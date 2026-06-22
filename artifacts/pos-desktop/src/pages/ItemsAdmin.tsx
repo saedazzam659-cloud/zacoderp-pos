@@ -2,6 +2,7 @@
 // Uses lib/items.ts + lib/uom.ts.
 
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { getTaxRate } from "../lib/taxSettings";
 import {
   listItems, createItem, updateItem, deleteItem, bulkImportLocalItems, updateItemExtended, updateItemWeighed,
   type LocalItem, type CreateItemInput, type ItemUnit,
@@ -1039,7 +1040,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     nameEn: initial?.nameEn ?? "",
     barcode: initial?.barcode ?? "",
     salePrice: initial?.salePrice ?? 0,
-    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 15),
+    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : getTaxRate()),
     uomId: initial?.uomId ?? getDefaultUom()?.id ?? null,
     groupId: initial?.groupId ?? null,
     nature: initial?.nature ?? "stock",

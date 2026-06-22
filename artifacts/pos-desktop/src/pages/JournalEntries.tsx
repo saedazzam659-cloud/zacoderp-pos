@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listJournalEntries, getJournalEntry, getJournalEntryDetail,
   createJournalEntry, updateJournalEntry, postJournalEntry, unpostJournalEntry,
@@ -82,6 +83,7 @@ export default function JournalEntries() {
     setRows(list); setAccounts(accs);
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["journal"], refresh);
 
   // Print: build a standalone HTML document and print it inside an isolated
   // hidden iframe. The previous in-DOM overlay (#je-print-area, position:absolute)

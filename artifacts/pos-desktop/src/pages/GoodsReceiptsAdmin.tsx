@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { getTaxRate } from "../lib/taxSettings";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listGoodsReceipts, getGoodsReceipt, createGoodsReceipt, postGoodsReceipt,
   deleteGoodsReceipt, convertGoodsReceiptToInvoice,
@@ -54,6 +56,7 @@ export default function GoodsReceiptsAdmin({ onNavigate }: { onNavigate?: (v: Wi
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
   const sel = useRowSelect(rows);
+  useDataRefresh(["invoices"], refresh);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
@@ -304,7 +307,7 @@ function CreateForm({ deps, onCancel, onDone }: {
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
-    itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
+    itemId: 0, qty: 1, unitCost: 0, vatRate: getTaxRate(), lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
   const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);

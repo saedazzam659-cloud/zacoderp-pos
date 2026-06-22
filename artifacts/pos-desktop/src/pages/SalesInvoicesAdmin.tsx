@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { getTaxRate } from "../lib/taxSettings";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listSalesInvoices, getSalesInvoice, createSalesInvoice, updateSalesInvoice, deleteSalesInvoice,
   unpostSalesInvoice, postSalesInvoice, listCashBoxes, listBanks, listFinancialTx,
@@ -135,6 +137,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
       setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
     })();
   }, []);
+  useDataRefresh(["invoices", "vouchers"], refresh);
 
   const zatca = isZatcaCountry();
   const columns = useMemo<GridColumn<SalesInvoice>[]>(() => {
@@ -435,7 +438,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
-    itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
+    itemId: 0, qty: 1, unitPrice: 0, vatRate: getTaxRate(), lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
   // Stored line unitPrice is already NET (discount baked in at create) — the

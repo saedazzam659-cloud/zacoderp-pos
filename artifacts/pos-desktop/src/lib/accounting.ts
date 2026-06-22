@@ -584,11 +584,13 @@ export async function deletePurchase(id: number): Promise<void> {
 export async function unpostPurchase(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("purchase_unpost", { id });
+  emitData("invoices", "journal", "stock");
 }
 /** ترحيل: re-apply a draft purchase's full impact and flip status back to posted. */
 export async function postPurchase(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("purchase_post", { id });
+  emitData("invoices", "journal", "stock");
 }
 
 // ─── Purchase returns ────────────────────────────────────────────────
@@ -602,7 +604,9 @@ export async function getPurchaseReturn(id: number): Promise<PurchaseReturn> {
 }
 export async function createPurchaseReturn(input: PurchaseReturnInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("purchase_return_create", { input });
+  const result = await invoke<number>("purchase_return_create", { input });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Purchase orders ─────────────────────────────────────────────────
@@ -632,7 +636,9 @@ export async function setPurchaseOrderStatus(id: number, status: PurchaseOrderSt
 }
 export async function convertPurchaseOrder(id: number): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("purchase_order_convert", { id });
+  const result = await invoke<number>("purchase_order_convert", { id });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Goods receipts ──────────────────────────────────────────────────
@@ -651,14 +657,18 @@ export async function createGoodsReceipt(input: GoodsReceiptInput): Promise<numb
 export async function postGoodsReceipt(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("goods_receipt_post", { id });
+  emitData("invoices", "journal", "stock");
 }
 export async function deleteGoodsReceipt(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("goods_receipt_delete", { id });
+  emitData("invoices", "journal", "stock");
 }
 export async function convertGoodsReceiptToInvoice(id: number, input: GoodsReceiptConvertInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("goods_receipt_convert_to_invoice", { id, input });
+  const result = await invoke<number>("goods_receipt_convert_to_invoice", { id, input });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Goods deliveries (سندات تسليم البضاعة) ──────────────────────────
@@ -701,10 +711,12 @@ export async function createGoodsDelivery(input: GoodsDeliveryInput): Promise<nu
 export async function postGoodsDelivery(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("goods_delivery_post", { id });
+  emitData("invoices", "journal", "stock");
 }
 export async function deleteGoodsDelivery(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("goods_delivery_delete", { id });
+  emitData("invoices", "journal", "stock");
 }
 
 // ─── Sales invoices ──────────────────────────────────────────────────
@@ -725,22 +737,26 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<numb
 export async function updateSalesInvoice(id: number, input: SalesInvoiceInput): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_update", { id, input });
+  emitData("invoices", "journal", "stock");
 }
 /** Delete a (non-ZATCA-bridged, open-period) sales invoice, reversing all impact. */
 export async function deleteSalesInvoice(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_delete", { id });
+  emitData("invoices", "journal", "stock");
 }
 /** فك الترحيل: reverse a posted sales invoice's GL/stock/AR impact, keep
  *  header+lines as a draft (status='draft', je_id NULL). */
 export async function unpostSalesInvoice(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_unpost", { id });
+  emitData("invoices", "journal", "stock");
 }
 /** ترحيل: re-apply a draft sales invoice's full impact and flip status to posted. */
 export async function postSalesInvoice(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_post", { id });
+  emitData("invoices", "journal", "stock");
 }
 /** Persist the ZATCA bridge link (QR + offline_invoices local_uuid) onto a sales invoice. */
 export async function setSalesInvoiceZatca(
@@ -779,7 +795,9 @@ export async function setQuotationStatus(id: number, status: QuotationStatus): P
 }
 export async function convertQuotationToInvoice(id: number): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("quotation_convert_to_invoice", { id });
+  const result = await invoke<number>("quotation_convert_to_invoice", { id });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Sales orders ────────────────────────────────────────────────────
@@ -811,7 +829,9 @@ export async function setSalesOrderStatus(id: number, status: SalesOrderStatus):
 }
 export async function convertSalesOrderToInvoice(id: number): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("sales_order_convert_to_invoice", { id });
+  const result = await invoke<number>("sales_order_convert_to_invoice", { id });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Sales returns ───────────────────────────────────────────────────
@@ -825,7 +845,9 @@ export async function getSalesReturn(id: number): Promise<SalesReturn> {
 }
 export async function createSalesReturn(input: SalesReturnInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("sales_return_create", { input });
+  const result = await invoke<number>("sales_return_create", { input });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Financial transactions ──────────────────────────────────────────
@@ -842,10 +864,12 @@ export async function createFinancialTx(input: FinancialTxInput): Promise<number
 export async function financialTxPost(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("financial_tx_post", { id });
+  emitData("vouchers", "journal");
 }
 export async function financialTxUnpost(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("financial_tx_unpost", { id });
+  emitData("vouchers", "journal");
 }
 
 // ─── Journal entries ─────────────────────────────────────────────────
@@ -863,23 +887,29 @@ export async function getJournalEntryDetail(id: number): Promise<ManualJeDetail>
 }
 export async function createJournalEntry(input: ManualJeInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("journal_entry_create", { input });
+  const result = await invoke<number>("journal_entry_create", { input });
+  emitData("journal");
+  return result;
 }
 export async function updateJournalEntry(id: number, input: ManualJeInput): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("journal_entry_update", { id, input });
+  emitData("journal");
 }
 export async function postJournalEntry(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("journal_entry_post", { id });
+  emitData("journal");
 }
 export async function unpostJournalEntry(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("journal_entry_unpost", { id });
+  emitData("journal");
 }
 export async function deleteJournalEntry(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("journal_entry_delete", { id });
+  emitData("journal");
 }
 export async function peekJournalEntryNumber(): Promise<string> {
   if (!hasTauri()) return "";
@@ -942,11 +972,15 @@ export async function setPostingSettings(input: PostingSettings): Promise<void> 
 // (which returns status / sourceType / entryType). Returns the count actioned.
 export async function postingCenterPost(ids: number[]): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("posting_center_post", { ids });
+  const result = await invoke<number>("posting_center_post", { ids });
+  emitData("journal", "invoices", "vouchers", "stock");
+  return result;
 }
 export async function postingCenterUnpost(ids: number[]): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("posting_center_unpost", { ids });
+  const result = await invoke<number>("posting_center_unpost", { ids });
+  emitData("journal", "invoices", "vouchers", "stock");
+  return result;
 }
 
 // Unposted SOURCE documents (draft sales/purchase invoices + vouchers) that
