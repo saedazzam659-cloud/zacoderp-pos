@@ -1185,7 +1185,7 @@ export default function Items() {
                 <Field label={t("pages.items.nameEn")}><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
                 <Field label={t("pages.items.barcode")}><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
                 <Field label={t("pages.items.itemType")} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceNoStockHint") : undefined}>
-                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" ? { itemNature: "merchandise", batchTrackingMode: "none" } : {}) }))} placeholder={t("pages.items.itemType")} />
+                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" ? { itemNature: "merchandise", batchTrackingMode: "none", reorderLevel: "0", maxLevel: "", expiryDate: "", costMethod: "weighted_avg" } : {}) }))} placeholder={t("pages.items.itemType")} />
                 </Field>
                 {form.itemType !== "service" && (
                 <Field label={t("inventoryMaster.items.natureFieldLabel")} hint={t("inventoryMaster.items.natureFieldHint")}>
@@ -1245,9 +1245,12 @@ export default function Items() {
                   <Field label={t("pages.items.costPriceLabel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} /></Field>
                   <Field label={t("pages.items.salePriceLabel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></Field>
                   <Field label={t("pages.items.vatRate")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></Field>
+                  {/* Costing method is inventory valuation only — irrelevant for SERVICE items (no stock). */}
+                  {form.itemType !== "service" && (
                   <Field label={t("pages.items.costMethod")}>
                     <SearchCombobox items={[{ value: "weighted_avg", label: t("pages.items.weightedAvg") }, { value: "last_cost", label: t("pages.items.lastCost") }]} value={form.costMethod} onValueChange={v => setForm((p: any) => ({ ...p, costMethod: v }))} placeholder={t("pages.items.costMethodPlaceholder")} />
                   </Field>
+                  )}
                   <Field label={t("pages.items.discount.type")}>
                     <SearchCombobox
                       items={[
@@ -1285,8 +1288,11 @@ export default function Items() {
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("pages.items.controlData")}</p>
                 <FormGrid>
+                  {/* Reorder / max-stock are stock-planning fields — hidden for SERVICE items. */}
+                  {form.itemType !== "service" && (<>
                   <Field label={t("pages.items.reorderLevel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></Field>
                   <Field label={t("pages.items.maxStockLevel")}><Input type="number" step="any" placeholder={t("pages.items.optional")} dir="ltr" className="text-left" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></Field>
+                  </>)}
                   <Field label={t("pages.items.notesDescription")} className="md:col-span-2"><Input placeholder={t("pages.items.descriptionPlaceholder")} value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></Field>
                 </FormGrid>
               </div>
@@ -1310,6 +1316,8 @@ export default function Items() {
                   </label>
                 </div>
               </div>
+              {/* Expiry + batch tracking are inventory-only — hidden for SERVICE items (SAP parity). */}
+              {form.itemType !== "service" && (<>
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("inventoryMaster.items.expiryDateSectionTitle")}</p>
                 <FormGrid>
@@ -1345,13 +1353,14 @@ export default function Items() {
                   </Field>
                 </FormGrid>
               </div>
+              </>)}
             </TabsContent>
             <TabsContent value="accounts" className="mt-0">
               <FormGrid>
-                <Field label={t("pages.items.costAccount")}>
+                <Field label={t("pages.items.costAccount")} required={form.itemType === "service"} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceAccountsRequired") : undefined}>
                   <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder={t("pages.items.chooseCostAccount")} filterTypes={["expense", "asset"]} grouped={false} />
                 </Field>
-                <Field label={t("pages.items.revenueAccount")}>
+                <Field label={t("pages.items.revenueAccount")} required={form.itemType === "service"} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceAccountsRequired") : undefined}>
                   <AccountCombobox value={form.revenueAccountId} onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))} placeholder={t("pages.items.chooseRevenueAccount")} filterTypes={["revenue"]} grouped={false} />
                 </Field>
               </FormGrid>
