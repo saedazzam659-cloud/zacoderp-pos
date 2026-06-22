@@ -6,7 +6,7 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, ErrorMsg, Empty,
-  btnPrimary, btnSecondary, fmt, input,
+  btnPrimary, btnSecondary, fmt, input, errText,
 } from "./_adminUi";
 import { currencySymbol } from "../lib/currency";
 import { useDataRefresh } from "../lib/dataBus";
@@ -218,7 +218,7 @@ export default function PostingCenter() {
       await refresh();
       setNotice(`تم ترحيل ${count} مستند`);
     } catch (e: any) {
-      setErr(e?.message ?? "فشل الترحيل");
+      setErr(errText(e, "فشل الترحيل"));
     } finally {
       setBusy(false);
     }
@@ -238,7 +238,7 @@ export default function PostingCenter() {
       await refresh();
       setNotice(`تم إلغاء ترحيل ${count} مستند`);
     } catch (e: any) {
-      setErr(e?.message ?? "فشل إلغاء الترحيل");
+      setErr(errText(e, "فشل إلغاء الترحيل"));
     } finally {
       setBusy(false);
     }

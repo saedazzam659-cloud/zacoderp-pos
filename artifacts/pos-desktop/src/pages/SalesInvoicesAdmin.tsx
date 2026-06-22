@@ -15,7 +15,7 @@ import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
 import { getCompanyProfile } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
-  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
+  input, btnPrimary, btnSecondary, btnLink, actionChip, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
@@ -244,16 +244,16 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
                     <Td>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
                         <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
+                          style={actionChip("default", formOpen)}>
                           {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
                         </button>
                         <button onClick={() => void printRow(p.id)} disabled={busyId === p.id || formOpen} title="طباعة الفاتورة A4"
-                          style={{ ...btnLink, opacity: (busyId === p.id || formOpen) ? 0.5 : 1, cursor: (busyId === p.id || formOpen) ? "not-allowed" : "pointer" }}>
+                          style={actionChip("primary", busyId === p.id || formOpen)}>
                           🖨️ طباعة
                         </button>
                         {onNavigate && (
                           <button onClick={() => void startReturn(p.id)} disabled={formOpen} title="إنشاء مرتجع من هذه الفاتورة"
-                            style={{ ...btnLink, color: "#b45309", opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
+                            style={actionChip("warn", formOpen)}>
                             ↩ إرجاع
                           </button>
                         )}
@@ -261,12 +261,12 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
                           <span title={bridgedMsg()} style={{ fontSize: 12, color: "#94a3b8" }}>🔒 مُرحّلة لزاتكا</span>
                         ) : p.status === "draft" ? (
                           <>
-                            <button onClick={() => void post(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#15803d" }}>ترحيل</button>
-                            <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} style={btnLink}>تعديل</button>
-                            <button onClick={() => void remove(p.id, p.invoiceNo, p.zatcaStatus)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                            <button onClick={() => void post(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} title="ترحيل الفاتورة" style={actionChip("success", busyId === p.id || formOpen)}>✔ ترحيل</button>
+                            <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} title="تعديل الفاتورة" style={actionChip("default", busyId === p.id || formOpen)}>✎ تعديل</button>
+                            <button onClick={() => void remove(p.id, p.invoiceNo, p.zatcaStatus)} disabled={busyId === p.id || formOpen} title="حذف الفاتورة" style={actionChip("danger", busyId === p.id || formOpen)}>حذف</button>
                           </>
                         ) : (
-                          <button onClick={() => void unpost(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} title="فك الترحيل لتعديل أو حذف الفاتورة" style={{ ...btnLink, color: "#b45309" }}>فك الترحيل</button>
+                          <button onClick={() => void unpost(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} title="فك الترحيل لتعديل أو حذف الفاتورة" style={actionChip("warn", busyId === p.id || formOpen)}>↺ فك الترحيل</button>
                         )}
                       </div>
                     </Td>

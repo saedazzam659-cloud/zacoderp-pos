@@ -138,6 +138,45 @@ export const btnSecondary: CSSProperties = { padding: "8px 16px", background: "#
 export const btnDanger: CSSProperties = { padding: "6px 12px", background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 13 };
 export const btnLink: CSSProperties = { background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontFamily: "inherit", fontSize: 13, padding: 0 };
 
+// ─── Row-action chips ────────────────────────────────────────────────
+// A more attractive, consistent replacement for the bare text `btnLink`
+// used inside table row action cells (ترحيل / تعديل / حذف / فك الترحيل …).
+// Renders a small tinted pill with a soft border per semantic tone, so the
+// invoice grids read as proper buttons rather than plain hyperlinks.
+export type ChipTone = "default" | "primary" | "success" | "warn" | "danger" | "purple";
+const CHIP_TONES: Record<ChipTone, { bg: string; fg: string; border: string }> = {
+  default: { bg: "#f1f5f9", fg: "#334155", border: "#e2e8f0" },
+  primary: { bg: "#eff6ff", fg: "#1d4ed8", border: "#bfdbfe" },
+  success: { bg: "#ecfdf5", fg: "#15803d", border: "#bbf7d0" },
+  warn:    { bg: "#fffbeb", fg: "#b45309", border: "#fde68a" },
+  danger:  { bg: "#fef2f2", fg: "#dc2626", border: "#fecaca" },
+  purple:  { bg: "#faf5ff", fg: "#7c3aed", border: "#e9d5ff" },
+};
+export function actionChip(tone: ChipTone = "default", disabled = false): CSSProperties {
+  const t = CHIP_TONES[tone];
+  return {
+    display: "inline-flex", alignItems: "center", gap: 4,
+    padding: "4px 11px", background: t.bg, color: t.fg,
+    border: `1px solid ${t.border}`, borderRadius: 999,
+    cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1,
+    fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, lineHeight: 1.4,
+    whiteSpace: "nowrap", transition: "filter .12s ease",
+  };
+}
+
+// ─── Tauri error text ────────────────────────────────────────────────
+// Tauri `Err(String)` rejects `invoke` with a RAW string, so `e.message` is
+// undefined and naive `e?.message ?? "fallback"` hides the real cause. Always
+// surface the string when present.
+export function errText(e: unknown, fallback: string): string {
+  if (typeof e === "string" && e.trim()) return e;
+  if (e && typeof e === "object" && "message" in e) {
+    const m = (e as { message?: unknown }).message;
+    if (typeof m === "string" && m.trim()) return m;
+  }
+  return fallback;
+}
+
 // ─── Searchable combobox ─────────────────────────────────────────────
 // Drop-in replacement for <select>. Renders a clickable trigger styled
 // like an <input>, opens a popover with a search box + filtered list.

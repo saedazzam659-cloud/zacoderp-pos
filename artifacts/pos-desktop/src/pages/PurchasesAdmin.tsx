@@ -12,7 +12,7 @@ import { emitData } from "../lib/dataBus";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
-  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
+  input, btnPrimary, btnSecondary, btnLink, actionChip, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
@@ -285,20 +285,20 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                     <Td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                         <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          style={actionChip("default", creating)}>
                           {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
                         </button>
                         <button onClick={() => void duplicate(p.id)} disabled={creating} title="نسخ كفاتورة جديدة"
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          style={actionChip("default", creating)}>
                           ⧉ نسخ
                         </button>
                         <button onClick={() => void printDoc(p.id, "a4")} disabled={creating} title="طباعة A4"
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          style={actionChip("primary", creating)}>
                           🖶 طباعة
                         </button>
                         {onNavigate && (
                           <button onClick={() => void startReturn(p.id)} disabled={creating} title="إنشاء مرتجع من هذه الفاتورة"
-                            style={{ ...btnLink, color: "#b45309", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                            style={actionChip("warn", creating)}>
                             ↩ إرجاع
                           </button>
                         )}
@@ -308,29 +308,29 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                           <>
                             <span title="ناتجة عن سند استلام — تُدار من شاشة سندات الاستلام" style={{ fontSize: 12, color: "#94a3b8" }}>🔒 من سند استلام</span>
                             <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
-                              style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                              style={actionChip("danger", creating)}>
                               حذف
                             </button>
                           </>
                         ) : p.status === "draft" ? (
                           <>
                             <button onClick={() => void post(p.id)} disabled={creating} title="ترحيل الفاتورة"
-                              style={{ ...btnLink, color: "#15803d", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                              ترحيل
+                              style={actionChip("success", creating)}>
+                              ✔ ترحيل
                             </button>
                             <button onClick={() => void startEdit(p.id)} disabled={creating} title="تعديل الفاتورة"
-                              style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                              style={actionChip("default", creating)}>
                               ✎ تعديل
                             </button>
                             <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
-                              style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                              style={actionChip("danger", creating)}>
                               حذف
                             </button>
                           </>
                         ) : (
                           <button onClick={() => void unpost(p.id)} disabled={creating} title="فك الترحيل لتعديل أو حذف الفاتورة"
-                            style={{ ...btnLink, color: "#b45309", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            فك الترحيل
+                            style={actionChip("warn", creating)}>
+                            ↺ فك الترحيل
                           </button>
                         )}
                       </div>

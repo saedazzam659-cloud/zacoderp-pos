@@ -14,7 +14,10 @@ post a JE can legitimately `Err` with "الحساب 1300 غير موجود", a c
 message, or a missing payment account — but the user only ever sees "فشل", which
 looks like a mystery bug and invites risky guess-fixes to the Rust posting logic.
 
-**How to apply:** in every form catch that surfaces a Tauri command error, use
-`typeof e === "string" ? e : (e?.message ?? "<fallback>")` (the convention already
-used in `ItemsAdmin.tsx`/`StandaloneActivation.tsx`). When diagnosing a generic
-"فشل" save failure, first make the error visible — do NOT assume a cause.
+**How to apply:** prefer the shared `errText(e, fallback)` helper exported from
+`pages/_adminUi.tsx` (string-first, then `.message`, then fallback) in every form
+catch that surfaces a Tauri command error; the inline `typeof e === "string" ? e :
+(e?.message ?? "<fallback>")` is equivalent. When diagnosing a generic "فشل" save
+failure, first make the error visible — do NOT assume a cause. Known still-swallowing
+catch sites worth migrating: `SupplierSettlementAdmin`, `PurchasesAdmin`,
+`SalesInvoicesAdmin`, `JournalEntries`. `PostingCenter` post/unpost already uses it.
