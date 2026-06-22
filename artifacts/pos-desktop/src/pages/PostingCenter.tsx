@@ -1,21 +1,40 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   listJournalEntries, postingCenterPost, postingCenterUnpost,
-  type JournalEntry,
+  postingCenterDocuments, postSalesInvoice, postPurchase, financialTxPost,
+  type JournalEntry, type UnpostedDoc,
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, ErrorMsg, Empty,
   btnPrimary, btnSecondary, fmt, input,
 } from "./_adminUi";
 import { currencySymbol } from "../lib/currency";
+import { useDataRefresh } from "../lib/dataBus";
 
 type StatusFilter = "draft" | "posted" | "all";
 
+// A unified posting-center row. Two shapes share the grid:
+//   • kind "je"  — a journal entry (draft manual JEs + ALL posted JEs).
+//   • kind "doc" — an UNPOSTED source document (draft sales/purchase invoice or
+//                  voucher) that has NO journal entry yet. Posting it creates
+//                  the JE via the document's own post path.
+type Row = {
+  key: string;                 // "je:<id>" | "<docType>:<id>" — unique across tables
+  kind: "je" | "doc";
+  id: number;
+  no: string;
+  date: string;
+  description: string | null;
+  source: string | null;       // source_type / voucher tx_type — drives label
+  party: string | null;
+  debit: number;
+  credit: number;
+  status: "draft" | "posted";
+  docType?: UnpostedDoc["docType"];      // doc rows only
+};
+
 // "نوع الحركة" filter — each entry maps a user-facing module to the set of
-// journal_entries_local.source_type values it covers. "" = all modules. The
-// posting center aggregates EVERY module through its journal entry, so this is
-// purely a client-side filter over the already-fetched rows; the post / unpost
-// math stays untouched in its original module.
+// source_type values it covers. "" = all modules. Purely a client-side filter.
 const MODULE_FILTERS: { value: string; label: string; match: (s: string | null) => boolean }[] = [
   { value: "", label: "كل الأنواع", match: () => true },
   { value: "sales_customers", label: "المبيعات والعملاء", match: (s) => s === "sale" || s === "sale_cogs" },
@@ -56,23 +75,15 @@ const SOURCE_LABEL: Record<string, string> = {
   manual: "يدوي",
 };
 
-const ENTRY_TYPE_LABEL: Record<string, string> = {
-  general: "قيد عام",
-  opening: "قيد افتتاحي",
-  closing: "قيد إقفال",
-  adjustment: "قيد تسوية",
-  depreciation: "قيد إهلاك",
-};
-
 function sourceLabel(source: string | null): string {
   if (source == null) return "يدوي";
   return SOURCE_LABEL[source] ?? source;
 }
 
-function StatusTag({ status }: { status: JournalEntry["status"] }) {
+function StatusTag({ status }: { status: Row["status"] }) {
   const m = status === "posted"
     ? { l: "مرحّل", c: "#15803d" }
-    : { l: "مسودة", c: "#b45309" };
+    : { l: "غير مرحّل", c: "#b45309" };
   return (
     <span style={{ background: m.c + "20", color: m.c, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600 }}>
       {m.l}
@@ -80,21 +91,42 @@ function StatusTag({ status }: { status: JournalEntry["status"] }) {
   );
 }
 
+function jeToRow(e: JournalEntry): Row {
+  return {
+    key: `je:${e.id}`, kind: "je", id: e.id, no: e.entryNo, date: e.entryDate,
+    description: e.description, source: e.sourceType, party: null,
+    debit: e.totalDebit, credit: e.totalCredit, status: e.status,
+  };
+}
+
+function docToRow(d: UnpostedDoc): Row {
+  return {
+    key: `${d.docType}:${d.id}`, kind: "doc", id: d.id, no: d.docNo, date: d.docDate,
+    description: d.description, source: d.sourceType, party: d.partyName,
+    debit: d.total, credit: d.total, status: "draft", docType: d.docType,
+  };
+}
+
 export default function PostingCenter() {
-  const [rows, setRows] = useState<JournalEntry[]>([]);
+  const [jes, setJes] = useState<JournalEntry[]>([]);
+  const [docs, setDocs] = useState<UnpostedDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("draft");
   const [moduleFilter, setModuleFilter] = useState<string>("");
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true); setErr(null);
     try {
-      const list = await listJournalEntries(500);
-      setRows(list);
+      const [jeList, docList] = await Promise.all([
+        listJournalEntries(500),
+        postingCenterDocuments(),
+      ]);
+      setJes(jeList);
+      setDocs(docList);
     } catch (e: any) {
       setErr(e?.message ?? "فشل تحميل القيود");
     } finally {
@@ -102,69 +134,89 @@ export default function PostingCenter() {
     }
   }
   useEffect(() => { void refresh(); }, []);
+  // Auto-refresh when any document/journal entry changes elsewhere in the app.
+  useDataRefresh(["journal", "invoices", "vouchers"], () => { void refresh(); });
+
+  // Unified rows: every unposted document (no JE yet) + every journal entry.
+  const allRows = useMemo<Row[]>(
+    () => [...docs.map(docToRow), ...jes.map(jeToRow)],
+    [docs, jes],
+  );
 
   const filtered = useMemo(() => {
     const mod = MODULE_FILTERS.find((m) => m.value === moduleFilter) ?? MODULE_FILTERS[0];
-    return rows.filter(
-      (e) =>
-        (statusFilter === "all" || e.status === statusFilter) &&
-        mod.match(e.sourceType),
+    return allRows.filter(
+      (r) =>
+        (statusFilter === "all" || r.status === statusFilter) &&
+        mod.match(r.source),
     );
-  }, [rows, statusFilter, moduleFilter]);
+  }, [allRows, statusFilter, moduleFilter]);
 
   // Drop any selections no longer visible under the current filter.
   useEffect(() => {
     setSelected((prev) => {
-      const visible = new Set(filtered.map((e) => e.id));
-      const next = new Set<number>();
-      for (const id of prev) if (visible.has(id)) next.add(id);
+      const visible = new Set(filtered.map((r) => r.key));
+      const next = new Set<string>();
+      for (const k of prev) if (visible.has(k)) next.add(k);
       return next.size === prev.size ? prev : next;
     });
   }, [filtered]);
 
-  const allVisibleSelected = filtered.length > 0 && filtered.every((e) => selected.has(e.id));
+  const allVisibleSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.key));
 
   function toggleAll() {
     setSelected((prev) => {
-      if (filtered.every((e) => prev.has(e.id)) && filtered.length > 0) {
+      if (filtered.every((r) => prev.has(r.key)) && filtered.length > 0) {
         const next = new Set(prev);
-        for (const e of filtered) next.delete(e.id);
+        for (const r of filtered) next.delete(r.key);
         return next;
       }
       const next = new Set(prev);
-      for (const e of filtered) next.add(e.id);
+      for (const r of filtered) next.add(r.key);
       return next;
     });
   }
-  function toggleRow(id: number) {
+  function toggleRow(key: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   }
 
   const selectedRows = useMemo(
-    () => rows.filter((e) => selected.has(e.id)),
-    [rows, selected],
+    () => filtered.filter((r) => selected.has(r.key)),
+    [filtered, selected],
   );
-  const selectedDraftIds = useMemo(
-    () => selectedRows.filter((e) => e.status === "draft").map((e) => e.id),
+  const selectedDraft = useMemo(
+    () => selectedRows.filter((r) => r.status === "draft"),
     [selectedRows],
   );
-  const selectedPostedIds = useMemo(
-    () => selectedRows.filter((e) => e.status === "posted").map((e) => e.id),
+  const selectedPosted = useMemo(
+    () => selectedRows.filter((r) => r.status === "posted"),
     [selectedRows],
   );
 
   async function doPost() {
-    if (selectedDraftIds.length === 0) return;
+    if (selectedDraft.length === 0) return;
     setBusy(true); setErr(null); setNotice(null);
     try {
-      const count = await postingCenterPost(selectedDraftIds);
+      let count = 0;
+      // Draft DOCUMENTS post through their own per-type post path (each creates
+      // the journal entry + applies stock / shadow on post). Draft JEs (manual +
+      // any remaining source-type drafts) go through the bulk posting center.
+      for (const r of selectedDraft) {
+        if (r.kind !== "doc") continue;
+        if (r.docType === "sale") await postSalesInvoice(r.id);
+        else if (r.docType === "purchase") await postPurchase(r.id);
+        else if (r.docType === "voucher") await financialTxPost(r.id);
+        count++;
+      }
+      const jeIds = selectedDraft.filter((r) => r.kind === "je").map((r) => r.id);
+      if (jeIds.length > 0) count += await postingCenterPost(jeIds);
       setSelected(new Set());
       await refresh();
-      setNotice(`تم ترحيل ${count} قيد`);
+      setNotice(`تم ترحيل ${count} مستند`);
     } catch (e: any) {
       setErr(e?.message ?? "فشل الترحيل");
     } finally {
@@ -173,14 +225,18 @@ export default function PostingCenter() {
   }
 
   async function doUnpost() {
-    if (selectedPostedIds.length === 0) return;
-    if (!confirm(`إلغاء ترحيل ${selectedPostedIds.length} قيد؟ ستُعاد لحالة مسودة وتُلغى آثارها على الأرصدة.`)) return;
+    if (selectedPosted.length === 0) return;
+    if (!confirm(`إلغاء ترحيل ${selectedPosted.length} مستند؟ ستُعاد لحالة غير مرحّل وتُلغى آثارها على الأرصدة.`)) return;
     setBusy(true); setErr(null); setNotice(null);
     try {
-      const count = await postingCenterUnpost(selectedPostedIds);
+      // Posted rows are always journal entries (a posted document carries its
+      // JE). The posting center unpost cascades source-doc JEs to the document's
+      // own unpost (deletes JE + reverses stock/shadow).
+      const jeIds = selectedPosted.filter((r) => r.kind === "je").map((r) => r.id);
+      const count = jeIds.length > 0 ? await postingCenterUnpost(jeIds) : 0;
       setSelected(new Set());
       await refresh();
-      setNotice(`تم إلغاء ترحيل ${count} قيد`);
+      setNotice(`تم إلغاء ترحيل ${count} مستند`);
     } catch (e: any) {
       setErr(e?.message ?? "فشل إلغاء الترحيل");
     } finally {
@@ -216,7 +272,7 @@ export default function PostingCenter() {
               ))}
             </select>
           </label>
-          <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} قيد — {selected.size} محدد</span>
+          <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} مستند — {selected.size} محدد</span>
         </div>
       </Card>
 
@@ -231,36 +287,36 @@ export default function PostingCenter() {
         {loading ? (
           <Empty text="... جاري التحميل" />
         ) : filtered.length === 0 ? (
-          <Empty text="لا توجد قيود مطابقة" />
+          <Empty text="لا توجد مستندات مطابقة" />
         ) : (
           <Table>
             <thead><tr>
               <Th style={{ width: 40 }}>
                 <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} aria-label="تحديد الكل" />
               </Th>
-              <Th>رقم القيد</Th>
+              <Th>الرقم</Th>
               <Th>التاريخ</Th>
               <Th>البيان</Th>
               <Th>المصدر</Th>
-              <Th>النوع</Th>
+              <Th>الطرف</Th>
               <Th style={{ textAlign: "left" }}>مدين</Th>
               <Th style={{ textAlign: "left" }}>دائن</Th>
               <Th>الحالة</Th>
             </tr></thead>
             <tbody>
-              {filtered.map((e) => (
-                <tr key={e.id} style={{ background: selected.has(e.id) ? "#eff6ff" : undefined }}>
+              {filtered.map((r) => (
+                <tr key={r.key} style={{ background: selected.has(r.key) ? "#eff6ff" : undefined }}>
                   <Td>
-                    <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleRow(e.id)} aria-label={`تحديد ${e.entryNo}`} />
+                    <input type="checkbox" checked={selected.has(r.key)} onChange={() => toggleRow(r.key)} aria-label={`تحديد ${r.no}`} />
                   </Td>
-                  <Td mono style={{ fontWeight: 600 }}>{e.entryNo}</Td>
-                  <Td>{e.entryDate}</Td>
-                  <Td>{e.description ?? "—"}</Td>
-                  <Td>{sourceLabel(e.sourceType)}</Td>
-                  <Td>{ENTRY_TYPE_LABEL[e.entryType] ?? e.entryType}</Td>
-                  <Td num>{fmt(e.totalDebit)} {sym}</Td>
-                  <Td num>{fmt(e.totalCredit)} {sym}</Td>
-                  <Td><StatusTag status={e.status} /></Td>
+                  <Td mono style={{ fontWeight: 600 }}>{r.no}</Td>
+                  <Td>{r.date}</Td>
+                  <Td>{r.description ?? "—"}</Td>
+                  <Td>{sourceLabel(r.source)}</Td>
+                  <Td>{r.party ?? "—"}</Td>
+                  <Td num>{fmt(r.debit)} {sym}</Td>
+                  <Td num>{fmt(r.credit)} {sym}</Td>
+                  <Td><StatusTag status={r.status} /></Td>
                 </tr>
               ))}
             </tbody>
@@ -270,17 +326,17 @@ export default function PostingCenter() {
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", marginTop: 12 }}>
         <span style={{ color: "#64748b", fontSize: 13, marginInlineEnd: "auto" }}>
-          {selectedDraftIds.length} مسودة · {selectedPostedIds.length} مرحّل محدد
+          {selectedDraft.length} غير مرحّل · {selectedPosted.length} مرحّل محدد
         </span>
         <button type="button" onClick={() => void doPost()}
-          disabled={busy || selectedDraftIds.length === 0}
-          style={{ ...btnPrimary, opacity: (busy || selectedDraftIds.length === 0) ? 0.5 : 1, cursor: (busy || selectedDraftIds.length === 0) ? "not-allowed" : "pointer" }}>
-          ترحيل المحدد ({selectedDraftIds.length})
+          disabled={busy || selectedDraft.length === 0}
+          style={{ ...btnPrimary, opacity: (busy || selectedDraft.length === 0) ? 0.5 : 1, cursor: (busy || selectedDraft.length === 0) ? "not-allowed" : "pointer" }}>
+          ترحيل المحدد ({selectedDraft.length})
         </button>
         <button type="button" onClick={() => void doUnpost()}
-          disabled={busy || selectedPostedIds.length === 0}
-          style={{ ...btnSecondary, opacity: (busy || selectedPostedIds.length === 0) ? 0.5 : 1, cursor: (busy || selectedPostedIds.length === 0) ? "not-allowed" : "pointer" }}>
-          إلغاء ترحيل المحدد ({selectedPostedIds.length})
+          disabled={busy || selectedPosted.length === 0}
+          style={{ ...btnSecondary, opacity: (busy || selectedPosted.length === 0) ? 0.5 : 1, cursor: (busy || selectedPosted.length === 0) ? "not-allowed" : "pointer" }}>
+          إلغاء ترحيل المحدد ({selectedPosted.length})
         </button>
       </div>
     </Page>

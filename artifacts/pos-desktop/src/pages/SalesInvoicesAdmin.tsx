@@ -5,6 +5,7 @@ import {
   type SalesInvoice, type SalesLine, type PaymentMethod, type CashBox, type Bank,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
+import { emitData } from "../lib/dataBus";
 import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
@@ -617,6 +618,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         id = await createSalesInvoice(payload);
         setSavedId(id);
         saveDocDiscount("sales_invoice", id, discOverlay);
+        emitData("invoices", "journal", "stock", "customers", "cashboxes", "banks");
       }
       // ZATCA bridge (Saudi installs only): generate the TLV QR and enqueue the
       // invoice into the existing offline_invoices → cloud-sync submission path.

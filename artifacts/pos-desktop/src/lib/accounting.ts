@@ -837,6 +837,16 @@ export async function createFinancialTx(input: FinancialTxInput): Promise<number
   if (!hasTauri()) notImpl();
   return await invoke<number>("financial_tx_create", { input });
 }
+// ترحيل / فك ترحيل سند قبض/صرف. Post writes a journal entry + applies the
+// cash/bank/party shadow balances; unpost deletes the JE + reverses the shadow.
+export async function financialTxPost(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("financial_tx_post", { id });
+}
+export async function financialTxUnpost(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("financial_tx_unpost", { id });
+}
 
 // ─── Journal entries ─────────────────────────────────────────────────
 export async function listJournalEntries(limit = 200): Promise<JournalEntry[]> {
@@ -937,6 +947,24 @@ export async function postingCenterPost(ids: number[]): Promise<number> {
 export async function postingCenterUnpost(ids: number[]): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("posting_center_unpost", { ids });
+}
+
+// Unposted SOURCE documents (draft sales/purchase invoices + vouchers) that
+// carry NO journal entry until posted — surfaced separately from draft manual
+// JEs (which live in journal_entries_list).
+export type UnpostedDoc = {
+  docType: "sale" | "purchase" | "voucher";
+  sourceType: "sale" | "purchase" | "receipt" | "payment";
+  id: number;
+  docNo: string;
+  docDate: string;
+  description: string | null;
+  partyName: string | null;
+  total: number;
+};
+export async function postingCenterDocuments(): Promise<UnpostedDoc[]> {
+  if (!hasTauri()) return [];
+  return await invoke<UnpostedDoc[]>("posting_center_documents");
 }
 
 // ─── Fiscal years + periods (الفترات المحاسبية) ────────────────────────

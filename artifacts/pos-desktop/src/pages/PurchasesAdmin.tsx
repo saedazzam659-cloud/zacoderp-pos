@@ -8,6 +8,7 @@ import {
 } from "../lib/accounting";
 import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
+import { emitData } from "../lib/dataBus";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
@@ -557,6 +558,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
         notes: notes || null, lines: payloadLines,
       };
       const id = isEdit ? (await updatePurchase(seed.editId!, payload), seed.editId!) : await createPurchase(payload);
+      emitData("invoices", "journal", "stock", "suppliers", "cashboxes", "banks");
       // Refresh the discount overlay for this invoice (clear stale, then save).
       clearDocDiscount("purchase", id);
       saveDocDiscount("purchase", id, {

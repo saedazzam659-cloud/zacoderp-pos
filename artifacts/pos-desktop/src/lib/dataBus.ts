@@ -23,6 +23,8 @@ export type DataEntity =
   | "itemGroups"
   | "accounts"
   | "journal"
+  | "invoices"
+  | "vouchers"
   | "branches"
   | "costCenters"
   | "currencies"

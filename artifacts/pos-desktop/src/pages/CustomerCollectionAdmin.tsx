@@ -4,6 +4,7 @@ import {
   type FinancialTx, type CashBox, type Bank, type SalesInvoice,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
+import { emitData } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
@@ -166,6 +167,7 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
         appliedDocType: invoiceId != null ? "sales_invoice" : null,
         appliedDocId: invoiceId,
       });
+      emitData("vouchers", "journal", "customers", "cashboxes", "banks");
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }

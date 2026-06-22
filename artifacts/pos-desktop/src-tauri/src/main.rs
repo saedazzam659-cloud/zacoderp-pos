@@ -535,6 +535,8 @@ fn main() {
             accounting::sales_return_create,
             accounting::financial_tx_list,
             accounting::financial_tx_create,
+            accounting::financial_tx_post,
+            accounting::financial_tx_unpost,
             accounting::journal_entries_list,
             accounting::journal_entry_get,
             accounting::journal_entry_detail,
@@ -548,6 +550,7 @@ fn main() {
             accounting::posting_settings_set,
             accounting::posting_center_post,
             accounting::posting_center_unpost,
+            accounting::posting_center_documents,
             accounting::number_series_list,
             accounting::number_series_update,
             // Fiscal years + periods + closing wizard (الفترات المحاسبية).

@@ -4,6 +4,7 @@ import {
   type FinancialTx, type TxType, type PartyType, type Supplier, type CashBox, type Bank, type Account,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
+import { emitData } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
@@ -117,6 +118,7 @@ function CreateForm({ type, deps, onCancel, onDone }: {
         branchId: branchId === "" ? null : branchId,
         costCenterId: costCenterId === "" ? null : costCenterId,
       });
+      emitData("vouchers", "journal", "cashboxes", "banks", "customers", "suppliers");
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }

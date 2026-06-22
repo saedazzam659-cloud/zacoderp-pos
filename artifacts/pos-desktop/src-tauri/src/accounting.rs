@@ -1331,7 +1331,7 @@ pub fn posting_center_unpost(ids: Vec<i64>) -> Result<i64, String> {
         }
         match stype.as_deref() {
             None | Some("manual") | Some("purchase") | Some("sale") | Some("sale_cogs")
-            | Some("supplier_settlement") => {}
+            | Some("supplier_settlement") | Some("receipt") | Some("payment") => {}
             Some(other) => {
                 return Err(format!(
                     "القيد ناتج عن «{}» ولا يمكن فك ترحيله من مركز الترحيل — افتح المستند المصدر لفك ترحيله. لم يتم فك ترحيل أي قيد.",
@@ -1358,7 +1358,7 @@ pub fn posting_center_unpost(ids: Vec<i64>) -> Result<i64, String> {
                 tx.commit().map_err(|e| e.to_string())?;
                 done += 1;
             }
-            Some(kind @ ("purchase" | "sale" | "sale_cogs" | "supplier_settlement")) => {
+            Some(kind @ ("purchase" | "sale" | "sale_cogs" | "supplier_settlement" | "receipt" | "payment")) => {
                 let s = sid
                     .ok_or_else(|| "القيد مرتبط بمستند لكن رقم المستند مفقود".to_string())?;
                 let doc_kind = if kind == "sale_cogs" { "sale" } else { kind };
@@ -1369,6 +1369,7 @@ pub fn posting_center_unpost(ids: Vec<i64>) -> Result<i64, String> {
                     "purchase" => purchase_unpost(s)?,
                     "sale" => sales_invoice_unpost(s)?,
                     "supplier_settlement" => supplier_settlement_unpost(s)?,
+                    "receipt" | "payment" => financial_tx_unpost(s)?,
                     _ => unreachable!(),
                 }
                 done += 1;
@@ -1382,6 +1383,85 @@ pub fn posting_center_unpost(ids: Vec<i64>) -> Result<i64, String> {
         }
     }
     Ok(done)
+}
+
+/// A source document still awaiting posting (status='draft'): sales invoices,
+/// purchase invoices and vouchers. Unlike draft manual JEs (which exist as rows
+/// in `journal_entries_local`), these carry NO journal entry at all until posted
+/// — so مركز الترحيل must surface them from their own tables.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UnpostedDoc {
+    pub doc_type: String,       // "sale" | "purchase" | "voucher"
+    pub source_type: String,    // "sale" | "purchase" | "receipt" | "payment"
+    pub id: i64,
+    pub doc_no: String,
+    pub doc_date: String,
+    pub description: Option<String>,
+    pub party_name: Option<String>,
+    pub total: f64,
+}
+
+/// Lists every UNPOSTED source document (draft sales/purchase invoices +
+/// vouchers) for مركز الترحيل. Draft manual journal entries are listed
+/// separately by the existing `journal_entries_list` (status filter) on the
+/// frontend; this command covers the doc types that have no JE while draft.
+#[tauri::command]
+pub fn posting_center_documents() -> Result<Vec<UnpostedDoc>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut out: Vec<UnpostedDoc> = Vec::new();
+
+    // Draft sales invoices.
+    {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.invoice_no, s.invoice_date, s.grand_total,
+                    (SELECT name_ar FROM customers_local WHERE id=s.customer_id)
+             FROM sales_invoices_local s WHERE s.status='draft' ORDER BY s.id DESC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |r| Ok(UnpostedDoc {
+            doc_type: "sale".into(), source_type: "sale".into(),
+            id: r.get(0)?, doc_no: r.get(1)?, doc_date: r.get(2)?, total: r.get(3)?,
+            party_name: r.get(4)?, description: None,
+        })).map_err(|e| e.to_string())?;
+        for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    }
+
+    // Draft purchase invoices.
+    {
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.invoice_no, p.invoice_date, p.grand_total,
+                    (SELECT name_ar FROM suppliers_local WHERE id=p.supplier_id)
+             FROM purchases_local p WHERE p.status='draft' ORDER BY p.id DESC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |r| Ok(UnpostedDoc {
+            doc_type: "purchase".into(), source_type: "purchase".into(),
+            id: r.get(0)?, doc_no: r.get(1)?, doc_date: r.get(2)?, total: r.get(3)?,
+            party_name: r.get(4)?, description: None,
+        })).map_err(|e| e.to_string())?;
+        for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    }
+
+    // Draft vouchers (سند قبض/صرف).
+    {
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.tx_no, f.tx_date, f.amount, f.tx_type, f.description,
+                    CASE f.party_type WHEN 'customer' THEN (SELECT name_ar FROM customers_local WHERE id=f.party_id)
+                                      WHEN 'supplier' THEN (SELECT name_ar FROM suppliers_local WHERE id=f.party_id)
+                                      ELSE NULL END
+             FROM financial_transactions_local f WHERE f.status='draft' ORDER BY f.id DESC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |r| {
+            let tx_type: String = r.get(4)?;
+            Ok(UnpostedDoc {
+                doc_type: "voucher".into(), source_type: tx_type,
+                id: r.get(0)?, doc_no: r.get(1)?, doc_date: r.get(2)?, total: r.get(3)?,
+                description: r.get(5)?, party_name: r.get(6)?,
+            })
+        }).map_err(|e| e.to_string())?;
+        for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    }
+
+    Ok(out)
 }
 
 /// Deletes a manual entry (drafts or posted). A posted entry's balance impact
@@ -1973,7 +2053,17 @@ fn purchase_create_in_tx(tx: &Transaction, input: &PurchaseInput) -> Result<i64,
     ).map_err(|e| e.to_string())?;
     let purchase_id = tx.last_insert_rowid();
 
-    apply_purchase_impact(tx, purchase_id, &invoice_no, input, subtotal, vat_total, grand_total, default_wh)?;
+    // Web parity (Option ب): only auto-post applies the full impact + a POSTED
+    // JE. With auto-post OFF the invoice is saved as a draft carrying NO impact
+    // (lines only, NO journal entry, NO stock movement, NO supplier/cash/bank
+    // shadow balance) — it surfaces in مركز الترحيل as «غير مرحّل» and the
+    // impact is applied later via `purchase_post`.
+    if resolve_auto_post(tx, "purchase") {
+        apply_purchase_impact(tx, purchase_id, &invoice_no, input, subtotal, vat_total, grand_total, default_wh)?;
+    } else {
+        insert_purchase_lines_only(tx, purchase_id, input, default_wh)?;
+        tx.execute("UPDATE purchases_local SET status='draft' WHERE id=?1", params![purchase_id]).map_err(|e| e.to_string())?;
+    }
     Ok(purchase_id)
 }
 
@@ -2061,7 +2151,10 @@ fn apply_purchase_impact(
         lines.push(JournalEntryLine { id: None, account_id: cr_account_id.unwrap(), account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
     }
 
-    let je_id = insert_journal_entry(tx, &input.invoice_date, Some(&format!("فاتورة شراء {invoice_no}")), Some("purchase"), Some(purchase_id), input.branch_id, input.cost_center_id, &lines, resolve_auto_post(tx, "purchase"))
+    // `apply_purchase_impact` is now only reached when a POSTED JE is wanted
+    // (create gates on `resolve_auto_post`; draft create takes the impact-free
+    // `insert_purchase_lines_only` path; explicit `/post` always wants posted).
+    let je_id = insert_journal_entry(tx, &input.invoice_date, Some(&format!("فاتورة شراء {invoice_no}")), Some("purchase"), Some(purchase_id), input.branch_id, input.cost_center_id, &lines, true)
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE purchases_local SET je_id=?1 WHERE id=?2", params![je_id, purchase_id]).map_err(|e| e.to_string())?;
 
@@ -3417,7 +3510,11 @@ fn apply_sales_invoice_impact(
     }
     // The COGS JE must share the invoice's posting status so the two never
     // diverge (e.g. a posted revenue JE paired with a draft cost JE).
-    let post_sale = resolve_auto_post(tx, "sale");
+    // `apply_sales_invoice_impact` is now only ever reached when a POSTED JE is
+    // wanted — create gates on `resolve_auto_post` (draft create takes the
+    // impact-free `insert_sales_lines_only` path), and the explicit `/post`
+    // always wants a posted JE — so the JE is unconditionally posted here.
+    let post_sale = true;
     let je_id = insert_journal_entry(tx, &input.invoice_date, Some(&format!("فاتورة مبيعات {invoice_no}")), Some("sale"), Some(invoice_id), input.branch_id, input.cost_center_id, &lines, post_sale)
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE sales_invoices_local SET je_id=?1 WHERE id=?2", params![je_id, invoice_id]).map_err(|e| e.to_string())?;
@@ -3628,7 +3725,17 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
     ).map_err(|e| e.to_string())?;
     let invoice_id = tx.last_insert_rowid();
 
-    apply_sales_invoice_impact(&tx, invoice_id, &invoice_no, &input, subtotal, vat_total, grand_total)?;
+    // Web parity (Option ب): only auto-post applies the full impact + a POSTED
+    // JE. With auto-post OFF the invoice is saved as a draft carrying NO impact
+    // (lines only, NO journal entry, NO stock movement, NO customer/cash/bank
+    // shadow balance) — it surfaces in مركز الترحيل as «غير مرحّل» and the
+    // impact is applied later via `sales_invoice_post`.
+    if resolve_auto_post(&tx, "sale") {
+        apply_sales_invoice_impact(&tx, invoice_id, &invoice_no, &input, subtotal, vat_total, grand_total)?;
+    } else {
+        insert_sales_lines_only(&tx, invoice_id, &input)?;
+        tx.execute("UPDATE sales_invoices_local SET status='draft' WHERE id=?1", params![invoice_id]).map_err(|e| e.to_string())?;
+    }
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(invoice_id)
@@ -4791,65 +4898,159 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
         _ => input.counter_account_id.ok_or("اختر الحساب المقابل")?,
     };
 
+    // Web parity (Option ب): only auto-post applies the JE + shadow balances.
+    // With auto-post OFF the voucher is saved as a draft carrying NO impact
+    // (NO journal entry, NO cash/bank/party shadow balance) — it surfaces in
+    // مركز الترحيل as «غير مرحّل» and the impact is applied later via
+    // `financial_tx_post`. The endpoint currency + rate are persisted so a
+    // later post / unpost reverses the exact same base amount.
+    let auto_post = resolve_auto_post(&tx, "voucher");
+    let status = if auto_post { "posted" } else { "draft" };
     tx.execute(
-        "INSERT INTO financial_transactions_local(tx_no,tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,counter_account_id,amount,description,branch_id,cost_center_id,applied_doc_type,applied_doc_id)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
-        params![tx_no, input.tx_date, input.tx_type, input.party_type, input.party_id, input.cash_box_id, input.bank_id, counter_acc, input.amount, input.description, input.branch_id, input.cost_center_id, input.applied_doc_type, input.applied_doc_id],
+        "INSERT INTO financial_transactions_local(tx_no,tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,counter_account_id,amount,description,branch_id,cost_center_id,applied_doc_type,applied_doc_id,currency_code,exchange_rate,status)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+        params![tx_no, input.tx_date, input.tx_type, input.party_type, input.party_id, input.cash_box_id, input.bank_id, counter_acc, input.amount, input.description, input.branch_id, input.cost_center_id, input.applied_doc_type, input.applied_doc_id, endpoint_currency, rate_to_base, status],
     ).map_err(|e| e.to_string())?;
     let ftx_id = tx.last_insert_rowid();
 
-    // JE:
-    //   receipt → DR cash/bank, CR counter
-    //   payment → DR counter, CR cash/bank
-    let (dr_acc, cr_acc) = if input.tx_type == "receipt" {
-        (cash_account_id, counter_acc)
-    } else { (counter_acc, cash_account_id) };
-
-    let lines = vec![
-        JournalEntryLine { id: None, account_id: dr_acc, account_code: None, account_name: None, debit: amount_base, credit: 0.0, description: input.description.clone() },
-        JournalEntryLine { id: None, account_id: cr_acc, account_code: None, account_name: None, debit: 0.0, credit: amount_base, description: None },
-    ];
-    let je_id = insert_journal_entry(
-        &tx, &input.tx_date,
-        Some(&format!("{} {tx_no}", if input.tx_type == "receipt" { "سند قبض" } else { "سند صرف" })),
-        Some(if input.tx_type == "receipt" { "receipt" } else { "payment" }),
-        Some(ftx_id), input.branch_id, input.cost_center_id, &lines,
-        resolve_auto_post(&tx, "voucher"),
-    ).map_err(|e| e.to_string())?;
-    tx.execute("UPDATE financial_transactions_local SET je_id=?1 WHERE id=?2", params![je_id, ftx_id]).map_err(|e| e.to_string())?;
-
-    // Shadow balances
-    let signed = if input.tx_type == "receipt" { input.amount } else { -input.amount };
-    if let Some(cb) = input.cash_box_id {
-        tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2", params![signed, cb]).map_err(|e| e.to_string())?;
-    }
-    if let Some(b) = input.bank_id {
-        tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2", params![signed, b]).map_err(|e| e.to_string())?;
-    }
-    if input.party_type.as_deref() == Some("supplier") {
-        // suppliers_local.balance follows AP normal-credit convention (positive = "we owe").
-        // Mirrors the JE side exactly (in base currency, matching how
-        // purchases post the AP credit on supplier balance):
-        //   • payment to supplier  → DR AP / CR cash → AP credit balance ↓  → -amount_base
-        //   • receipt from supplier (refund/over-credit) → DR cash / CR AP → AP credit balance ↑ → +amount_base
-        let supp_delta = if input.tx_type == "receipt" { amount_base } else { -amount_base };
-        tx.execute("UPDATE suppliers_local SET balance=balance+?1 WHERE id=?2", params![supp_delta, input.party_id.unwrap()]).map_err(|e| e.to_string())?;
-    }
-    if input.party_type.as_deref() == Some("customer") {
-        // customers_local.balance follows AR normal-debit convention (positive =
-        // "they owe us"), the same sign sales_invoice_create uses on a credit
-        // sale (balance += grand_total). Mirrors the JE side in base currency:
-        //   • receipt from customer  → DR cash / CR AR → AR debit balance ↓ → -amount_base
-        //   • payment to customer (refund) → DR AR / CR cash → AR debit balance ↑ → +amount_base
-        let cust_delta = if input.tx_type == "receipt" { -amount_base } else { amount_base };
-        if let Some(pid) = input.party_id {
-            tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2", params![cust_delta, pid]).map_err(|e| e.to_string())?;
-        }
+    if auto_post {
+        let lines = fintx_je_lines(&input.tx_type, cash_account_id, counter_acc, amount_base, input.description.as_deref());
+        let je_id = insert_journal_entry(
+            &tx, &input.tx_date,
+            Some(&format!("{} {tx_no}", if input.tx_type == "receipt" { "سند قبض" } else { "سند صرف" })),
+            Some(if input.tx_type == "receipt" { "receipt" } else { "payment" }),
+            Some(ftx_id), input.branch_id, input.cost_center_id, &lines, true,
+        ).map_err(|e| e.to_string())?;
+        tx.execute("UPDATE financial_transactions_local SET je_id=?1 WHERE id=?2", params![je_id, ftx_id]).map_err(|e| e.to_string())?;
+        apply_fintx_shadow(&tx, &input.tx_type, input.cash_box_id, input.bank_id, input.party_type.as_deref(), input.party_id, input.amount, amount_base, false)?;
     }
 
     tx.commit().map_err(|e| e.to_string())?;
     let _ = now_iso(); let _ = today_iso(); // keep helpers referenced
     Ok(ftx_id)
+}
+
+/// Builds the voucher's two-line journal entry in base currency:
+///   receipt → DR cash/bank, CR counter; payment → DR counter, CR cash/bank.
+fn fintx_je_lines(tx_type: &str, cash_account_id: i64, counter_acc: i64, amount_base: f64, description: Option<&str>) -> Vec<JournalEntryLine> {
+    let (dr_acc, cr_acc) = if tx_type == "receipt" { (cash_account_id, counter_acc) } else { (counter_acc, cash_account_id) };
+    vec![
+        JournalEntryLine { id: None, account_id: dr_acc, account_code: None, account_name: None, debit: amount_base, credit: 0.0, description: description.map(|s| s.to_string()) },
+        JournalEntryLine { id: None, account_id: cr_acc, account_code: None, account_name: None, debit: 0.0, credit: amount_base, description: None },
+    ]
+}
+
+/// Applies (or, with `reverse=true`, unwinds) the voucher's cash/bank + party
+/// shadow balances. Cash/bank move in NATIVE currency (`amount_native`); party
+/// AP/AR balances move in base currency (`amount_base`) to mirror the JE.
+#[allow(clippy::too_many_arguments)]
+fn apply_fintx_shadow(
+    tx: &Transaction, tx_type: &str, cash_box_id: Option<i64>, bank_id: Option<i64>,
+    party_type: Option<&str>, party_id: Option<i64>, amount_native: f64, amount_base: f64, reverse: bool,
+) -> Result<(), String> {
+    let dir = if reverse { -1.0 } else { 1.0 };
+    let signed = (if tx_type == "receipt" { amount_native } else { -amount_native }) * dir;
+    if let Some(cb) = cash_box_id {
+        tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2", params![signed, cb]).map_err(|e| e.to_string())?;
+    }
+    if let Some(b) = bank_id {
+        tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2", params![signed, b]).map_err(|e| e.to_string())?;
+    }
+    if party_type == Some("supplier") {
+        // suppliers_local.balance follows AP normal-credit convention (positive = "we owe").
+        //   • payment to supplier  → AP balance ↓ → -amount_base
+        //   • receipt from supplier → AP balance ↑ → +amount_base
+        let supp_delta = (if tx_type == "receipt" { amount_base } else { -amount_base }) * dir;
+        if let Some(pid) = party_id {
+            tx.execute("UPDATE suppliers_local SET balance=balance+?1 WHERE id=?2", params![supp_delta, pid]).map_err(|e| e.to_string())?;
+        }
+    }
+    if party_type == Some("customer") {
+        // customers_local.balance follows AR normal-debit convention (positive = "they owe us").
+        //   • receipt from customer  → AR balance ↓ → -amount_base
+        //   • payment to customer (refund) → AR balance ↑ → +amount_base
+        let cust_delta = (if tx_type == "receipt" { -amount_base } else { amount_base }) * dir;
+        if let Some(pid) = party_id {
+            tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2", params![cust_delta, pid]).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// ترحيل — post a draft voucher: recompute its base amount at the current rate,
+/// write a POSTED journal entry, apply the cash/bank/party shadow balances and
+/// flip status → 'posted'. Idempotent-guarded (already-posted vouchers reject).
+#[tauri::command]
+pub fn financial_tx_post(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (tx_no, tx_date, tx_type, party_type, party_id, cash_box_id, bank_id, counter_acc, amount, description, branch_id, cost_center_id, status):
+        (String, String, String, Option<String>, Option<i64>, Option<i64>, Option<i64>, i64, f64, Option<String>, Option<i64>, Option<i64>, String) = tx.query_row(
+        "SELECT tx_no,tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,counter_account_id,amount,description,branch_id,cost_center_id,status FROM financial_transactions_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?)),
+    ).map_err(|e| e.to_string())?;
+    if status == "posted" { return Err("السند مرحّل بالفعل".into()); }
+    guard_period_open_for_date(&tx, &tx_date)?;
+
+    // Re-resolve the cash/bank account + currency (the picked endpoint is fixed,
+    // but the rate-to-base is taken fresh at post time).
+    let (cash_account_id, endpoint_currency): (i64, String) = if let Some(cb) = cash_box_id {
+        tx.query_row("SELECT account_id, COALESCE(currency_code,'SAR') FROM cash_boxes_local WHERE id=?1", params![cb], |r| Ok((r.get(0)?, r.get(1)?))).map_err(|e| e.to_string())?
+    } else if let Some(b) = bank_id {
+        tx.query_row("SELECT account_id, COALESCE(currency_code,'SAR') FROM banks_local WHERE id=?1", params![b], |r| Ok((r.get(0)?, r.get(1)?))).map_err(|e| e.to_string())?
+    } else { return Err("اختر خزينة أو بنك".into()); };
+    let rate_to_base = current_rate_to_base(&tx, &endpoint_currency).map_err(|e| e.to_string())?;
+    let amount_base = amount * rate_to_base;
+
+    let lines = fintx_je_lines(&tx_type, cash_account_id, counter_acc, amount_base, description.as_deref());
+    let je_id = insert_journal_entry(
+        &tx, &tx_date,
+        Some(&format!("{} {tx_no}", if tx_type == "receipt" { "سند قبض" } else { "سند صرف" })),
+        Some(tx_type.as_str()), Some(id), branch_id, cost_center_id, &lines, true,
+    ).map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE financial_transactions_local SET je_id=?1, status='posted', currency_code=?2, exchange_rate=?3 WHERE id=?4",
+        params![je_id, endpoint_currency, rate_to_base, id],
+    ).map_err(|e| e.to_string())?;
+    apply_fintx_shadow(&tx, &tx_type, cash_box_id, bank_id, party_type.as_deref(), party_id, amount, amount_base, false)?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// فك الترحيل — unpost a posted voucher: reverse + DELETE its journal entry,
+/// unwind the cash/bank/party shadow balances (using the rate stored at post)
+/// and flip status → 'draft' (je_id cleared). The draft can then be edited or
+/// re-posted from مركز الترحيل.
+#[tauri::command]
+pub fn financial_tx_unpost(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (tx_date, tx_type, party_type, party_id, cash_box_id, bank_id, amount, exchange_rate, status, je_id):
+        (String, String, Option<String>, Option<i64>, Option<i64>, Option<i64>, f64, f64, String, Option<i64>) = tx.query_row(
+        "SELECT tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,amount,exchange_rate,status,je_id FROM financial_transactions_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)),
+    ).map_err(|e| e.to_string())?;
+    if status != "posted" { return Err("السند غير مرحّل بالفعل".into()); }
+    guard_period_open_for_date(&tx, &tx_date)?;
+    let amount_base = amount * exchange_rate;
+
+    // Reverse (only if the JE actually touched GL balances) + delete the JE.
+    if let Some(jid) = je_id {
+        let jstatus: Option<String> = tx.query_row(
+            "SELECT status FROM journal_entries_local WHERE id=?1", params![jid], |r| r.get(0),
+        ).optional().map_err(|e| e.to_string())?;
+        if let Some(st) = jstatus {
+            if st == "posted" { reverse_je_balance(&tx, jid).map_err(|e| e.to_string())?; }
+            tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![jid]).map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![jid]).map_err(|e| e.to_string())?;
+        }
+    }
+    apply_fintx_shadow(&tx, &tx_type, cash_box_id, bank_id, party_type.as_deref(), party_id, amount, amount_base, true)?;
+    tx.execute("UPDATE financial_transactions_local SET status='draft', je_id=NULL WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ═════════════════════════════════════════════════════════════════════

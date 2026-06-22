@@ -1177,6 +1177,12 @@ pub fn initialize() -> Result<()> {
         // invoice) so the invoice list can show a paid-amount per row.
         "ALTER TABLE financial_transactions_local ADD COLUMN applied_doc_type TEXT",
         "ALTER TABLE financial_transactions_local ADD COLUMN applied_doc_id INTEGER",
+        // Posting lock for vouchers (سند قبض/صرف): a voucher created with
+        // auto-post OFF is saved as 'draft' (NO journal entry, NO shadow-balance
+        // impact) and only hits the ledger once posted from مركز الترحيل. Unpost
+        // deletes its JE + reverses the shadow and flips back to 'draft'.
+        // Pre-existing rows default to 'posted', matching their applied impact.
+        "ALTER TABLE financial_transactions_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 

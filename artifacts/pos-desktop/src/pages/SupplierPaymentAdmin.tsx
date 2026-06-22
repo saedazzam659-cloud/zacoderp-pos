@@ -3,6 +3,7 @@ import {
   listFinancialTx, createFinancialTx, listSuppliers, listCashBoxes, listBanks, listPurchases,
   type FinancialTx, type Supplier, type CashBox, type Bank, type Purchase,
 } from "../lib/accounting";
+import { emitData } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
@@ -163,6 +164,7 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
         appliedDocType: purchaseId != null ? "purchase" : null,
         appliedDocId: purchaseId,
       });
+      emitData("vouchers", "journal", "suppliers", "cashboxes", "banks");
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }
