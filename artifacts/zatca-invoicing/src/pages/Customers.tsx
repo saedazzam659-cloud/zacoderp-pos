@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useMemo, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import ExportButtons from "@/components/ExportButtons";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -174,12 +175,12 @@ export default function Customers() {
   const pageEnd = pageSize === 0 ? filtered.length : Math.min(safePage * pageSize, filtered.length);
 
   const visibleColumns = useMemo(() => {
-    const dataCols = layout.dataOrder.map(k => COLUMNS.find(c => c.key === k)).filter((c): c is ColDef => !!c);
+    const dataCols = layout.dataOrder.map(k => COLUMNS.find(c => c.key === k)).filter((c): c is ColDef => !!c).filter(c => !layout.hiddenSet.has(c.key));
     const sel = COLUMNS.find(c => c.key === "_sel")!;
     const idx = COLUMNS.find(c => c.key === "_idx")!;
     const act = COLUMNS.find(c => c.key === "_act")!;
     return [sel, idx, ...dataCols, act];
-  }, [layout.dataOrder, COLUMNS]);
+  }, [layout.dataOrder, layout.hiddenSet, COLUMNS]);
   const reorderableCols = useMemo(() => layout.dataOrder
     .map(k => COLUMNS.find(c => c.key === k)!)
     .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
@@ -715,6 +716,10 @@ export default function Customers() {
                                   onClick={() => setDeleteTarget(customer)}>
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
+                                <JournalScanArchive
+                                  jeKey={`customer-${customer.id}`}
+                                  companyName={user?.company?.nameAr ?? null}
+                                />
                               </div>
                             </td>
                           );

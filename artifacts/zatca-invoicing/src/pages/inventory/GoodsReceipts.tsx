@@ -709,12 +709,13 @@ export default function GoodsReceipts() {
   const visibleColumns = useMemo(() => {
     const dataCols = layout.dataOrder
       .map((k) => COLUMNS.find((c) => c.key === k))
-      .filter((c): c is ColDef => !!c);
+      .filter((c): c is ColDef => !!c)
+      .filter((c) => !layout.hiddenSet.has(c.key));
     const sel = COLUMNS.find((c) => c.key === "_sel")!;
     const idx = COLUMNS.find((c) => c.key === "_idx")!;
     const act = COLUMNS.find((c) => c.key === "_act")!;
     return [sel, idx, ...dataCols, act];
-  }, [layout.dataOrder, COLUMNS]);
+  }, [layout.dataOrder, layout.hiddenSet, COLUMNS]);
   const reorderableCols = useMemo(
     () => DATA_KEYS.map((k) => COLUMNS.find((c) => c.key === k)!).map((c) => ({ key: c.key, label: c.label })),
     [DATA_KEYS, COLUMNS],

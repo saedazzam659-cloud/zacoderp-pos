@@ -223,6 +223,7 @@
     "actualQtySaved": "Actual quantities saved"
   },
   "common": {
+    "netAfterDiscount": "Net After Discount",
     "branch": "Branch",
     "branches": "branches",
     "allBranches": "All Branches",

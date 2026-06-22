@@ -9,7 +9,7 @@
  */
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import { ArrowDown, ArrowUp, Check, CheckCircle2, Palette, RotateCw, Settings2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CheckCircle2, Eye, EyeOff, Palette, RotateCw, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -198,7 +198,7 @@ interface ColumnReorderProps extends CommonProps {
 }
 
 export function ColumnReorderPopover({ layout, isRtl, columns }: ColumnReorderProps) {
-  const { dataOrder, moveCol, hasCustomLayout, resetLayout, theme, headerColor } = layout;
+  const { dataOrder, moveCol, hiddenCols, hiddenSet, toggleColHidden, hasCustomLayout, resetLayout, theme, headerColor } = layout;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -239,19 +239,39 @@ export function ColumnReorderPopover({ layout, isRtl, columns }: ColumnReorderPr
           )}
         </div>
         <div className="text-[10.5px] text-slate-500 mb-2 leading-relaxed">
-          استخدم الأسهم لتغيير ترتيب الأعمدة. التعديلات تُحفظ تلقائياً.
+          استخدم الأسهم لتغيير ترتيب الأعمدة، وأيقونة العين لإخفاء/إظهار العمود.
+          {hiddenCols.length > 0 && (
+            <span className="text-amber-700 font-medium"> — مخفي: {hiddenCols.length}</span>
+          )}
+          {" "}التعديلات تُحفظ تلقائياً.
         </div>
         <div className="max-h-72 overflow-y-auto space-y-0.5">
           {dataOrder.map((key, i) => {
             const col = columns.find((c) => c.key === key);
             if (!col) return null;
+            const isHidden = hiddenSet.has(key);
             return (
               <div
                 key={key}
-                className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-slate-50 border border-transparent hover:border-slate-200"
+                className={cn(
+                  "flex items-center gap-1 px-1.5 py-1 rounded hover:bg-slate-50 border border-transparent hover:border-slate-200",
+                  isHidden && "opacity-50",
+                )}
               >
                 <span className="text-[10px] text-slate-400 font-mono w-5 text-center">{i + 1}</span>
                 <span className="flex-1 text-xs text-slate-700 truncate">{col.label}</span>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className={cn("h-5 w-5", isHidden ? "text-amber-600" : "text-slate-500")}
+                  onClick={() => toggleColHidden(key)}
+                  title={isHidden ? "إظهار العمود" : "إخفاء العمود"}
+                  aria-label={isHidden ? `إظهار العمود ${col.label}` : `إخفاء العمود ${col.label}`}
+                  aria-pressed={isHidden}
+                >
+                  {isHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                </Button>
                 <Button
                   type="button"
                   size="icon"

@@ -129,6 +129,7 @@ const COLUMNS: ReadonlyArray<{ key: string; label: string; type: ColType; align?
   { key: "discount",   label: "الخصم",      type: "num",    align: "end"    },
   { key: "vatAmt",     label: "الضريبة",    type: "num",    align: "end"    },
   { key: "total",      label: "الإجمالي",   type: "num",    align: "end"    },
+  { key: "netAfterDiscount", label: "الإجمالي بعد الخصم", type: "num", align: "end" },
   { key: "commission", label: "العمولة",    type: "num",    align: "end"    },
   { key: "settle",     label: "حالة السداد", type: "text",  align: "center" },
   { key: "je",         label: "القيد",      type: "text",   align: "center" },
@@ -1250,6 +1251,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           case "discount":   cellValue = invTotalDiscount(inv); break;
           case "vatAmt":     cellValue = inv.vatAmount; break;
           case "total":      cellValue = inv.totalAmount; break;
+          case "netAfterDiscount": cellValue = Number(inv.totalAmount ?? 0) - Number(inv.vatAmount ?? 0); break;
           case "commission": cellValue = inv.commissionAmount ?? 0; break;
           case "settle":     cellValue = inv.paymentSettlement?.code ?? ""; break;
           case "je":         cellValue = inv.journalEntryId ? `JE-${inv.journalEntryId}` : ""; break;
@@ -1286,6 +1288,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       case "discount":   return { v: invTotalDiscount(inv),                          isNum: true  };
       case "vatAmt":     return { v: Number(inv.vatAmount ?? 0),                     isNum: true  };
       case "total":      return { v: Number(inv.totalAmount ?? 0),                   isNum: true  };
+      case "netAfterDiscount": return { v: Number(inv.totalAmount ?? 0) - Number(inv.vatAmount ?? 0), isNum: true };
       case "commission": return { v: Number(inv.commissionAmount ?? 0),              isNum: true  };
       case "settle":     return { v: inv.paymentSettlement?.code ?? "",              isNum: false };
       case "je":         return { v: Number(inv.journalEntryId ?? 0),                isNum: true  };
@@ -1547,10 +1550,11 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       acc.discount += invTotalDiscount(inv);
       acc.vat      += Number(inv.vatAmount ?? 0);
       acc.total    += Number(inv.totalAmount ?? 0);
+      acc.netAfterDiscount += Number(inv.totalAmount ?? 0) - Number(inv.vatAmount ?? 0);
       acc.commission += Number(inv.commissionAmount ?? 0);
       acc.freeQty  += Number(inv.totalFreeQty ?? 0);
       return acc;
-    }, { subtotal: 0, discount: 0, vat: 0, total: 0, commission: 0, freeQty: 0 });
+    }, { subtotal: 0, discount: 0, vat: 0, total: 0, netAfterDiscount: 0, commission: 0, freeQty: 0 });
   }, [filtered]);
 
   // ── AI audit trigger ──────────────────────────────────────────────────
@@ -1843,6 +1847,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       { header: "الخصم",             key: "discount",     width: 10 },
       { header: "الضريبة",           key: "vatAmount",    width: 12 },
       { header: "الإجمالي",          key: "totalAmount",  width: 14 },
+      { header: "الإجمالي بعد الخصم", key: "netAfterDiscount", width: 16 },
       { header: "الحالة",            key: "statusLabel",  width: 10 },
       { header: "أنشأه",              key: "createdByName", width: 14 },
       { header: "رحّله",              key: "postedByName",  width: 14 },
@@ -1865,6 +1870,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       discount:     fmt(invTotalDiscount(inv)),
       vatAmount:    fmt(inv.vatAmount),
       totalAmount:  fmt(inv.totalAmount),
+      netAfterDiscount: fmt(Number(inv.totalAmount ?? 0) - Number(inv.vatAmount ?? 0)),
       statusLabel:  STATUS[inv.status]?.label ?? inv.status,
       createdByName: inv.createdByName ?? "",
       postedByName:  inv.postedByName ?? "",
@@ -1892,6 +1898,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       discount:     fmt(sumDis),
       vatAmount:    fmt(sumVat),
       totalAmount:  fmt(sumTot),
+      netAfterDiscount: fmt(sumTot - sumVat),
       statusLabel:  "",
       createdByName: "",
       postedByName:  "",
@@ -2824,6 +2831,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-amber-700">{fmt(inv.vatAmount)}</td>;
                       case "total":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono font-bold text-slate-900">{fmt(inv.totalAmount)}</td>;
+                      case "netAfterDiscount":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono">{fmt(Number(inv.totalAmount ?? 0) - Number(inv.vatAmount ?? 0))}</td>;
                       case "commission":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-purple-700">{fmt(inv.commissionAmount ?? 0)}</td>;
                       case "settle":
@@ -2990,6 +2999,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                       discount: totals.discount,
                       vatAmt: totals.vat,
                       total: totals.total,
+                      netAfterDiscount: totals.netAfterDiscount,
                       commission: totals.commission,
                     };
                     if (i === 0) {

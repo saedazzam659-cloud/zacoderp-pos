@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
 import {
   Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package,
   Pencil, Trash2, TrendingUp, TrendingDown, Minus,
@@ -197,12 +198,12 @@ export default function Suppliers() {
   const pageEnd = pageSize === 0 ? filtered.length : Math.min(safePage * pageSize, filtered.length);
 
   const visibleColumns = useMemo(() => {
-    const dataCols = layout.dataOrder.map(k => COLUMNS.find(c => c.key === k)).filter((c): c is ColDef => !!c);
+    const dataCols = layout.dataOrder.map(k => COLUMNS.find(c => c.key === k)).filter((c): c is ColDef => !!c).filter(c => !layout.hiddenSet.has(c.key));
     const sel = COLUMNS.find(c => c.key === "_sel")!;
     const idx = COLUMNS.find(c => c.key === "_idx")!;
     const act = COLUMNS.find(c => c.key === "_act")!;
     return [sel, idx, ...dataCols, act];
-  }, [layout.dataOrder, COLUMNS]);
+  }, [layout.dataOrder, layout.hiddenSet, COLUMNS]);
   const reorderableCols = useMemo(() => layout.dataOrder
     .map(k => COLUMNS.find(c => c.key === k)!)
     .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
@@ -771,6 +772,10 @@ export default function Suppliers() {
                                   title={t("common.delete")}>
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </button>
+                                <JournalScanArchive
+                                  jeKey={`supplier-${supplier.id}`}
+                                  companyName={user?.company?.nameAr ?? null}
+                                />
                               </div>
                             </td>
                           );

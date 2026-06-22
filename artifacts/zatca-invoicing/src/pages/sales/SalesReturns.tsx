@@ -1105,6 +1105,7 @@ export default function SalesReturns() {
     { key: "subtotal", label: "المجموع",                          type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0) },
     { key: "vat",      label: t("salesReturns.vatLabel"),        type: "num",  valueOf: (r) => Number(r.vatAmount ?? 0) },
     { key: "total",    label: t("salesReturns.totalLabel"),      type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) },
+    { key: "netAfterDiscount", label: t("common.netAfterDiscount"), type: "num", valueOf: (r) => Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0) },
     { key: "journal",  label: t("salesReturns.colJournal"),      type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
     { key: "status",   label: t("salesReturns.colStatus"),       type: "text", valueOf: (r) => statusLabel(r.status) },
     { key: "_act",     label: t("salesReturns.colActions"),      type: "none", valueOf: () => "" },
@@ -1229,21 +1230,23 @@ export default function SalesReturns() {
       a.subtotal += sub;
       a.vat      += Number(r.vatAmount ?? 0);
       a.total    += Number(r.totalAmount ?? 0);
+      a.netAfterDiscount += Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0);
       return a;
     },
-    { subtotal: 0, vat: 0, total: 0 },
+    { subtotal: 0, vat: 0, total: 0, netAfterDiscount: 0 },
   ), [filteredReturns]);
 
   /* ── Visible columns in user's saved order ── */
   const visibleColumns = useMemo(() => {
     const dataCols = layout.dataOrder
       .map((k) => COLUMNS.find((c) => c.key === k))
-      .filter((c): c is ColDef => !!c);
+      .filter((c): c is ColDef => !!c)
+      .filter((c) => !layout.hiddenSet.has(c.key));
     const sel = COLUMNS.find((c) => c.key === "_sel")!;
     const idx = COLUMNS.find((c) => c.key === "_idx")!;
     const act = COLUMNS.find((c) => c.key === "_act")!;
     return [sel, idx, ...dataCols, act];
-  }, [layout.dataOrder, COLUMNS]);
+  }, [layout.dataOrder, layout.hiddenSet, COLUMNS]);
   const reorderableCols = useMemo(
     () => DATA_KEYS.map((k) => COLUMNS.find((c) => c.key === k)!).map((c) => ({ key: c.key, label: c.label })),
     [DATA_KEYS, COLUMNS],
@@ -1598,10 +1601,11 @@ ${sections}
       "المجموع": (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2),
       "الضريبة": Number(r.vatAmount ?? 0).toFixed(2),
       "الإجمالي": Number(r.totalAmount ?? 0).toFixed(2),
+      "الإجمالي بعد الخصم": (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2),
       "الحالة": r.status === "posted" ? "مرحّل" : r.status === "voided" ? "ملغى" : "مسودة",
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 16 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, t("salesReturns.title"));
     XLSX.writeFile(wb, `sales-returns-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -2535,6 +2539,8 @@ ${sections}
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-amber-700">{fmt(r.vatAmount)}</td>;
                       case "total":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono font-bold text-slate-900">{fmt(r.totalAmount)}</td>;
+                      case "netAfterDiscount":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-slate-800">{fmt(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0))}</td>;
                       case "journal":
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
@@ -2644,6 +2650,9 @@ ${sections}
                     }
                     if (col.key === "total") {
                       return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.total)}</td>;
+                    }
+                    if (col.key === "netAfterDiscount") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.netAfterDiscount)}</td>;
                     }
                     return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
                   })}

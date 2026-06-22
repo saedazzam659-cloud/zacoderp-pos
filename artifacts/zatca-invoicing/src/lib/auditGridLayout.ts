@@ -146,6 +146,14 @@ export interface AuditGridLayout {
   dataOrder: string[];
   setDataOrder: (next: string[]) => void;
   moveCol: (key: string, dir: -1 | 1) => void;
+  /** Hidden data column keys (view-only — exports still include them). */
+  hiddenCols: string[];
+  hiddenSet: Set<string>;
+  setHiddenCols: (next: string[] | ((prev: string[]) => string[])) => void;
+  /** Toggle a single data column's visibility (fixed lead/tail never hide). */
+  toggleColHidden: (key: string) => void;
+  /** Un-hide every column. */
+  showAllCols: () => void;
   /** Header theme (palette + classes). */
   headerColor: HeaderColor;
   setHeaderColor: (c: HeaderColor) => void;
@@ -240,6 +248,14 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
     }
     return out;
   };
+  // Hidden columns — only data keys may be hidden; dedupe + drop unknown keys.
+  const sanitizeHidden = (input: unknown): string[] => {
+    if (!Array.isArray(input)) return [];
+    const seen = new Set<string>();
+    return (input as unknown[]).filter(
+      (k): k is string => typeof k === "string" && dataKeysArr.includes(k) && !seen.has(k) && (seen.add(k), true)
+    );
+  };
 
   /* ── State (hydrated lazily from LS) ── */
   const [dataOrder, setDataOrder] = useState<string[]>(() => {
@@ -249,6 +265,14 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
     } catch { /* ignore */ }
     return [...dataKeysArr];
   });
+  const [hiddenCols, setHiddenCols] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) return sanitizeHidden(JSON.parse(raw)?.hiddenCols);
+    } catch { /* ignore */ }
+    return [];
+  });
+  const hiddenSet = useMemo(() => new Set(hiddenCols), [hiddenCols]);
   const [headerColor, setHeaderColor] = useState<HeaderColor>(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -292,19 +316,20 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
     if (pageSize !== DEFAULT_PAGE_SIZE) return true;
     if (dataOrder.length !== dataKeysArr.length) return true;
     if (Object.keys(colWidths).length > 0) return true;
+    if (hiddenCols.length > 0) return true;
     return dataOrder.some((k, i) => k !== dataKeysArr[i]);
-  }, [dataOrder, headerColor, footerColor, pageSize, colWidths, dataKeysArr]);
+  }, [dataOrder, hiddenCols, headerColor, footerColor, pageSize, colWidths, dataKeysArr]);
 
   /* ── Persist on change ── */
   useEffect(() => {
     try {
       if (hasCustomLayout) {
-        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor, footerColor, pageSize, colWidths }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, hiddenCols, headerColor, footerColor, pageSize, colWidths }));
       } else {
         localStorage.removeItem(LS_KEY);
       }
     } catch { /* ignore quota */ }
-  }, [dataOrder, headerColor, footerColor, pageSize, colWidths, hasCustomLayout, LS_KEY]);
+  }, [dataOrder, hiddenCols, headerColor, footerColor, pageSize, colWidths, hasCustomLayout, LS_KEY]);
 
   /* ── Re-hydrate when tenant changes ──
      `colFilters` is non-persistent UI state; we MUST clear it on tenant
@@ -316,6 +341,7 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
       if (raw) {
         const parsed = JSON.parse(raw);
         setDataOrder(sanitizeOrder(parsed?.dataOrder));
+        setHiddenCols(sanitizeHidden(parsed?.hiddenCols));
         setHeaderColor(sanitizeColor(parsed?.headerColor));
         setFooterColor(sanitizeFooterColor(parsed?.footerColor));
         setPageSize(sanitizePageSize(parsed?.pageSize));
@@ -326,6 +352,7 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
         return;
       }
       setDataOrder([...dataKeysArr]);
+      setHiddenCols([]);
       setHeaderColor(DEFAULT_HEADER_COLOR);
       setFooterColor(DEFAULT_FOOTER_COLOR);
       setPageSize(DEFAULT_PAGE_SIZE);
@@ -348,12 +375,18 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
       return next;
     });
   }
+  function toggleColHidden(key: string) {
+    if (!dataKeysArr.includes(key)) return; // fixed lead/tail never hide
+    setHiddenCols((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
+  }
+  function showAllCols() { setHiddenCols([]); }
   function setColFilter(key: string, value: string) {
     setColFilters((prev) => ({ ...prev, [key]: value }));
   }
   function clearColFilters() { setColFilters({}); }
   function resetLayout() {
     setDataOrder([...dataKeysArr]);
+    setHiddenCols([]);
     setHeaderColor(DEFAULT_HEADER_COLOR);
     setFooterColor(DEFAULT_FOOTER_COLOR);
     setPageSize(DEFAULT_PAGE_SIZE);
@@ -395,6 +428,7 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
 
   return {
     dataOrder, setDataOrder, moveCol,
+    hiddenCols, hiddenSet, setHiddenCols, toggleColHidden, showAllCols,
     headerColor, setHeaderColor, theme,
     footerColor, setFooterColor, footerTheme,
     pageSize, setPageSize, page, setPage,
