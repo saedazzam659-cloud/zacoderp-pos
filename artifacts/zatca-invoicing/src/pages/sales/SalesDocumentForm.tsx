@@ -9,6 +9,7 @@ import { useRoute, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters, currencySymbol } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
@@ -2098,6 +2099,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <p className="text-xs text-muted-foreground">{subtitle}</p>
           </div>
         </div>
+        {isInvoice && (
+          <JournalScanArchive
+            jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
+            companyName={user?.company?.nameAr ?? null}
+          />
+        )}
         {/* Status pill — visible whenever editing an existing doc (any mode).
             Status enum varies per mode; <DocStatusBadge> handles them all. */}
         {editId && (existing as any) && (

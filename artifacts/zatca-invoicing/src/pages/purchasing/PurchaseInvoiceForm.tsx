@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useToast } from "@/hooks/use-toast";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
@@ -810,6 +811,10 @@ export default function PurchaseInvoiceForm() {
             <p className="text-xs text-muted-foreground">{tr("subtitle")}</p>
           </div>
         </div>
+        <JournalScanArchive
+          jeKey={(existing as any)?.docNumber ?? (editId ? `PI-${editId}` : "PI-new-draft")}
+          companyName={user?.company?.nameAr ?? null}
+        />
         {/* Posted/draft/cancelled status pill — visible only when editing
             an existing purchase invoice. */}
         {!isNew && (existing as any) && (

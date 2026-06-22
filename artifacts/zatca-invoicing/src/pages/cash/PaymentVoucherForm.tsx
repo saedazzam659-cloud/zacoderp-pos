@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { AccountCascadePicker } from "@/components/ui/account-cascade-picker";
@@ -620,6 +621,10 @@ export default function PaymentVoucherForm() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <JournalScanArchive
+            jeKey={existing?.code ?? (editId ? `PV-${editId}` : "PV-new-draft")}
+            companyName={user?.company?.nameAr ?? null}
+          />
           {!isNew && navList.length > 0 && (
             <div className="flex items-center gap-1 rounded-md border bg-background px-1 py-0.5 print:hidden">
               <Button type="button" variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs"
