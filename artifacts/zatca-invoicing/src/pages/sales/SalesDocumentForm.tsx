@@ -485,22 +485,47 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }
   }, [repLocked, isNew, myRep?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+  // الفرع الافتراضي: المستخدم المقيَّد على فرع (viewAllBranches=false) يُحمَّل له
+  // فرعه المخصَّص تلقائياً أولاً، وإلا الفرع الرئيسي ثم أول فرع متاح.
+  const isPrivilegedUser = user?.role === "admin" || user?.role === "superadmin";
+  const assignedBranchId =
+    (!isPrivilegedUser && user?.viewAllBranches === false && ((user?.branchIds?.length ?? 0) > 0))
+      ? user!.branchIds![0]
+      : null;
+  const defaultBranch =
+    (assignedBranchId != null
+      ? (branches as any[]).find((b: any) => String(b.id) === String(assignedBranchId))
+      : undefined)
+    ?? (branches as any[]).find((b: any) => b.isMain)
+    ?? (branches as any[])[0];
   useEffect(() => {
     if (!isNew || !defaultBranch || branchId) return;
     setBranchId(String(defaultBranch.id));
   }, [isNew, defaultBranch?.id]);
 
-  const defaultWarehouse = (warehouses as any[]).find((w: any) => w.isDefault) ?? (warehouses as any[])[0];
+  // المستودع الافتراضي مرتبط بالفرع المختار: نختار المستودع الافتراضي ضمن فرع
+  // المستند (أو أول مستودع فيه)، ثم نرجع للمستودع الافتراضي العام كحل أخير.
+  const branchWarehouses = (warehouses as any[]).filter(
+    (w: any) => branchId && String(w.branchId) === String(branchId),
+  );
+  const defaultWarehouse =
+    (branchId ? (branchWarehouses.find((w: any) => w.isDefault) ?? branchWarehouses[0]) : undefined)
+    ?? (warehouses as any[]).find((w: any) => w.isDefault)
+    ?? (warehouses as any[])[0];
   // Header-level warehouse picker — when the user selects a warehouse here it
-  // is broadcast to every line, and any newly added line inherits it. Defaults
-  // to the company's default warehouse on new docs, or to the first line's
-  // warehouse when loading an existing one (so the picker reflects reality).
+  // is broadcast to every line, and any newly added line inherits it. On new
+  // docs it auto-loads the selected branch's warehouse; if the branch changes
+  // and the current warehouse no longer belongs to it, it re-applies the
+  // branch's default — but a manual in-branch pick is preserved. On edit it
+  // reflects the first line's warehouse (handled by the effect below).
   const [headerWarehouseId, setHeaderWarehouseId] = useState<string>("");
   useEffect(() => {
-    if (!isNew || !defaultWarehouse || headerWarehouseId) return;
-    setHeaderWarehouseId(String(defaultWarehouse.id));
-  }, [isNew, defaultWarehouse?.id]);
+    if (!isNew || !branchId) return;
+    const inBranch = branchWarehouses.some((w: any) => String(w.id) === headerWarehouseId);
+    if (headerWarehouseId && inBranch) return;
+    const wh = branchWarehouses.find((w: any) => w.isDefault) ?? branchWarehouses[0] ?? defaultWarehouse;
+    if (wh) applyHeaderWarehouse(String(wh.id));
+  }, [isNew, branchId, warehouses, headerWarehouseId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isNew || headerWarehouseId) return;
     const firstWh = lines.find(l => l.warehouseId)?.warehouseId;

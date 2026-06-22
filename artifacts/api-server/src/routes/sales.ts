@@ -1561,6 +1561,41 @@ router.delete("/sales-invoices/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+// فك ربط عرض/عروض الأسعار المحوَّلة إلى هذه الفاتورة — يعيد عرض السعر إلى
+// حالة "accepted" ويصفّر converted_invoice_id حتى يصبح بالإمكان حذف الفاتورة
+// أو إعادة تحويل العرض لاحقاً. لا يوجد عمود back-link على sales_invoices، لذا
+// الرابط الوحيد هو sales_quotations.converted_invoice_id.
+router.post("/sales-invoices/:id/unlink-quotation", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف فاتورة غير صحيح" }); return; }
+    // Branch-level isolation (IDOR-within-tenant): a restricted user must not
+    // unlink a quotation tied to an invoice in a branch they aren't linked to,
+    // mirroring GET/PATCH /sales-invoices/:id. Shared rows (branch_id NULL) ok.
+    const [inv] = await db.select({ id: salesInvoicesTable.id, status: salesInvoicesTable.status })
+      .from(salesInvoicesTable)
+      .where(and(
+        eq(salesInvoicesTable.id, id),
+        eq(salesInvoicesTable.companyId, cid),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+      ));
+    if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    if (inv.status === "posted") {
+      res.status(400).json({ error: "لا يمكن فك ربط فاتورة مُرحَّلة. قم بإلغاء الترحيل أولاً." });
+      return;
+    }
+    const unlinked = await db.update(salesQuotationsTable)
+      .set({ status: "accepted", convertedInvoiceId: null, updatedAt: new Date() })
+      .where(and(
+        eq(salesQuotationsTable.companyId, cid),
+        eq(salesQuotationsTable.convertedInvoiceId, id),
+      ))
+      .returning({ id: salesQuotationsTable.id, docNumber: salesQuotationsTable.docNumber });
+    res.json({ ok: true, unlinked });
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════════
 // SALES RETURNS
 // ═══════════════════════════════════════════════

@@ -1477,6 +1477,23 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   }
 
   // Bulk delete — only drafts/cancelled (server rejects posted invoices).
+  // حذف فاتورة مع فك ربط عرض السعر تلقائياً عند رفض الحذف بسبب التحويل (409).
+  async function deleteSalesInvoiceWithUnlink(id: number): Promise<void> {
+    let r = await fetch(`${API}/api/sales/sales-invoices/${id}`, { method: "DELETE", headers: authH });
+    if (r.status === 409) {
+      const j = await r.json().catch(() => ({}));
+      const msg = String(j.error || "");
+      if (msg.includes("عرض")) {
+        const ur = await fetch(`${API}/api/sales/sales-invoices/${id}/unlink-quotation`, { method: "POST", headers: authH });
+        if (!ur.ok) { const uj = await ur.json().catch(() => ({})); throw new Error(uj.error || "فشل فك ربط عرض السعر"); }
+        r = await fetch(`${API}/api/sales/sales-invoices/${id}`, { method: "DELETE", headers: authH });
+      } else {
+        throw new Error(msg || `HTTP 409`);
+      }
+    }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
+  }
+
   async function bulkDelete() {
     const deletable = selectedInvoices.filter((i: any) => i.status !== "posted");
     if (deletable.length === 0) {
@@ -1484,17 +1501,11 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       return;
     }
     const ids = deletable.map((i: any) => i.id);
-    if (!window.confirm(`حذف ${ids.length} فاتورة نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    if (!window.confirm(`حذف ${ids.length} فاتورة نهائياً؟ سيتم فك ربط أي عرض سعر مرتبط تلقائياً. لا يمكن التراجع عن هذا الإجراء.`)) return;
     setBulkBusy(true);
     try {
       const results = await Promise.allSettled(
-        ids.map(async (id: number) => {
-          const r = await fetch(`${API}/api/sales/sales-invoices/${id}`, { method: "DELETE", headers: authH });
-          if (!r.ok) {
-            const j = await r.json().catch(() => ({}));
-            throw new Error(j.error || `HTTP ${r.status}`);
-          }
-        })
+        ids.map((id: number) => deleteSalesInvoiceWithUnlink(id))
       );
       const failed = results
         .map((res, i) => ({ res, id: ids[i] }))
@@ -1526,7 +1537,17 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     if (!window.confirm(`حذف الفاتورة ${inv.docNumber ?? `SI-${inv.id}`} نهائياً؟`)) return;
     setBulkBusy(true);
     try {
-      const r = await fetch(`${API}/api/sales/sales-invoices/${inv.id}`, { method: "DELETE", headers: authH });
+      let r = await fetch(`${API}/api/sales/sales-invoices/${inv.id}`, { method: "DELETE", headers: authH });
+      if (r.status === 409) {
+        const j = await r.json().catch(() => ({}));
+        const msg = String(j.error || "");
+        if (msg.includes("عرض")) {
+          if (!window.confirm(`${msg}\n\nهل تريد فك ربط عرض السعر تلقائياً ثم حذف الفاتورة؟`)) { setBulkBusy(false); return; }
+          const ur = await fetch(`${API}/api/sales/sales-invoices/${inv.id}/unlink-quotation`, { method: "POST", headers: authH });
+          if (!ur.ok) { const uj = await ur.json().catch(() => ({})); throw new Error(uj.error || "فشل فك ربط عرض السعر"); }
+          r = await fetch(`${API}/api/sales/sales-invoices/${inv.id}`, { method: "DELETE", headers: authH });
+        }
+      }
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         throw new Error(j.error || `HTTP ${r.status}`);
