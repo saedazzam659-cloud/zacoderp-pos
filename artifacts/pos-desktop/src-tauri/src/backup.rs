@@ -71,6 +71,51 @@ pub fn backup_to_dir(dir: &str) -> Result<String> {
     Ok(dest.to_string_lossy().to_string())
 }
 
+// Safety snapshot taken automatically right before an in-app update installs.
+// It lands in a FIXED folder INSIDE the data root (`<data_root>/backups`), which
+// the MSI uninstall/upgrade never touches, so the user can always recover their
+// data after an update — even if something goes wrong with the installer.
+// Keeps only the most recent PRE_UPDATE_KEEP snapshots. Callers treat the Err as
+// non-fatal: a backup failure must NEVER block the update.
+pub fn pre_update_backup() -> Result<String> {
+    checkpoint()?;
+    let mut dir = db::data_root();
+    dir.push("backups");
+    std::fs::create_dir_all(&dir)?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let mut dest = dir.clone();
+    dest.push(format!("pre-update-{stamp}.db"));
+    std::fs::copy(db::db_path(), &dest)?;
+    prune_pre_update_backups(&dir);
+    Ok(dest.to_string_lossy().to_string())
+}
+
+// Keep the newest PRE_UPDATE_KEEP `pre-update-*.db` snapshots; delete the rest.
+// Names are zero-padded `YYYYMMDD-HHMMSS`, so a lexical sort is chronological.
+fn prune_pre_update_backups(dir: &std::path::Path) {
+    const PRE_UPDATE_KEEP: usize = 10;
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("pre-update-") && n.ends_with(".db"))
+                .unwrap_or(false)
+        })
+        .collect();
+    if files.len() <= PRE_UPDATE_KEEP {
+        return;
+    }
+    files.sort();
+    let remove = files.len() - PRE_UPDATE_KEEP;
+    for p in files.into_iter().take(remove) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 fn restore_from(src: &str) -> Result<()> {
     let dest = db::db_path();
     // Drop sidecars FIRST so a stale WAL can't re-overlay the old data after copy.

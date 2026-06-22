@@ -159,6 +159,15 @@ pub async fn download_and_install_update(
     // ── 3) Launch the MSI installer directly (Windows-only) ────────
     #[cfg(target_os = "windows")]
     {
+        // Safety net: snapshot the local database into <data_root>/backups
+        // BEFORE the installer replaces the app. That folder lives in %APPDATA%
+        // which the MSI upgrade/uninstall never touches, so an update can never
+        // lose data. Best-effort — a backup failure must NOT block the update.
+        match crate::backup::pre_update_backup() {
+            Ok(p) => log::info!("[updater] pre-update backup saved → {}", p),
+            Err(e) => log::warn!("[updater] pre-update backup failed (continuing): {}", e),
+        }
+
         let dest_str = dest_display.clone();
 
         // Verbose MSI log so any future failure is diagnosable instead of

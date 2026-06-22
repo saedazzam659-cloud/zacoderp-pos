@@ -207,6 +207,10 @@ export default function UpdatesScreen({ baseUrl }: Props) {
         <div>
           <h1 style={S.title}>التحديثات</h1>
           <p style={S.subtitle}>تحقّق من توفّر إصدار جديد من البرنامج وثبّته بضغطة واحدة</p>
+          <p style={S.subtitle}>
+            🛡️ تُؤخذ نسخة احتياطية تلقائية من بياناتك قبل كل تحديث، وبياناتك محفوظة في مجلد منفصل
+            لا يتأثر بالتثبيت أو إزالة النسخة القديمة.
+          </p>
         </div>
         <button style={S.refreshBtn} onClick={check} disabled={loading || installing}>
           {loading ? "⏳ جارٍ التحقق…" : "🔄 إعادة الفحص"}
