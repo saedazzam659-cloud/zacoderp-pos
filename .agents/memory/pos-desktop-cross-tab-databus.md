@@ -17,4 +17,4 @@ description: How keep-alive tabs stay fresh via lib/dataBus channel bus, and the
 
 **Do NOT** reintroduce a parallel generic broadcast (a prior session added `emitDataChanged`/`useDataChanged` and even clobbered dataBus.ts — all reverted). One bus only.
 
-Related FIX (same session): blank document-line VAT default is `getTaxRate()` (country-aware: SA=15, EG=14, AE=5…), but a picked item's own saved `vatRate` still wins (`it.vatRate ?? next.vatRate`). ItemsAdmin keeps pharmacy 14 via `isPharmacy ? 14 : getTaxRate()`.
+**VAT source rule (the 9 doc forms):** a document line's VAT comes ONLY from the picked item — never the country default. A blank line (no item) is `vatRate:0`; on item-select it is `it.vatRate ?? 0` on every form (sales AND purchase/goods). A selected HEADER tax (`selectedRate`) still overrides all line rates AFTER, so one tax can blanket the whole invoice. **Why:** items carry their own correct rate (e.g. zero-rated/exempt goods); seeding from `getTaxRate()` silently taxed exempt lines at the country rate. `getTaxRate()`/`ItemsAdmin` (item-master default, pharmacy 14) are a SEPARATE concern and keep using country-aware defaults.

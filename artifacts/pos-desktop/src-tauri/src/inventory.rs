@@ -93,6 +93,74 @@ pub fn ledger_push_in_tx(
     Ok(())
 }
 
+/// Cleanly ERASE every ledger row a document posted, instead of appending a
+/// reversing "*_void" counter-row. Called on فك الترحيل / delete so a
+/// post→unpost cycle leaves NO residue in حركة المخزون (the old void-row
+/// approach stacked two extra rows per cycle). Steps, per affected
+/// (item, warehouse):
+///   1. delete the rows matching (ref_type, ref_id);
+///   2. recompute the running `balance_after` for the remaining rows in
+///      insertion (id) order — the same order `apply_ledger_delta` built them in;
+///   3. refresh the `stock_on_hand_local` cache to the final running balance
+///      (0 when no rows remain).
+/// A no-op when the document pushed no ledger rows (e.g. GR-sourced purchases).
+pub fn ledger_remove_ref_in_tx(
+    tx: &Transaction,
+    ref_type: &str,
+    ref_id: i64,
+) -> Result<(), String> {
+    // Affected (item, warehouse) pairs BEFORE the delete.
+    let pairs: Vec<(i64, i64)> = {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT item_id, warehouse_id FROM stock_ledger_local WHERE ref_type=?1 AND ref_id=?2",
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![ref_type, ref_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(|e| e.to_string())?;
+        let mut v = Vec::new();
+        for r in rows { v.push(r.map_err(|e| e.to_string())?); }
+        v
+    };
+    if pairs.is_empty() { return Ok(()); }
+
+    tx.execute(
+        "DELETE FROM stock_ledger_local WHERE ref_type=?1 AND ref_id=?2",
+        params![ref_type, ref_id],
+    ).map_err(|e| e.to_string())?;
+
+    for (item_id, warehouse_id) in pairs {
+        // Recompute the running balance for the remaining rows in insertion order.
+        let rows: Vec<(i64, f64)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, qty_delta FROM stock_ledger_local WHERE item_id=?1 AND warehouse_id=?2 ORDER BY id ASC",
+            ).map_err(|e| e.to_string())?;
+            let rs = stmt
+                .query_map(params![item_id, warehouse_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))
+                .map_err(|e| e.to_string())?;
+            let mut v = Vec::new();
+            for r in rs { v.push(r.map_err(|e| e.to_string())?); }
+            v
+        };
+        let mut run = 0.0_f64;
+        for (rid, d) in &rows {
+            run += *d;
+            tx.execute(
+                "UPDATE stock_ledger_local SET balance_after=?1 WHERE id=?2",
+                params![run, rid],
+            ).map_err(|e| e.to_string())?;
+        }
+        // Refresh the on-hand cache to the final running balance (0 if emptied).
+        tx.execute(
+            "INSERT INTO stock_on_hand_local(item_id,warehouse_id,qty,updated_at)
+             VALUES(?1,?2,?3,CURRENT_TIMESTAMP)
+             ON CONFLICT(item_id,warehouse_id) DO UPDATE SET
+                 qty=excluded.qty, updated_at=CURRENT_TIMESTAMP",
+            params![item_id, warehouse_id, run],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Returns the id of the default warehouse, creating one if none exists.
 pub fn default_warehouse_id_in_tx(tx: &Transaction) -> Result<i64, String> {
     if let Ok(id) = tx.query_row::<i64, _, _>(

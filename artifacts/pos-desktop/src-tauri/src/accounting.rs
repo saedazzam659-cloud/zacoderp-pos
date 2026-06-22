@@ -2216,35 +2216,13 @@ fn reverse_purchase_impact(tx: &Transaction, purchase_id: i64) -> Result<(), Str
         tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je_id]).map_err(|e| e.to_string())?;
     }
 
-    // 2) Remove the stock that came IN: push the BASE units back OUT at the SAME
-    //    per-base cost (stored unit_cost ÷ factor) so the running balance unwinds
-    //    to exactly its pre-purchase state.
-    let default_wh = crate::inventory::default_warehouse_id_in_tx(tx)?;
-    let restore: Vec<(i64, f64, f64, f64, Option<i64>)> = {
-        let mut stmt = tx
-            .prepare("SELECT item_id,qty,unit_cost,conversion_factor,warehouse_id FROM purchase_lines_local WHERE purchase_id=?1")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![purchase_id], |r| Ok((
-                r.get::<_, i64>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?,
-                r.get::<_, f64>(3)?, r.get::<_, Option<i64>>(4)?,
-            )))
-            .map_err(|e| e.to_string())?;
-        let mut v = Vec::new();
-        for r in rows { v.push(r.map_err(|e| e.to_string())?); }
-        v
-    };
-    // GR-sourced invoices NEVER added stock (the goods receipt already did),
-    // so they must NOT push any stock back out on reverse — only the GL clears.
+    // 2) Remove the stock that came IN by ERASING this purchase's ledger rows
+    //    and recomputing the running balances — so a post→unpost cycle leaves NO
+    //    residue in حركة المخزون (the old approach stacked a "purchase_void"
+    //    counter-row each time). GR-sourced invoices never added stock (the goods
+    //    receipt already did), so the helper is a no-op for them.
     if gr_src.is_none() {
-        for (item_id, qty, unit_cost, cf, wh) in &restore {
-            let factor = if *cf > 0.0 { *cf } else { 1.0 };
-            let line_wh = match wh { Some(w) if *w > 0 => *w, _ => default_wh };
-            crate::inventory::ledger_push_in_tx(
-                tx, *item_id, line_wh, -(*qty * factor), *unit_cost / factor,
-                "purchase_void", Some(purchase_id), &date,
-            )?;
-        }
+        crate::inventory::ledger_remove_ref_in_tx(tx, "purchase", purchase_id)?;
     }
 
     // 3) Unwind the party/treasury shadow (mirror of the create-time bump). With
@@ -3096,16 +3074,9 @@ pub fn goods_receipt_delete(id: i64) -> Result<(), String> {
             tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![je_id]).map_err(|e| e.to_string())?;
             tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je_id]).map_err(|e| e.to_string())?;
         }
-        // Push the received stock back OUT at the SAME per-base cost it entered.
-        let default_wh = match wh { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
-        let lines = gr_lines_load(&tx, id)?;
-        for l in &lines {
-            let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
-            crate::inventory::ledger_push_in_tx(
-                &tx, l.item_id, default_wh, -(l.qty * factor), l.unit_cost / factor,
-                "goods_receipt_void", Some(id), &date,
-            )?;
-        }
+        // ERASE the received stock by deleting this receipt's ledger rows and
+        // recomputing balances (no "goods_receipt_void" counter-row residue).
+        crate::inventory::ledger_remove_ref_in_tx(&tx, "goods_receipt", id)?;
     }
     tx.execute("DELETE FROM goods_receipts_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
@@ -3594,33 +3565,10 @@ fn reverse_sales_invoice_impact(tx: &Transaction, invoice_id: i64) -> Result<(),
         tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je_id]).map_err(|e| e.to_string())?;
     }
 
-    // 2) Restore stock: push the BASE units back IN at the SAME cost they left
-    //    at (stored per line), reversing the original sale OUT.
-    let default_wh = crate::inventory::default_warehouse_id_in_tx(tx)?;
-    let restore: Vec<(i64, f64, f64, f64, f64, Option<i64>)> = {
-        let mut stmt = tx
-            .prepare("SELECT item_id,qty,unit_cost,conversion_factor,free_qty,warehouse_id FROM sales_invoice_lines_local WHERE invoice_id=?1")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![invoice_id], |r| Ok((
-                r.get::<_, i64>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?,
-                r.get::<_, f64>(3)?, r.get::<_, f64>(4)?, r.get::<_, Option<i64>>(5)?,
-            )))
-            .map_err(|e| e.to_string())?;
-        let mut v = Vec::new();
-        for r in rows { v.push(r.map_err(|e| e.to_string())?); }
-        v
-    };
-    for (item_id, qty, unit_cost, cf, fq, wh) in &restore {
-        let factor = if *cf > 0.0 { *cf } else { 1.0 };
-        let free = if *fq > 0.0 { *fq } else { 0.0 };
-        let total_base_qty = (*qty + free) * factor;
-        let line_wh = match wh { Some(w) if *w > 0 => *w, _ => default_wh };
-        crate::inventory::ledger_push_in_tx(
-            tx, *item_id, line_wh, total_base_qty, *unit_cost,
-            "sale_void", Some(invoice_id), &date,
-        )?;
-    }
+    // 2) Restore stock by ERASING this invoice's ledger rows and recomputing
+    //    balances (reverses the original sale OUT with NO "sale_void" counter-row
+    //    residue, so a post→unpost cycle leaves حركة المخزون clean).
+    crate::inventory::ledger_remove_ref_in_tx(tx, "sale", invoice_id)?;
 
     // 3) Unwind shadow balances (mirror of the create-time bump).
     match pm.as_str() {
@@ -6926,16 +6874,9 @@ pub fn goods_delivery_delete(id: i64) -> Result<(), String> {
             tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![je_id]).map_err(|e| e.to_string())?;
             tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je_id]).map_err(|e| e.to_string())?;
         }
-        let default_wh = match wh { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
-        let lines = gd_lines_load(&tx, id)?;
-        for l in &lines {
-            let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
-            let line_wh = match l.warehouse_id { Some(w) if w > 0 => w, _ => default_wh };
-            crate::inventory::ledger_push_in_tx(
-                &tx, l.item_id, line_wh, l.qty * factor, l.unit_cost,
-                "goods_delivery_void", Some(id), &date,
-            )?;
-        }
+        // ERASE the delivered-out stock by deleting this delivery's ledger rows
+        // and recomputing balances (no "goods_delivery_void" counter-row residue).
+        crate::inventory::ledger_remove_ref_in_tx(&tx, "goods_delivery", id)?;
     }
     tx.execute("DELETE FROM goods_deliveries_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;

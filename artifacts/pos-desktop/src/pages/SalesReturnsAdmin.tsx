@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { getTaxRate } from "../lib/taxSettings";
 import { useDataRefresh } from "../lib/dataBus";
 import {
   listSalesReturns, getSalesReturn, createSalesReturn, listCashBoxes, listBanks,
@@ -207,7 +206,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
-    itemId: 0, qty: 1, unitPrice: 0, vatRate: getTaxRate(), lineTotal: 0, disc: 0, discType: "percent",
+    itemId: 0, qty: 1, unitPrice: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
   const [lines, setLines] = useState<FLine[]>(() =>
@@ -234,7 +233,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         const it = deps.items.find((x) => x.id === Number(patch.itemId));
         if (it) {
           if (!next.unitPrice) next.unitPrice = it.salePrice ?? 0;
-          next.vatRate = it.vatRate ?? next.vatRate;
+          next.vatRate = it.vatRate ?? 0;
           if (it.uomId != null) {
             const u = uoms.find((x) => x.id === it.uomId);
             if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
