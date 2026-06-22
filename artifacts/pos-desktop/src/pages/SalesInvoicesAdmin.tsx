@@ -117,6 +117,16 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
     } catch (e: any) { setErr(e?.message ?? "تعذّر الترحيل"); }
     finally { setBusyId(null); }
   }
+  // Per-row A4 print: list rows don't carry lines, so load the full invoice first.
+  async function printRow(id: number) {
+    setErr(null);
+    setBusyId(id);
+    try {
+      const inv = await getSalesInvoice(id);
+      await printSalesDoc("a4", invoiceToPrintDoc(inv));
+    } catch (e: any) { setErr(e?.message ?? "تعذّر طباعة الفاتورة"); }
+    finally { setBusyId(null); }
+  }
   useEffect(() => {
     void refresh();
     void (async () => {
@@ -236,6 +246,10 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
                         <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
                           style={{ ...btnLink, opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
                           {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
+                        </button>
+                        <button onClick={() => void printRow(p.id)} disabled={busyId === p.id || formOpen} title="طباعة الفاتورة A4"
+                          style={{ ...btnLink, opacity: (busyId === p.id || formOpen) ? 0.5 : 1, cursor: (busyId === p.id || formOpen) ? "not-allowed" : "pointer" }}>
+                          🖨️ طباعة
                         </button>
                         {onNavigate && (
                           <button onClick={() => void startReturn(p.id)} disabled={formOpen} title="إنشاء مرتجع من هذه الفاتورة"

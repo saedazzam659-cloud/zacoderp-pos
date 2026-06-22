@@ -11,6 +11,17 @@ import {
   ExportButtons, gridToExportCols,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
+import { printVoucher } from "../lib/invoicePrint";
+
+function payWalletName(
+  deps: { cashBoxes: CashBox[]; banks: Bank[] } | null,
+  f: FinancialTx,
+): string | null {
+  if (!deps) return null;
+  if (f.bankId != null) return deps.banks.find((b) => b.id === f.bankId)?.name ?? null;
+  if (f.cashBoxId != null) return deps.cashBoxes.find((c) => c.id === f.cashBoxId)?.name ?? null;
+  return null;
+}
 
 // سند صرف لمورد — a supplier-scoped payment voucher. Reuses the shared
 // financial_tx pipeline (DR AP, CR cash/bank, decrements supplier balance),
@@ -77,6 +88,7 @@ export default function SupplierPaymentAdmin() {
                 <SortableTh grid={grid} colKey="invoice">الفاتورة المرتبطة</SortableTh>
                 <SortableTh grid={grid} colKey="description">البيان</SortableTh>
                 <SortableTh grid={grid} colKey="amount" style={{ textAlign: "left" }}>المبلغ</SortableTh>
+                <Th>طباعة</Th>
               </tr>
               <GridFilterRow grid={grid} columns={columns} />
             </thead>
@@ -90,6 +102,24 @@ export default function SupplierPaymentAdmin() {
                     <Td mono>{inv ? inv.invoiceNo : "—"}</Td>
                     <Td>{f.description ?? "—"}</Td>
                     <Td num style={{ fontWeight: 600, color: "#b91c1c" }}>{fmt(f.amount)}</Td>
+                    <Td>
+                      <button
+                        type="button"
+                        style={btnSecondary}
+                        onClick={() => printVoucher({
+                          kind: "payment",
+                          title: "سند صرف",
+                          docNo: f.txNo,
+                          date: f.txDate,
+                          partyName: f.partyName ?? null,
+                          amount: f.amount,
+                          description: f.description ?? null,
+                          walletKind: f.bankId != null ? "bank" : "cash",
+                          walletName: payWalletName(deps, f),
+                          linkedDocNo: inv ? inv.invoiceNo : null,
+                        })}
+                      >🖨️ طباعة</button>
+                    </Td>
                   </tr>
                 );
               })}

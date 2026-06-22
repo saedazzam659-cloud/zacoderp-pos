@@ -10,6 +10,17 @@ import {
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
+import { printVoucher } from "../lib/invoicePrint";
+
+function txWalletName(
+  deps: { cashBoxes: CashBox[]; banks: Bank[] } | null,
+  f: FinancialTx,
+): string | null {
+  if (!deps) return null;
+  if (f.bankId != null) return deps.banks.find((b) => b.id === f.bankId)?.name ?? null;
+  if (f.cashBoxId != null) return deps.cashBoxes.find((c) => c.id === f.cashBoxId)?.name ?? null;
+  return null;
+}
 
 export default function FinancialTransactionsAdmin() {
   const [rows, setRows] = useState<FinancialTx[]>([]);
@@ -58,6 +69,7 @@ export default function FinancialTransactionsAdmin() {
             <thead><tr>
               <Th>الرقم</Th><Th>التاريخ</Th><Th>النوع</Th><Th>الطرف</Th><Th>البيان</Th>
               <Th style={{ textAlign: "left" }}>المبلغ</Th>
+              <Th>طباعة</Th>
             </tr></thead>
             <tbody>
               {rows.map((f) => (
@@ -71,6 +83,23 @@ export default function FinancialTransactionsAdmin() {
                   <Td>{f.partyName ?? "—"}</Td>
                   <Td>{f.description ?? "—"}</Td>
                   <Td num style={{ fontWeight: 600, color: f.txType === "receipt" ? "#15803d" : "#b91c1c" }}>{fmt(f.amount)}</Td>
+                  <Td>
+                    <button
+                      type="button"
+                      style={btnSecondary}
+                      onClick={() => printVoucher({
+                        kind: f.txType === "receipt" ? "receipt" : "payment",
+                        title: f.txType === "receipt" ? "سند قبض" : "سند صرف",
+                        docNo: f.txNo,
+                        date: f.txDate,
+                        partyName: f.partyName ?? null,
+                        amount: f.amount,
+                        description: f.description ?? null,
+                        walletKind: f.bankId != null ? "bank" : "cash",
+                        walletName: txWalletName(deps, f),
+                      })}
+                    >🖨️ طباعة</button>
+                  </Td>
                 </tr>
               ))}
             </tbody>

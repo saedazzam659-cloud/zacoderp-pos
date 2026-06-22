@@ -19,6 +19,7 @@ const LS_LOGO = "pos_desktop_company_logo";   // base64 data URL or https URL
 const LS_NAME = "pos_desktop_company_name";
 const LS_VAT = "pos_desktop_company_vat";
 const LS_CR = "pos_desktop_company_cr";
+const LS_PHONE = "pos_desktop_company_phone";
 const LS_DECIMALS = "pos_desktop_decimal_places";
 
 export const DECIMALS_MIN = 0;
@@ -34,6 +35,7 @@ export type CompanyProfile = {
   name: string;
   vat: string;
   cr: string;
+  phone: string;
   decimals: number;
 };
 
@@ -82,6 +84,7 @@ export function getCompanyProfile(): CompanyProfile {
     name: ls(LS_NAME),
     vat: ls(LS_VAT),
     cr: ls(LS_CR),
+    phone: ls(LS_PHONE),
     decimals: readDecimals(),
   };
 }
@@ -101,6 +104,7 @@ export function setCompanyProfile(p: CompanyProfile): void {
   writeKey(LS_NAME, (p.name ?? "").trim());
   writeKey(LS_VAT, (p.vat ?? "").trim());
   writeKey(LS_CR, (p.cr ?? "").trim());
+  writeKey(LS_PHONE, (p.phone ?? "").trim());
   const dp = Math.min(DECIMALS_MAX, Math.max(DECIMALS_MIN, Math.floor(Number(p.decimals) || 0)));
   writeKey(LS_DECIMALS, String(dp));
   _decimals = dp;

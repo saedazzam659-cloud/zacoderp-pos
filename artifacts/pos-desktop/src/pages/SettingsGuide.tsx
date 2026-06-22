@@ -18,6 +18,7 @@ export default function SettingsGuide() {
   const [name, setName] = useState("");
   const [vat, setVat] = useState("");
   const [cr, setCr] = useState("");
+  const [phone, setPhone] = useState("");
   const [decimals, setDecimals] = useState<number>(DECIMALS_DEFAULT);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -29,6 +30,7 @@ export default function SettingsGuide() {
     setName(p.name);
     setVat(p.vat);
     setCr(p.cr);
+    setPhone(p.phone);
     setDecimals(p.decimals);
   }, []);
 
@@ -68,7 +70,7 @@ export default function SettingsGuide() {
   function save() {
     setErr(null);
     const dp = Math.min(DECIMALS_MAX, Math.max(DECIMALS_MIN, Math.floor(Number(decimals) || 0)));
-    setCompanyProfile({ logo, name, vat, cr, decimals: dp });
+    setCompanyProfile({ logo, name, vat, cr, phone, decimals: dp });
     setDecimals(dp);
     setSaved(true);
   }
@@ -123,7 +125,13 @@ export default function SettingsGuide() {
           <Field label="السجل التجاري (CR)">
             <input style={input} value={cr} onChange={(e) => { setCr(e.target.value); setSaved(false); }} inputMode="numeric" placeholder="10xxxxxxxx" />
           </Field>
+          <Field label="رقم الهاتف">
+            <input style={input} value={phone} onChange={(e) => { setPhone(e.target.value); setSaved(false); }} inputMode="tel" placeholder="مثال: 0555555555" dir="ltr" />
+          </Field>
         </div>
+        <span style={{ fontSize: 12, color: "#64748b" }}>
+          تظهر هذه البيانات في ترويسة طباعة الفواتير والسندات أسفل اسم الشركة.
+        </span>
       </Card>
 
       {/* ── Number format ── */}

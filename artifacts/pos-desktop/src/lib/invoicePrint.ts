@@ -7,7 +7,8 @@
 // same way the web builds it.
 import QRCode from "qrcode";
 import { getCompanyProfile, getDecimals, type CompanyProfile } from "./appSettings";
-import { currencySymbol } from "./currency";
+import { currencySymbol, baseCurrencyCode, currencyByCode } from "./currency";
+import { isZatcaCountry } from "./zatcaBridge";
 import type { SalesLine } from "./accounting";
 
 export type PrintKind = "a4" | "thermal";
@@ -66,27 +67,32 @@ async function buildQrDataUrl(base64Tlv: string | null | undefined): Promise<str
 // ─── A4 — "النموذج الأصلي" (a faithful port of the web app's template #14) ──
 // 3-column header (company right / logo+title+pills center / customer left),
 // gold accents, borderless zebra lines table, totals + QR cards, audit footer.
-function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string): string {
+function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca: boolean): string {
   const dp = co.decimals ?? 2;
   const sym = currencySymbol();
   const logo = co.logo;
   const isReturn = doc.kind === "return";
   const isSimplified = !doc.customerVat;
+  // Outside Saudi Arabia, drop all tax-authority ("ضريبية"/"Tax") wording.
   const titleMain = isReturn
-    ? (isSimplified ? "مرتجع مبيعات مبسط" : "مرتجع مبيعات ضريبي")
-    : (isSimplified ? "فاتورة مبيعات مبسطة" : "فاتورة مبيعات ضريبية");
-  const titleSub = isReturn ? "Sales Return" : (isSimplified ? "Simplified Tax Invoice" : "Tax Invoice");
+    ? (zatca ? (isSimplified ? "مرتجع مبيعات مبسط" : "مرتجع مبيعات ضريبي") : "مرتجع مبيعات")
+    : (zatca ? (isSimplified ? "فاتورة مبيعات مبسطة" : "فاتورة مبيعات ضريبية") : "فاتورة مبيعات");
+  const titleSub = isReturn
+    ? "Sales Return"
+    : (zatca ? (isSimplified ? "Simplified Tax Invoice" : "Tax Invoice") : "Sales Invoice");
 
   // Only show the discount/free columns when at least one line uses them.
   const showFree = doc.lines.some((l) => (Number(l.freeQty) || 0) > 0);
-  // Rendered columns: #, item, qty, [free], uom, unit price, vat%, vat value, total
-  const colCount = 8 + (showFree ? 1 : 0);
+  // Rendered columns: #, item, qty, [free], uom, unit price, [vat%, vat value], total.
+  // The two tax columns are dropped entirely outside Saudi Arabia.
+  const colCount = 6 + (zatca ? 2 : 0) + (showFree ? 1 : 0);
 
   const rows = doc.lines.map((l, i) => {
     const net = Number(l.lineTotal) || 0;
     const rate = Number(l.vatRate) || 0;
     const vat = net * (rate / 100);
-    const tot = net + vat;
+    // Without tax, the line total is just the net amount.
+    const tot = zatca ? net + vat : net;
     const freeQ = Number(l.freeQty) || 0;
     const note = (l.note ?? "").toString().trim();
     const itemRow = `
@@ -97,8 +103,8 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string): stri
           ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? esc(freeQ) : "—"}</td>` : ""}
           <td>${l.uomName ? esc(l.uomName) : "—"}</td>
           <td class="mono">${fmt(l.unitPrice, dp)}</td>
-          <td class="mono">${esc(rate)}%</td>
-          <td class="mono">${fmt(vat, dp)}</td>
+          ${zatca ? `<td class="mono">${esc(rate)}%</td>` : ""}
+          ${zatca ? `<td class="mono">${fmt(vat, dp)}</td>` : ""}
           <td class="mono" style="font-weight:600;">${fmt(tot, dp)}</td>
         </tr>`;
     const notesRow = note
@@ -169,8 +175,9 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string): stri
     <div class="col-co">
       <div class="label">بيانات المنشأة</div>
       <div class="co-name-ar">${esc(co.name)}</div>
-      ${co.vat ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${esc(co.vat)}</span></div>` : ""}
+      ${zatca && co.vat ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${esc(co.vat)}</span></div>` : ""}
       ${co.cr ? `<div class="row"><b>السجل التجاري:</b><span class="mono">${esc(co.cr)}</span></div>` : ""}
+      ${co.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${esc(co.phone)}</span></div>` : ""}
     </div>
 
     <div class="col-mid">
@@ -186,7 +193,7 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string): stri
     <div class="col-cu">
       <div class="label">بيانات العميل</div>
       <div class="cu-name">${esc(doc.customerName ?? "عميل نقدي")}</div>
-      ${doc.customerVat ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${esc(doc.customerVat)}</span></div>` : ""}
+      ${zatca && doc.customerVat ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${esc(doc.customerVat)}</span></div>` : ""}
     </div>
   </div>
 
@@ -198,8 +205,8 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string): stri
       ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
       <th>الوحدة</th>
       <th>سعر الوحدة</th>
-      <th>الضريبة</th>
-      <th>قيمة الضريبة</th>
+      ${zatca ? `<th>الضريبة</th>` : ""}
+      ${zatca ? `<th>قيمة الضريبة</th>` : ""}
       <th>الإجمالي</th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -209,28 +216,29 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string): stri
 
   <div class="bottom">
     <div class="totals-card">
-      <div class="__totalsRow"><span>المبلغ قبل الضريبة</span><span class="mono">${fmt(doc.subtotal, dp)} ${esc(sym)}</span></div>
-      <div class="__totalsRow"><span>ضريبة القيمة المضافة</span><span class="mono">${fmt(doc.vatTotal, dp)} ${esc(sym)}</span></div>
+      ${zatca ? `<div class="__totalsRow"><span>المبلغ قبل الضريبة</span><span class="mono">${fmt(doc.subtotal, dp)} ${esc(sym)}</span></div>` : ""}
+      ${zatca ? `<div class="__totalsRow"><span>ضريبة القيمة المضافة</span><span class="mono">${fmt(doc.vatTotal, dp)} ${esc(sym)}</span></div>` : ""}
       <div class="__totalsRow grand"><span>الإجمالي المستحق</span><span class="mono">${fmt(doc.grandTotal, dp)} ${esc(sym)}</span></div>
     </div>
-    ${qrDataUrl ? `<div class="qr-card"><img src="${qrDataUrl}" width="150" height="150" /><div class="lbl">رمز الاستجابة السريعة (QR) — زاتكا</div></div>` : "<div></div>"}
+    ${zatca && qrDataUrl ? `<div class="qr-card"><img src="${qrDataUrl}" width="150" height="150" /><div class="lbl">رمز الاستجابة السريعة (QR) — زاتكا</div></div>` : "<div></div>"}
   </div>
 
   <div class="audit-footer">
     <div class="grp">
-      <span>${docTitle(doc.kind)}</span>
-      <span style="color:var(--gold);font-weight:700;">ZATCA e-Invoice</span>
+      <span>${esc(titleMain)}</span>
+      ${zatca ? `<span style="color:var(--gold);font-weight:700;">ZATCA e-Invoice</span>` : ""}
     </div>
     <div class="grp" style="text-align:left;">
       <span>تاريخ الطباعة: <b>${esc(new Date().toLocaleString("en-GB"))}</b></span>
-      <span>نظام الفاتورة الإلكترونية — متوافق مع زاتكا</span>
+      ${zatca ? `<span>نظام الفاتورة الإلكترونية — متوافق مع زاتكا</span>` : `<span>شكراً لتعاملكم معنا</span>`}
     </div>
   </div>
 </div></body></html>`;
 }
 
 // ─── Thermal (80 mm receipt) ──────────────────────────────────────────
-function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string): string {
+function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca: boolean): string {
+  const thermalTitle = zatca ? docTitle(doc.kind) : (doc.kind === "invoice" ? "فاتورة مبيعات" : "مرتجع مبيعات");
   const dp = co.decimals ?? 2;
   const sym = currencySymbol();
   const rows = doc.lines.map((l) => `
@@ -265,9 +273,10 @@ function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string):
 <body><div class="rcpt">
   <div class="center">
     <div class="co-name">${esc(co.name)}</div>
-    <div class="muted">الرقم الضريبي: ${esc(co.vat)}</div>
+    ${zatca && co.vat ? `<div class="muted">الرقم الضريبي: ${esc(co.vat)}</div>` : ""}
     ${co.cr ? `<div class="muted">س.ت: ${esc(co.cr)}</div>` : ""}
-    <div class="doc-title">${docTitle(doc.kind)}</div>
+    ${co.phone ? `<div class="muted">هاتف: ${esc(co.phone)}</div>` : ""}
+    <div class="doc-title">${esc(thermalTitle)}</div>
   </div>
   <div class="sep"></div>
   <div class="meta"><span>${doc.kind === "invoice" ? "رقم الفاتورة" : "رقم المرتجع"}</span><span>${esc(doc.docNo)}</span></div>
@@ -277,11 +286,11 @@ function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string):
   <div class="sep"></div>
   ${rows}
   <div class="sep"></div>
-  <div class="tot"><span>المبلغ قبل الضريبة</span><span>${fmt(doc.subtotal, dp)} ${esc(sym)}</span></div>
-  <div class="tot"><span>ضريبة القيمة المضافة</span><span>${fmt(doc.vatTotal, dp)} ${esc(sym)}</span></div>
+  ${zatca ? `<div class="tot"><span>المبلغ قبل الضريبة</span><span>${fmt(doc.subtotal, dp)} ${esc(sym)}</span></div>` : ""}
+  ${zatca ? `<div class="tot"><span>ضريبة القيمة المضافة</span><span>${fmt(doc.vatTotal, dp)} ${esc(sym)}</span></div>` : ""}
   <div class="tot grand"><span>الإجمالي</span><span>${fmt(doc.grandTotal, dp)} ${esc(sym)}</span></div>
   ${doc.notes ? `<div class="sep"></div><div class="muted">ملاحظات: ${esc(doc.notes)}</div>` : ""}
-  ${qrDataUrl ? `<div class="qr"><img src="${qrDataUrl}" width="120" height="120" /></div>` : ""}
+  ${zatca && qrDataUrl ? `<div class="qr"><img src="${qrDataUrl}" width="120" height="120" /></div>` : ""}
   <div class="sep"></div>
   <div class="center muted">شكراً لتعاملكم معنا</div>
 </div></body></html>`;
@@ -315,7 +324,179 @@ function printHtml(html: string): void {
 /** Build + print a sales document with the chosen template. */
 export async function printSalesDoc(kind: PrintKind, doc: PrintDoc): Promise<void> {
   const co = getCompanyProfile();
+  const zatca = isZatcaCountry();
   const qrDataUrl = await buildQrDataUrl(doc.qrBase64);
-  const html = kind === "a4" ? buildA4Html(doc, co, qrDataUrl) : buildThermalHtml(doc, co, qrDataUrl);
+  const html = kind === "a4" ? buildA4Html(doc, co, qrDataUrl, zatca) : buildThermalHtml(doc, co, qrDataUrl, zatca);
   printHtml(html);
+}
+
+// ─── Vouchers (سند قبض / سند صرف / سند تحصيل) ─────────────────────────
+export type VoucherKind = "receipt" | "payment";
+
+export interface VoucherDoc {
+  kind: VoucherKind;            // receipt = قبض (money in), payment = صرف (money out)
+  title: string;               // e.g. "سند قبض" / "سند صرف" / "سند تحصيل"
+  docNo: string;
+  date: string;
+  partyName: string | null;     // العميل / المورد
+  amount: number;
+  description: string | null;
+  walletKind: "cash" | "bank" | null;
+  walletName: string | null;    // الصندوق / البنك
+  linkedDocNo?: string | null;  // الفاتورة / السند المرتبط
+}
+
+// ── Arabic number-to-words (تفقيط) ──
+const SUBUNIT_NAME: Record<string, string> = {
+  SAR: "هللة", QAR: "درهم", AED: "فلس", KWD: "فلس", BHD: "فلس", IQD: "فلس",
+  JOD: "فلس", OMR: "بيسة", LYD: "درهم", TND: "مليم", EGP: "قرش",
+  USD: "سنت", EUR: "سنت", GBP: "بنس",
+};
+
+function threeDigitsToWords(n: number): string {
+  const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة",
+    "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
+  const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+  const hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة", "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"];
+  const parts: string[] = [];
+  const h = Math.floor(n / 100);
+  const rem = n % 100;
+  if (h > 0) parts.push(hundreds[h]);
+  if (rem > 0) {
+    if (rem < 20) parts.push(ones[rem]);
+    else {
+      const t = Math.floor(rem / 10);
+      const o = rem % 10;
+      parts.push(o > 0 ? `${ones[o]} و${tens[t]}` : tens[t]);
+    }
+  }
+  return parts.join(" و");
+}
+
+function integerToWords(value: number): string {
+  let n = Math.floor(Math.abs(value));
+  if (n === 0) return "صفر";
+  const scales: { v: number; s: [string, string, string] }[] = [
+    { v: 1_000_000_000, s: ["مليار", "ملياران", "مليارات"] },
+    { v: 1_000_000, s: ["مليون", "مليونان", "ملايين"] },
+    { v: 1_000, s: ["ألف", "ألفان", "آلاف"] },
+  ];
+  const groups: string[] = [];
+  for (const sc of scales) {
+    const count = Math.floor(n / sc.v);
+    if (count > 0) {
+      if (count === 1) groups.push(sc.s[0]);
+      else if (count === 2) groups.push(sc.s[1]);
+      else if (count <= 10) groups.push(`${threeDigitsToWords(count)} ${sc.s[2]}`);
+      else groups.push(`${threeDigitsToWords(count)} ${sc.s[0]}`);
+      n %= sc.v;
+    }
+  }
+  if (n > 0) groups.push(threeDigitsToWords(n));
+  return groups.join(" و");
+}
+
+/** "فقط مائة وخمسون ريال سعودي وخمسون هللة لا غير" */
+function amountInWords(amount: number, dp: number): string {
+  const cur = currencyByCode(baseCurrencyCode());
+  const curName = cur.nameAr || "";
+  const places = Math.min(2, Math.max(0, dp || 0)) || 2;
+  const factor = Math.pow(10, places);
+  const abs = Math.abs(amount);
+  const intPart = Math.floor(abs);
+  const fracPart = Math.round((abs - intPart) * factor);
+  let out = `فقط ${integerToWords(intPart)}${curName ? " " + curName : ""}`;
+  if (fracPart > 0) {
+    const subName = SUBUNIT_NAME[cur.code] || "";
+    out += ` و${integerToWords(fracPart)}${subName ? " " + subName : ""}`;
+  }
+  return out + " لا غير";
+}
+
+function buildVoucherHtml(v: VoucherDoc, co: CompanyProfile, zatca: boolean): string {
+  const dp = co.decimals ?? 2;
+  const sym = currencySymbol();
+  const isReceipt = v.kind === "receipt";
+  const accent = isReceipt ? "#15803d" : "#b45309";      // green for in, amber for out
+  const accentBg = isReceipt ? "#f0fdf4" : "#fffbeb";
+  const partyLabel = isReceipt ? "استلمنا من السيد / السادة" : "صرفنا إلى السيد / السادة";
+  const walletLabel = v.walletKind === "bank" ? "البنك" : "الصندوق";
+  return `<!DOCTYPE html><html dir="rtl" lang="ar">
+<head><meta charset="UTF-8"><title>${esc(v.title)} ${esc(v.docNo)}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --accent: ${accent}; --ink: #0f172a; --muted: #64748b; --line: #e2e8f0; }
+  @page { size: A4; margin: 14mm; }
+  body { font-family: 'Tahoma', 'Segoe UI', Arial, sans-serif; direction: rtl; color: var(--ink); background: #fff; }
+  .sheet { max-width: 760px; margin: 0 auto; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid var(--accent); padding-bottom: 12px; }
+  .co .nm { font-size: 20px; font-weight: 800; }
+  .co .row { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .co .row b { color: var(--ink); }
+  .logo img { max-height: 70px; max-width: 180px; object-fit: contain; }
+  .title-pill { margin: 18px auto 4px; text-align: center; }
+  .title-pill .main { display: inline-block; background: var(--accent); color: #fff; font-size: 20px; font-weight: 800; padding: 8px 28px; border-radius: 999px; }
+  .docmeta { display: flex; justify-content: center; gap: 26px; margin: 10px 0 18px; font-size: 13px; color: var(--muted); }
+  .docmeta b { color: var(--ink); }
+  .amount-box { display: flex; justify-content: space-between; align-items: center; background: ${accentBg}; border: 1px solid var(--accent); border-radius: 12px; padding: 14px 20px; margin-bottom: 14px; }
+  .amount-box .lbl { font-size: 14px; font-weight: 700; color: var(--accent); }
+  .amount-box .val { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .words { background: #f8fafc; border: 1px dashed var(--line); border-radius: 10px; padding: 11px 16px; font-size: 14px; font-weight: 700; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 26px; }
+  .grid .r { display: flex; padding: 10px 16px; font-size: 13.5px; }
+  .grid .r:nth-child(odd) { background: #fafafa; }
+  .grid .r .k { width: 170px; color: var(--muted); font-weight: 700; }
+  .grid .r .v { flex: 1; font-weight: 600; }
+  .sign { display: flex; justify-content: space-between; gap: 24px; margin-top: 40px; }
+  .sign .cell { flex: 1; text-align: center; }
+  .sign .line { border-top: 1.5px solid var(--ink); margin: 0 8px 6px; padding-top: 6px; }
+  .sign .cap { font-size: 12.5px; color: var(--muted); font-weight: 700; }
+  .ftr { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 8px; display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+</style></head>
+<body><div class="sheet">
+  <div class="top">
+    <div class="co">
+      <div class="nm">${esc(co.name) || "—"}</div>
+      ${co.cr ? `<div class="row"><b>س.ت:</b> ${esc(co.cr)}</div>` : ""}
+      ${zatca && co.vat ? `<div class="row"><b>الرقم الضريبي:</b> ${esc(co.vat)}</div>` : ""}
+      ${co.phone ? `<div class="row"><b>الهاتف:</b> ${esc(co.phone)}</div>` : ""}
+    </div>
+    ${co.logo ? `<div class="logo"><img src="${esc(co.logo)}" alt="logo" /></div>` : ""}
+  </div>
+
+  <div class="title-pill"><span class="main">${esc(v.title)}</span></div>
+  <div class="docmeta"><span>رقم السند: <b>${esc(v.docNo)}</b></span><span>التاريخ: <b>${esc(v.date)}</b></span></div>
+
+  <div class="amount-box">
+    <span class="lbl">المبلغ</span>
+    <span class="val">${fmt(v.amount, dp)} ${esc(sym)}</span>
+  </div>
+  <div class="words">${esc(amountInWords(v.amount, dp))}</div>
+
+  <div class="grid">
+    <div class="r"><div class="k">${partyLabel}</div><div class="v">${esc(v.partyName || "—")}</div></div>
+    <div class="r"><div class="k">${walletLabel}</div><div class="v">${esc(v.walletName || "—")}</div></div>
+    ${v.linkedDocNo ? `<div class="r"><div class="k">المستند المرتبط</div><div class="v">${esc(v.linkedDocNo)}</div></div>` : ""}
+    <div class="r"><div class="k">وذلك عن / البيان</div><div class="v">${esc(v.description || "—")}</div></div>
+  </div>
+
+  <div class="sign">
+    <div class="cell"><div class="line"></div><div class="cap">${isReceipt ? "المُستلِم" : "المُستلِم"}</div></div>
+    <div class="cell"><div class="line"></div><div class="cap">المحاسب</div></div>
+    <div class="cell"><div class="line"></div><div class="cap">المدير</div></div>
+  </div>
+
+  <div class="ftr">
+    <span>${esc(v.title)} — ${esc(co.name)}</span>
+    <span>تاريخ الطباعة: ${esc(new Date().toLocaleString("en-GB"))}</span>
+  </div>
+</div></body></html>`;
+}
+
+/** Build + print a financial voucher (receipt / payment / collection). */
+export function printVoucher(v: VoucherDoc): void {
+  const co = getCompanyProfile();
+  const zatca = isZatcaCountry();
+  printHtml(buildVoucherHtml(v, co, zatca));
 }
