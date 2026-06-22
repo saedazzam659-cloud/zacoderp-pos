@@ -629,7 +629,7 @@ function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|
 
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -685,6 +685,10 @@ router.post("/items", async (req, res) => {
     variantAttributes: variantAttrsCheck.value,
     showInPos: showInPos === undefined ? true : showInPos === true,
     expiryDate: expiryDate || null,
+    // Service-item GL links (cost / revenue accounts). Coerced to a numeric id
+    // or null so an empty-string from the form doesn't break the FK.
+    costAccountId:    costAccountId    != null && costAccountId    !== "" ? Number(costAccountId)    : null,
+    revenueAccountId: revenueAccountId != null && revenueAccountId !== "" ? Number(revenueAccountId) : null,
     // PHASE E — Per-item batch picking mode. Validated to one of the three
     // allowed values; anything else (including legacy clients) falls back to
     // 'none' so the current WAC issue flow is preserved.
@@ -712,7 +716,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
   // PRO Extension #20 — variantAttributes is editable; parentItemId is
   // set-once at create time (re-parenting requires DELETE + recreate so
   // we don't have to reason about stock-balance migration).
@@ -766,6 +770,14 @@ router.put("/items/:id", async (req, res) => {
     ...(variantAttrsCheck.value !== undefined ? { variantAttributes: variantAttrsCheck.value } : {}),
     ...(showInPos !== undefined ? { showInPos: showInPos === true } : {}),
     ...(expiryDate !== undefined ? { expiryDate: expiryDate || null } : {}),
+    // Service-item GL links — only touch when the client sent them (partial-PUT
+    // safe). Empty-string / null clears the link; otherwise coerce to numeric id.
+    ...(costAccountId !== undefined
+      ? { costAccountId: costAccountId != null && costAccountId !== "" ? Number(costAccountId) : null }
+      : {}),
+    ...(revenueAccountId !== undefined
+      ? { revenueAccountId: revenueAccountId != null && revenueAccountId !== "" ? Number(revenueAccountId) : null }
+      : {}),
     // PHASE E — only touch when client explicitly sent; constrained list.
     ...(batchTrackingMode !== undefined && ["none","fifo","fefo"].includes(batchTrackingMode)
       ? { batchTrackingMode }
