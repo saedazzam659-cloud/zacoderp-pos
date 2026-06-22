@@ -5738,6 +5738,8 @@
       "posTab": "Point of Sale",
       "natureFieldLabel": "Item nature",
       "natureFieldHint": "Helps distinguish raw materials from finished goods in manufacturing screens",
+      "serviceNoStockHint": "Service item: never affects inventory. Set the cost account (e.g. Projects under Construction) and revenue account in the \"Accounting Link\" tab.",
+      "serviceAccountsRequired": "A service item requires both a cost account and a revenue account (set them in the \"Accounting Link\" tab, e.g. Projects under Construction).",
       "natureRawLong": "Raw materials",
       "natureSemi": "Semi-finished",
       "natureFinished": "Finished",

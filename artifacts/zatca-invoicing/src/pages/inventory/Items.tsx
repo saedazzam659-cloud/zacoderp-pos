@@ -1020,6 +1020,13 @@ export default function Items() {
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Service items are non-stock and must route their cost AND revenue to GL
+    // accounts (e.g. "مشاريع تحت التنفيذ") since they never hit inventory/COGS.
+    if (form.itemType === "service" && (!form.costAccountId || !form.revenueAccountId)) {
+      setActiveItemTab("accounts");
+      toast({ title: t("inventoryMaster.items.serviceAccountsRequired"), variant: "destructive" });
+      return;
+    }
     const payload = {
       ...form,
       groupId:          form.groupId          ? Number(form.groupId)          : null,
@@ -1177,9 +1184,10 @@ export default function Items() {
                 <Field label={t("pages.items.nameAr")} required><Input placeholder={t("pages.items.nameAr")} value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} /></Field>
                 <Field label={t("pages.items.nameEn")}><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
                 <Field label={t("pages.items.barcode")}><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
-                <Field label={t("pages.items.itemType")}>
-                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v }))} placeholder={t("pages.items.itemType")} />
+                <Field label={t("pages.items.itemType")} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceNoStockHint") : undefined}>
+                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" ? { itemNature: "merchandise", batchTrackingMode: "none" } : {}) }))} placeholder={t("pages.items.itemType")} />
                 </Field>
+                {form.itemType !== "service" && (
                 <Field label={t("inventoryMaster.items.natureFieldLabel")} hint={t("inventoryMaster.items.natureFieldHint")}>
                   <SearchCombobox
                     items={[
@@ -1194,6 +1202,7 @@ export default function Items() {
                     placeholder={t("inventoryMaster.items.natureFieldLabel")}
                   />
                 </Field>
+                )}
                 <Field label={t("pages.items.group")}>
                   <SearchCombobox items={[{ value: "", label: t("pages.items.noGroup") }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))} placeholder={t("pages.items.chooseGroup")} />
                 </Field>

@@ -1228,9 +1228,33 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
 
-    const noWh = lines.filter(l => l.itemId && !l.warehouseId);
+    // Load item metadata (type + per-item cost account). SERVICE items (خدمي)
+    // are handled SAP-style: they NEVER touch inventory/stock and their cost
+    // is debited to the item's own cost account (e.g. "مشاريع تحت التنفيذ")
+    // instead of a warehouse inventory account.
+    const lineItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const itemMetaRows = lineItemIds.length
+      ? await db.select({ id: itemsTable.id, type: itemsTable.itemType, costAcc: itemsTable.costAccountId })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
+      : [];
+    const itemTypeById = new Map<number, string>();
+    const costAccById  = new Map<number, number | null>();
+    for (const r of itemMetaRows) { itemTypeById.set(r.id, (r.type ?? "stock") as string); costAccById.set(r.id, r.costAcc ?? null); }
+    const isServiceLine = (l: any) => !!l.itemId && itemTypeById.get(l.itemId) === "service";
+
+    // Stock items still require a warehouse; SERVICE items must NOT have one.
+    const noWh = lines.filter(l => l.itemId && !l.warehouseId && !isServiceLine(l));
     if (noWh.length) {
       res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
+      return;
+    }
+
+    // Pre-validate SERVICE cost accounts BEFORE any stock mutation so a missing
+    // account fails fast without leaving partial stock movements behind.
+    const svcNoCost = lines.filter(l => isServiceLine(l) && Number(l.finalCost || l.unitPrice) > 0 && !costAccById.get(l.itemId as number));
+    if (svcNoCost.length) {
+      res.status(400).json({ error: `يجب تحديد حساب التكلفة للأصناف الخدمية قبل الترحيل: ${svcNoCost.map(l => l.itemName ?? `صنف #${l.itemId}`).join("، ")}` });
       return;
     }
 
@@ -1246,9 +1270,25 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
 
     // Update stock balance for each stockable line (in base units), accumulate inventory debit per warehouse
     const inventoryByWarehouse: Record<number, number> = {};
+    const serviceCostByAccount: Record<number, number> = {}; // SERVICE: cost → item.costAccountId
+    const serviceMissing: string[] = [];                     // SERVICE lines lacking a cost account
+    let serviceCostTotal = 0;
     const costRefreshItemIds = new Set<number>();
     for (const line of lines) {
-      if (!line.itemId || !line.warehouseId) continue;
+      if (!line.itemId) continue;
+      // SERVICE items: no stock movement; route their cost to the per-item
+      // cost account (e.g. مشاريع تحت التنفيذ). Uses the SAME cost formula as
+      // goods so the proportional inventory-debit split stays balanced.
+      if (isServiceLine(line)) {
+        const svcCost = Number(line.finalCost || line.unitPrice);
+        if (svcCost <= 0) continue;
+        const acc = costAccById.get(line.itemId) ?? null;
+        if (!acc) { serviceMissing.push(line.itemName ?? `صنف #${line.itemId}`); continue; }
+        serviceCostByAccount[acc] = (serviceCostByAccount[acc] ?? 0) + svcCost;
+        serviceCostTotal += svcCost;
+        continue;
+      }
+      if (!line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
       // Stock receives paid qty + free qty (supplier bonus units), but the
       // cost paid (finalCost) covers only the paid qty — so free units land
@@ -1360,41 +1400,76 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       }
       if (missingWh.length) missing.push(`حساب المخزون لـ: ${missingWh.join("، ")}`);
     }
+    // SERVICE items must carry a cost account (e.g. مشاريع تحت التنفيذ).
+    if (serviceMissing.length) missing.push(`حساب التكلفة للأصناف الخدمية: ${serviceMissing.join("، ")}`);
     if (missing.length) {
       throw new Error(`يجب تحديد الحسابات التالية قبل الترحيل: ${missing.join("، ")}`);
     }
 
     // Distribute landed-cost adjustment (LC expenses - discount on goods) proportionally over the warehouses,
     // so the per-warehouse inventory debits sum to inventoryDebit instead of just goods cost.
+    // SERVICE lines share the landed-cost adjustment proportionally too, so the
+    // ratio is taken over the COMBINED (goods + service) cost basis. Goods get
+    // warehouse-inventory debits; service gets per-item cost-account debits.
     const goodsCostTotal = Object.values(inventoryByWarehouse).reduce((s, v) => s + v, 0);
+    const allCostTotal   = goodsCostTotal + serviceCostTotal;
     const inventoryDebitByWh: Record<number, number> = {};
-    if (goodsCostTotal > 0) {
-      const ratio = inventoryDebit / goodsCostTotal;
+    const serviceDebitByAccount: Record<number, number> = {};
+    if (allCostTotal > 0) {
+      const ratio = inventoryDebit / allCostTotal;
       for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
         inventoryDebitByWh[Number(widStr)] = amt * ratio;
       }
-      // Fix rounding drift on the last warehouse so debits exactly balance
-      const sum = Object.values(inventoryDebitByWh).reduce((s, v) => s + v, 0);
+      for (const [accStr, amt] of Object.entries(serviceCostByAccount)) {
+        serviceDebitByAccount[Number(accStr)] = amt * ratio;
+      }
+      // Fix rounding drift so ALL debits (goods + service) exactly sum to
+      // inventoryDebit — prefer the last service account, else last warehouse.
+      const sum = Object.values(inventoryDebitByWh).reduce((s, v) => s + v, 0)
+                + Object.values(serviceDebitByAccount).reduce((s, v) => s + v, 0);
       const drift = inventoryDebit - sum;
       if (Math.abs(drift) > 0.001) {
-        const lastKey = Object.keys(inventoryDebitByWh).pop();
-        if (lastKey) inventoryDebitByWh[Number(lastKey)] += drift;
+        const svcKeys = Object.keys(serviceDebitByAccount);
+        if (svcKeys.length) serviceDebitByAccount[Number(svcKeys[svcKeys.length - 1])] += drift;
+        else {
+          const lastKey = Object.keys(inventoryDebitByWh).pop();
+          if (lastKey) inventoryDebitByWh[Number(lastKey)] += drift;
+        }
       }
     }
+    const servicePortionTotal = Object.values(serviceDebitByAccount).reduce((s, v) => s + v, 0);
 
     const desc = `قيد فاتورة مشتريات رقم ${inv.docNumber || inv.id}`;
+    // SERVICE cost debits (به: حساب تكلفة الصنف الخدمي) — appended to both the
+    // GRN and non-GRN debit sets. For GRN the clearing debit absorbs only the
+    // GOODS slice (inventoryDebit − servicePortionTotal).
+    const serviceDebitLines: JLine[] = Object.entries(serviceDebitByAccount)
+      .filter(([, amt]) => amt > 0)
+      .map(([accStr, amt]) => ({
+        accountId: Number(accStr),
+        debit: amt,
+        description: "تكلفة صنف خدمي",
+      }));
     const debitLines: JLine[] = grnSourced
-      ? [{ accountId: clearingAccId!, debit: inventoryDebit, description: "تسوية وسيط استلام البضاعة" }]
-      : Object.entries(inventoryDebitByWh)
-          .filter(([, amt]) => amt > 0)
-          .map(([widStr, amt]) => {
-            const wid = Number(widStr);
-            return {
-              accountId: whInfo[wid]!.accountId!,
-              debit: amt,
-              description: `قيمة البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
-            };
-          });
+      ? [
+          ...(inventoryDebit - servicePortionTotal > 0
+            ? [{ accountId: clearingAccId!, debit: inventoryDebit - servicePortionTotal, description: "تسوية وسيط استلام البضاعة" }]
+            : []),
+          ...serviceDebitLines,
+        ]
+      : [
+          ...Object.entries(inventoryDebitByWh)
+            .filter(([, amt]) => amt > 0)
+            .map(([widStr, amt]) => {
+              const wid = Number(widStr);
+              return {
+                accountId: whInfo[wid]!.accountId!,
+                debit: amt,
+                description: `قيمة البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+              };
+            }),
+          ...serviceDebitLines,
+        ];
     // Build credit lines. For LC-linked invoices, split the credit:
     //   - Goods portion → LC settlement account (clears the LC asset)
     //   - Expenses portion → each LC expense's clearing account

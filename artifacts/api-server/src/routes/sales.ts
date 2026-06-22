@@ -1129,23 +1129,33 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       notes: string | null;
       picks: BatchPick[] | null; // null = legacy single-row, [] = nothing to pick
     };
+    // Load per-item metadata once: batch mode (stock costing), item TYPE
+    // (service vs stock) and the per-item revenue account. SERVICE items (خدمي)
+    // are SAP-style — they NEVER affect stock/COGS and their revenue is credited
+    // to the item's own revenue account instead of the generic sales account.
+    const lineItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const itemMetaRows = lineItemIds.length
+      ? await db
+          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType, revAcc: itemsTable.revenueAccountId })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
+      : [];
+    const modeById = new Map<number, "none" | "fifo" | "fefo">();
+    const typeById = new Map<number, string>();
+    const revAccById = new Map<number, number | null>();
+    for (const r of itemMetaRows) {
+      const m = (r.mode ?? "none") as string;
+      modeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
+      typeById.set(r.id, (r.type ?? "stock") as string);
+      revAccById.set(r.id, r.revAcc ?? null);
+    }
+    const isServiceLine = (l: any) => !!l.itemId && typeById.get(l.itemId) === "service";
+
     const stockOps: StockOp[] = [];
     if (!gdnSourced) {
-      // Fetch batch_tracking_mode for every line item in one query.
-      const lineItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
-      const itemRows = lineItemIds.length
-        ? await db
-            .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
-            .from(itemsTable)
-            .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
-        : [];
-      const modeById = new Map<number, "none" | "fifo" | "fefo">();
-      for (const r of itemRows) {
-        const m = (r.mode ?? "none") as string;
-        modeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
-      }
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId) continue;
+        if (isServiceLine(line)) continue; // SERVICE items never move stock / accrue COGS
         const factor  = Number(line.conversionFactor || "1") || 1;
         // Free qty consumes inventory at the same avg cost as paid qty —
         // both legs add to COGS so the inventory credit matches the actual
@@ -1221,7 +1231,9 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     // GDN-sourced invoices — they post against Delivery Clearing instead.
     if (!gdnSourced) {
       if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
-      if (!cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
+      // COGS account only needed when there IS cost to book — an all-SERVICE
+      // invoice has zero COGS and must post without a configured COGS account.
+      if (totalCogs > 0 && !cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
       // Inventory account is taken from each warehouse, not the invoice. Verify every used warehouse has one.
       const missingWh: string[] = [];
       for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
@@ -1284,6 +1296,44 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     const grossSubtotalAmt = subtotalAmt + lineDiscountTotal;
     const discountAmt      = headerDiscAmt + lineDiscountTotal;
 
+    // SERVICE revenue routing: credit each service line's GROSS revenue
+    // (qty × unitPrice, pre-discount, VAT-exclusive) to the item's OWN revenue
+    // account; the remainder of gross revenue stays on the main sales account.
+    // Discount keeps flowing through the discount debit exactly as for goods,
+    // so total revenue credits still sum to grossSubtotalAmt (JE stays balanced).
+    const serviceRevenueByAccount: Record<number, number> = {};
+    for (const ln of lines) {
+      if (!isServiceLine(ln)) continue;
+      const acc = revAccById.get(ln.itemId as number) ?? null;
+      if (!acc) continue; // no per-item revenue account → falls into main sales revenue
+      const qty   = Number(ln.qty) || 0;
+      const price = Number(ln.unitPrice) || 0;
+      let gross = qty * price;
+      if (priceIncludesVat) {
+        const rate = (Number(ln.vatRate) || 0) / 100;
+        if (rate > -1) gross = gross / (1 + rate);
+      }
+      gross = Math.round(gross * 100) / 100;
+      if (gross <= 0) continue;
+      serviceRevenueByAccount[acc] = Math.round(((serviceRevenueByAccount[acc] ?? 0) + gross) * 100) / 100;
+    }
+    // `serviceRevenueByAccount` is the SINGLE SOURCE OF TRUTH for the service
+    // credit lines. Reconcile its sum against grossSubtotalAmt so that
+    // (mainRevenueAmt + Σ serviceRevenueByAccount) === grossSubtotalAmt EXACTLY
+    // → the JE always balances even under rounding. Service revenue is a subset
+    // of all lines so it can only overshoot by sub-cent rounding; if it does,
+    // trim the overflow off the last service account.
+    let serviceRevenueTotal = Math.round(Object.values(serviceRevenueByAccount).reduce((s, v) => s + v, 0) * 100) / 100;
+    if (serviceRevenueTotal > grossSubtotalAmt) {
+      const overflow = Math.round((serviceRevenueTotal - grossSubtotalAmt) * 100) / 100;
+      const keys = Object.keys(serviceRevenueByAccount);
+      const lastK = Number(keys[keys.length - 1]);
+      serviceRevenueByAccount[lastK] = Math.round((serviceRevenueByAccount[lastK] - overflow) * 100) / 100;
+      if (serviceRevenueByAccount[lastK] <= 0) delete serviceRevenueByAccount[lastK];
+      serviceRevenueTotal = Math.round(Object.values(serviceRevenueByAccount).reduce((s, v) => s + v, 0) * 100) / 100;
+    }
+    const mainRevenueAmt = Math.round((grossSubtotalAmt - serviceRevenueTotal) * 100) / 100;
+
     const partyAccountId =
       inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
       : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
@@ -1334,9 +1384,14 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
             // Debits
             { accountId: partyAccountId,        debit: totalAmt,    description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
             { accountId: discountAccId, debit: discountAmt, description: "خصم مسموح به" },
-            { accountId: cogsAccId,     debit: totalCogs,   description: "تكلفة البضاعة المباعة" },
-            // Credits
-            { accountId: salesAccId,     credit: grossSubtotalAmt, description: "إيراد المبيعات" },
+            // COGS only when there is cost (stock items); SERVICE-only invoices skip it.
+            ...(totalCogs > 0 ? [{ accountId: cogsAccId, debit: totalCogs, description: "تكلفة البضاعة المباعة" }] : []),
+            // Credits — main sales revenue (excl. service-routed revenue)
+            ...(mainRevenueAmt > 0 ? [{ accountId: salesAccId, credit: mainRevenueAmt, description: "إيراد المبيعات" }] : []),
+            // Service revenue → each service item's own revenue account (e.g. مشاريع تحت التنفيذ)
+            ...Object.entries(serviceRevenueByAccount)
+              .filter(([, amt]) => amt > 0)
+              .map(([accStr, amt]) => ({ accountId: Number(accStr), credit: amt, description: "إيراد صنف خدمي" })),
             { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
             // Inventory: one credit line per warehouse using its own GL account
             ...Object.entries(cogsByWarehouse)
