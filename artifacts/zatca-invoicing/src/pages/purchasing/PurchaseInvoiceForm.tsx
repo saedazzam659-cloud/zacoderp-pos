@@ -258,15 +258,20 @@ export default function PurchaseInvoiceForm() {
     const firstWh = lines.find(l => l.warehouseId)?.warehouseId;
     if (firstWh) setHeaderWarehouseId(String(firstWh));
   }, [isNew, lines, headerWarehouseId]);
-  const hasEmptyWarehouse = lines.some(l => !l.warehouseId);
+  // SERVICE items never touch stock → no warehouse, no batch/expiry. This helper
+  // lets the warehouse auto-fill / broadcast effects skip service lines and lets
+  // the line grid hide the warehouse + batch + expiry inputs for them.
+  const isServiceLine = (l: { itemId: string }) =>
+    (inventoryItems as any[]).some((i: any) => String(i.id) === l.itemId && i.itemType === "service");
+  const hasEmptyWarehouse = lines.some(l => !l.warehouseId && !isServiceLine(l));
   useEffect(() => {
     if (!headerWarehouseId || !hasEmptyWarehouse) return;
-    setLines(prev => prev.map(l => l.warehouseId ? l : { ...l, warehouseId: headerWarehouseId }));
+    setLines(prev => prev.map(l => (l.warehouseId || isServiceLine(l)) ? l : { ...l, warehouseId: headerWarehouseId }));
   }, [headerWarehouseId, hasEmptyWarehouse]);
   function applyHeaderWarehouse(v: string) {
     setHeaderWarehouseId(v);
     if (!v) return;
-    setLines(prev => prev.map(l => ({ ...l, warehouseId: v })));
+    setLines(prev => prev.map(l => isServiceLine(l) ? l : { ...l, warehouseId: v }));
   }
   // Header-level tax picker — dynamic tax catalog (الضرائب). Selecting a
   // percent tax broadcasts its rate to every line's editable vatRate. The
@@ -539,6 +544,7 @@ export default function PurchaseInvoiceForm() {
     }
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
+      const isService = item.itemType === "service";
       const updated: InvoiceLine = {
         ...l,
         itemId:    String(item.id),
@@ -549,6 +555,10 @@ export default function PurchaseInvoiceForm() {
         conversionFactor: String(base?.conversionFactor ?? "1"),
         unitPrice: trimTrailingZeros(chosenPrice),
         vatRate:   (item.vatRate != null && item.vatRate !== "" ? String(item.vatRate) : "15"),
+        // Service lines never hit inventory: drop warehouse + batch + expiry.
+        warehouseId: isService ? "" : l.warehouseId,
+        batchNumber: isService ? "" : l.batchNumber,
+        expiryDate:  isService ? "" : l.expiryDate,
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
@@ -1302,7 +1312,11 @@ export default function PurchaseInvoiceForm() {
                         <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
-                      {warehouses.length > 0 ? (
+                      {isServiceLine(l) ? (
+                        <div className="h-8 flex items-center justify-center rounded-md bg-muted/40 text-[11px] text-muted-foreground" title={t("inventoryMaster.items.serviceNoStockHint") as string}>
+                          {t("salesDocForm.serviceNoWarehouse")}
+                        </div>
+                      ) : warehouses.length > 0 ? (
                         <div className={cn("rounded-md", l.itemId && !l.warehouseId && "ring-1 ring-amber-400")}>
                           <SearchCombobox
                             items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn }))}
@@ -1352,10 +1366,18 @@ export default function PurchaseInvoiceForm() {
                         onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs bg-blue-50 text-blue-700" readOnly value={fmt(l.expenseShare)} />
                       <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.finalCost)} />
-                      <Input className="h-8 text-xs" placeholder="رقم الدفعة" value={l.batchNumber}
-                        onChange={e => updateLine(l._id, "batchNumber", e.target.value)} />
-                      <DateField className="h-8 text-xs" value={l.expiryDate}
-                        onChange={e => updateLine(l._id, "expiryDate", e.target.value)} />
+                      {isServiceLine(l) ? (
+                        <Input className="h-8 text-xs bg-muted/30" placeholder="—" readOnly />
+                      ) : (
+                        <Input className="h-8 text-xs" placeholder="رقم الدفعة" value={l.batchNumber}
+                          onChange={e => updateLine(l._id, "batchNumber", e.target.value)} />
+                      )}
+                      {isServiceLine(l) ? (
+                        <Input className="h-8 text-xs bg-muted/30" placeholder="—" readOnly />
+                      ) : (
+                        <DateField className="h-8 text-xs" value={l.expiryDate}
+                          onChange={e => updateLine(l._id, "expiryDate", e.target.value)} />
+                      )}
                       <Input className="h-8 text-xs" value={l.notes}
                         onChange={e => updateLine(l._id, "notes", e.target.value)} />
                       <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"

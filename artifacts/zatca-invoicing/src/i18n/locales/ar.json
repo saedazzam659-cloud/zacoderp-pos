@@ -410,6 +410,7 @@
     "colQty": "الكمية",
     "colFreeQty": "مجاني",
     "colFreeQtyHint": "كمية مجانية تخصم من المخزون بدون إضافتها لقيمة الفاتورة",
+    "serviceNoWarehouse": "خدمي (بدون مخزون)",
     "colPrice": "سعر البيع",
     "colDiscPct": "خصم%",
     "colDiscAmount": "قيمة الخصم",

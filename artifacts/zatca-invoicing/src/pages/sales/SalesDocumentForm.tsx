@@ -526,20 +526,25 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const wh = branchWarehouses.find((w: any) => w.isDefault) ?? branchWarehouses[0] ?? defaultWarehouse;
     if (wh) applyHeaderWarehouse(String(wh.id));
   }, [isNew, branchId, warehouses, headerWarehouseId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // SERVICE items never touch stock, so they must NOT carry a warehouse. This
+  // helper lets the warehouse auto-fill / broadcast effects skip service lines
+  // and lets the line grid hide the warehouse picker for them.
+  const isServiceLine = (l: { itemId: string }) =>
+    (inventoryItems as any[]).some((i: any) => String(i.id) === l.itemId && i.itemType === "service");
   useEffect(() => {
     if (isNew || headerWarehouseId) return;
     const firstWh = lines.find(l => l.warehouseId)?.warehouseId;
     if (firstWh) setHeaderWarehouseId(String(firstWh));
   }, [isNew, lines, headerWarehouseId]);
-  const hasEmptyWarehouse = lines.some(l => !l.warehouseId);
+  const hasEmptyWarehouse = lines.some(l => !l.warehouseId && !isServiceLine(l));
   useEffect(() => {
     if (!headerWarehouseId || !hasEmptyWarehouse) return;
-    setLines(prev => prev.map(l => l.warehouseId ? l : { ...l, warehouseId: headerWarehouseId }));
+    setLines(prev => prev.map(l => (l.warehouseId || isServiceLine(l)) ? l : { ...l, warehouseId: headerWarehouseId }));
   }, [headerWarehouseId, hasEmptyWarehouse]);
   function applyHeaderWarehouse(v: string) {
     setHeaderWarehouseId(v);
     if (!v) return;
-    setLines(prev => prev.map(l => ({ ...l, warehouseId: v })));
+    setLines(prev => prev.map(l => isServiceLine(l) ? l : { ...l, warehouseId: v }));
   }
   // Header-level tax picker — dynamic tax catalog (الضرائب). Selecting a
   // percent tax broadcasts its rate to every line's editable vatRate (which
@@ -919,6 +924,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         itemId:    String(item.id),
         itemName:  item.nameAr ?? "",
         itemCode:  item.code   ?? "",
+        // Service items never hit inventory → never inherit a warehouse.
+        warehouseId: item.itemType === "service" ? "" : l.warehouseId,
         unitId:    chosenUnitId ? String(chosenUnitId) : "",
         unit:      chosenUnitName,
         conversionFactor: String(chosenFactor),
@@ -1480,7 +1487,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
-                      {warehouses.length > 0 ? (
+                      {isServiceLine(l) ? (
+                        <div className="h-8 flex items-center justify-center rounded-md bg-muted/40 text-[11px] text-muted-foreground" title={t("inventoryMaster.items.serviceNoStockHint") as string}>
+                          {t("salesDocForm.serviceNoWarehouse")}
+                        </div>
+                      ) : warehouses.length > 0 ? (
                         <div className={cn("rounded-md", l.itemId && !l.warehouseId && "ring-1 ring-amber-400")}>
                           <SearchCombobox
                             items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn }))}
