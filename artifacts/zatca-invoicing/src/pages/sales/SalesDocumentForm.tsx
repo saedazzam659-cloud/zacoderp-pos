@@ -351,6 +351,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       const src = await r.json();
       setCustomerId(src.customerId ? String(src.customerId) : "");
+      if (usesBranch) setBranchId(src.branchId ? String(src.branchId) : "");
       setCurrencyCode(src.currencyCode ?? "SAR");
       setExchangeRate(String(src.exchangeRate ?? "1"));
       setPriceIncludesVat(!!src.priceIncludesVat);
@@ -825,6 +826,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, user, cid]);
 
+  // ── Convert a quotation → invoice (?fromQuotation=<id> on /new) ──
+  // The quotation is NOT marked "converted" here; that happens ONLY when the
+  // user SAVES the invoice (POST /sales-invoices carries sourceQuotationId and
+  // the server flips the quotation atomically). Abandoning this form therefore
+  // leaves the quotation untouched ("accepted") — exactly the requested flow.
+  const quotationSeedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew || !isInvoice || quotationSeedRef.current || !user) return;
+    const qid = new URLSearchParams(window.location.search).get("fromQuotation");
+    if (!qid) return;
+    quotationSeedRef.current = true;
+    (async () => {
+      await loadFromQuotation(qid);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("fromQuotation");
+      window.history.replaceState({}, "", url.toString());
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, isInvoice, user, cid]);
+
   function updateLine(id: string, field: keyof DocLine, value: string) {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l;
@@ -1279,9 +1300,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           if (!isValidSaudiVat(cust.vatNumber)) {
             reasons.push("رقم ضريبي سعودي صحيح (15 رقم يبدأ وينتهي بـ 3)");
           }
-          if (!String(cust.crNumber ?? "").trim()) {
-            reasons.push("رقم السجل التجاري");
-          }
+          // ملاحظة: رقم السجل التجاري لم يعد إجبارياً لحفظ الفاتورة الضريبية —
+          // الرقم الضريبي للعميل يكفي لتعريف المشتري في زاتكا (B2B). يُطبع
+          // السجل التجاري إن وُجد فقط.
           const addrMissing = missingNationalAddress(cust);
           if (addrMissing.length) {
             reasons.push(`العنوان الوطني (${addrMissing.join("، ")})`);
@@ -2179,7 +2200,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
         const crOk = cust ? !!String(cust.crNumber ?? "").trim() : false;
         const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
-        const standardReady = vatOk && crOk && addrMissing.length === 0;
+        // رقم السجل التجاري اختياري — لا يدخل في جاهزية الإرسال إلى زاتكا.
+        const standardReady = vatOk && addrMissing.length === 0;
         const isStd = invoiceType === "standard";
         const isSimp = invoiceType === "simplified";
         return (
@@ -2231,8 +2253,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         <div className={cn("flex items-center gap-1", vatOk ? "text-emerald-700" : "text-rose-700")}>
                           <span>{vatOk ? "✓" : "✗"}</span><span>رقم ضريبي سعودي صحيح (15 رقم)</span>
                         </div>
-                        <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-rose-700")}>
-                          <span>{crOk ? "✓" : "✗"}</span><span>رقم السجل التجاري</span>
+                        <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-muted-foreground")}>
+                          <span>{crOk ? "✓" : "•"}</span><span>رقم السجل التجاري (اختياري)</span>
                         </div>
                         <div className={cn("flex items-center gap-1", addrMissing.length === 0 ? "text-emerald-700" : "text-rose-700")}>
                           <span>{addrMissing.length === 0 ? "✓" : "✗"}</span>

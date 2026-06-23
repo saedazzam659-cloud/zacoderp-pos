@@ -121,19 +121,12 @@ export default function SalesQuotations() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  const convertMut = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`${API}/api/sales/sales-quotations/${id}/convert`, { method: "POST", headers });
-      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
-    },
-    onSuccess: (j) => {
-      invalidate();
-      qc.invalidateQueries({ queryKey: ["sales-invoices"] });
-      toast({ title: t("salesQuotations.toastConverted") });
-      navigate(`/sales/invoices/${j.invoice.id}`);
-    },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
-  });
+  // Converting no longer mints the invoice up-front. We navigate to the
+  // new-invoice form seeded from this quotation (?fromQuotation=<id>); the
+  // quotation is flipped to "converted" by the server ONLY when that invoice
+  // is actually SAVED (POST /sales-invoices carries sourceQuotationId). So a
+  // user who opens the form and backs out leaves the quotation "accepted".
+  const startConvert = (id: number) => navigate(`/sales/invoices/new?fromQuotation=${id}`);
 
   const deleteMut = useMutation({
     mutationFn: async (id: number) => {
@@ -874,7 +867,7 @@ ${sections}
                               {q.status === "accepted" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-primary"
                                   title={t("salesQuotations.actionConvert")}
-                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("salesQuotations.confirmConvert"))) convertMut.mutate(q.id); }}>
+                                  onClick={(e) => { e.stopPropagation(); startConvert(q.id); }}>
                                   <ArrowRightLeft className="h-3.5 w-3.5" />
                                 </Button>
                               )}
