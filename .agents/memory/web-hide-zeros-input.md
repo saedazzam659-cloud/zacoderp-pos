@@ -10,7 +10,15 @@ when the company's `companies.show_zeros` is off. Default off (= hide) for exist
 AND new companies. Toggle lives in General Settings (عرض الصفر / إخفاء الصفر).
 
 **Where the logic lives:** the SHARED `components/ui/input.tsx`. One change covers
-every screen using `<Input type="number">` (~72 files) — no per-form rollout.
+every screen using the shared `<Input>` — no per-form rollout.
+
+**A "numeric" field is NOT only `type="number"`.** The line-item grids
+(SalesDocumentForm / PurchaseDocumentForm — qty, freeQty, unitPrice, discount,
+discountAmount, vatRate) use `type="text" inputMode="numeric|decimal"` with a
+sanitizing onChange, NOT `type="number"`. The blank-zero condition must treat
+`inputMode==="numeric"||"decimal"` as numeric too, or invoice/order/quotation/return
+LINE zeros stay visible while the rest of the app hides them. (Route note:
+`/sales/invoices/new` → SalesInvoiceForm → re-exports `SalesDocumentForm mode="invoice"`.)
 
 **Why:** "across ALL screens" with least risk + consistency. Editing hundreds of
 inputs individually is error-prone; a single shared-component hook is uniform and

@@ -33,7 +33,15 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
     // `register()`, which passes no `value`) are read from the DOM on submit,
     // so we must never blank them — they're left exactly as-is.
     const isControlled = value !== undefined && typeof props.onChange === "function";
-    if (type === "number" && isControlled && !showZeros && isZeroValue(value)) {
+    // A "numeric" field is either type=number OR a type=text box that declares a
+    // numeric inputMode. The line-item grids (sales/purchase invoices, orders,
+    // quotations, returns) use `type="text" inputMode="numeric|decimal"` with a
+    // sanitizing onChange instead of type=number, so they must be covered too.
+    const isNumericField =
+      type === "number" ||
+      props.inputMode === "numeric" ||
+      props.inputMode === "decimal";
+    if (isNumericField && isControlled && !showZeros && isZeroValue(value)) {
       displayValue = "";
       // Faint "0" hint (placeholder:text-muted-foreground in the class list).
       if (displayPlaceholder == null) displayPlaceholder = "0";
