@@ -49,6 +49,10 @@ async function fetchSupplierDirectJeLines(
       date: journalEntriesTable.entryDate,
       docNumber: journalEntriesTable.docNumber,
       description: journalEntriesTable.description,
+      // The description the user actually wrote on the supplier (AP) line of
+      // this journal entry — what they expect to see in the statement's
+      // "الشرح" column, not the generic "قيد يومية يدوي" label.
+      lineDescription: journalEntryLinesTable.description,
       debit:  journalEntryLinesTable.debit,
       credit: journalEntryLinesTable.credit,
       entryType: journalEntriesTable.entryType,
@@ -57,7 +61,11 @@ async function fetchSupplierDirectJeLines(
     .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
     .where(and(...conds));
   return rows.map(r => ({
-    id: r.id, date: r.date, docNumber: r.docNumber, description: r.description,
+    id: r.id, date: r.date, docNumber: r.docNumber,
+    // Prefer the per-line description over the entry-level header description.
+    description: (r.lineDescription && r.lineDescription.trim()) ? r.lineDescription.trim()
+               : (r.description && r.description.trim()) ? r.description.trim()
+               : null,
     debit:  Number(r.debit  || 0),
     credit: Number(r.credit || 0),
     entryType: r.entryType,
@@ -408,6 +416,34 @@ router.get("/supplier-statement", async (req, res) => {
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, purchaseInvoicesTable.journalEntryId))
       .where(and(...invConds));
 
+    // Item names per invoice — used to fill the "الشرح" column from the
+    // purchase invoice itself (the substance of the document) when the user
+    // did not type a free-text note on the invoice header.
+    const invIds = invs.map(i => i.id);
+    const invItemNames = new Map<number, string>();
+    if (invIds.length) {
+      const liRows = await db.select({
+        invoiceId: purchaseInvoiceLinesTable.invoiceId,
+        itemName:  purchaseInvoiceLinesTable.itemName,
+      }).from(purchaseInvoiceLinesTable)
+        .where(and(
+          eq(purchaseInvoiceLinesTable.companyId, cid),
+          inArray(purchaseInvoiceLinesTable.invoiceId, invIds),
+        ))
+        .orderBy(asc(purchaseInvoiceLinesTable.id));
+      const grouped = new Map<number, string[]>();
+      for (const r of liRows) {
+        const nm = (r.itemName ?? "").trim();
+        if (!nm) continue;
+        const arr = grouped.get(r.invoiceId) ?? [];
+        arr.push(nm);
+        grouped.set(r.invoiceId, arr);
+      }
+      for (const [id, names] of grouped) {
+        invItemNames.set(id, Array.from(new Set(names)).join("، "));
+      }
+    }
+
     const retConds: any[] = [
       eq(purchaseReturnsTable.companyId, cid),
       eq(purchaseReturnsTable.supplierId, sid),
@@ -469,14 +505,19 @@ router.get("/supplier-statement", async (req, res) => {
     // their own debit/credit as posted.
     type Line = { id: number | null; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
-      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: withNote("فاتورة مشتريات آجلة", i.notes) })),
+      // Invoice "الشرح" loads from the purchase invoice itself: the user-typed
+      // header note when present, otherwise the item name(s) on the invoice.
+      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—") })),
       ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
       ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: withNote("سند صرف", p.notes) })),
+      // Manual / direct JE rows: show the actual journal-line text the user
+      // wrote (resolved in fetchSupplierDirectJeLines), falling back to a
+      // type-specific label only when the entry carries no description.
       ...jeLines.map(j => ({
         id: null, date: j.date, type: "journal", docNumber: null,
         journalEntryId: j.id, journalEntryNumber: j.docNumber,
         debit: j.debit, credit: j.credit,
-        description: jeLineLabel(j.entryType, j.description),
+        description: (j.description && j.description.trim()) ? j.description.trim() : jeLineLabel(j.entryType, null),
       })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
@@ -592,6 +633,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       discountAmount: purchaseInvoicesTable.discountAmount,
       priceIncludesVat: purchaseInvoicesTable.priceIncludesVat,
       paymentType: purchaseInvoicesTable.paymentType,
+      notes: purchaseInvoicesTable.notes,
     }).from(purchaseInvoicesTable).where(and(...invConds));
 
     const retConds: any[] = [
@@ -736,11 +778,19 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       ...invs.map(i => {
         const total = Number(i.total);
         const isCredit = i.paymentType === "credit";
+        // "الشرح" from source: typed header note → invoice item name(s) →
+        // generic payment-type label (matches /supplier-statement behavior).
+        const itemNames = Array.from(new Set(
+          (invLineMap.get(i.id) ?? [])
+            .map((l: any) => String(l.itemName ?? "").trim())
+            .filter(Boolean),
+        )).join("، ");
         return {
           id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber,
           debit: isCredit ? 0 : total,
           credit: total,
-          description: invDesc(i.paymentType),
+          description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim()
+                     : (itemNames || invDesc(i.paymentType)),
           paymentType: i.paymentType,
           vatAmount: Number(i.vatAmount || 0),
           discountAmount: Number(i.discountAmount || 0),
@@ -779,7 +829,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       )).map(j => ({
         id: j.id, date: j.date, type: "journal", docNumber: j.docNumber,
         debit: j.debit, credit: j.credit,
-        description: jeLineLabel(j.entryType, j.description),
+        description: (j.description && j.description.trim()) ? j.description.trim() : jeLineLabel(j.entryType, null),
         paymentType: null,
         meta: { entryType: j.entryType, description: j.description },
       })),
