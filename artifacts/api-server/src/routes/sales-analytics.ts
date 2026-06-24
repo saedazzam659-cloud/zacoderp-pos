@@ -379,6 +379,33 @@ router.get("/customer-statement", async (req, res) => {
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, salesInvoicesTable.journalEntryId))
       .where(and(...invConds));
 
+    // Item names per invoice — used to fill the "الشرح" column from the sales
+    // invoice itself when the user did not type a free-text header note.
+    const invIds = invs.map(i => i.id);
+    const invItemNames = new Map<number, string>();
+    if (invIds.length) {
+      const liRows = await db.select({
+        invoiceId: salesInvoiceLinesTable.invoiceId,
+        itemName:  salesInvoiceLinesTable.itemName,
+      }).from(salesInvoiceLinesTable)
+        .where(and(
+          eq(salesInvoiceLinesTable.companyId, cid),
+          inArray(salesInvoiceLinesTable.invoiceId, invIds),
+        ))
+        .orderBy(asc(salesInvoiceLinesTable.id));
+      const grouped = new Map<number, string[]>();
+      for (const r of liRows) {
+        const nm = (r.itemName ?? "").trim();
+        if (!nm) continue;
+        const arr = grouped.get(r.invoiceId) ?? [];
+        arr.push(nm);
+        grouped.set(r.invoiceId, arr);
+      }
+      for (const [id, names] of grouped) {
+        invItemNames.set(id, Array.from(new Set(names)).join("، "));
+      }
+    }
+
     const retConds: any[] = [
       eq(salesReturnsTable.companyId, cid),
       eq(salesReturnsTable.customerId, ccid),
@@ -429,7 +456,9 @@ router.get("/customer-statement", async (req, res) => {
 
     type Line = { id: number; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
-      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: withNote("فاتورة مبيعات آجلة", i.notes) })),
+      // Invoice "الشرح" loads from the sales invoice: the user-typed header
+      // note when present, otherwise the item name(s) on the invoice.
+      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—") })),
       ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes) })),
       ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: withNote("سند قبض", r.notes) })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
