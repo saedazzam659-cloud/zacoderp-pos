@@ -23,6 +23,24 @@ export const SEQUENCE_TX_TYPES = [
   "stock_count",
   "receipt_voucher",
   "payment_voucher",
+  // Per-payment-method numbering sub-types (opt-in). When a company configures
+  // a sequence bound to one of these, documents of that payment type draw from
+  // it instead of the unified base type; otherwise they fall back to the base
+  // type (`sales_invoice` / `purchase_invoice` / `receipt_voucher` /
+  // `payment_voucher`). Only the human-readable document number is affected —
+  // the ZATCA ICV/PIH cryptographic chain is NEVER split. Resolution lives in
+  // `nextSequenceForPayment` (api-server lib/sequences.ts). Vouchers have no
+  // credit variant (cash_payment_type enum = cash|bank).
+  "sales_invoice_cash",
+  "sales_invoice_credit",
+  "sales_invoice_bank",
+  "purchase_invoice_cash",
+  "purchase_invoice_credit",
+  "purchase_invoice_bank",
+  "receipt_voucher_cash",
+  "receipt_voucher_bank",
+  "payment_voucher_cash",
+  "payment_voucher_bank",
   "pos_receipt",
   // Production & Manufacturing — production_order is already issued by the
   // backend via nextSequenceNumber, declaring it here closes the type drift.

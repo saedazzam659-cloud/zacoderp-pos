@@ -20,7 +20,7 @@ import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, refreshItemCost } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { goodsReceiptsTable } from "@workspace/db";
 import { getReceivingClearingAccountId } from "./goodsReceipts.js";
@@ -1076,7 +1076,7 @@ router.post("/purchase-invoices", async (req, res) => {
     let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
     if (!resolvedDocNumber) {
       try {
-        resolvedDocNumber = await nextSequenceNumber(cid, "purchase_invoice", {
+        resolvedDocNumber = await nextSequenceForPayment(cid, "purchase_invoice", pType, {
           userId:   (req as any).authUser?.id ?? null,
           refTable: "purchase_invoices",
           branchId: branchId ? Number(branchId) : null,
@@ -2010,17 +2010,21 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
 
     // Issue a NEW invoice docNumber from the purchase_invoice sequence
     // (independent counter — orders and invoices have separate sequences).
+    // Normalise the payment type BEFORE issuing the number so the doc number's
+    // payment-split series matches the payment type the invoice is persisted
+    // with (legacy/null order paymentType persists as "credit" below — the
+    // sequence must resolve purchase_invoice_credit, not the base series).
+    const pType = ord.paymentType || "credit";
+
     let invDocNumber: string | null = null;
     try {
-      invDocNumber = await nextSequenceNumber(cid, "purchase_invoice", {
+      invDocNumber = await nextSequenceForPayment(cid, "purchase_invoice", pType, {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "purchase_invoices",
         branchId: ord.branchId ?? null,
         docDate:  ord.orderDate ?? null,
       });
     } catch { invDocNumber = null; }
-
-    const pType = ord.paymentType || "credit";
 
     // Currency conversion: when the PO is in a foreign currency, materialise
     // the resulting purchase invoice in the company's BASE currency by

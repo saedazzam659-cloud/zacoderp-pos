@@ -670,7 +670,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // the fetch — keeps the union type honest without runtime impact.
   const sequenceType: SequenceTxType = isOrder ? "sales_order" : "sales_invoice";
   const sequenceEnabled = (isInvoice || isOrder) && !editId;
-  const seqPeek = useNextSequenceNumber(sequenceType, sequenceEnabled, undefined, branchId);
+  const seqPeek = useNextSequenceNumber(sequenceType, sequenceEnabled, undefined, branchId, isInvoice ? paymentType : undefined);
   useEffect(() => {
     if (!sequenceEnabled) return;
     if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);

@@ -63,6 +63,14 @@ export function useNextSequenceNumber(
    *  at the start number while saves advance the real branch counter. Pass the
    *  form's selected branch here; omit/empty/0 → company-wide counter. */
   branchId?: number | string | null,
+  /** Optional payment method (cash | credit | bank). When the company has
+   *  opted into SEPARATE numbering per payment type, the badge must preview
+   *  the payment-specific series so it matches the number issuance will
+   *  actually persist. Re-fetches whenever it changes; the server falls back
+   *  to the unified base series when no split series is configured. Only
+   *  meaningful for sales_invoice / purchase_invoice / receipt_voucher /
+   *  payment_voucher — ignored (no-op) for every other tx type. */
+  paymentType?: string | null,
 ) {
   const [data, setData] = useState<PeekResult>({ number: null, hasSequence: false });
   const [loading, setLoading] = useState(false);
@@ -77,6 +85,7 @@ export function useNextSequenceNumber(
       if (date && date !== "") qs.set("date", date);
       const bid = branchId != null && branchId !== "" ? Number(branchId) : 0;
       if (Number.isFinite(bid) && bid > 0) qs.set("branchId", String(bid));
+      if (paymentType && paymentType !== "") qs.set("paymentType", String(paymentType));
       const q = qs.toString();
       const url = `${API_BASE}/api/sequences/peek/${txType}${q ? `?${q}` : ""}`;
       const r = await fetch(url, { headers: authHeaders() });
@@ -91,7 +100,7 @@ export function useNextSequenceNumber(
     } finally {
       if (my === seq.current) setLoading(false);
     }
-  }, [txType, enabled, date, branchId]);
+  }, [txType, enabled, date, branchId, paymentType]);
 
   useEffect(() => { refetch(); }, [refetch]);
 

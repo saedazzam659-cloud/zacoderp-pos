@@ -383,3 +383,82 @@ export async function nextSequenceOrFallback(
   if (fromSeq != null) return fromSeq;
   return await fallback();
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Per-payment-method numbering (opt-in)
+//
+// Companies may optionally configure SEPARATE numbering series per payment
+// method (cash / credit / bank). When such a series exists we draw the
+// human-readable document number from it; otherwise we transparently fall
+// back to the unified base series. This NEVER touches the ZATCA ICV/PIH
+// cryptographic chain — only the visible doc number is affected.
+//
+// Base types that support the split and their allowed payment methods:
+//   sales_invoice     → cash | credit | bank
+//   purchase_invoice  → cash | credit | bank
+//   receipt_voucher   → cash | bank          (vouchers have no credit)
+//   payment_voucher   → cash | bank
+// ──────────────────────────────────────────────────────────────────────────
+
+const PAYMENT_SPLIT_METHODS: Record<string, readonly string[]> = {
+  sales_invoice:    ["cash", "credit", "bank"],
+  purchase_invoice: ["cash", "credit", "bank"],
+  receipt_voucher:  ["cash", "bank"],
+  payment_voucher:  ["cash", "bank"],
+};
+
+/**
+ * Resolve the payment-specific sub-type for a base transaction type, or null
+ * when the combination is not a recognised split (so the caller uses the base
+ * type unchanged). Normalises the payment method and rejects unsupported
+ * pairings (e.g. a "credit" voucher).
+ */
+export function subTypeFor(
+  baseType: string,
+  paymentType: string | null | undefined,
+): string | null {
+  const pt = String(paymentType ?? "").trim().toLowerCase();
+  const allowed = PAYMENT_SPLIT_METHODS[baseType];
+  if (!allowed || !pt || !allowed.includes(pt)) return null;
+  return `${baseType}_${pt}`;
+}
+
+/**
+ * Generate the next document number honouring an OPTIONAL per-payment-method
+ * series. Tries the payment-specific sub-type first; if no active sequence is
+ * bound to it (returns null), falls back to the unified base type. Each branch
+ * is its own short transaction, and the sub-type attempt consumes nothing when
+ * it returns null — so there is no number/sequence gap on fallback.
+ *
+ * Returns null only when NEITHER the sub-type NOR the base type has an active
+ * sequence (i.e. the caller's legacy "no sequence configured" path).
+ */
+export async function nextSequenceForPayment(
+  companyId: number,
+  baseType: string,
+  paymentType: string | null | undefined,
+  ctx: NextSequenceCtx = {},
+): Promise<string | null> {
+  const sub = subTypeFor(baseType, paymentType);
+  if (sub) {
+    const fromSub = await nextSequenceNumber(companyId, sub, ctx);
+    if (fromSub != null) return fromSub;
+  }
+  return await nextSequenceNumber(companyId, baseType, ctx);
+}
+
+/**
+ * Same as {@link nextSequenceForPayment} but falls back to the supplied legacy
+ * generator when no sequence (sub-type or base) is configured.
+ */
+export async function nextSequenceForPaymentOrFallback(
+  companyId: number,
+  baseType: string,
+  paymentType: string | null | undefined,
+  ctx: NextSequenceCtx,
+  fallback: () => string | Promise<string>,
+): Promise<string> {
+  const fromSeq = await nextSequenceForPayment(companyId, baseType, paymentType, ctx);
+  if (fromSeq != null) return fromSeq;
+  return await fallback();
+}

@@ -10,7 +10,7 @@ import {
 import { eq, and, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -186,7 +186,7 @@ router.post("/", async (req, res) => {
   if (d.code) {
     code = String(d.code);
   } else {
-    const seq = await nextSequenceNumber(cid, "payment_voucher", {
+    const seq = await nextSequenceForPayment(cid, "payment_voucher", d.paymentType || "cash", {
       branchId: d.branchId ? parseInt(d.branchId) : null,
       userId:   (req as any).authUser?.id ?? null,
       refTable: "payment_vouchers",

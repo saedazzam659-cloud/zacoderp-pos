@@ -122,7 +122,7 @@ export default function PaymentVoucherForm() {
   const [entityMode, setEntityMode] = useState<"party" | "account">("party");
 
   // ── Sequence preview for new vouchers ───────────────────────────
-  const seqPeek = useNextSequenceNumber("payment_voucher", isNew);
+  const seqPeek = useNextSequenceNumber("payment_voucher", isNew, undefined, undefined, form.paymentType);
 
   // ── Data fetches ─────────────────────────────────────────────────
   const { data: cashBoxes = [] } = useQuery<any[]>({

@@ -10,6 +10,7 @@ import {
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requireAdminRole, audit } from "../middleware/permissions.js";
+import { subTypeFor } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -137,93 +138,113 @@ router.get("/peek/:txType", async (req: any, res) => {
   const dateSource = cfgRows.rows?.[0]?.sequence_date_source ?? "system";
   const effectiveDate = resolveEffectiveDateForPreview(dateSource, previewDate);
 
-  // ORDER BY puts scoped matches first so a "FY 2026 override" sequence
-  // wins over a tenant's existing universal sequence for documents that
-  // belong to 2026 — matching the resolution logic in nextSequenceNumber.
-  const rows = await db.execute<{
-    id: number;
-    prefix: string | null; start_number: number; current_number: number;
-    end_number: number; pad_length: number | null; code: string;
-    month_pattern: string | null; monthly_reset: boolean;
-  }>(sql`
-    SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern, monthly_reset
-    FROM sequences
-    WHERE company_id = ${cid}
-      AND is_active = true
-      AND transaction_types ? ${txType}
-      AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
-    ORDER BY
-      CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
-      id ASC
-    LIMIT 1
-  `);
-  const seq = rows.rows?.[0];
-  if (!seq) { res.json({ number: null, hasSequence: false }); return; }
-
-  // Resolve the counter BUCKET this preview belongs to — IDENTICAL to the
-  // issuance helper:
-  //   • monthly_reset OFF → the single continuous "" sentinel row.
-  //   • monthly_reset ON  → the per-month "YYYY-MM" row for the previewed date.
-  const monthlyReset  = seq.monthly_reset === true;
-  const previewPeriod = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, "0")}`;
-  const counterPeriod = monthlyReset ? previewPeriod : "";
-
-  // Pull the bucket counter (if any) and an "any counter exists?" flag in a
-  // single round-trip. The flag drives the non-reset seeding heuristic.
-  const counterRows = await db.execute<{
-    bucket_current: number | null; any_exists: boolean;
-  }>(sql`
-    SELECT
-      (SELECT current_number FROM sequence_counters
-        WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ${counterPeriod}) AS bucket_current,
-      EXISTS(SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}) AS any_exists
-  `);
-  const cRow = counterRows.rows?.[0];
-  const bucketCurrent = cRow?.bucket_current ?? null;
-  const anyExists     = !!cRow?.any_exists;
-
-  let previewNumber: number;
-  if (bucketCurrent != null) {
-    // Bucket already exists — preview its running number directly.
-    previewNumber = bucketCurrent;
-  } else if (monthlyReset) {
-    // No counter for this month yet — mirror the helper's seed: start_number,
-    // but never below what was already issued this month (logs) nor below a
-    // legacy "" row being adopted on a monthly_reset toggle. (Read-only: the
-    // preview never retires the legacy row — only the real issuance does.)
-    let seed = seq.start_number;
-    const renderedPrefix = `${seq.prefix ?? ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
-    const escaped = renderedPrefix.replace(/([\\%_])/g, "\\$1");
-    const logRows = await db.execute<{ mx: number | null }>(sql`
-      SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::int) AS mx
-      FROM sequence_logs
-      WHERE sequence_id = ${seq.id}
-        AND generated_number LIKE ${escaped + "%"} ESCAPE '\\'
+  // Resolve the preview for a SINGLE transaction type. Extracted so the
+  // opt-in per-payment-method split can try the payment-specific sub-type
+  // first and transparently fall back to the unified base type when no
+  // sub-type series is configured. Returns null when no active sequence is
+  // bound to the type (caller then tries the next candidate).
+  async function resolveForType(qType: string): Promise<{
+    number: string | null; hasSequence: true; sequenceCode: string;
+    branchId: number; exhausted: boolean;
+  } | null> {
+    // ORDER BY puts scoped matches first so a "FY 2026 override" sequence
+    // wins over a tenant's existing universal sequence for documents that
+    // belong to 2026 — matching the resolution logic in nextSequenceNumber.
+    const rows = await db.execute<{
+      id: number;
+      prefix: string | null; start_number: number; current_number: number;
+      end_number: number; pad_length: number | null; code: string;
+      month_pattern: string | null; monthly_reset: boolean;
+    }>(sql`
+      SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern, monthly_reset
+      FROM sequences
+      WHERE company_id = ${cid}
+        AND is_active = true
+        AND transaction_types ? ${qType}
+        AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
+      ORDER BY
+        CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
+        id ASC
+      LIMIT 1
     `);
-    const logMax = logRows.rows?.[0]?.mx ?? null;
-    if (logMax != null) seed = Math.max(seed, logMax + 1);
-    const legacyRows = await db.execute<{ current_number: number; last_period: string | null }>(sql`
-      SELECT current_number, last_period FROM sequence_counters
-      WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ''
+    const seq = rows.rows?.[0];
+    if (!seq) return null;
+
+    // Resolve the counter BUCKET this preview belongs to — IDENTICAL to the
+    // issuance helper:
+    //   • monthly_reset OFF → the single continuous "" sentinel row.
+    //   • monthly_reset ON  → the per-month "YYYY-MM" row for the previewed date.
+    const monthlyReset  = seq.monthly_reset === true;
+    const previewPeriod = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, "0")}`;
+    const counterPeriod = monthlyReset ? previewPeriod : "";
+
+    // Pull the bucket counter (if any) and an "any counter exists?" flag in a
+    // single round-trip. The flag drives the non-reset seeding heuristic.
+    const counterRows = await db.execute<{
+      bucket_current: number | null; any_exists: boolean;
+    }>(sql`
+      SELECT
+        (SELECT current_number FROM sequence_counters
+          WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ${counterPeriod}) AS bucket_current,
+        EXISTS(SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}) AS any_exists
     `);
-    const legacy = legacyRows.rows?.[0];
-    if (legacy && (legacy.last_period == null || legacy.last_period === counterPeriod)) {
-      seed = Math.max(seed, legacy.current_number);
+    const cRow = counterRows.rows?.[0];
+    const bucketCurrent = cRow?.bucket_current ?? null;
+    const anyExists     = !!cRow?.any_exists;
+
+    let previewNumber: number;
+    if (bucketCurrent != null) {
+      // Bucket already exists — preview its running number directly.
+      previewNumber = bucketCurrent;
+    } else if (monthlyReset) {
+      // No counter for this month yet — mirror the helper's seed: start_number,
+      // but never below what was already issued this month (logs) nor below a
+      // legacy "" row being adopted on a monthly_reset toggle. (Read-only: the
+      // preview never retires the legacy row — only the real issuance does.)
+      let seed = seq.start_number;
+      const renderedPrefix = `${seq.prefix ?? ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+      const escaped = renderedPrefix.replace(/([\\%_])/g, "\\$1");
+      const logRows = await db.execute<{ mx: number | null }>(sql`
+        SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::int) AS mx
+        FROM sequence_logs
+        WHERE sequence_id = ${seq.id}
+          AND generated_number LIKE ${escaped + "%"} ESCAPE '\\'
+      `);
+      const logMax = logRows.rows?.[0]?.mx ?? null;
+      if (logMax != null) seed = Math.max(seed, logMax + 1);
+      const legacyRows = await db.execute<{ current_number: number; last_period: string | null }>(sql`
+        SELECT current_number, last_period FROM sequence_counters
+        WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ''
+      `);
+      const legacy = legacyRows.rows?.[0];
+      if (legacy && (legacy.last_period == null || legacy.last_period === counterPeriod)) {
+        seed = Math.max(seed, legacy.current_number);
+      }
+      previewNumber = seed;
+    } else {
+      // Non-reset, no "" row yet — identical to the pre-period seeding rule.
+      previewNumber = anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number);
     }
-    previewNumber = seed;
-  } else {
-    // Non-reset, no "" row yet — identical to the pre-period seeding rule.
-    previewNumber = anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number);
+
+    const exhausted = previewNumber > seq.end_number;
+    return {
+      number: exhausted ? null : fmt(seq.prefix, previewNumber, seq.pad_length, seq.month_pattern, effectiveDate),
+      hasSequence: true,
+      sequenceCode: seq.code,
+      branchId: branchKey,
+      exhausted,
+    };
   }
 
-  const exhausted = previewNumber > seq.end_number;
-  res.json({
-    number: exhausted ? null : fmt(seq.prefix, previewNumber, seq.pad_length, seq.month_pattern, effectiveDate),
-    hasSequence: true,
-    sequenceCode: seq.code,
-    branchId: branchKey,
-    exhausted,
-  });
+  // Opt-in per-payment-method split: when the client passes ?paymentType= and
+  // the (base, paymentType) pair maps to a configured sub-type series, preview
+  // THAT series; otherwise fall back to the unified base type. Mirrors the
+  // issuance-time resolution in `nextSequenceForPayment`.
+  const sub = subTypeFor(txType, req.query?.paymentType as string | undefined);
+  let result = sub ? await resolveForType(sub) : null;
+  if (!result) result = await resolveForType(txType);
+  if (!result) { res.json({ number: null, hasSequence: false }); return; }
+  res.json(result);
 });
 
 // ─── Admin-only management endpoints ───────────────────────────────────────
@@ -468,6 +489,85 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
     });
 
     res.status(result.status).json(result.body);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── SEED PER-PAYMENT-METHOD SPLIT SERIES ─────────────────────────────────────
+// POST /api/sequences/seed-payment-split
+// One-click helper that creates the OPT-IN per-payment-method numbering series
+// (sales/purchase invoices: نقدي/آجل/بنكي ; vouchers: نقدي/بنكي) with sensible
+// default prefixes. Fully idempotent: a sub-type that already has an ACTIVE
+// sequence is skipped, so re-running never duplicates. Codes are made unique
+// per company. The user can freely edit prefix/start/padding afterwards from
+// the normal sequence editor.
+const SPLIT_DEFAULTS: ReadonlyArray<{ type: string; code: string; nameAr: string; nameEn: string; prefix: string }> = [
+  { type: "sales_invoice_cash",     code: "SINV-CASH",   nameAr: "فاتورة مبيعات - نقدي",   nameEn: "Sales Invoice - Cash",      prefix: "SC-"  },
+  { type: "sales_invoice_credit",   code: "SINV-CREDIT", nameAr: "فاتورة مبيعات - آجل",    nameEn: "Sales Invoice - Credit",    prefix: "SA-"  },
+  { type: "sales_invoice_bank",     code: "SINV-BANK",   nameAr: "فاتورة مبيعات - بنكي",   nameEn: "Sales Invoice - Bank",      prefix: "SB-"  },
+  { type: "purchase_invoice_cash",  code: "PINV-CASH",   nameAr: "فاتورة مشتريات - نقدي",  nameEn: "Purchase Invoice - Cash",   prefix: "PC-"  },
+  { type: "purchase_invoice_credit",code: "PINV-CREDIT", nameAr: "فاتورة مشتريات - آجل",   nameEn: "Purchase Invoice - Credit", prefix: "PA-"  },
+  { type: "purchase_invoice_bank",  code: "PINV-BANK",   nameAr: "فاتورة مشتريات - بنكي",  nameEn: "Purchase Invoice - Bank",   prefix: "PB-"  },
+  { type: "receipt_voucher_cash",   code: "RV-CASH",     nameAr: "سند قبض - نقدي",         nameEn: "Receipt Voucher - Cash",    prefix: "RC-"  },
+  { type: "receipt_voucher_bank",   code: "RV-BANK",     nameAr: "سند قبض - بنكي",         nameEn: "Receipt Voucher - Bank",    prefix: "RB-"  },
+  { type: "payment_voucher_cash",   code: "PV-CASH",     nameAr: "سند صرف - نقدي",         nameEn: "Payment Voucher - Cash",    prefix: "PYC-" },
+  { type: "payment_voucher_bank",   code: "PV-BANK",     nameAr: "سند صرف - بنكي",         nameEn: "Payment Voucher - Bank",    prefix: "PYB-" },
+];
+
+router.post("/seed-payment-split", audit("sequences", "create"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+
+    const result = await db.transaction(async (tx) => {
+      // Serialize against concurrent create/seed so two admins can't both pass
+      // the "no active sequence for this sub-type" check and double-insert.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${SEQ_LOCK_NS}, ${cid})`);
+
+      // Snapshot existing codes once so we can mint unique ones in-memory.
+      const existing = await tx.select({ code: sequencesTable.code })
+        .from(sequencesTable).where(eq(sequencesTable.companyId, cid));
+      const usedCodes = new Set(existing.map(r => String(r.code)));
+      const uniqueCode = (base: string): string => {
+        if (!usedCodes.has(base)) { usedCodes.add(base); return base; }
+        for (let i = 2; ; i++) {
+          const c = `${base}-${i}`;
+          if (!usedCodes.has(c)) { usedCodes.add(c); return c; }
+        }
+      };
+
+      const created: string[] = [];
+      const skipped: string[] = [];
+      for (const d of SPLIT_DEFAULTS) {
+        // Idempotent: skip sub-types that already have an ACTIVE sequence.
+        const dup = await tx.execute<{ id: number }>(sql`
+          SELECT id FROM sequences
+          WHERE company_id = ${cid} AND is_active = true AND transaction_types ? ${d.type}
+          LIMIT 1
+        `);
+        if (dup.rows?.length) { skipped.push(d.type); continue; }
+
+        await tx.insert(sequencesTable).values({
+          companyId:        cid,
+          code:             uniqueCode(d.code),
+          nameAr:           d.nameAr,
+          nameEn:           d.nameEn,
+          prefix:           d.prefix,
+          monthPattern:     null,
+          startNumber:      1,
+          endNumber:        999999,
+          currentNumber:    1,
+          padLength:        4,
+          isActive:         true,
+          monthlyReset:     false,
+          transactionTypes: [d.type],
+          branchIds:        [],
+          fiscalPeriodIds:  [],
+        });
+        created.push(d.type);
+      }
+      return { created, skipped };
+    });
+
+    res.status(201).json({ ...result, createdCount: result.created.length });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

@@ -151,7 +151,7 @@ export default function ReceiptVoucherForm() {
   }, [fp, entityMode, isNew]);
 
   // ── Sequence preview for new vouchers ───────────────────────────
-  const seqPeek = useNextSequenceNumber("receipt_voucher", isNew);
+  const seqPeek = useNextSequenceNumber("receipt_voucher", isNew, undefined, undefined, form.paymentType);
 
   // ── Data fetches ─────────────────────────────────────────────────
   const { data: cashBoxes = [] } = useQuery<any[]>({

@@ -127,8 +127,8 @@ export default function PurchaseInvoiceForm() {
   // are per-(sequence, branch), so omitting branchId reads the empty branch-0
   // sentinel and the badge freezes at the start number while saves advance the
   // real branch counter.
-  const seqPeek = useNextSequenceNumber("purchase_invoice", isNew, undefined, branchId);
   const [paymentType,  setPaymentType]  = useState("credit");
+  const seqPeek = useNextSequenceNumber("purchase_invoice", isNew, undefined, branchId, paymentType);
   const [cashBoxId,    setCashBoxId]    = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
   const [currencyCode, setCurrencyCode] = useState("");

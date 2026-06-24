@@ -82,4 +82,7 @@ export const sequencesApi = {
                       request<SequenceRow>("POST", `/sequences/${id}/reset`, opts),
   logs:             (id: number, limit = 50) => request<SequenceLogRow[]>("GET", `/sequences/${id}/logs?limit=${limit}`),
   transactionTypes: () => request<string[]>("GET", "/sequences/transaction-types"),
+  seedPaymentSplit: () =>
+    request<{ created: string[]; skipped: string[]; createdCount: number }>(
+      "POST", "/sequences/seed-payment-split", {}),
 };

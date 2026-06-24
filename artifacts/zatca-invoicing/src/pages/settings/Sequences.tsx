@@ -21,7 +21,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, RefreshCcw, ListOrdered, History, AlertTriangle, X, ChevronsUpDown, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, RefreshCcw, ListOrdered, History, AlertTriangle, X, ChevronsUpDown, Search, Layers } from "lucide-react";
 
 const EMPTY_FORM = {
   code: "",
@@ -479,6 +479,21 @@ export default function Sequences() {
     onError:    (e: any) => { setResetId(null); setResetAck(false); errToast(e); },
   });
 
+  const seedSplit = useMutation({
+    mutationFn: () => sequencesApi.seedPaymentSplit(),
+    onSuccess:  (r) => {
+      inv();
+      toast({
+        title: t("sequences.seedSplitDone"),
+        description: t("sequences.seedSplitResult", {
+          created: r.createdCount,
+          skipped: r.skipped.length,
+        }),
+      });
+    },
+    onError:    (e: any) => errToast(e),
+  });
+
   function reset() {
     setForm(EMPTY_FORM);
     setEditingId(null);
@@ -576,9 +591,19 @@ export default function Sequences() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">{t("sequences.subtitle")}</p>
         </div>
-        <Button onClick={openNew} data-testid="button-new-sequence">
-          <Plus className="w-4 h-4 me-1" /> {t("sequences.new")}
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            onClick={() => seedSplit.mutate()}
+            disabled={seedSplit.isPending}
+            data-testid="button-seed-payment-split"
+          >
+            <Layers className="w-4 h-4 me-1" /> {t("sequences.seedSplit")}
+          </Button>
+          <Button onClick={openNew} data-testid="button-new-sequence">
+            <Plus className="w-4 h-4 me-1" /> {t("sequences.new")}
+          </Button>
+        </div>
       </div>
 
       <Card>

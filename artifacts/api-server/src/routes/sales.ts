@@ -25,7 +25,7 @@ import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type BatchPick } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
 import { salesInvoiceRowToZatcaData } from "../lib/zatca-sales-mapper.js";
@@ -839,7 +839,7 @@ router.post("/sales-invoices", async (req, res) => {
     // value or null (legacy free-numbering behaviour).
     let resolvedDocNumber: string | null;
     try {
-      const fromSeq = await nextSequenceNumber(cid, "sales_invoice", {
+      const fromSeq = await nextSequenceForPayment(cid, "sales_invoice", pType, {
         userId:   req.authUser?.id ?? null,
         refTable: "sales_invoices",
         branchId: branchId ? Number(branchId) : null,
