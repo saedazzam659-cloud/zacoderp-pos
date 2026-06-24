@@ -111,6 +111,26 @@ export const employeesApi = {
   disburseLoan: (id: number, data: { cashBoxId?: number | null; bankAccountId?: number | null }) =>
     req<any>("POST", `/employees/loans/${id}/disburse`, data),
 
+  // Custody / Imprest (العُهد) — NOT salary-deducted
+  custodies:   (params: { employeeId?: number; status?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.employeeId) qs.set("employeeId", String(params.employeeId));
+    if (params.status) qs.set("status", params.status);
+    const q = qs.toString(); return req<any[]>("GET", `/hr/custodies${q ? `?${q}` : ""}`);
+  },
+  addCustody:    (data: any) => req<any>("POST", "/hr/custodies", data),
+  updateCustody: (id: number, data: any) => req<any>("PUT", `/hr/custodies/${id}`, data),
+  deleteCustody: (id: number) => req<any>("DELETE", `/hr/custodies/${id}`),
+  disburseCustody: (id: number, data: { cashBoxId?: number | null; bankAccountId?: number | null }) =>
+    req<any>("POST", `/hr/custodies/${id}/disburse`, data),
+  custodySettlements: (id: number) => req<any[]>("GET", `/hr/custodies/${id}/settlements`),
+  addCustodySettlement: (id: number, data: { settleDate: string; amount: number; expenseAccountId: number; description?: string; invoiceNumber?: string }) =>
+    req<any>("POST", `/hr/custodies/${id}/settlements`, data),
+  deleteCustodySettlement: (id: number, sid: number) =>
+    req<any>("DELETE", `/hr/custodies/${id}/settlements/${sid}`),
+  returnCustody: (id: number, data: { amount?: number; returnDate?: string; cashBoxId?: number | null; bankAccountId?: number | null; description?: string }) =>
+    req<any>("POST", `/hr/custodies/${id}/return`, data),
+
   // EOS payment (creates JE)
   payEos: (empId: number, data: { amount: number; payDate: string; cashBoxId?: number | null; bankAccountId?: number | null; useProvision?: boolean; description?: string; endEmployment?: boolean }) =>
     req<any>("POST", `/employees/${empId}/eos-pay`, data),

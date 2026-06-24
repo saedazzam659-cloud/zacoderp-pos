@@ -120,6 +120,7 @@ import Employees from "@/pages/hr/Employees";
 import EmployeeContracts from "@/pages/hr/EmployeeContracts";
 import Attendance from "@/pages/hr/Attendance";
 import EmployeeLoans from "@/pages/hr/EmployeeLoans";
+import EmployeeCustodies from "@/pages/hr/EmployeeCustodies";
 import Payroll from "@/pages/hr/Payroll";
 import AllContracts from "@/pages/hr/AllContracts";
 import EndOfService from "@/pages/hr/EndOfService";
@@ -684,6 +685,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/contracts"               module="hr_employees"   component={AllContracts} />}
             {!isSuperAdmin && <PermRoute path="/hr/attendance"              module="hr_attendance"  component={Attendance} />}
             {!isSuperAdmin && <PermRoute path="/hr/loans"                   module="hr_loans"       component={EmployeeLoans} />}
+            {!isSuperAdmin && <PermRoute path="/hr/custody"                 module="hr_loans"       component={EmployeeCustodies} />}
             {!isSuperAdmin && <PermRoute path="/hr/payroll"                 module="hr_payroll"     component={Payroll} />}
             {!isSuperAdmin && <PermRoute path="/hr/end-of-service"          module="hr_eos"         component={EndOfService} />}
             {!isSuperAdmin && <PermRoute path="/hr/calculators"             module="hr_calculators" component={HRCalculators} />}

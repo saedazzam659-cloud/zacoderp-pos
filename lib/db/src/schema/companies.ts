@@ -144,6 +144,7 @@ export const companiesTable = pgTable("companies", {
   hrGosiPayableAccountId:        integer("hr_gosi_payable_account_id"),
   hrOtherDeductionsAccountId:    integer("hr_other_deductions_account_id"),
   hrEmployeeLoansAccountId:      integer("hr_employee_loans_account_id"),
+  hrEmployeeCustodyAccountId:    integer("hr_employee_custody_account_id"),
   hrEosProvisionAccountId:       integer("hr_eos_provision_account_id"),
   hrDefaultPayCashBoxId:         integer("hr_default_pay_cashbox_id"),
   hrDefaultPayBankAccountId:     integer("hr_default_pay_bank_account_id"),

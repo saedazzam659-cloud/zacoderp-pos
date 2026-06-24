@@ -4,6 +4,7 @@
 - [Atomic claim-and-post in PG](atomic-claim-post.md) — conditional UPDATE alone is NOT enough; the SET must flip the gating column or two concurrent callers both win.
 - [Gated download URL exposure](gated-download-url.md) — metered downloads must return the resource URL ONLY from the consuming /claim step, never from the metadata/release endpoint.
 - [Module gate keys live in two places](module-gate-sync.md) — backend `COMPANY_MODULE_GATE` (permissions.ts) AND frontend group-perms arrays in `Layout.tsx` must both list any new module key, or sidebar/company-toggle silently breaks.
+- [Employee Custody module](employee-custody-module.md) — SAP imprest, separate from loans (not salary-deducted), COA 11082, reuses hr_loans permKey; mutating endpoints need FOR UPDATE row lock + per-company FK validation.
 - [POS Desktop new-screen wiring](pos-desktop-screen-wiring.md) — a new PosShell screen needs View type + nav + permission + the render branch in the content switch; the render branch is the one tsc won't catch.
 - [POS Desktop tabbed shell gating](pos-desktop-tabbed-shell.md) — keep-alive tabs preserve state; gating must PRUNE openTabs, not just redirect active view, or disabled modules stay reachable via tab chips.
 - [POS Desktop cross-tab dataBus](pos-desktop-cross-tab-databus.md) — lib emits via emitData(channels), screens useDataRefresh(channels) & fire while hidden; a screen's channels must cover EVERY entity its refresh() reads (invoice admins read financialTx → need "vouchers"); one bus only.

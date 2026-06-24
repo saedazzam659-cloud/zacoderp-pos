@@ -329,7 +329,7 @@ export default function EmployeeLoans() {
             </Field>
             <Field label={tr("fieldType")}>
               <SearchCombobox
-                items={Object.entries(TYPES).map(([k, v]) => ({ value: k, label: v }))}
+                items={Object.entries(TYPES).filter(([k]) => k !== "advance").map(([k, v]) => ({ value: k, label: v }))}
                 value={form.loanType}
                 onValueChange={(v) => setForm({ ...form, loanType: v })}
                 placeholder={tr("chooseType")}

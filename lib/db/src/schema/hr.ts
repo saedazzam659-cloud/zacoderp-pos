@@ -211,6 +211,44 @@ export const employeeLoansTable = pgTable("employee_loans", {
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });
 
+// ─── Employee Custody / Imprest (العُهد) ─────────────────────────────────────
+// A custody is an amount advanced to an employee to spend on the company's
+// behalf, SETTLED by submitting expense/invoice lines (NOT deducted from
+// salary). Lifecycle: create → disburse (DR custody / CR cash|bank) →
+// settle expenses (DR expense / CR custody) → return remaining (DR cash|bank /
+// CR custody). status: active | settled | cancelled.
+export const employeeCustodiesTable = pgTable("employee_custodies", {
+  id:             serial("id").primaryKey(),
+  companyId:      integer("company_id").references(() => companiesTable.id).notNull(),
+  branchId:       integer("branch_id").references(() => branchesTable.id),
+  employeeId:     integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  custodyDate:    date("custody_date").notNull(),
+  amount:         decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  settledAmount:  decimal("settled_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  returnedAmount: decimal("returned_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  purpose:        text("purpose"),
+  notes:          text("notes"),
+  status:         text("status").notNull().default("active"),
+  custodyAccountId:      integer("custody_account_id").references(() => accountsTable.id),
+  disbursementJournalId: integer("disbursement_journal_id"),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+  updatedAt:      timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const employeeCustodySettlementsTable = pgTable("employee_custody_settlements", {
+  id:             serial("id").primaryKey(),
+  companyId:      integer("company_id").references(() => companiesTable.id).notNull(),
+  custodyId:      integer("custody_id").references(() => employeeCustodiesTable.id, { onDelete: "cascade" }).notNull(),
+  settleDate:     date("settle_date").notNull(),
+  kind:           text("kind").notNull().default("expense"), // expense | return
+  expenseAccountId: integer("expense_account_id").references(() => accountsTable.id),
+  amount:         decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  description:    text("description"),
+  invoiceNumber:  text("invoice_number"),
+  journalId:      integer("journal_id"),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+});
+
 export const payrollRunsTable = pgTable("payroll_runs", {
   id:             serial("id").primaryKey(),
   companyId:      integer("company_id").references(() => companiesTable.id).notNull(),

@@ -1038,6 +1038,17 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultCoaRow[] = [
     "reportDirection": "balance_sheet"
   },
   {
+    "code": "11082",
+    "nameAr": "عُهد الموظفين",
+    "nameEn": "Employee Custody / Imprest",
+    "accountType": "asset",
+    "parentCode": "1108",
+    "level": 4,
+    "isPosting": true,
+    "isActive": true,
+    "reportDirection": "balance_sheet"
+  },
+  {
     "code": "22021",
     "nameAr": "مخصص مكافأة نهاية الخدمة",
     "nameEn": "EOS Provision",
