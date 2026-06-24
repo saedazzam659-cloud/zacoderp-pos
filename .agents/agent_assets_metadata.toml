@@ -311,3 +311,21 @@ id = "hCNK-gGuKfgBMmtbXB1TP"
 uri = "file://dist/exports/zacoderp-database.sql.gz"
 type = "unspecified"
 title = "نسخة قاعدة البيانات (zacoderp-database.sql.gz)"
+
+[[outputs]]
+id = "tvLDbUC2joeSM51h6jCmM"
+uri = "file://delivery/zatca-erp-source.tar.gz"
+type = "unspecified"
+title = "السورس كود الكامل (شامل برنامج الويندوز POS)"
+
+[[outputs]]
+id = "7WpQV2Nay7FkKGyRbtc0S"
+uri = "file://delivery/database-full.sql.gz"
+type = "unspecified"
+title = "نسخة قاعدة البيانات الكاملة (257 جدول)"
+
+[[outputs]]
+id = "Gw45Athmh-A0hKfpV037s"
+uri = "file://delivery/INSTALL-VPS-GoDaddy.md"
+type = "text"
+title = "دليل التركيب على VPS GoDaddy"
