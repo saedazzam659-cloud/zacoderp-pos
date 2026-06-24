@@ -11,6 +11,7 @@ import { Page, Card, Field, ErrorMsg, input, btnPrimary, btnSecondary, btnDanger
 import {
   getCompanyProfile, setCompanyProfile, safeLogoSrc,
   DECIMALS_MIN, DECIMALS_MAX, DECIMALS_DEFAULT, LOGO_MAX_BASE64_CHARS,
+  getHideZeros, setHideZeros,
 } from "../lib/appSettings";
 
 export default function SettingsGuide() {
@@ -20,6 +21,7 @@ export default function SettingsGuide() {
   const [cr, setCr] = useState("");
   const [phone, setPhone] = useState("");
   const [decimals, setDecimals] = useState<number>(DECIMALS_DEFAULT);
+  const [hideZeros, setHideZerosState] = useState<boolean>(true);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -32,6 +34,7 @@ export default function SettingsGuide() {
     setCr(p.cr);
     setPhone(p.phone);
     setDecimals(p.decimals);
+    setHideZerosState(getHideZeros());
   }, []);
 
   function onPickLogo(e: React.ChangeEvent<HTMLInputElement>) {
@@ -71,6 +74,7 @@ export default function SettingsGuide() {
     setErr(null);
     const dp = Math.min(DECIMALS_MAX, Math.max(DECIMALS_MIN, Math.floor(Number(decimals) || 0)));
     setCompanyProfile({ logo, name, vat, cr, phone, decimals: dp });
+    setHideZeros(hideZeros);
     setDecimals(dp);
     setSaved(true);
   }
@@ -160,6 +164,19 @@ export default function SettingsGuide() {
         </div>
         <span style={{ fontSize: 12, color: "#64748b" }}>
           يُطبّق على عرض وطباعة كل المبالغ في البرنامج (القيود، الفواتير، التقارير).
+        </span>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={hideZeros}
+            onChange={(e) => { setHideZerosState(e.target.checked); setSaved(false); }}
+            style={{ width: 18, height: 18, cursor: "pointer" }}
+          />
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#0f172a" }}>إخفاء الأصفار في حقول الإدخال</span>
+        </label>
+        <span style={{ fontSize: 12, color: "#64748b" }}>
+          عند التفعيل تظهر خانات الأرقام فارغة بدلاً من الصفر (٠) في الفواتير والأصناف، فيكتب المستخدم الرقم مباشرةً دون مسح الصفر. مُفعّلة افتراضياً.
         </span>
       </Card>
 

@@ -21,6 +21,7 @@ const LS_VAT = "pos_desktop_company_vat";
 const LS_CR = "pos_desktop_company_cr";
 const LS_PHONE = "pos_desktop_company_phone";
 const LS_DECIMALS = "pos_desktop_decimal_places";
+const LS_HIDE_ZEROS = "pos_desktop_hide_zeros";
 
 export const DECIMALS_MIN = 0;
 export const DECIMALS_MAX = 6;
@@ -140,6 +141,43 @@ export function useDecimals(): number {
     };
   }, []);
   return dp;
+}
+
+// ─── Hide-zeros preference ───────────────────────────────────────────
+// When ON (the default for fresh installs) numeric input fields render BLANK
+// instead of a literal 0, so the user types over an empty box rather than
+// fighting a leading zero. Stored "1"/"0"; absent key ⇒ ON.
+export function getHideZeros(): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = localStorage.getItem(LS_HIDE_ZEROS);
+  if (raw == null) return true;
+  return raw === "1";
+}
+
+export function setHideZeros(on: boolean): void {
+  writeKey(LS_HIDE_ZEROS, on ? "1" : "0");
+  window.dispatchEvent(new Event(EVT));
+}
+
+/** Live hide-zeros flag — re-renders when toggled in الإعدادات. */
+export function useHideZeros(): boolean {
+  const [v, setV] = useState<boolean>(() => getHideZeros());
+  useEffect(() => {
+    const refresh = () => setV(getHideZeros());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return v;
+}
+
+/** Input-value helper: returns "" for a zero amount when `hide` is on. */
+export function blankIfZero(n: number | string | null | undefined, hide: boolean): number | string {
+  if (!hide) return n ?? 0;
+  return Number(n) === 0 ? "" : (n ?? 0);
 }
 
 // ─── Tauri SQLite mirror (fire-and-forget) ───────────────────────────

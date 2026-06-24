@@ -13,7 +13,7 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
-import { getCompanyProfile } from "../lib/appSettings";
+import { getCompanyProfile, useHideZeros, blankIfZero } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -34,7 +34,7 @@ import { isZatcaCountry, bridgeSalesInvoiceToZatca } from "../lib/zatcaBridge";
 import { setSalesReturnPrefill } from "../lib/returnPrefill";
 import { type WindowsView } from "../lib/moduleRegistry";
 
-type FLine = SalesLine & DiscFields;
+type FLine = SalesLine & DiscFields & { unitKey?: string };
 
 export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: WindowsView) => void }) {
   const [rows, setRows] = useState<SalesInvoice[]>([]);
@@ -129,14 +129,18 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
     } catch (e: any) { setErr(e?.message ?? "تعذّر طباعة الفاتورة"); }
     finally { setBusyId(null); }
   }
+  async function reloadDeps() {
+    const [customers, cashBoxes, banks, items, warehouses, salespersons] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listSalespersons(false)]);
+    setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
+  }
   useEffect(() => {
     void refresh();
-    void (async () => {
-      const [customers, cashBoxes, banks, items, warehouses, salespersons] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listSalespersons(false)]);
-      setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
-    })();
+    void reloadDeps();
   }, []);
   useDataRefresh(["invoices", "vouchers"], refresh);
+  // Keep the item/customer pickers live: another tab adding an item or customer
+  // emits on these channels, so reload deps without a manual app refresh.
+  useDataRefresh(["items", "customers"], reloadDeps);
 
   const zatca = isZatcaCountry();
   const columns = useMemo<GridColumn<SalesInvoice>[]>(() => {
@@ -409,6 +413,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   onCancel: () => void; onDone: () => void;
 }) {
   const isEdit = !!initial;
+  const hideZeros = useHideZeros();
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
@@ -439,6 +444,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const blankLine = (): FLine => ({
     itemId: 0, qty: 1, unitPrice: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
+    unitKey: "base",
   });
   // Stored line unitPrice is already NET (discount baked in at create) — the
   // pre-discount breakdown isn't round-tripped, so edit re-opens with disc=0.
@@ -514,22 +520,30 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
     setLines((ls) => ls.map((l, k) => {
       if (k !== i) return l;
       const next = { ...l, ...patch };
-      // Auto-fill sale price + vat from the chosen item, and default its unit.
+      // Auto-fill sale price + vat from the chosen item, and reset to its BASE
+      // unit (the item's own additional units appear in the unit picker below).
       if (patch.itemId !== undefined) {
         const it = deps.items.find((x) => x.id === Number(patch.itemId));
         if (it) {
-          if (!next.unitPrice) next.unitPrice = it.salePrice ?? 0;
+          next.unitKey = "base";
+          next.unitPrice = it.salePrice ?? 0;
           next.vatRate = it.vatRate ?? 0;
-          if (it.uomId != null) {
-            const u = uoms.find((x) => x.id === it.uomId);
-            if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
-          }
+          const bu = it.uomId != null ? uoms.find((x) => x.id === it.uomId) : defUom;
+          next.uomId = bu?.id ?? null; next.uomName = bu?.nameAr ?? null; next.conversionFactor = bu?.baseQty ?? 1;
         }
       }
-      // Unit change: price stays per SELECTED unit; factor only affects stock/COGS.
-      if (patch.uomId !== undefined) {
-        const u = uoms.find((x) => x.id === Number(patch.uomId));
-        if (u) { next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
+      // Unit change via the per-item picker. Picking an ADDITIONAL unit auto-fills
+      // its own price + conversion factor; the BASE unit restores the base price.
+      if (patch.unitKey !== undefined) {
+        const it = deps.items.find((x) => x.id === Number(next.itemId));
+        if (patch.unitKey.startsWith("add:") && it) {
+          const u = it.units?.find((x) => x.id === patch.unitKey!.slice(4));
+          if (u) { next.uomId = null; next.uomName = u.name; next.conversionFactor = u.factor; next.unitPrice = u.price; }
+        } else {
+          const bu = it?.uomId != null ? uoms.find((x) => x.id === it.uomId) : defUom;
+          next.uomId = bu?.id ?? null; next.uomName = bu?.nameAr ?? null; next.conversionFactor = bu?.baseQty ?? 1;
+          if (it) next.unitPrice = it.salePrice ?? 0;
+        }
       }
       // A selected header tax overrides any per-item/per-line rate so one tax
       // applies to the whole invoice.
@@ -798,7 +812,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         <thead><tr>
           <Th style={{ width: 44, textAlign: "center" }}>#</Th>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
-          <Th style={{ width: 130 }}>الوحدة</Th>
+          <Th style={{ minWidth: 180 }}>الوحدة</Th>
           <Th style={{ width: 180, textAlign: "center" }}>الكمية</Th>
           <Th style={{ width: 80, textAlign: "center" }}>مجاني</Th>
           <Th style={{ width: 240, textAlign: "center" }}>سعر الوحدة</Th>
@@ -825,17 +839,31 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
                 />
               </Td>
               <Td>
-                <SearchCombobox
-                  value={l.uomId ?? 0}
-                  onChange={(v) => setLine(i, { uomId: Number(v) })}
-                  {...navCombo}
-                  style={input}
-                  options={uoms.map((u) => ({ value: u.id, label: u.baseQty !== 1 ? `${u.nameAr} (×${u.baseQty})` : u.nameAr }))}
-                />
+                {(() => {
+                  const selItem = deps.items.find((x) => x.id === l.itemId);
+                  const baseName = selItem?.uomId != null
+                    ? (uoms.find((u) => u.id === selItem.uomId)?.nameAr ?? "")
+                    : (defUom?.nameAr ?? "");
+                  const unitOpts = selItem
+                    ? [
+                        { value: "base", label: baseName || "أساسي" },
+                        ...((selItem.units ?? []).map((u) => ({ value: `add:${u.id}`, label: `${u.name} (×${u.factor})` }))),
+                      ]
+                    : [{ value: "base", label: defUom?.nameAr ?? "" }];
+                  return (
+                    <SearchCombobox
+                      value={l.unitKey ?? "base"}
+                      onChange={(v) => setLine(i, { unitKey: String(v) })}
+                      {...navCombo}
+                      style={input}
+                      options={unitOpts}
+                    />
+                  );
+                })()}
               </Td>
-              <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-              <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
-              <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
+              <Td><input type="number" step="0.001" value={blankIfZero(l.qty, hideZeros)} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
+              <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+              <Td><input type="number" step="0.01" value={blankIfZero(l.unitPrice, hideZeros)} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
               <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
               <Td><input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} /></Td>

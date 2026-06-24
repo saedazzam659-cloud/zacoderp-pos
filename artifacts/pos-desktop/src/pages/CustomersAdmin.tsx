@@ -9,7 +9,7 @@ import {
 import { listCurrencies, listAccounts, type Currency, type Account } from "../lib/accounting";
 import { listBranches, type Branch } from "../lib/branches";
 import { SearchCombobox, ExportButtons } from "./_adminUi";
-import { useDataRefresh } from "../lib/dataBus";
+import { useDataRefresh, emitData } from "../lib/dataBus";
 
 const emptyInput: CreateCustomerInput = {
   nameAr: "", nameEn: "", phone: "", vatNumber: "",
@@ -115,6 +115,7 @@ export default function CustomersAdmin() {
         });
         setToast({ kind: "ok", text: "تم تحديث العميل" });
       }
+      emitData("customers");
       setEdit(null); await refresh();
     } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
     finally { setBusy(false); }
@@ -124,7 +125,7 @@ export default function CustomersAdmin() {
 
   async function handleDelete(c: LocalCustomer) {
     if (!confirm(`حذف العميل «${c.nameAr}»؟`)) return;
-    try { await deleteCustomer(c.id); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
+    try { await deleteCustomer(c.id); emitData("customers"); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
     catch (e: any) { setToast({ kind: "err", text: e?.message ?? "فشل الحذف" }); }
   }
 

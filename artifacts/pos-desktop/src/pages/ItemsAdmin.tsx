@@ -2,7 +2,6 @@
 // Uses lib/items.ts + lib/uom.ts.
 
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { getTaxRate } from "../lib/taxSettings";
 import {
   listItems, createItem, updateItem, deleteItem, bulkImportLocalItems, updateItemExtended, updateItemWeighed,
   type LocalItem, type CreateItemInput, type ItemUnit,
@@ -14,7 +13,8 @@ import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
 import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
-import { useDataRefresh } from "../lib/dataBus";
+import { useDataRefresh, emitData } from "../lib/dataBus";
+import { useHideZeros, blankIfZero } from "../lib/appSettings";
 
 // ─── Excel-like grid: column defs, filtering, sorting, export ───────
 type ColKey = "name" | "qty" | "barcode" | "code" | "price" | "vat" | "source";
@@ -407,7 +407,7 @@ export default function ItemsAdmin() {
 
   async function handleDelete(it: LocalItem) {
     if (!confirm(`حذف الصنف «${it.nameAr}»؟`)) return;
-    try { await deleteItem(it.id); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
+    try { await deleteItem(it.id); emitData("items"); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
     catch (e: any) { setToast({ kind: "err", text: e?.message ?? "فشل الحذف" }); }
   }
 
@@ -925,6 +925,7 @@ function ImportCsvModal({
       }
     }
     setImporting(false);
+    if (created > 0) emitData("items");
     const parts = [`تم استيراد ${created} صنف`];
     if (skippedDup.length) parts.push(`تم تجاهل ${skippedDup.length} مكرر`);
     if (failed) parts.push(`فشل ${failed}`);
@@ -1034,13 +1035,14 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
 }) {
   const uoms = listUom();
   const itemGroups = listItemGroups();
+  const hideZeros = useHideZeros();
   const [form, setForm] = useState<CreateItemInput>({
     code: initial?.code ?? "",
     nameAr: initial?.nameAr ?? "",
     nameEn: initial?.nameEn ?? "",
     barcode: initial?.barcode ?? "",
     salePrice: initial?.salePrice ?? 0,
-    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : getTaxRate()),
+    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 0),
     uomId: initial?.uomId ?? getDefaultUom()?.id ?? null,
     groupId: initial?.groupId ?? null,
     nature: initial?.nature ?? "stock",
@@ -1150,6 +1152,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           batchNo: form.batchNo || null,
         });
       }
+      emitData("items");
       onSaved(initial ? "تم تحديث الصنف" : "تم إضافة الصنف");
     } catch (e: any) {
       // Tauri commands reject with a bare STRING; collapsing it into a generic
@@ -1223,13 +1226,13 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           </Field>
 
           <Field label={form.isWeighed ? "سعر البيع (يُستبدل بـ السعر/كجم)" : "سعر البيع *"}>
-            <input type="number" step="0.01" min="0" value={form.salePrice}
+            <input type="number" step="0.01" min="0" value={blankIfZero(form.salePrice, hideZeros)}
                    disabled={!!form.isWeighed}
                    onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) })}
                    style={{ ...S.input, opacity: form.isWeighed ? 0.5 : 1 }} />
           </Field>
           <Field label="نسبة الضريبة %">
-            <input type="number" step="0.5" min="0" max="100" value={form.vatRate} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) })} style={S.input} />
+            <input type="number" step="0.5" min="0" max="100" value={form.vatRate || ""} placeholder="0" onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) || 0 })} style={S.input} />
           </Field>
         </div>
 
@@ -1245,7 +1248,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
         {form.isWeighed && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Field label={`السعر للكيلو (${currencySymbol()} / كجم) *`}>
-              <input type="number" step="0.01" min="0" value={form.pricePerKg ?? 0}
+              <input type="number" step="0.01" min="0" value={blankIfZero(form.pricePerKg ?? 0, hideZeros)}
                      onChange={(e) => setForm({ ...form, pricePerKg: Number(e.target.value) })}
                      style={S.input} />
             </Field>
