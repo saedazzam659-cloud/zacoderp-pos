@@ -1,7 +1,7 @@
 // Centralized Sequence Management screen (مسلسل الحركات).
 // Admins-only. CRUD on sequences + reset action + quick logs viewer.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -407,6 +407,17 @@ export default function Sequences() {
   const [resetId, setResetId]     = useState<number | null>(null);
   const [resetAck, setResetAck]   = useState(false);
   const [logsId,  setLogsId]      = useState<number | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
+
+  // When the inline add/edit form opens, jump straight to it so the user
+  // doesn't have to scroll down past the (often long) sequences table.
+  useEffect(() => {
+    if (showForm) {
+      requestAnimationFrame(() => {
+        formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [showForm, editingId]);
 
   const { data: rows = [], isLoading } = useQuery<SequenceRow[]>({
     queryKey: ["sequences", cid],
@@ -705,7 +716,7 @@ export default function Sequences() {
 
       {/* ─── Inline Create / Edit form (replaces popup) ───────────────────── */}
       {showForm && (
-        <Card className="border-primary/40" data-testid="inline-form-sequence">
+        <Card ref={formRef} className="border-primary/40 scroll-mt-20" data-testid="inline-form-sequence">
           <CardHeader className="pb-3 flex flex-row items-start justify-between gap-3 space-y-0">
             <div>
               <CardTitle className="text-base">
