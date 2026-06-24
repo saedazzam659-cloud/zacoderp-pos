@@ -10,6 +10,7 @@ import { moduleAudit, requireModulePermission } from "../middleware/permissions.
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
+import { nextSequenceNumber } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -304,8 +305,15 @@ router.post("/:id/generate", async (req, res) => {
       }
 
       const jeStatus = await resolvePostingStatus(cid, "adjustment");
+      // JE draws its own continuous "journal_entry" number (null when no active
+      // sequence — preserves prior numberless behavior).
+      const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+        userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+        branchId: null, docDate: isoDate,
+      })) ?? null;
       const [entry] = await db.insert(journalEntriesTable).values({
         companyId:   cid,
+        docNumber:   jeDocNumber,
         entryDate:   isoDate,
         description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
         entryType:   adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
@@ -388,8 +396,14 @@ router.post("/run-due", async (req, res) => {
         if (!writability.ok) { skipped.push({ ym, reason: writability.reason }); continue; }
 
         const jeStatus = await resolvePostingStatus(cid, "adjustment");
+        // JE draws its own continuous "journal_entry" number (null when no
+        // active sequence — preserves prior numberless behavior).
+        const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+          userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+          branchId: null, docDate: isoDate,
+        })) ?? null;
         const [entry] = await db.insert(journalEntriesTable).values({
-          companyId: cid, entryDate: isoDate,
+          companyId: cid, docNumber: jeDocNumber, entryDate: isoDate,
           description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
           entryType: adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
           status: jeStatus,

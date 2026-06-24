@@ -624,10 +624,16 @@ router.patch("/:id/post", async (req, res) => {
         throw err;
       }
       const grStatus = await resolvePostingStatus(cid, "goodsReceipt");
+      // JE draws its own continuous "journal_entry" number; the GRN number
+      // stays in the description + source link. Falls back to the GRN number.
+      const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+        userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+        branchId: gr.branchId ?? null, docDate: gr.receiptDate as any,
+      })) ?? (gr.docNumber ?? null);
       const [entry] = await tx.insert(journalEntriesTable).values({
         companyId:    cid,
         branchId:     gr.branchId ?? null,
-        docNumber:    gr.docNumber ?? null,
+        docNumber:    jeDocNumber,
         entryDate:    gr.receiptDate,
         currency:     "SAR",
         exchangeRate: gr.exchangeRate ?? "1",

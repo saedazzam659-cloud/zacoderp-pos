@@ -95,9 +95,21 @@ export async function createJournalEntry(opts: {
   const auditFields = opts.audit?.req
     ? fullAuditFor(opts.audit.req as any, jeStatus)
     : (opts.audit ?? {});
+  // The journal entry draws its OWN continuous number from the "journal_entry"
+  // sequence — independent of the source document's number. The source number
+  // stays in the description + the source.jeId link, so traceability and
+  // unposting are unaffected. Falls back to the source docNumber when no active
+  // "journal_entry" sequence is configured (back-compat).
+  const seqDocNumber = await nextSequenceNumber(opts.companyId, "journal_entry", {
+    userId:   (opts.audit?.req as any)?.authUser?.id ?? null,
+    refTable: "journal_entries",
+    branchId: opts.branchId ?? null,
+    docDate:  opts.date,
+  });
+  const jeDocNumber = seqDocNumber ?? (opts.docNumber ?? null);
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId: opts.companyId, branchId: opts.branchId ?? null,
-    docNumber: opts.docNumber ?? null, entryDate: opts.date,
+    docNumber: jeDocNumber, entryDate: opts.date,
     currency: "SAR", exchangeRate: opts.exchangeRate ?? "1",
     description: opts.description, entryType: opts.entryType ?? "general",
     status: jeStatus,

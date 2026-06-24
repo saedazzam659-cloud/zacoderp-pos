@@ -41,6 +41,7 @@ import {
 import { resolvePostingStatus } from "./postingStatus.js";
 import { resolveCashAccount } from "./hr-journals.js";
 import { assertWritableForDate } from "./periodGuard.js";
+import { nextSequenceNumber } from "./sequences.js";
 
 type DbOrTx = typeof db;
 
@@ -159,10 +160,15 @@ export async function buildAcquisitionJournal(
   const acqW = await assertWritableForDate(cid, acqDate);
   if (!acqW.ok) throw new Error(acqW.reason);
   const desc = `اقتناء أصل ثابت: ${a.nameAr} (${a.code})`;
+  // JE draws its own continuous "journal_entry" number; asset code stays in the
+  // description + source link. Falls back to the asset code.
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: null, refTable: "journal_entries", branchId: a.branchId ?? null, docDate: acqDate,
+  })) ?? a.code;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: a.branchId ?? null,
-    docNumber: a.code,
+    docNumber: jeDocNumber,
     entryDate: acqDate,
     currency: "SAR",
     exchangeRate: "1",
@@ -220,10 +226,14 @@ export async function buildDepreciationRunJournal(
   const depW = await assertWritableForDate(cid, entryDate);
   if (!depW.ok) throw new Error(depW.reason);
   const desc = `إهلاك شهري ${period} — ${a.nameAr} (${a.code})`;
+  // JE draws its own continuous "journal_entry" number; falls back to DEP-*.
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: null, refTable: "journal_entries", branchId: a.branchId ?? null, docDate: entryDate,
+  })) ?? `DEP-${a.code}-${run.periodYear}${String(run.periodMonth).padStart(2, "0")}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: a.branchId ?? null,
-    docNumber: `DEP-${a.code}-${run.periodYear}${String(run.periodMonth).padStart(2, "0")}`,
+    docNumber: jeDocNumber,
     entryDate,
     currency: "SAR",
     exchangeRate: "1",
@@ -306,10 +316,15 @@ export async function buildDisposalJournal(
 
   const dispW = await assertWritableForDate(cid, d.disposalDate);
   if (!dispW.ok) throw new Error(dispW.reason);
+  // JE draws its own continuous "journal_entry" number; disposal code stays in
+  // the description + source link. Falls back to the disposal code.
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: null, refTable: "journal_entries", branchId: a.branchId ?? null, docDate: d.disposalDate,
+  })) ?? d.code;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: a.branchId ?? null,
-    docNumber: d.code,
+    docNumber: jeDocNumber,
     entryDate: d.disposalDate,
     currency: "SAR",
     exchangeRate: "1",

@@ -1196,8 +1196,14 @@ router.post("/stock-transfers/:id/post", async (req, res) => {
       if (fromAcc && toAcc && fromAcc !== toAcc && totalAmount > 0) {
         const desc = `تحويل مخزني ${tr.transferNumber}${tr.notes ? " - " + tr.notes : ""}`;
         const jeStatus = await resolvePostingStatus(cid, "stockMovement");
+        // JE draws its own continuous "journal_entry" number; the transfer
+        // number stays in the description + source link. Falls back to it.
+        const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+          userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+          branchId: (tr as any).branchId ?? null, docDate: tr.transferDate as any,
+        })) ?? tr.transferNumber;
         const [entry] = await tx.insert(journalEntriesTable).values({
-          companyId: cid, docNumber: tr.transferNumber, entryDate: tr.transferDate,
+          companyId: cid, docNumber: jeDocNumber, entryDate: tr.transferDate,
           currency: "SAR", exchangeRate: "1",
           description: desc, entryType: "stock_transfer",
           status: jeStatus,
@@ -1369,9 +1375,15 @@ router.post("/stock-adjustments/:id/post", async (req, res) => {
     const writability = await assertWritableForDate(cid, adj.adjustmentDate);
     if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
     const jeStatus = await resolvePostingStatus(cid, "stockMovement");
+    // JE draws its own continuous "journal_entry" number; the adjustment
+    // number stays in the description + source link. Falls back to ADJ-JE-*.
+    const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+      userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+      branchId: (adj as any).branchId ?? null, docDate: adj.adjustmentDate as any,
+    })) ?? `ADJ-JE-${adj.adjustmentNumber}`;
     const [je] = await db.insert(journalEntriesTable).values({
       companyId: cid,
-      docNumber: `ADJ-JE-${adj.adjustmentNumber}`,
+      docNumber: jeDocNumber,
       entryDate: adj.adjustmentDate,
       description: `قيد تسوية مخزنية: ${adj.adjustmentNumber}${adj.reason ? " — " + adj.reason : ""}`,
       entryType: "stock_adjustment",

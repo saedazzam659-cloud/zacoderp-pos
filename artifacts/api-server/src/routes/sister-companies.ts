@@ -387,8 +387,12 @@ router.post("/transfers/:id/post", async (req, res) => {
 
   const desc = `تحويل لشركة شقيقة ${tr.transferNumber} - ${sister.nameAr}`;
   const jeStatus = await resolvePostingStatus(cid, "stockMovement");
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+    branchId: tr.branchId ?? null, docDate: tr.transferDate as any,
+  })) ?? tr.transferNumber;
   const [entry] = await db.insert(journalEntriesTable).values({
-    companyId: cid, branchId: tr.branchId ?? null, docNumber: tr.transferNumber, entryDate: tr.transferDate as any,
+    companyId: cid, branchId: tr.branchId ?? null, docNumber: jeDocNumber, entryDate: tr.transferDate as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_transfer",
     status: jeStatus, periodId: writability.period?.id ?? null,
@@ -738,8 +742,12 @@ router.post("/returns/:id/post", async (req, res) => {
 
   const desc = `مرتجع تحويل شركة شقيقة ${ret.returnNumber} - ${sister.nameAr}`;
   const jeStatus = await resolvePostingStatus(cid, "stockMovement");
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+    branchId: ret.branchId ?? null, docDate: ret.returnDate as any,
+  })) ?? ret.returnNumber;
   const [entry] = await db.insert(journalEntriesTable).values({
-    companyId: cid, branchId: ret.branchId ?? null, docNumber: ret.returnNumber, entryDate: ret.returnDate as any,
+    companyId: cid, branchId: ret.branchId ?? null, docNumber: jeDocNumber, entryDate: ret.returnDate as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_transfer_return",
     status: jeStatus, periodId: writability.period?.id ?? null,
@@ -985,8 +993,12 @@ router.post("/settlements/:id/post", async (req, res) => {
   const isReceive = v.direction === "receive";
   const desc = `${isReceive ? "تحصيل من" : "سداد إلى"} ${sister.nameAr} - ${v.code}`;
   const jeStatus = await resolvePostingStatus(cid, "receipt");
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+    branchId: v.branchId ?? null, docDate: v.date as any,
+  })) ?? v.code;
   const [entry] = await db.insert(journalEntriesTable).values({
-    companyId: cid, branchId: v.branchId ?? null, docNumber: v.code, entryDate: v.date as any,
+    companyId: cid, branchId: v.branchId ?? null, docNumber: jeDocNumber, entryDate: v.date as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_settlement",
     status: jeStatus, periodId: writability.period?.id ?? null,

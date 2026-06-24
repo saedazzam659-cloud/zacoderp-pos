@@ -450,9 +450,15 @@ router.post("/:id/post", async (req, res) => {
       }
 
       const jeStatus = await resolvePostingStatus(cid, "financial");
+      // JE draws its own continuous "journal_entry" number; the note number
+      // stays in the description + source link. Falls back to the note number.
+      const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+        userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+        branchId: (n as any).branchId ?? null, docDate: n.noteDate as any,
+      })) ?? n.noteNumber;
       const [entry] = await tx.insert(journalEntriesTable).values({
         companyId: cid,
-        docNumber: n.noteNumber,
+        docNumber: jeDocNumber,
         entryDate: n.noteDate as any,
         currency: "SAR",
         exchangeRate: "1",

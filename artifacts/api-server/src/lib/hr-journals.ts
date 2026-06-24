@@ -14,6 +14,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { assertWritableForDate } from "./periodGuard.js";
+import { nextSequenceNumber } from "./sequences.js";
 
 type DbOrTx = typeof db;
 
@@ -177,10 +178,15 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   const payrollDate = run.payDate || run.periodEnd;
   const prW = await assertWritableForDate(cid, payrollDate);
   if (!prW.ok) throw new Error(prW.reason);
+  // JE draws its own continuous "journal_entry" number; run code stays in the
+  // description + source link. Falls back to the run code.
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: null, refTable: "journal_entries", branchId: run.branchId ?? null, docDate: payrollDate,
+  })) ?? run.code;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: run.branchId ?? null,
-    docNumber: run.code,
+    docNumber: jeDocNumber,
     entryDate: payrollDate,
     currency: "SAR",
     exchangeRate: "1",
@@ -238,10 +244,14 @@ export async function buildLoanDisbursementJournal(
 
   const loanW = await assertWritableForDate(cid, loan.loanDate);
   if (!loanW.ok) throw new Error(loanW.reason);
+  // JE draws its own continuous "journal_entry" number; falls back to LOAN-*.
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: null, refTable: "journal_entries", branchId: emp?.branchId ?? null, docDate: loan.loanDate,
+  })) ?? `LOAN-${loan.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: emp?.branchId ?? null,
-    docNumber: `LOAN-${loan.id}`,
+    docNumber: jeDocNumber,
     entryDate: loan.loanDate,
     currency: "SAR",
     exchangeRate: "1",
@@ -285,10 +295,14 @@ export async function buildEosPaymentJournal(
 
   const eosW = await assertWritableForDate(cid, payDate);
   if (!eosW.ok) throw new Error(eosW.reason);
+  // JE draws its own continuous "journal_entry" number; falls back to EOS-*.
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: null, refTable: "journal_entries", branchId: emp.branchId ?? null, docDate: payDate,
+  })) ?? `EOS-${employeeId}-${payDate.replace(/-/g, "")}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: emp.branchId ?? null,
-    docNumber: `EOS-${employeeId}-${payDate.replace(/-/g, "")}`,
+    docNumber: jeDocNumber,
     entryDate: payDate,
     currency: "SAR",
     exchangeRate: "1",

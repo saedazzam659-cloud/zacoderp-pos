@@ -97,9 +97,15 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
   // Pre-resolve so audit posted_* fields are stamped only when the
   // tenant's auto-post setting actually puts the JE in "posted" status.
   const jeStatus = await resolvePostingStatus(cid, "payment");
+  // JE draws its own continuous "journal_entry" number; the voucher code
+  // stays in the description + source link. Falls back to the voucher code.
+  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+    branchId: v.branchId ?? null, docDate: v.date as any,
+  })) ?? v.code;
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId: cid, branchId: v.branchId ?? null,
-    docNumber: v.code, entryDate: v.date,
+    docNumber: jeDocNumber, entryDate: v.date,
     currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
     description: desc, entryType: "payment",
     status: jeStatus,
