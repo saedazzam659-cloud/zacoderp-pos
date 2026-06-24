@@ -2119,7 +2119,7 @@ function template14(d: PrintData): string {
       <div class="col-co">
         <div class="label">${L.companyInfo}</div>
         <div class="co-name-ar">${(isEn ? (company?.nameEn ?? company?.nameAr) : company?.nameAr) ?? L.companyNameFallback}</div>
-        ${(isEn ? company?.nameAr : company?.nameEn) ? `<div class="co-name-en">${isEn ? company?.nameAr : company?.nameEn}</div>` : ""}
+        ${(!isEn && company?.nameEn) ? `<div class="co-name-en">${company?.nameEn}</div>` : ""}
         ${company?.vatNumber ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${company.vatNumber}</span></div>` : ""}
         ${company?.crNumber  ? `<div class="row"><b>${L.crNumber}</b><span class="mono">${company.crNumber}</span></div>` : ""}
         ${(company as any)?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${(company as any).phone}</span></div>` : ""}
@@ -2130,7 +2130,7 @@ function template14(d: PrintData): string {
         ${safeLogo ? `<div class="logo-wrap"><img src="${safeLogo}" alt="logo" /></div>` : ""}
         <div class="doc-title-pill">
           ${titleMain}
-          <span class="en">${titleSub}</span>
+          ${!isEn ? `<span class="en">${titleSub}</span>` : ""}
         </div>
         <div class="meta-pills">
           <span class="pill no"><b>${docNo}</b></span>
