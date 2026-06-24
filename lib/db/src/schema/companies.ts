@@ -40,6 +40,12 @@ export const companiesTable = pgTable("companies", {
   // General settings
   logo: text("logo"),                          // base64 data URL
   decimalPlaces: integer("decimal_places").notNull().default(2),
+  // Display-only preference: when false (default), numeric INPUT fields across
+  // the web app hide a value of 0 (blank field + faint "0" placeholder) instead
+  // of showing "0". Purely cosmetic — stored values, calculations, and reports
+  // are NEVER affected. Default false = HIDE zeros for existing + new tenants
+  // (the user can flip it back from /general-settings).
+  showZeros: boolean("show_zeros").notNull().default(false),
   // Menu visibility permissions (JSON): { invoices, customers, suppliers, zatca }
   menuPermissions: text("menu_permissions").default('{"invoices":true,"customers":true,"suppliers":true,"zatca":true}'),
   // Windows desktop-app module visibility (JSON): { <windows module key>: boolean }.

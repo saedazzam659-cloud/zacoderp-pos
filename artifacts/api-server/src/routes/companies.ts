@@ -130,7 +130,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     return;
   }
   const {
-    logo, logoBase64, logoMime, decimalPlaces, autoPostingEnabled,
+    logo, logoBase64, logoMime, decimalPlaces, showZeros, autoPostingEnabled,
     // Per-doc-type auto-posting toggles. Each one independently decides
     // whether saving that document immediately posts the resulting journal
     // entry. Validated as plain booleans below.
@@ -171,7 +171,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     taxCalculationMode,
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
-    decimalPlaces?: number; autoPostingEnabled?: boolean;
+    decimalPlaces?: number; showZeros?: boolean; autoPostingEnabled?: boolean;
     autoPostJournalEntry?: boolean;
     autoPostSales?: boolean; autoPostPurchase?: boolean;
     autoPostReceipt?: boolean; autoPostPayment?: boolean;
@@ -232,6 +232,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     }
     updates.decimalPlaces = dp;
   }
+  // Display-only "show zeros" toggle — coerce to boolean so we never persist a
+  // string. Affects how numeric inputs render 0; no impact on stored data.
+  if (showZeros !== undefined) updates.showZeros = !!showZeros;
   if (autoPostingEnabled !== undefined) {
     updates.autoPostingEnabled = !!autoPostingEnabled;
   }

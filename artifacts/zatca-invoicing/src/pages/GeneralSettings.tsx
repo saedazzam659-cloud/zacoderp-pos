@@ -1312,6 +1312,41 @@ export default function GeneralSettings() {
             </div>
           </div>
 
+          {/* ── إظهار/إخفاء الصفر في حقول الإدخال الرقمية (عرض فقط) ── */}
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <Calculator className="h-4 w-4 text-muted-foreground" />
+              إظهار الصفر في حقول الإدخال
+            </h2>
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">
+                  {user?.company?.showZeros === true ? "عرض الصفر" : "إخفاء الصفر"}
+                </Label>
+                <p className="text-xs text-muted-foreground leading-relaxed max-w-prose">
+                  عند الإيقاف (الوضع الافتراضي) تظهر الحقول الرقمية التي قيمتها صفر فارغةً
+                  مع علامة <span className="font-mono text-muted-foreground/70">0</span> باهتة
+                  بدلاً من إظهار الرقم «0». هذا تغيير شكلي فقط — لا يؤثر على القيم المحفوظة
+                  أو الحسابات أو التقارير إطلاقاً.
+                </p>
+              </div>
+              <Switch
+                checked={user?.company?.showZeros === true}
+                disabled={postingSaving}
+                onCheckedChange={(v) => togglePostingMode({ showZeros: v })}
+              />
+            </div>
+            <div className="rounded-lg bg-muted/40 px-4 py-3 text-sm flex items-center gap-3">
+              <span className="text-muted-foreground">مثال:</span>
+              <span className="font-mono">الكمية</span>
+              {user?.company?.showZeros === true ? (
+                <span className="inline-flex h-9 w-28 items-center rounded-md border bg-transparent px-3 font-mono">0</span>
+              ) : (
+                <span className="inline-flex h-9 w-28 items-center rounded-md border bg-transparent px-3 font-mono text-muted-foreground/50">0</span>
+              )}
+            </div>
+          </div>
+
           {/* Save button (also saves logo + decimals together) */}
           <div className="flex items-center justify-between gap-4">
             {isDirty ? (

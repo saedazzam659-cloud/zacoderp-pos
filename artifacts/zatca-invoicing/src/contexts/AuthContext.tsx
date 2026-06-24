@@ -165,7 +165,7 @@ export interface RegisterData {
   username: string; email?: string; password: string;
 }
 
-const AuthContext = createContext<AuthContextType | null>(null);
+export const AuthContext = createContext<AuthContextType | null>(null);
 
 const TOKEN_KEY = "zatca_token";
 const SESSION_KEY = "zatca_session";
