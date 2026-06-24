@@ -1944,6 +1944,15 @@ function template14(d: PrintData): string {
   const LINES_PER_PAGE = lines.length || 1; // retained for row-index math below
   const lineChunks: any[][] = [lines];
 
+  // Bottom-anchor the totals/QR cluster ONLY for short invoices that are
+  // guaranteed to fit on a single page together with that cluster. For those,
+  // the items+totals are wrapped in a flex column so a spacer can push the
+  // cluster to the page foot (fixes the large empty area under a few-item
+  // invoice). For longer/multi-page invoices we stay in plain block flow so
+  // the lines table paginates reliably (Chrome print fragmentation inside a
+  // flex container is unreliable). ~12 rows is a conservative single-page cap.
+  const anchorBottom = lines.length <= 12;
+
   const docHead = `<!DOCTYPE html><html dir="${dir}"><head><meta charset="UTF-8"><title>${titleMain} — ${docNo}</title>
   ${baseStyles("#0f172a")}
   <style>
@@ -2052,6 +2061,21 @@ function template14(d: PrintData): string {
     }
     .lines-chunk tbody tr.line-notes .nlbl { color:var(--gold); font-weight:700; font-style:normal; margin-left:4px; }
     .page-break { page-break-after: always; break-after: page; height:0; }
+
+    /* ── Page body: pin the totals/QR cluster to the page bottom ─────── */
+    /* The tbody content is a flex column so the .bottom-spacer can push the
+       totals/QR cluster (.bottom) down into the empty area at the foot of
+       the page — instead of letting it float mid-page right under the items
+       — even for a single-item invoice. Natural pagination is preserved:
+       when the items are tall enough to fill/overflow a page the spacer
+       collapses to 0 and the lines table simply breaks onto the next page.
+       min-height = A4 printable height (297 − 8 top − 10 bottom = 279mm)
+       minus a ~79mm reserve for the repeating running header + footer +
+       safety, so the cluster lands near the page bottom WITHOUT ever
+       spilling onto a fresh blank page. Keep in sync with the @page margins
+       and the running header/footer above. */
+    .page-body { display:flex; flex-direction:column; min-height:200mm; }
+    .bottom-spacer { flex:1 1 auto; min-height:0; }
 
     /* ── Totals + QR + footer ───────────────────────────────────────── */
     .bottom { display:grid; grid-template-columns: 1fr 280px; gap:14px; margin-top:14px; align-items:flex-start; break-inside: avoid; page-break-inside: avoid; }
@@ -2241,9 +2265,18 @@ function template14(d: PrintData): string {
       </tfoot>
       <tbody>
         <tr><td>
+          ${anchorBottom ? `<div class="page-body">` : ""}
           <div class="lines-wrap">${chunkTablesHtml}</div>
 
-          <!-- Bottom : totals + QR (only after the last chunk) ───────── -->
+          ${doc.notes ? `<div class="notes-box"><b>${L.notesLbl}</b> ${doc.notes}</div>` : ""}
+
+          <!-- Flexible spacer: on a short (single-page) invoice it pushes the
+               totals/QR cluster to the bottom of the page (the empty area the
+               user flagged). Omitted for long/multi-page invoices so the lines
+               table stays in plain block flow and paginates reliably. -->
+          ${anchorBottom ? `<div class="bottom-spacer"></div>` : ""}
+
+          <!-- Bottom : totals + QR (anchored to the page bottom) ──────── -->
           <div class="bottom">
             <div class="totals-card">
               <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)}</span></div>
@@ -2267,8 +2300,7 @@ function template14(d: PrintData): string {
               })()}
             </div>
           </div>
-
-          ${doc.notes ? `<div class="notes-box"><b>${L.notesLbl}</b> ${doc.notes}</div>` : ""}
+          ${anchorBottom ? `</div>` : ""}
         </td></tr>
       </tbody>
     </table>
