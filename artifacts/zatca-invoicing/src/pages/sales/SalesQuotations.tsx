@@ -592,9 +592,9 @@ ${sections}
             placeholder="بحث (مستند، عميل، عملة)…"
             value={tableSearch}
             onChange={(e) => setTableSearch(e.target.value)}
-            className="h-7 text-xs w-56"
+            className="h-7 text-xs w-full sm:w-56"
           />
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {(["all", "draft", "sent", "accepted", "rejected", "converted"] as const).map((s) => (
               <button key={s} type="button" onClick={() => setStatusFilter(s)}
                 className={cn(

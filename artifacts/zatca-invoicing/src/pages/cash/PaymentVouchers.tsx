@@ -173,7 +173,7 @@ export default function PaymentVouchers() {
         <Button onClick={openAdd} className="gap-2"><Plus className="h-4 w-4" />{t(`${NS}.newVoucher`)}</Button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { label: t(`${NS}.totalVouchers`), value: (vouchers as any[]).length, color: "text-primary bg-primary/10" },
           { label: t(`${NS}.posted`),         value: (vouchers as any[]).filter((v: any) => v.status === "posted").length, color: "text-green-700 bg-green-100" },
@@ -187,13 +187,13 @@ export default function PaymentVouchers() {
       </div>
 
       <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="flex items-center justify-between border-b px-4 py-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b px-4 py-3">
           <p className="text-sm font-medium">{t(`${NS}.list`)}</p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
-            <div className="relative">
+            <div className="relative flex-1 sm:flex-none min-w-[140px]">
               <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
-              <Input className={`${isRtl ? "pr-9" : "pl-9"} h-8 w-56 text-sm`} placeholder={t("cashCommon.search")} value={search} onChange={e => setSearch(e.target.value)} />
+              <Input className={`${isRtl ? "pr-9" : "pl-9"} h-8 w-full sm:w-56 text-sm`} placeholder={t("cashCommon.search")} value={search} onChange={e => setSearch(e.target.value)} />
             </div>
           </div>
         </div>

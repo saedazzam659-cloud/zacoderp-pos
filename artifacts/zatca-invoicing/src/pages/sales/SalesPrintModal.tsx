@@ -1933,14 +1933,16 @@ function template14(d: PrintData): string {
   // bottom block) onto a fresh blank page. 12 rows × ~10mm + bottom
   // block ~50mm ≈ 170mm, well inside the ~200mm content area between
   // the running header and running footer on A4.
-  const LINES_PER_PAGE = 12;
-  const lineChunks: any[][] = [];
-  for (let i = 0; i < lines.length; i += LINES_PER_PAGE) {
-    lineChunks.push(lines.slice(i, i + LINES_PER_PAGE));
-  }
-  // Empty-invoice safety: always render at least one chunk so the table
-  // structure (thead row, etc.) shows even when there are no items.
-  if (lineChunks.length === 0) lineChunks.push([]);
+  // Natural pagination: render ALL items in ONE table and let the print
+  // engine break across pages, filling each page completely with rows
+  // before moving on. No fixed per-page row cap and NO empty filler rows
+  // (those wasted space and pushed the totals block onto a blank page).
+  // The page-frame's running header/footer repeat on every page, and the
+  // lines table's own <thead> repeats too, so multi-page invoices stay
+  // readable. The bottom block (totals + QR) flows right after the last
+  // row and is kept intact via break-inside:avoid.
+  const LINES_PER_PAGE = lines.length || 1; // retained for row-index math below
+  const lineChunks: any[][] = [lines];
 
   const docHead = `<!DOCTYPE html><html dir="${dir}"><head><meta charset="UTF-8"><title>${titleMain} — ${docNo}</title>
   ${baseStyles("#0f172a")}
@@ -2033,16 +2035,6 @@ function template14(d: PrintData): string {
     .lines-chunk th { padding:8px 6px; font-weight:700; font-size:10.5px; letter-spacing:.02em; border:none; border-bottom:1px solid var(--line); text-align:right; }
     .lines-chunk td { padding:10px 6px; border:none; border-bottom:1px solid var(--line); text-align:right; }
     .lines-chunk tbody tr.item-row:nth-of-type(odd) td { background:#fafbfc; }
-    /* Empty filler rows on the last chunk — keep the same visual rhythm
-       as a full 10-row page so the bottom block (totals + QR) lands at
-       a consistent position and the audit footer (running tfoot) pins
-       cleanly to the page bottom. Slightly muted background so they
-       don't look like real data, but kept readable. */
-    .lines-chunk tbody tr.empty-row td {
-      height:30px; background:#fff; border-bottom:1px solid var(--line);
-      color:transparent;
-    }
-    .lines-chunk tbody tr.empty-row:nth-of-type(odd) td { background:#fafbfc; }
     /* Avoid splitting an item row (and its notes companion row) across
        pages — keeps line + its description glued together. */
     .lines-chunk tbody tr { page-break-inside: avoid; break-inside: avoid; }
@@ -2062,7 +2054,7 @@ function template14(d: PrintData): string {
     .page-break { page-break-after: always; break-after: page; height:0; }
 
     /* ── Totals + QR + footer ───────────────────────────────────────── */
-    .bottom { display:grid; grid-template-columns: 1fr 280px; gap:14px; margin-top:14px; align-items:flex-start; }
+    .bottom { display:grid; grid-template-columns: 1fr 280px; gap:14px; margin-top:14px; align-items:flex-start; break-inside: avoid; page-break-inside: avoid; }
     .qr-card { border:1px solid var(--line); border-radius:10px; padding:10px; text-align:center; background:#fff; }
     .qr-card .lbl { font-size:9px; color:#64748b; margin-top:4px; letter-spacing:.08em; }
     .totals-card { border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fff; }
@@ -2227,31 +2219,13 @@ function template14(d: PrintData): string {
     }).join("");
 
     const isLast = chunkIdx === lineChunks.length - 1;
-    // ── Last-chunk row padding ────────────────────────────────────────
-    // When this is the FINAL chunk and the invoice has NO document-level
-    // notes, top up the chunk with empty filler rows so every printed
-    // page (including the last) shows exactly LINES_PER_PAGE rows. This
-    // anchors the bottom block (totals + QR) at a consistent vertical
-    // position, matching the position of the running audit-footer at
-    // the page bottom — that's the "make red & blue boxes share the
-    // same bottom margin" behaviour the user asked for.
-    //
-    // When document notes ARE present we skip padding: the notes box
-    // takes that space naturally, and any items that overflow the
-    // remaining room paginate to the next page using the same chunk
-    // mechanism as before.
-    let padHtml = "";
-    if (isLast && !doc.notes && chunk.length < LINES_PER_PAGE) {
-      const pad = LINES_PER_PAGE - chunk.length;
-      const emptyCells = Array(colCount).fill('<td>&nbsp;</td>').join("");
-      padHtml = Array(pad)
-        .fill(`<tr class="empty-row">${emptyCells}</tr>`)
-        .join("");
-    }
+    // NO empty filler rows: rows flow naturally and the print engine fills
+    // each page completely before breaking to the next. Filler rows used to
+    // waste vertical space and shove the totals block onto a blank page.
     return `
       <table class="lines-chunk">
         ${linesHeadHtml}
-        <tbody>${rowsHtml}${padHtml}</tbody>
+        <tbody>${rowsHtml}</tbody>
       </table>
       ${!isLast ? `<div class="page-break"></div>` : ""}`;
   }).join("");

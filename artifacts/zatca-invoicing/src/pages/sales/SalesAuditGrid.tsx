@@ -2386,7 +2386,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
             placeholder="بحث (رقم فاتورة، رقم/اسم العميل، الفرع، المنطقة، هاتف، ملاحظات)…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="h-7 text-xs w-56"
+            className="h-7 text-xs w-full sm:w-56"
           />
           )}
           {/* Multi-branch filter — auto-hides when the user has access to a
@@ -2395,7 +2395,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
             <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
           )}
           {fp.isVisible("status_filter") && (
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {(["all","draft","posted","cancelled"] as const).map(s => (
               <button
                 key={s}

@@ -2294,13 +2294,13 @@ ${sections}
             placeholder="بحث (مستند، عميل، فاتورة، عملة)…"
             value={tableSearch}
             onChange={(e) => setTableSearch(e.target.value)}
-            className="h-7 text-xs w-56"
+            className="h-7 text-xs w-full sm:w-56"
           />
           <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
           {/* ── User filter is configured in:
                الإعدادات العامة → إعدادات مرتجعات المبيعات
                (selection is read from localStorage and applied silently) ── */}
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {(["all", "draft", "posted"] as const).map((s) => (
               <button
                 key={s}
