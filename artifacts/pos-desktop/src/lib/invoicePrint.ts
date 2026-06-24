@@ -146,12 +146,13 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
   .pill.pay { background:#fef3c7; border-color:#fcd34d; color:#7c2d12; }
   .pill.no { background:#e0f2fe; border-color:#7dd3fc; color:#075985; font-family:'Segoe UI', monospace; }
 
-  /* ── Lines table ─────────────────────────────────────────────────── */
-  .lines-chunk { width:100%; border-collapse:collapse; font-size:11px; margin-top:6px; }
-  .lines-chunk thead tr { background:#f3f4f6; color:var(--ink); }
-  .lines-chunk th { padding:8px 6px; font-weight:700; font-size:10.5px; border-bottom:1px solid var(--line); text-align:right; }
-  .lines-chunk td { padding:10px 6px; border-bottom:1px solid var(--line); text-align:right; }
-  .lines-chunk tbody tr.item-row:nth-of-type(odd) td { background:#fafbfc; }
+  /* ── Lines table (full bordered grid; no overflow wrapper so it
+       fragments cleanly across pages on long multi-page invoices) ────── */
+  .lines-chunk { width:100%; border-collapse:collapse; font-size:11px; margin-top:8px; border:1.5px solid var(--gold2); }
+  .lines-chunk thead tr { background:linear-gradient(180deg,#fbf2db,#f3e4bf); color:var(--ink); }
+  .lines-chunk th { padding:9px 6px; font-weight:800; font-size:10.5px; border:1px solid var(--gold2); text-align:right; }
+  .lines-chunk td { padding:9px 6px; border:1px solid var(--line); text-align:right; }
+  .lines-chunk tbody tr.item-row:nth-of-type(odd) td { background:#fbfaf6; }
   .lines-chunk tbody tr { page-break-inside: avoid; break-inside: avoid; }
   .lines-chunk tbody tr.line-notes td { padding:6px 10px 10px; font-size:10.5px; color:#475569; font-style:italic; border-right:3px solid var(--gold2); }
   .lines-chunk tbody tr.line-notes .nlbl { color:var(--gold); font-weight:700; font-style:normal; margin-left:4px; }
