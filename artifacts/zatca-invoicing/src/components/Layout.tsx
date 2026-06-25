@@ -24,6 +24,7 @@ import {
   Trophy,
   CalendarClock,
   Gauge,
+  Handshake,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -148,6 +149,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.superAdminSecurity",   href: "/admin/security-superadmin", icon: ShieldCheck },
   { nameKey: "nav.reportsHub",           href: "/admin/reports",            icon: BarChart3 },
   { nameKey: "nav.subscriptions",        href: "/admin/subscriptions",      icon: Package },
+  { nameKey: "nav.resellers",            href: "/admin/resellers",          icon: Handshake },
   { nameKey: "nav.plans",                href: "/admin/plans",              icon: Settings2 },
   { nameKey: "nav.modules",              href: "/admin/modules",            icon: Layers },
   { nameKey: "nav.industries",           href: "/admin/industries",         icon: Briefcase },
@@ -3071,6 +3073,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     "/admin/requests":                { label: "nav.registrationRequests" },
     "/admin/licenses":                { label: "nav.licenses" },
     "/admin/subscriptions":           { label: "nav.subscriptions" },
+    "/admin/resellers":               { label: "nav.resellers" },
     "/admin/plans":                   { label: "nav.plans" },
     "/admin/modules":                 { label: "nav.modules" },
     "/admin/industries":              { label: "nav.industries" },

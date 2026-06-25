@@ -40,6 +40,7 @@ import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
+import { accrueResellerCommission } from "../lib/resellerCommissions.js";
 import { resolveCountryForIp, resolveLocationForIp, type IpLocation } from "../middleware/visitorCountry.js";
 import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
@@ -489,6 +490,14 @@ router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => 
     metadata: { op: "extend", months, newEnd: updated?.endDate ?? row.end_date, reactivated },
   });
   emitSessionRefresh(updated?.companyId ?? row.company_id, "subscription_changed", { op: "extend", months, reactivated });
+  // Reseller commission accrual (no-op unless the company is reseller-managed).
+  await accrueResellerCommission({
+    companyId: updated?.companyId ?? row.company_id,
+    eventType: "renewal",
+    baseAmount: Number(updated?.price ?? 0),
+    subscriptionId: id,
+    description: `تمديد الاشتراك ${months} شهر`,
+  });
   res.json({ ok: true, subscription: updated, reactivated });
 });
 
@@ -548,6 +557,14 @@ router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res
     },
   });
   emitSessionRefresh(updated.companyId, "subscription_changed", { op: "change-plan", plan: planKey });
+  // Reseller commission accrual (no-op unless the company is reseller-managed).
+  await accrueResellerCommission({
+    companyId: updated.companyId,
+    eventType: "renewal",
+    baseAmount: Number(price ?? 0),
+    subscriptionId: id,
+    description: `تغيير الباقة إلى ${planKey} (${cycle})`,
+  });
   res.json({ ok: true, subscription: updated });
 });
 
@@ -604,6 +621,17 @@ router.post("/subscriptions/bulk-extend", requireSuperAdmin, async (req, res) =>
     });
   }
   emitSessionRefreshMany(rows.map(r => Number(r.company_id)), "subscription_changed", { op: "bulk-extend", months });
+  // Reseller commission accrual per renewed subscription (no-op unless managed).
+  for (const r of rows) {
+    const [sub] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, Number(r.id)));
+    await accrueResellerCommission({
+      companyId: Number(r.company_id),
+      eventType: "renewal",
+      baseAmount: Number(sub?.price ?? 0),
+      subscriptionId: Number(r.id),
+      description: `تمديد جماعي ${months} شهر`,
+    });
+  }
   res.json({
     ok: true,
     requestedIds, updatedIds, missingIds,

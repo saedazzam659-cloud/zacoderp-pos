@@ -90,6 +90,16 @@ export interface AuthUser {
   company?: any;
   subscription?: any;
   /**
+   * Reseller (Agent) identity fields — populated only when role==="reseller".
+   * Resellers live in the `resellers` table (NOT `users`); their /api/auth/me
+   * response carries the reseller id + granular capability grants so the
+   * portal can gate its own screens. Additive: ignored for all other roles.
+   */
+  resellerId?: number | null;
+  resellerPermissions?: Record<string, boolean>;
+  nameAr?: string | null;
+  code?: string | null;
+  /**
    * Durable per-user UI preferences, namespaced by screen slug. Mirrors what
    * used to live only in localStorage so a saved grid layout survives a browser
    * cache wipe. Shape: { "<screenSlug>": { ...arbitrary layout blob } }.

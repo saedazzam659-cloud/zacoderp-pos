@@ -932,7 +932,8 @@
     "companyMaintenanceGroup": "صيانة الشركات",
     "multiLinkGroup": "ربط متعدد",
     "multiLinkClients": "عملاء البوابة",
-    "multiLinkReports": "تقارير البوابة"
+    "multiLinkReports": "تقارير البوابة",
+    "resellers": "إدارة الموزّعين"
   },
   "security": {
     "title": "الأمن والمراقبة",

@@ -78,6 +78,9 @@ import PosLanding from "@/pages/PosLanding";
 import PendingApproval from "@/pages/PendingApproval";
 import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
+import ResellerLogin from "@/pages/ResellerLogin";
+import ResellerPortal from "@/pages/ResellerPortal";
+import ResellersAdmin from "@/pages/ResellersAdmin";
 import PlanSettings from "@/pages/PlanSettings";
 import ZatcaIntegration from "@/pages/ZatcaIntegration";
 import ZatcaBridge from "@/pages/ZatcaBridge";
@@ -499,6 +502,10 @@ function AppRoutes() {
   if (!isAuthenticated) {
     if (location === "/") return <Home />;
     if (location === "/pos-system") return <PosLanding />;
+    // Reseller (Agent) portal login — a distinct identity (resellers table),
+    // reachable without a user session. Renders directly so the public Switch
+    // (which assumes user auth) is bypassed.
+    if (location === "/reseller/login") return <ResellerLogin />;
     const knownPublicRoute =
       location === "/login" ||
       location === "/register" ||
@@ -553,6 +560,16 @@ function AppRoutes() {
   const rawIsSuperAdmin = user?.role === "superadmin";
   const isSuperAdmin = rawIsSuperAdmin && !actingCompanyId;
 
+  // Reseller (Agent) portal — a wholly separate, self-contained shell with its
+  // own sidebar and routing (NOT the tenant Layout). A reseller is never a
+  // company tenant nor a SuperAdmin, so it short-circuits ahead of both shells.
+  // The portal's internal <Switch> handles every /reseller/* path and falls
+  // back to the dashboard, so a stray /reseller/login (already authed) lands
+  // on the dashboard too.
+  if (user?.role === "reseller") {
+    return <ResellerPortal />;
+  }
+
   return (
     <Switch>
       {/* Public routes — also reachable by authenticated users so the
@@ -587,6 +604,7 @@ function AppRoutes() {
             {rawIsSuperAdmin && <Route path="/companies/deleted" component={DeletedCompanies} />}
             {rawIsSuperAdmin && <Route path="/companies/:id" component={CompanyDetails} />}
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
+            {isSuperAdmin && <Route path="/admin/resellers" component={ResellersAdmin} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/windows-app-permissions" component={WindowsAppPermissions} />}

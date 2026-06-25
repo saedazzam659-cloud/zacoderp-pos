@@ -10,6 +10,8 @@ import authRouter from "./auth";
 import superAdminAuthRouter from "./superAdminAuth";
 import suppliersRouter from "./suppliers";
 import adminRouter from "./admin";
+import resellersAdminRouter from "./resellers-admin";
+import resellerRouter from "./reseller";
 import gatewayClientsRouter from "./gatewayClients";
 import integrationsRouter, { inboundRouter as integrationsInboundRouter } from "./integrations";
 import adminDbStatsRouter from "./admin-db-stats";
@@ -143,6 +145,12 @@ router.use("/admin/ai-controls", adminAiControlsRouter);
 router.use("/admin/db-stats", adminDbStatsRouter);
 router.use("/admin/gateway-clients", gatewayClientsRouter);
 router.use("/admin/domains", domainsRouter);
+// Reseller (Agent) management — Task #237. Both routers MUST be mounted BEFORE
+// the path-less zatcaRouter: the reseller portal uses its own bearer token
+// (absent from usersTable) and would otherwise be 401-ed by zatca's global
+// tenant-auth catch-all. The admin router self-guards with requireSuperAdmin.
+router.use("/admin/resellers", resellersAdminRouter);
+router.use("/reseller", resellerRouter);
 router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);

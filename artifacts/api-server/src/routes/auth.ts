@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -535,6 +535,47 @@ router.get("/me", async (req, res) => {
     }
   }
   if (!user) {
+    // ── Reseller (Agent) fall-through — Task #237 (additive) ──────────────
+    // Resellers live in `resellers` (NOT `users`) and authenticate via
+    // /api/reseller/login. A reseller bearer token resolves to a distinct
+    // identity shape (role:"reseller", companyId:null, resellerId) so the
+    // existing user/superadmin resolution above is completely unaffected.
+    const [reseller] = await db.select().from(resellersTable).where(eq(resellersTable.sessionToken, token));
+    if (reseller?.isActive && reseller.status === "active") {
+      const subscriptionNotice = await getSubscriptionNotice();
+      res.json({
+        id: reseller.id,
+        username: reseller.username,
+        email: reseller.email,
+        role: "reseller",
+        companyId: null,
+        resellerId: reseller.id,
+        sessionId: reseller.sessionId,
+        code: reseller.code,
+        nameAr: reseller.nameAr,
+        nameEn: reseller.nameEn,
+        permissions: {},
+        resellerPermissions: reseller.permissions ?? {},
+        reseller: {
+          id: reseller.id,
+          code: reseller.code,
+          nameAr: reseller.nameAr,
+          nameEn: reseller.nameEn,
+          phone: reseller.phone,
+          email: reseller.email,
+          commissionRate: reseller.commissionRate,
+          status: reseller.status,
+          permissions: reseller.permissions ?? {},
+        },
+        uiPreferences: {},
+        viewAllBranches: true,
+        branchIds: [],
+        company: null,
+        subscription: null,
+        subscriptionNotice,
+      });
+      return;
+    }
     res.status(401).json({ error: "الجلسة منتهية — يرجى تسجيل الدخول مجدداً" });
     return;
   }

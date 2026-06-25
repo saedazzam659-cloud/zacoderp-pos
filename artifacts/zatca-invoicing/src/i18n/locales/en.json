@@ -937,7 +937,8 @@
     "companyMaintenanceGroup": "Company Maintenance",
     "multiLinkGroup": "Multi-Link Gateway",
     "multiLinkClients": "Gateway Clients",
-    "multiLinkReports": "Gateway Reports"
+    "multiLinkReports": "Gateway Reports",
+    "resellers": "Resellers"
   },
   "security": {
     "title": "Security & Monitoring",

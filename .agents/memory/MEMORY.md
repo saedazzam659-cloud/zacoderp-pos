@@ -138,3 +138,4 @@
 - [RTL physical+logical padding conflict](rtl-physical-logical-padding-conflict.md) — never mix Tailwind px-*/pl-* with ps-*/pe-* on direction-aware controls; in RTL the physical rule wins and collapses reserved icon gutters (text overlaps clear/chevron).
 - [toLocaleString max-fraction leak](tolocalestring-max-fraction-leak.md) — money display `toLocaleString({minimumFractionDigits:2})` w/o `maximumFractionDigits` leaks a 3rd decimal on summed totals; always pass BOTH or use useFmt().
 - [Web hide-zeros numeric inputs](web-hide-zeros-input.md) — shared ui/input.tsx blanks a CONTROLLED numeric 0 (value+onChange) only; never ref/RHF-register fields; per-company companies.show_zeros, default hide.
+- [Reseller network module](reseller-network-module.md) — platform reseller/agent network is SuperAdmin ROLE-gated (no company-module key); portal scoped via resellerCompanyIds(), perms renew_subscriptions/view_reports/support.
