@@ -85,6 +85,8 @@ import PartnerPortal from "@/pages/PartnerPortal";
 import ResellersAdmin from "@/pages/ResellersAdmin";
 import PartnersAdmin from "@/pages/PartnersAdmin";
 import DevCloudAdmin from "@/pages/DevCloudAdmin";
+import MarketplaceAdmin from "@/pages/MarketplaceAdmin";
+import Marketplace from "@/pages/Marketplace";
 import PlanSettings from "@/pages/PlanSettings";
 import ZatcaIntegration from "@/pages/ZatcaIntegration";
 import ZatcaBridge from "@/pages/ZatcaBridge";
@@ -628,6 +630,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/resellers" component={ResellersAdmin} />}
             {isSuperAdmin && <Route path="/admin/partners" component={PartnersAdmin} />}
             {isSuperAdmin && <Route path="/admin/dev-cloud" component={DevCloudAdmin} />}
+            {isSuperAdmin && <Route path="/admin/marketplace" component={MarketplaceAdmin} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/windows-app-permissions" component={WindowsAppPermissions} />}
@@ -710,6 +713,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/pos-operations" module="pos" component={PosOperations} />}
             {!isSuperAdmin && <PermRoute path="/chat" module="chat" component={Chat} />}
             {!isSuperAdmin && <PermRoute path="/extensions" module="extensions" component={ExtensionsAdmin} />}
+            {!isSuperAdmin && <PermRoute path="/marketplace" module="extensions" component={Marketplace} />}
             {!isSuperAdmin && <PermRoute path="/ext/:extensionId/table/:tableKey" module="extensions" component={ExtensionTableScreen} />}
             {!isSuperAdmin && <PermRoute path="/ext/:extensionId/:screenKey?" module="extensions" component={ExtensionScreen} />}
             {!isSuperAdmin && <PermRoute path="/pos-settings"   module="pos" component={PosSettings} />}

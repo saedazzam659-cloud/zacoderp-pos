@@ -938,7 +938,9 @@
     "multiLinkReports": "تقارير البوابة",
     "resellers": "إدارة الموزّعين",
     "partners": "المطوّرون والشركاء",
-    "devCloud": "سحابة المطورين"
+    "devCloud": "سحابة المطورين",
+    "marketplace": "المتجر والماركت بليس",
+    "marketplaceAdmin": "إدارة المتجر"
   },
   "security": {
     "title": "الأمن والمراقبة",

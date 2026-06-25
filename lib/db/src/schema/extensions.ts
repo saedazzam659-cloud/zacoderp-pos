@@ -3,6 +3,7 @@ import {
   serial,
   text,
   integer,
+  numeric,
   boolean,
   jsonb,
   timestamp,
@@ -180,6 +181,104 @@ export const extensionPublishesTable = pgTable(
   }),
 );
 
+// ─────────────────────────────────────────────────────────────────────────
+// Marketplace — Phase 4 (المتجر والماركت بليس). 100% ADDITIVE. The storefront
+// where developers list/sell extensions and companies install them per tenant.
+//
+//   extension_listings   — the COMMERCIAL descriptor of an extension on the
+//                          store, kept SEPARATE from the signed code manifest
+//                          (pricing is a commercial attribute the head office /
+//                          developer controls, never part of the signed code).
+//                          One listing per extension_id. `commission_rate` is
+//                          ZACODE's cut (percent); when null it falls back to
+//                          the attributed developer's default partner rate.
+//
+//   extension_purchases  — per-tenant purchase / entitlement records. A PAID
+//                          extension can only be enabled for a company that
+//                          holds an `active` purchase here (entitlement). Each
+//                          purchase snapshots the price + commission so the
+//                          developer commission ledger and the Control Center
+//                          breakdown stay consistent even if the listing later
+//                          changes. Billing is the platform's EXISTING internal
+//                          ledger model (no external card processor).
+// ─────────────────────────────────────────────────────────────────────────
+
+// free = no charge; one_time = single purchase; monthly = recurring entitlement.
+export const EXTENSION_PRICING_MODELS = ["free", "one_time", "monthly"] as const;
+export type ExtensionPricingModel = (typeof EXTENSION_PRICING_MODELS)[number];
+
+// draft = not visible in the store; published = visible/installable; unpublished = hidden.
+export const EXTENSION_LISTING_STATUSES = ["draft", "published", "unpublished"] as const;
+export type ExtensionListingStatus = (typeof EXTENSION_LISTING_STATUSES)[number];
+
+// active = entitled; cancelled = uninstalled/refunded; expired = billing lapsed.
+export const EXTENSION_PURCHASE_STATUSES = ["active", "cancelled", "expired"] as const;
+export type ExtensionPurchaseStatus = (typeof EXTENSION_PURCHASE_STATUSES)[number];
+
+export const extensionListingsTable = pgTable(
+  "extension_listings",
+  {
+    id: serial("id").primaryKey(),
+    // One listing per extension (free-form extension_id slug, no FK by design).
+    extensionId: text("extension_id").notNull().unique(),
+    // Developer (platform_partners.id) who earns on each sale. Nullable.
+    partnerId: integer("partner_id"),
+    category: text("category").notNull().default("other"),
+    summaryAr: text("summary_ar"),
+    summaryEn: text("summary_en"),
+    descriptionAr: text("description_ar"),
+    iconUrl: text("icon_url"),
+    // free | one_time | monthly
+    pricingModel: text("pricing_model").notNull().default("free"),
+    price: numeric("price", { precision: 15, scale: 2 }).notNull().default("0"),
+    currency: text("currency").notNull().default("SAR"),
+    // Zacode's commission cut (percent). NULL ⇒ fall back to the partner default.
+    commissionRate: numeric("commission_rate", { precision: 6, scale: 3 }),
+    // draft | published | unpublished — storefront visibility.
+    status: text("status").notNull().default("draft"),
+    featured: boolean("featured").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byStatus: index("extension_listings_status_idx").on(t.status),
+    byPartner: index("extension_listings_partner_idx").on(t.partnerId),
+  }),
+);
+
+export const extensionPurchasesTable = pgTable(
+  "extension_purchases",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull(),
+    extensionId: text("extension_id").notNull(),
+    // The listing the purchase was made against (snapshot reference).
+    listingId: integer("listing_id"),
+    // Developer attribution snapshot (commission recipient).
+    partnerId: integer("partner_id"),
+    // free | one_time | monthly (snapshot of the listing at purchase time).
+    pricingModel: text("pricing_model").notNull().default("free"),
+    amount: numeric("amount", { precision: 15, scale: 2 }).notNull().default("0"),
+    currency: text("currency").notNull().default("SAR"),
+    // Commission snapshots (Zacode's cut) — kept in lockstep with the ledger row.
+    commissionRate: numeric("commission_rate", { precision: 6, scale: 3 }).notNull().default("0"),
+    commissionAmount: numeric("commission_amount", { precision: 15, scale: 2 }).notNull().default("0"),
+    // active | cancelled | expired — the entitlement state.
+    status: text("status").notNull().default("active"),
+    // For monthly entitlements: when the current billing cycle ends.
+    billingCycleEnd: timestamp("billing_cycle_end", { withTimezone: true }),
+    purchasedBy: integer("purchased_by"),
+    purchasedByUsername: text("purchased_by_username"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byCompany: index("extension_purchases_company_idx").on(t.companyId),
+    byScope: index("extension_purchases_scope_idx").on(t.companyId, t.extensionId),
+    byPartner: index("extension_purchases_partner_idx").on(t.partnerId),
+  }),
+);
+
 export const insertPlatformExtensionSchema = createInsertSchema(platformExtensionsTable).omit({
   id: true,
   createdAt: true,
@@ -205,14 +304,28 @@ export const insertExtensionPublishSchema = createInsertSchema(extensionPublishe
   createdAt: true,
   updatedAt: true,
 });
+export const insertExtensionListingSchema = createInsertSchema(extensionListingsTable).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export const insertExtensionPurchaseSchema = createInsertSchema(extensionPurchasesTable).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 
 export type PlatformExtension = typeof platformExtensionsTable.$inferSelect;
 export type CompanyExtension = typeof companyExtensionsTable.$inferSelect;
 export type ExtData = typeof extDataTable.$inferSelect;
 export type ExtRecord = typeof extRecordsTable.$inferSelect;
 export type ExtensionPublish = typeof extensionPublishesTable.$inferSelect;
+export type ExtensionListing = typeof extensionListingsTable.$inferSelect;
+export type ExtensionPurchase = typeof extensionPurchasesTable.$inferSelect;
 export type InsertPlatformExtension = z.infer<typeof insertPlatformExtensionSchema>;
 export type InsertCompanyExtension = z.infer<typeof insertCompanyExtensionSchema>;
 export type InsertExtData = z.infer<typeof insertExtDataSchema>;
 export type InsertExtRecord = z.infer<typeof insertExtRecordSchema>;
 export type InsertExtensionPublish = z.infer<typeof insertExtensionPublishSchema>;
+export type InsertExtensionListing = z.infer<typeof insertExtensionListingSchema>;
+export type InsertExtensionPurchase = z.infer<typeof insertExtensionPurchaseSchema>;

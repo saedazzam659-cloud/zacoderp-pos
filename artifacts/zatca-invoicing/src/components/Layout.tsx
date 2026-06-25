@@ -153,6 +153,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.resellers",            href: "/admin/resellers",          icon: Handshake },
   { nameKey: "nav.partners",             href: "/admin/partners",           icon: Boxes },
   { nameKey: "nav.devCloud",             href: "/admin/dev-cloud",          icon: Cloud },
+  { nameKey: "nav.marketplaceAdmin",     href: "/admin/marketplace",        icon: Store },
   { nameKey: "nav.plans",                href: "/admin/plans",              icon: Settings2 },
   { nameKey: "nav.modules",              href: "/admin/modules",            icon: Layers },
   { nameKey: "nav.industries",           href: "/admin/industries",         icon: Briefcase },
@@ -457,6 +458,7 @@ const companyMaintenanceSubNav: NavDef[] = [
 // perm via isGroupAllowed one level up.
 const extensionsSubNav: NavDef[] = [
   { nameKey: "nav.extensions",      href: "/extensions",          icon: Puzzle,    permKey: "extensions" },
+  { nameKey: "nav.marketplace",     href: "/marketplace",         icon: Store,     permKey: "extensions" },
 ];
 
 // "ربط ZATCA" — top-level group for ZATCA integration screens. Per the
@@ -3137,6 +3139,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     "/admin/resellers":               { label: "nav.resellers" },
     "/admin/partners":                { label: "nav.partners" },
     "/admin/dev-cloud":               { label: "nav.devCloud" },
+    "/admin/marketplace":             { label: "nav.marketplaceAdmin" },
     "/admin/plans":                   { label: "nav.plans" },
     "/admin/modules":                 { label: "nav.modules" },
     "/admin/industries":              { label: "nav.industries" },

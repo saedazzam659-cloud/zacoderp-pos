@@ -126,6 +126,7 @@ import adminDownloadCodesRouter from "./admin-download-codes";
 import domainsRouter from "./domains";
 import devCloudAdminRouter from "./dev-cloud-admin";
 import extensionsRouter from "../extensions/index.js";
+import { marketplaceRouter, marketplaceAdminRouter } from "./marketplace.js";
 import { resolveDomainCompany } from "../middleware/domainResolver";
 
 const router: IRouter = Router();
@@ -171,6 +172,8 @@ router.use("/admin/publish", publishRouter);
 // rationale as the reseller portal: partner bearer tokens live in
 // platform_partners (absent from usersTable) and self-guard via requirePartner.
 router.use("/partner", partnerRouter);
+// Phase 4 Marketplace Control Center. Same mount-before-zatcaRouter rationale; SuperAdmin self-guarded.
+router.use("/admin/marketplace", marketplaceAdminRouter);
 router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);
@@ -262,6 +265,8 @@ router.use("/admin/download-codes", adminDownloadCodesRouter);
 // ?token= query param (sandboxed iframe cannot set headers) handled inside
 // the router. Gated by the `extensions_platform` company module (default OFF).
 router.use("/ext", extensionsRouter);
+// Phase 4 Marketplace — tenant storefront (module-gated; self-guards auth).
+router.use("/marketplace", marketplaceRouter);
 router.use(zatcaRouter);
 router.use("/contracting", contractingRouter);
 router.use("/contracting-ai", contractingAiRouter);

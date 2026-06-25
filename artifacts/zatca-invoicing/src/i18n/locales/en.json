@@ -943,7 +943,9 @@
     "multiLinkReports": "Gateway Reports",
     "resellers": "Resellers",
     "partners": "Developers & Partners",
-    "devCloud": "Developer Cloud"
+    "devCloud": "Developer Cloud",
+    "marketplace": "App Store & Marketplace",
+    "marketplaceAdmin": "Marketplace Admin"
   },
   "security": {
     "title": "Security & Monitoring",

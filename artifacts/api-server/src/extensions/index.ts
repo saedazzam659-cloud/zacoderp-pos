@@ -25,6 +25,11 @@ import {
   DataStoreError,
 } from "./dataStore.js";
 import { EXTENSION_SDK_JS } from "./sdk.js";
+import {
+  getListingByExtensionId,
+  listingIsPaid,
+  hasActiveEntitlement,
+} from "../lib/marketplace.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Extension Platform router — mounted at /api/ext (ADDITIVE; one line in
@@ -206,6 +211,19 @@ async function setEnabled(req: Request, res: Response, enabled: boolean): Promis
   if (!ext) {
     res.status(404).json({ error: "الإضافة غير موجودة أو غير موثّقة" });
     return;
+  }
+  // Entitlement gate: a PAID marketplace listing can only be enabled for a
+  // company that holds an active purchase. Free extensions enable directly.
+  // (SuperAdmin manages on behalf of tenants and bypasses this check.)
+  if (enabled && req.authUser!.role !== "superadmin") {
+    const listing = await getListingByExtensionId(extensionId);
+    if (listingIsPaid(listing) && !(await hasActiveEntitlement(cid, extensionId))) {
+      res.status(402).json({
+        error: "هذه الإضافة مدفوعة — يجب شراؤها من المتجر أولاً",
+        code: "PURCHASE_REQUIRED",
+      });
+      return;
+    }
   }
   try {
     await db
