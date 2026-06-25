@@ -13,6 +13,7 @@ import { companyDomainsTable, companiesTable } from "@workspace/db";
 import { eq, and, desc, ne } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth } from "../middleware/auth.js";
+import { companyAllowsModule } from "../middleware/permissions.js";
 import { clearDomainCache, normalizeHost } from "../middleware/domainResolver.js";
 import dns from "node:dns";
 import tls from "node:tls";
@@ -22,6 +23,16 @@ router.use(extractAuth);
 router.use((req, res, next) => {
   if ((req as any).authUser?.role !== "superadmin") {
     res.status(403).json({ error: "هذه الصفحة للمشرف العام فقط" }); return;
+  }
+  next();
+});
+// Platform module gate — Multi-Domain is LOCKED by default and must be enabled
+// on the operator's own company (companies.menuPermissions) before any of these
+// endpoints respond. Applies even to superadmins (companyAllowsModule has no
+// role bypass — that lives in the middleware callers).
+router.use((req, res, next) => {
+  if (!companyAllowsModule((req as any).authUser, "multi_domain")) {
+    res.status(403).json({ error: "وحدة إدارة النطاقات غير مفعّلة" }); return;
   }
   next();
 });
@@ -35,6 +46,7 @@ router.get("/", async (_req, res) => {
     companyName: companiesTable.nameAr,
     companyCode: companiesTable.code,
     isPrimary: companyDomainsTable.isPrimary,
+    isMain: companyDomainsTable.isMain,
     status: companyDomainsTable.status,
     activatedAt: companyDomainsTable.activatedAt,
     lastCheckAt: companyDomainsTable.lastCheckAt,
@@ -52,7 +64,8 @@ const STATUS = ["pending", "active", "disabled"] as const;
 
 const createSchema = z.object({
   domain: z.string().min(3).max(255),
-  companyId: z.number().int().positive(),
+  companyId: z.number().int().positive().optional(),
+  isMain: z.boolean().optional(),
   isPrimary: z.boolean().optional(),
   status: z.enum(STATUS).optional(),
   notes: z.string().max(1000).optional(),
@@ -66,6 +79,15 @@ async function demoteOtherPrimaries(companyId: number, exceptId?: number): Promi
   await db.update(companyDomainsTable).set({ isPrimary: false, updatedAt: new Date() }).where(cond);
 }
 
+// At most one shared "main" multi-company domain — demote any other main when a
+// new one is set.
+async function demoteOtherMains(exceptId?: number): Promise<void> {
+  const cond = exceptId
+    ? and(eq(companyDomainsTable.isMain, true), ne(companyDomainsTable.id, exceptId))
+    : eq(companyDomainsTable.isMain, true);
+  await db.update(companyDomainsTable).set({ isMain: false, updatedAt: new Date() }).where(cond);
+}
+
 // POST /api/admin/domains — map a new domain to a company.
 router.post("/", async (req, res) => {
   const parsed = createSchema.safeParse(req.body);
@@ -74,22 +96,35 @@ router.post("/", async (req, res) => {
   const domain = normalizeHost(parsed.data.domain);
   if (!domain) { res.status(400).json({ error: "نطاق غير صالح" }); return; }
 
-  // Company must exist (and not be soft-deleted).
-  const [co] = await db.select({ id: companiesTable.id })
-    .from(companiesTable).where(eq(companiesTable.id, parsed.data.companyId));
-  if (!co) { res.status(400).json({ error: "الشركة غير موجودة" }); return; }
+  const isMain = parsed.data.isMain ?? false;
+  // A "main" domain is the shared multi-company domain — it has NO bound company
+  // (keeps the default multi-company behavior). A regular mapping REQUIRES a
+  // company. These two are mutually exclusive.
+  const companyId = isMain ? null : (parsed.data.companyId ?? null);
+  if (!isMain && companyId == null) {
+    res.status(400).json({ error: "اختر الشركة أو علّم النطاق كنطاق رئيسي" }); return;
+  }
+
+  if (companyId != null) {
+    // Company must exist (and not be soft-deleted).
+    const [co] = await db.select({ id: companiesTable.id })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!co) { res.status(400).json({ error: "الشركة غير موجودة" }); return; }
+  }
 
   const [dupe] = await db.select({ id: companyDomainsTable.id })
     .from(companyDomainsTable).where(eq(companyDomainsTable.domain, domain));
   if (dupe) { res.status(409).json({ error: "هذا النطاق مُسجّل بالفعل" }); return; }
 
   const status = parsed.data.status ?? "pending";
-  const isPrimary = parsed.data.isPrimary ?? false;
-  if (isPrimary) await demoteOtherPrimaries(parsed.data.companyId);
+  const isPrimary = isMain ? false : (parsed.data.isPrimary ?? false);
+  if (isMain) await demoteOtherMains();
+  if (isPrimary && companyId != null) await demoteOtherPrimaries(companyId);
 
   const [created] = await db.insert(companyDomainsTable).values({
     domain,
-    companyId: parsed.data.companyId,
+    companyId,
+    isMain,
     isPrimary,
     status,
     activatedAt: status === "active" ? new Date() : null,
@@ -102,7 +137,8 @@ router.post("/", async (req, res) => {
 
 const patchSchema = z.object({
   domain: z.string().min(3).max(255).optional(),
-  companyId: z.number().int().positive().optional(),
+  companyId: z.number().int().positive().nullable().optional(),
+  isMain: z.boolean().optional(),
   isPrimary: z.boolean().optional(),
   status: z.enum(STATUS).optional(),
   notes: z.string().max(1000).optional(),
@@ -132,13 +168,34 @@ router.patch("/:id", async (req, res) => {
     patch.domain = domain;
   }
 
-  let targetCompanyId = existing.companyId;
+  // The effective "main" flag after this patch (defaults to the current value).
+  const willBeMain = b.isMain !== undefined ? b.isMain : existing.isMain;
+
+  let targetCompanyId: number | null = existing.companyId;
   if (b.companyId !== undefined && b.companyId !== existing.companyId) {
-    const [co] = await db.select({ id: companiesTable.id })
-      .from(companiesTable).where(eq(companiesTable.id, b.companyId));
-    if (!co) { res.status(400).json({ error: "الشركة غير موجودة" }); return; }
+    if (b.companyId != null) {
+      const [co] = await db.select({ id: companiesTable.id })
+        .from(companiesTable).where(eq(companiesTable.id, b.companyId));
+      if (!co) { res.status(400).json({ error: "الشركة غير موجودة" }); return; }
+    }
     patch.companyId = b.companyId;
     targetCompanyId = b.companyId;
+  }
+
+  if (b.isMain !== undefined) {
+    patch.isMain = b.isMain;
+    if (b.isMain) {
+      // A main domain has no bound company and cannot also be a per-company primary.
+      patch.companyId = null;
+      targetCompanyId = null;
+      patch.isPrimary = false;
+      await demoteOtherMains(id);
+    }
+  }
+
+  // A non-main domain MUST keep a bound company.
+  if (!willBeMain && targetCompanyId == null) {
+    res.status(400).json({ error: "اختر الشركة أو علّم النطاق كنطاق رئيسي" }); return;
   }
 
   if (b.notes !== undefined) patch.notes = b.notes;
@@ -149,9 +206,9 @@ router.patch("/:id", async (req, res) => {
     if (b.status === "active" && !existing.activatedAt) patch.activatedAt = new Date();
   }
 
-  if (b.isPrimary !== undefined) {
+  if (b.isPrimary !== undefined && !willBeMain) {
     patch.isPrimary = b.isPrimary;
-    if (b.isPrimary) await demoteOtherPrimaries(targetCompanyId, id);
+    if (b.isPrimary && targetCompanyId != null) await demoteOtherPrimaries(targetCompanyId, id);
   }
 
   const [updated] = await db.update(companyDomainsTable).set(patch)

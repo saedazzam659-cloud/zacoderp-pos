@@ -35,8 +35,8 @@ type CheckResult = {
 
 type Domain = {
   id: number; domain: string;
-  companyId: number; companyName: string | null; companyCode: string | null;
-  isPrimary: boolean; status: "pending" | "active" | "disabled";
+  companyId: number | null; companyName: string | null; companyCode: string | null;
+  isMain: boolean; isPrimary: boolean; status: "pending" | "active" | "disabled";
   activatedAt: string | null;
   lastCheckAt: string | null; lastCheckResult: CheckResult;
   notes: string | null; createdAt: string;
@@ -53,7 +53,7 @@ const STATUS_CLS: Record<Domain["status"], string> = {
 };
 
 const emptyForm = {
-  id: 0, domain: "", companyId: "", status: "pending" as Domain["status"], isPrimary: false, notes: "",
+  id: 0, domain: "", companyId: "", isMain: false, status: "pending" as Domain["status"], isPrimary: false, notes: "",
 };
 
 export default function Domains() {
@@ -90,8 +90,8 @@ export default function Domains() {
   function openCreate() { setForm({ ...emptyForm }); setShowForm(true); }
   function openEdit(d: Domain) {
     setForm({
-      id: d.id, domain: d.domain, companyId: String(d.companyId),
-      status: d.status, isPrimary: d.isPrimary, notes: d.notes ?? "",
+      id: d.id, domain: d.domain, companyId: d.companyId != null ? String(d.companyId) : "",
+      isMain: d.isMain, status: d.status, isPrimary: d.isPrimary, notes: d.notes ?? "",
     });
     setShowForm(true);
   }
@@ -99,12 +99,13 @@ export default function Domains() {
   const save = useMutation({
     mutationFn: async () => {
       if (!form.domain.trim()) throw new Error("أدخل النطاق");
-      if (!form.companyId) throw new Error("اختر الشركة");
+      if (!form.isMain && !form.companyId) throw new Error("اختر الشركة أو علّم النطاق كنطاق رئيسي");
       const body: Record<string, unknown> = {
         domain: form.domain.trim(),
-        companyId: Number(form.companyId),
+        companyId: form.isMain ? null : Number(form.companyId),
+        isMain: form.isMain,
         status: form.status,
-        isPrimary: form.isPrimary,
+        isPrimary: form.isMain ? false : form.isPrimary,
         notes: form.notes.trim() || undefined,
       };
       const url = isEdit ? `${API}/api/admin/domains/${form.id}` : `${API}/api/admin/domains`;
@@ -224,7 +225,7 @@ export default function Domains() {
                   {rows.map((d) => (
                     <tr key={d.id} className="border-t hover:bg-slate-50/50">
                       <td className="p-3 font-mono font-semibold">{d.domain}</td>
-                      <td className="p-3">{d.companyName || <span className="text-muted-foreground">—</span>}</td>
+                      <td className="p-3">{d.isMain ? <Badge className="bg-blue-100 text-blue-700">رئيسي (متعدد الشركات)</Badge> : (d.companyName || <span className="text-muted-foreground">—</span>)}</td>
                       <td className="p-3 font-mono text-xs">{d.companyCode || "—"}</td>
                       <td className="p-3">
                         {d.isPrimary
@@ -277,9 +278,16 @@ export default function Domains() {
               <Label>النطاق</Label>
               <Input value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} placeholder="مثال: company1.com" className="font-mono" dir="ltr" />
             </div>
-            <div className="space-y-2">
+            <div className="flex items-center justify-between rounded-lg border p-3 bg-blue-50/40">
+              <div>
+                <Label>نطاق رئيسي متعدد الشركات</Label>
+                <p className="text-xs text-muted-foreground">غير مرتبط بشركة واحدة — يحافظ على سلوك تعدد الشركات الافتراضي. يُلغى أي نطاق رئيسي آخر تلقائياً.</p>
+              </div>
+              <Switch checked={form.isMain} onCheckedChange={(v) => setForm({ ...form, isMain: v, companyId: v ? "" : form.companyId, isPrimary: v ? false : form.isPrimary })} />
+            </div>
+            <div className="space-y-2" hidden={form.isMain}>
               <Label>الشركة</Label>
-              <Select value={form.companyId || ""} onValueChange={(v) => setForm({ ...form, companyId: v })}>
+              <Select value={form.companyId || ""} onValueChange={(v) => setForm({ ...form, companyId: v })} disabled={form.isMain}>
                 <SelectTrigger><SelectValue placeholder="اختر الشركة" /></SelectTrigger>
                 <SelectContent>
                   {(companiesQ.data ?? []).map((co) => (
@@ -300,7 +308,7 @@ export default function Domains() {
               </Select>
               <p className="text-xs text-muted-foreground">يتم اعتماد توجيه النطاق إلى الشركة فقط عندما تكون الحالة "مفعّل".</p>
             </div>
-            <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="flex items-center justify-between rounded-lg border p-3" hidden={form.isMain}>
               <div>
                 <Label>النطاق الرئيسي للشركة</Label>
                 <p className="text-xs text-muted-foreground">يُلغى أي نطاق رئيسي آخر لنفس الشركة تلقائياً.</p>

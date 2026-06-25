@@ -103,7 +103,15 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   field_service_tickets:   "field_service",
   field_service_tracking:  "field_service",
   field_service_reports:   "field_service",
+  // Multi-Domain Management — SuperAdmin platform module, LOCKED by default
+  // (see MODULE_GATE_DEFAULT_OFF). Hidden until explicitly enabled.
+  multi_domain: "multi_domain",
 };
+
+// Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse
+// of the normal default-on). Keep in sync with permissions.ts (backend) and
+// DEFAULT_OFF_KEYS in MenuPermissions.tsx.
+const MODULE_GATE_DEFAULT_OFF = new Set<string>(["multi_domain"]);
 
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `permKey`. Mirrors parsePerms semantics in
@@ -117,16 +125,17 @@ export function companyAllowsModule(user: any, permKey?: string): boolean {
   if (!permKey) return true;
   const gateKey = COMPANY_MODULE_GATE[permKey];
   if (!gateKey) return true;
+  const defaultOff = MODULE_GATE_DEFAULT_OFF.has(gateKey);
   const raw = user?.company?.menuPermissions;
-  if (raw == null) return true;
+  if (raw == null) return !defaultOff;
   let parsed: Record<string, boolean>;
   try {
     parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
   } catch {
-    return true;
+    return !defaultOff;
   }
-  if (!parsed || typeof parsed !== "object") return true;
-  return parsed[gateKey] !== false;
+  if (!parsed || typeof parsed !== "object") return !defaultOff;
+  return defaultOff ? parsed[gateKey] === true : parsed[gateKey] !== false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -39,8 +39,13 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const GROUPED_MODULE_KEYS = new Set(MODULE_GROUPS.flatMap(g => g.moduleKeys));
 const EXTRA_KEYS = MENU_ITEMS.map(m => m.key).filter(k => !GROUPED_MODULE_KEYS.has(k));
 
+// Modules LOCKED by default — absent ⇒ OFF (must be explicitly enabled by a
+// SuperAdmin). Keep in sync with MODULE_GATE_DEFAULT_OFF in companyModuleGate.ts
+// and permissions.ts (backend).
+const DEFAULT_OFF_KEYS = new Set<string>(["multi_domain"]);
+
 const DEFAULT_PERMISSIONS: Record<string, boolean> = MENU_ITEMS.reduce(
-  (acc, m) => { acc[m.key] = true; return acc; },
+  (acc, m) => { acc[m.key] = !DEFAULT_OFF_KEYS.has(m.key); return acc; },
   {} as Record<string, boolean>,
 );
 

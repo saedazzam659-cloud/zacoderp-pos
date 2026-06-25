@@ -18,12 +18,17 @@ import { usersTable } from "./users";
 export const companyDomainsTable = pgTable("company_domains", {
   id:        serial("id").primaryKey(),
   // One domain → one company. Cascade so removing a company drops its domains.
-  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  // NULLABLE: the shared "main" multi-company domain (isMain=true) has NO bound
+  // company — it keeps the default multi-company behavior (see domainResolver).
+  companyId: integer("company_id").references(() => companiesTable.id, { onDelete: "cascade" }),
   // Normalised host (lowercase, no scheme/port). Globally unique.
   domain:    text("domain").notNull(),
   // The primary/canonical domain for the company (at most one per company —
   // enforced in the API layer, not the DB, to keep edits flexible).
   isPrimary: boolean("is_primary").notNull().default(false),
+  // The shared "main" multi-company domain — NOT bound to a single company;
+  // preserves the default multi-company behavior. At most one (API-enforced).
+  isMain: boolean("is_main").notNull().default(false),
   // pending | active | disabled.
   status:    text("status").notNull().default("pending"),
   // When the domain went live (set when activated).

@@ -128,18 +128,30 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   field_service_tickets:   "field_service",
   field_service_tracking:  "field_service",
   field_service_reports:   "field_service",
+  // Multi-Domain Management — SuperAdmin platform module, LOCKED by default
+  // (see MODULE_GATE_DEFAULT_OFF). Hidden until explicitly enabled.
+  multi_domain: "multi_domain",
 };
+
+// Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be
+// explicitly enabled), the inverse of the normal default-on behavior. Used for
+// SuperAdmin platform modules that must stay hidden until turned on. Keep in
+// sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
+// MenuPermissions.tsx.
+const MODULE_GATE_DEFAULT_OFF = new Set<string>(["multi_domain"]);
 
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `module`. Mirrors companyAllowsModule() in Layout.tsx —
 // missing keys, missing JSON, and unparseable JSON all default to "allowed"
-// to avoid breaking legacy companies that never had menuPermissions set.
+// to avoid breaking legacy companies that never had menuPermissions set —
+// EXCEPT for default-locked modules (MODULE_GATE_DEFAULT_OFF) which default OFF.
 export function companyAllowsModule(authUser: any, module: string): boolean {
   const gateKey = COMPANY_MODULE_GATE[module];
   if (!gateKey) return true;
+  const defaultOff = MODULE_GATE_DEFAULT_OFF.has(gateKey);
   const mp = authUser?.companyMenuPermissions;
-  if (!mp || typeof mp !== "object") return true;
-  return mp[gateKey] !== false;
+  if (!mp || typeof mp !== "object") return !defaultOff;
+  return defaultOff ? mp[gateKey] === true : mp[gateKey] !== false;
 }
 
 // Pure predicate for the per-action permission decision (NO company gate,

@@ -338,9 +338,10 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "create company_domains table",
       sql:   `CREATE TABLE IF NOT EXISTS company_domains (
         id                 SERIAL PRIMARY KEY,
-        company_id         INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        company_id         INTEGER REFERENCES companies(id) ON DELETE CASCADE,
         domain             TEXT NOT NULL,
         is_primary         BOOLEAN NOT NULL DEFAULT FALSE,
+        is_main            BOOLEAN NOT NULL DEFAULT FALSE,
         status             TEXT NOT NULL DEFAULT 'pending',
         activated_at       TIMESTAMP,
         last_check_at      TIMESTAMP,
@@ -354,6 +355,12 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS company_domains_domain_uniq ON company_domains (domain)` },
     { label: "company_domains_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS company_domains_company_idx ON company_domains (company_id)` },
+    // Multi-domain: allow a "main" multi-company domain (no bound company) plus
+    // the is_main flag. Idempotent ALTERs for tables created before this change.
+    { label: "company_domains company_id nullable",
+      sql:   `ALTER TABLE company_domains ALTER COLUMN company_id DROP NOT NULL` },
+    { label: "company_domains add is_main",
+      sql:   `ALTER TABLE company_domains ADD COLUMN IF NOT EXISTS is_main BOOLEAN NOT NULL DEFAULT FALSE` },
 
     { label: "create store_products table",
       sql:   `CREATE TABLE IF NOT EXISTS store_products (
