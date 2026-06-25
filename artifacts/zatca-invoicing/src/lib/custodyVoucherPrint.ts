@@ -156,8 +156,8 @@ body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111
 .header { display:flex; align-items:center; justify-content:center; gap:18px; border-bottom:3px solid #166534; padding:6px 0 16px; }
 .header .logo img { max-height:80px; max-width:140px; object-fit:contain; }
 .header .co-name { font-size:24px; font-weight:800; color:#14532d; text-align:center; }
-.title-bar { background:#166534; color:#fff; font-size:17px; font-weight:800; text-align:center; padding:8px 12px; margin:18px auto 0; border-radius:6px; width:60%; }
-.data-wrap { flex:1; display:flex; flex-direction:column; justify-content:center; padding:10px 0; }
+.title-bar { background:#166534; color:#fff; font-size:17px; font-weight:800; text-align:center; padding:8px 12px; margin:12px auto 0; border-radius:6px; width:60%; }
+.data-wrap { flex:1; display:flex; flex-direction:column; justify-content:flex-start; padding:14px 0 0; }
 .section-label { font-size:14px; font-weight:700; color:#166534; margin:0 0 10px; text-align:center; }
 table.data { width:80%; margin:0 auto; border-collapse:collapse; font-size:13.5px; }
 table.data td { border:1px solid #cbd5e1; padding:9px 14px; }
@@ -170,9 +170,11 @@ table.lines td.num { font-weight:700; }
 .notes { width:90%; margin:14px auto 0; font-size:12.5px; border:1px dashed #a7f3d0; border-radius:6px; padding:8px 12px; background:#f0fdf4; }
 .notes-label { font-weight:700; color:#166534; }
 .tafqeet { text-align:center; font-size:14px; font-weight:700; color:#14532d; margin:18px auto 0; padding:8px; width:80%; border-top:1px dashed #a7f3d0; }
-.recipient { display:grid; grid-template-columns:repeat(3,1fr); gap:36px; margin:44px auto 0; width:100%; font-size:12.5px; text-align:center; }
-.sig .role { font-weight:700; margin-bottom:40px; }
-.sig .line { border-top:1px solid #111; padding-top:6px; color:#475569; font-size:11px; }
+.recipient { display:grid; grid-template-columns:repeat(3,1fr); gap:40px; margin:24px auto 0; width:100%; font-size:12.5px; text-align:center; align-items:start; }
+.sig { padding:0 8px; }
+.sig.approve { margin-top:26px; }
+.sig .role { font-weight:700; margin-bottom:46px; }
+.sig .line { border-top:1px solid #111; padding-top:6px; color:#475569; font-size:11px; max-width:210px; margin:0 auto; }
 .footer { display:flex; justify-content:space-between; font-size:10px; color:#64748b; border-top:1px solid #e2e8f0; padding-top:6px; margin-top:18px; }
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#166534; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
 @media print { .print-btn { display:none; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
@@ -196,7 +198,7 @@ table.lines td.num { font-weight:700; }
       <div class="role">توقيع الموظف (المستلم)</div>
       <div class="line">${esc(doc.employeeName)}</div>
     </div>
-    <div class="sig">
+    <div class="sig approve">
       <div class="role">اعتماد</div>
       <div class="line">الاسم والتوقيع</div>
     </div>
