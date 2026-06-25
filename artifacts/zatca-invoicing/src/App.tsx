@@ -94,6 +94,7 @@ import GatewayClientReports from "@/pages/admin/GatewayClientReports";
 import GatewayOverview from "@/pages/admin/GatewayOverview";
 import Modules from "@/pages/admin/Modules";
 import Industries from "@/pages/admin/Industries";
+import CompanyCloning from "@/pages/admin/CompanyCloning";
 import LicenseManagement from "@/pages/LicenseManagement";
 import BackupOperations from "@/pages/BackupOperations";
 import GeneralSettings from "@/pages/GeneralSettings";
@@ -616,6 +617,7 @@ function AppRoutes() {
             {rawIsSuperAdmin && <Route path="/admin/invoice-field-policies" component={InvoiceFieldPolicies} />}
             {isSuperAdmin && <Route path="/admin/modules" component={Modules} />}
             {isSuperAdmin && <Route path="/admin/industries" component={Industries} />}
+            {isSuperAdmin && <Route path="/admin/company-cloning" component={CompanyCloning} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
             {isSuperAdmin && <Route path="/admin/pos-devices" component={PosDevices} />}
             {isSuperAdmin && <Route path="/admin/offline-licenses" component={OfflineLicenses} />}

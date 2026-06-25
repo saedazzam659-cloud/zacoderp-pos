@@ -448,6 +448,38 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "cpt_company_doc_idx",
       sql:   `CREATE INDEX IF NOT EXISTS cpt_company_doc_idx ON custom_print_templates (company_id, document_type)` },
 
+    // ─── Company Cloning from Templates (see lib/db/src/schema/companyTemplates.ts).
+    { label: "create company_templates table",
+      sql:   `CREATE TABLE IF NOT EXISTS company_templates (
+        id                 SERIAL PRIMARY KEY,
+        name_ar            TEXT NOT NULL,
+        name_en            TEXT,
+        description        TEXT,
+        industry_name      TEXT,
+        source_company_id  INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "company_templates_source_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS company_templates_source_idx ON company_templates (source_company_id)` },
+
+    { label: "create company_clone_runs table",
+      sql:   `CREATE TABLE IF NOT EXISTS company_clone_runs (
+        id                   SERIAL PRIMARY KEY,
+        source_company_id    INTEGER NOT NULL,
+        target_company_id    INTEGER,
+        template_id          INTEGER,
+        performed_by_user_id INTEGER,
+        status               TEXT NOT NULL DEFAULT 'success',
+        summary              JSONB,
+        error                TEXT,
+        created_at           TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "company_clone_runs_source_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS company_clone_runs_source_idx ON company_clone_runs (source_company_id)` },
+
     { label: "create store_payment_settings table",
       sql:   `CREATE TABLE IF NOT EXISTS store_payment_settings (
         id           SERIAL PRIMARY KEY,

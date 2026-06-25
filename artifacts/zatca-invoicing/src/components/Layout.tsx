@@ -25,6 +25,7 @@ import {
   CalendarClock,
   Gauge,
   Handshake,
+  Copy,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -161,6 +162,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.plans",                href: "/admin/plans",              icon: Settings2 },
   { nameKey: "nav.modules",              href: "/admin/modules",            icon: Layers },
   { nameKey: "nav.industries",           href: "/admin/industries",         icon: Briefcase },
+  { nameKey: "nav.companyCloning",        href: "/admin/company-cloning",    icon: Copy },
   { nameKey: "nav.menuPermissions",      href: "/admin/menu-permissions",   icon: SlidersHorizontal },
   { nameKey: "nav.windowsAppPermissions", href: "/admin/windows-app-permissions", icon: MonitorSmartphone },
   { nameKey: "nav.gatewayClients",       href: "/admin/gateway-clients",    icon: KeyRound },

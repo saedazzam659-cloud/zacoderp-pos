@@ -77,3 +77,4 @@ export * from "./accountNotes";
 export * from "./safety";
 export * from "./taxes";
 export * from "./resellers";
+export * from "./companyTemplates";
