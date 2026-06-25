@@ -115,8 +115,6 @@ export function buildCustodyVoucherHtml(args: CustodyVoucherArgs): string {
     ["الموظف", `${esc(doc.employeeName)}${doc.employeeCode ? ` (${esc(doc.employeeCode)})` : ""}`],
     ["تاريخ العهدة", esc(doc.custodyDate || "—")],
     ["مبلغ العهدة", `${fmtMoney(amount)} ر.س`],
-    ["المُسوّى بالمصروفات", `${fmtMoney(settled)} ر.س`],
-    ["المُرجَع", `${fmtMoney(returned)} ر.س`],
     ["المتبقي", `${fmtMoney(remaining)} ر.س`],
     ["الحالة", esc(doc.statusLabel || "—")],
   ];
@@ -174,7 +172,6 @@ table.lines td.num { font-weight:700; }
 .notes-label { font-weight:700; color:#166534; }
 .tafqeet { text-align:center; font-size:14px; font-weight:700; color:#14532d; margin:18px auto 0; padding:8px; width:80%; border-top:1px dashed #a7f3d0; }
 .recipient { display:grid; grid-template-columns:repeat(2,1fr); gap:40px; margin:32px auto 0; width:80%; font-size:12.5px; text-align:center; }
-.sigs { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; margin-top:34px; font-size:13px; text-align:center; }
 .sig .role { font-weight:700; margin-bottom:34px; }
 .sig .line { border-top:1px solid #111; padding-top:6px; color:#475569; font-size:11px; }
 .footer { display:flex; justify-content:space-between; font-size:10px; color:#64748b; border-top:1px solid #e2e8f0; padding-top:6px; margin-top:18px; }
@@ -201,21 +198,7 @@ table.lines td.num { font-weight:700; }
       <div class="line">${esc(doc.employeeName)}</div>
     </div>
     <div class="sig">
-      <div class="role">المُحاسب</div>
-      <div class="line">الاسم والتوقيع</div>
-    </div>
-  </div>
-  <div class="sigs">
-    <div class="sig">
-      <div class="role">أمين الصندوق</div>
-      <div class="line">الاسم والتوقيع</div>
-    </div>
-    <div class="sig">
-      <div class="role">مدير الموارد البشرية</div>
-      <div class="line">الاسم والتوقيع</div>
-    </div>
-    <div class="sig">
-      <div class="role">الإدارة المالية</div>
+      <div class="role">اعتماد</div>
       <div class="line">الاسم والتوقيع</div>
     </div>
   </div>

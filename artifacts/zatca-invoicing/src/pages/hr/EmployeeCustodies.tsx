@@ -19,7 +19,7 @@ import { printCustodyVoucher, downloadCustodyVoucherPdf, type CustodyVoucherDoc 
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 
 const today = () => new Date().toISOString().slice(0, 10);
-const EMPTY: any = { employeeId: "", custodyDate: today(), amount: 0, purpose: "", notes: "" };
+const EMPTY: any = { employeeId: "", custodyDate: today(), amount: 0, custodyAccountId: "", purpose: "", notes: "" };
 const EMPTY_SETTLE: any = { settleDate: today(), amount: 0, expenseAccountId: "", description: "", invoiceNumber: "" };
 
 // ISO (YYYY-MM-DD) → DD/MM/YYYY for read-only display, matching SmartDateInput.
@@ -218,6 +218,7 @@ export default function EmployeeCustodies() {
       employeeId: String(c.employeeId ?? ""),
       custodyDate: c.custodyDate || today(),
       amount: c.amount ?? 0,
+      custodyAccountId: c.custodyAccountId ? String(c.custodyAccountId) : "",
       purpose: c.purpose || "",
       notes: c.notes || "",
     });
@@ -379,6 +380,20 @@ export default function EmployeeCustodies() {
             <Field label={tr("fieldAmount")}>
               <Input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })}
                 disabled={lockPrincipal} data-testid="custody-amount" />
+            </Field>
+            <Field label={tr("fieldCustodyAccount")} className="md:col-span-3">
+              <SearchCombobox
+                items={((hrSettings?.accounts || []) as any[]).map((a: any) => ({
+                  value: String(a.id), code: a.code, label: pickName(a.nameAr, a.nameEn),
+                }))}
+                value={form.custodyAccountId ? String(form.custodyAccountId) : ""}
+                onValueChange={(v) => setForm({ ...form, custodyAccountId: v })}
+                placeholder={tr("chooseCustodyAccount")}
+                searchPlaceholder={tr("searchAccountPlaceholder")}
+                className="w-full"
+                disabled={lockPrincipal}
+                data-testid="custody-account"
+              />
             </Field>
             <Field label={tr("fieldPurpose")} className="md:col-span-3">
               <Input value={form.purpose} onChange={e => setForm({ ...form, purpose: e.target.value })} placeholder={tr("purposePlaceholder")} />
