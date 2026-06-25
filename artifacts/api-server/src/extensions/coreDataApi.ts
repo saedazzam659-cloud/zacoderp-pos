@@ -5,6 +5,11 @@ import {
   invoicesTable,
   suppliersTable,
   accountsTable,
+  purchaseOrdersTable,
+  purchaseInvoicesTable,
+  journalEntriesTable,
+  receiptVouchersTable,
+  paymentVouchersTable,
 } from "@workspace/db";
 import { and, desc, eq, ilike, or } from "drizzle-orm";
 import type { ExtensionManifest } from "./manifest.js";
@@ -184,7 +189,7 @@ const RESOURCES: Record<string, CoreResourceDef> = {
     resource: "suppliers",
     titleAr: "الموردون",
     titleEn: "Suppliers",
-    actions: ["read"],
+    actions: ["read", "write"],
     async list(companyId, opts) {
       const limit = clampLimit(opts.limit);
       const term = (opts.search ?? "").trim();
@@ -212,6 +217,25 @@ const RESOURCES: Record<string, CoreResourceDef> = {
         .where(where)
         .orderBy(desc(suppliersTable.id))
         .limit(limit);
+    },
+    async create(companyId, body) {
+      const nameAr = String(body.nameAr ?? "").trim();
+      if (!nameAr) throw new CoreApiError(400, "EXT_CORE_VALIDATION", "اسم المورد (nameAr) مطلوب");
+      const nameEn = body.nameEn != null ? String(body.nameEn).trim() || null : null;
+      const phone = body.phone != null ? String(body.phone).trim() || null : null;
+      const email = body.email != null ? String(body.email).trim() || null : null;
+      const city = body.city != null ? String(body.city).trim() || null : null;
+      const vatNumber = body.vatNumber != null ? String(body.vatNumber).trim() || null : null;
+      const [row] = await db
+        .insert(suppliersTable)
+        .values({ companyId, nameAr, nameEn, phone, email, city, vatNumber })
+        .returning({
+          id: suppliersTable.id,
+          nameAr: suppliersTable.nameAr,
+          nameEn: suppliersTable.nameEn,
+          phone: suppliersTable.phone,
+        });
+      return row;
     },
   },
 
@@ -246,6 +270,184 @@ const RESOURCES: Record<string, CoreResourceDef> = {
         .from(accountsTable)
         .where(where)
         .orderBy(accountsTable.code)
+        .limit(limit);
+    },
+  },
+
+  purchase_orders: {
+    resource: "purchase_orders",
+    titleAr: "أوامر الشراء",
+    titleEn: "Purchase Orders",
+    actions: ["read"],
+    async list(companyId, opts) {
+      const limit = clampLimit(opts.limit);
+      const term = (opts.search ?? "").trim();
+      const where = term
+        ? and(
+            eq(purchaseOrdersTable.companyId, companyId),
+            or(
+              ilike(purchaseOrdersTable.docNumber, `%${term}%`),
+              ilike(purchaseOrdersTable.supplierInvoiceNumber, `%${term}%`),
+            ),
+          )
+        : eq(purchaseOrdersTable.companyId, companyId);
+      return db
+        .select({
+          id: purchaseOrdersTable.id,
+          docNumber: purchaseOrdersTable.docNumber,
+          orderDate: purchaseOrdersTable.orderDate,
+          expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
+          supplierId: purchaseOrdersTable.supplierId,
+          status: purchaseOrdersTable.status,
+          currencyCode: purchaseOrdersTable.currencyCode,
+          totalAmount: purchaseOrdersTable.totalAmount,
+          vatAmount: purchaseOrdersTable.vatAmount,
+        })
+        .from(purchaseOrdersTable)
+        .where(where)
+        .orderBy(desc(purchaseOrdersTable.id))
+        .limit(limit);
+    },
+  },
+
+  purchase_invoices: {
+    resource: "purchase_invoices",
+    titleAr: "فواتير الشراء",
+    titleEn: "Purchase Invoices",
+    actions: ["read"],
+    async list(companyId, opts) {
+      const limit = clampLimit(opts.limit);
+      const term = (opts.search ?? "").trim();
+      const where = term
+        ? and(
+            eq(purchaseInvoicesTable.companyId, companyId),
+            or(
+              ilike(purchaseInvoicesTable.docNumber, `%${term}%`),
+              ilike(purchaseInvoicesTable.supplierInvoiceNumber, `%${term}%`),
+            ),
+          )
+        : eq(purchaseInvoicesTable.companyId, companyId);
+      return db
+        .select({
+          id: purchaseInvoicesTable.id,
+          docNumber: purchaseInvoicesTable.docNumber,
+          supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
+          invoiceDate: purchaseInvoicesTable.invoiceDate,
+          supplierId: purchaseInvoicesTable.supplierId,
+          status: purchaseInvoicesTable.status,
+          currencyCode: purchaseInvoicesTable.currencyCode,
+          totalAmount: purchaseInvoicesTable.totalAmount,
+          vatAmount: purchaseInvoicesTable.vatAmount,
+        })
+        .from(purchaseInvoicesTable)
+        .where(where)
+        .orderBy(desc(purchaseInvoicesTable.id))
+        .limit(limit);
+    },
+  },
+
+  journal_entries: {
+    resource: "journal_entries",
+    titleAr: "القيود اليومية",
+    titleEn: "Journal Entries",
+    actions: ["read"],
+    async list(companyId, opts) {
+      const limit = clampLimit(opts.limit);
+      const term = (opts.search ?? "").trim();
+      const where = term
+        ? and(
+            eq(journalEntriesTable.companyId, companyId),
+            or(
+              ilike(journalEntriesTable.docNumber, `%${term}%`),
+              ilike(journalEntriesTable.description, `%${term}%`),
+            ),
+          )
+        : eq(journalEntriesTable.companyId, companyId);
+      return db
+        .select({
+          id: journalEntriesTable.id,
+          docNumber: journalEntriesTable.docNumber,
+          entryDate: journalEntriesTable.entryDate,
+          entryType: journalEntriesTable.entryType,
+          status: journalEntriesTable.status,
+          currency: journalEntriesTable.currency,
+          description: journalEntriesTable.description,
+        })
+        .from(journalEntriesTable)
+        .where(where)
+        .orderBy(desc(journalEntriesTable.id))
+        .limit(limit);
+    },
+  },
+
+  receipt_vouchers: {
+    resource: "receipt_vouchers",
+    titleAr: "سندات القبض",
+    titleEn: "Receipt Vouchers",
+    actions: ["read"],
+    async list(companyId, opts) {
+      const limit = clampLimit(opts.limit);
+      const term = (opts.search ?? "").trim();
+      const where = term
+        ? and(
+            eq(receiptVouchersTable.companyId, companyId),
+            or(
+              ilike(receiptVouchersTable.code, `%${term}%`),
+              ilike(receiptVouchersTable.entityName, `%${term}%`),
+              ilike(receiptVouchersTable.refNumber, `%${term}%`),
+            ),
+          )
+        : eq(receiptVouchersTable.companyId, companyId);
+      return db
+        .select({
+          id: receiptVouchersTable.id,
+          code: receiptVouchersTable.code,
+          date: receiptVouchersTable.date,
+          paymentType: receiptVouchersTable.paymentType,
+          entityType: receiptVouchersTable.entityType,
+          entityName: receiptVouchersTable.entityName,
+          amount: receiptVouchersTable.amount,
+          status: receiptVouchersTable.status,
+        })
+        .from(receiptVouchersTable)
+        .where(where)
+        .orderBy(desc(receiptVouchersTable.id))
+        .limit(limit);
+    },
+  },
+
+  payment_vouchers: {
+    resource: "payment_vouchers",
+    titleAr: "سندات الصرف",
+    titleEn: "Payment Vouchers",
+    actions: ["read"],
+    async list(companyId, opts) {
+      const limit = clampLimit(opts.limit);
+      const term = (opts.search ?? "").trim();
+      const where = term
+        ? and(
+            eq(paymentVouchersTable.companyId, companyId),
+            or(
+              ilike(paymentVouchersTable.code, `%${term}%`),
+              ilike(paymentVouchersTable.entityName, `%${term}%`),
+              ilike(paymentVouchersTable.refNumber, `%${term}%`),
+            ),
+          )
+        : eq(paymentVouchersTable.companyId, companyId);
+      return db
+        .select({
+          id: paymentVouchersTable.id,
+          code: paymentVouchersTable.code,
+          date: paymentVouchersTable.date,
+          paymentType: paymentVouchersTable.paymentType,
+          entityType: paymentVouchersTable.entityType,
+          entityName: paymentVouchersTable.entityName,
+          amount: paymentVouchersTable.amount,
+          status: paymentVouchersTable.status,
+        })
+        .from(paymentVouchersTable)
+        .where(where)
+        .orderBy(desc(paymentVouchersTable.id))
         .limit(limit);
     },
   },

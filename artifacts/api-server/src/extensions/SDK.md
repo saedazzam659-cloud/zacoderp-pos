@@ -106,10 +106,15 @@ always filtered to the caller's company:
 | Resource | Actions |
 | --- | --- |
 | `customers` | read, write |
+| `suppliers` | read, write |
 | `items` | read |
 | `invoices` | read |
-| `suppliers` | read |
 | `accounts` | read |
+| `purchase_orders` | read |
+| `purchase_invoices` | read |
+| `journal_entries` | read |
+| `receipt_vouchers` | read |
+| `payment_vouchers` | read |
 
 A call without the matching signed permission returns `403 EXT_PERMISSION_DENIED`.
 
