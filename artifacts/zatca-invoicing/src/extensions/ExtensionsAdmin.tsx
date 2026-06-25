@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
-import { Puzzle, ShieldCheck, ShieldAlert, ExternalLink } from "lucide-react";
+import { Puzzle, ShieldCheck, ShieldAlert, ExternalLink, Table2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -99,11 +99,23 @@ export default function ExtensionsAdmin() {
                   <span className="text-[10px] text-muted-foreground">
                     {t("extensions.tables", "جداول خاصة")}:
                   </span>
-                  {e.tables.map((tb) => (
-                    <span key={tb.key} className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
-                      {isEn ? tb.titleEn || tb.titleAr : tb.titleAr}
-                    </span>
-                  ))}
+                  {e.tables.map((tb) =>
+                    e.enabled ? (
+                      <Link
+                        key={tb.key}
+                        href={`/ext/${e.extensionId}/table/${tb.key}`}
+                        className="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700 hover:bg-indigo-100"
+                        data-testid={`extension-open-table-${e.extensionId}-${tb.key}`}
+                      >
+                        <Table2 className="h-3 w-3" />
+                        {isEn ? tb.titleEn || tb.titleAr : tb.titleAr}
+                      </Link>
+                    ) : (
+                      <span key={tb.key} className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+                        {isEn ? tb.titleEn || tb.titleAr : tb.titleAr}
+                      </span>
+                    ),
+                  )}
                 </div>
               )}
 

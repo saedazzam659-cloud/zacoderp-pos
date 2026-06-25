@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
+import { Table2 } from "lucide-react";
 import { useInstalledExtensions } from "./registry";
 import PartnerScreenWrapper from "./PartnerScreenWrapper";
 
@@ -58,6 +59,7 @@ export default function ExtensionScreen({
   const screen = screens.find((s) => s.key === screenKey);
   const extName = isEn ? ext.nameEn || ext.nameAr : ext.nameAr;
   const screenTitle = screen ? (isEn ? screen.titleEn || screen.titleAr : screen.titleAr) : screenKey;
+  const tables = ext.tables ?? [];
 
   return (
     <div className="flex flex-col h-full" data-testid={`ext-screen-${extensionId}`}>
@@ -67,9 +69,9 @@ export default function ExtensionScreen({
         </Link>
         <span className="text-muted-foreground">/</span>
         <span className="text-sm font-medium">{extName}</span>
-        {screens.length > 1 && (
-          <div className="flex flex-wrap gap-1 ms-auto">
-            {screens.map((s) => {
+        <div className="flex flex-wrap gap-1 ms-auto">
+          {screens.length > 1 &&
+            screens.map((s) => {
               const active = s.key === screenKey;
               const label = isEn ? s.titleEn || s.titleAr : s.titleAr;
               return (
@@ -86,8 +88,21 @@ export default function ExtensionScreen({
                 </Link>
               );
             })}
-          </div>
-        )}
+          {tables.map((tb) => {
+            const label = isEn ? tb.titleEn || tb.titleAr : tb.titleAr;
+            return (
+              <Link
+                key={tb.key}
+                href={`/ext/${ext.extensionId}/table/${tb.key}`}
+                className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-1 text-xs text-indigo-700 hover:bg-indigo-100"
+                data-testid={`ext-screen-table-${tb.key}`}
+              >
+                <Table2 className="h-3 w-3" />
+                {label}
+              </Link>
+            );
+          })}
+        </div>
       </div>
       <div className="flex-1 min-h-0">
         <PartnerScreenWrapper

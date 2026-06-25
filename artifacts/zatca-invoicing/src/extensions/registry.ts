@@ -80,7 +80,95 @@ export function screensByKind(screens: ExtensionScreenDef[]): Record<ExtensionSc
 export const extKeys = {
   installed: ["ext", "installed"] as const,
   catalog: ["ext", "catalog"] as const,
+  data: (extensionId: string, collection: string) =>
+    ["ext", "data", extensionId, collection] as const,
 };
+
+// ── Extension OWN-data records (ext_records collections) ──────────────────
+// One row of an extension's custom "table". The host never knows the row's
+// shape — `data` is whatever JSON the extension stored. The generic data grid
+// derives its columns from the keys present across rows.
+export interface ExtDataRecord {
+  id: string;
+  collection: string;
+  data: Record<string, unknown>;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+function extDataBase(extensionId: string, collection: string): string {
+  return `${API}/api/ext/${encodeURIComponent(extensionId)}/data/${encodeURIComponent(collection)}`;
+}
+
+// List the rows of one declared collection (tenant-scoped, manifest-gated by
+// the backend). `enabled` lets callers defer the fetch until a table is chosen.
+export function useExtDataList(
+  extensionId: string,
+  collection: string,
+  opts: { enabled?: boolean; limit?: number } = {},
+) {
+  const { enabled = true, limit } = opts;
+  return useQuery({
+    queryKey: extKeys.data(extensionId, collection),
+    enabled: enabled && !!extensionId && !!collection,
+    queryFn: async () => {
+      const qs = limit ? `?limit=${encodeURIComponent(String(limit))}` : "";
+      return jsonOrThrow<ExtDataRecord[]>(
+        await fetch(`${extDataBase(extensionId, collection)}${qs}`, { headers: authHeaders() }),
+      );
+    },
+  });
+}
+
+export function useExtDataCreate(extensionId: string, collection: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Record<string, unknown>) =>
+      jsonOrThrow<ExtDataRecord>(
+        await fetch(extDataBase(extensionId, collection), {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ data }),
+        }),
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: extKeys.data(extensionId, collection) });
+    },
+  });
+}
+
+export function useExtDataUpdate(extensionId: string, collection: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      jsonOrThrow<ExtDataRecord>(
+        await fetch(`${extDataBase(extensionId, collection)}/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          headers: authHeaders(),
+          body: JSON.stringify({ data }),
+        }),
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: extKeys.data(extensionId, collection) });
+    },
+  });
+}
+
+export function useExtDataRemove(extensionId: string, collection: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      jsonOrThrow<{ ok: true; id: string }>(
+        await fetch(`${extDataBase(extensionId, collection)}/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          headers: authHeaders(),
+        }),
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: extKeys.data(extensionId, collection) });
+    },
+  });
+}
 
 // ── Tenant-scoped: extensions enabled for the current company ────────────
 export function useInstalledExtensions(enabled = true) {
