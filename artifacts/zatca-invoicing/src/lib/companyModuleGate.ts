@@ -103,12 +103,16 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   field_service_tickets:   "field_service",
   field_service_tracking:  "field_service",
   field_service_reports:   "field_service",
+  // Extension Platform (Phase 0) — additive "outer shell". Default OFF; a
+  // company sees the الإضافات group ONLY after SuperAdmin grants the
+  // `extensions_platform` toggle. Mirror of the backend COMPANY_MODULE_GATE.
+  extensions: "extensions_platform",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse
 // of the normal default-on). Keep in sync with permissions.ts (backend) and
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
-const MODULE_GATE_DEFAULT_OFF = new Set<string>([]);
+const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform"]);
 
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `permKey`. Mirrors parsePerms semantics in

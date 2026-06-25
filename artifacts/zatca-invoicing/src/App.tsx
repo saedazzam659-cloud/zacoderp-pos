@@ -289,6 +289,8 @@ import Currencies from "@/pages/settings/Currencies";
 import AccountingMappings from "@/pages/settings/AccountingMappings";
 import DataImportExport from "@/pages/settings/DataImportExport";
 import Sequences from "@/pages/settings/Sequences";
+import ExtensionsAdmin from "@/extensions/ExtensionsAdmin";
+import ExtensionScreen from "@/extensions/ExtensionScreen";
 import SalesReps from "@/pages/sales/SalesReps";
 import SalesRepCommissions from "@/pages/sales/SalesRepCommissions";
 // Accounting Reports
@@ -687,6 +689,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/pos-monitoring" module="pos" component={PosMonitoring} />}
             {!isSuperAdmin && <PermRoute path="/pos-operations" module="pos" component={PosOperations} />}
             {!isSuperAdmin && <PermRoute path="/chat" module="chat" component={Chat} />}
+            {!isSuperAdmin && <PermRoute path="/extensions" module="extensions" component={ExtensionsAdmin} />}
+            {!isSuperAdmin && <PermRoute path="/ext/:extensionId/:screenKey?" module="extensions" component={ExtensionScreen} />}
             {!isSuperAdmin && <PermRoute path="/pos-settings"   module="pos" component={PosSettings} />}
             {!isSuperAdmin && <PermRoute path="/pos-terminals"  module="pos" component={PosTerminals} />}
             {!isSuperAdmin && <PermRoute path="/online-store" module="online_store" component={OnlineStore} />}

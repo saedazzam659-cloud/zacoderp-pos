@@ -14,7 +14,7 @@ import {
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope, Video,
   ScrollText, Database, ListOrdered, HardDrive, Trash2, BadgePercent, Percent,
   Gift, ReceiptText,
-  Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
+  Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone, Puzzle,
   Server, Camera, Monitor,
   GitBranch, Globe,
   Plug,
@@ -450,6 +450,13 @@ const companyMaintenanceSubNav: NavDef[] = [
   { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,  permKey: "data_io" },
 ];
 
+// "الإضافات" — Extension Platform (Phase 0). The whole group is bounded by the
+// `extensions_platform` company toggle (default OFF) + per-user `extensions`
+// perm via isGroupAllowed one level up.
+const extensionsSubNav: NavDef[] = [
+  { nameKey: "nav.extensions",      href: "/extensions",          icon: Puzzle,    permKey: "extensions" },
+];
+
 // "ربط ZATCA" — top-level group for ZATCA integration screens. Per the
 // user's request these were lifted out of the dashboard/control-panel
 // group so they get their own visible category in the sidebar.
@@ -850,6 +857,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   sessions:    ["sessions"],
   chat:        ["chat"],
   companyMaintenance: ["company_maintenance"],
+  extensions:  ["extensions"],
   multiLink:   ["multi_link"],
   liveMonitoring: LIVE_MONITORING_GROUP_PERMS,
 };
@@ -2072,6 +2080,40 @@ function CompanyMaintenanceNavGroup({
   );
 }
 
+// ─── ExtensionsNavGroup ──────────────────────────────────────────────────────
+// Top-level "الإضافات" group — Extension Platform (additive "outer shell").
+// Gated by the `extensions_platform` company toggle (default OFF) one level up.
+function ExtensionsNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const visibleChildren = filterNav(extensionsSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = location.startsWith("/extensions") || location.startsWith("/ext/");
+  return (
+    <div>
+      <HubGroupButton
+        hubHref={visibleChildren[0].href}
+        icon={Puzzle}
+        label={t("nav.extensionsGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {visibleChildren.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MultiLinkNavGroup ───────────────────────────────────────────────────────
 // Collapsible "ربط متعدد" group — multi-tenant external invoice gateway
 // (gateway clients management, CSID upload, reports, dispatch monitor).
@@ -2471,6 +2513,8 @@ function SidebarInner({
   onChatToggle,
   companyMaintenanceOpen,
   onCompanyMaintenanceToggle,
+  extensionsOpen,
+  onExtensionsToggle,
   liveMonitoringOpen,
   onLiveMonitoringToggle,
   onNavigate,
@@ -2545,6 +2589,8 @@ function SidebarInner({
   onCompanyMaintenanceToggle: () => void;
   liveMonitoringOpen: boolean;
   onLiveMonitoringToggle: () => void;
+  extensionsOpen: boolean;
+  onExtensionsToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
   /** Optional close handler. When provided we render a close button in
@@ -2958,6 +3004,17 @@ function SidebarInner({
               </div>
             )}
 
+            {isGroupAllowed(menuPerms, "extensions", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <ExtensionsNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={extensionsOpen}
+                  onToggle={onExtensionsToggle}
+                />
+              </div>
+            )}
+
             {filteredBusiness.length > 0 && (
               <div className="space-y-0.5">
                 {filteredBusiness.map(item => (
@@ -3106,6 +3163,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...sessionsSubNav,
     ...chatSubNav,
     ...companyMaintenanceSubNav,
+    ...extensionsSubNav,
     ...purchasingSubNav.map(i => ({ ...i, parent: "/purchasing" })),
     ...salesSubNav.map(i => ({ ...i, parent: "/sales" })),
     ...companySystemNav.map(i => ({ ...i, parent: "/accounting" })),
@@ -3450,6 +3508,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [liveMonitoringOpen, setLiveMonitoringOpen] = useState(() =>
     location.startsWith("/user-tracking")
   );
+  const [extensionsOpen, setExtensionsOpen] = useState(() =>
+    location.startsWith("/extensions") || location.startsWith("/ext/")
+  );
 
   // Mirror the App.tsx logic: while impersonating a tenant the SA should
   // see the tenant sidebar (Dashboard / Sales / Inventory / …), not the
@@ -3465,7 +3526,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "sister" | "accounting"
     | "purchasing" | "sales" | "cash" | "hr" | "production" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
-    | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring";
+    | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring" | "extensions";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
     if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
@@ -3494,6 +3555,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "chat")        setChatOpen(false);
     if (keep !== "companyMaintenance") setCompanyMaintenanceOpen(false);
     if (keep !== "liveMonitoring") setLiveMonitoringOpen(false);
+    if (keep !== "extensions")  setExtensionsOpen(false);
   };
   // Each top-level toggle: flip its own state. When the row is currently
   // CLOSED (i.e. the click is about to OPEN it), also collapse every other
@@ -3538,6 +3600,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleChatToggle       = makeAccordionToggle("chat",       chatOpen,       setChatOpen);
   const handleCompanyMaintenanceToggle = makeAccordionToggle("companyMaintenance", companyMaintenanceOpen, setCompanyMaintenanceOpen);
   const handleLiveMonitoringToggle = makeAccordionToggle("liveMonitoring", liveMonitoringOpen, setLiveMonitoringOpen);
+  const handleExtensionsToggle  = makeAccordionToggle("extensions",  extensionsOpen,  setExtensionsOpen);
   // Sub-group toggles (nested reports) — independent of the accordion.
   const handleInvReportsToggle        = () => setInvReportsOpen(v => !v);
   const handleReportsToggle           = () => setReportsOpen(v => !v);
@@ -3649,6 +3712,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         chat:        setChatOpen,
         companyMaintenance: setCompanyMaintenanceOpen,
         liveMonitoring: setLiveMonitoringOpen,
+        extensions:  setExtensionsOpen,
       };
       setterByGroup[target](true);
       closeOtherTopLevelGroups(target);
@@ -3724,6 +3788,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onCompanyMaintenanceToggle: handleCompanyMaintenanceToggle,
     liveMonitoringOpen,
     onLiveMonitoringToggle: handleLiveMonitoringToggle,
+    extensionsOpen,
+    onExtensionsToggle: handleExtensionsToggle,
     onNavigate: closeMobile,
     onClose: closeMobile,
     onLogout: handleLogout,

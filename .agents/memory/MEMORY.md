@@ -140,3 +140,4 @@
 - [toLocaleString max-fraction leak](tolocalestring-max-fraction-leak.md) — money display `toLocaleString({minimumFractionDigits:2})` w/o `maximumFractionDigits` leaks a 3rd decimal on summed totals; always pass BOTH or use useFmt().
 - [Web hide-zeros numeric inputs](web-hide-zeros-input.md) — shared ui/input.tsx blanks a CONTROLLED numeric 0 (value+onChange) only; never ref/RHF-register fields; per-company companies.show_zeros, default hide.
 - [Reseller network module](reseller-network-module.md) — platform reseller/agent network is SuperAdmin ROLE-gated (no company-module key); portal scoped via resellerCompanyIds(), perms renew_subscriptions/view_reports/support.
+- [Extension Platform foundation](extension-platform-foundation.md) — additive partner outer-shell: Ed25519-signed manifests, in-process-only handlers, iframe sandbox WITHOUT allow-same-origin, default-OFF gating in 4 places, single ensureSchema DDL block in src/lib (not src/db).

@@ -128,6 +128,10 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   field_service_tickets:   "field_service",
   field_service_tracking:  "field_service",
   field_service_reports:   "field_service",
+  // Extension Platform (Phase 0) — additive "outer shell". Default OFF: a
+  // company sees/uses extensions ONLY after SuperAdmin grants the
+  // `extensions_platform` toggle. Mirror in frontend companyModuleGate.ts.
+  extensions: "extensions_platform",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be
@@ -135,7 +139,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // SuperAdmin platform modules that must stay hidden until turned on. Keep in
 // sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
 // MenuPermissions.tsx.
-const MODULE_GATE_DEFAULT_OFF = new Set<string>([]);
+const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform"]);
 
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `module`. Mirrors companyAllowsModule() in Layout.tsx —

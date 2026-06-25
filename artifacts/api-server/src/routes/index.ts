@@ -121,6 +121,7 @@ import publicOfflineRouter from "./public-offline";
 import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
 import domainsRouter from "./domains";
+import extensionsRouter from "../extensions/index.js";
 import { resolveDomainCompany } from "../middleware/domainResolver";
 
 const router: IRouter = Router();
@@ -239,6 +240,12 @@ router.use("/sync", posDesktopSyncRouter);
 router.use("/admin/pos-devices", adminPosDevicesRouter);
 router.use("/admin/offline-licenses", adminOfflineLicensesRouter);
 router.use("/admin/download-codes", adminDownloadCodesRouter);
+// ─── Extension Platform (Phase 0) — additive "outer shell" ────────────────
+// MUST be mounted BEFORE the path-less zatcaRouter (its catch-all 401s any
+// unmatched /api/* request). The screen/api endpoints authenticate via a
+// ?token= query param (sandboxed iframe cannot set headers) handled inside
+// the router. Gated by the `extensions_platform` company module (default OFF).
+router.use("/ext", extensionsRouter);
 router.use(zatcaRouter);
 router.use("/contracting", contractingRouter);
 router.use("/contracting-ai", contractingAiRouter);

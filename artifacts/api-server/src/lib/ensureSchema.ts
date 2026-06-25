@@ -1418,6 +1418,47 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       )` },
     { label: "reseller_activation_requests_reseller_idx",
       sql:   `CREATE INDEX IF NOT EXISTS reseller_activation_requests_reseller_idx ON reseller_activation_requests (reseller_id)` },
+
+    // ── Extension Platform — Phase 0 (additive "outer shell"; default OFF) ──
+    { label: "create platform_extensions table",
+      sql:   `CREATE TABLE IF NOT EXISTS platform_extensions (
+        id            SERIAL PRIMARY KEY,
+        extension_id  TEXT NOT NULL UNIQUE,
+        name_ar       TEXT NOT NULL,
+        name_en       TEXT,
+        version       TEXT NOT NULL DEFAULT '1.0.0',
+        vendor        TEXT,
+        manifest      JSONB NOT NULL,
+        signature     TEXT,
+        public_key_id TEXT,
+        status        TEXT NOT NULL DEFAULT 'active',
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "create company_extensions table",
+      sql:   `CREATE TABLE IF NOT EXISTS company_extensions (
+        id           SERIAL PRIMARY KEY,
+        company_id   INTEGER NOT NULL,
+        extension_id TEXT NOT NULL,
+        enabled      BOOLEAN NOT NULL DEFAULT FALSE,
+        settings     JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "company_extensions_company_ext_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS company_extensions_company_ext_uniq ON company_extensions (company_id, extension_id)` },
+    { label: "create ext_data table",
+      sql:   `CREATE TABLE IF NOT EXISTS ext_data (
+        id           SERIAL PRIMARY KEY,
+        company_id   INTEGER,
+        extension_id TEXT NOT NULL,
+        key          TEXT NOT NULL,
+        value        JSONB,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "ext_data_scope_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS ext_data_scope_idx ON ext_data (company_id, extension_id, key)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {
