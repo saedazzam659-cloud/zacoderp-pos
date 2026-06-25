@@ -27,6 +27,7 @@ export * from "./notifications";
 export * from "./supportMessages";
 export * from "./accountingMappings";
 export * from "./autoBackups";
+export * from "./companyDomains";
 export * from "./salesReps";
 export * from "./auditLog";
 export * from "./workSessions";

@@ -331,6 +331,30 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "store_domains_domain_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS store_domains_domain_uniq ON store_domains (domain)` },
 
+    // ─── Multi-Domain Management (SuperAdmin platform module). One domain →
+    // one company; host-based resolution is a fallback only (see auth.ts
+    // resolveCompanyId). Created here because ensureColumns only ALTERs.
+    // Distinct from store_domains (online-store storefront domains).
+    { label: "create company_domains table",
+      sql:   `CREATE TABLE IF NOT EXISTS company_domains (
+        id                 SERIAL PRIMARY KEY,
+        company_id         INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        domain             TEXT NOT NULL,
+        is_primary         BOOLEAN NOT NULL DEFAULT FALSE,
+        status             TEXT NOT NULL DEFAULT 'pending',
+        activated_at       TIMESTAMP,
+        last_check_at      TIMESTAMP,
+        last_check_result  JSONB,
+        notes              TEXT,
+        created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "company_domains_domain_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS company_domains_domain_uniq ON company_domains (domain)` },
+    { label: "company_domains_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS company_domains_company_idx ON company_domains (company_id)` },
+
     { label: "create store_products table",
       sql:   `CREATE TABLE IF NOT EXISTS store_products (
         id              SERIAL PRIMARY KEY,

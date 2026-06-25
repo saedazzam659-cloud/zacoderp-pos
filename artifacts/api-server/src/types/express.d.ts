@@ -14,6 +14,12 @@ declare global {
       // resolveCompanyId and audit/log child contexts so impersonated
       // actions remain traceable to the SA.
       actingAsCompanyId?: number;
+      // Multi-Domain Management: when a request arrives on a known + active
+      // mapped company domain, resolveDomainCompany sets this to that company.
+      // It is a LOWEST-priority FALLBACK consumed by resolveCompanyId for
+      // superadmins only (explicit ?companyId= and x-acting-company-id still
+      // win). Tenant users are always scoped to their own companyId regardless.
+      domainCompanyId?: number;
     }
   }
 }

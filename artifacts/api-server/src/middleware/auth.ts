@@ -322,6 +322,10 @@ export function resolveCompanyId(req: Request, queryCompanyId?: number): number 
     // Otherwise fall back to the impersonation context set by extractAuth
     // from the x-acting-company-id header (validated, role-gated there).
     if (req.actingAsCompanyId != null) return req.actingAsCompanyId;
+    // LOWEST-priority fallback: when the SA browses on a mapped + active
+    // company domain (set by resolveDomainCompany), scope to that company.
+    // The main / unmapped domain leaves this undefined → multi-company view.
+    if (req.domainCompanyId != null) return req.domainCompanyId;
     return undefined;
   }
   return req.authUser.companyId ?? undefined;

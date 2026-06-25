@@ -116,8 +116,15 @@ import publicDownloadRouter from "./public-download";
 import publicOfflineRouter from "./public-offline";
 import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
+import domainsRouter from "./domains";
+import { resolveDomainCompany } from "../middleware/domainResolver";
 
 const router: IRouter = Router();
+
+// Multi-Domain Management — best-effort host→company resolution. Sets
+// req.domainCompanyId (FALLBACK only; see auth.ts resolveCompanyId). Mounted
+// first so it runs for every /api request; it never throws or blocks.
+router.use(resolveDomainCompany);
 
 router.use(healthRouter);
 router.use("/auth", authRouter);
@@ -135,6 +142,7 @@ router.use("/admin/seo", adminSeoRouter);
 router.use("/admin/ai-controls", adminAiControlsRouter);
 router.use("/admin/db-stats", adminDbStatsRouter);
 router.use("/admin/gateway-clients", gatewayClientsRouter);
+router.use("/admin/domains", domainsRouter);
 router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);
