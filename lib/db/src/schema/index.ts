@@ -1,4 +1,5 @@
 export * from "./companies";
+export * from "./documentArchives";
 export * from "./customers";
 export * from "./invoices";
 export * from "./users";

@@ -628,6 +628,7 @@ export default function PaymentVoucherForm() {
         <div className="flex items-center gap-2 flex-wrap">
           <JournalScanArchive
             jeKey={existing?.code ?? (editId ? `PV-${editId}` : "PV-new-draft")}
+            screenKey="payment_vouchers"
             companyName={user?.company?.nameAr ?? null}
           />
           {!isNew && navList.length > 0 && (

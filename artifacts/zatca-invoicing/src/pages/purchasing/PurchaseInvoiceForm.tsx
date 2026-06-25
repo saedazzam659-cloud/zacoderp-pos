@@ -823,6 +823,7 @@ export default function PurchaseInvoiceForm() {
         </div>
         <JournalScanArchive
           jeKey={(existing as any)?.docNumber ?? (editId ? `PI-${editId}` : "PI-new-draft")}
+          screenKey="purchase_invoices"
           companyName={user?.company?.nameAr ?? null}
         />
         {/* Posted/draft/cancelled status pill — visible only when editing

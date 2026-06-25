@@ -2159,6 +2159,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         {isInvoice && (
           <JournalScanArchive
             jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
+            screenKey="sales_invoices"
             companyName={user?.company?.nameAr ?? null}
           />
         )}

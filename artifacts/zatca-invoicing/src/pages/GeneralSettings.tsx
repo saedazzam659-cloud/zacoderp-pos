@@ -13,7 +13,8 @@ import {
   Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save,
   LogOut, Timer, ShieldCheck, CalendarDays, CalendarClock,
   Users as UsersIcon, Percent, Calculator,
-  Wand2, PanelTop, PanelRight, Scale
+  Wand2, PanelTop, PanelRight, Scale,
+  Archive, Cloud, HardDrive, Ban
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,6 +34,27 @@ const DECIMAL_OPTIONS = [
   { value: 2, label: "0.00", example: "1,234.56" },
   { value: 3, label: "0.000",example: "1,234.567" },
   { value: 4, label: "0.0000",example:"1,234.5678" },
+];
+
+// ─── Document-archiving control center ────────────────────────────────────
+type ArchiveMode = "local" | "cloud" | "off";
+
+// The screens that expose an "أرشفة مستند" button — keys MUST match the
+// `screenKey` prop passed to <JournalScanArchive> in each form.
+const ARCHIVE_SCREENS: { key: string; label: string }[] = [
+  { key: "journal_entries",  label: "القيود المحاسبية" },
+  { key: "sales_invoices",   label: "فواتير المبيعات" },
+  { key: "purchase_invoices",label: "فواتير المشتريات" },
+  { key: "receipt_vouchers", label: "سندات القبض" },
+  { key: "payment_vouchers", label: "سندات الصرف" },
+  { key: "customers",        label: "العملاء" },
+  { key: "suppliers",        label: "الموردون" },
+];
+
+const ARCHIVE_MODES: { value: ArchiveMode; label: string; desc: string; icon: typeof Cloud }[] = [
+  { value: "local", label: "محلي",   desc: "تُحفظ الملفات على جهاز المستخدم فقط", icon: HardDrive },
+  { value: "cloud", label: "سحابي",  desc: "تُرفع الملفات إلى الخادم لكل الشركة", icon: Cloud },
+  { value: "off",   label: "معطّل",  desc: "إخفاء زر الأرشفة في هذه الشاشة", icon: Ban },
 ];
 
 // Company logos are stored as a base64 data URL inside companies.logo. A raw
@@ -250,7 +272,7 @@ export default function GeneralSettings() {
   // them to the server in one request. Used by both the master switch
   // (autoPostingEnabled) and the per-doc-type toggles below so we keep a
   // single network/error path.
-  async function togglePostingMode(payload: Record<string, boolean | string | number | null>) {
+  async function togglePostingMode(payload: Record<string, any>) {
     const cid = user?.company?.id ?? user?.companyId;
     if (!cid || postingSaving) return;
     setPostingSaving(true);
@@ -286,6 +308,42 @@ export default function GeneralSettings() {
   const isDirty =
     logo !== (user?.company?.logo ?? null) ||
     decimals !== (user?.company?.decimalPlaces ?? 2);
+
+  // ─── Document-archiving control center state ──────────────────────────────
+  const isArchiveAdmin = user?.role === "admin" || user?.role === "superadmin";
+  const archiveKey = JSON.stringify(user?.company?.archiveSettings ?? null);
+  const [archiveDefaultMode, setArchiveDefaultMode] = useState<ArchiveMode>("local");
+  const [archiveScreens, setArchiveScreens] = useState<Record<string, ArchiveMode>>({});
+  const [archiveAllowed, setArchiveAllowed] = useState<number[]>([]);
+  // Re-hydrate the editable copy whenever the persisted settings change
+  // (initial load AND after a successful save, which echoes the new row).
+  useEffect(() => {
+    const s = (user?.company?.archiveSettings ?? {}) as {
+      defaultMode?: ArchiveMode; screens?: Record<string, ArchiveMode>; allowedUserIds?: number[];
+    };
+    setArchiveDefaultMode(s.defaultMode ?? "local");
+    setArchiveScreens(s.screens && typeof s.screens === "object" ? s.screens : {});
+    setArchiveAllowed(Array.isArray(s.allowedUserIds) ? s.allowedUserIds : []);
+  }, [archiveKey]);
+  const { data: archiveUsers = [] } = useQuery<any[]>({
+    queryKey: ["users", "archive-allowed"],
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/users`, { headers });
+      if (!res.ok) return [];
+      const d = await res.json();
+      return Array.isArray(d) ? d : [];
+    },
+    enabled: isArchiveAdmin,
+  });
+  const archiveBaseline = (user?.company?.archiveSettings ?? {}) as {
+    defaultMode?: ArchiveMode; screens?: Record<string, ArchiveMode>; allowedUserIds?: number[];
+  };
+  const sortNums = (a: number[]) => [...a].sort((x, y) => x - y);
+  const archiveDirty =
+    archiveDefaultMode !== (archiveBaseline.defaultMode ?? "local") ||
+    JSON.stringify(archiveScreens) !== JSON.stringify(archiveBaseline.screens ?? {}) ||
+    JSON.stringify(sortNums(archiveAllowed)) !==
+      JSON.stringify(sortNums(Array.isArray(archiveBaseline.allowedUserIds) ? archiveBaseline.allowedUserIds : []));
 
   // ─── Bulk Import (Items + Opening Balances) ─────────────────────────────
   const itemsFileRef    = useRef<HTMLInputElement>(null);
@@ -747,6 +805,15 @@ export default function GeneralSettings() {
             <PanelTop className="h-4 w-4 shrink-0" />
             <span className="truncate">موضع القوائم</span>
           </TabsTrigger>
+          {isArchiveAdmin && (
+            <TabsTrigger
+              value="documentArchive"
+              className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+            >
+              <Archive className="h-4 w-4 shrink-0" />
+              <span className="truncate">أرشفة المستندات</span>
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {/* ═══ TAB 1: General (Logo + Decimals + Save) ═══════════════════════ */}
@@ -1972,6 +2039,177 @@ export default function GeneralSettings() {
             })()}
           </div>
         </TabsContent>
+
+        {/* ═══ TAB: Document-archiving control center ════════════════════════ */}
+        {isArchiveAdmin && (
+        <TabsContent value="documentArchive" className="mt-5 space-y-6">
+          {/* Intro + default mode */}
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <Archive className="h-4 w-4 text-muted-foreground" />
+              أرشفة المستندات
+            </h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              تحكَّم في طريقة تخزين المستندات المرفقة عبر زر «أرشفة مستند» لكل شاشة على حدة:
+              <span className="font-semibold"> محلي</span> على جهاز المستخدم،
+              أو <span className="font-semibold">سحابي</span> على الخادم،
+              أو <span className="font-semibold">معطّل</span>. كما يمكنك تحديد المستخدمين المسموح لهم بالأرشفة.
+            </p>
+
+            <div>
+              <Label className="text-sm font-semibold mb-2 block">الوضع الافتراضي لكل الشاشات</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {ARCHIVE_MODES.map((m) => {
+                  const active = archiveDefaultMode === m.value;
+                  const Icon = m.icon;
+                  return (
+                    <button
+                      key={m.value}
+                      type="button"
+                      onClick={() => setArchiveDefaultMode(m.value)}
+                      className={cn(
+                        "flex flex-col items-start gap-1.5 rounded-xl border-2 p-3 text-right transition-all",
+                        active ? "border-primary bg-primary/5 shadow-sm" : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid={`card-archive-default-${m.value}`}
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-7 w-7 rounded-md flex items-center justify-center",
+                          active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">{m.label}</span>
+                        {active && (
+                          <span className="ms-auto text-[10px] font-semibold rounded px-1.5 py-0.5 border bg-emerald-50 text-emerald-700 border-emerald-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">{m.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Per-screen overrides */}
+          <div className="rounded-xl border bg-card p-5 space-y-3">
+            <h3 className="font-semibold text-sm">إعداد كل شاشة على حدة</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              اختر «افتراضي» لتتبع الوضع الافتراضي أعلاه، أو حدِّد وضعاً مختلفاً لهذه الشاشة.
+            </p>
+            <div className="space-y-2">
+              {ARCHIVE_SCREENS.map((sc) => {
+                const cur = archiveScreens[sc.key];
+                const options: { value: ArchiveMode | "default"; label: string }[] = [
+                  { value: "default", label: "افتراضي" },
+                  { value: "local", label: "محلي" },
+                  { value: "cloud", label: "سحابي" },
+                  { value: "off", label: "معطّل" },
+                ];
+                return (
+                  <div key={sc.key} className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2">
+                    <span className="text-sm font-medium">{sc.label}</span>
+                    <div className="flex items-center gap-1">
+                      {options.map((o) => {
+                        const active = (o.value === "default" && cur == null) || o.value === cur;
+                        return (
+                          <button
+                            key={o.value}
+                            type="button"
+                            onClick={() => setArchiveScreens((prev) => {
+                              const next = { ...prev };
+                              if (o.value === "default") delete next[sc.key];
+                              else next[sc.key] = o.value;
+                              return next;
+                            })}
+                            className={cn(
+                              "h-7 px-2.5 rounded-md text-xs font-medium border transition-colors",
+                              active
+                                ? "bg-primary text-primary-foreground border-primary"
+                                : "bg-background text-muted-foreground border-border hover:border-primary/40"
+                            )}
+                            data-testid={`btn-archive-${sc.key}-${o.value}`}
+                          >
+                            {o.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Allowed users */}
+          <div className="rounded-xl border bg-card p-5 space-y-3">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <UsersIcon className="h-4 w-4 text-muted-foreground" />
+              المستخدمون المسموح لهم بالأرشفة
+            </h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              إذا لم تُحدِّد أحداً، يُسمح لجميع المستخدمين. المدير والمدير العام مسموح لهما دائماً.
+              سيُخفى زر الأرشفة عمَّن ليس لديه صلاحية.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[260px] overflow-y-auto">
+              {archiveUsers
+                .filter((u: any) => u.role !== "superadmin")
+                .map((u: any) => {
+                  const checked = archiveAllowed.includes(u.id);
+                  return (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 cursor-pointer hover:border-primary/40 transition-colors"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) =>
+                          setArchiveAllowed((prev) =>
+                            v ? Array.from(new Set([...prev, u.id])) : prev.filter((x) => x !== u.id)
+                          )
+                        }
+                      />
+                      <span className="text-sm">{u.nameAr || u.username}</span>
+                      {u.role === "admin" && (
+                        <span className="ms-auto text-[10px] text-muted-foreground">(مدير)</span>
+                      )}
+                    </label>
+                  );
+                })}
+              {archiveUsers.length === 0 && (
+                <p className="text-xs text-muted-foreground">لا يوجد مستخدمون.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Save */}
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              disabled={postingSaving || !archiveDirty}
+              onClick={() =>
+                togglePostingMode({
+                  archiveSettings: {
+                    defaultMode: archiveDefaultMode,
+                    screens: archiveScreens,
+                    allowedUserIds: archiveAllowed,
+                  },
+                })
+              }
+              className="gap-2"
+              data-testid="btn-save-archive-settings"
+            >
+              {postingSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              حفظ إعدادات الأرشفة
+            </Button>
+            {archiveDirty && <span className="text-xs text-amber-600">تغييرات غير محفوظة</span>}
+          </div>
+        </TabsContent>
+        )}
       </Tabs>
 
     </div>

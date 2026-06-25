@@ -169,6 +169,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     menuLayout,
     // VAT calc mode: "before_discount" | "after_discount". Validated below.
     taxCalculationMode,
+    // Document-archiving control center config. Validated + coerced below.
+    archiveSettings,
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     decimalPlaces?: number; showZeros?: boolean; autoPostingEnabled?: boolean;
@@ -204,6 +206,11 @@ router.patch("/:id/general-settings", async (req, res) => {
     journalSmartForm?: boolean;
     menuLayout?: string;
     taxCalculationMode?: string;
+    archiveSettings?: {
+      defaultMode?: string;
+      screens?: Record<string, string>;
+      allowedUserIds?: number[];
+    } | null;
   };
   const updates: Record<string, any> = { updatedAt: new Date() };
   // The client sends the logo as raw base64 (+ mime) — never a "data:" URL —
@@ -379,6 +386,35 @@ router.patch("/:id/general-settings", async (req, res) => {
       return;
     }
     updates.taxCalculationMode = taxCalculationMode;
+  }
+  // Document-archiving config — sanitize each mode to the allowed enum and
+  // coerce the user-id list to clean integers so we never persist garbage.
+  if (archiveSettings !== undefined) {
+    if (archiveSettings === null) {
+      updates.archiveSettings = null;
+    } else {
+      const MODES = ["local", "cloud", "off"] as const;
+      const coerceMode = (m: any): "local" | "cloud" | "off" =>
+        MODES.includes(m) ? m : "local";
+      const rawScreens = archiveSettings.screens && typeof archiveSettings.screens === "object"
+        ? archiveSettings.screens : {};
+      const screens: Record<string, "local" | "cloud" | "off"> = {};
+      for (const [k, v] of Object.entries(rawScreens)) {
+        if (typeof k === "string" && k) screens[k.slice(0, 64)] = coerceMode(v);
+      }
+      const allowedUserIds = Array.isArray(archiveSettings.allowedUserIds)
+        ? Array.from(new Set(
+            archiveSettings.allowedUserIds
+              .map((n) => Number(n))
+              .filter((n) => Number.isInteger(n) && n > 0),
+          ))
+        : [];
+      updates.archiveSettings = {
+        defaultMode: coerceMode(archiveSettings.defaultMode),
+        screens,
+        allowedUserIds,
+      };
+    }
   }
   const [company] = await db.update(companiesTable).set(updates)
     .where(eq(companiesTable.id, id)).returning();

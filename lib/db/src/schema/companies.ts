@@ -243,6 +243,19 @@ export const companiesTable = pgTable("companies", {
   // defaults to false so existing tenants are completely unaffected by
   // the new code paths until SuperAdmin explicitly enables it.
   enableOfflinePos: boolean("enable_offline_pos").notNull().default(false),
+  // ─── Document archiving (أرشفة المستندات) control center ───────────────
+  // Per-company config for the "أرشفة مستند" feature. Shape:
+  //   { defaultMode: "local"|"cloud"|"off",
+  //     screens: { <screenKey>: "local"|"cloud"|"off" },   // overrides default
+  //     allowedUserIds: number[] }                          // [] = everyone
+  // NULL/missing → defaults to { defaultMode:"local", screens:{}, allowedUserIds:[] }
+  // (legacy companies keep the original local-only behavior). Admins/superadmin
+  // can always archive regardless of allowedUserIds.
+  archiveSettings: jsonb("archive_settings").$type<{
+    defaultMode: "local" | "cloud" | "off";
+    screens: Record<string, "local" | "cloud" | "off">;
+    allowedUserIds: number[];
+  }>(),
   // Public, human-friendly company code (e.g. "ZTC-1042"). Required by
   // login: tenants identify themselves with (companyCode, username,
   // password) so usernames can repeat across companies. Generated at

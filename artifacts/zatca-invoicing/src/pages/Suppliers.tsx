@@ -780,6 +780,7 @@ export default function Suppliers() {
                                 </button>
                                 <JournalScanArchive
                                   jeKey={`supplier-${supplier.id}`}
+                                  screenKey="suppliers"
                                   companyName={user?.company?.nameAr ?? null}
                                 />
                               </div>

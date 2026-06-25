@@ -680,6 +680,7 @@ export default function ReceiptVoucherForm() {
         <div className="flex items-center gap-2 flex-wrap">
           <JournalScanArchive
             jeKey={existing?.code ?? (editId ? `RV-${editId}` : "RV-new-draft")}
+            screenKey="receipt_vouchers"
             companyName={user?.company?.nameAr ?? null}
           />
           {!isNew && navList.length > 0 && (

@@ -718,6 +718,7 @@ export default function Customers() {
                                 </Button>
                                 <JournalScanArchive
                                   jeKey={`customer-${customer.id}`}
+                                  screenKey="customers"
                                   companyName={user?.company?.nameAr ?? null}
                                 />
                               </div>

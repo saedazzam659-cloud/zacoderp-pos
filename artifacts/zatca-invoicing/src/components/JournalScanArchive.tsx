@@ -1,12 +1,22 @@
-// ─── Local-disk archive uploader for journal entries ─────────────────────
+// ─── Document archive uploader (local-disk OR cloud) ─────────────────────
 // Lets the user attach scanned documents (camera capture, file upload, or
-// multi-page PDF) to a journal entry. Files are stored ON THE USER'S
-// COMPUTER — never uploaded to our backend. See `lib/localArchive.ts`.
+// multi-page PDF) to a document (journal entry, invoice, voucher, party…).
+//
+// Storage mode is decided by the company's "أرشفة المستندات" control center
+// (companies.archiveSettings), resolved per screen via the `screenKey` prop:
+//   • "local" → files stay ON THE USER'S COMPUTER (File System Access API /
+//     download fallback). Index in localStorage. See `lib/localArchive.ts`.
+//   • "cloud" → files upload to object storage; a DB row indexes them so any
+//     authorised user on the company can list/open/delete them.
+//   • "off"   → the feature is disabled; the button is hidden entirely.
+//
+// The button is ALSO hidden for users not present in archiveSettings.allowedUserIds
+// (admins/superadmin are always allowed; an empty list means everyone).
 //
 // A small badge on the trigger button shows how many files are already
-// archived for the current JE.
+// archived for the current document.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter, DialogTrigger,
@@ -15,11 +25,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import imageCompression from "browser-image-compression";
 import { jsPDF } from "jspdf";
 import {
   Camera, Upload, FolderOpen, Trash2, FileText, Image as ImageIcon,
   Paperclip, CheckCircle2, AlertCircle, ScanLine, X, ExternalLink, RefreshCw, Save,
+  Cloud,
 } from "lucide-react";
 import {
   isFsAccessSupported, pickArchiveFolder, getArchiveFolder, clearArchiveFolder,
@@ -27,12 +39,36 @@ import {
   openArchivedFile, type ArchivedFileMeta,
 } from "@/lib/localArchive";
 
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+type ArchiveMode = "local" | "cloud" | "off";
+
+interface ArchiveSettings {
+  defaultMode?: ArchiveMode;
+  screens?: Record<string, ArchiveMode>;
+  allowedUserIds?: number[];
+}
+
 interface Props {
-  /** Stable key — usually the JE number ("JE-2026-00045") or `new-<timestamp>`. */
+  /** Stable per-document key — e.g. JE number, invoice id, `customer-<id>`. */
   jeKey: string;
-  /** Used to organise the on-disk folder hierarchy. */
+  /** Which screen this archive button lives on; resolves the storage mode. */
+  screenKey: string;
+  /** Used to organise the on-disk folder hierarchy (local mode only). */
   companyName?: string | null;
   className?: string;
+}
+
+/** A cloud-archived file row as returned by /api/document-archives. */
+interface CloudFile {
+  id: number;
+  filename: string;
+  objectPath: string;
+  contentType?: string | null;
+  bytes?: number | null;
+  pages?: number | null;
+  uploadedByName?: string | null;
+  createdAt: string;
 }
 
 interface PendingPage {
@@ -60,13 +96,7 @@ function buildPdf(pages: PendingPage[]): Blob {
   const pageH = pdf.internal.pageSize.getHeight();  // 297
   pages.forEach((p, i) => {
     if (i > 0) pdf.addPage();
-    // Fit each image into the page while preserving aspect ratio.
-    const img = new Image();
-    img.src = p.dataUrl;
-    // jsPDF v2+ accepts data URLs synchronously when the format is provided.
     const imgFmt = p.dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
-    // We use page dimensions directly — the embedded image will scale.
-    // (Synchronous fit is good enough for archival quality.)
     pdf.addImage(p.dataUrl, imgFmt, 5, 5, pageW - 10, pageH - 10, undefined, "FAST");
   });
   return pdf.output("blob");
@@ -84,14 +114,29 @@ function formatBytes(b: number): string {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export function JournalScanArchive({ jeKey, companyName, className }: Props) {
+export function JournalScanArchive({ jeKey, screenKey, companyName, className }: Props) {
   const { toast } = useToast();
+  const { user, token } = useAuth();
   const supported = isFsAccessSupported();
+
+  // ─── Resolve storage mode + permission from company settings ─────────────
+  const settings = (user?.company?.archiveSettings ?? null) as ArchiveSettings | null;
+  const mode: ArchiveMode =
+    settings?.screens?.[screenKey] ?? settings?.defaultMode ?? "local";
+  const allowed = useMemo(() => {
+    const role = user?.role;
+    if (role === "superadmin" || role === "admin") return true;
+    const list = settings?.allowedUserIds;
+    if (!Array.isArray(list) || list.length === 0) return true;
+    return user?.id != null && list.includes(user.id);
+  }, [user?.role, user?.id, settings]);
+  const isCloud = mode === "cloud";
 
   const [open, setOpen] = useState(false);
   const [folder, setFolder] = useState<FileSystemDirectoryHandle | null>(null);
   const [pages, setPages] = useState<PendingPage[]>([]);
   const [archived, setArchived] = useState<ArchivedFileMeta[]>([]);
+  const [cloudFiles, setCloudFiles] = useState<CloudFile[]>([]);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<"upload" | "camera">("upload");
 
@@ -101,18 +146,92 @@ export function JournalScanArchive({ jeKey, companyName, className }: Props) {
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  // Refresh saved-folder + archived list whenever dialog opens.
+  // ─── Cloud helpers ───────────────────────────────────────────────────────
+  const fetchCloud = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await fetch(
+        `${API}/api/document-archives?screenKey=${encodeURIComponent(screenKey)}&docKey=${encodeURIComponent(jeKey)}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) return;
+      const data = await r.json();
+      setCloudFiles(Array.isArray(data) ? data : []);
+    } catch { /* offline — leave list as-is */ }
+  }, [token, screenKey, jeKey]);
+
+  async function uploadToCloud(blob: Blob, filename: string, pageCount?: number) {
+    if (!token) throw new Error("الجلسة منتهية");
+    const contentType = blob.type || "application/pdf";
+    // 1) presigned URL
+    const urlRes = await fetch(`${API}/api/storage/uploads/request-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: filename, size: blob.size, contentType }),
+    });
+    if (!urlRes.ok) throw new Error("تعذّر تجهيز رابط الرفع");
+    const { uploadURL, objectPath } = await urlRes.json();
+    // 2) PUT the bytes straight to object storage
+    const putRes = await fetch(uploadURL, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: blob,
+    });
+    if (!putRes.ok) throw new Error("تعذّر رفع الملف");
+    // 3) record the index row
+    const recRes = await fetch(`${API}/api/document-archives`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        screenKey, docKey: jeKey, filename, objectPath, contentType,
+        bytes: blob.size, pages: pageCount ?? null,
+      }),
+    });
+    if (!recRes.ok) throw new Error("تعذّر تسجيل الملف في الأرشيف");
+    await fetchCloud();
+  }
+
+  function openCloud(f: CloudFile) {
+    // Stream through the guarded archive endpoint (tenant + permission + mode
+    // checked server-side) — never hit the raw private-object route directly.
+    const url = `${API}/api/document-archives/${f.id}/download?token=${encodeURIComponent(token ?? "")}`;
+    window.open(url, "_blank", "noopener");
+  }
+
+  async function deleteCloud(f: CloudFile) {
+    if (!token) return;
+    try {
+      const r = await fetch(`${API}/api/document-archives/${f.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) {
+        toast({ title: "تعذّر الحذف", variant: "destructive" });
+        return;
+      }
+      await fetchCloud();
+      toast({ title: "تم حذف الملف من الأرشيف" });
+    } catch (e: any) {
+      toast({ title: "تعذّر الحذف", description: e?.message ?? String(e), variant: "destructive" });
+    }
+  }
+
+  // Refresh saved-folder + archived list whenever dialog opens (local mode).
   useEffect(() => {
     if (!open) return;
+    if (isCloud) { fetchCloud(); return; }
     setArchived(getArchivedFiles(jeKey));
-    if (supported) {
-      getArchiveFolder().then(setFolder);
-    }
-  }, [open, jeKey, supported]);
+    if (supported) getArchiveFolder().then(setFolder);
+  }, [open, jeKey, supported, isCloud, fetchCloud]);
 
-  // Refresh badge count even when dialog is closed (after save).
+  // Keep the badge count fresh even while the dialog is closed.
   const [badgeCount, setBadgeCount] = useState(0);
-  useEffect(() => { setBadgeCount(getArchivedFiles(jeKey).length); }, [jeKey, archived.length]);
+  useEffect(() => {
+    if (isCloud) { setBadgeCount(cloudFiles.length); return; }
+    setBadgeCount(getArchivedFiles(jeKey).length);
+  }, [jeKey, archived.length, isCloud, cloudFiles.length]);
+  // In cloud mode, fetch once on mount so the badge is accurate before opening.
+  useEffect(() => { if (isCloud) fetchCloud(); }, [isCloud, fetchCloud]);
 
   // ─── Camera lifecycle ────────────────────────────────────────────────────
   async function startCamera() {
@@ -164,7 +283,6 @@ export function JournalScanArchive({ jeKey, companyName, className }: Props) {
     if (!files || files.length === 0) return;
     for (const f of Array.from(files)) {
       if (f.type === "application/pdf") {
-        // PDFs are saved as-is, one per file (don't merge into the multi-page draft).
         await savePdfDirect(f);
       } else if (f.type.startsWith("image/")) {
         const { dataUrl, bytes } = await fileToCompressedDataUrl(f);
@@ -185,16 +303,21 @@ export function JournalScanArchive({ jeKey, companyName, className }: Props) {
     setSaving(true);
     try {
       const filename = `${jeKey}_${timestamp()}_${pdfFile.name.replace(/\.[^.]+$/, "")}.pdf`;
-      const r = await saveToArchive(folder, subPathFor(), filename, pdfFile);
-      recordArchivedFile(jeKey, {
-        filename, path: r.path, bytes: pdfFile.size, savedAt: new Date().toISOString(),
-        viaDownload: r.viaDownload,
-      });
-      setArchived(getArchivedFiles(jeKey));
-      toast({
-        title: "تمت الأرشفة",
-        description: r.viaDownload ? "تم تنزيل الملف على جهازك" : `تم الحفظ في: ${r.path}`,
-      });
+      if (isCloud) {
+        await uploadToCloud(pdfFile, filename);
+        toast({ title: "تمت الأرشفة", description: "تم رفع الملف إلى الأرشيف السحابي" });
+      } else {
+        const r = await saveToArchive(folder, subPathFor(), filename, pdfFile);
+        recordArchivedFile(jeKey, {
+          filename, path: r.path, bytes: pdfFile.size, savedAt: new Date().toISOString(),
+          viaDownload: r.viaDownload,
+        });
+        setArchived(getArchivedFiles(jeKey));
+        toast({
+          title: "تمت الأرشفة",
+          description: r.viaDownload ? "تم تنزيل الملف على جهازك" : `تم الحفظ في: ${r.path}`,
+        });
+      }
     } catch (e: any) {
       toast({ title: "تعذّر الحفظ", description: e?.message ?? String(e), variant: "destructive" });
     } finally { setSaving(false); }
@@ -209,19 +332,23 @@ export function JournalScanArchive({ jeKey, companyName, className }: Props) {
     try {
       const blob = buildPdf(pages);
       const filename = `${jeKey}_${timestamp()}.pdf`;
-      const r = await saveToArchive(folder, subPathFor(), filename, blob);
-      recordArchivedFile(jeKey, {
-        filename, path: r.path, bytes: blob.size, pages: pages.length,
-        savedAt: new Date().toISOString(), viaDownload: r.viaDownload,
-      });
-      setArchived(getArchivedFiles(jeKey));
-      setPages([]);
-      toast({
-        title: "تمت الأرشفة",
-        description: r.viaDownload
-          ? `تم تنزيل ${pages.length} صفحة كملف PDF`
-          : `تم الحفظ في: ${r.path}`,
-      });
+      if (isCloud) {
+        await uploadToCloud(blob, filename, pages.length);
+        setPages([]);
+        toast({ title: "تمت الأرشفة", description: `تم رفع ${pages.length} صفحة إلى الأرشيف السحابي` });
+      } else {
+        const r = await saveToArchive(folder, subPathFor(), filename, blob);
+        recordArchivedFile(jeKey, {
+          filename, path: r.path, bytes: blob.size, pages: pages.length,
+          savedAt: new Date().toISOString(), viaDownload: r.viaDownload,
+        });
+        setArchived(getArchivedFiles(jeKey));
+        setPages([]);
+        toast({
+          title: "تمت الأرشفة",
+          description: r.viaDownload ? `تم تنزيل ${pages.length} صفحة كملف PDF` : `تم الحفظ في: ${r.path}`,
+        });
+      }
     } catch (e: any) {
       toast({ title: "تعذّر الحفظ", description: e?.message ?? String(e), variant: "destructive" });
     } finally { setSaving(false); }
@@ -268,6 +395,9 @@ export function JournalScanArchive({ jeKey, companyName, className }: Props) {
     return "لم يُحدَّد مجلّد بعد — سيُسأل عند أول حفظ";
   }, [folder, supported]);
 
+  // Feature disabled for this screen, or the user is not allowed → render nothing.
+  if (mode === "off" || !allowed) return null;
+
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setPages([]); stopCamera(); } }}>
       <DialogTrigger asChild>
@@ -276,9 +406,9 @@ export function JournalScanArchive({ jeKey, companyName, className }: Props) {
           variant="outline"
           size="sm"
           className={className ?? "h-8 gap-1.5 text-xs relative"}
-          title="أرشفة مستندات (تخزين على جهازك المحلي)"
+          title={isCloud ? "أرشفة مستندات (تخزين سحابي)" : "أرشفة مستندات (تخزين على جهازك المحلي)"}
         >
-          <Paperclip className="h-3.5 w-3.5" />
+          {isCloud ? <Cloud className="h-3.5 w-3.5" /> : <Paperclip className="h-3.5 w-3.5" />}
           أرشفة مستند
           {badgeCount > 0 && (
             <span className="absolute -top-1.5 -left-1.5 h-4 min-w-[16px] rounded-full bg-emerald-500 text-white text-[10px] font-bold leading-none flex items-center justify-center px-1">
@@ -291,38 +421,41 @@ export function JournalScanArchive({ jeKey, companyName, className }: Props) {
       <DialogContent dir="rtl" className="sm:max-w-3xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ScanLine className="h-5 w-5 text-primary" />
-            أرشفة مستندات القيد على جهازك
+            {isCloud ? <Cloud className="h-5 w-5 text-primary" /> : <ScanLine className="h-5 w-5 text-primary" />}
+            {isCloud ? "أرشفة المستندات في السحابة" : "أرشفة المستندات على جهازك"}
           </DialogTitle>
           <DialogDescription>
-            تُحفظ الملفات على جهازك مباشرةً ولا تُرسَل لأي خادم. تختار مجلّد الأرشيف
-            مرة واحدة وكل الحفظ بعدها يتمّ تلقائياً.
+            {isCloud
+              ? "تُرفع الملفات إلى التخزين السحابي ويمكن لأي مستخدم مخوّل في الشركة فتحها لاحقاً."
+              : "تُحفظ الملفات على جهازك مباشرةً ولا تُرسَل لأي خادم. تختار مجلّد الأرشيف مرة واحدة وكل الحفظ بعدها يتمّ تلقائياً."}
           </DialogDescription>
         </DialogHeader>
 
-        {/* ── Folder selector ──────────────────────────────────────────── */}
-        <div className={`rounded-lg border-2 p-3 flex items-center gap-3 ${
-          folder ? "border-emerald-300 bg-emerald-50/50" : "border-amber-300 bg-amber-50/50"
-        }`}>
-          <FolderOpen className={`h-5 w-5 shrink-0 ${folder ? "text-emerald-600" : "text-amber-600"}`} />
-          <div className="flex-1 min-w-0">
-            <div className="text-xs font-semibold">مجلّد الأرشيف</div>
-            <div className="text-[11px] text-muted-foreground truncate">{folderLabel}</div>
-          </div>
-          {supported && (
-            <>
-              <Button type="button" size="sm" variant="outline" onClick={onPickFolder} className="h-8 text-xs gap-1">
-                <FolderOpen className="h-3.5 w-3.5" />
-                {folder ? "تغيير" : "اختر مجلّد"}
-              </Button>
-              {folder && (
-                <Button type="button" size="sm" variant="ghost" onClick={onResetFolder} className="h-8 text-xs gap-1">
-                  <RefreshCw className="h-3.5 w-3.5" />
+        {/* ── Folder selector (local mode only) ──────────────────────────── */}
+        {!isCloud && (
+          <div className={`rounded-lg border-2 p-3 flex items-center gap-3 ${
+            folder ? "border-emerald-300 bg-emerald-50/50" : "border-amber-300 bg-amber-50/50"
+          }`}>
+            <FolderOpen className={`h-5 w-5 shrink-0 ${folder ? "text-emerald-600" : "text-amber-600"}`} />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold">مجلّد الأرشيف</div>
+              <div className="text-[11px] text-muted-foreground truncate">{folderLabel}</div>
+            </div>
+            {supported && (
+              <>
+                <Button type="button" size="sm" variant="outline" onClick={onPickFolder} className="h-8 text-xs gap-1">
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  {folder ? "تغيير" : "اختر مجلّد"}
                 </Button>
-              )}
-            </>
-          )}
-        </div>
+                {folder && (
+                  <Button type="button" size="sm" variant="ghost" onClick={onResetFolder} className="h-8 text-xs gap-1">
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="mt-3">
           <TabsList className="grid grid-cols-2 w-full">
@@ -420,52 +553,95 @@ export function JournalScanArchive({ jeKey, companyName, className }: Props) {
         )}
 
         {/* ── Already-archived list ────────────────────────────────────── */}
-        {archived.length > 0 && (
-          <div className="mt-4 space-y-2 border-t pt-4">
-            <Label className="text-sm font-semibold flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              مستندات مؤرشفة لهذا القيد ({archived.length})
-            </Label>
-            <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
-              {archived.map((f) => (
-                <div key={f.filename + f.savedAt} className="flex items-center gap-2 p-2 rounded-md border bg-muted/30 text-sm">
-                  {f.filename.toLowerCase().endsWith(".pdf")
-                    ? <FileText className="h-4 w-4 text-red-500 shrink-0" />
-                    : <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />}
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate font-mono text-xs">{f.filename}</div>
-                    <div className="text-[10px] text-muted-foreground">
-                      {formatBytes(f.bytes)}{f.pages ? ` · ${f.pages} صفحة` : ""}
-                      {" · "}{new Date(f.savedAt).toLocaleString("ar-SA")}
-                      {f.viaDownload && " · مجلّد التنزيلات"}
+        {isCloud ? (
+          cloudFiles.length > 0 && (
+            <div className="mt-4 space-y-2 border-t pt-4">
+              <Label className="text-sm font-semibold flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                مستندات مؤرشفة لهذا المستند ({cloudFiles.length})
+              </Label>
+              <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
+                {cloudFiles.map((f) => (
+                  <div key={f.id} className="flex items-center gap-2 p-2 rounded-md border bg-muted/30 text-sm">
+                    {f.filename.toLowerCase().endsWith(".pdf")
+                      ? <FileText className="h-4 w-4 text-red-500 shrink-0" />
+                      : <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate font-mono text-xs">{f.filename}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {f.bytes != null && formatBytes(f.bytes)}{f.pages ? ` · ${f.pages} صفحة` : ""}
+                        {" · "}{new Date(f.createdAt).toLocaleString("ar-SA")}
+                        {f.uploadedByName ? ` · ${f.uploadedByName}` : ""}
+                      </div>
                     </div>
+                    <Button
+                      type="button" size="sm" variant="ghost" className="h-7 w-7 p-0"
+                      title="فتح الملف"
+                      onClick={() => openCloud(f)}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button" size="sm" variant="ghost"
+                      className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
+                      title="حذف الملف من الأرشيف السحابي"
+                      onClick={() => deleteCloud(f)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
-                  <Button
-                    type="button" size="sm" variant="ghost" className="h-7 w-7 p-0"
-                    title="فتح الملف"
-                    onClick={() => openArchived(f)}
-                    disabled={f.viaDownload}
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button" size="sm" variant="ghost"
-                    className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
-                    title="حذف من فهرس الأرشفة (لا يحذف الملف من جهازك)"
-                    onClick={() => {
-                      removeArchivedFile(jeKey, f.filename);
-                      setArchived(getArchivedFiles(jeKey));
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">
-              ⚠️ زر الحذف يُزيل الملف من فهرس البرنامج فقط. الملف الفعلي يبقى على جهازك حتى تحذفه يدوياً.
-            </p>
-          </div>
+          )
+        ) : (
+          archived.length > 0 && (
+            <div className="mt-4 space-y-2 border-t pt-4">
+              <Label className="text-sm font-semibold flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                مستندات مؤرشفة لهذا المستند ({archived.length})
+              </Label>
+              <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
+                {archived.map((f) => (
+                  <div key={f.filename + f.savedAt} className="flex items-center gap-2 p-2 rounded-md border bg-muted/30 text-sm">
+                    {f.filename.toLowerCase().endsWith(".pdf")
+                      ? <FileText className="h-4 w-4 text-red-500 shrink-0" />
+                      : <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate font-mono text-xs">{f.filename}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {formatBytes(f.bytes)}{f.pages ? ` · ${f.pages} صفحة` : ""}
+                        {" · "}{new Date(f.savedAt).toLocaleString("ar-SA")}
+                        {f.viaDownload && " · مجلّد التنزيلات"}
+                      </div>
+                    </div>
+                    <Button
+                      type="button" size="sm" variant="ghost" className="h-7 w-7 p-0"
+                      title="فتح الملف"
+                      onClick={() => openArchived(f)}
+                      disabled={f.viaDownload}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button" size="sm" variant="ghost"
+                      className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
+                      title="حذف من فهرس الأرشفة (لا يحذف الملف من جهازك)"
+                      onClick={() => {
+                        removeArchivedFile(jeKey, f.filename);
+                        setArchived(getArchivedFiles(jeKey));
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                ⚠️ زر الحذف يُزيل الملف من فهرس البرنامج فقط. الملف الفعلي يبقى على جهازك حتى تحذفه يدوياً.
+              </p>
+            </div>
+          )
         )}
 
         <DialogFooter>

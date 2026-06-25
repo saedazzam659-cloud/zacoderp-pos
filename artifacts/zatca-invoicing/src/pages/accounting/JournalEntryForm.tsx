@@ -1590,6 +1590,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       {fp.isVisible("attachments") && (
                         <JournalScanArchive
                           jeKey={docNumber || (editId ? `JE-${editId}` : `new-draft`)}
+                          screenKey="journal_entries"
                           companyName={user?.company?.nameAr ?? null}
                         />
                       )}
