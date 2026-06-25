@@ -207,6 +207,7 @@ export const employeeLoansTable = pgTable("employee_loans", {
   status:         text("status").notNull().default("active"),
   reason:         text("reason"),
   notes:          text("notes"),
+  loanAccountId:  integer("loan_account_id").references(() => accountsTable.id),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });

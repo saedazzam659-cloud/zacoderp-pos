@@ -19,7 +19,7 @@ import { printLoanVoucher, downloadLoanVoucherPdf, type LoanVoucherDoc } from "@
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 
 const today = () => new Date().toISOString().slice(0, 10);
-const EMPTY: any = { employeeId: "", loanDate: today(), loanType: "loan", amount: 0, installments: 1, installmentAmt: 0, installmentStartDate: "", reason: "", notes: "" };
+const EMPTY: any = { employeeId: "", loanDate: today(), loanType: "loan", amount: 0, installments: 1, installmentAmt: 0, installmentStartDate: "", loanAccountId: "", reason: "", notes: "" };
 
 // Add `months` whole months to an ISO date (YYYY-MM-DD), clamping the day to
 // the target month's last day (e.g. Jan-31 + 1 month → Feb-28/29).
@@ -151,6 +151,12 @@ export default function EmployeeLoans() {
   const lockPrincipal = !!editingLoan && ((editingLoan.notes || "").includes("JE#") || isClosedLoan);
   const lockSchedule = isClosedLoan;
 
+  // Selected employee → surface their bank details (read-only) in the form.
+  const selectedEmp = useMemo(
+    () => employees.find((e: any) => String(e.id) === String(form.employeeId)) ?? null,
+    [employees, form.employeeId],
+  );
+
   // Auto-derived end date = start date + (number of installments) months.
   const installmentEndDate = useMemo(
     () => (form.installmentStartDate ? addMonths(form.installmentStartDate, Math.max(1, Number(form.installments) || 1)) : ""),
@@ -171,6 +177,7 @@ export default function EmployeeLoans() {
       installments: l.installments ?? 1,
       installmentAmt: l.installmentAmt ?? 0,
       installmentStartDate: l.installmentStartDate || "",
+      loanAccountId: l.loanAccountId ? String(l.loanAccountId) : "",
       reason: l.reason || "",
       notes: l.notes || "",
     });
@@ -327,6 +334,19 @@ export default function EmployeeLoans() {
                 disabled={lockPrincipal}
               />
             </Field>
+            {selectedEmp && (
+              <div className="md:col-span-3 rounded border bg-muted/30 p-2 text-xs flex flex-wrap items-center gap-x-6 gap-y-1" data-testid="loan-bank-info">
+                <span className="font-medium text-muted-foreground">{tr("bankInfoTitle")}</span>
+                {(selectedEmp.bankName || selectedEmp.bankAccountIban) ? (
+                  <>
+                    <span><span className="text-muted-foreground">{tr("labelBankName")}</span> {selectedEmp.bankName || "—"}</span>
+                    <span><span className="text-muted-foreground">{tr("labelIban")}</span> <span className="tabular-nums" dir="ltr">{selectedEmp.bankAccountIban || "—"}</span></span>
+                  </>
+                ) : (
+                  <span className="text-amber-700">{tr("bankInfoEmpty")}</span>
+                )}
+              </div>
+            )}
             <Field label={tr("fieldType")}>
               <SearchCombobox
                 items={Object.entries(TYPES).filter(([k]) => k !== "advance").map(([k, v]) => ({ value: k, label: v }))}
@@ -355,6 +375,20 @@ export default function EmployeeLoans() {
             </Field>
             <Field label={tr("fieldInstallmentEndDate")}>
               <Input value={fmtDmy(installmentEndDate)} readOnly disabled placeholder="—" data-testid="loan-installment-end" />
+            </Field>
+            <Field label={tr("fieldLoanAccount")} className="md:col-span-3">
+              <SearchCombobox
+                items={((hrSettings?.accounts || []) as any[]).map((a: any) => ({
+                  value: String(a.id), code: a.code, label: pickName(a.nameAr, a.nameEn),
+                }))}
+                value={form.loanAccountId ? String(form.loanAccountId) : ""}
+                onValueChange={(v) => setForm({ ...form, loanAccountId: v })}
+                placeholder={tr("chooseLoanAccount")}
+                searchPlaceholder={tr("searchAccountPlaceholder")}
+                className="w-full"
+                disabled={lockPrincipal}
+                data-testid="loan-account"
+              />
             </Field>
             <Field label={tr("fieldReason")} className="md:col-span-3">
               <Input value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} placeholder={tr("reasonPlaceholder")} />
@@ -459,6 +493,12 @@ export default function EmployeeLoans() {
                 <div><span className="text-muted-foreground">{tr("labelEmployee")}</span> <strong>{pickName(disburseFor.empNameAr, disburseFor.empNameEn)}</strong> ({disburseFor.empCode})</div>
                 <div><span className="text-muted-foreground">{tr("labelDate")}</span> {disburseFor.loanDate}</div>
                 <div><span className="text-muted-foreground">{tr("labelAmount")}</span> <strong className="text-emerald-700">{Number(disburseFor.amount).toFixed(2)} {tr("sar")}</strong></div>
+                {(disburseFor.empBankName || disburseFor.empBankIban) && (
+                  <>
+                    <div><span className="text-muted-foreground">{tr("labelBankName")}</span> {disburseFor.empBankName || "—"}</div>
+                    <div><span className="text-muted-foreground">{tr("labelIban")}</span> <span className="tabular-nums" dir="ltr">{disburseFor.empBankIban || "—"}</span></div>
+                  </>
+                )}
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">{tr("labelMethod")}</label>

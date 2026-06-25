@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable } from "@workspace/db";
+import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable, accountsTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
@@ -18,6 +18,23 @@ function guard(req: any, res: any): number | null {
 }
 
 const N = (v: any) => (v == null || v === "" ? null : v);
+
+// Validate a user-supplied loan COA account: it must exist, belong to THIS
+// company, and be a posting account. Returns the numeric id, or null when none
+// supplied. Throws a tagged BAD_LOAN_ACCOUNT error (mapped to 400) on a foreign
+// or non-posting id, so a disbursement JE can never debit another tenant's GL.
+async function validateLoanAccount(cid: number, raw: any): Promise<number | null> {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const accId = Number(raw);
+  if (!Number.isInteger(accId) || accId <= 0)
+    throw Object.assign(new Error("حساب السلفة غير صالح"), { code: "BAD_LOAN_ACCOUNT" });
+  const [a] = await db.select({ id: accountsTable.id })
+    .from(accountsTable)
+    .where(and(eq(accountsTable.id, accId), eq(accountsTable.companyId, cid), eq(accountsTable.isPosting, true)));
+  if (!a)
+    throw Object.assign(new Error("حساب السلفة غير موجود أو ليس حساباً ترحيلياً ضمن الشركة"), { code: "BAD_LOAN_ACCOUNT" });
+  return accId;
+}
 
 // ─── EMPLOYEES ───────────────────────────────────────────────
 router.get("/", async (req, res) => {
@@ -618,9 +635,12 @@ router.get("/loans/list", async (req, res) => {
       status: employeeLoansTable.status,
       reason: employeeLoansTable.reason,
       notes: employeeLoansTable.notes,
+      loanAccountId: employeeLoansTable.loanAccountId,
       empCode: employeesTable.code,
       empNameAr: employeesTable.nameAr,
       empNameEn: employeesTable.nameEn,
+      empBankName: employeesTable.bankName,
+      empBankIban: employeesTable.bankAccountIban,
     }).from(employeeLoansTable)
       .leftJoin(employeesTable, eq(employeesTable.id, employeeLoansTable.employeeId))
       .where(and(...conds))
@@ -637,6 +657,7 @@ router.post("/loans", async (req, res) => {
     const installments = Math.max(1, Number(b.installments || 1));
     const amt = Number(b.amount);
     const inst = Number(b.installmentAmt) > 0 ? Number(b.installmentAmt) : +(amt / installments).toFixed(2);
+    const loanAccountId = await validateLoanAccount(cid, b.loanAccountId);
     const [row] = await db.insert(employeeLoansTable).values({
       companyId: cid,
       employeeId: Number(b.employeeId),
@@ -651,9 +672,10 @@ router.post("/loans", async (req, res) => {
       status: "active",
       reason: N(b.reason),
       notes: N(b.notes),
+      loanAccountId,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.code === "BAD_LOAN_ACCOUNT" ? 400 : 500).json({ error: e.message }); }
 });
 
 // Disburse an existing loan — creates a journal entry (DR loans receivable / CR cash or bank)
@@ -734,6 +756,7 @@ router.put("/loans/:id", async (req, res) => {
       if (numChanged("employeeId", b.employeeId)) violations.push("employeeId");
       if (strChanged("loanDate", b.loanDate)) violations.push("loanDate");
       if (strChanged("loanType", b.loanType)) violations.push("loanType");
+      if (numChanged("loanAccountId", b.loanAccountId)) violations.push("loanAccountId");
     }
     if (isClosed) {
       if (numChanged("installments", b.installments)) violations.push("installments");
@@ -765,6 +788,7 @@ router.put("/loans/:id", async (req, res) => {
     if (b.installmentAmt != null) upd.installmentAmt = String(b.installmentAmt);
     if (b.installmentStartDate !== undefined) upd.installmentStartDate = N(b.installmentStartDate);
     if (b.installmentEndDate !== undefined) upd.installmentEndDate = N(b.installmentEndDate);
+    if (b.loanAccountId !== undefined) upd.loanAccountId = await validateLoanAccount(cid, b.loanAccountId);
     if (b.reason !== undefined) upd.reason = N(b.reason);
     // Preserve the disbursement marker (JE#…) so editing the loan from the
     // form never strips the link to its disbursement journal entry.

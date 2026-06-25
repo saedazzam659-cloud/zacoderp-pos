@@ -231,6 +231,24 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   return entry.id;
 }
 
+// Resolves the loan receivable account for a loan row: the row's own
+// loan_account_id wins, else the company loans mapping (11081). Throws when
+// nothing resolves so postings never silently misfire.
+async function resolveLoanAccount(cid: number, loanAccountId: number | null, dx: DbOrTx): Promise<number> {
+  // Defense-in-depth: only honor the row's account when it still belongs to
+  // this company and is a posting account (the API boundary validates on write,
+  // but a stale/foreign id must never silently post to another tenant's GL).
+  if (loanAccountId) {
+    const [a] = await dx.select({ id: accountsTable.id })
+      .from(accountsTable)
+      .where(and(eq(accountsTable.id, loanAccountId), eq(accountsTable.companyId, cid), eq(accountsTable.isPosting, true)));
+    if (a) return a.id;
+  }
+  const accounts = await resolveHrAccounts(cid, true, dx);
+  if (!accounts.employeeLoans) throw new Error("حساب سلف الموظفين (11081) غير مربوط في إعدادات الموارد البشرية");
+  return accounts.employeeLoans;
+}
+
 // ─── LOAN DISBURSEMENT JOURNAL ───────────────────────────────────────────────
 export async function buildLoanDisbursementJournal(
   cid: number,
@@ -246,8 +264,7 @@ export async function buildLoanDisbursementJournal(
   if (amount <= 0) throw new Error("مبلغ السلفة يجب أن يكون أكبر من صفر");
 
   const [emp] = await dx.select().from(employeesTable).where(eq(employeesTable.id, loan.employeeId));
-  const accounts = await resolveHrAccounts(cid, true, dx);
-  if (!accounts.employeeLoans) throw new Error("حساب سلف الموظفين (11081) غير مربوط في الإعدادات");
+  const loanAccountId = await resolveLoanAccount(cid, loan.loanAccountId, dx);
 
   const cash = await resolveCashAccount(cid, source, dx);
   const desc = `صرف ${loan.loanType === "advance" ? "عُهدة" : "سلفة"} للموظف ${emp?.nameAr ?? ""}`.trim();
@@ -271,10 +288,10 @@ export async function buildLoanDisbursementJournal(
   }).returning();
 
   await dx.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: accounts.employeeLoans, debit: fix(amount), credit: "0.00",
+    { entryId: entry.id, accountId: loanAccountId,  debit: fix(amount), credit: "0.00",
       description: desc, sortOrder: 0 },
-    { entryId: entry.id, accountId: cash.accountId,         debit: "0.00",      credit: fix(amount),
-      description: cash.label,                              sortOrder: 1 },
+    { entryId: entry.id, accountId: cash.accountId, debit: "0.00",      credit: fix(amount),
+      description: cash.label,                      sortOrder: 1 },
   ]);
   return entry.id;
 }

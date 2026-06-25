@@ -7217,7 +7217,14 @@
       "fieldInstallmentStartDate": "Installment start date",
       "fieldInstallmentEndDate": "Installment end date (auto)",
       "lockNoteDisbursed": "This loan has been disbursed and is linked to a journal entry, so the amount, employee, and loan type/date cannot be changed. You can still edit the installment schedule, reason, and notes.",
-      "lockNoteClosed": "This loan is cancelled or completed, so its data cannot be edited — only notes can be changed."
+      "lockNoteClosed": "This loan is cancelled or completed, so its data cannot be edited — only notes can be changed.",
+      "fieldLoanAccount": "Loan account",
+      "chooseLoanAccount": "— Select loan account (auto default) —",
+      "searchAccountPlaceholder": "Search by code or name…",
+      "bankInfoTitle": "Employee bank details",
+      "labelBankName": "Bank name:",
+      "labelIban": "IBAN:",
+      "bankInfoEmpty": "No bank details recorded for this employee."
     },
     "custody": {
       "title": "Employee Custody",
