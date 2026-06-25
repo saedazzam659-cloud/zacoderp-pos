@@ -294,7 +294,54 @@ test("an extension only reads its OWN tenant's ext_records", async () => {
   assert.equal(cross.status, 404, "B fetching A's record id must 404, never return A's data");
 });
 
-// ─── 2. Permission model: read-only extension is refused a core WRITE ───────
+// ─── 1c. Tenant scoping: forced company_id on ext_records WRITES ─────────────
+test("an extension cannot UPDATE or DELETE another tenant's ext_records by id", async () => {
+  // Company A creates a private note. Its record id is the only thing an
+  // attacker needs to guess — everything else (extension, collection) is shared.
+  const created = await api<{ id: string; data: { text?: string } }>(`/api/ext/${EXT_ID}/data/notes`, {
+    method: "POST", token: adminAToken, body: { data: { text: `${TEST_TAG}-A-write-target` } },
+  });
+  assert.equal(created.status, 200, created.text.slice(0, 200));
+  await trackExtRecord(created.body.id);
+  const recordId = created.body.id;
+
+  // Company B tries to OVERWRITE company A's record by its id → 404, never 200.
+  const putAttempt = await api<{ code?: string }>(
+    `/api/ext/${EXT_ID}/data/notes/${encodeURIComponent(recordId)}`,
+    { method: "PUT", token: adminBToken, body: { data: { text: `${TEST_TAG}-B-tampered` } } },
+  );
+  assert.equal(putAttempt.status, 404, "B updating A's record id must 404");
+  assert.ok(
+    isObject(putAttempt.body) && putAttempt.body.code === "EXT_RECORD_NOT_FOUND",
+    `expected EXT_RECORD_NOT_FOUND, got ${putAttempt.text.slice(0, 200)}`,
+  );
+
+  // Company B tries to DELETE company A's record by its id → 404, never 200.
+  const deleteAttempt = await api<{ code?: string }>(
+    `/api/ext/${EXT_ID}/data/notes/${encodeURIComponent(recordId)}`,
+    { method: "DELETE", token: adminBToken },
+  );
+  assert.equal(deleteAttempt.status, 404, "B deleting A's record id must 404");
+  assert.ok(
+    isObject(deleteAttempt.body) && deleteAttempt.body.code === "EXT_RECORD_NOT_FOUND",
+    `expected EXT_RECORD_NOT_FOUND, got ${deleteAttempt.text.slice(0, 200)}`,
+  );
+
+  // After both attempts, company A can still read its record, UNCHANGED.
+  const reread = await api<{ id: string; data: { text?: string } }>(
+    `/api/ext/${EXT_ID}/data/notes/${encodeURIComponent(recordId)}`,
+    { token: adminAToken },
+  );
+  assert.equal(reread.status, 200, "A's record must survive B's tamper attempts");
+  assert.equal(reread.body.id, recordId);
+  assert.equal(
+    reread.body.data?.text,
+    `${TEST_TAG}-A-write-target`,
+    "A's record data must be untouched by B's PUT",
+  );
+});
+
+// ─── 2. Permission model: a read-only extension is refused a core WRITE ───────
 test("a read-only extension is refused a core write (403 EXT_PERMISSION_DENIED)", async () => {
   // partner-toolkit declares customers:read but NOT customers:write.
   const r = await api<{ code?: string }>(`/api/ext/${EXT_ID}/core/customers`, {
