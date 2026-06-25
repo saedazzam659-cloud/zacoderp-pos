@@ -941,7 +941,8 @@
     "multiLinkGroup": "Multi-Link Gateway",
     "multiLinkClients": "Gateway Clients",
     "multiLinkReports": "Gateway Reports",
-    "resellers": "Resellers"
+    "resellers": "Resellers",
+    "partners": "Developers & Partners"
   },
   "security": {
     "title": "Security & Monitoring",

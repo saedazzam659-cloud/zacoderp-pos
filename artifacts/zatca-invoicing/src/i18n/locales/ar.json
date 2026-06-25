@@ -936,7 +936,8 @@
     "multiLinkGroup": "ربط متعدد",
     "multiLinkClients": "عملاء البوابة",
     "multiLinkReports": "تقارير البوابة",
-    "resellers": "إدارة الموزّعين"
+    "resellers": "إدارة الموزّعين",
+    "partners": "المطوّرون والشركاء"
   },
   "security": {
     "title": "الأمن والمراقبة",

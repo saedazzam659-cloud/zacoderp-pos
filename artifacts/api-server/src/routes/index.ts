@@ -12,6 +12,7 @@ import suppliersRouter from "./suppliers";
 import adminRouter from "./admin";
 import resellersAdminRouter from "./resellers-admin";
 import resellerRouter from "./reseller";
+import partnersAdminRouter from "./partners-admin";
 import gatewayClientsRouter from "./gatewayClients";
 import integrationsRouter, { inboundRouter as integrationsInboundRouter } from "./integrations";
 import adminDbStatsRouter from "./admin-db-stats";
@@ -155,6 +156,9 @@ router.use("/admin/domains", domainsRouter);
 // tenant-auth catch-all. The admin router self-guards with requireSuperAdmin.
 router.use("/admin/resellers", resellersAdminRouter);
 router.use("/reseller", resellerRouter);
+// Developer & Partner Control Center — Phase 1 (additive, SuperAdmin-only).
+// Same mount-before-zatcaRouter rationale; self-guards with requireSuperAdmin.
+router.use("/admin/partners", partnersAdminRouter);
 router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);
