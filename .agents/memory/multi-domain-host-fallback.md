@@ -21,22 +21,19 @@ their own `companyId` regardless of host.
 and SuperAdmin tooling (`/admin/*`, acting-company banner) must keep working when
 browsed on any host. A mapped host is a convenience, not an authority.
 
-**Multi-Domain is a LOCKED / default-OFF platform module (`multi_domain`).** Unlike
-normal tenant modules (absent key ⇒ allowed), default-OFF modules are gated by a
-`MODULE_GATE_DEFAULT_OFF` set so an ABSENT key ⇒ DENIED. This set + the `multi_domain`
-entry must be mirrored in FOUR places or the gate goes inconsistent: backend
-`permissions.ts` (`companyAllowsModule`), frontend `companyModuleGate.ts`,
-`MenuPermissions.tsx` (`DEFAULT_OFF_KEYS`, so the toggle renders OFF), and
-`menuItems.ts` (the toggle entry). The gate applies EVEN to SuperAdmin: in
-`Layout.tsx` `navItemAllowed`, a NavDef `superadminModuleGate` is checked BEFORE the
-`role==="superadmin"` auto-allow; `App.tsx` wraps the route in `companyAllowsModule`;
-`routes/domains.ts` adds a second `router.use` 403 gate after the SA role guard.
-**Why:** the screen lives in `superAdminNav`, but the requirement is that it stay
-hidden/403 until explicitly enabled on the OPERATOR'S OWN company
-(`companies.menuPermissions`) — so the SA enables `multi_domain` on their own company
-via the MenuPermissions screen to reveal it. **How to apply:** to add another
-default-locked SA platform module, add its key to ALL FOUR `MODULE_GATE_DEFAULT_OFF`/
-map spots and set `superadminModuleGate` on its NavDef + a route + API gate.
+**The "إدارة النطاقات" screen is SuperAdmin-ONLY and has NO company module gate.**
+It lives in `superAdminNav`, the route is `isSuperAdmin`-gated, and `routes/domains.ts`
+has a `router.use` superadmin-only 403 guard — that is the whole access model. A
+default-OFF `multi_domain` company-module gate WAS once added (key in
+`COMPANY_MODULE_GATE` + a `MODULE_GATE_DEFAULT_OFF` set + a `menuItems.ts` toggle + a
+`Layout.tsx` `superadminModuleGate` field), then **explicitly removed at the owner's
+request**. **Why:** a SuperAdmin-only platform feature is NOT per-tenant, so exposing it
+as a toggle inside companies' menu permissions was confusing noise — and making even the
+SuperAdmin enable it on their own company before it appears is a footgun. **How to apply:
+do NOT re-introduce a company module key for any SuperAdmin-only platform screen** —
+gate it with `isSuperAdmin` (nav + route) + a superadmin `router.use` on the API.
+(`MODULE_GATE_DEFAULT_OFF`/`DEFAULT_OFF_KEYS` are now empty sets — inert generic infra,
+not a live feature.)
 
 **Main (company-less) domain — `is_main` + nullable `company_id`.** A domain row may
 be `isMain=true` with `companyId=NULL`: the shared multi-company domain that keeps the

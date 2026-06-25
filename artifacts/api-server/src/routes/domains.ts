@@ -13,7 +13,6 @@ import { companyDomainsTable, companiesTable } from "@workspace/db";
 import { eq, and, desc, ne } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth } from "../middleware/auth.js";
-import { companyAllowsModule } from "../middleware/permissions.js";
 import { clearDomainCache, normalizeHost } from "../middleware/domainResolver.js";
 import dns from "node:dns";
 import tls from "node:tls";
@@ -23,16 +22,6 @@ router.use(extractAuth);
 router.use((req, res, next) => {
   if ((req as any).authUser?.role !== "superadmin") {
     res.status(403).json({ error: "هذه الصفحة للمشرف العام فقط" }); return;
-  }
-  next();
-});
-// Platform module gate — Multi-Domain is LOCKED by default and must be enabled
-// on the operator's own company (companies.menuPermissions) before any of these
-// endpoints respond. Applies even to superadmins (companyAllowsModule has no
-// role bypass — that lives in the middleware callers).
-router.use((req, res, next) => {
-  if (!companyAllowsModule((req as any).authUser, "multi_domain")) {
-    res.status(403).json({ error: "وحدة إدارة النطاقات غير مفعّلة" }); return;
   }
   next();
 });

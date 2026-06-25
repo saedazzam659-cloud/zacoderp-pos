@@ -128,9 +128,6 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   field_service_tickets:   "field_service",
   field_service_tracking:  "field_service",
   field_service_reports:   "field_service",
-  // Multi-Domain Management — SuperAdmin platform module, LOCKED by default
-  // (see MODULE_GATE_DEFAULT_OFF). Hidden until explicitly enabled.
-  multi_domain: "multi_domain",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be
@@ -138,7 +135,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // SuperAdmin platform modules that must stay hidden until turned on. Keep in
 // sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
 // MenuPermissions.tsx.
-const MODULE_GATE_DEFAULT_OFF = new Set<string>(["multi_domain"]);
+const MODULE_GATE_DEFAULT_OFF = new Set<string>([]);
 
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `module`. Mirrors companyAllowsModule() in Layout.tsx —

@@ -58,10 +58,6 @@ type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permK
   /** When true, this entry is visible ONLY to superadmins (even when entered into a tenant
    *  via "الدخول إلى شركة"). Company admins never see it. */
   requireSuperadmin?: boolean;
-  /** Module key (companies.menuPermissions) that gates this entry EVEN FOR
-   *  superadmins — used for platform modules that are LOCKED by default and must
-   *  be explicitly enabled (on the operator's own company) before they appear. */
-  superadminModuleGate?: string;
 };
 
 // Returns true when this nav item should be visible to the given user.
@@ -82,10 +78,6 @@ function navItemAllowed(item: NavDef, user: any): boolean {
   // Superadmin-only items: visible only to platform operators (even while
   // they're acting inside a tenant). Company admins never see them.
   if (item.requireSuperadmin && user.role !== "superadmin") return false;
-  // Default-locked platform module gate — applies EVEN to superadmins, so a
-  // module that is OFF stays hidden until explicitly enabled (on the operator's
-  // own company's companies.menuPermissions).
-  if (item.superadminModuleGate && !companyAllowsModule(user, item.superadminModuleGate)) return false;
   if (user.role === "superadmin") return true;
   // Admin-only items stay hidden for non-admin roles regardless of granted
   // perms, because their backend endpoints require admin role and would 403/404.
@@ -152,7 +144,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.posDevices",           href: "/admin/pos-devices",        icon: Monitor },
   { nameKey: "nav.offlineLicenses",      href: "/admin/offline-licenses",   icon: KeyRound },
   { nameKey: "nav.downloadCodes",        href: "/admin/download-codes",     icon: KeyRound },
-  { nameKey: "nav.domains",              href: "/admin/domains",            icon: Globe, superadminModuleGate: "multi_domain" },
+  { nameKey: "nav.domains",              href: "/admin/domains",            icon: Globe },
   { nameKey: "nav.backupOperations",     href: "/admin/backups",            icon: HardDrive },
   { nameKey: "nav.securityCenter",       href: "/admin/security",           icon: ShieldCheck },
   { nameKey: "nav.superAdminSecurity",   href: "/admin/security-superadmin", icon: ShieldCheck },

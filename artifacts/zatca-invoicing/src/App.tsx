@@ -239,7 +239,6 @@ import PosSettings from "@/pages/pos/PosSettings";
 import PosTerminals from "@/pages/pos/PosTerminals";
 import OnlineStore from "@/pages/online-store/OnlineStore";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import { companyAllowsModule } from "@/lib/companyModuleGate";
 import { ScreenActionsProvider } from "@/contexts/ScreenActionsContext";
 import { CallProvider } from "@/contexts/CallContext";
 import { Loader2 } from "lucide-react";
@@ -622,7 +621,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/pos-devices" component={PosDevices} />}
             {isSuperAdmin && <Route path="/admin/offline-licenses" component={OfflineLicenses} />}
             {isSuperAdmin && <Route path="/admin/download-codes" component={DownloadCodes} />}
-            {isSuperAdmin && companyAllowsModule(user, "multi_domain") && <Route path="/admin/domains" component={Domains} />}
+            {isSuperAdmin && <Route path="/admin/domains" component={Domains} />}
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
             <Route path="/integrations/gateway" component={IntegrationGateway} />
