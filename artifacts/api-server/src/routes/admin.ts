@@ -41,6 +41,7 @@ import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegis
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { accrueResellerCommission } from "../lib/resellerCommissions.js";
+import { accruePartnerCommission } from "../lib/partnerCommissions.js";
 import { resolveCountryForIp, resolveLocationForIp, type IpLocation } from "../middleware/visitorCountry.js";
 import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
@@ -498,6 +499,13 @@ router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => 
     subscriptionId: id,
     description: `تمديد الاشتراك ${months} شهر`,
   });
+  // Partner commission accrual (no-op unless the company is partner-linked).
+  await accruePartnerCommission({
+    companyId: updated?.companyId ?? row.company_id,
+    eventType: "app_renewal",
+    baseAmount: Number(updated?.price ?? 0),
+    description: `تمديد الاشتراك ${months} شهر`,
+  });
   res.json({ ok: true, subscription: updated, reactivated });
 });
 
@@ -565,6 +573,13 @@ router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res
     subscriptionId: id,
     description: `تغيير الباقة إلى ${planKey} (${cycle})`,
   });
+  // Partner commission accrual (no-op unless the company is partner-linked).
+  await accruePartnerCommission({
+    companyId: updated.companyId,
+    eventType: "app_renewal",
+    baseAmount: Number(price ?? 0),
+    description: `تغيير الباقة إلى ${planKey} (${cycle})`,
+  });
   res.json({ ok: true, subscription: updated });
 });
 
@@ -629,6 +644,13 @@ router.post("/subscriptions/bulk-extend", requireSuperAdmin, async (req, res) =>
       eventType: "renewal",
       baseAmount: Number(sub?.price ?? 0),
       subscriptionId: Number(r.id),
+      description: `تمديد جماعي ${months} شهر`,
+    });
+    // Partner commission accrual (no-op unless the company is partner-linked).
+    await accruePartnerCommission({
+      companyId: Number(r.company_id),
+      eventType: "app_renewal",
+      baseAmount: Number(sub?.price ?? 0),
       description: `تمديد جماعي ${months} شهر`,
     });
   }

@@ -10,6 +10,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { requireReseller, requireResellerPermission, resellerCompanyIds, resellerOwnsCompany } from "../middleware/reseller.js";
 import { accrueResellerCommission } from "../lib/resellerCommissions.js";
+import { accruePartnerCommission } from "../lib/partnerCommissions.js";
 import { seedDefaultChartOfAccounts } from "../lib/seedDefaultChartOfAccounts.js";
 import { logger } from "../lib/logger.js";
 
@@ -278,6 +279,13 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
     subscriptionId: subscription.id,
     description: `اشتراك جديد — ${planKey} (${billingCycle})`,
   });
+  // Partner commission accrual (no-op unless the company is partner-linked).
+  await accruePartnerCommission({
+    companyId: company.id,
+    eventType: "app_sale",
+    baseAmount: Number(price ?? 0),
+    description: `اشتراك جديد — ${planKey} (${billingCycle})`,
+  });
 
   res.status(201).json({ ok: true, company: { ...company }, companyCode: generatedCompanyCode, subscription });
 });
@@ -314,6 +322,13 @@ router.post("/clients/:id/renew", requireResellerPermission("renew_subscriptions
     eventType: "renewal",
     baseAmount: Number(updated?.price ?? 0),
     subscriptionId: sub.id,
+    description: `تجديد الاشتراك ${months} شهر`,
+  });
+  // Partner commission accrual (no-op unless the company is partner-linked).
+  await accruePartnerCommission({
+    companyId: id,
+    eventType: "app_renewal",
+    baseAmount: Number(updated?.price ?? 0),
     description: `تجديد الاشتراك ${months} شهر`,
   });
   res.json({ ok: true, subscription: updated });
