@@ -937,7 +937,8 @@
     "multiLinkClients": "عملاء البوابة",
     "multiLinkReports": "تقارير البوابة",
     "resellers": "إدارة الموزّعين",
-    "partners": "المطوّرون والشركاء"
+    "partners": "المطوّرون والشركاء",
+    "devCloud": "سحابة المطورين"
   },
   "security": {
     "title": "الأمن والمراقبة",

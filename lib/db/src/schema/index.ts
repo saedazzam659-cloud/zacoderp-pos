@@ -81,3 +81,4 @@ export * from "./resellers";
 export * from "./partners";
 export * from "./companyTemplates";
 export * from "./extensions";
+export * from "./devCloud";

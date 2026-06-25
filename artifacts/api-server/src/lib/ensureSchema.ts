@@ -1552,6 +1552,70 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS ext_records_scope_idx ON ext_records (company_id, extension_id, collection)` },
     { label: "ext_records_record_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS ext_records_record_uniq ON ext_records (company_id, extension_id, collection, record_id)` },
+
+    // ── Developer Cloud (Workspaces) — Phase 5 (additive; SA-only) ───────────
+    // One isolated workspace per partner company (sandbox + git + storage + test
+    // env), multi-role developer seats, and Publish-engine-only deployments.
+    // Stores only opaque provider references — never credentials/SSH/RDP/DB.
+    { label: "create dev_workspaces table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_workspaces (
+        id                    SERIAL PRIMARY KEY,
+        company_id            INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        provider              TEXT NOT NULL DEFAULT 'replit',
+        external_workspace_id TEXT,
+        sandbox_id            TEXT,
+        git_repo_url          TEXT,
+        storage_bucket        TEXT,
+        test_env_url          TEXT,
+        region                TEXT,
+        tier                  TEXT NOT NULL DEFAULT 'standard',
+        status                TEXT NOT NULL DEFAULT 'pending',
+        provisioned_at        TIMESTAMP,
+        last_error            TEXT,
+        notes                 TEXT,
+        is_active             BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at            TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_workspaces_company_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS dev_workspaces_company_uniq ON dev_workspaces (company_id)` },
+    { label: "dev_workspaces_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_workspaces_status_idx ON dev_workspaces (status)` },
+    { label: "create dev_workspace_seats table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_workspace_seats (
+        id           SERIAL PRIMARY KEY,
+        workspace_id INTEGER NOT NULL REFERENCES dev_workspaces(id) ON DELETE CASCADE,
+        name         TEXT NOT NULL,
+        email        TEXT NOT NULL,
+        role         TEXT NOT NULL DEFAULT 'backend',
+        permissions  JSONB NOT NULL DEFAULT '{}',
+        status       TEXT NOT NULL DEFAULT 'active',
+        invited_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+        created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_workspace_seats_ws_email_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS dev_workspace_seats_ws_email_uniq ON dev_workspace_seats (workspace_id, email)` },
+    { label: "dev_workspace_seats_workspace_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_workspace_seats_workspace_idx ON dev_workspace_seats (workspace_id)` },
+    { label: "create dev_deployments table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_deployments (
+        id                   SERIAL PRIMARY KEY,
+        workspace_id         INTEGER NOT NULL REFERENCES dev_workspaces(id) ON DELETE CASCADE,
+        environment          TEXT NOT NULL DEFAULT 'test',
+        ref                  TEXT,
+        status               TEXT NOT NULL DEFAULT 'queued',
+        method               TEXT NOT NULL DEFAULT 'publish_engine',
+        triggered_by_seat_id INTEGER REFERENCES dev_workspace_seats(id) ON DELETE SET NULL,
+        notes                TEXT,
+        last_error           TEXT,
+        published_at         TIMESTAMP,
+        created_at           TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_deployments_workspace_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_deployments_workspace_idx ON dev_deployments (workspace_id)` },
+    { label: "dev_deployments_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_deployments_status_idx ON dev_deployments (status)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

@@ -122,6 +122,7 @@ import publicOfflineRouter from "./public-offline";
 import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
 import domainsRouter from "./domains";
+import devCloudAdminRouter from "./dev-cloud-admin";
 import extensionsRouter from "../extensions/index.js";
 import { resolveDomainCompany } from "../middleware/domainResolver";
 
@@ -159,6 +160,9 @@ router.use("/reseller", resellerRouter);
 // Developer & Partner Control Center — Phase 1 (additive, SuperAdmin-only).
 // Same mount-before-zatcaRouter rationale; self-guards with requireSuperAdmin.
 router.use("/admin/partners", partnersAdminRouter);
+// Developer Cloud (Workspaces) — Phase 5 (additive, SuperAdmin-only). Same
+// mount-before-zatcaRouter rationale; self-guards with requireSuperAdmin.
+router.use("/admin/dev-cloud", devCloudAdminRouter);
 router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);

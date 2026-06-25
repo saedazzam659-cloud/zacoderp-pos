@@ -82,6 +82,7 @@ import ResellerLogin from "@/pages/ResellerLogin";
 import ResellerPortal from "@/pages/ResellerPortal";
 import ResellersAdmin from "@/pages/ResellersAdmin";
 import PartnersAdmin from "@/pages/PartnersAdmin";
+import DevCloudAdmin from "@/pages/DevCloudAdmin";
 import PlanSettings from "@/pages/PlanSettings";
 import ZatcaIntegration from "@/pages/ZatcaIntegration";
 import ZatcaBridge from "@/pages/ZatcaBridge";
@@ -610,6 +611,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
             {isSuperAdmin && <Route path="/admin/resellers" component={ResellersAdmin} />}
             {isSuperAdmin && <Route path="/admin/partners" component={PartnersAdmin} />}
+            {isSuperAdmin && <Route path="/admin/dev-cloud" component={DevCloudAdmin} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/windows-app-permissions" component={WindowsAppPermissions} />}

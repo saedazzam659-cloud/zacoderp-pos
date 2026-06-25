@@ -942,7 +942,8 @@
     "multiLinkClients": "Gateway Clients",
     "multiLinkReports": "Gateway Reports",
     "resellers": "Resellers",
-    "partners": "Developers & Partners"
+    "partners": "Developers & Partners",
+    "devCloud": "Developer Cloud"
   },
   "security": {
     "title": "Security & Monitoring",
