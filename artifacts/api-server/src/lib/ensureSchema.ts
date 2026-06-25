@@ -1616,6 +1616,33 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS dev_deployments_workspace_idx ON dev_deployments (workspace_id)` },
     { label: "dev_deployments_status_idx",
       sql:   `CREATE INDEX IF NOT EXISTS dev_deployments_status_idx ON dev_deployments (status)` },
+    // ── Extension Platform — Phase 3: Publish Engine (extension_publishes) ──
+    { label: "create extension_publishes table",
+      sql:   `CREATE TABLE IF NOT EXISTS extension_publishes (
+        id                  SERIAL PRIMARY KEY,
+        extension_id        TEXT NOT NULL,
+        version             TEXT NOT NULL,
+        partner_id          INTEGER,
+        submitted_manifest  JSONB NOT NULL,
+        status              TEXT NOT NULL DEFAULT 'pending',
+        current_stage       TEXT,
+        gates               JSONB NOT NULL DEFAULT '[]'::jsonb,
+        report              JSONB,
+        package_digest      TEXT,
+        signature           TEXT,
+        public_key_id       TEXT,
+        deployed_at         TIMESTAMPTZ,
+        created_by          INTEGER,
+        created_by_username TEXT,
+        created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "extension_publishes_extension_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS extension_publishes_extension_idx ON extension_publishes (extension_id)` },
+    { label: "extension_publishes_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS extension_publishes_status_idx ON extension_publishes (status)` },
+    { label: "extension_publishes_created_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS extension_publishes_created_idx ON extension_publishes (created_at)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

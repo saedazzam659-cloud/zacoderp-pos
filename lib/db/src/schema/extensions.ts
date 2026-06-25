@@ -130,6 +130,56 @@ export const extRecordsTable = pgTable(
   }),
 );
 
+// ─────────────────────────────────────────────────────────────────────────
+// extension_publishes — Phase 3 "Publish Engine". An immutable-ish record of
+// every publish RUN a developer triggers. The publish pipeline executes staged
+// gates (build → security scan → AI review → package → sign → deploy → monitor);
+// each gate's outcome is captured in `gates`, and a clear, actionable failure
+// report lives in `report`. On success the signed manifest is deployed to
+// platform_extensions and `signature`/`publicKeyId`/`deployedAt` are filled.
+//
+// This table is the durable, queryable audit trail of the distribution layer:
+// it never carries executable code (only the declarative manifest + outcomes),
+// and combined with the audit_log entries it satisfies the "immutable audit for
+// every publish event" guarantee. Rows are append-only by convention (the
+// pipeline updates a row in place only while a single run is in flight).
+// ─────────────────────────────────────────────────────────────────────────
+export const extensionPublishesTable = pgTable(
+  "extension_publishes",
+  {
+    id: serial("id").primaryKey(),
+    extensionId: text("extension_id").notNull(),
+    version: text("version").notNull(),
+    // Optional developer (platform_partners.id) the run is attributed to.
+    partnerId: integer("partner_id"),
+    // The candidate manifest exactly as submitted (pre-canonicalisation).
+    submittedManifest: jsonb("submitted_manifest").notNull(),
+    // pending | running | passed | deployed | failed | blocked
+    status: text("status").notNull().default("pending"),
+    // The last stage the pipeline reached (build, security_scan, …, monitor).
+    currentStage: text("current_stage"),
+    // Per-gate outcomes: [{ stage, status: pass|warn|fail|skip, summary, details, durationMs }]
+    gates: jsonb("gates").notNull().default([]),
+    // Actionable report surfaced to the developer: { errors[], warnings[], … }.
+    report: jsonb("report"),
+    // sha256 of the canonical manifest bytes that were signed (the "package").
+    packageDigest: text("package_digest"),
+    // Ed25519 signature over the canonical manifest (filled on a passing sign gate).
+    signature: text("signature"),
+    publicKeyId: text("public_key_id"),
+    deployedAt: timestamp("deployed_at", { withTimezone: true }),
+    createdBy: integer("created_by"),
+    createdByUsername: text("created_by_username"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byExtension: index("extension_publishes_extension_idx").on(t.extensionId),
+    byStatus: index("extension_publishes_status_idx").on(t.status),
+    byCreatedAt: index("extension_publishes_created_idx").on(t.createdAt),
+  }),
+);
+
 export const insertPlatformExtensionSchema = createInsertSchema(platformExtensionsTable).omit({
   id: true,
   createdAt: true,
@@ -150,12 +200,19 @@ export const insertExtRecordSchema = createInsertSchema(extRecordsTable).omit({
   createdAt: true,
   updatedAt: true,
 });
+export const insertExtensionPublishSchema = createInsertSchema(extensionPublishesTable).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 
 export type PlatformExtension = typeof platformExtensionsTable.$inferSelect;
 export type CompanyExtension = typeof companyExtensionsTable.$inferSelect;
 export type ExtData = typeof extDataTable.$inferSelect;
 export type ExtRecord = typeof extRecordsTable.$inferSelect;
+export type ExtensionPublish = typeof extensionPublishesTable.$inferSelect;
 export type InsertPlatformExtension = z.infer<typeof insertPlatformExtensionSchema>;
 export type InsertCompanyExtension = z.infer<typeof insertCompanyExtensionSchema>;
 export type InsertExtData = z.infer<typeof insertExtDataSchema>;
 export type InsertExtRecord = z.infer<typeof insertExtRecordSchema>;
+export type InsertExtensionPublish = z.infer<typeof insertExtensionPublishSchema>;

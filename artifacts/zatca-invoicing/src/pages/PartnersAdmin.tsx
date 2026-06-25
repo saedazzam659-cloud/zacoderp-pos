@@ -11,6 +11,8 @@ import { cn } from "@/lib/utils";
 import {
   Boxes, PlusCircle, RefreshCw, Building2, Trash2, X, Link2, Unlink, Search,
   Pencil, ChevronRight, BadgeCheck, FileText, Wallet, Ban, CheckCircle2,
+  UploadCloud, ShieldCheck, Sparkles, Package, PenTool, Activity, Loader2,
+  AlertTriangle, Hammer, Rocket,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -75,14 +77,15 @@ export default function PartnersAdmin() {
   const { toast } = useToast();
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" }), [token]);
 
-  const [tab, setTab] = useState<"developer" | "partner" | "report">("developer");
+  const [tab, setTab] = useState<"developer" | "partner" | "publish" | "report">("developer");
+  const isPartnerList = tab === "developer" || tab === "partner";
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
   const [detailId, setDetailId] = useState<number | null>(null);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["admin-partners", tab],
-    enabled: tab !== "report",
+    enabled: isPartnerList,
     queryFn: async () => {
       const r = await fetch(`${API}/api/admin/partners?kind=${tab}`, { headers });
       if (!r.ok) throw new Error();
@@ -137,13 +140,13 @@ export default function PartnersAdmin() {
           </div>
         </div>
         <div className="flex gap-2">
-          {tab !== "report" && <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-2"><RefreshCw className="h-4 w-4" /> تحديث</Button>}
-          {tab !== "report" && <Button size="sm" onClick={() => { setForm({ ...emptyForm, kind: tab }); setShowCreate(true); }} className="gap-2" data-testid="button-add-partner"><PlusCircle className="h-4 w-4" /> {tab === "partner" ? "شريك جديد" : "مطوّر جديد"}</Button>}
+          {isPartnerList && <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-2"><RefreshCw className="h-4 w-4" /> تحديث</Button>}
+          {isPartnerList && <Button size="sm" onClick={() => { setForm({ ...emptyForm, kind: tab }); setShowCreate(true); }} className="gap-2" data-testid="button-add-partner"><PlusCircle className="h-4 w-4" /> {tab === "partner" ? "شريك جديد" : "مطوّر جديد"}</Button>}
         </div>
       </div>
 
       <div className="flex gap-1 border-b">
-        {([["developer", "المطوّرون"], ["partner", "الشركاء"], ["report", "تقرير العمولات"]] as [typeof tab, string][]).map(([k, label]) => (
+        {([["developer", "المطوّرون"], ["partner", "الشركاء"], ["publish", "النشر"], ["report", "تقرير العمولات"]] as [typeof tab, string][]).map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)} data-testid={`tab-${k}`}
             className={cn("px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
               tab === k ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700")}>
@@ -152,7 +155,7 @@ export default function PartnersAdmin() {
         ))}
       </div>
 
-      {tab === "report" ? <CommissionsReport headers={headers} /> : (isLoading ? (
+      {tab === "report" ? <CommissionsReport headers={headers} /> : tab === "publish" ? <PublishCenter headers={headers} /> : (isLoading ? (
         <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
       ) : partners.length === 0 ? (
         <div className="rounded-xl border border-dashed py-12 text-center text-slate-400">لا يوجد {tab === "partner" ? "شركاء" : "مطوّرون"} بعد</div>
@@ -611,6 +614,268 @@ function CommissionsReport({ headers }: { headers: any }) {
             {rows.length === 0 && <tr><td colSpan={7} className="px-3 py-12 text-center text-slate-400">لا توجد بيانات</td></tr>}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 3 — Publish Engine. A one-click pipeline that runs staged BLOCKING
+// gates over a candidate extension manifest: build → security scan → AI review
+// → package → digital sign → deploy → monitor. A failing scan/review/sign gate
+// blocks deployment with a clear, actionable report. Every run is persisted
+// (extension_publishes) and audited. Reads/writes ONLY /api/admin/publish/*.
+// ─────────────────────────────────────────────────────────────────────────
+
+const STAGE_META: Record<string, { label: string; Icon: any }> = {
+  build:         { label: "البناء",          Icon: Hammer },
+  security_scan: { label: "الفحص الأمني",     Icon: ShieldCheck },
+  ai_review:     { label: "المراجعة الذكية",  Icon: Sparkles },
+  package:       { label: "التحزيم",          Icon: Package },
+  sign:          { label: "التوقيع الرقمي",   Icon: PenTool },
+  deploy:        { label: "النشر",            Icon: Rocket },
+  monitor:       { label: "المراقبة",         Icon: Activity },
+};
+
+const GATE_CLS: Record<string, string> = {
+  pass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  warn: "bg-amber-50 text-amber-700 border-amber-200",
+  fail: "bg-red-50 text-red-700 border-red-200",
+  skip: "bg-slate-50 text-slate-500 border-slate-200",
+};
+const GATE_LABEL: Record<string, string> = { pass: "اجتاز", warn: "تنبيه", fail: "فشل", skip: "تخطّي" };
+
+const RUN_STATUS: Record<string, { label: string; cls: string }> = {
+  deployed: { label: "تم النشر",  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  blocked:  { label: "محظور",     cls: "bg-red-50 text-red-700 border-red-200" },
+  failed:   { label: "فشل",       cls: "bg-orange-50 text-orange-700 border-orange-200" },
+  pending:  { label: "قيد الانتظار", cls: "bg-slate-50 text-slate-600 border-slate-200" },
+  running:  { label: "قيد التنفيذ",  cls: "bg-sky-50 text-sky-700 border-sky-200" },
+};
+
+function GateCard({ g }: { g: any }) {
+  const meta = STAGE_META[g.stage] ?? { label: g.stage, Icon: Boxes };
+  const Icon = meta.Icon;
+  const cls = GATE_CLS[g.status] ?? GATE_CLS.skip;
+  return (
+    <div className={cn("rounded-xl border p-3", cls)} data-testid={`gate-${g.stage}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 font-medium">
+          <Icon className="h-4 w-4" /> {meta.label}
+        </div>
+        <span className="inline-flex rounded-full border bg-white/60 px-2 py-0.5 text-xs font-semibold">{GATE_LABEL[g.status] ?? g.status}</span>
+      </div>
+      <p className="mt-1 text-xs opacity-90">{g.summary}</p>
+      {Array.isArray(g.details) && g.details.length > 0 && (
+        <ul className="mt-1 list-disc pr-4 space-y-0.5 text-xs opacity-80">
+          {g.details.slice(0, 8).map((d: string, i: number) => <li key={i}>{d}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PublishCenter({ headers }: { headers: Record<string, string> }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [manifestText, setManifestText] = useState("");
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [result, setResult] = useState<any | null>(null);
+
+  const builtins = useQuery({
+    queryKey: ["publish-builtins"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/publish/builtins`, { headers });
+      if (!r.ok) throw new Error();
+      return r.json();
+    },
+  });
+
+  const runs = useQuery({
+    queryKey: ["publish-runs"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/publish`, { headers });
+      if (!r.ok) throw new Error();
+      return r.json();
+    },
+  });
+
+  const publish = useMutation({
+    mutationFn: async () => {
+      let manifest: any;
+      try { manifest = JSON.parse(manifestText); }
+      catch { throw new Error("صيغة JSON غير صالحة — تحقّق من البيان"); }
+      const r = await fetch(`${API}/api/admin/publish`, { method: "POST", headers, body: JSON.stringify({ manifest }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error ?? "فشل النشر");
+      return d;
+    },
+    onSuccess: (d) => {
+      setResult(d.outcome);
+      const st = d.outcome?.status;
+      toast({
+        title: st === "deployed" ? "تم النشر بنجاح" : st === "blocked" ? "حُظر النشر" : "فشل النشر",
+        description: st === "deployed" ? "اجتازت الإضافة جميع البوابات ونُشرت" : "راجع تقرير البوابات أدناه",
+        variant: st === "deployed" ? undefined : "destructive",
+      });
+      qc.invalidateQueries({ queryKey: ["publish-runs"] });
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
+  const loadBuiltin = (id: string) => {
+    const b = (builtins.data?.builtins ?? []).find((x: any) => x.extensionId === id);
+    if (!b) return;
+    setManifestText(JSON.stringify(b.manifest, null, 2));
+    setParseError(null);
+    setResult(null);
+  };
+
+  const validateJson = (txt: string) => {
+    setManifestText(txt);
+    if (!txt.trim()) { setParseError(null); return; }
+    try { JSON.parse(txt); setParseError(null); }
+    catch { setParseError("صيغة JSON غير صالحة"); }
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Pipeline overview strip */}
+      <div className="rounded-xl border bg-slate-50 p-4">
+        <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <UploadCloud className="h-4 w-4 text-primary" /> خط النشر — بوابات متتابعة، أي فشل في الفحص/المراجعة/التوقيع يحظر النشر
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          {Object.entries(STAGE_META).map(([k, m], i, arr) => {
+            const Icon = m.Icon;
+            return (
+              <div key={k} className="flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600">
+                  <Icon className="h-3.5 w-3.5" /> {m.label}
+                </span>
+                {i < arr.length - 1 && <ChevronRight className="h-3.5 w-3.5 text-slate-300 rotate-180" />}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Submit */}
+        <div className="rounded-xl border p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-slate-800">إرسال بيان للنشر</h3>
+            <div className="flex items-center gap-2">
+              <select
+                onChange={(e) => { if (e.target.value) loadBuiltin(e.target.value); e.target.value = ""; }}
+                className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                data-testid="select-builtin-template"
+                defaultValue=""
+              >
+                <option value="">تحميل قالب…</option>
+                {(builtins.data?.builtins ?? []).map((b: any) => (
+                  <option key={b.extensionId} value={b.extensionId}>{b.manifest?.name?.ar ?? b.extensionId}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <Label className="text-xs text-slate-500">البيان (JSON)</Label>
+          <textarea
+            value={manifestText}
+            onChange={(e) => validateJson(e.target.value)}
+            dir="ltr"
+            spellCheck={false}
+            placeholder='{ "manifestVersion": 1, "extensionId": "my-ext", ... }'
+            className="w-full h-72 rounded-md border border-input bg-background p-3 font-mono text-xs leading-relaxed"
+            data-testid="input-manifest"
+          />
+          {parseError && (
+            <p className="text-xs text-red-600 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" /> {parseError}</p>
+          )}
+          <Button
+            onClick={() => publish.mutate()}
+            disabled={publish.isPending || !manifestText.trim() || !!parseError}
+            className="gap-2 w-full"
+            data-testid="button-publish"
+          >
+            {publish.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+            {publish.isPending ? "جارٍ تشغيل خط النشر…" : "نشر الإضافة"}
+          </Button>
+        </div>
+
+        {/* Result */}
+        <div className="rounded-xl border p-4">
+          <h3 className="font-semibold text-slate-800 mb-3">نتيجة البوابات</h3>
+          {!result ? (
+            <div className="py-12 text-center text-slate-400 text-sm">أرسل بياناً لعرض نتائج البوابات هنا</div>
+          ) : (
+            <div className="space-y-3" data-testid="publish-result">
+              <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                <div className="text-sm">
+                  <span className="font-mono text-xs text-slate-500">{result.extensionId}</span>
+                  <span className="text-slate-400"> · v{result.version}</span>
+                </div>
+                <span className={cn("inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold", (RUN_STATUS[result.status] ?? RUN_STATUS.failed).cls)}>
+                  {(RUN_STATUS[result.status] ?? RUN_STATUS.failed).label}
+                </span>
+              </div>
+              {result.report?.blockedAt && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                  <div className="font-semibold flex items-center gap-1 mb-1"><Ban className="h-3.5 w-3.5" /> حُظر النشر عند بوابة: {STAGE_META[result.report.blockedAt]?.label ?? result.report.blockedAt}</div>
+                  {(result.report.errors ?? []).slice(0, 8).map((e: string, i: number) => <div key={i}>• {e}</div>)}
+                </div>
+              )}
+              {result.status === "deployed" && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-700 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> نُشرت الإضافة إلى الكتالوج بتوقيع رقمي {result.publicKeyId ? `(مفتاح ${result.publicKeyId})` : ""}
+                </div>
+              )}
+              <div className="space-y-2">
+                {(result.gates ?? []).map((g: any) => <GateCard key={g.stage} g={g} />)}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Run history */}
+      <div className="rounded-xl border">
+        <div className="flex items-center justify-between border-b px-4 py-2.5">
+          <h3 className="font-semibold text-slate-800">سجلّ عمليات النشر</h3>
+          <Button size="sm" variant="outline" onClick={() => runs.refetch()} className="gap-1.5"><RefreshCw className="h-3.5 w-3.5" /> تحديث</Button>
+        </div>
+        {runs.isLoading ? (
+          <div className="p-4 space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+        ) : (runs.data?.runs ?? []).length === 0 ? (
+          <div className="py-10 text-center text-slate-400 text-sm">لا توجد عمليات نشر بعد</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-3 py-2 text-right font-medium">المعرّف</th>
+                  <th className="px-3 py-2 text-right font-medium">الإصدار</th>
+                  <th className="px-3 py-2 text-right font-medium">الحالة</th>
+                  <th className="px-3 py-2 text-right font-medium">آخر مرحلة</th>
+                  <th className="px-3 py-2 text-right font-medium">بواسطة</th>
+                  <th className="px-3 py-2 text-right font-medium">التاريخ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {(runs.data?.runs ?? []).map((r: any) => (
+                  <tr key={r.id} data-testid={`run-${r.id}`}>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-600">{r.extensionId}</td>
+                    <td className="px-3 py-2 tabular-nums text-xs">v{r.version}</td>
+                    <td className="px-3 py-2"><span className={cn("inline-flex rounded-full border px-2 py-0.5 text-xs font-medium", (RUN_STATUS[r.status] ?? RUN_STATUS.failed).cls)}>{(RUN_STATUS[r.status] ?? RUN_STATUS.failed).label}</span></td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{STAGE_META[r.currentStage]?.label ?? r.currentStage ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{r.createdByUsername ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-400">{r.createdAt ? new Date(r.createdAt).toLocaleString("ar") : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -13,6 +13,7 @@ import adminRouter from "./admin";
 import resellersAdminRouter from "./resellers-admin";
 import resellerRouter from "./reseller";
 import partnersAdminRouter from "./partners-admin";
+import publishRouter from "./publish";
 import gatewayClientsRouter from "./gatewayClients";
 import integrationsRouter, { inboundRouter as integrationsInboundRouter } from "./integrations";
 import adminDbStatsRouter from "./admin-db-stats";
@@ -163,6 +164,8 @@ router.use("/admin/partners", partnersAdminRouter);
 // Developer Cloud (Workspaces) — Phase 5 (additive, SuperAdmin-only). Same
 // mount-before-zatcaRouter rationale; self-guards with requireSuperAdmin.
 router.use("/admin/dev-cloud", devCloudAdminRouter);
+// Phase 3 Publish Engine. Same mount-before-zatcaRouter rationale; SuperAdmin self-guarded.
+router.use("/admin/publish", publishRouter);
 router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);
