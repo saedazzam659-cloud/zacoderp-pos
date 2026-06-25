@@ -142,12 +142,7 @@
 - [Web hide-zeros numeric inputs](web-hide-zeros-input.md) — shared ui/input.tsx blanks a CONTROLLED numeric 0 (value+onChange) only; never ref/RHF-register fields; per-company companies.show_zeros, default hide.
 - [Reseller network module](reseller-network-module.md) — platform reseller/agent network is SuperAdmin ROLE-gated (no company-module key); portal scoped via resellerCompanyIds(), perms renew_subscriptions/view_reports/support.
 - [Extension Platform foundation](extension-platform-foundation.md) — additive partner outer-shell: Ed25519-signed manifests, in-process-only handlers, iframe sandbox WITHOUT allow-same-origin, default-OFF gating in 4 places, single ensureSchema DDL block in src/lib (not src/db).
-<<<<<<< HEAD
 - [Developer Cloud module](dev-cloud-module.md) — SA-only partner dev-cloud (workspace+seats+deploy); stores ONLY opaque provider refs (never creds/SSH/RDP/DB); deploy is publish_engine-only + needs trigger_publish seat perm.
-<<<<<<< HEAD
-=======
 - [ext_records missing-table warning is a false alarm](ext-records-ensureschema-warning.md) — drizzle reconciliation warns ext_* tables missing; a later ensureSchema custom-DDL step actually creates them. Verify via psql, don't db:push.
->>>>>>> dfc6df6a (feat(api-server): Advanced AI Platform (المرحلة 6) as signed builtin extension)
-=======
 - [Extension Publish Engine](extension-publish-engine.md) — staged blocking gates (build/security_scan/ai_review/sign); never ingests code; security_scan validates perms vs listCoreResources; ai_review must fall back to rule-based.
->>>>>>> 06a2e69d (Extension Platform Phase 3: Publish Engine (one-click staged publish pipeline))
+- [Developer/Partner portal](partner-portal-module.md) — platform_partners self-service portal is a 1:1 mirror of the reseller portal (auth, gates, App.tsx 3-spot routing); change both sides in lockstep.

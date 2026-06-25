@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -566,6 +566,49 @@ router.get("/me", async (req, res) => {
           commissionRate: reseller.commissionRate,
           status: reseller.status,
           permissions: reseller.permissions ?? {},
+        },
+        uiPreferences: {},
+        viewAllBranches: true,
+        branchIds: [],
+        company: null,
+        subscription: null,
+        subscriptionNotice,
+      });
+      return;
+    }
+    // ── Developer / Partner fall-through (additive) ───────────────────────
+    // Partners live in `platform_partners` (NOT `users`) and authenticate via
+    // /api/partner/login. A partner bearer token resolves to a distinct
+    // identity shape (role:"partner", companyId:null, partnerId). Only an
+    // APPROVED + active partner is recognised; anything earlier in onboarding
+    // has no portal session.
+    const [partner] = await db.select().from(platformPartnersTable).where(eq(platformPartnersTable.sessionToken, token));
+    if (partner?.isActive && partner.status === "approved") {
+      const subscriptionNotice = await getSubscriptionNotice();
+      res.json({
+        id: partner.id,
+        username: partner.username,
+        email: partner.email,
+        role: "partner",
+        companyId: null,
+        partnerId: partner.id,
+        sessionId: partner.sessionId,
+        code: partner.partnerCode,
+        nameAr: partner.nameAr,
+        nameEn: partner.nameEn,
+        permissions: {},
+        partnerPermissions: partner.permissions ?? {},
+        partner: {
+          id: partner.id,
+          code: partner.partnerCode,
+          kind: partner.kind,
+          nameAr: partner.nameAr,
+          nameEn: partner.nameEn,
+          phone: partner.phone,
+          email: partner.email,
+          commissionRate: partner.commissionRate,
+          status: partner.status,
+          permissions: partner.permissions ?? {},
         },
         uiPreferences: {},
         viewAllBranches: true,

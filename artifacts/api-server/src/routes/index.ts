@@ -14,6 +14,7 @@ import resellersAdminRouter from "./resellers-admin";
 import resellerRouter from "./reseller";
 import partnersAdminRouter from "./partners-admin";
 import publishRouter from "./publish";
+import partnerRouter from "./partner-portal";
 import gatewayClientsRouter from "./gatewayClients";
 import integrationsRouter, { inboundRouter as integrationsInboundRouter } from "./integrations";
 import adminDbStatsRouter from "./admin-db-stats";
@@ -166,6 +167,10 @@ router.use("/admin/partners", partnersAdminRouter);
 router.use("/admin/dev-cloud", devCloudAdminRouter);
 // Phase 3 Publish Engine. Same mount-before-zatcaRouter rationale; SuperAdmin self-guarded.
 router.use("/admin/publish", publishRouter);
+// Developer / Partner self-service portal. Same mount-before-zatcaRouter
+// rationale as the reseller portal: partner bearer tokens live in
+// platform_partners (absent from usersTable) and self-guard via requirePartner.
+router.use("/partner", partnerRouter);
 router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);

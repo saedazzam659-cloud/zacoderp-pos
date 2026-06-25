@@ -8,8 +8,16 @@ import {
   type PartnerKind, type PartnerStatus, type PartnerPermissions,
 } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
+import bcrypt from "bcryptjs";
 import { writeAudit } from "../middleware/permissions.js";
 import { extractAuth } from "../middleware/auth.js";
+
+// Drop credential/session columns before any partner row leaves this router —
+// these must never be exposed to the admin client.
+function stripPartnerSecrets<T extends Record<string, any>>(p: T) {
+  const { passwordHash, sessionToken, sessionId, ...rest } = p;
+  return rest;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // SuperAdmin Developer & Partner Control Center — Phase 1 (additive only).
@@ -72,7 +80,7 @@ router.get("/", async (req, res) => {
     : rows;
   res.json({
     partners: filtered.map((r) => ({
-      ...r,
+      ...stripPartnerSecrets(r),
       companyCount: countMap.get(r.id) ?? 0,
       commissionTotal: totalMap.get(r.id) ?? "0",
     })),
@@ -239,7 +247,7 @@ router.get("/:id", async (req, res) => {
     .where(eq(partnerDocumentsTable.partnerId, id))
     .orderBy(desc(partnerDocumentsTable.createdAt));
 
-  res.json({ partner, companies, commissions, documents });
+  res.json({ partner: stripPartnerSecrets(partner), companies, commissions, documents });
 });
 
 // ─── Update partner (profile / rate / permissions / kind) ───────────────────
@@ -273,7 +281,59 @@ router.put("/:id", async (req, res) => {
     companyId: null, module: "partners", action: "edit",
     entityType: "partner", entityId: String(id), metadata: { fields: Object.keys(patch) },
   });
-  res.json({ ok: true, partner: updated });
+  res.json({ ok: true, partner: stripPartnerSecrets(updated) });
+});
+
+// ─── Provision / reset partner portal credentials ──────────────────────────
+// Sets the portal username (per-partner unique) and/or password. Setting a new
+// password clears any live session so the partner must re-authenticate. The
+// partner can only actually log in once status==="approved" (enforced at login).
+router.post("/:id/credentials", async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const [existing] = await db.select().from(platformPartnersTable).where(eq(platformPartnersTable.id, id));
+  if (!existing) { res.status(404).json({ error: "الكيان غير موجود" }); return; }
+
+  const b = req.body ?? {};
+  const patch: Record<string, any> = { updatedAt: now() };
+  let sessionCleared = false;
+
+  if (b.username !== undefined) {
+    const username = String(b.username).trim();
+    if (!username) { res.status(400).json({ error: "اسم المستخدم مطلوب" }); return; }
+    if (username !== existing.username) {
+      const [dup] = await db.select({ id: platformPartnersTable.id }).from(platformPartnersTable).where(eq(platformPartnersTable.username, username));
+      if (dup && dup.id !== id) { res.status(409).json({ error: "اسم المستخدم مستخدم بالفعل" }); return; }
+    }
+    patch.username = username;
+  }
+
+  if (b.password !== undefined && b.password !== "") {
+    const password = String(b.password);
+    if (password.length < 6) { res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }); return; }
+    patch.passwordHash = await bcrypt.hash(password, 12);
+    // Invalidate any live portal session when the password rotates.
+    patch.sessionToken = null;
+    patch.sessionId = null;
+    sessionCleared = true;
+  }
+
+  if (patch.username === undefined && patch.passwordHash === undefined) {
+    res.status(400).json({ error: "لا يوجد تغيير" }); return;
+  }
+  // Cannot set a password before the partner has a username on record.
+  if (patch.passwordHash !== undefined && patch.username === undefined && !existing.username) {
+    res.status(400).json({ error: "يجب تعيين اسم المستخدم أولاً" }); return;
+  }
+
+  const [updated] = await db.update(platformPartnersTable).set(patch).where(eq(platformPartnersTable.id, id)).returning();
+  await writeAudit({
+    userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null, role: "superadmin",
+    companyId: null, module: "partners", action: "edit",
+    entityType: "partner", entityId: String(id),
+    metadata: { op: "credentials", setUsername: patch.username !== undefined, setPassword: patch.passwordHash !== undefined, sessionCleared },
+  });
+  res.json({ ok: true, partner: stripPartnerSecrets(updated) });
 });
 
 // ─── Advance / set onboarding status (state machine) ────────────────────────

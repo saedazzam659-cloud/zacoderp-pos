@@ -80,6 +80,8 @@ import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
 import ResellerLogin from "@/pages/ResellerLogin";
 import ResellerPortal from "@/pages/ResellerPortal";
+import PartnerLogin from "@/pages/PartnerLogin";
+import PartnerPortal from "@/pages/PartnerPortal";
 import ResellersAdmin from "@/pages/ResellersAdmin";
 import PartnersAdmin from "@/pages/PartnersAdmin";
 import DevCloudAdmin from "@/pages/DevCloudAdmin";
@@ -512,6 +514,10 @@ function AppRoutes() {
     // reachable without a user session. Renders directly so the public Switch
     // (which assumes user auth) is bypassed.
     if (location === "/reseller/login") return <ResellerLogin />;
+    // Developer / Partner portal login — a distinct identity (platform_partners
+    // table), reachable without a user session. Same rationale as the reseller
+    // login above.
+    if (location === "/partner/login") return <PartnerLogin />;
     const knownPublicRoute =
       location === "/login" ||
       location === "/register" ||
@@ -574,6 +580,15 @@ function AppRoutes() {
   // on the dashboard too.
   if (user?.role === "reseller") {
     return <ResellerPortal />;
+  }
+
+  // Developer / Partner portal — same self-contained-shell pattern as the
+  // reseller portal above. A partner is never a company tenant nor a
+  // SuperAdmin, so it short-circuits ahead of both shells. The portal's
+  // internal <Switch> handles every /partner/* path and falls back to the
+  // dashboard, so a stray /partner/login (already authed) lands there too.
+  if (user?.role === "partner") {
+    return <PartnerPortal />;
   }
 
   return (

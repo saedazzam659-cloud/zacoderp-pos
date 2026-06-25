@@ -71,6 +71,16 @@ export const platformPartnersTable = pgTable("platform_partners", {
   email:            text("email"),
   address:          text("address"),
   website:          text("website"),
+  // ─── Self-service portal credentials (additive) ──────────────────────────
+  // A partner authenticates against the developer/partner portal through these.
+  // NULL until the head office provisions portal access; login requires BOTH
+  // username + passwordHash present AND status==="approved". Mirrors the
+  // reseller auth columns; kept nullable so existing Phase-1 rows are untouched.
+  username:         text("username").unique(),
+  passwordHash:     text("password_hash"),
+  sessionToken:     text("session_token"),
+  sessionId:        text("session_id"),
+  lastLoginAt:      timestamp("last_login_at"),
   // Default commission rate (percent) for this entity's app sales.
   commissionRate:   numeric("commission_rate", { precision: 6, scale: 3 }).notNull().default("0"),
   // Onboarding state — see PARTNER_STATUSES above.

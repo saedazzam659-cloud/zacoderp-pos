@@ -1446,6 +1446,22 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS platform_partners_kind_idx ON platform_partners (kind)` },
     { label: "platform_partners_status_idx",
       sql:   `CREATE INDEX IF NOT EXISTS platform_partners_status_idx ON platform_partners (status)` },
+    // Self-service portal credentials (additive — see partners.ts). Each ALTER
+    // is independent + IF NOT EXISTS so re-runs and partial states are safe.
+    { label: "platform_partners.username",
+      sql:   `ALTER TABLE platform_partners ADD COLUMN IF NOT EXISTS username TEXT` },
+    { label: "platform_partners.password_hash",
+      sql:   `ALTER TABLE platform_partners ADD COLUMN IF NOT EXISTS password_hash TEXT` },
+    { label: "platform_partners.session_token",
+      sql:   `ALTER TABLE platform_partners ADD COLUMN IF NOT EXISTS session_token TEXT` },
+    { label: "platform_partners.session_id",
+      sql:   `ALTER TABLE platform_partners ADD COLUMN IF NOT EXISTS session_id TEXT` },
+    { label: "platform_partners.last_login_at",
+      sql:   `ALTER TABLE platform_partners ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP` },
+    { label: "platform_partners_username_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS platform_partners_username_uniq ON platform_partners (username) WHERE username IS NOT NULL` },
+    { label: "platform_partners_session_token_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS platform_partners_session_token_idx ON platform_partners (session_token)` },
     { label: "create partner_documents table",
       sql:   `CREATE TABLE IF NOT EXISTS partner_documents (
         id          SERIAL PRIMARY KEY,

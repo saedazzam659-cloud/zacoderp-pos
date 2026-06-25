@@ -97,6 +97,14 @@ export interface AuthUser {
    */
   resellerId?: number | null;
   resellerPermissions?: Record<string, boolean>;
+  /**
+   * Developer / Partner identity fields — populated only when role==="partner".
+   * Partners live in the `platform_partners` table (NOT `users`); their
+   * /api/auth/me response carries the partner id + granular capability grants
+   * so the portal can gate its own screens. Additive: ignored for other roles.
+   */
+  partnerId?: number | null;
+  partnerPermissions?: Record<string, boolean>;
   nameAr?: string | null;
   code?: string | null;
   /**
