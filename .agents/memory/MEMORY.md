@@ -77,6 +77,7 @@
 - [ZATCA compliance-invoices endpoint](zatca-compliance-invoices-endpoint.md) — compliance posts ALL samples to ONE /compliance/invoices; the .../clearance/single & .../reporting/single split is LIVE-invoice only and 404s during onboarding → blocks PCSID.
 - [ZATCA compliance-check gateway 404](zatca-compliance-check-gateway-404.md) — a /compliance 404 ⇒ check the PATH first (single /compliance/invoices), THEN env/CSID pairing; log+surface raw response when validationResults absent.
 - [POS Desktop boot-hang white screen](pos-desktop-boot-hang-whitescreen.md) — startup stuck on "checking" = blank screen; need boot() try/catch + watchdog + recoverable boot-error phase + bootRunId guard (ErrorBoundary only catches render errors).
+- [AI Builder manifest generation](ai-builder-manifest.md) — natural-language brief → VALID, Ed25519-SIGNED manifest scaffold; clamps requested perms to read-only on known core resources; validates via ExtensionManifestSchema; persists to its own tenant-scoped "scaffolds" collection (ext_records, best-effort).
 - [Opening-balance party import](opening-balance-party-import.md) — one draft JE marked in description; replace must clear-on-zero, guard DELETED JE's period, serialize via advisory lock, round before summing.
 - [ZATCA compliance-test invoice picker](zatca-compliance-test-invoice-picker.md) — step-3 resolves invoice by DB id + needs ISSUED (has xmlContent); use a status=issued picker, never a typed number.
 - [List query array-guard](fetch-list-guard.md) — list queryFns feeding .find/.map MUST coerce to array (fetchJsonArray); a module-gated 403 returns an OBJECT and white-screens via ErrorBoundary in only the companies lacking the perm.
@@ -141,4 +142,8 @@
 - [Web hide-zeros numeric inputs](web-hide-zeros-input.md) — shared ui/input.tsx blanks a CONTROLLED numeric 0 (value+onChange) only; never ref/RHF-register fields; per-company companies.show_zeros, default hide.
 - [Reseller network module](reseller-network-module.md) — platform reseller/agent network is SuperAdmin ROLE-gated (no company-module key); portal scoped via resellerCompanyIds(), perms renew_subscriptions/view_reports/support.
 - [Extension Platform foundation](extension-platform-foundation.md) — additive partner outer-shell: Ed25519-signed manifests, in-process-only handlers, iframe sandbox WITHOUT allow-same-origin, default-OFF gating in 4 places, single ensureSchema DDL block in src/lib (not src/db).
+<<<<<<< HEAD
 - [Developer Cloud module](dev-cloud-module.md) — SA-only partner dev-cloud (workspace+seats+deploy); stores ONLY opaque provider refs (never creds/SSH/RDP/DB); deploy is publish_engine-only + needs trigger_publish seat perm.
+=======
+- [ext_records missing-table warning is a false alarm](ext-records-ensureschema-warning.md) — drizzle reconciliation warns ext_* tables missing; a later ensureSchema custom-DDL step actually creates them. Verify via psql, don't db:push.
+>>>>>>> dfc6df6a (feat(api-server): Advanced AI Platform (المرحلة 6) as signed builtin extension)
