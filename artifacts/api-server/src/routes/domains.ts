@@ -198,7 +198,8 @@ function checkSsl(host: string, timeoutMs = 6000): Promise<SslResult> {
           if (!cert || Object.keys(cert).length === 0) { done({ ok: false, error: "no certificate" }); return; }
           const validTo = cert.valid_to ? new Date(cert.valid_to) : null;
           const daysRemaining = validTo ? Math.round((validTo.getTime() - Date.now()) / 86_400_000) : undefined;
-          const issuer = cert.issuer && (cert.issuer.O || cert.issuer.CN) ? (cert.issuer.O || cert.issuer.CN) : undefined;
+          const rawIssuer = cert.issuer && (cert.issuer.O || cert.issuer.CN);
+          const issuer = Array.isArray(rawIssuer) ? rawIssuer[0] : (rawIssuer || undefined);
           done({
             ok: socket.authorized || !!cert.valid_to,
             validFrom: cert.valid_from,
