@@ -115,7 +115,6 @@ export function buildCustodyVoucherHtml(args: CustodyVoucherArgs): string {
     ["الموظف", `${esc(doc.employeeName)}${doc.employeeCode ? ` (${esc(doc.employeeCode)})` : ""}`],
     ["تاريخ العهدة", esc(doc.custodyDate || "—")],
     ["مبلغ العهدة", `${fmtMoney(amount)} ر.س`],
-    ["المتبقي", `${fmtMoney(remaining)} ر.س`],
     ["الحالة", esc(doc.statusLabel || "—")],
   ];
   if (doc.purpose) dataRows.push(["الغرض", esc(doc.purpose)]);
@@ -171,8 +170,8 @@ table.lines td.num { font-weight:700; }
 .notes { width:90%; margin:14px auto 0; font-size:12.5px; border:1px dashed #a7f3d0; border-radius:6px; padding:8px 12px; background:#f0fdf4; }
 .notes-label { font-weight:700; color:#166534; }
 .tafqeet { text-align:center; font-size:14px; font-weight:700; color:#14532d; margin:18px auto 0; padding:8px; width:80%; border-top:1px dashed #a7f3d0; }
-.recipient { display:grid; grid-template-columns:repeat(2,1fr); gap:40px; margin:32px auto 0; width:80%; font-size:12.5px; text-align:center; }
-.sig .role { font-weight:700; margin-bottom:34px; }
+.recipient { display:grid; grid-template-columns:repeat(3,1fr); gap:36px; margin:44px auto 0; width:100%; font-size:12.5px; text-align:center; }
+.sig .role { font-weight:700; margin-bottom:40px; }
 .sig .line { border-top:1px solid #111; padding-top:6px; color:#475569; font-size:11px; }
 .footer { display:flex; justify-content:space-between; font-size:10px; color:#64748b; border-top:1px solid #e2e8f0; padding-top:6px; margin-top:18px; }
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#166534; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
@@ -199,6 +198,10 @@ table.lines td.num { font-weight:700; }
     </div>
     <div class="sig">
       <div class="role">اعتماد</div>
+      <div class="line">الاسم والتوقيع</div>
+    </div>
+    <div class="sig">
+      <div class="role">الإدارة المالية</div>
       <div class="line">الاسم والتوقيع</div>
     </div>
   </div>
