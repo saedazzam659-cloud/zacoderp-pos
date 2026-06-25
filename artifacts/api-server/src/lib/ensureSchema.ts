@@ -1536,6 +1536,22 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       )` },
     { label: "ext_data_scope_idx",
       sql:   `CREATE INDEX IF NOT EXISTS ext_data_scope_idx ON ext_data (company_id, extension_id, key)` },
+    // ── Extension Platform — Phase 2 runtime: ext_records ("ext_* tables") ──
+    { label: "create ext_records table",
+      sql:   `CREATE TABLE IF NOT EXISTS ext_records (
+        id           SERIAL PRIMARY KEY,
+        company_id   INTEGER NOT NULL,
+        extension_id TEXT NOT NULL,
+        collection   TEXT NOT NULL,
+        record_id    TEXT NOT NULL,
+        data         JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "ext_records_scope_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS ext_records_scope_idx ON ext_records (company_id, extension_id, collection)` },
+    { label: "ext_records_record_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS ext_records_record_uniq ON ext_records (company_id, extension_id, collection, record_id)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

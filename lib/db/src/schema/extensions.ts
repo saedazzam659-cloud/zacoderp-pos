@@ -99,6 +99,37 @@ export const extDataTable = pgTable(
   }),
 );
 
+// ─────────────────────────────────────────────────────────────────────────
+// ext_records — Phase 2 runtime: the additive "ext_* tables" store. An
+// extension declares logical "tables" (collections) in its signed manifest;
+// the runtime persists their rows HERE so partners get a real, queryable,
+// per-tenant record store WITHOUT ever creating DDL or touching core tables.
+// Scoped strictly by (company_id, extension_id, collection). record_id is a
+// runtime-assigned UUID, unique within a tenant+extension+collection.
+// ─────────────────────────────────────────────────────────────────────────
+export const extRecordsTable = pgTable(
+  "ext_records",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull(),
+    extensionId: text("extension_id").notNull(),
+    collection: text("collection").notNull(),
+    recordId: text("record_id").notNull(),
+    data: jsonb("data").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byScope: index("ext_records_scope_idx").on(t.companyId, t.extensionId, t.collection),
+    byRecord: uniqueIndex("ext_records_record_uniq").on(
+      t.companyId,
+      t.extensionId,
+      t.collection,
+      t.recordId,
+    ),
+  }),
+);
+
 export const insertPlatformExtensionSchema = createInsertSchema(platformExtensionsTable).omit({
   id: true,
   createdAt: true,
@@ -114,10 +145,17 @@ export const insertExtDataSchema = createInsertSchema(extDataTable).omit({
   createdAt: true,
   updatedAt: true,
 });
+export const insertExtRecordSchema = createInsertSchema(extRecordsTable).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 
 export type PlatformExtension = typeof platformExtensionsTable.$inferSelect;
 export type CompanyExtension = typeof companyExtensionsTable.$inferSelect;
 export type ExtData = typeof extDataTable.$inferSelect;
+export type ExtRecord = typeof extRecordsTable.$inferSelect;
 export type InsertPlatformExtension = z.infer<typeof insertPlatformExtensionSchema>;
 export type InsertCompanyExtension = z.infer<typeof insertCompanyExtensionSchema>;
 export type InsertExtData = z.infer<typeof insertExtDataSchema>;
+export type InsertExtRecord = z.infer<typeof insertExtRecordSchema>;

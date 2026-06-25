@@ -7,6 +7,7 @@ import { verifyManifest } from "./signing.js";
 import { loadOrCreatePlatformKeys } from "./platformKey.js";
 import { seedBuiltinExtensions } from "./seed.js";
 import { helloWorldExtension } from "./helloWorld.js";
+import { partnerToolkitExtension } from "./partnerToolkit.js";
 
 // Context handed to every builtin extension handler. Deliberately minimal — an
 // extension sees ONLY its tenant scope, never the core db/handles.
@@ -29,6 +30,7 @@ export interface BuiltinExtension {
 // (no arbitrary code execution).
 const BUILTINS: Record<string, BuiltinExtension> = {
   [helloWorldExtension.extensionId]: helloWorldExtension,
+  [partnerToolkitExtension.extensionId]: partnerToolkitExtension,
 };
 
 export function listBuiltins(): BuiltinExtension[] {

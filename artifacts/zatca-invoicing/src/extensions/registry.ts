@@ -33,7 +33,17 @@ async function jsonOrThrow<T>(r: Response): Promise<T> {
 }
 
 // ── Types (mirror the backend response shapes) ───────────────────────────
+export type ExtensionScreenKind = "screen" | "report" | "dashboard";
+
 export interface ExtensionScreenDef {
+  key: string;
+  titleAr: string;
+  titleEn?: string;
+  icon?: string;
+  kind?: ExtensionScreenKind;
+}
+
+export interface ExtensionTableDef {
   key: string;
   titleAr: string;
   titleEn?: string;
@@ -46,6 +56,8 @@ export interface InstalledExtension {
   version: string;
   vendor?: string;
   screens: ExtensionScreenDef[];
+  tables?: ExtensionTableDef[];
+  permissions?: string[];
 }
 
 export interface CatalogExtension extends InstalledExtension {
@@ -54,6 +66,14 @@ export interface CatalogExtension extends InstalledExtension {
   verified: boolean;
   hasHandler: boolean;
   enabled: boolean;
+}
+
+// Group an extension's screens by their host surface kind. Screens with no
+// explicit kind default to "screen".
+export function screensByKind(screens: ExtensionScreenDef[]): Record<ExtensionScreenKind, ExtensionScreenDef[]> {
+  const out: Record<ExtensionScreenKind, ExtensionScreenDef[]> = { screen: [], report: [], dashboard: [] };
+  for (const s of screens) out[s.kind ?? "screen"].push(s);
+  return out;
 }
 
 // ── Query keys ───────────────────────────────────────────────────────────

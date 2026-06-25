@@ -21,8 +21,9 @@ const manifest: ExtensionManifest = {
   vendor: "Zacode",
   description:
     "إضافة تجريبية مرجعية تثبت عزل الطرف الثالث: واجهة معزولة (iframe) + نطاق API مستقل، دون الوصول إلى نواة النظام.",
-  screens: [{ key: "home", titleAr: "الصفحة الرئيسية", titleEn: "Home", icon: "Puzzle" }],
+  screens: [{ key: "home", titleAr: "الصفحة الرئيسية", titleEn: "Home", icon: "Puzzle", kind: "screen" }],
   apiRoutes: [{ method: "GET", path: "/ping", description: "Health/echo endpoint" }],
+  tables: [],
   permissions: [],
 };
 

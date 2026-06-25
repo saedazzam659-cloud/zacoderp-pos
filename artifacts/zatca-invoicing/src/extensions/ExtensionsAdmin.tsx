@@ -4,7 +4,14 @@ import { Puzzle, ShieldCheck, ShieldAlert, ExternalLink } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useExtensionCatalog, useSetExtensionEnabled, type CatalogExtension } from "./registry";
+import {
+  useExtensionCatalog,
+  useSetExtensionEnabled,
+  screensByKind,
+  type CatalogExtension,
+  type ExtensionScreenDef,
+  type ExtensionScreenKind,
+} from "./registry";
 
 // ─────────────────────────────────────────────────────────────────────────
 // ExtensionsAdmin — the company admin's control panel for the platform.
@@ -87,21 +94,53 @@ export default function ExtensionsAdmin() {
                 </div>
               )}
 
-              {e.enabled && e.screens?.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {e.screens.map((s) => (
-                    <Link
-                      key={s.key}
-                      href={`/ext/${e.extensionId}/${s.key}`}
-                      className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs hover:bg-muted/70"
-                      data-testid={`extension-open-${e.extensionId}-${s.key}`}
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      {isEn ? s.titleEn || s.titleAr : s.titleAr}
-                    </Link>
+              {e.tables && e.tables.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="text-[10px] text-muted-foreground">
+                    {t("extensions.tables", "جداول خاصة")}:
+                  </span>
+                  {e.tables.map((tb) => (
+                    <span key={tb.key} className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+                      {isEn ? tb.titleEn || tb.titleAr : tb.titleAr}
+                    </span>
                   ))}
                 </div>
               )}
+
+              {e.enabled &&
+                e.screens?.length > 0 &&
+                (() => {
+                  const groups = screensByKind(e.screens);
+                  const sections = (
+                    [
+                      { kind: "dashboard", label: t("extensions.kind.dashboard", "لوحات المعلومات"), items: groups.dashboard },
+                      { kind: "report", label: t("extensions.kind.report", "التقارير"), items: groups.report },
+                      { kind: "screen", label: t("extensions.kind.screen", "الشاشات"), items: groups.screen },
+                    ] as Array<{ kind: ExtensionScreenKind; label: string; items: ExtensionScreenDef[] }>
+                  ).filter((s) => s.items.length > 0);
+                  return (
+                    <div className="space-y-1.5">
+                      {sections.map((section) => (
+                        <div key={section.kind} className="space-y-1">
+                          <div className="text-[10px] font-medium text-muted-foreground">{section.label}</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {section.items.map((s) => (
+                              <Link
+                                key={s.key}
+                                href={`/ext/${e.extensionId}/${s.key}`}
+                                className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs hover:bg-muted/70"
+                                data-testid={`extension-open-${e.extensionId}-${s.key}`}
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                {isEn ? s.titleEn || s.titleAr : s.titleAr}
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
 
               <Button
                 variant={e.enabled ? "outline" : "default"}
