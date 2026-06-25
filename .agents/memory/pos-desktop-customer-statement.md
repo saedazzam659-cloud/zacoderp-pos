@@ -7,16 +7,27 @@ The desktop app has NO per-customer GL sub-account, so the customer statement is
 built purely in TS from source documents, not from a ledger account.
 
 **Rule:** only `paymentMethod === "credit"` sales invoices (debit AR) and credit
-sales returns (credit AR) move AR — cash/bank docs settle on the spot and are
-excluded. Customer `FinancialTx` receipt vouchers credit AR, payment vouchers
-debit AR. Opening = net debit−credit of every qualifying doc dated strictly
-before `fromDate`. The in-range window is INCLUSIVE on BOTH ends
-(`fromDate <= date <= toDate`) — forgetting the `toDate` upper bound silently
-pulls future movements into the period and corrupts the closing balance.
+sales returns (credit AR) move AR — cash/bank docs settle on the spot. Customer
+`FinancialTx` receipt vouchers credit AR, payment vouchers debit AR. Opening =
+net debit−credit of every qualifying doc dated strictly before `fromDate`. The
+in-range window is INCLUSIVE on BOTH ends (`fromDate <= date <= toDate`) —
+forgetting the `toDate` upper bound silently pulls future movements into the
+period and corrupts the closing balance.
+
+**Cash invoices are SHOWN but net-zero (opt-in, default ON).** A `includeCash`
+toggle (mirrored on the supplier statement) adds each cash/bank invoice as a
+PAIRED pair of lines on the same date+docNo: the invoice (debit for customer AR /
+credit for supplier AP) PLUS an immediate "سداد فوري" settlement on the opposite
+side. Net balance impact is zero, so the running/opening/closing math is
+unchanged, but the operator can now see cash activity per invoice. Cash sales
+returns get the mirror pair (return credit + refund debit). SAFE because cash
+invoices/returns do NOT create a `financial_transactions_local` row, so the
+synthetic settlement never double-counts a real voucher. Paired-line adjacency
+relies on the stable sort (same date+docNo → comparator 0) — fine on WebView2.
 
 **Why:** mirrors the web CustomerStatement semantics without a real AR
-sub-ledger; cash/bank invoices never create a receivable so including them would
-double-count.
+sub-ledger; cash docs net to zero against AR so the paired representation keeps
+the balance correct while restoring per-invoice visibility the user asked for.
 
 **How to apply:** any new doc type that affects customer AR (e.g. opening-balance
 JE, debit notes) must be folded into the same TS aggregation, with the same

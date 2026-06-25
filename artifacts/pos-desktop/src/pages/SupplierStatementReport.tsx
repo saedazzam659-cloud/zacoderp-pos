@@ -21,8 +21,12 @@ type StmtLine = {
 };
 
 // AP semantics (mirror of the customer AR statement, signs flipped):
-//   • CREDIT purchase invoice → credit (AP rose, we owe more). Cash/bank
-//     invoices settle on the spot (DR purchases / CR cash) and never touch AP.
+//   • CREDIT purchase invoice → credit (AP rose, we owe more).
+//   • CASH/BANK purchase invoice (when includeCash) → shown as a PAIR: the
+//     invoice credit + an immediate settlement debit on the same date, so it
+//     appears in the statement yet nets to zero on the running balance (it
+//     settled on the spot: DR purchases / CR cash, never touching AP). No
+//     double-count: cash invoices do NOT create a financial_transactions row.
 //   • CREDIT purchase return  → debit (AP fell). Cash/bank returns refund cash.
 //   • Payment voucher (سند صرف) to the supplier → debit (we paid, AP fell).
 //   • Receipt voucher (سند قبض) from the supplier (refund/advance) → credit.
@@ -31,19 +35,39 @@ function buildLines(
   purchases: Purchase[],
   returns: PurchaseReturn[],
   txs: FinancialTx[],
+  includeCash: boolean,
 ): StmtLine[] {
   const lines: StmtLine[] = [];
   for (const inv of purchases) {
     if (inv.supplierId !== supplierId) continue;
-    if (inv.paymentMethod !== "credit") continue;
-    lines.push({
-      date: inv.invoiceDate,
-      docType: "فاتورة مشتريات",
-      docNo: inv.invoiceNo,
-      description: inv.notes || "",
-      debit: 0,
-      credit: inv.grandTotal,
-    });
+    if (inv.paymentMethod === "credit") {
+      lines.push({
+        date: inv.invoiceDate,
+        docType: "فاتورة مشتريات",
+        docNo: inv.invoiceNo,
+        description: inv.notes || "",
+        debit: 0,
+        credit: inv.grandTotal,
+      });
+    } else if (includeCash) {
+      const settle = inv.paymentMethod === "bank" ? "سداد بنكي فوري" : "سداد نقدي فوري";
+      lines.push({
+        date: inv.invoiceDate,
+        docType: "فاتورة مشتريات نقدية",
+        docNo: inv.invoiceNo,
+        description: inv.notes || "",
+        debit: 0,
+        credit: inv.grandTotal,
+      });
+      lines.push({
+        date: inv.invoiceDate,
+        docType: settle,
+        docNo: inv.invoiceNo,
+        description: "سداد قيمة الفاتورة النقدية فوراً",
+        debit: inv.grandTotal,
+        credit: 0,
+      });
+    }
   }
   for (const r of returns) {
     if (r.supplierId !== supplierId) continue;
@@ -80,6 +104,7 @@ export default function SupplierStatementReport() {
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
   const [includeOpening, setIncludeOpening] = useState(true);
+  const [includeCash, setIncludeCash] = useState(true);
   const [result, setResult] = useState<{ supplier: Supplier; opening: number; lines: StmtLine[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -106,7 +131,7 @@ export default function SupplierStatementReport() {
         listPurchaseReturns(100000),
         listFinancialTx(100000),
       ]);
-      const all = buildLines(supplierId, purchases, returns, txs);
+      const all = buildLines(supplierId, purchases, returns, txs, includeCash);
       // Opening = net movement (credit − debit) of every document dated BEFORE
       // the period start. The period is INCLUSIVE on both ends.
       let opening = 0;
@@ -124,7 +149,7 @@ export default function SupplierStatementReport() {
   const closing = result ? result.opening + totals.cr - totals.dr : 0;
 
   return (
-    <Page title="كشف حساب مورد" subtitle="حركة حساب المورد خلال الفترة (فواتير آجلة، مرتجعات آجلة، سندات الصرف والقبض) مع الرصيد الافتتاحي والجاري. الرصيد الموجب = مستحق للمورد.">
+    <Page title="كشف حساب مورد" subtitle="حركة حساب المورد خلال الفترة (الفواتير الآجلة والنقدية، المرتجعات، سندات الصرف والقبض) مع الرصيد الافتتاحي والجاري. الفواتير النقدية تظهر مع سداد فوري مقابل لها فلا تؤثر على الرصيد. الرصيد الموجب = مستحق للمورد.">
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
           <FilterField label="المورد">
@@ -143,6 +168,17 @@ export default function SupplierStatementReport() {
                 type="checkbox"
                 checked={includeOpening}
                 onChange={(e) => setIncludeOpening(e.target.checked)}
+                style={{ width: 16, height: 16 }}
+              />
+              تضمين
+            </label>
+          </FilterField>
+          <FilterField label="الفواتير النقدية">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, height: 38 }}>
+              <input
+                type="checkbox"
+                checked={includeCash}
+                onChange={(e) => setIncludeCash(e.target.checked)}
                 style={{ width: 16, height: 16 }}
               />
               تضمين

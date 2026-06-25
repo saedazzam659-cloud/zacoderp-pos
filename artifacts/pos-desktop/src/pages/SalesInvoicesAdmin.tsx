@@ -220,7 +220,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
         <ActionBar selectedLabel={sel.selected ? sel.selected.invoiceNo : null}>
           <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected}
             onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
-          <ActionBtn label="طباعة" icon="🖨️" tone="primary" disabled={!sel.selected || busyId === sel.selectedId}
+          <ActionBtn label="طباعة الفاتورة" icon="🖨️" tone="primary" disabled={!sel.selected || busyId === sel.selectedId}
             onClick={() => { if (sel.selectedId != null) void printRow(sel.selectedId); }} />
           {onNavigate && (
             <ActionBtn label="إرجاع" icon="↩" tone="warn" disabled={!sel.selected}

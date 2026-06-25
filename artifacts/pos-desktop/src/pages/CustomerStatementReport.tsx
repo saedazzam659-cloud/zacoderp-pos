@@ -22,9 +22,14 @@ type StmtLine = {
 };
 
 // AR semantics (mirrors the web's AR-account-based كشف حساب):
-//   • CREDIT sales invoice  → debit (AR رose). Cash/bank invoices settle on the
-//     spot (DR cash / CR revenue) and never touch AR, so they are excluded.
-//   • CREDIT sales return   → credit (AR fell). Cash/bank returns refund cash.
+//   • CREDIT sales invoice  → debit (AR rose).
+//   • CASH/BANK sales invoice (when includeCash) → shown as a PAIR: the invoice
+//     debit + an immediate settlement credit on the same date, so it appears in
+//     the statement yet nets to zero on the running balance (it settled on the
+//     spot: DR cash / CR revenue, never touching AR). No double-count: cash
+//     invoices do NOT create a financial_transactions row.
+//   • CREDIT sales return   → credit (AR fell). Cash/bank returns refund cash →
+//     shown as a pair (return credit + refund debit) when includeCash.
 //   • Receipt voucher (سند قبض) for the customer → credit (payment received).
 //   • Payment voucher (سند صرف) to the customer (refund) → debit.
 function buildLines(
@@ -32,31 +37,70 @@ function buildLines(
   invoices: SalesInvoice[],
   returns: SalesReturn[],
   txs: FinancialTx[],
+  includeCash: boolean,
 ): StmtLine[] {
   const lines: StmtLine[] = [];
   for (const inv of invoices) {
     if (inv.customerId !== customerId) continue;
-    if (inv.paymentMethod !== "credit") continue;
-    lines.push({
-      date: inv.invoiceDate,
-      docType: "فاتورة مبيعات",
-      docNo: inv.invoiceNo,
-      description: inv.notes || "",
-      debit: inv.grandTotal,
-      credit: 0,
-    });
+    if (inv.paymentMethod === "credit") {
+      lines.push({
+        date: inv.invoiceDate,
+        docType: "فاتورة مبيعات",
+        docNo: inv.invoiceNo,
+        description: inv.notes || "",
+        debit: inv.grandTotal,
+        credit: 0,
+      });
+    } else if (includeCash) {
+      const settle = inv.paymentMethod === "bank" ? "سداد بنكي فوري" : "سداد نقدي فوري";
+      lines.push({
+        date: inv.invoiceDate,
+        docType: "فاتورة مبيعات نقدية",
+        docNo: inv.invoiceNo,
+        description: inv.notes || "",
+        debit: inv.grandTotal,
+        credit: 0,
+      });
+      lines.push({
+        date: inv.invoiceDate,
+        docType: settle,
+        docNo: inv.invoiceNo,
+        description: "تحصيل قيمة الفاتورة النقدية فوراً",
+        debit: 0,
+        credit: inv.grandTotal,
+      });
+    }
   }
   for (const r of returns) {
     if (r.customerId !== customerId) continue;
-    if (r.paymentMethod !== "credit") continue;
-    lines.push({
-      date: r.returnDate,
-      docType: "مرتجع مبيعات",
-      docNo: r.returnNo,
-      description: r.notes || "",
-      debit: 0,
-      credit: r.grandTotal,
-    });
+    if (r.paymentMethod === "credit") {
+      lines.push({
+        date: r.returnDate,
+        docType: "مرتجع مبيعات",
+        docNo: r.returnNo,
+        description: r.notes || "",
+        debit: 0,
+        credit: r.grandTotal,
+      });
+    } else if (includeCash) {
+      const refund = r.paymentMethod === "bank" ? "استرداد بنكي فوري" : "استرداد نقدي فوري";
+      lines.push({
+        date: r.returnDate,
+        docType: "مرتجع مبيعات نقدي",
+        docNo: r.returnNo,
+        description: r.notes || "",
+        debit: 0,
+        credit: r.grandTotal,
+      });
+      lines.push({
+        date: r.returnDate,
+        docType: refund,
+        docNo: r.returnNo,
+        description: "رد قيمة المرتجع النقدي فوراً",
+        debit: r.grandTotal,
+        credit: 0,
+      });
+    }
   }
   for (const t of txs) {
     if (t.partyType !== "customer" || t.partyId !== customerId) continue;
@@ -82,6 +126,7 @@ export default function CustomerStatementReport() {
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
   const [includeOpening, setIncludeOpening] = useState(true);
+  const [includeCash, setIncludeCash] = useState(true);
   const [result, setResult] = useState<{ customer: LocalCustomer; opening: number; lines: StmtLine[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -109,7 +154,7 @@ export default function CustomerStatementReport() {
         listSalesReturns(100000),
         listFinancialTx(100000),
       ]);
-      const all = buildLines(customerId, invoices, returns, txs);
+      const all = buildLines(customerId, invoices, returns, txs, includeCash);
       // Opening = net movement of every document dated BEFORE the period start.
       // The period is INCLUSIVE on both ends; movements after toDate are excluded
       // entirely (they belong to a later statement, not this one).
@@ -150,7 +195,7 @@ export default function CustomerStatementReport() {
   const closing = result ? result.opening + totals.dr - totals.cr : 0;
 
   return (
-    <Page title="كشف حساب عميل" subtitle="حركة حساب العميل خلال الفترة (فواتير آجلة، مرتجعات آجلة، سندات القبض والصرف) مع الرصيد الافتتاحي والجاري.">
+    <Page title="كشف حساب عميل" subtitle="حركة حساب العميل خلال الفترة (الفواتير الآجلة والنقدية، المرتجعات، سندات القبض والصرف) مع الرصيد الافتتاحي والجاري. الفواتير النقدية تظهر مع سداد فوري مقابل لها فلا تؤثر على الرصيد.">
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
           <FilterField label="العميل">
@@ -169,6 +214,17 @@ export default function CustomerStatementReport() {
                 type="checkbox"
                 checked={includeOpening}
                 onChange={(e) => setIncludeOpening(e.target.checked)}
+                style={{ width: 16, height: 16 }}
+              />
+              تضمين
+            </label>
+          </FilterField>
+          <FilterField label="الفواتير النقدية">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, height: 38 }}>
+              <input
+                type="checkbox"
+                checked={includeCash}
+                onChange={(e) => setIncludeCash(e.target.checked)}
                 style={{ width: 16, height: 16 }}
               />
               تضمين

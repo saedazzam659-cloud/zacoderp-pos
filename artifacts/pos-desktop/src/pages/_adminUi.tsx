@@ -897,7 +897,7 @@ export function ExportButtons<T>({ columns, rows, filenameBase, title }: {
       <button type="button" disabled={disabled}
         onClick={() => exportToPdf(title, columns, rows)}
         style={{ ...btnSecondary, opacity: disabled ? 0.5 : 1, cursor: disabled ? "default" : "pointer" }}
-        title="تصدير / طباعة PDF">🖨️ PDF</button>
+        title="تصدير القائمة كاملة كملف PDF (لطباعة فاتورة مفردة اختر صفها ثم اضغط «طباعة الفاتورة»)">📄 تصدير القائمة (PDF)</button>
     </>
   );
 }
