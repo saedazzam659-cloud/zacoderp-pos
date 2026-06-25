@@ -557,11 +557,19 @@ function PartnerDetail({ id, headers, onClose }: { id: number; headers: any; onC
 }
 
 // ─── Consolidated commissions report (agents + developers/partners) ─────────
+const MONTH_LABELS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+
 function CommissionsReport({ headers }: { headers: any }) {
+  const [year, setYear] = useState<string>("");
+  const [month, setMonth] = useState<string>("");
   const { data, isLoading } = useQuery({
-    queryKey: ["admin-partners-report"],
+    queryKey: ["admin-partners-report", year, month],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/partners/reports/commissions`, { headers });
+      const qs = new URLSearchParams();
+      if (year) qs.set("year", year);
+      if (month) qs.set("month", month);
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      const r = await fetch(`${API}/api/admin/partners/reports/commissions${suffix}`, { headers });
       if (!r.ok) throw new Error();
       return r.json();
     },
@@ -569,10 +577,41 @@ function CommissionsReport({ headers }: { headers: any }) {
   const rows = data?.rows ?? [];
   const totals = data?.totals;
 
-  if (isLoading) return <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>;
+  const nowYear = new Date().getFullYear();
+  const yearOptions = Array.from({ length: 7 }, (_, i) => nowYear - i);
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          data-testid="select-report-year"
+          className="rounded-lg border bg-white px-3 py-2 text-sm"
+        >
+          <option value="">كل السنوات</option>
+          {yearOptions.map((y) => <option key={y} value={String(y)}>{y}</option>)}
+        </select>
+        <select
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          data-testid="select-report-month"
+          className="rounded-lg border bg-white px-3 py-2 text-sm"
+        >
+          <option value="">كل الأشهر</option>
+          {MONTH_LABELS.map((m, i) => <option key={i} value={String(i + 1)}>{m}</option>)}
+        </select>
+        {(year || month) && (
+          <Button variant="outline" size="sm" onClick={() => { setYear(""); setMonth(""); }} data-testid="button-report-clear-period">
+            عرض الكل
+          </Button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+      ) : (
+      <>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           ["الكيانات", totals?.entities ?? 0],
@@ -615,6 +654,8 @@ function CommissionsReport({ headers }: { headers: any }) {
           </tbody>
         </table>
       </div>
+      </>
+      )}
     </div>
   );
 }

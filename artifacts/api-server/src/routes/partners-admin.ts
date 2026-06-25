@@ -81,7 +81,22 @@ router.get("/", async (req, res) => {
 
 // ─── Consolidated commissions report (agents + developers/partners) ─────────
 // MUST be registered before "/:id" routes so "reports" is not eaten by ":id".
-router.get("/reports/commissions", async (_req, res) => {
+router.get("/reports/commissions", async (req, res) => {
+  // Optional period filter (?year= & ?month=). Omitting both keeps all-time.
+  const yearRaw = parseInt(String(req.query.year ?? ""), 10);
+  const monthRaw = parseInt(String(req.query.month ?? ""), 10);
+  const year = Number.isInteger(yearRaw) && yearRaw > 0 ? yearRaw : null;
+  const month = Number.isInteger(monthRaw) && monthRaw >= 1 && monthRaw <= 12 ? monthRaw : null;
+
+  const partnerPeriod = and(
+    year != null ? eq(partnerCommissionsTable.periodYear, year) : undefined,
+    month != null ? eq(partnerCommissionsTable.periodMonth, month) : undefined,
+  );
+  const resellerPeriod = and(
+    year != null ? eq(resellerCommissionsTable.periodYear, year) : undefined,
+    month != null ? eq(resellerCommissionsTable.periodMonth, month) : undefined,
+  );
+
   // Developers / partners
   const partners = await db.select().from(platformPartnersTable);
   const pCounts = await db
@@ -93,7 +108,7 @@ router.get("/reports/commissions", async (_req, res) => {
       base: sql<string>`coalesce(sum(${partnerCommissionsTable.baseAmount}),0)`,
       commission: sql<string>`coalesce(sum(${partnerCommissionsTable.commissionAmount}),0)`,
     })
-    .from(partnerCommissionsTable).groupBy(partnerCommissionsTable.partnerId);
+    .from(partnerCommissionsTable).where(partnerPeriod).groupBy(partnerCommissionsTable.partnerId);
   const pCountMap = new Map(pCounts.map((c) => [c.partnerId, c.n]));
   const pBaseMap = new Map(pAgg.map((a) => [a.partnerId, a.base]));
   const pCommMap = new Map(pAgg.map((a) => [a.partnerId, a.commission]));
@@ -109,7 +124,7 @@ router.get("/reports/commissions", async (_req, res) => {
       base: sql<string>`coalesce(sum(${resellerCommissionsTable.baseAmount}),0)`,
       commission: sql<string>`coalesce(sum(${resellerCommissionsTable.commissionAmount}),0)`,
     })
-    .from(resellerCommissionsTable).groupBy(resellerCommissionsTable.resellerId);
+    .from(resellerCommissionsTable).where(resellerPeriod).groupBy(resellerCommissionsTable.resellerId);
   const rCountMap = new Map(rCounts.map((c) => [c.resellerId, c.n]));
   const rBaseMap = new Map(rAgg.map((a) => [a.resellerId, a.base]));
   const rCommMap = new Map(rAgg.map((a) => [a.resellerId, a.commission]));
