@@ -1843,6 +1843,19 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS dev_studio_proposals_dev_idx ON dev_studio_proposals (developer_id)` },
     { label: "dev_studio_proposals_status_idx",
       sql:   `CREATE INDEX IF NOT EXISTS dev_studio_proposals_status_idx ON dev_studio_proposals (status)` },
+    // Phase 2 — SuperAdmin review/approval gate (additive columns).
+    { label: "dev_studio_proposals.review_report",
+      sql:   `ALTER TABLE dev_studio_proposals ADD COLUMN IF NOT EXISTS review_report JSONB` },
+    { label: "dev_studio_proposals.review_verdict",
+      sql:   `ALTER TABLE dev_studio_proposals ADD COLUMN IF NOT EXISTS review_verdict TEXT` },
+    { label: "dev_studio_proposals.diff_hash",
+      sql:   `ALTER TABLE dev_studio_proposals ADD COLUMN IF NOT EXISTS diff_hash TEXT` },
+    { label: "dev_studio_proposals.reviewed_by",
+      sql:   `ALTER TABLE dev_studio_proposals ADD COLUMN IF NOT EXISTS reviewed_by INTEGER` },
+    { label: "dev_studio_proposals.reviewed_at",
+      sql:   `ALTER TABLE dev_studio_proposals ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ` },
+    { label: "dev_studio_proposals.decision_reason",
+      sql:   `ALTER TABLE dev_studio_proposals ADD COLUMN IF NOT EXISTS decision_reason TEXT` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

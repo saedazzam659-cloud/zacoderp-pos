@@ -34,6 +34,7 @@ interface Me {
 interface Proposal {
   id: number; title: string; description: string | null; targetPath: string | null;
   diff: string | null; status: string; writeLines: number; createdAt: string;
+  decisionReason?: string | null; reviewVerdict?: string | null;
 }
 
 export default function DevStudio() {
@@ -347,20 +348,25 @@ function StudioShell({ apiGet, headers, logout }: { apiGet: (p: string) => Promi
               <div className="text-sm font-medium">مقترحاتي</div>
               {proposals.length === 0 && <div className="text-xs text-muted-foreground">لا توجد مقترحات بعد.</div>}
               {proposals.map((p) => (
-                <div key={p.id} className="flex items-center justify-between border rounded-md p-2 text-sm">
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{p.title}</div>
-                    <div className="text-xs text-muted-foreground" dir="ltr">{p.targetPath ?? "—"} · {p.writeLines} سطر</div>
+                <div key={p.id} className="border rounded-md p-2 text-sm space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{p.title}</div>
+                      <div className="text-xs text-muted-foreground" dir="ltr">{p.targetPath ?? "—"} · {p.writeLines} سطر</div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={p.status === "draft" ? "secondary" : p.status === "submitted" ? "default" : p.status === "published" ? "default" : "destructive"}>{statusAr(p.status)}</Badge>
+                      {p.status === "draft" && (
+                        <>
+                          <Button size="sm" variant="outline" onClick={() => submitProposal(p.id)}><Send className="h-3.5 w-3.5 ml-1" /> إرسال</Button>
+                          <Button size="sm" variant="ghost" onClick={() => deleteProposal(p.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Badge variant={p.status === "draft" ? "secondary" : p.status === "submitted" ? "default" : p.status === "published" ? "default" : "destructive"}>{statusAr(p.status)}</Badge>
-                    {p.status === "draft" && (
-                      <>
-                        <Button size="sm" variant="outline" onClick={() => submitProposal(p.id)}><Send className="h-3.5 w-3.5 ml-1" /> إرسال</Button>
-                        <Button size="sm" variant="ghost" onClick={() => deleteProposal(p.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                      </>
-                    )}
-                  </div>
+                  {p.status === "submitted" && <div className="text-[11px] text-muted-foreground">بانتظار مراجعة مدير المنصة.</div>}
+                  {p.status === "published" && <div className="text-[11px] text-emerald-600">تم اعتماد المقترح من مدير المنصة.{p.decisionReason ? ` — ${p.decisionReason}` : ""}</div>}
+                  {p.status === "rejected" && p.decisionReason && <div className="text-[11px] text-red-600">سبب الرفض: {p.decisionReason}</div>}
                 </div>
               ))}
             </CardContent>

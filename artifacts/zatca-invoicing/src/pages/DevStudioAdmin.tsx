@@ -447,7 +447,6 @@ function SnapshotsTab() {
 // ── Proposals ─────────────────────────────────────────────────────────────────
 function ProposalsTab() {
   const { headers, base } = useApi();
-  const qc = useQueryClient();
   const [status, setStatus] = useState("");
   const [viewId, setViewId] = useState<number | null>(null);
   const { data, isLoading } = useQuery({
@@ -455,10 +454,6 @@ function ProposalsTab() {
     queryFn: async () => jsonOrThrow(await fetch(`${base}/proposals${status ? `?status=${status}` : ""}`, { headers })),
   });
   const proposals: any[] = data?.proposals ?? [];
-  const act = useMutation({
-    mutationFn: async ({ id, to }: { id: number; to: string }) => jsonOrThrow(await fetch(`${base}/proposals/${id}/status`, { method: "POST", headers, body: JSON.stringify({ status: to }) })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["devstudio-proposals"] }),
-  });
 
   return (
     <div className="space-y-3">
@@ -481,13 +476,9 @@ function ProposalsTab() {
                 <Badge variant={p.status === "submitted" ? "default" : p.status === "published" ? "default" : p.status === "rejected" ? "destructive" : "secondary"}>
                   {p.status === "submitted" ? "مُرسَل" : p.status === "published" ? "معتمد" : p.status === "rejected" ? "مرفوض" : "مسودة"}
                 </Badge>
-                <Button size="sm" variant="outline" onClick={() => setViewId(p.id)}><Eye className="h-3.5 w-3.5" /></Button>
-                {p.status === "submitted" && (
-                  <>
-                    <Button size="sm" onClick={() => act.mutate({ id: p.id, to: "published" })}><CheckCircle2 className="h-3.5 w-3.5" /></Button>
-                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => act.mutate({ id: p.id, to: "rejected" })}><XCircle className="h-3.5 w-3.5" /></Button>
-                  </>
-                )}
+                <Button size="sm" variant={p.status === "submitted" ? "default" : "outline"} onClick={() => setViewId(p.id)}>
+                  <Eye className="h-3.5 w-3.5 ml-1" /> {p.status === "submitted" ? "مراجعة" : "عرض"}
+                </Button>
               </div>
             </div>
           ))}
@@ -499,19 +490,99 @@ function ProposalsTab() {
   );
 }
 
+const VERDICT_AR: Record<string, string> = { approve: "موصى بالقبول", warn: "يحتاج مراجعة", reject: "موصى بالرفض" };
+
+function GateRow({ g }: { g: any }) {
+  const color = g.status === "fail" ? "text-red-600" : g.status === "warn" ? "text-amber-600" : "text-emerald-600";
+  const Icon = g.status === "fail" ? XCircle : g.status === "warn" ? ShieldCheck : CheckCircle2;
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      <Icon className={`h-3.5 w-3.5 mt-0.5 shrink-0 ${color}`} />
+      <div className="min-w-0">
+        <span className="font-medium">{g.label}</span>
+        <span className="text-muted-foreground"> — {g.summary}</span>
+      </div>
+    </div>
+  );
+}
+
 function ProposalDialog({ id, onClose }: { id: number; onClose: () => void }) {
   const { headers, base } = useApi();
+  const qc = useQueryClient();
+  const [reason, setReason] = useState("");
   const { data, isLoading } = useQuery({ queryKey: ["devstudio-proposal", id], queryFn: async () => jsonOrThrow(await fetch(`${base}/proposals/${id}`, { headers })) });
   const p = data?.proposal;
+  const report = p?.reviewReport ?? null;
+
+  const review = useMutation({
+    mutationFn: async () => jsonOrThrow(await fetch(`${base}/proposals/${id}/review`, { method: "POST", headers })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["devstudio-proposal", id] }),
+  });
+  const decide = useMutation({
+    mutationFn: async (to: string) => jsonOrThrow(await fetch(`${base}/proposals/${id}/status`, { method: "POST", headers, body: JSON.stringify({ status: to, reason: reason.trim() || undefined }) })),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["devstudio-proposals"] });
+      qc.invalidateQueries({ queryKey: ["devstudio-proposal", id] });
+      onClose();
+    },
+  });
+  const busy = review.isPending || decide.isPending;
+  const canDecide = p?.status === "submitted";
+
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent dir="rtl" className="max-w-3xl">
+      <DialogContent dir="rtl" className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{p?.title ?? "مقترح"}</DialogTitle></DialogHeader>
         {isLoading || !p ? <Loader2 className="h-5 w-5 animate-spin mx-auto" /> : (
           <div className="space-y-3">
             <div className="text-xs text-muted-foreground" dir="ltr">{p.targetPath ?? "—"} · {p.writeLines} سطر</div>
             {p.description && <p className="text-sm whitespace-pre-wrap">{p.description}</p>}
-            {p.diff && <pre className="p-3 text-xs bg-slate-900 text-slate-100 rounded-md overflow-x-auto max-h-[50vh]" dir="ltr"><code>{p.diff}</code></pre>}
+
+            {/* Automated advisory review report */}
+            <div className="border rounded-md p-3 space-y-2 bg-muted/30">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium flex items-center gap-1"><ShieldCheck className="h-4 w-4" /> المراجعة الآلية (استشارية)</div>
+                <Button size="sm" variant="outline" onClick={() => review.mutate()} disabled={busy}>
+                  {review.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin ml-1" /> : <RefreshCw className="h-3.5 w-3.5 ml-1" />} تشغيل المراجعة
+                </Button>
+              </div>
+              {report ? (
+                <>
+                  <div className="flex items-center gap-2 text-xs">
+                    <Badge variant={report.verdict === "reject" ? "destructive" : report.verdict === "warn" ? "secondary" : "default"}>
+                      {VERDICT_AR[report.verdict] ?? report.verdict}
+                    </Badge>
+                    <span className="text-muted-foreground">+{report.stats?.addedLines ?? 0} / -{report.stats?.removedLines ?? 0} · {report.stats?.filesTouched?.length ?? 0} ملف</span>
+                  </div>
+                  <div className="space-y-1">{(report.gates ?? []).map((g: any) => <GateRow key={g.gate} g={g} />)}</div>
+                  {report.diffHash && <div className="text-[10px] text-muted-foreground font-mono break-all" dir="ltr">sha256: {report.diffHash}</div>}
+                  <p className="text-[11px] text-muted-foreground">القرار النهائي يدوي — هذه النتائج للمساعدة فقط. «الاعتماد» يسجّل القبول مع بصمة لا يمكن التلاعب بها؛ تطبيق الشيفرة فعلياً يبقى خطوة بشرية.</p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">لم تُجرَ مراجعة بعد. اضغط «تشغيل المراجعة» لفحص النطاق والأنماط الخطرة والذكاء الاصطناعي.</p>
+              )}
+            </div>
+
+            {p.diff && <pre className="p-3 text-xs bg-slate-900 text-slate-100 rounded-md overflow-x-auto max-h-[40vh]" dir="ltr"><code>{p.diff}</code></pre>}
+
+            {p.status === "rejected" && p.decisionReason && (
+              <div className="text-xs text-red-600">سبب الرفض: {p.decisionReason}</div>
+            )}
+
+            {canDecide && (
+              <div className="space-y-2 border-t pt-3">
+                <Label className="text-xs">ملاحظة/سبب (مطلوب للرفض)</Label>
+                <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="اكتب سبب الرفض أو ملاحظة عند الاعتماد…" />
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => decide.mutate("published")} disabled={busy}>
+                    {decide.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin ml-1" /> : <CheckCircle2 className="h-3.5 w-3.5 ml-1" />} اعتماد
+                  </Button>
+                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => decide.mutate("rejected")} disabled={busy || reason.trim().length < 3}>
+                    <XCircle className="h-3.5 w-3.5 ml-1" /> رفض
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
         <DialogFooter><Button variant="outline" onClick={onClose}>إغلاق</Button></DialogFooter>

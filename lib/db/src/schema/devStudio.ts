@@ -193,6 +193,16 @@ export const devStudioProposalsTable = pgTable("dev_studio_proposals", {
   diff:        text("diff"),
   status:      text("status").notNull().default("draft"),
   writeLines:  integer("write_lines").notNull().default(0),
+  // Phase 2 — SuperAdmin manual review/approval gate (safe model #1). A decision
+  // is recorded with an automated advisory report + a tamper-evident hash of the
+  // accepted diff. "published" = SA-accepted into the merge queue; the actual code
+  // application to production remains a human step (no code executes here).
+  reviewReport:   jsonb("review_report").$type<Record<string, any> | null>(),
+  reviewVerdict:  text("review_verdict"),    // advisory: approve | warn | reject
+  diffHash:       text("diff_hash"),          // sha256(diff) captured at decision
+  reviewedBy:     integer("reviewed_by"),     // SuperAdmin user id who decided
+  reviewedAt:     timestamp("reviewed_at"),
+  decisionReason: text("decision_reason"),    // required on reject; optional note on approve
   createdAt:   timestamp("created_at").defaultNow().notNull(),
   updatedAt:   timestamp("updated_at").defaultNow().notNull(),
   submittedAt: timestamp("submitted_at"),

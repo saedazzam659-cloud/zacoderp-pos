@@ -16,6 +16,7 @@ import {
   captureSnapshot, loadSnapshot, scopedPaths, isPathVisible, countLines,
 } from "../lib/devStudioSnapshot.js";
 import { proposeChange } from "../devstudio/aiOrchestrator.js";
+import { reviewProposalDiff } from "../devstudio/proposalReview.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // DevStudio — "التطوير من خلال زاكود" (additive only).
@@ -67,6 +68,13 @@ async function audit(developerId: number | null, action: string, path: string | 
   try {
     await db.insert(devStudioAuditTable).values({ developerId, action, path, lines, detail });
   } catch { /* audit must never break a request */ }
+}
+
+// A developer's granted visibility prefixes (the allow-list a proposal is scoped to).
+async function developerAllowedPrefixes(developerId: number): Promise<string[]> {
+  const rows = await db.select({ p: devStudioVisibilityTable.pathPrefix })
+    .from(devStudioVisibilityTable).where(eq(devStudioVisibilityTable.developerId, developerId));
+  return rows.map((r) => r.p);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -784,16 +792,66 @@ devStudioAdminRouter.get("/proposals/:id", async (req, res) => {
   res.json({ proposal });
 });
 
-// ── Proposal status (publish / reject — MVP records the decision) ──────────
+// ── Proposal review (advisory automated report — re-runnable, persisted) ────
+// Phase 2: gives the SuperAdmin scope/size/danger/AI gates + a tamper-evident
+// diff hash to inform the MANUAL approve/reject decision. Never applies the diff.
+devStudioAdminRouter.post("/proposals/:id/review", async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const [p] = await db.select().from(devStudioProposalsTable).where(eq(devStudioProposalsTable.id, id));
+  if (!p) { res.status(404).json({ error: "المقترح غير موجود" }); return; }
+  const allowed = await developerAllowedPrefixes(p.developerId);
+  const report = await reviewProposalDiff({
+    diff: p.diff ?? "", targetPath: p.targetPath, allowedPrefixes: allowed, request: p.description ?? undefined,
+  });
+  await db.update(devStudioProposalsTable)
+    .set({ reviewReport: report, reviewVerdict: report.verdict, diffHash: report.diffHash, updatedAt: now() })
+    .where(eq(devStudioProposalsTable.id, id));
+  await writeAudit({ ...auditBase(req), companyId: null, module: "dev_studio", action: "edit", entityType: "dev_studio_proposal", entityId: String(id), metadata: { op: "review", verdict: report.verdict } });
+  res.json({ ok: true, report });
+});
+
+// ── Proposal decision (approve→published / reject) — manual SA gate ─────────
+// Only a SUBMITTED proposal can be decided. Approving records a tamper-evident
+// acceptance (diff hash + reviewer + report); the actual code application to
+// production stays a human/main-agent step (no untrusted code executes here).
 devStudioAdminRouter.post("/proposals/:id/status", async (req, res) => {
   const id = parseInt(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const to = String(req.body?.status ?? "").trim();
   if (!["published", "rejected"].includes(to)) { res.status(400).json({ error: "حالة غير صالحة" }); return; }
+  const reason = String(req.body?.reason ?? "").trim();
+  if (to === "rejected" && reason.length < 3) { res.status(400).json({ error: "سبب الرفض مطلوب (3 أحرف على الأقل)" }); return; }
+
+  const [p] = await db.select().from(devStudioProposalsTable).where(eq(devStudioProposalsTable.id, id));
+  if (!p) { res.status(404).json({ error: "المقترح غير موجود" }); return; }
+  if (p.status !== "submitted") { res.status(409).json({ error: "لا يمكن اتخاذ قرار إلا على مقترح مُرسَل" }); return; }
+
+  // Ensure a review report exists at decision time (auto-run if the SA skipped it),
+  // so every accepted/rejected proposal carries an auditable record + diff hash.
+  let report = p.reviewReport as any;
+  if (!report || !report.diffHash) {
+    const allowed = await developerAllowedPrefixes(p.developerId);
+    report = await reviewProposalDiff({
+      diff: p.diff ?? "", targetPath: p.targetPath, allowedPrefixes: allowed, request: p.description ?? undefined,
+    });
+  }
+
   const [updated] = await db.update(devStudioProposalsTable)
-    .set({ status: to, updatedAt: now() }).where(eq(devStudioProposalsTable.id, id))
-    .returning({ id: devStudioProposalsTable.id, status: devStudioProposalsTable.status });
+    .set({
+      status: to,
+      reviewReport: report,
+      reviewVerdict: report.verdict ?? null,
+      diffHash: report.diffHash ?? null,
+      reviewedBy: req.authUser?.id ?? null,
+      reviewedAt: now(),
+      decisionReason: reason || null,
+      updatedAt: now(),
+    })
+    .where(eq(devStudioProposalsTable.id, id))
+    .returning();
   if (!updated) { res.status(404).json({ error: "المقترح غير موجود" }); return; }
-  await writeAudit({ ...auditBase(req), companyId: null, module: "dev_studio", action: "edit", entityType: "dev_studio_proposal", entityId: String(id), metadata: { status: to } });
+  await writeAudit({ ...auditBase(req), companyId: null, module: "dev_studio", action: "edit", entityType: "dev_studio_proposal", entityId: String(id), metadata: { status: to, verdict: report.verdict, diffHash: report.diffHash, reason: reason || undefined } });
+  await audit(p.developerId, "proposal_decision", p.targetPath, p.writeLines, { proposalId: id, status: to, verdict: report.verdict, reason: reason || undefined });
   res.json({ ok: true, proposal: updated });
 });
