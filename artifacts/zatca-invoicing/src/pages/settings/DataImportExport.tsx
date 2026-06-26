@@ -887,15 +887,35 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
 // using the original entry dates).
 // ════════════════════════════════════════════════════════════════════════════
 
+function stmtNormalizeDigits(s: string): string {
+  return s
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+}
 function stmtToNum(v: any): number {
   if (v == null || v === "") return 0;
-  const n = Number(String(v).replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[^\d.\-]/g, ""));
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  const s = stmtNormalizeDigits(String(v))
+    .replace(/٫/g, ".")   // arabic decimal separator
+    .replace(/[٬,]/g, "") // arabic / ascii thousands separator
+    .replace(/[^\d.\-]/g, "");
+  const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 }
 function stmtDateValue(v: any): number {
   if (!v) return 0;
-  const t = new Date(v).getTime();
-  return Number.isFinite(t) ? t : 0;
+  if (v instanceof Date) { const t = v.getTime(); return Number.isFinite(t) ? t : 0; }
+  const s = stmtNormalizeDigits(String(v)).trim();
+  let t = new Date(s).getTime();
+  if (Number.isFinite(t)) return t;
+  const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (m) {
+    let [, d, mo, y] = m;
+    if (y.length === 2) y = (Number(y) > 50 ? "19" : "20") + y;
+    t = new Date(`${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`).getTime();
+    if (Number.isFinite(t)) return t;
+  }
+  return 0;
 }
 
 function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean }) {
