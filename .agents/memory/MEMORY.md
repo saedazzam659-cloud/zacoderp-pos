@@ -149,5 +149,6 @@
 - [Extension Publish Engine](extension-publish-engine.md) — staged blocking gates (build/security_scan/ai_review/sign); never ingests code; security_scan validates perms vs listCoreResources; ai_review must fall back to rule-based.
 - [Developer/Partner portal](partner-portal-module.md) — platform_partners self-service portal is a 1:1 mirror of the reseller portal (auth, gates, App.tsx 3-spot routing); change both sides in lockstep.
 - [DevStudio quota on all content paths](devstudio-quota-on-all-content-paths.md) — read/write quota+audit must gate EVERY content-exposing/persisting path (AI propose=read, proposal update=delta write), not just the direct read/create endpoint.
+- [zatca-invoicing prod build heap OOM](zatca-build-heap-oom.md) — publish build dies "heap out of memory" in Rollup chunk phase if --max-old-space-size too low (2048 failed, 4096 ok); only surfaces at publish, never in dev.
 - [Zacode Office module](office-module.md) — client-side Word+Excel editor; single `office` key mirrors sister_companies; sanitize external HTML before DOM insert; saveFile must surface real errors.
 - [DevStudio proposal review/approval gate](devstudio-proposal-review-gate.md) — submitted code proposals need MANUAL SA approval; advisory diff-text-only review (scope/danger/AI) + sha256 record; "published" is governance only, no auto code-apply.
