@@ -55,7 +55,7 @@ export default function GoodsReceiptsAdmin({ onNavigate }: { onNavigate?: (v: Wi
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
   const sel = useRowSelect(rows);
-  useDataRefresh(["invoices"], refresh);
+  useDataRefresh(["invoices", "stock"], refresh);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {

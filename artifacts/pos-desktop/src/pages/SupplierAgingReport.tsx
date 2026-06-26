@@ -5,6 +5,7 @@ import {
 } from "../lib/accounting";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { DateField } from "./_reportFilters";
+import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
 
 // Flat row mirroring the on-screen aging table (per-supplier buckets + totals row).
@@ -101,6 +102,10 @@ export default function SupplierAgingReport() {
       setRows(out);
     } finally { setLoading(false); }
   }
+
+  // Re-run the displayed aging when an invoice/voucher/journal is posted on
+  // another tab, but only when a report is already shown.
+  useDataRefresh(["invoices", "vouchers", "journal", "suppliers"], () => { if (rows) void run(); });
 
   const totals = (rows ?? []).reduce(
     (s, r) => { s.b0 += r.b0; s.b30 += r.b30; s.b60 += r.b60; s.b90 += r.b90; s.total += r.total; return s; },

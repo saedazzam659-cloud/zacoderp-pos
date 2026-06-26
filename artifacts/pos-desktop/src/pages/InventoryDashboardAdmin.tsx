@@ -6,6 +6,7 @@
 // "أصناف تحت حد الطلب" tile stays consistent with that screen.
 
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listStockOnHand, listStockMovements, listWarehouses,
   type StockOnHand, type StockMovement, type Warehouse,
@@ -56,6 +57,7 @@ export default function InventoryDashboardAdmin() {
     }
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "invoices", "items", "warehouses"], () => { void refresh(); });
 
   const stockValue = useMemo(
     () => onHand.reduce((s, r) => s + r.qty * r.last_cost, 0),

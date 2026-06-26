@@ -207,7 +207,7 @@ export default function CustomerStatementReport() {
 
   // Re-run the displayed statement when an invoice/voucher is created on another
   // tab, but only when a statement is already shown.
-  useDataRefresh(["invoices", "vouchers"], () => { if (result) void run(); });
+  useDataRefresh(["invoices", "vouchers", "journal"], () => { if (result) void run(); });
 
   const totals = (result?.lines ?? []).reduce((s, l) => { s.dr += l.debit; s.cr += l.credit; return s; }, { dr: 0, cr: 0 });
   const closing = result ? result.opening + totals.dr - totals.cr : 0;

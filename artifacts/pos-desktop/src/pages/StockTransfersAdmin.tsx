@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listStockTransfers, createStockTransfer, listWarehouses,
   type TransferSummary, type TransferLineInput, type Warehouse,
@@ -16,6 +17,7 @@ export default function StockTransfersAdmin() {
 
   async function refresh() { setRows(await listStockTransfers()); }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "journal"], () => { void refresh(); });
 
   return (
     <Page

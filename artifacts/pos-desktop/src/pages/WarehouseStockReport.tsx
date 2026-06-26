@@ -5,6 +5,7 @@
 // inventory reports.
 
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import { listStockOnHand, type StockOnHand } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, ExportButtons,
@@ -42,6 +43,7 @@ export default function WarehouseStockReport() {
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "invoices"], () => { void refresh(); });
 
   // Warehouse columns (only those that actually have stock rows), sorted by name.
   const warehouses = useMemo<WhCol[]>(() => {

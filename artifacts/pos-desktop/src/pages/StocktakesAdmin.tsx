@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listStocktakes, createStocktake, postStocktake,
   listWarehouses, listStockOnHand,
@@ -20,6 +21,7 @@ export default function StocktakesAdmin() {
 
   async function refresh() { setRows(await listStocktakes()); }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "journal"], () => { void refresh(); });
 
   async function post(s: StocktakeSummary) {
     if (!confirm(`ترحيل الجرد ${s.stocktake_no}؟ سيتم إنشاء تسوية بالفروقات.`)) return;

@@ -146,7 +146,9 @@ export async function listStockAdjustments(): Promise<AdjustmentSummary[]> {
   return await invoke<AdjustmentSummary[]>("stock_adjustments_list");
 }
 export async function createStockAdjustment(input: AdjustmentInput): Promise<number> {
-  return await invoke<number>("stock_adjustment_create", { input });
+  const id = await invoke<number>("stock_adjustment_create", { input });
+  emitData("stock", "journal");
+  return id;
 }
 
 // ─── Stock transfers ───────────────────────────────────────────────
@@ -180,7 +182,9 @@ export async function listStockTransfers(): Promise<TransferSummary[]> {
   return await invoke<TransferSummary[]>("stock_transfers_list");
 }
 export async function createStockTransfer(input: TransferInput): Promise<number> {
-  return await invoke<number>("stock_transfer_create", { input });
+  const id = await invoke<number>("stock_transfer_create", { input });
+  emitData("stock");
+  return id;
 }
 
 // ─── Stocktakes ────────────────────────────────────────────────────
@@ -212,8 +216,12 @@ export async function listStocktakes(): Promise<StocktakeSummary[]> {
   return await invoke<StocktakeSummary[]>("stocktakes_list");
 }
 export async function createStocktake(input: StocktakeInput): Promise<number> {
-  return await invoke<number>("stocktake_create", { input });
+  const id = await invoke<number>("stocktake_create", { input });
+  emitData("stock");
+  return id;
 }
 export async function postStocktake(id: number): Promise<number> {
-  return await invoke<number>("stocktake_post", { id });
+  const adjustmentId = await invoke<number>("stocktake_post", { id });
+  emitData("stock", "journal");
+  return adjustmentId;
 }

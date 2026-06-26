@@ -2,6 +2,7 @@ import { useState } from "react";
 import { listSuppliers, type Supplier } from "../lib/accounting";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { FilterField } from "./_reportFilters";
+import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
 
 // Flat row mirroring the on-screen balances table (per-supplier rows + totals row).
@@ -30,6 +31,10 @@ export default function SupplierBalancesReport() {
       setRows(list.slice().sort((a, b) => b.balance - a.balance));
     } finally { setLoading(false); }
   }
+
+  // Re-run the displayed balances when an invoice/voucher/journal is posted on
+  // another tab, but only when balances are already shown.
+  useDataRefresh(["invoices", "vouchers", "journal", "suppliers"], () => { if (rows) void run(); });
 
   const shown = (rows ?? []).filter((s) => {
     if (filter === "owed") return s.balance > 0.001;

@@ -555,7 +555,9 @@ export async function listTreasuryTransfers(limit = 200): Promise<TreasuryTransf
 }
 export async function createTreasuryTransfer(input: TreasuryTransferInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("treasury_transfer_create", { input });
+  const id = await invoke<number>("treasury_transfer_create", { input });
+  emitData("vouchers", "journal", "banks", "cashboxes");
+  return id;
 }
 
 // ─── Purchases ───────────────────────────────────────────────────────

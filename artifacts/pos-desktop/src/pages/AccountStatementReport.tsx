@@ -3,6 +3,7 @@ import { reportLedgerLines, type LedgerLine } from "../lib/reports";
 import { listAccounts, type Account } from "../lib/accounting";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField, CostCenterField, FilterField } from "./_reportFilters";
+import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
 
 type ASExportRow = {
@@ -66,6 +67,10 @@ export default function AccountStatementReport({ initialAccountId, onConsumed }:
       setResult({ opening, lines: inRange });
     } finally { setLoading(false); }
   }
+
+  // Re-run the displayed statement when a journal/voucher/invoice is posted on
+  // another tab, but only when a statement is already shown.
+  useDataRefresh(["journal", "vouchers", "invoices"], () => { if (result) void run(); });
 
   const totals = (result?.lines ?? []).reduce((s, l) => { s.dr += l.debit; s.cr += l.credit; return s; }, { dr: 0, cr: 0 });
   const closing = result ? result.opening + totals.dr - totals.cr : 0;

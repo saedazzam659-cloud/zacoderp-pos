@@ -6,6 +6,7 @@ import {
 } from "../lib/accounting";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { DateField, FilterField } from "./_reportFilters";
+import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
@@ -119,6 +120,10 @@ export default function SupplierStatementDetailedReport() {
       setResult({ supplier, opening, docs });
     } finally { setLoading(false); }
   }
+
+  // Re-run the displayed statement when an invoice/voucher/journal is posted on
+  // another tab, but only when a statement is already shown.
+  useDataRefresh(["invoices", "vouchers", "journal"], () => { if (result) void run(); });
 
   const totals = (result?.docs ?? []).reduce((s, d) => { s.dr += d.debit; s.cr += d.credit; return s; }, { dr: 0, cr: 0 });
   const closing = result ? result.opening + totals.cr - totals.dr : 0;

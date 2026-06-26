@@ -8,6 +8,7 @@ import {
   Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary,
   fmtCurrency, fmt, todayStr, SearchCombobox, Field, Row, ErrorMsg,
 } from "./_adminUi";
+import { useDataRefresh } from "../lib/dataBus";
 
 type Endpoint = { kind: TreasuryKind; id: number };
 type Draft = {
@@ -45,6 +46,10 @@ export default function TreasuryTransfersAdmin() {
     setRows(tt); setCashBoxes(cb); setBanks(bk); setCurrencies(cur);
   }
   useEffect(() => { void refresh(); }, []);
+
+  // Refresh the list + balances when a voucher/journal/bank/cashbox is mutated
+  // on another tab.
+  useDataRefresh(["vouchers", "journal", "banks", "cashboxes"], () => { void refresh(); });
 
   const endpointOpts = useMemo(() => [
     ...cashBoxes.map(c => ({ value: endpointKey({ kind: "cash", id: c.id }), label: `💰 ${c.name}`, hint: `${c.currencyCode} · ${fmt(c.balance)}` })),

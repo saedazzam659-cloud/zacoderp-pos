@@ -15,6 +15,10 @@ description: How keep-alive tabs stay fresh via lib/dataBus channel bus, and the
 
 **How to apply:** when wiring a new screen onto the bus, list-channel = union of all entities its fetch touches. When adding a new posting/GL/stock mutation to a lib, add an `emitData(...)` after the successful invoke.
 
+**Empty-state guard trap:** for an ON-DEMAND report (data only after the user clicks عرض/تشغيل) guard the refresh callback so it re-runs only when a result already exists — but guard on a stable "has been run" signal, NEVER on `rows.length`/`raw.length`: a report whose last run returned ZERO rows would then never refresh again. For screens that AUTO-load on mount (`useEffect(() => void refresh(), [])`), use NO guard at all — just `() => { void refresh(); }`. Mis-guarding StockValuation/WarehouseStock on `rows.length` silently froze them on empty stock.
+
+**Draft-create mutations must emit too:** the objective is "every action (create/edit/delete/post/unpost) propagates". A draft-create that writes no JE/stock still changes a LIST (e.g. `createStocktake`) — emit its nearest channel (`"stock"`) so open admin lists refresh cross-tab, even though only posting touches GL.
+
 **Do NOT** reintroduce a parallel generic broadcast (a prior session added `emitDataChanged`/`useDataChanged` and even clobbered dataBus.ts — all reverted). One bus only.
 
 **VAT source rule (the 9 doc forms):** a document line's VAT comes ONLY from the picked item — never the country default. A blank line (no item) is `vatRate:0`; on item-select it is `it.vatRate ?? 0` on every form (sales AND purchase/goods). A selected HEADER tax (`selectedRate`) still overrides all line rates AFTER, so one tax can blanket the whole invoice. **Why:** items carry their own correct rate (e.g. zero-rated/exempt goods); seeding from `getTaxRate()` silently taxed exempt lines at the country rate. `getTaxRate()`/`ItemsAdmin` (item-master default, pharmacy 14) are a SEPARATE concern and keep using country-aware defaults.

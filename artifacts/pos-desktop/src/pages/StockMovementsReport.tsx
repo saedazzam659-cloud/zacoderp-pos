@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import { listStockMovements, listWarehouses, type StockMovement, type Warehouse } from "../lib/inventory";
 import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
@@ -48,6 +49,7 @@ export default function StockMovementsReport() {
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useDataRefresh(["stock", "invoices", "journal"], () => { void refresh(); });
 
   const totals = useMemo(() => {
     let inQ = 0, outQ = 0;

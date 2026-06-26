@@ -5,6 +5,7 @@
 // so untracked items (reorderPoint = 0) never appear here.
 
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import { listItems, type LocalItem } from "../lib/items";
 import {
   getStock,
@@ -43,6 +44,7 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "items"], () => { void refresh(); });
 
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];

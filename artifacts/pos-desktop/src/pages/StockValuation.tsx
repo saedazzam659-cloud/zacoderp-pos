@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import { listStockOnHand, listWarehouses, type StockOnHand, type Warehouse } from "../lib/inventory";
 import { useCurrencySymbol } from "../lib/currency";
 import {
@@ -39,6 +40,7 @@ export default function StockValuation() {
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void refresh(); }, [warehouseId]);
+  useDataRefresh(["stock", "invoices"], () => { void refresh(); });
 
   const valued = useMemo<ValRow[]>(() => {
     return rows
