@@ -16,6 +16,7 @@ import {
   maintenanceOrdersTable,
   bankAccountsTable, cashBoxesTable,
   fiscalYearsTable,
+  suppliersTable, customersTable,
 } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
@@ -693,20 +694,26 @@ router.get("/account-statement", async (req, res) => {
     // Source-document descriptions for invoice rows: when a row's JE comes
     // from a sales/purchase invoice, replace the generic GL line label (e.g.
     // "مستحقات المورد" / "ذمم العملاء") with what was actually invoiced —
-    // the item name(s) on the source invoice plus its document number — so the
-    // statement reads from the source document instead of a placeholder.
+    // the item name(s) on the source invoice plus its document number AND the
+    // counter-party name (supplier / customer) — so the statement reads from
+    // the source document instead of a placeholder.
     const pInvIds = Array.from(new Set(rows.map(r => r.purchaseInvoiceId).filter((x): x is number => !!x)));
     const sInvIds = Array.from(new Set(rows.map(r => r.salesInvoiceId).filter((x): x is number => !!x)));
-    const pInvInfo = new Map<number, { names: string; docNumber: string | null }>();
-    const sInvInfo = new Map<number, { names: string; docNumber: string | null }>();
+    const pInvInfo = new Map<number, { names: string; docNumber: string | null; party: string | null }>();
+    const sInvInfo = new Map<number, { names: string; docNumber: string | null; party: string | null }>();
 
     const dedupeNames = (names: string[]) => Array.from(new Set(names)).join("، ");
 
     if (pInvIds.length) {
-      const hdrs = await db.select({ id: purchaseInvoicesTable.id, docNumber: purchaseInvoicesTable.docNumber })
+      const hdrs = await db.select({
+        id: purchaseInvoicesTable.id,
+        docNumber: purchaseInvoicesTable.docNumber,
+        party: suppliersTable.nameAr,
+      })
         .from(purchaseInvoicesTable)
+        .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseInvoicesTable.supplierId))
         .where(and(eq(purchaseInvoicesTable.companyId, cid), inArray(purchaseInvoicesTable.id, pInvIds)));
-      for (const h of hdrs) pInvInfo.set(h.id, { names: "", docNumber: h.docNumber });
+      for (const h of hdrs) pInvInfo.set(h.id, { names: "", docNumber: h.docNumber, party: h.party ?? null });
       const liRows = await db.select({ invoiceId: purchaseInvoiceLinesTable.invoiceId, itemName: purchaseInvoiceLinesTable.itemName })
         .from(purchaseInvoiceLinesTable)
         .where(and(eq(purchaseInvoiceLinesTable.companyId, cid), inArray(purchaseInvoiceLinesTable.invoiceId, pInvIds)))
@@ -718,16 +725,21 @@ router.get("/account-statement", async (req, res) => {
         (grouped.get(r.invoiceId) ?? grouped.set(r.invoiceId, []).get(r.invoiceId)!).push(nm);
       }
       for (const [id, names] of grouped) {
-        const prev = pInvInfo.get(id) ?? { names: "", docNumber: null };
+        const prev = pInvInfo.get(id) ?? { names: "", docNumber: null, party: null };
         pInvInfo.set(id, { ...prev, names: dedupeNames(names) });
       }
     }
 
     if (sInvIds.length) {
-      const hdrs = await db.select({ id: salesInvoicesTable.id, docNumber: salesInvoicesTable.docNumber })
+      const hdrs = await db.select({
+        id: salesInvoicesTable.id,
+        docNumber: salesInvoicesTable.docNumber,
+        party: customersTable.nameAr,
+      })
         .from(salesInvoicesTable)
+        .leftJoin(customersTable, eq(customersTable.id, salesInvoicesTable.customerId))
         .where(and(eq(salesInvoicesTable.companyId, cid), inArray(salesInvoicesTable.id, sInvIds)));
-      for (const h of hdrs) sInvInfo.set(h.id, { names: "", docNumber: h.docNumber });
+      for (const h of hdrs) sInvInfo.set(h.id, { names: "", docNumber: h.docNumber, party: h.party ?? null });
       const liRows = await db.select({ invoiceId: salesInvoiceLinesTable.invoiceId, itemName: salesInvoiceLinesTable.itemName })
         .from(salesInvoiceLinesTable)
         .where(and(eq(salesInvoiceLinesTable.companyId, cid), inArray(salesInvoiceLinesTable.invoiceId, sInvIds)))
@@ -739,18 +751,17 @@ router.get("/account-statement", async (req, res) => {
         (grouped.get(r.invoiceId) ?? grouped.set(r.invoiceId, []).get(r.invoiceId)!).push(nm);
       }
       for (const [id, names] of grouped) {
-        const prev = sInvInfo.get(id) ?? { names: "", docNumber: null };
+        const prev = sInvInfo.get(id) ?? { names: "", docNumber: null, party: null };
         sInvInfo.set(id, { ...prev, names: dedupeNames(names) });
       }
     }
 
-    const invoiceDescription = (info: { names: string; docNumber: string | null } | undefined): string | null => {
+    const invoiceDescription = (info: { names: string; docNumber: string | null; party: string | null } | undefined): string | null => {
       if (!info) return null;
-      const names = info.names.trim();
-      const num = (info.docNumber ?? "").trim();
-      if (!names && !num) return null;
-      if (names && num) return `${names} — ${num}`;
-      return names || num;
+      const parts = [info.names, info.docNumber ?? "", info.party ?? ""]
+        .map(s => s.trim())
+        .filter(Boolean);
+      return parts.length ? parts.join(" — ") : null;
     };
 
     // Running balance starts from the historical previous balance

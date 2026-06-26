@@ -111,7 +111,7 @@ export default function PurchaseReturns() {
   const [form, setForm]         = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
 
-  const seqPeek = useNextSequenceNumber("purchase_return", showForm && editingId == null, undefined, form.branchId);
+  const seqPeek = useNextSequenceNumber("purchase_return", showForm && editingId == null, undefined, form.branchId, form.paymentType);
   useEffect(() => {
     if (!showForm || editingId != null) return;
     if (seqPeek.hasSequence && seqPeek.number) {

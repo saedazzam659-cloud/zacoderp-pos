@@ -403,6 +403,8 @@ export async function nextSequenceOrFallback(
 const PAYMENT_SPLIT_METHODS: Record<string, readonly string[]> = {
   sales_invoice:    ["cash", "credit", "bank"],
   purchase_invoice: ["cash", "credit", "bank"],
+  sales_return:     ["cash", "credit", "bank"],
+  purchase_return:  ["cash", "credit", "bank"],
   receipt_voucher:  ["cash", "bank"],
   payment_voucher:  ["cash", "bank"],
 };

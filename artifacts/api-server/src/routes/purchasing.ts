@@ -2181,7 +2181,7 @@ router.post("/purchase-returns", async (req, res) => {
     // can never persist the same number.
     let resolvedDocNumber: string | null;
     try {
-      const fromSeq = await nextSequenceNumber(cid, "purchase_return", {
+      const fromSeq = await nextSequenceForPayment(cid, "purchase_return", pType, {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "purchase_returns",
         branchId: branchId ? Number(branchId) : null,
