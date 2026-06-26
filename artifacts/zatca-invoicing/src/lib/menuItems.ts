@@ -76,7 +76,7 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "chat",               label: "الاتصال الداخلي",            section: "الاتصال الداخلي" },
 
-  { key: "company_maintenance", label: "صيانة الشركات",             section: "صيانة الشركات" },
+  { key: "company_maintenance", label: "مركز استيراد وتصدير البيانات", section: "مركز استيراد وتصدير البيانات" },
 
   { key: "installments",       label: "البيع بالتقسيط الذكي",       section: "البيع بالتقسيط" },
 
@@ -562,6 +562,12 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/user-tracking/movement-report", label: "تقرير تحركات المستخدمين", report: true },
     ],
   },
+  {
+    key: "companyMaintenance", label: "مركز استيراد وتصدير البيانات", emoji: "🗄️", moduleKeys: ["company_maintenance"],
+    screens: [
+      { path: "/settings/data-io", label: "استيراد وتصدير البيانات" },
+    ],
+  },
 ];
 
 export const MODULE_GROUP_BY_KEY: Record<string, ModuleGroupDef> = Object.fromEntries(
@@ -630,7 +636,7 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },
   "إعدادات المساعد الصوتي": { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },
   "الجلسات":              { bg: "bg-indigo-50",   text: "text-indigo-700",   border: "border-indigo-200" },
-  "صيانة الشركات":         { bg: "bg-slate-50",    text: "text-slate-700",    border: "border-slate-200" },
+  "مركز استيراد وتصدير البيانات": { bg: "bg-slate-50",    text: "text-slate-700",    border: "border-slate-200" },
   "النظام":               { bg: "bg-purple-50",   text: "text-purple-700",   border: "border-purple-200" },
   "الاتصال الداخلي":       { bg: "bg-green-50",    text: "text-green-700",    border: "border-green-200" },
   "البيع بالتقسيط":         { bg: "bg-lime-50",     text: "text-lime-700",     border: "border-lime-200" },
