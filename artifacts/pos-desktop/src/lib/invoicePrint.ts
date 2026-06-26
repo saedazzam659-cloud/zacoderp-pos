@@ -316,6 +316,21 @@ function printHtml(html: string): void {
   idoc.open();
   idoc.write(html);
   idoc.close();
+  // CSP-proof styling: the Tauri WebView CSP can block the iframe's inline
+  // <style> element (it then prints as raw unstyled text). The element still
+  // exists in the DOM with its CSS text, so re-apply that text through the
+  // CSSOM (constructable stylesheet), which is NOT subject to `style-src`.
+  try {
+    const cssText = Array.from(idoc.querySelectorAll("style"))
+      .map((s) => s.textContent || "")
+      .join("\n");
+    const Ctor = (win as unknown as { CSSStyleSheet?: typeof CSSStyleSheet }).CSSStyleSheet;
+    if (cssText && Ctor && "adoptedStyleSheets" in idoc) {
+      const sheet = new Ctor();
+      sheet.replaceSync(cssText);
+      idoc.adoptedStyleSheets = [...idoc.adoptedStyleSheets, sheet];
+    }
+  } catch { /* CSSOM unavailable — fall back to the inline <style> */ }
   // Wait for the document (incl. logo + QR images) to load so nothing prints
   // blank, with a timeout fallback in case onload never fires.
   if (idoc.readyState === "complete") setTimeout(run, 250);
