@@ -12,8 +12,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HistoricalMigration } from "./HistoricalMigration";
 import {
   Database, Upload, Download, FileSpreadsheet, FileJson, Sparkles, AlertTriangle,
-  CheckCircle2, X, Eye, ArrowLeft, ArrowRight, Loader2, FileDown, Copy,
+  CheckCircle2, X, Eye, ArrowLeft, ArrowRight, Loader2, FileDown, Copy, Printer,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
+import { safeLogoSrc } from "@/lib/export";
 import {
   fetchEntities, exportData, analyzeImport, processImport, commitImport, downloadBlob,
   type EntityCatalogItem, type AnalyzeResult, type ProcessResult, type CommitResult, type RowIssue,
@@ -918,11 +920,16 @@ function stmtDateValue(v: any): number {
   return 0;
 }
 
+const STMT_ALL = "__all__";
+
 function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean }) {
   const { t, i18n } = useTranslation();
+  const { user } = useAuth();
   const dateLocale = i18n.language?.startsWith("ar") ? "ar-EG" : "en-GB";
   const [open, setOpen] = useState(false);
   const [account, setAccount] = useState<string>("");
+  const [fromDate, setFromDate] = useState<string>("");
+  const [toDate, setToDate] = useState<string>("");
   const align = isAr ? "text-right" : "text-left";
 
   const accounts = useMemo(() => {
@@ -935,21 +942,43 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
   }, [rows]);
 
   const selected = account || accounts[0] || "";
+  const allMode = selected === STMT_ALL;
+
+  // Inclusive date window over the original entry dates. "To" extends to the
+  // end of that day so same-day entries are not dropped.
+  const fromMs = fromDate ? stmtDateValue(fromDate) : null;
+  const toMs = toDate ? stmtDateValue(toDate) + 86399999 : null;
+  const inRange = (d: any) => {
+    if (fromMs == null && toMs == null) return true;
+    const ms = stmtDateValue(d);
+    if (fromMs != null && ms < fromMs) return false;
+    if (toMs != null && ms > toMs) return false;
+    return true;
+  };
 
   const lines = useMemo(() => {
     const list = rows
-      .filter((r) => String(r?.accountCode ?? "").trim() === selected)
+      .filter((r) => (allMode ? true : String(r?.accountCode ?? "").trim() === selected))
+      .filter((r) => inRange(r?.entryDate))
       .map((r) => ({
         date: r?.entryDate ?? "",
         doc: r?.docNumber != null ? String(r.docNumber) : "",
+        acct: String(r?.accountCode ?? "").trim(),
         desc: String(r?.lineDescription ?? r?.description ?? ""),
         debit: stmtToNum(r?.debit),
         credit: stmtToNum(r?.credit),
       }))
       .sort((a, b) => stmtDateValue(a.date) - stmtDateValue(b.date));
-    let bal = 0;
-    return list.map((l) => { bal += l.debit - l.credit; return { ...l, balance: bal }; });
-  }, [rows, selected]);
+    // Running balance is kept PER account so the "all accounts" listing shows
+    // each account's own running balance (single-account mode reduces to one).
+    const bals = new Map<string, number>();
+    return list.map((l) => {
+      const nb = (bals.get(l.acct) ?? 0) + l.debit - l.credit;
+      bals.set(l.acct, nb);
+      return { ...l, balance: nb };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, selected, allMode, fromDate, toDate]);
 
   const totals = useMemo(
     () => lines.reduce((acc, l) => { acc.debit += l.debit; acc.credit += l.credit; return acc; }, { debit: 0, credit: 0 }),
@@ -958,18 +987,110 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
 
   const fmt = (n: number) => n.toLocaleString(dateLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtDate = (v: any) => { const ms = stmtDateValue(v); return ms ? new Date(ms).toLocaleDateString(dateLocale) : String(v ?? ""); };
+  const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 
   function exportStatement() {
     const wb = XLSX.utils.book_new();
+    const header = allMode
+      ? [t("dataIO.stmtDate"), t("dataIO.stmtDoc"), t("dataIO.stmtAccount"), t("dataIO.stmtDesc"), t("dataIO.stmtDebit"), t("dataIO.stmtCredit"), t("dataIO.stmtBalance")]
+      : [t("dataIO.stmtDate"), t("dataIO.stmtDoc"), t("dataIO.stmtDesc"), t("dataIO.stmtDebit"), t("dataIO.stmtCredit"), t("dataIO.stmtBalance")];
+    const body = lines.map((l) => allMode
+      ? [fmtDate(l.date), l.doc, l.acct, l.desc, l.debit, l.credit, l.balance]
+      : [fmtDate(l.date), l.doc, l.desc, l.debit, l.credit, l.balance]);
+    const totalsRow = allMode
+      ? [t("dataIO.stmtTotals"), "", "", "", totals.debit, totals.credit, totals.debit - totals.credit]
+      : [t("dataIO.stmtTotals"), "", "", totals.debit, totals.credit, totals.debit - totals.credit];
     const aoa: any[][] = [
-      [t("dataIO.stmtAccount"), selected],
+      [t("dataIO.stmtAccount"), allMode ? t("dataIO.stmtAllAccounts") : selected],
       [],
-      [t("dataIO.stmtDate"), t("dataIO.stmtDoc"), t("dataIO.stmtDesc"), t("dataIO.stmtDebit"), t("dataIO.stmtCredit"), t("dataIO.stmtBalance")],
-      ...lines.map((l) => [fmtDate(l.date), l.doc, l.desc, l.debit, l.credit, l.balance]),
-      [t("dataIO.stmtTotals"), "", "", totals.debit, totals.credit, totals.debit - totals.credit],
+      header,
+      ...body,
+      totalsRow,
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "statement");
-    XLSX.writeFile(wb, `account-statement-${selected}-${Date.now()}.xlsx`);
+    XLSX.writeFile(wb, `account-statement-${allMode ? "all" : selected}-${Date.now()}.xlsx`);
+  }
+
+  // ── Print helpers (standalone window, same look as the system JE print) ──
+  function buildShell(title: string, inner: string) {
+    const dir = isAr ? "rtl" : "ltr";
+    const lang = isAr ? "ar" : "en";
+    const alignCss = isAr ? "right" : "left";
+    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    const logo = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;"/></div>` : "";
+    const cname = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${esc(user.company.nameAr)}</div>` : "";
+    const today = new Date().toLocaleDateString(dateLocale);
+    return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+@page { size:A4; margin:12mm; }
+@media print { thead { display:table-header-group; } .print-btn { display:none; } }
+*{box-sizing:border-box;}
+body{font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif;color:#111;margin:0;padding:16px;}
+.h{text-align:center;margin-bottom:10px;}
+.h h1{margin:0 0 4px;font-size:18px;}
+.h .meta{font-size:11px;color:#555;}
+table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:4px;}
+thead th{background:#1e3a8a;color:#fff;padding:6px 8px;border:1px solid #1e3a8a;text-align:${alignCss};font-weight:600;}
+tbody td{padding:5px 8px;border:1px solid #d1d5db;text-align:${alignCss};}
+tbody tr:nth-child(even) td{background:#f5f7fb;}
+tfoot td{padding:5px 8px;border:1px solid #94a3b8;background:#eef2ff;font-weight:700;text-align:${alignCss};}
+.num{font-family:"Consolas",monospace;}
+.entry{margin-bottom:14px;page-break-inside:avoid;border:1px solid #cbd5e1;border-radius:6px;padding:8px;}
+.entry-h{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;margin-bottom:6px;padding-bottom:4px;border-bottom:1px dashed #cbd5e1;}
+.entry-h .ed{color:#475569;}
+.grand{display:flex;gap:18px;justify-content:center;margin:8px 0 14px;font-size:13px;background:#f1f5f9;padding:8px;border-radius:6px;}
+.grand b{color:#1e3a8a;}
+.print-btn{position:fixed;top:10px;${isAr ? "left" : "right"}:10px;padding:8px 14px;background:#1e3a8a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;}
+</style></head><body>
+<button class="print-btn" onclick="window.print()">${esc(t("dataIO.stmtPrintNow"))}</button>
+<div class="h">${logo}${cname}<h1>${esc(title)}</h1><div class="meta">${esc(t("dataIO.stmtReportDate"))}: ${esc(today)}</div></div>
+${inner}
+<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  }
+
+  function openWin(html: string) {
+    const w = window.open("", "_blank", "width=1100,height=800");
+    if (!w) return;
+    w.document.open(); w.document.write(html); w.document.close();
+  }
+
+  function printStatement() {
+    const acctHead = allMode ? `<th>${esc(t("dataIO.stmtAccount"))}</th>` : "";
+    const head = `<tr><th>#</th><th>${esc(t("dataIO.stmtDate"))}</th><th>${esc(t("dataIO.stmtDoc"))}</th>${acctHead}<th>${esc(t("dataIO.stmtDesc"))}</th><th>${esc(t("dataIO.stmtDebit"))}</th><th>${esc(t("dataIO.stmtCredit"))}</th><th>${esc(t("dataIO.stmtBalance"))}</th></tr>`;
+    const body = lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(fmtDate(l.date))}</td><td>${esc(l.doc)}</td>${allMode ? `<td>${esc(l.acct)}</td>` : ""}<td>${esc(l.desc)}</td><td class="num">${l.debit ? fmt(l.debit) : ""}</td><td class="num">${l.credit ? fmt(l.credit) : ""}</td><td class="num">${fmt(l.balance)}</td></tr>`).join("");
+    const span = allMode ? 5 : 4;
+    const foot = `<tr><td colspan="${span}">${esc(t("dataIO.stmtTotals"))}</td><td class="num">${fmt(totals.debit)}</td><td class="num">${fmt(totals.credit)}</td><td class="num">${fmt(totals.debit - totals.credit)}</td></tr>`;
+    const inner = `<table><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>`;
+    openWin(buildShell(`${t("dataIO.stmtStatementTitle")} — ${allMode ? t("dataIO.stmtAllAccounts") : selected}`, inner));
+  }
+
+  function printGrouped() {
+    const filtered = rows.filter((r) => inRange(r?.entryDate));
+    const map = new Map<string, { date: string; doc: string; desc: string; lns: any[]; td: number; tc: number }>();
+    for (const r of filtered) {
+      const doc = r?.docNumber != null ? String(r.docNumber) : "";
+      const date = r?.entryDate ?? "";
+      const key = `${doc}__${stmtDateValue(date)}`;
+      let g = map.get(key);
+      if (!g) { g = { date, doc, desc: String(r?.description ?? ""), lns: [], td: 0, tc: 0 }; map.set(key, g); }
+      const debit = stmtToNum(r?.debit), credit = stmtToNum(r?.credit);
+      g.lns.push({ acct: String(r?.accountCode ?? "").trim(), desc: String(r?.lineDescription ?? r?.description ?? ""), debit, credit });
+      g.td += debit; g.tc += credit;
+      if (!g.desc && r?.description) g.desc = String(r.description);
+    }
+    const groups = Array.from(map.values()).sort((a, b) => stmtDateValue(a.date) - stmtDateValue(b.date));
+    let gTd = 0, gTc = 0;
+    const blocks = groups.map((g) => {
+      gTd += g.td; gTc += g.tc;
+      const lnsHtml = g.lns.map((l) => `<tr><td>${esc(l.acct)}</td><td>${esc(l.desc)}</td><td class="num">${l.debit ? fmt(l.debit) : ""}</td><td class="num">${l.credit ? fmt(l.credit) : ""}</td></tr>`).join("");
+      return `<div class="entry"><div class="entry-h"><span>${esc(t("dataIO.stmtDoc"))}: <b>${esc(g.doc || "—")}</b></span><span>${esc(t("dataIO.stmtDate"))}: <b>${esc(fmtDate(g.date))}</b></span>${g.desc ? `<span class="ed">${esc(g.desc)}</span>` : ""}</div>`
+        + `<table><thead><tr><th>${esc(t("dataIO.stmtAccount"))}</th><th>${esc(t("dataIO.stmtDesc"))}</th><th>${esc(t("dataIO.stmtDebit"))}</th><th>${esc(t("dataIO.stmtCredit"))}</th></tr></thead><tbody>${lnsHtml}</tbody>`
+        + `<tfoot><tr><td colspan="2">${esc(t("dataIO.stmtTotals"))}</td><td class="num">${fmt(g.td)}</td><td class="num">${fmt(g.tc)}</td></tr></tfoot></table></div>`;
+    }).join("");
+    const grand = `<div class="grand"><span>${esc(t("dataIO.stmtEntriesCount", { count: groups.length }))}</span><span>${esc(t("dataIO.stmtDebit"))}: <b>${fmt(gTd)}</b></span><span>${esc(t("dataIO.stmtCredit"))}: <b>${fmt(gTc)}</b></span></div>`;
+    openWin(buildShell(t("dataIO.stmtPrintTitle"), grand + blocks));
   }
 
   return (
@@ -992,21 +1113,38 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm text-muted-foreground">{t("dataIO.stmtAccount")}</span>
             <select className="px-2 py-1 text-sm border rounded bg-background min-w-[180px]" value={selected} onChange={(e) => setAccount(e.target.value)}>
+              <option value={STMT_ALL}>{t("dataIO.stmtAllAccounts")}</option>
               {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
+            <span className="text-sm text-muted-foreground">{t("dataIO.stmtFrom")}</span>
+            <DateField value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="px-2 py-1 text-sm border rounded bg-background w-[150px]" />
+            <span className="text-sm text-muted-foreground">{t("dataIO.stmtTo")}</span>
+            <DateField value={toDate} onChange={(e) => setToDate(e.target.value)} className="px-2 py-1 text-sm border rounded bg-background w-[150px]" />
+            {(fromDate || toDate) && (
+              <Button size="sm" variant="ghost" onClick={() => { setFromDate(""); setToDate(""); }}>{t("dataIO.stmtClear")}</Button>
+            )}
             <Badge variant="outline">{t("dataIO.stmtRows", { count: lines.length })}</Badge>
-            <Button size="sm" variant="outline" onClick={exportStatement} className="ms-auto">
-              <FileDown className="w-4 h-4 ml-2" /> {t("dataIO.stmtExport")}
-            </Button>
+            <div className="flex items-center gap-2 ms-auto">
+              <Button size="sm" variant="outline" onClick={printStatement}>
+                <Printer className="w-4 h-4 ml-2" /> {t("dataIO.stmtPrintStatement")}
+              </Button>
+              <Button size="sm" variant="outline" onClick={printGrouped}>
+                <Printer className="w-4 h-4 ml-2" /> {t("dataIO.stmtPrint")}
+              </Button>
+              <Button size="sm" variant="outline" onClick={exportStatement}>
+                <FileDown className="w-4 h-4 ml-2" /> {t("dataIO.stmtExport")}
+              </Button>
+            </div>
           </div>
 
-          <div className="overflow-x-auto rounded border max-h-[420px] bg-background">
+          <div className="overflow-x-auto rounded border max-h-[600px] bg-background">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 sticky top-0">
                 <tr>
                   <th className={`p-2 ${align} w-10`}>#</th>
                   <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDate")}</th>
                   <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDoc")}</th>
+                  {allMode && <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtAccount")}</th>}
                   <th className={`p-2 ${align}`}>{t("dataIO.stmtDesc")}</th>
                   <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDebit")}</th>
                   <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtCredit")}</th>
@@ -1019,6 +1157,7 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
                     <td className="p-2 text-xs text-muted-foreground">{idx + 1}</td>
                     <td className="p-2 whitespace-nowrap">{fmtDate(l.date)}</td>
                     <td className="p-2 whitespace-nowrap">{l.doc}</td>
+                    {allMode && <td className="p-2 whitespace-nowrap">{l.acct}</td>}
                     <td className="p-2 max-w-[280px] truncate" title={l.desc}>{l.desc}</td>
                     <td className="p-2 whitespace-nowrap">{l.debit ? fmt(l.debit) : ""}</td>
                     <td className="p-2 whitespace-nowrap">{l.credit ? fmt(l.credit) : ""}</td>
@@ -1028,7 +1167,7 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
               </tbody>
               <tfoot>
                 <tr className="border-t bg-muted/30 font-semibold">
-                  <td className="p-2" colSpan={4}>{t("dataIO.stmtTotals")}</td>
+                  <td className="p-2" colSpan={allMode ? 5 : 4}>{t("dataIO.stmtTotals")}</td>
                   <td className="p-2 whitespace-nowrap">{fmt(totals.debit)}</td>
                   <td className="p-2 whitespace-nowrap">{fmt(totals.credit)}</td>
                   <td className="p-2 whitespace-nowrap">{fmt(totals.debit - totals.credit)}</td>
