@@ -842,6 +842,11 @@
     "sisterReturns": "مرتجعات الشركات الشقيقة",
     "sisterSettlements": "تسويات الشركات الشقيقة",
     "sisterStatements": "كشف حساب الشركات الشقيقة",
+    "officeModule": "أوفيس زاكود",
+    "officeGroup": "أوفيس زاكود",
+    "officeHub": "أوفيس زاكود",
+    "officeWord": "محرر المستندات (Word)",
+    "officeExcel": "محرر الجداول (Excel)",
     "stockAdjustments": "التسوية المخزنية",
     "stockCounts": "الجرد المخزني",
     "offers": "العروض",
@@ -2487,7 +2492,8 @@
       "chat": "الاتصال الداخلي",
       "companyMaintenance": "صيانة الشركات",
       "fieldService": "الخدمة الميدانية",
-      "multiLink": "ربط متعدد"
+      "multiLink": "ربط متعدد",
+      "office": "أوفيس زاكود"
     },
     "actions": {
       "view": "عرض",
@@ -2517,6 +2523,7 @@
       "data_io": "استيراد وتصدير البيانات",
       "sequences": "مسلسل الحركات",
       "extensions": "الإضافات",
+      "office": "أوفيس زاكود (Word + Excel)",
       "customers": "العملاء",
       "sales_quotations": "عروض الأسعار",
       "sales_invoices": "فواتير المبيعات",

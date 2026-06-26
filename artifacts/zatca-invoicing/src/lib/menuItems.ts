@@ -91,6 +91,14 @@ export const MENU_ITEMS: MenuItem[] = [
   // management. Single permission key drives the whole collapsible
   // sidebar group + the per-company MenuPermissions toggle.
   { key: "multi_link",         label: "ربط متعدد",                  section: "ربط متعدد" },
+
+  // ── أوفيس زاكود ────────────────────────────────────────────────
+  // In-browser Word + Excel editor (open/read/save external DOCX, XLSX,
+  // CSV, TXT; PDF export). LOCKED BY DEFAULT — the SuperAdmin enables it
+  // per company from /admin/menu-permissions. Single permission key
+  // (`office`) drives the company toggle, per-user RBAC, the collapsible
+  // sidebar group and every route.
+  { key: "office",             label: "أوفيس زاكود",                section: "أوفيس زاكود" },
 ];
 
 export const SECTIONS: string[] = Array.from(new Set(MENU_ITEMS.map(m => m.section)));
@@ -157,6 +165,9 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   user_tracking:      null,
   zatca:              "zatca",
   multi_link:         null,           // SuperAdmin / partner tool, not billed per-company
+  // Office suite is LOCKED BY DEFAULT — the permission key itself is the
+  // on/off switch (no separate billable parent module).
+  office:             null,
 };
 
 // Resolve the unique set of high-level module keys implied by a list of
@@ -326,6 +337,14 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/inventory/sister-returns", label: "مرتجعات الشركات الشقيقة" },
       { path: "/inventory/sister-settlements", label: "تسويات الشركات الشقيقة" },
       { path: "/inventory/sister-statements", label: "كشف حساب الشركات الشقيقة", report: true },
+    ],
+  },
+  {
+    key: "office", label: "أوفيس زاكود", emoji: "📄", moduleKeys: ["office"],
+    screens: [
+      { path: "/office", label: "أوفيس زاكود" },
+      { path: "/office/word", label: "محرر المستندات (Word)" },
+      { path: "/office/excel", label: "محرر الجداول (Excel)" },
     ],
   },
   {

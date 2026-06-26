@@ -840,6 +840,11 @@
     "sisterReturns": "Sister Returns",
     "sisterSettlements": "Sister Settlements",
     "sisterStatements": "Sister Companies Statement",
+    "officeModule": "Zacode Office",
+    "officeGroup": "Zacode Office",
+    "officeHub": "Zacode Office",
+    "officeWord": "Document Editor (Word)",
+    "officeExcel": "Spreadsheet Editor (Excel)",
     "stockAdjustments": "Stock Adjustments",
     "stockCounts": "Stock Counts",
     "offers": "Offers",
@@ -2484,7 +2489,8 @@
       "chat": "Internal Communication",
       "companyMaintenance": "Company Maintenance",
       "fieldService": "Field Service",
-      "multiLink": "Multi-Link Gateway"
+      "multiLink": "Multi-Link Gateway",
+      "office": "Zacode Office"
     },
     "actions": {
       "view": "View",
@@ -2514,6 +2520,7 @@
       "data_io": "Data Import / Export",
       "sequences": "Document Numbering (Sequences)",
       "extensions": "Extensions",
+      "office": "Zacode Office (Word + Excel)",
       "customers": "Customers",
       "sales_quotations": "Sales Quotations",
       "sales_invoices": "Sales Invoices",

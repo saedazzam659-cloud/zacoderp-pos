@@ -107,12 +107,16 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   // company sees the الإضافات group ONLY after SuperAdmin grants the
   // `extensions_platform` toggle. Mirror of the backend COMPANY_MODULE_GATE.
   extensions: "extensions_platform",
+  // Zacode Office (أوفيس زاكود) — additive in-browser Word + Excel editor.
+  // Default OFF; a company sees/uses the office suite ONLY after SuperAdmin
+  // grants the `office` toggle. Single key gates every office route.
+  office: "office",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse
 // of the normal default-on). Keep in sync with permissions.ts (backend) and
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
-const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform"]);
+const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office"]);
 
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `permKey`. Mirrors parsePerms semantics in

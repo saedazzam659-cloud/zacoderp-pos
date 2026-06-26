@@ -270,6 +270,9 @@ import SisterSettlements from "@/pages/inventory/sister-companies/SisterSettleme
 import SisterSettlementForm from "@/pages/inventory/sister-companies/SisterSettlementForm";
 import SisterCompanyStatement from "@/pages/inventory/sister-companies/SisterCompanyStatement";
 import SisterStatementsHub from "@/pages/inventory/sister-companies/SisterStatementsHub";
+import OfficeHub from "@/pages/office/OfficeHub";
+import WordEditor from "@/pages/office/WordEditor";
+import ExcelEditor from "@/pages/office/ExcelEditor";
 import StockAdjustment from "@/pages/inventory/StockAdjustment";
 import StockCounting from "@/pages/inventory/StockCounting";
 import StockLedger from "@/pages/inventory/StockLedger";
@@ -908,6 +911,10 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements/new"         module="sister_companies" action="create" component={SisterSettlementForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements/:id"         module="sister_companies" action="edit" component={SisterSettlementForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-statements"              module="sister_companies" component={SisterStatementsHub} />}
+            {/* ── أوفيس زاكود (Zacode Office) — locked-by-default module ── */}
+            {!isSuperAdmin && <PermRoute path="/office"       module="office" component={OfficeHub} />}
+            {!isSuperAdmin && <PermRoute path="/office/word"  module="office" component={WordEditor} />}
+            {!isSuperAdmin && <PermRoute path="/office/excel" module="office" component={ExcelEditor} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments"      module="stock_adjustments" component={StockAdjustment} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments/new"  module="stock_adjustments" action="create" component={StockAdjustment} />}
             {!isSuperAdmin && <PermRoute path="/inventory/counts"           module="stock_counts"      component={StockCounting} />}

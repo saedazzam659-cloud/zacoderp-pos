@@ -42,6 +42,7 @@ const G = {
   companyMaintenance: "perms.groups.companyMaintenance",
   fieldService: "perms.groups.fieldService",
   multiLink:    "perms.groups.multiLink",
+  office:       "perms.groups.office",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -59,6 +60,8 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "currencies",           label: "perms.modules.currencies",           group: G.dashboard,  actions: VC },
   { key: "sequences",            label: "perms.modules.sequences",            group: G.dashboard,  actions: VC },
   { key: "extensions",           label: "perms.modules.extensions",           group: G.dashboard,  actions: VO },
+
+  { key: "office",               label: "perms.modules.office",               group: G.office,     actions: VO },
 
   { key: "customers",            label: "perms.modules.customers",            group: G.sales,      actions: VC },
   { key: "sales_quotations",     label: "perms.modules.sales_quotations",     group: G.sales,      actions: ALL },

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
-  LayoutDashboard, Building2, FileText, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning,
+  LayoutDashboard, Building2, FileText, FileSpreadsheet, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning,
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
   Package, PackagePlus, PackageMinus, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2, ListTree,
@@ -127,6 +127,11 @@ const INVENTORY_GROUP_PERMS     = ["items","warehouses","stock_transfers","stock
 // ("معاملات الشركات الشقيقة"). Single permission key gates the whole
 // group (master, transfers, returns, settlements, statement report).
 const SISTER_GROUP_PERMS        = ["sister_companies"];
+// Zacode Office (أوفيس زاكود) — in-browser Word + Excel editor promoted to
+// its own top-level sidebar group. Single permission key gates the whole
+// group (hub, Word editor, Excel editor); locked-by-default until the
+// SuperAdmin enables it on the tenant.
+const OFFICE_GROUP_PERMS        = ["office"];
 // All inventory report routes are gated as module="items" in App.tsx, so the
 // group should mirror that exactly — a user with only `warehouses.view` has
 // nothing accessible inside this group.
@@ -577,6 +582,16 @@ const sisterSubNav: NavDef[] = [
   { nameKey: "nav.sisterStatements",  href: "/inventory/sister-statements",  icon: FileText,       permKey: "sister_companies" },
 ];
 
+// ── أوفيس زاكود (Zacode Office) — locked-by-default ──────────────────────
+// In-browser Word + Excel editor. Single permKey (`office`) gates every
+// entry; the whole group auto-hides until the SuperAdmin enables it on the
+// tenant from /admin/menu-permissions.
+const officeSubNav: NavDef[] = [
+  { nameKey: "nav.officeHub",   href: "/office",       icon: LayoutDashboard,  permKey: "office", exact: true },
+  { nameKey: "nav.officeWord",  href: "/office/word",  icon: FileText,         permKey: "office" },
+  { nameKey: "nav.officeExcel", href: "/office/excel", icon: FileSpreadsheet,  permKey: "office" },
+];
+
 const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
 const inventoryReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.stockBalance", href: "/inventory/reports/stock-balance", icon: BarChart2,         permKey: "items" },
@@ -842,6 +857,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   zatca:       ["zatca"],
   inventory:   ["inventory", "inventory_mobile", "inventory_reports"],
   sister:      ["sister_companies"],
+  office:      ["office"],
   sales:       ["sales", "sales_module", "sales_reports", "customers"],
   purchasing:  ["purchasing", "purchases_module", "purchases_reports", "suppliers"],
   cash:        ["cash", "cash_module", "cash_reports"],
@@ -1317,6 +1333,45 @@ function SisterNavGroup({
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {sisterSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── OfficeNavGroup (top-level sidebar group) ─────────────────────────────────
+// "أوفيس زاكود" — in-browser Word + Excel editor. Locked-by-default module:
+// gated entirely on the `office` menu permission key; the group hides until
+// the SuperAdmin enables it from /admin/menu-permissions for the tenant.
+function OfficeNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, OFFICE_GROUP_PERMS)) return null;
+  const isOnOffice = location.startsWith("/office");
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/office"
+        icon={FileText}
+        label={t("nav.officeModule")}
+        isOn={isOnOffice}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {officeSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -2300,6 +2355,11 @@ function TopNavBar(props: any) {
       node: close => <SisterNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
+      key: "office",
+      label: t("nav.officeGroup", { defaultValue: "أوفيس زاكود" }),
+      node: close => <OfficeNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
       key: "sales",
       label: t("nav.salesGroup", { defaultValue: "المبيعات" }),
       node: close => (
@@ -2467,6 +2527,8 @@ function SidebarInner({
   onInvReportsToggle,
   sisterOpen,
   onSisterToggle,
+  officeOpen,
+  onOfficeToggle,
   reportsOpen,
   onReportsToggle,
   purchasingOpen,
@@ -2541,6 +2603,8 @@ function SidebarInner({
   onInvReportsToggle: () => void;
   sisterOpen: boolean;
   onSisterToggle: () => void;
+  officeOpen: boolean;
+  onOfficeToggle: () => void;
   reportsOpen: boolean;
   onReportsToggle: () => void;
   purchasingOpen: boolean;
@@ -2745,6 +2809,17 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={sisterOpen}
                   onToggle={onSisterToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "office", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <OfficeNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={officeOpen}
+                  onToggle={onOfficeToggle}
                 />
               </div>
             )}
@@ -3464,6 +3539,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [invReportsOpen, setInvReportsOpen]   = useState(() => location.startsWith("/inventory/reports"));
   // Sister Companies group — auto-expand when on any /inventory/sister-* route.
   const [sisterOpen,    setSisterOpen]        = useState(() => location.startsWith("/inventory/sister-"));
+  // Zacode Office group — auto-expand when on any /office route.
+  const [officeOpen,    setOfficeOpen]        = useState(() => location.startsWith("/office"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   // Reports are nested INSIDE the purchasing group, so any /purchasing/* route
   // (including /purchasing/reports/*) auto-expands the parent.
@@ -3536,12 +3613,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "sister" | "accounting"
     | "purchasing" | "sales" | "cash" | "hr" | "production" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
-    | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring" | "extensions";
+    | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring" | "extensions" | "office";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
     if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
     if (keep !== "inventory")  setInventoryOpen(false);
     if (keep !== "sister")     setSisterOpen(false);
+    if (keep !== "office")     setOfficeOpen(false);
     if (keep !== "accounting") setAccountingOpen(false);
     if (keep !== "purchasing") setPurchasingOpen(false);
     if (keep !== "sales")      setSalesOpen(false);
@@ -3587,6 +3665,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleZatcaGroupToggle = makeAccordionToggle("zatcaGroup", zatcaGroupOpen, setZatcaGroupOpen);
   const handleInventoryToggle  = makeAccordionToggle("inventory",  inventoryOpen,  setInventoryOpen);
   const handleSisterToggle     = makeAccordionToggle("sister",     sisterOpen,     setSisterOpen);
+  const handleOfficeToggle     = makeAccordionToggle("office",     officeOpen,     setOfficeOpen);
   const handleAccountingToggle = makeAccordionToggle("accounting", accountingOpen, setAccountingOpen);
   const handlePurchasingToggle = makeAccordionToggle("purchasing", purchasingOpen, setPurchasingOpen);
   const handleSalesToggle      = makeAccordionToggle("sales",      salesOpen,      setSalesOpen);
@@ -3659,6 +3738,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/accounting")) target = "accounting";
     else if (location.startsWith("/inventory/sister-")) target = "sister";
     else if (location.startsWith("/inventory")) target = "inventory";
+    else if (location.startsWith("/office")) target = "office";
     else if (location.startsWith("/production")) target = "production";
     else if (location.startsWith("/safety")) target = "safety";
     else if (location.startsWith("/contracting")) target = "contracting";
@@ -3699,6 +3779,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         zatcaGroup: setZatcaGroupOpen,
         inventory:  setInventoryOpen,
         sister:     setSisterOpen,
+        office:     setOfficeOpen,
         accounting: setAccountingOpen,
         purchasing: setPurchasingOpen,
         sales:      setSalesOpen,
@@ -3744,6 +3825,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onInvReportsToggle: handleInvReportsToggle,
     sisterOpen,
     onSisterToggle: handleSisterToggle,
+    officeOpen,
+    onOfficeToggle: handleOfficeToggle,
     reportsOpen,
     onReportsToggle: handleReportsToggle,
     purchasingOpen,

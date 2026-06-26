@@ -132,6 +132,10 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // company sees/uses extensions ONLY after SuperAdmin grants the
   // `extensions_platform` toggle. Mirror in frontend companyModuleGate.ts.
   extensions: "extensions_platform",
+  // Zacode Office (أوفيس زاكود) — additive in-browser Word + Excel editor.
+  // Default OFF; mirror in frontend companyModuleGate.ts. Single key gates
+  // every office route + the sidebar group.
+  office: "office",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be
@@ -139,7 +143,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // SuperAdmin platform modules that must stay hidden until turned on. Keep in
 // sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
 // MenuPermissions.tsx.
-const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform"]);
+const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office"]);
 
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `module`. Mirrors companyAllowsModule() in Layout.tsx —
