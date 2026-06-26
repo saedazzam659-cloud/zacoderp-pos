@@ -882,6 +882,147 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// JOURNAL ACCOUNT-STATEMENT PREVIEW (built client-side from the imported rows,
+// BEFORE saving — lets a maintainer verify migrated journal entries per account
+// using the original entry dates).
+// ════════════════════════════════════════════════════════════════════════════
+
+function stmtToNum(v: any): number {
+  if (v == null || v === "") return 0;
+  const n = Number(String(v).replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[^\d.\-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+function stmtDateValue(v: any): number {
+  if (!v) return 0;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean }) {
+  const { t, i18n } = useTranslation();
+  const dateLocale = i18n.language?.startsWith("ar") ? "ar-EG" : "en-GB";
+  const [open, setOpen] = useState(false);
+  const [account, setAccount] = useState<string>("");
+  const align = isAr ? "text-right" : "text-left";
+
+  const accounts = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) {
+      const code = r?.accountCode;
+      if (code != null && String(code).trim() !== "") set.add(String(code).trim());
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [rows]);
+
+  const selected = account || accounts[0] || "";
+
+  const lines = useMemo(() => {
+    const list = rows
+      .filter((r) => String(r?.accountCode ?? "").trim() === selected)
+      .map((r) => ({
+        date: r?.entryDate ?? "",
+        doc: r?.docNumber != null ? String(r.docNumber) : "",
+        desc: String(r?.lineDescription ?? r?.description ?? ""),
+        debit: stmtToNum(r?.debit),
+        credit: stmtToNum(r?.credit),
+      }))
+      .sort((a, b) => stmtDateValue(a.date) - stmtDateValue(b.date));
+    let bal = 0;
+    return list.map((l) => { bal += l.debit - l.credit; return { ...l, balance: bal }; });
+  }, [rows, selected]);
+
+  const totals = useMemo(
+    () => lines.reduce((acc, l) => { acc.debit += l.debit; acc.credit += l.credit; return acc; }, { debit: 0, credit: 0 }),
+    [lines],
+  );
+
+  const fmt = (n: number) => n.toLocaleString(dateLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtDate = (v: any) => { const ms = stmtDateValue(v); return ms ? new Date(ms).toLocaleDateString(dateLocale) : String(v ?? ""); };
+
+  function exportStatement() {
+    const wb = XLSX.utils.book_new();
+    const aoa: any[][] = [
+      [t("dataIO.stmtAccount"), selected],
+      [],
+      [t("dataIO.stmtDate"), t("dataIO.stmtDoc"), t("dataIO.stmtDesc"), t("dataIO.stmtDebit"), t("dataIO.stmtCredit"), t("dataIO.stmtBalance")],
+      ...lines.map((l) => [fmtDate(l.date), l.doc, l.desc, l.debit, l.credit, l.balance]),
+      [t("dataIO.stmtTotals"), "", "", totals.debit, totals.credit, totals.debit - totals.credit],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "statement");
+    XLSX.writeFile(wb, `account-statement-${selected}-${Date.now()}.xlsx`);
+  }
+
+  return (
+    <Card className="p-4 border-sky-300 bg-sky-50/40 dark:bg-sky-950/20">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <FileSpreadsheet className="w-4 h-4 text-sky-600" />
+          <h3 className="font-semibold">{t("dataIO.stmtTitle")}</h3>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => setOpen((o) => !o)}>
+          {open ? t("dataIO.stmtHide") : t("dataIO.stmtShow")}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground mt-1">{t("dataIO.stmtHint")}</p>
+
+      {open && (accounts.length === 0 ? (
+        <div className="mt-3 text-sm text-amber-700 dark:text-amber-300">{t("dataIO.stmtNoAccounts")}</div>
+      ) : (
+        <div className="mt-3 space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-muted-foreground">{t("dataIO.stmtAccount")}</span>
+            <select className="px-2 py-1 text-sm border rounded bg-background min-w-[180px]" value={selected} onChange={(e) => setAccount(e.target.value)}>
+              {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <Badge variant="outline">{t("dataIO.stmtRows", { count: lines.length })}</Badge>
+            <Button size="sm" variant="outline" onClick={exportStatement} className="ms-auto">
+              <FileDown className="w-4 h-4 ml-2" /> {t("dataIO.stmtExport")}
+            </Button>
+          </div>
+
+          <div className="overflow-x-auto rounded border max-h-[420px] bg-background">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 sticky top-0">
+                <tr>
+                  <th className={`p-2 ${align} w-10`}>#</th>
+                  <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDate")}</th>
+                  <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDoc")}</th>
+                  <th className={`p-2 ${align}`}>{t("dataIO.stmtDesc")}</th>
+                  <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDebit")}</th>
+                  <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtCredit")}</th>
+                  <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtBalance")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l, idx) => (
+                  <tr key={idx} className="border-t">
+                    <td className="p-2 text-xs text-muted-foreground">{idx + 1}</td>
+                    <td className="p-2 whitespace-nowrap">{fmtDate(l.date)}</td>
+                    <td className="p-2 whitespace-nowrap">{l.doc}</td>
+                    <td className="p-2 max-w-[280px] truncate" title={l.desc}>{l.desc}</td>
+                    <td className="p-2 whitespace-nowrap">{l.debit ? fmt(l.debit) : ""}</td>
+                    <td className="p-2 whitespace-nowrap">{l.credit ? fmt(l.credit) : ""}</td>
+                    <td className="p-2 whitespace-nowrap font-medium">{fmt(l.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t bg-muted/30 font-semibold">
+                  <td className="p-2" colSpan={4}>{t("dataIO.stmtTotals")}</td>
+                  <td className="p-2 whitespace-nowrap">{fmt(totals.debit)}</td>
+                  <td className="p-2 whitespace-nowrap">{fmt(totals.credit)}</td>
+                  <td className="p-2 whitespace-nowrap">{fmt(totals.debit - totals.credit)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // REVIEW PANEL
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -930,6 +1071,10 @@ function ReviewPanel({ processed, entity, entityKey, setProcessed, onCommit, onB
         <StatCard label={t("dataIO.statFixes")}      value={processed.stats.info}      icon={<Sparkles />} tone="info"   onClick={() => setFilter("info")}        active={filter === "info"} />
         <StatCard label={t("dataIO.statDuplicates")} value={processed.stats.duplicates} icon={<CheckCircle2 />} tone="muted" onClick={() => setFilter("duplicates")} active={filter === "duplicates"} />
       </div>
+
+      {entityKey === "journalEntries" && (
+        <JournalStatementPreview rows={processed.processed} isAr={isAr} />
+      )}
 
       <Card className="p-4">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">

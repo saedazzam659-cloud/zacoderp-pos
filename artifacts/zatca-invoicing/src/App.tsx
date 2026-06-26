@@ -1088,7 +1088,7 @@ function AppRoutes() {
             {/* Settings routes */}
             {!isSuperAdmin && <PermRoute path="/settings/currencies"          module="currencies"       component={Currencies} />}
             {!isSuperAdmin && <PermRoute path="/settings/accounting-mappings" module="general_settings" component={AccountingMappings} />}
-            {!isSuperAdmin && <PermRoute path="/settings/data-io"             module="data_io"          component={DataImportExport} />}
+            <PermRoute path="/settings/data-io"             module="data_io"          component={DataImportExport} />
             {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/settings/sequences" module="sequences" component={Sequences} />}
             {!isSuperAdmin && <PermRoute path="/sales/reps/commissions"       module="sales_reps"       component={SalesRepCommissions} />}
             {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_reps"       component={SalesReps} />}
