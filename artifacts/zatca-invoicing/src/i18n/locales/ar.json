@@ -7314,6 +7314,10 @@
     },
     "custody": {
       "title": "عُهد الموظفين",
+      "bankInfoTitle": "البيانات البنكية للموظف",
+      "labelBankName": "اسم البنك:",
+      "labelIban": "الآيبان:",
+      "bankInfoEmpty": "لا توجد بيانات بنكية مسجلة لهذا الموظف.",
       "newCustody": "عهدة جديدة",
       "statusActive": "نشطة",
       "statusSettled": "مُسوّاة",

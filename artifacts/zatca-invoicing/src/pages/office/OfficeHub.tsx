@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { FileText, FileSpreadsheet, FolderOpen, Save, FileDown } from "lucide-react";
+import { FileText, FileSpreadsheet, FolderOpen, Save, FileDown, FileUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
 export default function OfficeHub() {
@@ -13,8 +13,8 @@ export default function OfficeHub() {
       icon: FileText,
       title: ar ? "محرر المستندات (Word)" : "Document Editor (Word)",
       desc: ar
-        ? "افتح وحرّر واحفظ ملفات Word (DOCX) والنصوص (TXT) مباشرة من جهازك، مع تنسيق غني وتصدير PDF."
-        : "Open, edit and save Word (DOCX) and text (TXT) files straight from your device, with rich formatting and PDF export.",
+        ? "افتح وحرّر واحفظ ملفات Word (DOCX) والنصوص (TXT)، واستورد نص ملفات PDF مباشرة من جهازك، مع تنسيق غني وتصدير PDF."
+        : "Open, edit and save Word (DOCX) and text (TXT) files, import text from PDF files straight from your device, with rich formatting and PDF export.",
       accent: "text-blue-600",
       ring: "group-hover:border-blue-300",
     },
@@ -23,8 +23,8 @@ export default function OfficeHub() {
       icon: FileSpreadsheet,
       title: ar ? "محرر الجداول (Excel)" : "Spreadsheet Editor (Excel)",
       desc: ar
-        ? "افتح وحرّر واحفظ جداول Excel (XLSX) وملفات CSV بأوراق متعددة، مع تصدير PDF للطباعة."
-        : "Open, edit and save Excel (XLSX) and CSV spreadsheets with multiple sheets, plus PDF export for printing.",
+        ? "افتح وحرّر واحفظ جداول Excel (XLSX) وملفات CSV بأوراق متعددة، واستورد جداول من ملفات PDF، مع تصدير PDF للطباعة."
+        : "Open, edit and save Excel (XLSX) and CSV spreadsheets with multiple sheets, import tables from PDF files, plus PDF export for printing.",
       accent: "text-green-600",
       ring: "group-hover:border-green-300",
     },
@@ -42,6 +42,13 @@ export default function OfficeHub() {
       desc: ar
         ? "احفظ التعديلات في نفس الملف (في المتصفحات المدعومة) أو نزّل نسخة جديدة."
         : "Write changes back to the same file (supported browsers) or download a fresh copy.",
+    },
+    {
+      icon: FileUp,
+      title: ar ? "استيراد من PDF" : "Import from PDF",
+      desc: ar
+        ? "حوّل نص ملفات PDF إلى مستند Word أو جدول Excel قابل للتحرير (الملفات النصية، وليست الممسوحة ضوئياً)."
+        : "Convert PDF text into an editable Word document or Excel table (text PDFs, not scanned images).",
     },
     {
       icon: FileDown,

@@ -210,6 +210,15 @@ export default function EmployeeCustodies() {
   const editingCustody = editingId ? custodies.find((c: any) => c.id === editingId) : null;
   const lockPrincipal = !!editingCustody && !!editingCustody.disbursementJournalId;
 
+  const selectedEmp = useMemo(
+    () => employees.find((e: any) => String(e.id) === String(form.employeeId)) ?? null,
+    [employees, form.employeeId],
+  );
+  const disburseEmp = useMemo(
+    () => (disburseFor ? employees.find((e: any) => String(e.id) === String(disburseFor.employeeId)) ?? null : null),
+    [employees, disburseFor],
+  );
+
   function resetForm() { setForm(EMPTY); setEditingId(null); setShowForm(false); }
   function openNew() { setForm(EMPTY); setEditingId(null); setShowForm(true); }
   function openEdit(c: any) {
@@ -374,6 +383,19 @@ export default function EmployeeCustodies() {
                 disabled={lockPrincipal}
               />
             </Field>
+            {selectedEmp && (
+              <div className="md:col-span-3 rounded border bg-muted/30 p-2 text-xs space-y-1" data-testid="custody-bank-info">
+                <div className="font-medium text-muted-foreground">{tr("bankInfoTitle")}</div>
+                {(selectedEmp.bankName || selectedEmp.bankAccountIban) ? (
+                  <>
+                    <div><span className="text-muted-foreground">{tr("labelBankName")}</span> {selectedEmp.bankName || "—"}</div>
+                    <div><span className="text-muted-foreground">{tr("labelIban")}</span> <span className="tabular-nums" dir="ltr">{selectedEmp.bankAccountIban || "—"}</span></div>
+                  </>
+                ) : (
+                  <div className="text-amber-700">{tr("bankInfoEmpty")}</div>
+                )}
+              </div>
+            )}
             <Field label={tr("fieldDate")}>
               <DateField value={form.custodyDate} onChange={e => setForm({ ...form, custodyDate: e.target.value })} disabled={lockPrincipal} data-testid="custody-date" />
             </Field>
@@ -492,6 +514,12 @@ export default function EmployeeCustodies() {
                 <div><span className="text-muted-foreground">{tr("labelEmployee")}</span> <strong>{pickName(disburseFor.empNameAr, disburseFor.empNameEn)}</strong> ({disburseFor.empCode})</div>
                 <div><span className="text-muted-foreground">{tr("labelDate")}</span> {disburseFor.custodyDate}</div>
                 <div><span className="text-muted-foreground">{tr("labelAmount")}</span> <strong className="text-emerald-700">{num(disburseFor.amount).toFixed(2)} {tr("sar")}</strong></div>
+                {(disburseEmp?.bankName || disburseEmp?.bankAccountIban) && (
+                  <>
+                    <div><span className="text-muted-foreground">{tr("labelBankName")}</span> {disburseEmp.bankName || "—"}</div>
+                    <div><span className="text-muted-foreground">{tr("labelIban")}</span> <span className="tabular-nums" dir="ltr">{disburseEmp.bankAccountIban || "—"}</span></div>
+                  </>
+                )}
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">{tr("labelMethod")}</label>

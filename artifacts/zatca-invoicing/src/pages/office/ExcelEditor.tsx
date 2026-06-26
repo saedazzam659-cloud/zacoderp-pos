@@ -1,18 +1,19 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  FileSpreadsheet, FolderOpen, Save, FileDown, FilePlus2, Plus, Trash2, Columns3,
+  FileSpreadsheet, FolderOpen, Save, FileDown, FilePlus2, Plus, Trash2, Columns3, FileUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { openFile, saveFile, printHtml, withExtension, type OpenedFile } from "./fileIo";
+import { openFile, saveFile, printHtml, withExtension, extractPdf, type OpenedFile } from "./fileIo";
 
 const XLSX_ACCEPT = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
   "application/vnd.ms-excel": [".xls"],
 };
 const CSV_ACCEPT = { "text/csv": [".csv"] };
+const PDF_ACCEPT = { "application/pdf": [".pdf"] };
 
 interface SheetData {
   name: string;
@@ -154,6 +155,49 @@ export default function ExcelEditor() {
     }
   };
 
+  const handleImportPdf = async () => {
+    try {
+      const opened = await openFile({
+        accept: PDF_ACCEPT,
+        description: ar ? "ملفات PDF" : "PDF files",
+      });
+      if (!opened) return;
+      setBusy(true);
+      const pages = await extractPdf(opened.file);
+      const loaded: SheetData[] = pages
+        .map((p, i) => ({
+          name: `${ar ? "صفحة" : "Page"} ${i + 1}`,
+          lines: p.lines,
+        }))
+        .filter((p) => p.lines.length > 0)
+        .map((p) => ({ name: p.name, rows: rectify(p.lines.map((l) => l.cells)) }));
+      if (!loaded.length) {
+        toast({
+          title: ar ? "لا يوجد نص قابل للاستخراج" : "No extractable text",
+          description: ar
+            ? "هذا الملف يبدو ممسوحاً ضوئياً (صورة). يتطلب تحويله ميزة OCR غير المتوفرة حالياً."
+            : "This PDF appears to be scanned (image-only). Converting it needs OCR, which is not available yet.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setSheets(loaded);
+      setActive(0);
+      // Imported content has no original XLSX file → save creates a new one.
+      setFileName(withExtension(opened.file.name, "xlsx"));
+      setHandle(null);
+      setDirty(true);
+      toast({
+        title: ar ? "تم استيراد PDF" : "PDF imported",
+        description: ar ? "راجع الجدول ثم احفظه بصيغة Excel." : "Review the table, then save as Excel.",
+      });
+    } catch (e: any) {
+      toast({ title: ar ? "تعذّر استيراد PDF" : "Could not import PDF", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const doSave = async (kind: "xlsx" | "csv", saveAs: boolean) => {
     try {
       setBusy(true);
@@ -227,6 +271,9 @@ export default function ExcelEditor() {
           </Button>
           <Button size="sm" variant="outline" onClick={handleOpen} disabled={busy} data-testid="button-excel-open">
             <FolderOpen className="h-4 w-4 ms-1" /> {ar ? "فتح" : "Open"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleImportPdf} disabled={busy} data-testid="button-excel-importpdf">
+            <FileUp className="h-4 w-4 ms-1" /> {ar ? "استيراد PDF" : "Import PDF"}
           </Button>
           <Button size="sm" onClick={() => doSave("xlsx", false)} disabled={busy} data-testid="button-excel-save">
             <Save className="h-4 w-4 ms-1" /> {ar ? "حفظ XLSX" : "Save XLSX"}

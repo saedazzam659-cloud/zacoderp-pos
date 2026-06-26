@@ -3,17 +3,18 @@ import { useTranslation } from "react-i18next";
 import DOMPurify from "dompurify";
 import {
   FileText, FolderOpen, Save, FileDown, FilePlus2, Bold, Italic, Underline,
-  List, ListOrdered, Heading1, Heading2, Heading3, AlignRight, AlignCenter, AlignLeft,
+  List, ListOrdered, Heading1, Heading2, Heading3, AlignRight, AlignCenter, AlignLeft, FileUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { openFile, saveFile, printHtml, withExtension, type OpenedFile } from "./fileIo";
+import { openFile, saveFile, printHtml, withExtension, extractPdf, type OpenedFile } from "./fileIo";
 
 const DOCX_ACCEPT = {
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
 };
 const TXT_ACCEPT = { "text/plain": [".txt"] };
+const PDF_ACCEPT = { "application/pdf": [".pdf"] };
 
 // Walk a contentEditable DOM tree and build a docx Document.
 async function buildDocxBlob(root: HTMLElement, rtl: boolean): Promise<Blob> {
@@ -186,6 +187,52 @@ export default function WordEditor() {
     }
   };
 
+  const handleImportPdf = async () => {
+    try {
+      const opened = await openFile({
+        accept: PDF_ACCEPT,
+        description: ar ? "ملفات PDF" : "PDF files",
+      });
+      if (!opened) return;
+      setBusy(true);
+      const pages = await extractPdf(opened.file);
+      const lines = pages.flatMap((p, i) => {
+        const pageLines = p.lines.map((l) => l.text);
+        // Separate pages with a blank line (skip before the first page).
+        return i === 0 ? pageLines : ["", ...pageLines];
+      });
+      const hasText = lines.some((l) => l.trim() !== "");
+      if (!hasText) {
+        toast({
+          title: ar ? "لا يوجد نص قابل للاستخراج" : "No extractable text",
+          description: ar
+            ? "هذا الملف يبدو ممسوحاً ضوئياً (صورة). يتطلب تحويله ميزة OCR غير المتوفرة حالياً."
+            : "This PDF appears to be scanned (image-only). Converting it needs OCR, which is not available yet.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const html = lines
+        .map((l) => `<p>${escapeHtml(l) || "<br>"}</p>`)
+        .join("");
+      if (editorRef.current) {
+        editorRef.current.innerHTML = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+      }
+      // Imported content has no original DOCX file → save creates a new one.
+      setFileName(withExtension(opened.file.name, "docx"));
+      setHandle(null);
+      setDirty(true);
+      toast({
+        title: ar ? "تم استيراد PDF" : "PDF imported",
+        description: ar ? "راجع النص ثم احفظه بصيغة Word." : "Review the text, then save as Word.",
+      });
+    } catch (e: any) {
+      toast({ title: ar ? "تعذّر استيراد PDF" : "Could not import PDF", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const doSave = async (kind: "docx" | "txt", saveAs: boolean) => {
     if (!editorRef.current) return;
     try {
@@ -243,6 +290,9 @@ export default function WordEditor() {
           </Button>
           <Button size="sm" variant="outline" onClick={handleOpen} disabled={busy} data-testid="button-word-open">
             <FolderOpen className="h-4 w-4 ms-1" /> {ar ? "فتح" : "Open"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleImportPdf} disabled={busy} data-testid="button-word-importpdf">
+            <FileUp className="h-4 w-4 ms-1" /> {ar ? "استيراد PDF" : "Import PDF"}
           </Button>
           <Button size="sm" onClick={() => doSave("docx", false)} disabled={busy} data-testid="button-word-save">
             <Save className="h-4 w-4 ms-1" /> {ar ? "حفظ DOCX" : "Save DOCX"}

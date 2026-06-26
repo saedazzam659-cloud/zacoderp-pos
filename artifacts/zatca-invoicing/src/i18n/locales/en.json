@@ -7236,6 +7236,10 @@
     },
     "custody": {
       "title": "Employee Custody",
+      "bankInfoTitle": "Employee bank details",
+      "labelBankName": "Bank name:",
+      "labelIban": "IBAN:",
+      "bankInfoEmpty": "No bank details recorded for this employee.",
       "newCustody": "New custody",
       "statusActive": "Active",
       "statusSettled": "Settled",

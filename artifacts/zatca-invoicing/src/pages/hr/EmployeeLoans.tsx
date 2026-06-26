@@ -335,15 +335,15 @@ export default function EmployeeLoans() {
               />
             </Field>
             {selectedEmp && (
-              <div className="md:col-span-3 rounded border bg-muted/30 p-2 text-xs flex flex-wrap items-center gap-x-6 gap-y-1" data-testid="loan-bank-info">
-                <span className="font-medium text-muted-foreground">{tr("bankInfoTitle")}</span>
+              <div className="md:col-span-3 rounded border bg-muted/30 p-2 text-xs space-y-1" data-testid="loan-bank-info">
+                <div className="font-medium text-muted-foreground">{tr("bankInfoTitle")}</div>
                 {(selectedEmp.bankName || selectedEmp.bankAccountIban) ? (
                   <>
-                    <span><span className="text-muted-foreground">{tr("labelBankName")}</span> {selectedEmp.bankName || "—"}</span>
-                    <span><span className="text-muted-foreground">{tr("labelIban")}</span> <span className="tabular-nums" dir="ltr">{selectedEmp.bankAccountIban || "—"}</span></span>
+                    <div><span className="text-muted-foreground">{tr("labelBankName")}</span> {selectedEmp.bankName || "—"}</div>
+                    <div><span className="text-muted-foreground">{tr("labelIban")}</span> <span className="tabular-nums" dir="ltr">{selectedEmp.bankAccountIban || "—"}</span></div>
                   </>
                 ) : (
-                  <span className="text-amber-700">{tr("bankInfoEmpty")}</span>
+                  <div className="text-amber-700">{tr("bankInfoEmpty")}</div>
                 )}
               </div>
             )}
