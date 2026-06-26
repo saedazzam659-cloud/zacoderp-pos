@@ -85,6 +85,9 @@ import PartnerPortal from "@/pages/PartnerPortal";
 import ResellersAdmin from "@/pages/ResellersAdmin";
 import PartnersAdmin from "@/pages/PartnersAdmin";
 import DevCloudAdmin from "@/pages/DevCloudAdmin";
+import DevStudioRegister from "@/pages/DevStudioRegister";
+import DevStudio from "@/pages/DevStudio";
+import DevStudioAdmin from "@/pages/DevStudioAdmin";
 import MarketplaceAdmin from "@/pages/MarketplaceAdmin";
 import Marketplace from "@/pages/Marketplace";
 import PlanSettings from "@/pages/PlanSettings";
@@ -482,6 +485,15 @@ function AppRoutes() {
 
   if (loading) return <LoadingScreen />;
 
+  // DevStudio ("التطوير من خلال زاكود") — externally-registered developers are a
+  // wholly separate identity (dev_studio_developers + own bearer token in
+  // localStorage), independent of any tenant user session. Render the public
+  // registration + in-browser studio directly, ahead of the auth gates, so they
+  // are reachable with or without a logged-in tenant user. (The SA control
+  // center lives inside the authed Layout switch below.)
+  if (location === "/dev-studio/register") return <DevStudioRegister />;
+  if (location === "/dev-studio") return <DevStudio />;
+
   // For "/" we MUST distinguish authenticated (dashboard) vs guest (Home
   // landing). Treat "/" as public only when the visitor is unauthenticated;
   // otherwise the route table renders the dashboard normally.
@@ -630,6 +642,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/resellers" component={ResellersAdmin} />}
             {isSuperAdmin && <Route path="/admin/partners" component={PartnersAdmin} />}
             {isSuperAdmin && <Route path="/admin/dev-cloud" component={DevCloudAdmin} />}
+            {isSuperAdmin && <Route path="/admin/dev-studio" component={DevStudioAdmin} />}
             {isSuperAdmin && <Route path="/admin/marketplace" component={MarketplaceAdmin} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}

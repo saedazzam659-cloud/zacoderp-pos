@@ -1709,6 +1709,140 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS extension_purchases_scope_idx ON extension_purchases (company_id, extension_id)` },
     { label: "extension_purchases_partner_idx",
       sql:   `CREATE INDEX IF NOT EXISTS extension_purchases_partner_idx ON extension_purchases (partner_id)` },
+
+    // ── DevStudio — "التطوير من خلال زاكود" (additive, SuperAdmin-governed) ──
+    { label: "create dev_studio_packages table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_studio_packages (
+        id               SERIAL PRIMARY KEY,
+        name_ar          TEXT NOT NULL,
+        name_en          TEXT,
+        offices          INTEGER NOT NULL DEFAULT 1,
+        units            INTEGER NOT NULL DEFAULT 1,
+        read_line_quota  INTEGER NOT NULL DEFAULT 5000,
+        write_line_quota INTEGER NOT NULL DEFAULT 1000,
+        price_monthly    INTEGER NOT NULL DEFAULT 0,
+        price_annual     INTEGER NOT NULL DEFAULT 0,
+        is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+        sort_order       INTEGER NOT NULL DEFAULT 0,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_studio_packages_active_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_packages_active_idx ON dev_studio_packages (is_active)` },
+
+    { label: "create dev_studio_developers table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_studio_developers (
+        id               SERIAL PRIMARY KEY,
+        name             TEXT NOT NULL,
+        phone            TEXT NOT NULL,
+        country          TEXT NOT NULL,
+        package_id       INTEGER REFERENCES dev_studio_packages(id) ON DELETE SET NULL,
+        password_hash    TEXT NOT NULL,
+        status           TEXT NOT NULL DEFAULT 'pending',
+        entitlements     JSONB,
+        billing_cycle    TEXT NOT NULL DEFAULT 'monthly',
+        snapshot_id      INTEGER,
+        nda_accepted_at  TIMESTAMPTZ,
+        approved_at      TIMESTAMPTZ,
+        suspended_at     TIMESTAMPTZ,
+        notes            TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_studio_developers_phone_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS dev_studio_developers_phone_uniq ON dev_studio_developers (phone)` },
+    { label: "dev_studio_developers_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_developers_status_idx ON dev_studio_developers (status)` },
+
+    { label: "create dev_studio_visibility table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_studio_visibility (
+        id           SERIAL PRIMARY KEY,
+        developer_id INTEGER NOT NULL REFERENCES dev_studio_developers(id) ON DELETE CASCADE,
+        path_prefix  TEXT NOT NULL,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_studio_visibility_dev_path_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS dev_studio_visibility_dev_path_uniq ON dev_studio_visibility (developer_id, path_prefix)` },
+    { label: "dev_studio_visibility_dev_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_visibility_dev_idx ON dev_studio_visibility (developer_id)` },
+
+    { label: "create dev_studio_snapshots table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_studio_snapshots (
+        id           SERIAL PRIMARY KEY,
+        version      TEXT NOT NULL,
+        label        TEXT,
+        status       TEXT NOT NULL DEFAULT 'draft',
+        file_count   INTEGER NOT NULL DEFAULT 0,
+        byte_size    INTEGER NOT NULL DEFAULT 0,
+        content      TEXT,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        published_at TIMESTAMPTZ
+      )` },
+    { label: "dev_studio_snapshots_version_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS dev_studio_snapshots_version_uniq ON dev_studio_snapshots (version)` },
+    { label: "dev_studio_snapshots_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_snapshots_status_idx ON dev_studio_snapshots (status)` },
+
+    { label: "create dev_studio_sessions table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_studio_sessions (
+        id           SERIAL PRIMARY KEY,
+        developer_id INTEGER NOT NULL REFERENCES dev_studio_developers(id) ON DELETE CASCADE,
+        token        TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'active',
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_studio_sessions_token_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS dev_studio_sessions_token_uniq ON dev_studio_sessions (token)` },
+    { label: "dev_studio_sessions_dev_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_sessions_dev_idx ON dev_studio_sessions (developer_id)` },
+
+    { label: "create dev_studio_usage table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_studio_usage (
+        id               SERIAL PRIMARY KEY,
+        developer_id     INTEGER NOT NULL REFERENCES dev_studio_developers(id) ON DELETE CASCADE,
+        period_key       TEXT NOT NULL,
+        read_lines_used  INTEGER NOT NULL DEFAULT 0,
+        write_lines_used INTEGER NOT NULL DEFAULT 0,
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_studio_usage_dev_period_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS dev_studio_usage_dev_period_uniq ON dev_studio_usage (developer_id, period_key)` },
+
+    { label: "create dev_studio_audit table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_studio_audit (
+        id           SERIAL PRIMARY KEY,
+        developer_id INTEGER REFERENCES dev_studio_developers(id) ON DELETE SET NULL,
+        action       TEXT NOT NULL,
+        path         TEXT,
+        lines        INTEGER NOT NULL DEFAULT 0,
+        detail       JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "dev_studio_audit_dev_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_audit_dev_idx ON dev_studio_audit (developer_id)` },
+    { label: "dev_studio_audit_action_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_audit_action_idx ON dev_studio_audit (action)` },
+
+    { label: "create dev_studio_proposals table",
+      sql:   `CREATE TABLE IF NOT EXISTS dev_studio_proposals (
+        id           SERIAL PRIMARY KEY,
+        developer_id INTEGER NOT NULL REFERENCES dev_studio_developers(id) ON DELETE CASCADE,
+        snapshot_id  INTEGER REFERENCES dev_studio_snapshots(id) ON DELETE SET NULL,
+        title        TEXT NOT NULL,
+        description  TEXT,
+        target_path  TEXT,
+        diff         TEXT,
+        status       TEXT NOT NULL DEFAULT 'draft',
+        write_lines  INTEGER NOT NULL DEFAULT 0,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        submitted_at TIMESTAMPTZ
+      )` },
+    { label: "dev_studio_proposals_dev_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_proposals_dev_idx ON dev_studio_proposals (developer_id)` },
+    { label: "dev_studio_proposals_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS dev_studio_proposals_status_idx ON dev_studio_proposals (status)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

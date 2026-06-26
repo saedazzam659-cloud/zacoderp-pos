@@ -125,6 +125,7 @@ import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
 import domainsRouter from "./domains";
 import devCloudAdminRouter from "./dev-cloud-admin";
+import { devStudioRouter, devStudioAdminRouter } from "./dev-studio";
 import extensionsRouter from "../extensions/index.js";
 import { marketplaceRouter, marketplaceAdminRouter } from "./marketplace.js";
 import { resolveDomainCompany } from "../middleware/domainResolver";
@@ -166,6 +167,13 @@ router.use("/admin/partners", partnersAdminRouter);
 // Developer Cloud (Workspaces) — Phase 5 (additive, SuperAdmin-only). Same
 // mount-before-zatcaRouter rationale; self-guards with requireSuperAdmin.
 router.use("/admin/dev-cloud", devCloudAdminRouter);
+// DevStudio "التطوير من خلال زاكود" — additive AI coding studio. BOTH routers
+// MUST be mounted BEFORE the path-less zatcaRouter: the developer studio uses
+// its OWN bearer token (in dev_studio_sessions, absent from usersTable) and the
+// public register/login + developer endpoints would otherwise be 401-ed by
+// zatca's global tenant-auth catch-all. Admin router self-guards (requireSuperAdmin).
+router.use("/admin/dev-studio", devStudioAdminRouter);
+router.use("/dev-studio", devStudioRouter);
 // Phase 3 Publish Engine. Same mount-before-zatcaRouter rationale; SuperAdmin self-guarded.
 router.use("/admin/publish", publishRouter);
 // Developer / Partner self-service portal. Same mount-before-zatcaRouter

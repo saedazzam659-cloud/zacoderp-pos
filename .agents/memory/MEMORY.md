@@ -147,3 +147,4 @@
 - [ext_records missing-table warning is a false alarm](ext-records-ensureschema-warning.md) — drizzle reconciliation warns ext_* tables missing; a later ensureSchema custom-DDL step actually creates them. Verify via psql, don't db:push.
 - [Extension Publish Engine](extension-publish-engine.md) — staged blocking gates (build/security_scan/ai_review/sign); never ingests code; security_scan validates perms vs listCoreResources; ai_review must fall back to rule-based.
 - [Developer/Partner portal](partner-portal-module.md) — platform_partners self-service portal is a 1:1 mirror of the reseller portal (auth, gates, App.tsx 3-spot routing); change both sides in lockstep.
+- [DevStudio quota on all content paths](devstudio-quota-on-all-content-paths.md) — read/write quota+audit must gate EVERY content-exposing/persisting path (AI propose=read, proposal update=delta write), not just the direct read/create endpoint.
