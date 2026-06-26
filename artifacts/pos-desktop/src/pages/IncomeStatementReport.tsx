@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField, CostCenterField } from "./_reportFilters";
+import type { ExportColumn } from "../lib/exporters";
 
 type Row = { accountId: number; code: string; name: string; amount: number };
+
+type ISExportRow = { code: string; name: string; amount: number | string };
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -52,6 +55,23 @@ export default function IncomeStatementReport() {
   const netIncome = data ? data.totalRevenue - data.totalExpenses : 0;
   const isProfit = netIncome >= 0;
 
+  const exportRows: ISExportRow[] = data
+    ? [
+        { code: "", name: "الإيرادات", amount: "" },
+        ...data.revenues.map((r): ISExportRow => ({ code: r.code, name: r.name, amount: r.amount })),
+        { code: "", name: "إجمالي الإيرادات", amount: data.totalRevenue },
+        { code: "", name: "المصروفات", amount: "" },
+        ...data.expenses.map((r): ISExportRow => ({ code: r.code, name: r.name, amount: r.amount })),
+        { code: "", name: "إجمالي المصروفات", amount: data.totalExpenses },
+        { code: "", name: isProfit ? "صافي الربح" : "صافي الخسارة", amount: Math.abs(netIncome) },
+      ]
+    : [];
+  const exportCols: ExportColumn<ISExportRow>[] = [
+    { header: "الكود", cell: (r) => r.code },
+    { header: "الحساب", cell: (r) => r.name },
+    { header: "المبلغ", cell: (r) => r.amount },
+  ];
+
   return (
     <Page title="قائمة الدخل" subtitle="الإيرادات والمصروفات وصافي الربح/الخسارة خلال الفترة (القيود المرحّلة فقط).">
       <Card style={{ marginBottom: 16 }}>
@@ -67,6 +87,9 @@ export default function IncomeStatementReport() {
 
       {data && (
         <>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <ExportButtons columns={exportCols} rows={exportRows} filenameBase="قائمة-الدخل" title={`قائمة الدخل — ${fromDate} ← ${toDate}`} />
+          </div>
           <Card style={{ marginBottom: 16 }}>
             <h3 style={{ margin: "0 0 8px", color: "#15803d" }}>الإيرادات</h3>
             {data.revenues.length === 0 ? <Empty text="لا توجد إيرادات" /> : (

@@ -3,7 +3,7 @@ import {
   listFinancialTx, createFinancialTx, listSuppliers, listCashBoxes, listBanks, listPurchases,
   type FinancialTx, type Supplier, type CashBox, type Bank, type Purchase,
 } from "../lib/accounting";
-import { emitData } from "../lib/dataBus";
+import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
@@ -34,18 +34,25 @@ export default function SupplierPaymentAdmin() {
   const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; purchases: Purchase[] } | null>(null);
 
   async function refresh() { setRows((await listFinancialTx(1000)).filter((f) => f.txType === "payment" && f.partyType === "supplier")); }
-  useEffect(() => {
-    void refresh();
-    void (async () => {
-      const [suppliers, cashBoxes, banks, purchases] = await Promise.all([
-        listSuppliers(), listCashBoxes(), listBanks(), listPurchases(5000),
-      ]);
-      setDeps({ suppliers, cashBoxes, banks, purchases });
-    })();
-  }, []);
+  async function loadDeps() {
+    const [suppliers, cashBoxes, banks, purchases] = await Promise.all([
+      listSuppliers(), listCashBoxes(), listBanks(), listPurchases(5000),
+    ]);
+    setDeps({ suppliers, cashBoxes, banks, purchases });
+  }
+  useEffect(() => { void refresh(); void loadDeps(); }, []);
 
   const [allTx, setAllTx] = useState<FinancialTx[]>([]);
   useEffect(() => { void (async () => setAllTx(await listFinancialTx(5000)))(); }, [rows.length]);
+
+  // Live-refresh: when a purchase invoice or another voucher is created/posted on
+  // a different tab, reload the deps (outstanding-purchase picker) + paid totals
+  // so the new invoice appears here without a manual page reload.
+  useDataRefresh(["invoices", "vouchers", "suppliers", "cashboxes", "banks"], () => {
+    void refresh();
+    void loadDeps();
+    void (async () => setAllTx(await listFinancialTx(5000)))();
+  });
 
   const invByApplied = (f: FinancialTx) =>
     f.appliedDocType === "purchase" && f.appliedDocId != null

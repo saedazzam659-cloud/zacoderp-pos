@@ -7,8 +7,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { listStockOnHand, type StockOnHand } from "../lib/inventory";
 import {
-  Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt,
+  Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, ExportButtons,
 } from "./_adminUi";
+import type { ExportColumn } from "../lib/exporters";
+
+// Flat row mirroring the on-screen pivot table (item rows + per-warehouse qty
+// columns + grand total) plus a trailing totals row.
+type StockExportRow = {
+  itemName: string;
+  itemCode: string;
+  qtyByWh: Record<number, number | "">;
+  total: number;
+};
 
 interface WhCol { id: number; name: string }
 interface PivotRow {
@@ -75,6 +85,31 @@ export default function WarehouseStockReport() {
     return { byWh, grand };
   }, [rows, warehouses]);
 
+  // Export rows mirror the on-screen pivot: item rows + per-warehouse qty +
+  // grand total, then a trailing totals row.
+  const exportRows = useMemo<StockExportRow[]>(() => {
+    if (rows.length === 0) return [];
+    const out: StockExportRow[] = rows.map((p) => {
+      const qtyByWh: Record<number, number | ""> = {};
+      for (const w of warehouses) {
+        const q = p.qtyByWh[w.id] ?? 0;
+        qtyByWh[w.id] = q ? q : "";
+      }
+      return { itemName: p.itemName, itemCode: p.itemCode ?? "—", qtyByWh, total: p.total };
+    });
+    const totalRow: StockExportRow = { itemName: "الإجمالي", itemCode: "—", qtyByWh: {}, total: totals.grand };
+    for (const w of warehouses) totalRow.qtyByWh[w.id] = totals.byWh[w.id] ?? 0;
+    out.push(totalRow);
+    return out;
+  }, [rows, warehouses, totals]);
+
+  const exportCols = useMemo<ExportColumn<StockExportRow>[]>(() => [
+    { header: "الصنف", cell: (r) => r.itemName },
+    { header: "الكود", cell: (r) => r.itemCode },
+    ...warehouses.map((w) => ({ header: w.name, cell: (r: StockExportRow) => r.qtyByWh[w.id] ?? "" })),
+    { header: "الإجمالي", cell: (r: StockExportRow) => r.total },
+  ], [warehouses]);
+
   return (
     <Page title="الكميات المتاحة حسب المخزن">
       <Card>
@@ -92,6 +127,16 @@ export default function WarehouseStockReport() {
           <button style={btnSecondary} onClick={() => void refresh()} disabled={loading}>
             {loading ? "جارٍ التحديث…" : "تحديث"}
           </button>
+          {exportRows.length > 0 && (
+            <div style={{ marginInlineStart: "auto", display: "flex", gap: 8 }}>
+              <ExportButtons
+                columns={exportCols}
+                rows={exportRows}
+                filenameBase="الكميات-حسب-المخزن"
+                title="الكميات المتاحة حسب المخزن"
+              />
+            </div>
+          )}
         </div>
 
         {rows.length === 0 ? (

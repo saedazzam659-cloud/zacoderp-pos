@@ -1,9 +1,20 @@
 import { useState } from "react";
 import { reportSalesInvoiceLines } from "../lib/salesReports";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import type { ExportColumn } from "../lib/exporters";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
+
+// Flat row mirroring the on-screen items table (per-item rows + totals row).
+type ItemExportRow = {
+  code: string;
+  name: string;
+  qty: number;
+  invoices: number | "";
+  total: number;
+  share: string;
+};
 
 type Bucket = {
   itemId: number; code: string | null; name: string;
@@ -37,6 +48,30 @@ export default function SalesByItemReport() {
   const grandTotal = (rows ?? []).reduce((s, r) => s + r.total, 0);
   const totalQty = (rows ?? []).reduce((s, r) => s + r.qty, 0);
 
+  // Export rows mirror the on-screen table: per-item rows + totals row.
+  const exportRows: ItemExportRow[] = (rows ?? []).map((r) => ({
+    code: r.code || "—",
+    name: r.name,
+    qty: r.qty,
+    invoices: r.invoices.size,
+    total: r.total,
+    share: grandTotal > 0 ? `${((r.total / grandTotal) * 100).toFixed(1)}%` : "—",
+  }));
+  if (rows && rows.length > 0) {
+    exportRows.push({
+      code: `الإجمالي (${rows.length} صنف)`,
+      name: "", qty: totalQty, invoices: "", total: grandTotal, share: "100%",
+    });
+  }
+  const exportCols: ExportColumn<ItemExportRow>[] = [
+    { header: "كود الصنف", cell: (r) => r.code },
+    { header: "اسم الصنف", cell: (r) => r.name },
+    { header: "الكمية", cell: (r) => r.qty },
+    { header: "الفواتير", cell: (r) => r.invoices },
+    { header: "إجمالي المبيعات", cell: (r) => r.total },
+    { header: "المساهمة", cell: (r) => r.share },
+  ];
+
   return (
     <Page title="المبيعات حسب الصنف" subtitle="إجمالي مبيعات كل صنف خلال الفترة مرتبة تنازلياً مع نسبة المساهمة.">
       <Card style={{ marginBottom: 16 }}>
@@ -51,6 +86,16 @@ export default function SalesByItemReport() {
 
       {rows && (
         <Card>
+          {exportRows.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
+              <ExportButtons
+                columns={exportCols}
+                rows={exportRows}
+                filenameBase="المبيعات-حسب-الصنف"
+                title={`المبيعات حسب الصنف — ${fromDate} ← ${toDate}`}
+              />
+            </div>
+          )}
           <Table>
             <thead>
               <tr>

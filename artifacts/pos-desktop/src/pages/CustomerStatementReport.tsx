@@ -4,8 +4,22 @@ import {
   type SalesInvoice, type SalesReturn, type FinancialTx,
 } from "../lib/accounting";
 import { listCustomers, getCustomerOpening, type LocalCustomer } from "../lib/customers";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { DateField, FilterField } from "./_reportFilters";
+import { useDataRefresh } from "../lib/dataBus";
+import type { ExportColumn } from "../lib/exporters";
+
+// Flat row mirroring the on-screen statement table (opening row + per-line
+// running balance + totals/closing row) for Excel/PDF export.
+type StmtExportRow = {
+  date: string;
+  docType: string;
+  docNo: string;
+  description: string;
+  debit: number | "";
+  credit: number | "";
+  balance: number;
+};
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -191,8 +205,45 @@ export default function CustomerStatementReport() {
     } finally { setLoading(false); }
   }
 
+  // Re-run the displayed statement when an invoice/voucher is created on another
+  // tab, but only when a statement is already shown.
+  useDataRefresh(["invoices", "vouchers"], () => { if (result) void run(); });
+
   const totals = (result?.lines ?? []).reduce((s, l) => { s.dr += l.debit; s.cr += l.credit; return s; }, { dr: 0, cr: 0 });
   const closing = result ? result.opening + totals.dr - totals.cr : 0;
+
+  // Export rows mirror the on-screen table exactly: opening row + per-line
+  // running balance + totals/closing row. Raw numbers so Excel stays numeric.
+  const exportRows = useMemo<StmtExportRow[]>(() => {
+    if (!result) return [];
+    const out: StmtExportRow[] = [];
+    out.push({ date: "", docType: "", docNo: "", description: "الرصيد الافتتاحي", debit: "", credit: "", balance: result.opening });
+    let running = result.opening;
+    for (const l of result.lines) {
+      running += l.debit - l.credit;
+      out.push({
+        date: l.date,
+        docType: l.docType,
+        docNo: l.docNo,
+        description: l.description || "—",
+        debit: l.debit > 0.001 ? l.debit : "",
+        credit: l.credit > 0.001 ? l.credit : "",
+        balance: running,
+      });
+    }
+    out.push({ date: "", docType: "", docNo: "", description: "الإجمالي / الرصيد الختامي", debit: totals.dr, credit: totals.cr, balance: closing });
+    return out;
+  }, [result, totals.dr, totals.cr, closing]);
+
+  const exportCols: ExportColumn<StmtExportRow>[] = [
+    { header: "التاريخ", cell: (r) => r.date },
+    { header: "النوع", cell: (r) => r.docType },
+    { header: "المستند", cell: (r) => r.docNo },
+    { header: "البيان", cell: (r) => r.description },
+    { header: "مدين", cell: (r) => r.debit },
+    { header: "دائن", cell: (r) => r.credit },
+    { header: "الرصيد", cell: (r) => r.balance },
+  ];
 
   return (
     <Page title="كشف حساب عميل" subtitle="حركة حساب العميل خلال الفترة (الفواتير الآجلة والنقدية، المرتجعات، سندات القبض والصرف) مع الرصيد الافتتاحي والجاري. الفواتير النقدية تظهر مع سداد فوري مقابل لها فلا تؤثر على الرصيد.">
@@ -237,6 +288,16 @@ export default function CustomerStatementReport() {
 
       {result && (
         <Card>
+          {exportRows.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
+              <ExportButtons
+                columns={exportCols}
+                rows={exportRows}
+                filenameBase="كشف-حساب-عميل"
+                title={`كشف حساب عميل — ${result.customer.nameAr} — ${fromDate} ← ${toDate}`}
+              />
+            </div>
+          )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 24, marginBottom: 14, fontSize: 13 }}>
             <div><b>العميل:</b> {result.customer.nameAr}</div>
             {result.customer.vatNumber && <div><b>الرقم الضريبي:</b> {result.customer.vatNumber}</div>}

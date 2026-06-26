@@ -4,7 +4,7 @@ import {
   type FinancialTx, type TxType, type PartyType, type Supplier, type CashBox, type Bank, type Account,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
-import { emitData } from "../lib/dataBus";
+import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
@@ -31,15 +31,20 @@ export default function FinancialTransactionsAdmin() {
   const sel = useRowSelect(rows);
 
   async function refresh() { setRows(await listFinancialTx()); }
-  useEffect(() => {
+  async function loadDeps() {
+    const [suppliers, customers, cashBoxes, banks, accounts] = await Promise.all([
+      listSuppliers(), listCustomers(), listCashBoxes(), listBanks(), listAccounts(),
+    ]);
+    setDeps({ suppliers, customers, cashBoxes, banks, accounts });
+  }
+  useEffect(() => { void refresh(); void loadDeps(); }, []);
+
+  // Live-refresh: vouchers/JEs posted on another tab (and the party/wallet
+  // balances they move) stay current here without a manual reload.
+  useDataRefresh(["vouchers", "journal", "customers", "suppliers", "cashboxes", "banks", "accounts"], () => {
     void refresh();
-    void (async () => {
-      const [suppliers, customers, cashBoxes, banks, accounts] = await Promise.all([
-        listSuppliers(), listCustomers(), listCashBoxes(), listBanks(), listAccounts(),
-      ]);
-      setDeps({ suppliers, customers, cashBoxes, banks, accounts });
-    })();
-  }, []);
+    void loadDeps();
+  });
 
   return (
     <Page

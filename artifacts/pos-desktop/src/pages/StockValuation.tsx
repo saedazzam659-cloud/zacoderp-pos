@@ -2,12 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import { listStockOnHand, listWarehouses, type StockOnHand, type Warehouse } from "../lib/inventory";
 import { useCurrencySymbol } from "../lib/currency";
 import {
-  Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, fmtCurrency, SearchCombobox,
+  Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, fmtCurrency, SearchCombobox, ExportButtons,
 } from "./_adminUi";
+import type { ExportColumn } from "../lib/exporters";
 
 interface ValRow extends StockOnHand {
   value: number;
 }
+
+// Flat row mirroring the on-screen valuation table (item rows + optional
+// per-warehouse subtotal rows + grand total row).
+type ValExportRow = {
+  warehouse: string;
+  code: string;
+  name: string;
+  qty: number;
+  cost: number | "";
+  value: number;
+};
 
 export default function StockValuation() {
   useCurrencySymbol(); // subscribe so currency formatting re-renders on country change
@@ -57,6 +69,36 @@ export default function StockValuation() {
 
   const showSubtotals = warehouseId === "" && subtotals.size > 1;
 
+  // Export rows mirror the on-screen table: item rows + optional per-warehouse
+  // subtotal rows + grand total row. Raw numbers so Excel stays numeric.
+  const exportRows = useMemo<ValExportRow[]>(() => {
+    if (valued.length === 0) return [];
+    const out: ValExportRow[] = valued.map((r) => ({
+      warehouse: r.warehouse_name,
+      code: r.item_code ?? "",
+      name: r.item_name,
+      qty: r.qty,
+      cost: r.last_cost,
+      value: r.value,
+    }));
+    if (showSubtotals) {
+      for (const [name, t] of subtotals.entries()) {
+        out.push({ warehouse: name, code: "—", name: "إجمالي المخزن", qty: t.qty, cost: "", value: t.value });
+      }
+    }
+    out.push({ warehouse: "الإجمالي العام", code: "—", name: "—", qty: grand.qty, cost: "", value: grand.value });
+    return out;
+  }, [valued, showSubtotals, subtotals, grand]);
+
+  const exportCols: ExportColumn<ValExportRow>[] = [
+    { header: "المخزن", cell: (r) => r.warehouse },
+    { header: "الكود", cell: (r) => r.code },
+    { header: "الصنف", cell: (r) => r.name },
+    { header: "الكمية", cell: (r) => r.qty },
+    { header: "متوسط التكلفة", cell: (r) => r.cost },
+    { header: "القيمة", cell: (r) => r.value },
+  ];
+
   return (
     <Page
       title="تقييم المخزون"
@@ -84,6 +126,16 @@ export default function StockValuation() {
         </div>
       </Card>
       <Card>
+        {exportRows.length > 0 && (
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "12px 12px 0" }}>
+            <ExportButtons
+              columns={exportCols}
+              rows={exportRows}
+              filenameBase="تقييم-المخزون"
+              title="تقييم المخزون"
+            />
+          </div>
+        )}
         {valued.length === 0 ? <Empty text="لا توجد أرصدة مخزون" /> : (
           <Table>
             <thead><tr>

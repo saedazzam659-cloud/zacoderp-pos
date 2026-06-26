@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
 import { listAccounts, type Account } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField, CostCenterField, FilterField } from "./_reportFilters";
+import type { ExportColumn } from "../lib/exporters";
+
+type ASExportRow = {
+  date: string; entryNo: string; description: string;
+  debit: number | string; credit: number | string; balance: number;
+};
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -64,6 +70,36 @@ export default function AccountStatementReport({ initialAccountId, onConsumed }:
   const totals = (result?.lines ?? []).reduce((s, l) => { s.dr += l.debit; s.cr += l.credit; return s; }, { dr: 0, cr: 0 });
   const closing = result ? result.opening + totals.dr - totals.cr : 0;
 
+  const acctLabel = accountOpts.find((o) => o.value === accountId)?.label ?? "";
+  const exportRows: ASExportRow[] = result
+    ? (() => {
+        const out: ASExportRow[] = [];
+        out.push({ date: "", entryNo: "", description: "الرصيد الافتتاحي", debit: "", credit: "", balance: result.opening });
+        let running = result.opening;
+        for (const l of result.lines) {
+          running += l.debit - l.credit;
+          out.push({
+            date: l.entryDate,
+            entryNo: l.entryNo,
+            description: l.description || "—",
+            debit: l.debit > 0.001 ? l.debit : "",
+            credit: l.credit > 0.001 ? l.credit : "",
+            balance: running,
+          });
+        }
+        out.push({ date: "", entryNo: "", description: "الإجمالي / الرصيد الختامي", debit: totals.dr, credit: totals.cr, balance: closing });
+        return out;
+      })()
+    : [];
+  const exportCols: ExportColumn<ASExportRow>[] = [
+    { header: "التاريخ", cell: (r) => r.date },
+    { header: "القيد", cell: (r) => r.entryNo },
+    { header: "البيان", cell: (r) => r.description },
+    { header: "مدين", cell: (r) => r.debit },
+    { header: "دائن", cell: (r) => r.credit },
+    { header: "الرصيد", cell: (r) => r.balance },
+  ];
+
   return (
     <Page title="كشف حساب" subtitle="حركة حساب معين خلال الفترة مع الرصيد الافتتاحي والرصيد الجاري (القيود المرحّلة فقط).">
       <Card style={{ marginBottom: 16 }}>
@@ -87,6 +123,9 @@ export default function AccountStatementReport({ initialAccountId, onConsumed }:
 
       {result && (
         <Card>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <ExportButtons columns={exportCols} rows={exportRows} filenameBase="كشف-حساب" title={`كشف حساب — ${acctLabel} — ${fromDate} ← ${toDate}`} />
+          </div>
           <Table>
             <thead>
               <tr>

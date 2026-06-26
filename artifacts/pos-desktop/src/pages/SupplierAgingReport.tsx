@@ -3,8 +3,19 @@ import {
   listPurchases, listPurchaseReturns, listFinancialTx, listSuppliers,
   type Purchase, type PurchaseReturn, type FinancialTx,
 } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { DateField } from "./_reportFilters";
+import type { ExportColumn } from "../lib/exporters";
+
+// Flat row mirroring the on-screen aging table (per-supplier buckets + totals row).
+type AgeExportRow = {
+  name: string;
+  b0: number;
+  b30: number;
+  b60: number;
+  b90: number;
+  total: number;
+};
 
 // Accounts-payable aging. We FIFO-apply every AP-reducing event (credit purchase
 // returns + payment vouchers to the supplier) against that supplier's CREDIT
@@ -96,6 +107,25 @@ export default function SupplierAgingReport() {
     { b0: 0, b30: 0, b60: 0, b90: 0, total: 0 },
   );
 
+  // Export rows mirror the on-screen table: per-supplier buckets + totals row.
+  const exportRows: AgeExportRow[] = (rows ?? []).map((r) => ({
+    name: r.name, b0: r.b0, b30: r.b30, b60: r.b60, b90: r.b90, total: r.total,
+  }));
+  if (rows && rows.length > 0) {
+    exportRows.push({
+      name: `الإجمالي (${rows.length} مورد)`,
+      b0: totals.b0, b30: totals.b30, b60: totals.b60, b90: totals.b90, total: totals.total,
+    });
+  }
+  const exportCols: ExportColumn<AgeExportRow>[] = [
+    { header: "المورد", cell: (r) => r.name },
+    { header: "0 - 30 يوم", cell: (r) => r.b0 },
+    { header: "31 - 60 يوم", cell: (r) => r.b30 },
+    { header: "61 - 90 يوم", cell: (r) => r.b60 },
+    { header: "أكثر من 90", cell: (r) => r.b90 },
+    { header: "الإجمالي", cell: (r) => r.total },
+  ];
+
   return (
     <Page title="أعمار ديون الموردين" subtitle="توزيع المستحق لكل مورد على فترات تقادم الفواتير الآجلة (تطبيق الدفعات والمرتجعات على الأقدم أولاً).">
       <Card style={{ marginBottom: 16 }}>
@@ -107,6 +137,16 @@ export default function SupplierAgingReport() {
 
       {rows && (
         <Card>
+          {exportRows.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
+              <ExportButtons
+                columns={exportCols}
+                rows={exportRows}
+                filenameBase="أعمار-ديون-الموردين"
+                title={`أعمار ديون الموردين — حتى ${asOf}`}
+              />
+            </div>
+          )}
           <Table>
             <thead>
               <tr>

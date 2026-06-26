@@ -4,7 +4,7 @@ import {
   type FinancialTx, type CashBox, type Bank, type SalesInvoice,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
-import { emitData } from "../lib/dataBus";
+import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
@@ -35,19 +35,26 @@ export default function CustomerCollectionAdmin() {
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; invoices: SalesInvoice[] } | null>(null);
 
   async function refresh() { setRows((await listFinancialTx(1000)).filter((f) => f.txType === "receipt" && f.partyType === "customer")); }
-  useEffect(() => {
-    void refresh();
-    void (async () => {
-      const [customers, cashBoxes, banks, invoices] = await Promise.all([
-        listCustomers(), listCashBoxes(), listBanks(), listSalesInvoices(5000),
-      ]);
-      setDeps({ customers, cashBoxes, banks, invoices });
-    })();
-  }, []);
+  async function loadDeps() {
+    const [customers, cashBoxes, banks, invoices] = await Promise.all([
+      listCustomers(), listCashBoxes(), listBanks(), listSalesInvoices(5000),
+    ]);
+    setDeps({ customers, cashBoxes, banks, invoices });
+  }
+  useEffect(() => { void refresh(); void loadDeps(); }, []);
 
   // Paid-so-far per sales invoice (across ALL receipts, not just this filtered view).
   const [allTx, setAllTx] = useState<FinancialTx[]>([]);
   useEffect(() => { void (async () => setAllTx(await listFinancialTx(5000)))(); }, [rows.length]);
+
+  // Live-refresh: when a sales invoice or another voucher is created/posted on a
+  // different tab, reload the deps (outstanding-invoice picker) + paid totals so
+  // the new invoice appears here without a manual page reload.
+  useDataRefresh(["invoices", "vouchers", "customers", "cashboxes", "banks"], () => {
+    void refresh();
+    void loadDeps();
+    void (async () => setAllTx(await listFinancialTx(5000)))();
+  });
 
   const invByApplied = (f: FinancialTx) =>
     f.appliedDocType === "sales_invoice" && f.appliedDocId != null

@@ -4,10 +4,25 @@ import {
   getPurchase, getPurchaseReturn,
   type Supplier,
 } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { DateField, FilterField } from "./_reportFilters";
+import type { ExportColumn } from "../lib/exporters";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
+
+// Flat row mirroring the on-screen detailed table (opening row + per-doc rows
+// with running balance + indented item lines + totals/closing row).
+type DetailExportRow = {
+  date: string;
+  docType: string;
+  docNo: string;
+  description: string;
+  qty: number | "";
+  unitCost: number | "";
+  debit: number | "";
+  credit: number | "";
+  balance: number | "";
+};
 
 // A document on the supplier ledger, expanded with its item lines. Same AP
 // sign convention as the summary statement (positive running = we owe).
@@ -108,6 +123,56 @@ export default function SupplierStatementDetailedReport() {
   const totals = (result?.docs ?? []).reduce((s, d) => { s.dr += d.debit; s.cr += d.credit; return s; }, { dr: 0, cr: 0 });
   const closing = result ? result.opening + totals.cr - totals.dr : 0;
 
+  // Export rows mirror the on-screen table exactly: opening row + per-doc rows
+  // (with running balance) + indented item lines + totals/closing row.
+  const exportRows = useMemo<DetailExportRow[]>(() => {
+    if (!result) return [];
+    const out: DetailExportRow[] = [];
+    out.push({ date: "", docType: "", docNo: "", description: "الرصيد الافتتاحي", qty: "", unitCost: "", debit: "", credit: "", balance: result.opening });
+    let running = result.opening;
+    for (const d of result.docs) {
+      running += d.credit - d.debit;
+      out.push({
+        date: d.date,
+        docType: d.docType,
+        docNo: d.docNo,
+        description: d.description || "—",
+        qty: "",
+        unitCost: "",
+        debit: d.debit > 0.001 ? d.debit : "",
+        credit: d.credit > 0.001 ? d.credit : "",
+        balance: running,
+      });
+      for (const l of d.lines) {
+        out.push({
+          date: "",
+          docType: "",
+          docNo: "",
+          description: l.itemName,
+          qty: l.qty,
+          unitCost: l.unitCost,
+          debit: l.lineTotal,
+          credit: "",
+          balance: "",
+        });
+      }
+    }
+    out.push({ date: "", docType: "", docNo: "", description: "الإجمالي / الرصيد الختامي", qty: "", unitCost: "", debit: totals.dr, credit: totals.cr, balance: closing });
+    return out;
+  }, [result, totals.dr, totals.cr, closing]);
+
+  const exportCols: ExportColumn<DetailExportRow>[] = [
+    { header: "التاريخ", cell: (r) => r.date },
+    { header: "النوع", cell: (r) => r.docType },
+    { header: "المستند", cell: (r) => r.docNo },
+    { header: "البيان / الصنف", cell: (r) => r.description },
+    { header: "الكمية", cell: (r) => r.qty },
+    { header: "التكلفة", cell: (r) => r.unitCost },
+    { header: "مدين", cell: (r) => r.debit },
+    { header: "دائن", cell: (r) => r.credit },
+    { header: "الرصيد", cell: (r) => r.balance },
+  ];
+
   return (
     <Page title="كشف حساب مورد تفصيلي" subtitle="حركة المورد خلال الفترة مع تفصيل أصناف كل فاتورة ومرتجع. الرصيد الموجب = مستحق للمورد.">
       <Card style={{ marginBottom: 16 }}>
@@ -129,6 +194,16 @@ export default function SupplierStatementDetailedReport() {
 
       {result && (
         <Card>
+          {exportRows.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
+              <ExportButtons
+                columns={exportCols}
+                rows={exportRows}
+                filenameBase="كشف-حساب-مورد-تفصيلي"
+                title={`كشف حساب مورد تفصيلي — ${result.supplier.nameAr} — ${fromDate} ← ${toDate}`}
+              />
+            </div>
+          )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 24, marginBottom: 14, fontSize: 13 }}>
             <div><b>المورد:</b> {result.supplier.nameAr}</div>
             {result.supplier.vatNumber && <div><b>الرقم الضريبي:</b> {result.supplier.vatNumber}</div>}
