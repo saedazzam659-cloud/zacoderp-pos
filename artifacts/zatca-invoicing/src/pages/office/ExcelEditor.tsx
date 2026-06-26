@@ -1,10 +1,13 @@
 import { useRef, useState, useLayoutEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  FileSpreadsheet, FolderOpen, Save, FileDown, FilePlus2, Plus, Trash2, Columns3, FileUp,
+  FileSpreadsheet, FolderOpen, Save, FilePlus2, Plus, Trash2, Columns3, FileUp, ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { openFile, saveFile, printHtml, withExtension, extractPdf, type OpenedFile } from "./fileIo";
 
@@ -14,6 +17,9 @@ const XLSX_ACCEPT = {
 };
 const CSV_ACCEPT = { "text/csv": [".csv"] };
 const PDF_ACCEPT = { "application/pdf": [".pdf"] };
+const TXT_ACCEPT = { "text/plain": [".txt"] };
+const HTML_ACCEPT = { "text/html": [".html"] };
+const JSON_ACCEPT = { "application/json": [".json"] };
 
 interface SheetData {
   name: string;
@@ -277,6 +283,53 @@ export default function ExcelEditor() {
     printHtml(html, { title: fileName, rtl: ar });
   };
 
+  // Export the ACTIVE sheet to a plain-text format (txt / html / json). XLSX
+  // (all sheets) and CSV keep their own save-back-in-place path in doSave.
+  const exportAs = async (kind: "txt" | "html" | "json") => {
+    try {
+      setBusy(true);
+      const rows = sheet.rows;
+      let blob: Blob;
+      let suggested: string;
+      let accept: Record<string, string[]>;
+      let description: string;
+      if (kind === "txt") {
+        const txt = rows.map((r) => r.map((c) => String(c ?? "")).join("\t")).join("\r\n");
+        blob = new Blob(["\uFEFF" + txt], { type: "text/plain;charset=utf-8" });
+        suggested = withExtension(fileName, "txt");
+        accept = TXT_ACCEPT;
+        description = ar ? "نص" : "Text";
+      } else if (kind === "json") {
+        blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json;charset=utf-8" });
+        suggested = withExtension(fileName, "json");
+        accept = JSON_ACCEPT;
+        description = "JSON";
+      } else {
+        const head = rows[0] ?? [];
+        const body = rows.slice(1);
+        const dir = ar ? "rtl" : "ltr";
+        const align = ar ? "right" : "left";
+        const html = `<!DOCTYPE html><html dir="${dir}" lang="${ar ? "ar" : "en"}"><head><meta charset="utf-8"><title>${
+          escapeHtml(sheet.name)
+        }</title><style>table{border-collapse:collapse}th,td{border:1px solid #999;padding:6px 8px;text-align:${align}}th{background:#f1f5f9}</style></head><body><table><thead><tr>${
+          head.map((h) => `<th>${escapeHtml(h)}</th>`).join("")
+        }</tr></thead><tbody>${
+          body.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`).join("")
+        }</tbody></table></body></html>`;
+        blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        suggested = withExtension(fileName, "html");
+        accept = HTML_ACCEPT;
+        description = "HTML";
+      }
+      const res = await saveFile(blob, { suggestedName: suggested, accept, description, handle: null });
+      if (res.saved) toast({ title: ar ? "تم الحفظ" : "Saved", description: suggested });
+    } catch (e: any) {
+      toast({ title: ar ? "تعذّر الحفظ" : "Could not save", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const colCount = sheet.rows[0]?.length ?? 0;
 
   // Measure the scroll viewport, sticky-header height, and the real rendered
@@ -326,15 +379,33 @@ export default function ExcelEditor() {
           <Button size="sm" onClick={() => doSave("xlsx", false)} disabled={busy} data-testid="button-excel-save">
             <Save className="h-4 w-4 ms-1" /> {ar ? "حفظ XLSX" : "Save XLSX"}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => doSave("xlsx", true)} disabled={busy} data-testid="button-excel-saveas">
-            {ar ? "حفظ باسم" : "Save As"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => doSave("csv", true)} disabled={busy} data-testid="button-excel-savecsv">
-            {ar ? "حفظ CSV" : "Save CSV"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handlePdf} disabled={busy} data-testid="button-excel-pdf">
-            <FileDown className="h-4 w-4 ms-1" /> PDF
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" disabled={busy} data-testid="button-excel-saveas">
+                {ar ? "حفظ باسم" : "Save As"} <ChevronDown className="h-4 w-4 ms-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => doSave("xlsx", true)} data-testid="menu-excel-xlsx">
+                Excel (.xlsx)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => doSave("csv", true)} data-testid="menu-excel-csv">
+                CSV (.csv)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportAs("txt")} data-testid="menu-excel-txt">
+                {ar ? "نص" : "Text"} (.txt)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportAs("html")} data-testid="menu-excel-html">
+                HTML (.html)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportAs("json")} data-testid="menu-excel-json">
+                JSON (.json)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handlePdf} data-testid="menu-excel-pdf">
+                PDF (.pdf)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

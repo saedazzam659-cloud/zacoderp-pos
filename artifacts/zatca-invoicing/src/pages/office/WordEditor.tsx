@@ -2,11 +2,14 @@ import { useRef, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import DOMPurify from "dompurify";
 import {
-  FileText, FolderOpen, Save, FileDown, FilePlus2, Bold, Italic, Underline,
-  List, ListOrdered, Heading1, Heading2, Heading3, AlignRight, AlignCenter, AlignLeft, FileUp,
+  FileText, FolderOpen, Save, FilePlus2, Bold, Italic, Underline,
+  List, ListOrdered, Heading1, Heading2, Heading3, AlignRight, AlignCenter, AlignLeft, FileUp, ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { openFile, saveFile, printHtml, withExtension, extractPdf, type OpenedFile } from "./fileIo";
 
@@ -15,6 +18,7 @@ const DOCX_ACCEPT = {
 };
 const TXT_ACCEPT = { "text/plain": [".txt"] };
 const PDF_ACCEPT = { "application/pdf": [".pdf"] };
+const HTML_ACCEPT = { "text/html": [".html"] };
 
 // Walk a contentEditable DOM tree and build a docx Document.
 async function buildDocxBlob(root: HTMLElement, rtl: boolean): Promise<Blob> {
@@ -274,6 +278,26 @@ export default function WordEditor() {
     printHtml(editorRef.current.innerHTML, { title: fileName, rtl });
   };
 
+  const exportHtml = async () => {
+    if (!editorRef.current) return;
+    try {
+      setBusy(true);
+      const dir = rtl ? "rtl" : "ltr";
+      const inner = DOMPurify.sanitize(editorRef.current.innerHTML, { USE_PROFILES: { html: true } });
+      const html = `<!DOCTYPE html><html dir="${dir}" lang="${ar ? "ar" : "en"}"><head><meta charset="utf-8"><title>${
+        escapeHtml(fileName)
+      }</title></head><body>${inner}</body></html>`;
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const suggested = withExtension(fileName, "html");
+      const res = await saveFile(blob, { suggestedName: suggested, accept: HTML_ACCEPT, description: "HTML", handle: null });
+      if (res.saved) toast({ title: ar ? "تم الحفظ" : "Saved", description: suggested });
+    } catch (e: any) {
+      toast({ title: ar ? "تعذّر الحفظ" : "Could not save", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="p-4 sm:p-6 space-y-3" data-testid="page-office-word">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -297,15 +321,27 @@ export default function WordEditor() {
           <Button size="sm" onClick={() => doSave("docx", false)} disabled={busy} data-testid="button-word-save">
             <Save className="h-4 w-4 ms-1" /> {ar ? "حفظ DOCX" : "Save DOCX"}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => doSave("docx", true)} disabled={busy} data-testid="button-word-saveas">
-            {ar ? "حفظ باسم" : "Save As"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => doSave("txt", true)} disabled={busy} data-testid="button-word-savetxt">
-            {ar ? "حفظ TXT" : "Save TXT"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handlePdf} disabled={busy} data-testid="button-word-pdf">
-            <FileDown className="h-4 w-4 ms-1" /> PDF
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" disabled={busy} data-testid="button-word-saveas">
+                {ar ? "حفظ باسم" : "Save As"} <ChevronDown className="h-4 w-4 ms-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => doSave("docx", true)} data-testid="menu-word-docx">
+                Word (.docx)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => doSave("txt", true)} data-testid="menu-word-txt">
+                {ar ? "نص" : "Text"} (.txt)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={exportHtml} data-testid="menu-word-html">
+                HTML (.html)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handlePdf} data-testid="menu-word-pdf">
+                PDF (.pdf)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
