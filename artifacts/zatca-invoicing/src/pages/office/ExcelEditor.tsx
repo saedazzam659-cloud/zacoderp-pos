@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useLayoutEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
   FileSpreadsheet, FolderOpen, Save, FileDown, FilePlus2, Plus, Trash2, Columns3, FileUp,
@@ -22,6 +22,12 @@ interface SheetData {
 
 const BLANK_COLS = 8;
 const BLANK_ROWS = 20;
+
+// Row virtualization: only the rows visible in the viewport are rendered as
+// editable inputs. Without this, opening a large spreadsheet would mount tens
+// of thousands of <input> elements at once and freeze the browser.
+const ROW_H = 32; // fixed body-row height (px) used for the windowing math
+const OVERSCAN = 8; // extra rows rendered above/below the viewport for smooth scroll
 
 function blankSheet(name: string): SheetData {
   return {
@@ -70,6 +76,19 @@ export default function ExcelEditor() {
   activeRef.current = active;
   const sheetsRef = useRef(sheets);
   sheetsRef.current = sheets;
+
+  // Virtualized-grid scroll state.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const theadRef = useRef<HTMLTableSectionElement>(null);
+  const rowProbeRef = useRef<HTMLTableRowElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(600);
+  const [headerH, setHeaderH] = useState(0);
+  const [rowH, setRowH] = useState(ROW_H);
+  const resetScroll = () => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setScrollTop(0);
+  };
 
   const sheet = sheets[active] ?? sheets[0];
 
@@ -124,6 +143,7 @@ export default function ExcelEditor() {
     setFileName(ar ? "جدول جديد.xlsx" : "Untitled.xlsx");
     setHandle(null);
     setDirty(false);
+    resetScroll();
   };
 
   const handleOpen = async () => {
@@ -134,6 +154,8 @@ export default function ExcelEditor() {
       });
       if (!opened) return;
       setBusy(true);
+      // Yield once so the disabled/busy UI paints before the synchronous parse.
+      await new Promise((r) => setTimeout(r, 0));
       const XLSX: any = await import("xlsx");
       const buf = await opened.file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
@@ -148,6 +170,7 @@ export default function ExcelEditor() {
       setFileName(opened.file.name);
       setHandle(opened.handle);
       setDirty(false);
+      resetScroll();
     } catch (e: any) {
       toast({ title: ar ? "تعذّر فتح الملف" : "Could not open file", description: String(e?.message ?? e), variant: "destructive" });
     } finally {
@@ -187,6 +210,7 @@ export default function ExcelEditor() {
       setFileName(withExtension(opened.file.name, "xlsx"));
       setHandle(null);
       setDirty(true);
+      resetScroll();
       toast({
         title: ar ? "تم استيراد PDF" : "PDF imported",
         description: ar ? "راجع الجدول ثم احفظه بصيغة Excel." : "Review the table, then save as Excel.",
@@ -255,6 +279,30 @@ export default function ExcelEditor() {
 
   const colCount = sheet.rows[0]?.length ?? 0;
 
+  // Measure the scroll viewport, sticky-header height, and the real rendered
+  // row height (so the spacer math stays exact regardless of borders/zoom).
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => {
+      setViewportH(el.clientHeight || 600);
+      setHeaderH(theadRef.current?.offsetHeight ?? 0);
+      const probe = rowProbeRef.current?.offsetHeight;
+      if (probe && probe > 0) setRowH(probe);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [active, colCount, sheet.rows.length]);
+
+  const totalRows = sheet.rows.length;
+  const bodyScroll = Math.max(0, scrollTop - headerH);
+  const startRow = Math.max(0, Math.floor(bodyScroll / rowH) - OVERSCAN);
+  const endRow = Math.min(totalRows, startRow + Math.ceil(viewportH / rowH) + OVERSCAN * 2);
+  const topPad = startRow * rowH;
+  const bottomPad = Math.max(0, (totalRows - endRow) * rowH);
+
   return (
     <div className="p-4 sm:p-6 space-y-3" data-testid="page-office-excel">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -298,9 +346,13 @@ export default function ExcelEditor() {
         <span className="text-xs text-muted-foreground ms-2">{sheet.rows.length} × {colCount}</span>
       </Card>
 
-      <Card className="p-0 overflow-auto max-h-[60vh]">
+      <Card
+        ref={scrollRef}
+        onScroll={(e) => setScrollTop((e.currentTarget as HTMLDivElement).scrollTop)}
+        className="p-0 overflow-auto max-h-[60vh]"
+      >
         <table className="border-collapse text-sm" dir="ltr" data-testid="grid-excel">
-          <thead className="sticky top-0 z-10">
+          <thead ref={theadRef} className="sticky top-0 z-10">
             <tr>
               <th className="bg-muted border border-border w-10 text-xs text-muted-foreground sticky start-0 z-20" />
               {Array.from({ length: colCount }, (_, c) => (
@@ -311,22 +363,35 @@ export default function ExcelEditor() {
             </tr>
           </thead>
           <tbody>
-            {sheet.rows.map((row, r) => (
-              <tr key={r}>
-                <td className="bg-muted border border-border text-center text-xs text-muted-foreground sticky start-0 z-10">{r + 1}</td>
-                {Array.from({ length: colCount }, (_, c) => (
-                  <td key={c} className="border border-border p-0">
-                    <input
-                      value={row[c] ?? ""}
-                      onChange={(e) => updateCell(r, c, e.target.value)}
-                      dir="auto"
-                      className="w-full min-w-[6rem] px-2 py-1 bg-transparent outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400"
-                      data-testid={`cell-${r}-${c}`}
-                    />
-                  </td>
-                ))}
+            {topPad > 0 && (
+              <tr aria-hidden style={{ height: topPad }}>
+                <td colSpan={colCount + 1} className="p-0 border-0" />
               </tr>
-            ))}
+            )}
+            {sheet.rows.slice(startRow, endRow).map((row, i) => {
+              const r = startRow + i;
+              return (
+                <tr key={r} ref={i === 0 ? rowProbeRef : undefined} style={{ height: ROW_H }}>
+                  <td className="bg-muted border border-border text-center text-xs text-muted-foreground sticky start-0 z-10">{r + 1}</td>
+                  {Array.from({ length: colCount }, (_, c) => (
+                    <td key={c} className="border border-border p-0">
+                      <input
+                        value={row[c] ?? ""}
+                        onChange={(e) => updateCell(r, c, e.target.value)}
+                        dir="auto"
+                        className="w-full min-w-[6rem] h-8 px-2 py-0 bg-transparent outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400"
+                        data-testid={`cell-${r}-${c}`}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+            {bottomPad > 0 && (
+              <tr aria-hidden style={{ height: bottomPad }}>
+                <td colSpan={colCount + 1} className="p-0 border-0" />
+              </tr>
+            )}
           </tbody>
         </table>
       </Card>
@@ -336,7 +401,7 @@ export default function ExcelEditor() {
           <button
             key={i}
             type="button"
-            onClick={() => setActive(i)}
+            onClick={() => { setActive(i); resetScroll(); }}
             className={`px-3 py-1 text-sm rounded-t border-b-2 ${
               i === active ? "border-green-600 font-semibold bg-card" : "border-transparent text-muted-foreground hover:bg-muted"
             }`}

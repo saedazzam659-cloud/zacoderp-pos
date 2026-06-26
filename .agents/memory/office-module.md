@@ -39,3 +39,12 @@ INSIDE handlers to keep the main bundle light — keep new file-format paths the
 - **Excel state.** Grid is array-of-arrays per sheet. Cell/sheet mutations read the
   active-sheet index from a ref (`activeRef`), NOT the render closure, to avoid
   stale-closure writes to the wrong sheet under rapid tab-switch + edit.
+- **Excel grid MUST virtualize rows.** Every cell renders as a controlled
+  `<input>`; rendering the whole sheet at once (`rows.map`) mounts tens/hundreds
+  of thousands of inputs and HARD-FREEZES the browser on a large .xlsx. The grid
+  windows rows (only viewport ± overscan rendered, top/bottom spacer `<tr>`s keep
+  the scrollbar correct). Spacer math needs a real row height — measure it at
+  runtime (probe ref) + header/viewport via ResizeObserver, don't trust a CSS
+  guess. Edits index by ABSOLUTE row (`startRow + i`); save/export must read the
+  FULL `sheets` state, never the visible slice. Any new big-grid render path
+  (Word tables, future sheets) must window too.
