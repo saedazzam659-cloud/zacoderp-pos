@@ -196,6 +196,7 @@ export type PosTerminal = {
   isActive:    boolean;
   notes:       string | null;
   busyUserId:  number | null;
+  enabledServices: string[] | null;
 };
 
 export type PosSession = {
@@ -346,6 +347,12 @@ export const api = {
     const s = qs.toString();
     return req<PosTerminal[]>("GET", `/api/pos-terminals${s ? `?${s}` : ""}`);
   },
+  // Service icons the current cashier should see (per-terminal default +
+  // per-cashier override; admins get all; unconfigured = all).
+  getEffectiveServices: () =>
+    req<{ services: string[]; terminalId: number | null }>(
+      "GET", "/api/pos-terminals/effective-services",
+    ),
 
   // POS Sessions
   getCurrentPosSession: () =>

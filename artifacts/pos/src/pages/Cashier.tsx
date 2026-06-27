@@ -26,6 +26,9 @@ import {
   LogOut,
   Loader2,
   ChefHat,
+  CookingPot,
+  Settings,
+  Users,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
 import PosAiPanel from "@/components/PosAiPanel";
@@ -128,6 +131,13 @@ export default function CashierPage() {
   const [time, setTime] = useState(new Date());
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [restaurantOpen, setRestaurantOpen] = useState(false);
+  // Service icons visible in the top bar. null = all visible (backwards
+  // compatible default). Resolved per-terminal + per-cashier from the server.
+  const [enabledServices, setEnabledServices] = useState<string[] | null>(null);
+  const canShowService = useCallback(
+    (key: string) => enabledServices === null || enabledServices.includes(key),
+    [enabledServices],
+  );
 
   // Auth gate
   useEffect(() => {
@@ -190,6 +200,11 @@ export default function CashierPage() {
         setBranches(brs);
         setCashBoxes(cbs);
         setPosSettings(settings);
+        // Resolve which service icons this cashier may see (per-terminal default
+        // + per-cashier override). Best-effort: on failure keep all visible.
+        api.getEffectiveServices()
+          .then((r) => { if (alive) setEnabledServices(r?.services ?? null); })
+          .catch(() => {});
       } catch (err: any) {
         if (alive) setLoadError(err?.message || "تعذّر تحميل البيانات");
       } finally {
@@ -529,20 +544,66 @@ export default function CashierPage() {
           >
             <UserIcon className="w-4 h-4" />
           </button>
-          <button
-            onClick={() => setRestaurantOpen(true)}
-            title="طلبات الصالة (المطعم)"
-            className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
-          >
-            <ChefHat className="w-4 h-4" /> طلبات الصالة
-          </button>
-          <button
-            onClick={() => navigate("/super")}
-            title="نمط سوبر ماركت"
-            className="h-10 px-3 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-semibold grid place-items-center hover-elevate active-elevate-2 hidden md:flex"
-          >
-            🛒 سوبر ماركت
-          </button>
+          {canShowService("waiter") && (
+            <>
+              <button
+                onClick={() => navigate("/waiter")}
+                title="تطبيق النادل (الطاولات)"
+                className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+                data-testid="svc-waiter"
+              >
+                <Users className="w-4 h-4" /> النادل
+              </button>
+              <button
+                onClick={() => setRestaurantOpen(true)}
+                title="طلبات الصالة (المطعم)"
+                className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+                data-testid="svc-waiter-orders"
+              >
+                <ChefHat className="w-4 h-4" /> طلبات الصالة
+              </button>
+            </>
+          )}
+          {canShowService("kitchen") && (
+            <button
+              onClick={() => navigate("/kitchen")}
+              title="شاشة المطبخ"
+              className="h-10 px-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+              data-testid="svc-kitchen"
+            >
+              <CookingPot className="w-4 h-4" /> المطبخ
+            </button>
+          )}
+          {canShowService("analytics") && (
+            <button
+              onClick={() => navigate("/restaurant-ai")}
+              title="تحليلات الذكاء الاصطناعي"
+              className="h-10 px-3 rounded-xl border border-violet-300 bg-violet-50 text-violet-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+              data-testid="svc-analytics"
+            >
+              <Sparkles className="w-4 h-4" /> الذكاء
+            </button>
+          )}
+          {canShowService("settings") && (
+            <button
+              onClick={() => navigate("/restaurant-settings")}
+              title="إعدادات المطعم"
+              className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2 hidden md:flex"
+              data-testid="svc-settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
+          {canShowService("supermarket") && (
+            <button
+              onClick={() => navigate("/super")}
+              title="نمط سوبر ماركت"
+              className="h-10 px-3 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-semibold grid place-items-center hover-elevate active-elevate-2 hidden md:flex"
+              data-testid="svc-supermarket"
+            >
+              🛒 سوبر ماركت
+            </button>
+          )}
           <button
             onClick={handleLogout}
             title="تسجيل الخروج"

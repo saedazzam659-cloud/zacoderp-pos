@@ -25,6 +25,11 @@ export const posTerminalsTable = pgTable("pos_terminals", {
   cashBoxId:   integer("cash_box_id"),
   isActive:    boolean("is_active").notNull().default(true),
   notes:       text("notes"),
+  // Per-terminal allow-list of service icons visible to cashiers on this
+  // terminal (keys: kitchen/waiter/settings/analytics/supermarket). null =
+  // all services visible (backwards compatible). A per-cashier override on
+  // pos_terminal_users.enabledServices takes precedence when present.
+  enabledServices: text("enabled_services").array(),
   createdAt:   timestamp("created_at").defaultNow().notNull(),
   updatedAt:   timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({
@@ -41,6 +46,9 @@ export const posTerminalUsersTable = pgTable("pos_terminal_users", {
   companyId:    integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   posTerminalId: integer("pos_terminal_id").notNull().references(() => posTerminalsTable.id, { onDelete: "cascade" }),
   userId:       integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  // Per-cashier override of the visible service icons on this terminal. null =
+  // inherit the terminal's enabledServices (which itself defaults to "all").
+  enabledServices: text("enabled_services").array(),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
 }, (t) => ({
   uniqTerminalUser: uniqueIndex("pos_terminal_users_uniq").on(t.posTerminalId, t.userId),

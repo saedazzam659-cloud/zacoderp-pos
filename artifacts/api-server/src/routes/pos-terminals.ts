@@ -9,8 +9,40 @@ import {
   usersTable,
   userBranchesTable,
 } from "@workspace/db";
-import { and, eq, asc, ne, sql, inArray } from "drizzle-orm";
+import { and, eq, asc, desc, ne, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+
+// ─── Service-icon visibility ────────────────────────────────────────────────
+// Canonical set of POS service icons that can be shown/hidden per terminal and
+// per cashier. Keep in lockstep with the POS frontend (artifacts/pos) gating
+// and the ERP terminals UI checkboxes.
+const SERVICE_KEYS = ["kitchen", "waiter", "settings", "analytics", "supermarket"] as const;
+
+// Normalize an arbitrary value into a clean, ordered array of valid service
+// keys, or null when the input isn't an array (meaning "inherit / all").
+function normalizeServices(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null;
+  const set = new Set<string>();
+  for (const x of v) {
+    const s = String(x);
+    if ((SERVICE_KEYS as readonly string[]).includes(s)) set.add(s);
+  }
+  return SERVICE_KEYS.filter((k) => set.has(k));
+}
+
+// Resolve the effective service list for a cashier on a terminal.
+// Precedence: admin/superadmin → all; else per-cashier override → terminal
+// default → (null on both) all (unconfigured is backwards-compatible).
+function effectiveServices(
+  terminalServices: string[] | null,
+  userServices: string[] | null,
+  isAdminLike: boolean,
+): string[] {
+  if (isAdminLike) return [...SERVICE_KEYS];
+  const base = userServices ?? terminalServices;
+  if (base == null) return [...SERVICE_KEYS];
+  return SERVICE_KEYS.filter((k) => base.includes(k));
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -100,6 +132,7 @@ router.get("/", async (req, res) => {
       cashBoxName: cashBoxesTable.nameAr,
       isActive:    posTerminalsTable.isActive,
       notes:       posTerminalsTable.notes,
+      enabledServices: posTerminalsTable.enabledServices,
     })
     .from(posTerminalsTable)
     .leftJoin(branchesTable,  eq(branchesTable.id,  posTerminalsTable.branchId))
@@ -169,8 +202,56 @@ router.get("/", async (req, res) => {
   })));
 });
 
+// ─── GET /pos-terminals/effective-services ──────────────────────────────────
+// Resolve the service icons the CURRENT caller should see, based on their open
+// session's terminal (per-terminal default + per-cashier override). Admins and
+// superadmins always get the full set. Returns all services when the caller
+// has no open session / unconfigured terminal (backwards compatible).
+// Registered before "/:id/*" routes so the literal segment wins.
+router.get("/effective-services", async (req, res) => {
+  const cid = getCid(req, res); if (!cid) return;
+  const u = req.authUser!;
+  const isAdminLike = u.role === "admin" || u.role === "superadmin";
+  if (isAdminLike) { res.json({ services: [...SERVICE_KEYS], terminalId: null }); return; }
+
+  const [sess] = await db
+    .select({ posTerminalId: posSessionsTable.posTerminalId })
+    .from(posSessionsTable)
+    .where(and(
+      eq(posSessionsTable.companyId, cid),
+      eq(posSessionsTable.userId, u.id),
+      eq(posSessionsTable.status, "open"),
+    ))
+    .orderBy(desc(posSessionsTable.openedAt))
+    .limit(1);
+
+  const terminalId = sess?.posTerminalId ?? null;
+  if (!terminalId) { res.json({ services: [...SERVICE_KEYS], terminalId: null }); return; }
+
+  const [term] = await db
+    .select({ enabledServices: posTerminalsTable.enabledServices })
+    .from(posTerminalsTable)
+    .where(and(eq(posTerminalsTable.id, terminalId), eq(posTerminalsTable.companyId, cid)))
+    .limit(1);
+  const [link] = await db
+    .select({ enabledServices: posTerminalUsersTable.enabledServices })
+    .from(posTerminalUsersTable)
+    .where(and(
+      eq(posTerminalUsersTable.companyId, cid),
+      eq(posTerminalUsersTable.posTerminalId, terminalId),
+      eq(posTerminalUsersTable.userId, u.id),
+    ))
+    .limit(1);
+
+  res.json({
+    services: effectiveServices(term?.enabledServices ?? null, link?.enabledServices ?? null, false),
+    terminalId,
+  });
+});
+
 // ─── GET /pos-terminals/:id/users ───────────────────────────────────────────
-// List the user IDs allowed to use this terminal (admin-only).
+// List the user IDs allowed to use this terminal (admin-only), along with each
+// user's per-cashier service override (null = inherits the terminal default).
 router.get("/:id/users", requireAdmin, async (req, res) => {
   const cid = getCid(req, res); if (!cid) return;
   const id = Number(req.params.id);
@@ -179,10 +260,16 @@ router.get("/:id/users", requireAdmin, async (req, res) => {
     .where(and(eq(posTerminalsTable.id, id), eq(posTerminalsTable.companyId, cid)))
     .limit(1);
   if (!t) { res.status(404).json({ error: "غير موجود" }); return; }
-  const links = await db.select({ userId: posTerminalUsersTable.userId })
+  const links = await db.select({
+      userId: posTerminalUsersTable.userId,
+      enabledServices: posTerminalUsersTable.enabledServices,
+    })
     .from(posTerminalUsersTable)
     .where(and(eq(posTerminalUsersTable.companyId, cid), eq(posTerminalUsersTable.posTerminalId, id)));
-  res.json({ userIds: links.map(l => l.userId) });
+  res.json({
+    userIds: links.map(l => l.userId),
+    users: links.map(l => ({ userId: l.userId, enabledServices: l.enabledServices ?? null })),
+  });
 });
 
 // ─── PUT /pos-terminals/:id/users ───────────────────────────────────────────
@@ -191,8 +278,26 @@ router.get("/:id/users", requireAdmin, async (req, res) => {
 router.put("/:id/users", requireAdmin, async (req, res) => {
   const cid = getCid(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const incoming = Array.isArray(req.body?.userIds) ? (req.body.userIds as unknown[]).map(Number).filter(Number.isFinite) : null;
-  if (!incoming) { res.status(400).json({ error: "userIds مطلوب" }); return; }
+
+  // Accept either the rich `users:[{userId, enabledServices}]` shape (per-cashier
+  // service overrides) or the legacy `userIds:number[]` shape (override = null →
+  // inherit terminal default). Last entry per userId wins on dedupe.
+  const body = req.body ?? {};
+  const byUser = new Map<number, string[] | null>();
+  if (Array.isArray(body.users)) {
+    for (const x of body.users as any[]) {
+      const uid = Number(x?.userId);
+      if (Number.isFinite(uid)) byUser.set(uid, normalizeServices(x?.enabledServices));
+    }
+  } else if (Array.isArray(body.userIds)) {
+    for (const raw of body.userIds as unknown[]) {
+      const uid = Number(raw);
+      if (Number.isFinite(uid)) byUser.set(uid, null);
+    }
+  } else {
+    res.status(400).json({ error: "userIds مطلوب" }); return;
+  }
+  const uids = Array.from(byUser.keys());
 
   const [t] = await db.select({ id: posTerminalsTable.id })
     .from(posTerminalsTable)
@@ -201,11 +306,11 @@ router.put("/:id/users", requireAdmin, async (req, res) => {
   if (!t) { res.status(404).json({ error: "غير موجود" }); return; }
 
   // Validate every user belongs to this company.
-  if (incoming.length > 0) {
+  if (uids.length > 0) {
     const found = await db.select({ id: usersTable.id })
       .from(usersTable)
-      .where(and(eq(usersTable.companyId, cid), inArray(usersTable.id, incoming)));
-    if (found.length !== new Set(incoming).size) {
+      .where(and(eq(usersTable.companyId, cid), inArray(usersTable.id, uids)));
+    if (found.length !== uids.length) {
       res.status(400).json({ error: "بعض المستخدمين لا ينتمون لهذه الشركة" });
       return;
     }
@@ -214,19 +319,19 @@ router.put("/:id/users", requireAdmin, async (req, res) => {
   await db.transaction(async (tx) => {
     await tx.delete(posTerminalUsersTable)
       .where(and(eq(posTerminalUsersTable.companyId, cid), eq(posTerminalUsersTable.posTerminalId, id)));
-    if (incoming.length > 0) {
+    if (uids.length > 0) {
       await tx.insert(posTerminalUsersTable).values(
-        Array.from(new Set(incoming)).map(uid => ({ companyId: cid, posTerminalId: id, userId: uid })),
+        uids.map(uid => ({ companyId: cid, posTerminalId: id, userId: uid, enabledServices: byUser.get(uid) ?? null })),
       );
     }
   });
-  res.json({ ok: true, userIds: Array.from(new Set(incoming)) });
+  res.json({ ok: true, userIds: uids });
 });
 
 // ─── POST /pos-terminals ────────────────────────────────────────────────────
 router.post("/", requireAdmin, async (req, res) => {
   const cid = getCid(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, branchId, machineCode, cashBoxId, isActive, notes } = req.body ?? {};
+  const { code, nameAr, nameEn, branchId, machineCode, cashBoxId, isActive, notes, enabledServices } = req.body ?? {};
   if (!nameAr || !branchId) {
     res.status(400).json({ error: "الاسم والفرع مطلوبان" }); return;
   }
@@ -244,6 +349,7 @@ router.post("/", requireAdmin, async (req, res) => {
       cashBoxId:   cashBoxId ? Number(cashBoxId) : null,
       isActive:    isActive !== false,
       notes:       notes ? String(notes) : null,
+      enabledServices: enabledServices === undefined ? null : normalizeServices(enabledServices),
     }).returning();
     res.json(row);
   } catch (e: any) {
@@ -258,7 +364,7 @@ router.post("/", requireAdmin, async (req, res) => {
 router.patch("/:id", requireAdmin, async (req, res) => {
   const cid = getCid(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, branchId, machineCode, cashBoxId, isActive, notes } = req.body ?? {};
+  const { code, nameAr, nameEn, branchId, machineCode, cashBoxId, isActive, notes, enabledServices } = req.body ?? {};
 
   if (branchId !== undefined || cashBoxId !== undefined) {
     const ownErr = await validateOwnership(
@@ -278,6 +384,7 @@ router.patch("/:id", requireAdmin, async (req, res) => {
   if (cashBoxId   !== undefined) patch.cashBoxId   = cashBoxId ? Number(cashBoxId) : null;
   if (isActive    !== undefined) patch.isActive    = !!isActive;
   if (notes       !== undefined) patch.notes       = notes ? String(notes) : null;
+  if (enabledServices !== undefined) patch.enabledServices = normalizeServices(enabledServices);
 
   try {
     const [row] = await db.update(posTerminalsTable)

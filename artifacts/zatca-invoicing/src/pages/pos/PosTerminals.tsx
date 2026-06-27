@@ -27,6 +27,18 @@ import { useToast } from "@/hooks/use-toast";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+// Service icons that can be shown/hidden in the cashier top bar. Keep keys in
+// lockstep with the backend SERVICE_KEYS (pos-terminals.ts) and the POS
+// frontend gating (artifacts/pos Cashier.tsx).
+const SERVICE_OPTIONS: { key: string; ar: string; en: string }[] = [
+  { key: "kitchen",     ar: "المطبخ",            en: "Kitchen" },
+  { key: "waiter",      ar: "الجرسون / الصالة",   en: "Waiter / Hall" },
+  { key: "settings",    ar: "إعدادات المطعم",     en: "Restaurant settings" },
+  { key: "analytics",   ar: "تحليلات الذكاء",     en: "AI analytics" },
+  { key: "supermarket", ar: "سوبر ماركت",         en: "Supermarket" },
+];
+const ALL_SERVICE_KEYS = SERVICE_OPTIONS.map((s) => s.key);
+
 type Branch  = { id: number; nameAr: string; nameEn?: string | null; code?: string };
 type CashBox = { id: number; nameAr: string; nameEn?: string | null; code?: string };
 type Company = { id: number; nameAr: string; nameEn?: string | null };
@@ -48,6 +60,7 @@ type Terminal = {
   notes:       string | null;
   busyUserId:  number | null;
   allowedUserCount?: number;
+  enabledServices: string[] | null;
 };
 
 type Draft = {
@@ -60,11 +73,14 @@ type Draft = {
   cashBoxId:   string;
   isActive:    boolean;
   notes:       string;
+  // null = all services visible (backwards compatible default).
+  enabledServices: string[] | null;
 };
 
 const blankDraft: Draft = {
   code: "", nameAr: "", nameEn: "", branchId: "",
   machineCode: "", cashBoxId: "", isActive: true, notes: "",
+  enabledServices: null,
 };
 
 export default function PosTerminals() {
@@ -151,6 +167,7 @@ export default function PosTerminals() {
         cashBoxId:   d.cashBoxId ? Number(d.cashBoxId) : null,
         isActive:    d.isActive,
         notes:       d.notes.trim() || null,
+        enabledServices: d.enabledServices,
       };
       const url = d.id ? `${API}/api/pos-terminals/${d.id}` : `${API}/api/pos-terminals`;
       const r = await fetch(url, {
@@ -230,6 +247,7 @@ export default function PosTerminals() {
     branchId: String(tt.branchId), machineCode: tt.machineCode ?? "",
     cashBoxId: tt.cashBoxId ? String(tt.cashBoxId) : "",
     isActive: tt.isActive, notes: tt.notes ?? "",
+    enabledServices: tt.enabledServices ?? null,
   });
 
   return (
@@ -627,6 +645,64 @@ function TerminalEditor({
               onChange={(e) => onChange({ ...draft, notes: e.target.value })}
             />
           </div>
+
+          <div className="col-span-2 space-y-2 rounded-lg border bg-muted/20 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs font-semibold">
+                {isRtl ? "الخدمات الظاهرة للكاشير" : "Cashier services"}
+              </Label>
+              <button
+                type="button"
+                className="text-[11px] text-primary hover:underline"
+                onClick={() =>
+                  onChange({
+                    ...draft,
+                    enabledServices: draft.enabledServices === null ? [] : null,
+                  })
+                }
+                data-testid="btn-toggle-services-all"
+              >
+                {draft.enabledServices === null
+                  ? (isRtl ? "تخصيص" : "Customize")
+                  : (isRtl ? "إظهار الكل" : "Show all")}
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {draft.enabledServices === null
+                ? (isRtl
+                    ? "كل الخدمات ظاهرة (الوضع الافتراضي). اضغط «تخصيص» للتحكم."
+                    : "All services visible (default). Click \"Customize\" to control.")
+                : (isRtl
+                    ? "حدّد الخدمات التي تظهر في الشريط العلوي للكاشير على هذه المحطة."
+                    : "Pick which services show in the cashier top bar on this terminal.")}
+            </p>
+            {draft.enabledServices !== null && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {SERVICE_OPTIONS.map((s) => {
+                  const checked = draft.enabledServices!.includes(s.key);
+                  return (
+                    <label
+                      key={s.key}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 cursor-pointer"
+                      data-testid={`svc-terminal-${s.key}`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => {
+                          const cur = draft.enabledServices ?? [];
+                          const next = checked
+                            ? cur.filter((k) => k !== s.key)
+                            : ALL_SERVICE_KEYS.filter((k) => cur.includes(k) || k === s.key);
+                          onChange({ ...draft, enabledServices: next });
+                        }}
+                      />
+                      <span className="text-sm">{isRtl ? s.ar : s.en}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center justify-end gap-2 pt-2 border-t">
@@ -656,6 +732,8 @@ function TerminalUsersDialog({
   const tr = (k: string, opts?: any) => t(`posPages.terminals.${k}`, opts) as string;
   const { toast } = useToast();
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Per-cashier service override. Absent key (or null value) = inherit terminal.
+  const [svcOverrides, setSvcOverrides] = useState<Map<number, string[] | null>>(new Map());
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -667,9 +745,18 @@ function TerminalUsersDialog({
       try {
         const r = await fetch(`${apiBase}/api/pos-terminals/${terminal.id}/users`, { headers });
         const j = await r.json();
-        if (!cancelled) setSelected(new Set<number>((j?.userIds ?? []) as number[]));
+        if (!cancelled) {
+          const rows = (j?.users ?? []) as { userId: number; enabledServices: string[] | null }[];
+          if (rows.length > 0) {
+            setSelected(new Set<number>(rows.map(x => x.userId)));
+            setSvcOverrides(new Map(rows.map(x => [x.userId, x.enabledServices ?? null])));
+          } else {
+            setSelected(new Set<number>((j?.userIds ?? []) as number[]));
+            setSvcOverrides(new Map());
+          }
+        }
       } catch {
-        if (!cancelled) setSelected(new Set());
+        if (!cancelled) { setSelected(new Set()); setSvcOverrides(new Map()); }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -683,6 +770,23 @@ function TerminalUsersDialog({
       if (next.has(uid)) next.delete(uid); else next.add(uid);
       return next;
     });
+  };
+
+  // null = inherit terminal default; array = custom per-cashier list.
+  const setOverride = (uid: number, value: string[] | null) => {
+    setSvcOverrides(prev => {
+      const next = new Map(prev);
+      next.set(uid, value);
+      return next;
+    });
+  };
+  const toggleUserSvc = (uid: number, key: string) => {
+    const cur = svcOverrides.get(uid) ?? [];
+    const has = cur.includes(key);
+    const next = has
+      ? cur.filter(k => k !== key)
+      : ALL_SERVICE_KEYS.filter(k => cur.includes(k) || k === key);
+    setOverride(uid, next);
   };
 
   const filtered = useMemo(() => {
@@ -699,7 +803,12 @@ function TerminalUsersDialog({
       const r = await fetch(`${apiBase}/api/pos-terminals/${terminal.id}/users`, {
         method: "PUT",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ userIds: Array.from(selected) }),
+        body: JSON.stringify({
+          users: Array.from(selected).map(uid => ({
+            userId: uid,
+            enabledServices: svcOverrides.get(uid) ?? null,
+          })),
+        }),
       });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
@@ -745,21 +854,68 @@ function TerminalUsersDialog({
             filtered.map(u => {
               const checked = selected.has(u.id);
               const display = isRtl ? (u.nameAr ?? u.username) : (u.nameEn ?? u.nameAr ?? u.username);
+              const override = svcOverrides.get(u.id) ?? null;
+              const custom = override !== null;
               return (
-                <label
+                <div
                   key={u.id}
-                  className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 ${checked ? "bg-primary/5" : ""}`}
+                  className={`px-3 py-2 ${checked ? "bg-primary/5" : ""}`}
                   data-testid={`row-user-${u.id}`}
                 >
-                  <Checkbox checked={checked} onCheckedChange={() => toggle(u.id)} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">{display}</div>
-                    <div className="text-[11px] font-mono text-muted-foreground truncate">
-                      {u.username} · {u.role}
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox checked={checked} onCheckedChange={() => toggle(u.id)} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{display}</div>
+                      <div className="text-[11px] font-mono text-muted-foreground truncate">
+                        {u.username} · {u.role}
+                      </div>
                     </div>
-                  </div>
-                  {checked && <Check className="w-4 h-4 text-primary" />}
-                </label>
+                    {checked && <Check className="w-4 h-4 text-primary" />}
+                  </label>
+
+                  {checked && (
+                    <div className="mt-2 ms-7 rounded-md border bg-background/60 p-2 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-semibold text-muted-foreground">
+                          {isRtl ? "الخدمات الظاهرة" : "Visible services"}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-[11px] text-primary hover:underline"
+                          onClick={() => setOverride(u.id, custom ? null : [])}
+                          data-testid={`btn-user-override-${u.id}`}
+                        >
+                          {custom
+                            ? (isRtl ? "متابعة إعداد المحطة" : "Inherit terminal")
+                            : (isRtl ? "تخصيص لهذا الكاشير" : "Customize")}
+                        </button>
+                      </div>
+                      {!custom ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          {isRtl
+                            ? "يتبع الخدمات الافتراضية للمحطة."
+                            : "Follows the terminal's default services."}
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                          {SERVICE_OPTIONS.map((s) => (
+                            <label
+                              key={s.key}
+                              className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted/50 cursor-pointer"
+                              data-testid={`svc-user-${u.id}-${s.key}`}
+                            >
+                              <Checkbox
+                                checked={(override ?? []).includes(s.key)}
+                                onCheckedChange={() => toggleUserSvc(u.id, s.key)}
+                              />
+                              <span className="text-xs">{isRtl ? s.ar : s.en}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               );
             })
           )}

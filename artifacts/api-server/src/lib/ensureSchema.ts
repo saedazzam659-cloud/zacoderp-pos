@@ -289,6 +289,12 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS pos_terminal_users_uniq ON pos_terminal_users (pos_terminal_id, user_id)` },
     { label: "pos_terminal_users_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS pos_terminal_users_company_idx ON pos_terminal_users (company_id)` },
+    // ─── Per-station / per-cashier service-icon visibility (see schema/pos.ts).
+    // null = all services visible (backwards compatible).
+    { label: "pos_terminals.enabled_services",
+      sql:   `ALTER TABLE pos_terminals ADD COLUMN IF NOT EXISTS enabled_services TEXT[]` },
+    { label: "pos_terminal_users.enabled_services",
+      sql:   `ALTER TABLE pos_terminal_users ADD COLUMN IF NOT EXISTS enabled_services TEXT[]` },
 
     // ─── Online Store module (see lib/db/src/schema/onlineStore.ts).
     // Multi-tenant e-commerce storefront tables — same rationale as above
