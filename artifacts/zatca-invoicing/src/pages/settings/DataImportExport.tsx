@@ -966,13 +966,46 @@ const STMT_ALL = "__all__";
 
 function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean }) {
   const { t, i18n } = useTranslation();
-  const { user } = useAuth();
+  const { user, token } = useAuth() as any;
   const dateLocale = i18n.language?.startsWith("ar") ? "ar-EG" : "en-GB";
   const [open, setOpen] = useState(false);
   const [account, setAccount] = useState<string>("");
+  const [search, setSearch] = useState<string>("");
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
   const align = isAr ? "text-right" : "text-left";
+
+  // The imported rows only carry the account NUMBER (accountCode). To let the
+  // user search by account NAME (e.g. «أحمد الوكيل») we resolve number → name
+  // from the company chart of accounts and match against both.
+  const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const cid: number | undefined = user?.company?.id ?? user?.companyId ?? undefined;
+  const { data: chartAccounts = [] } = useQuery<any[]>({
+    queryKey: ["accounts", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return [];
+      const j = await res.json();
+      return Array.isArray(j) ? j : [];
+    },
+    enabled: !!token && open,
+  });
+  const codeName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of chartAccounts as any[]) {
+      const code = String(a?.code ?? "").trim();
+      if (!code) continue;
+      const nm = isAr ? (a?.nameAr ?? a?.nameEn) : (a?.nameEn ?? a?.nameAr);
+      if (nm != null && String(nm).trim() !== "") m.set(code, String(nm).trim());
+    }
+    return m;
+  }, [chartAccounts, isAr]);
+  const accountLabel = (code: any) => {
+    const c = String(code ?? "").trim();
+    const nm = codeName.get(c);
+    return nm ? `${c} — ${nm}` : c;
+  };
 
   const accounts = useMemo(() => {
     const set = new Set<string>();
@@ -985,6 +1018,28 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
 
   const selected = account || accounts[0] || "";
   const allMode = selected === STMT_ALL;
+
+  // Free-text search by account NAME or NUMBER. When active it OVERRIDES the
+  // dropdown and scopes the statement to EVERY account whose name/number matches
+  // (so «أحمد الوكيل» surfaces all of that account's movements in the period).
+  const searchNorm = stmtNormalizeDigits(search).trim().toLowerCase();
+  const searchActive = searchNorm !== "";
+  const matchedCodes = useMemo(() => {
+    if (!searchActive) return [] as string[];
+    return accounts.filter((code) => {
+      const cd = stmtNormalizeDigits(code).toLowerCase();
+      const nm = (codeName.get(code) || "").toLowerCase();
+      return cd.includes(searchNorm) || nm.includes(searchNorm);
+    });
+  }, [accounts, codeName, searchActive, searchNorm]);
+
+  // null = every account; otherwise the explicit set of in-scope account codes.
+  const scopeCodes: string[] | null = searchActive ? matchedCodes : (allMode ? null : [selected]);
+  const inScope = (code: string) => scopeCodes === null ? true : scopeCodes.includes(code);
+  const multiAcct = scopeCodes === null || scopeCodes.length !== 1;
+  const scopeLabel = searchActive
+    ? (matchedCodes.length === 1 ? accountLabel(matchedCodes[0]) : t("dataIO.stmtMatchedScope", { q: search.trim(), count: matchedCodes.length }))
+    : (allMode ? t("dataIO.stmtAllAccounts") : accountLabel(selected));
 
   // Inclusive date window over the original entry dates. "To" extends to the
   // end of that day so same-day entries are not dropped.
@@ -1000,7 +1055,7 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
 
   const lines = useMemo(() => {
     const list = rows
-      .filter((r) => (allMode ? true : String(r?.accountCode ?? "").trim() === selected))
+      .filter((r) => inScope(String(r?.accountCode ?? "").trim()))
       .filter((r) => inRange(r?.entryDate))
       .map((r) => ({
         date: r?.entryDate ?? "",
@@ -1020,7 +1075,7 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
       return { ...l, balance: nb };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, selected, allMode, fromDate, toDate]);
+  }, [rows, selected, allMode, searchActive, matchedCodes, fromDate, toDate]);
 
   const totals = useMemo(
     () => lines.reduce((acc, l) => { acc.debit += l.debit; acc.credit += l.credit; return acc; }, { debit: 0, credit: 0 }),
@@ -1033,24 +1088,24 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
 
   function exportStatement() {
     const wb = XLSX.utils.book_new();
-    const header = allMode
+    const header = multiAcct
       ? [t("dataIO.stmtDate"), t("dataIO.stmtDoc"), t("dataIO.stmtAccount"), t("dataIO.stmtDesc"), t("dataIO.stmtDebit"), t("dataIO.stmtCredit"), t("dataIO.stmtBalance")]
       : [t("dataIO.stmtDate"), t("dataIO.stmtDoc"), t("dataIO.stmtDesc"), t("dataIO.stmtDebit"), t("dataIO.stmtCredit"), t("dataIO.stmtBalance")];
-    const body = lines.map((l) => allMode
-      ? [fmtDate(l.date), l.doc, l.acct, l.desc, l.debit, l.credit, l.balance]
+    const body = lines.map((l) => multiAcct
+      ? [fmtDate(l.date), l.doc, accountLabel(l.acct), l.desc, l.debit, l.credit, l.balance]
       : [fmtDate(l.date), l.doc, l.desc, l.debit, l.credit, l.balance]);
-    const totalsRow = allMode
+    const totalsRow = multiAcct
       ? [t("dataIO.stmtTotals"), "", "", "", totals.debit, totals.credit, totals.debit - totals.credit]
       : [t("dataIO.stmtTotals"), "", "", totals.debit, totals.credit, totals.debit - totals.credit];
     const aoa: any[][] = [
-      [t("dataIO.stmtAccount"), allMode ? t("dataIO.stmtAllAccounts") : selected],
+      [t("dataIO.stmtAccount"), scopeLabel],
       [],
       header,
       ...body,
       totalsRow,
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "statement");
-    XLSX.writeFile(wb, `account-statement-${allMode ? "all" : selected}-${Date.now()}.xlsx`);
+    XLSX.writeFile(wb, `account-statement-${searchActive ? "search" : (allMode ? "all" : selected)}-${Date.now()}.xlsx`);
   }
 
   // ── Print helpers (standalone window, same look as the system JE print) ──
@@ -1099,17 +1154,19 @@ ${inner}
   }
 
   function printStatement() {
-    const acctHead = allMode ? `<th>${esc(t("dataIO.stmtAccount"))}</th>` : "";
+    const acctHead = multiAcct ? `<th>${esc(t("dataIO.stmtAccount"))}</th>` : "";
     const head = `<tr><th>#</th><th>${esc(t("dataIO.stmtDate"))}</th><th>${esc(t("dataIO.stmtDoc"))}</th>${acctHead}<th>${esc(t("dataIO.stmtDesc"))}</th><th>${esc(t("dataIO.stmtDebit"))}</th><th>${esc(t("dataIO.stmtCredit"))}</th><th>${esc(t("dataIO.stmtBalance"))}</th></tr>`;
-    const body = lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(fmtDate(l.date))}</td><td>${esc(l.doc)}</td>${allMode ? `<td>${esc(l.acct)}</td>` : ""}<td>${esc(l.desc)}</td><td class="num">${l.debit ? fmt(l.debit) : ""}</td><td class="num">${l.credit ? fmt(l.credit) : ""}</td><td class="num">${fmt(l.balance)}</td></tr>`).join("");
-    const span = allMode ? 5 : 4;
+    const body = lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(fmtDate(l.date))}</td><td>${esc(l.doc)}</td>${multiAcct ? `<td>${esc(accountLabel(l.acct))}</td>` : ""}<td>${esc(l.desc)}</td><td class="num">${l.debit ? fmt(l.debit) : ""}</td><td class="num">${l.credit ? fmt(l.credit) : ""}</td><td class="num">${fmt(l.balance)}</td></tr>`).join("");
+    const span = multiAcct ? 5 : 4;
     const foot = `<tr><td colspan="${span}">${esc(t("dataIO.stmtTotals"))}</td><td class="num">${fmt(totals.debit)}</td><td class="num">${fmt(totals.credit)}</td><td class="num">${fmt(totals.debit - totals.credit)}</td></tr>`;
     const inner = `<table><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>`;
-    openWin(buildShell(`${t("dataIO.stmtStatementTitle")} — ${allMode ? t("dataIO.stmtAllAccounts") : selected}`, inner));
+    openWin(buildShell(`${t("dataIO.stmtStatementTitle")} — ${scopeLabel}`, inner));
   }
 
   function printGrouped() {
-    const filtered = rows.filter((r) => inRange(r?.entryDate));
+    const filtered = rows
+      .filter((r) => inScope(String(r?.accountCode ?? "").trim()))
+      .filter((r) => inRange(r?.entryDate));
     const map = new Map<string, { date: string; doc: string; desc: string; lns: any[]; td: number; tc: number }>();
     for (const r of filtered) {
       const doc = r?.docNumber != null ? String(r.docNumber) : "";
@@ -1126,13 +1183,13 @@ ${inner}
     let gTd = 0, gTc = 0;
     const blocks = groups.map((g) => {
       gTd += g.td; gTc += g.tc;
-      const lnsHtml = g.lns.map((l) => `<tr><td>${esc(l.acct)}</td><td>${esc(l.desc)}</td><td class="num">${l.debit ? fmt(l.debit) : ""}</td><td class="num">${l.credit ? fmt(l.credit) : ""}</td></tr>`).join("");
+      const lnsHtml = g.lns.map((l) => `<tr><td>${esc(accountLabel(l.acct))}</td><td>${esc(l.desc)}</td><td class="num">${l.debit ? fmt(l.debit) : ""}</td><td class="num">${l.credit ? fmt(l.credit) : ""}</td></tr>`).join("");
       return `<div class="entry"><div class="entry-h"><span>${esc(t("dataIO.stmtDoc"))}: <b>${esc(g.doc || "—")}</b></span><span>${esc(t("dataIO.stmtDate"))}: <b>${esc(fmtDate(g.date))}</b></span>${g.desc ? `<span class="ed">${esc(g.desc)}</span>` : ""}</div>`
         + `<table><thead><tr><th>${esc(t("dataIO.stmtAccount"))}</th><th>${esc(t("dataIO.stmtDesc"))}</th><th>${esc(t("dataIO.stmtDebit"))}</th><th>${esc(t("dataIO.stmtCredit"))}</th></tr></thead><tbody>${lnsHtml}</tbody>`
         + `<tfoot><tr><td colspan="2">${esc(t("dataIO.stmtTotals"))}</td><td class="num">${fmt(g.td)}</td><td class="num">${fmt(g.tc)}</td></tr></tfoot></table></div>`;
     }).join("");
     const grand = `<div class="grand"><span>${esc(t("dataIO.stmtEntriesCount", { count: groups.length }))}</span><span>${esc(t("dataIO.stmtDebit"))}: <b>${fmt(gTd)}</b></span><span>${esc(t("dataIO.stmtCredit"))}: <b>${fmt(gTc)}</b></span></div>`;
-    openWin(buildShell(t("dataIO.stmtPrintTitle"), grand + blocks));
+    openWin(buildShell(`${t("dataIO.stmtPrintTitle")} — ${scopeLabel}`, grand + blocks));
   }
 
   return (
@@ -1153,10 +1210,25 @@ ${inner}
       ) : (
         <div className="mt-3 space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-muted-foreground">{t("dataIO.stmtSearch")}</span>
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t("dataIO.stmtSearchPh")}
+              className="h-8 px-2 py-1 text-sm w-[240px]"
+            />
+            {searchActive && (
+              <Button size="sm" variant="ghost" onClick={() => setSearch("")}>{t("dataIO.stmtClear")}</Button>
+            )}
             <span className="text-sm text-muted-foreground">{t("dataIO.stmtAccount")}</span>
-            <select className="px-2 py-1 text-sm border rounded bg-background min-w-[180px]" value={selected} onChange={(e) => setAccount(e.target.value)}>
+            <select
+              className="px-2 py-1 text-sm border rounded bg-background min-w-[200px] max-w-[280px] disabled:opacity-50"
+              value={selected}
+              disabled={searchActive}
+              onChange={(e) => { setAccount(e.target.value); setSearch(""); }}
+            >
               <option value={STMT_ALL}>{t("dataIO.stmtAllAccounts")}</option>
-              {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
+              {accounts.map((a) => <option key={a} value={a}>{accountLabel(a)}</option>)}
             </select>
             <span className="text-sm text-muted-foreground">{t("dataIO.stmtFrom")}</span>
             <DateField value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="px-2 py-1 text-sm border rounded bg-background w-[150px]" />
@@ -1179,6 +1251,15 @@ ${inner}
             </div>
           </div>
 
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">{t("dataIO.stmtAccount")}:</span>
+            <span className="font-semibold">{scopeLabel}</span>
+          </div>
+
+          {searchActive && matchedCodes.length === 0 ? (
+            <div className="text-sm text-amber-700 dark:text-amber-300">{t("dataIO.stmtNoMatch")}</div>
+          ) : null}
+
           <div className="overflow-x-auto rounded border max-h-[600px] bg-background">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 sticky top-0">
@@ -1186,7 +1267,7 @@ ${inner}
                   <th className={`p-2 ${align} w-10`}>#</th>
                   <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDate")}</th>
                   <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDoc")}</th>
-                  {allMode && <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtAccount")}</th>}
+                  {multiAcct && <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtAccount")}</th>}
                   <th className={`p-2 ${align}`}>{t("dataIO.stmtDesc")}</th>
                   <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtDebit")}</th>
                   <th className={`p-2 ${align} whitespace-nowrap`}>{t("dataIO.stmtCredit")}</th>
@@ -1199,7 +1280,7 @@ ${inner}
                     <td className="p-2 text-xs text-muted-foreground">{idx + 1}</td>
                     <td className="p-2 whitespace-nowrap">{fmtDate(l.date)}</td>
                     <td className="p-2 whitespace-nowrap">{l.doc}</td>
-                    {allMode && <td className="p-2 whitespace-nowrap">{l.acct}</td>}
+                    {multiAcct && <td className="p-2 whitespace-nowrap">{accountLabel(l.acct)}</td>}
                     <td className="p-2 max-w-[280px] truncate" title={l.desc}>{l.desc}</td>
                     <td className="p-2 whitespace-nowrap">{l.debit ? fmt(l.debit) : ""}</td>
                     <td className="p-2 whitespace-nowrap">{l.credit ? fmt(l.credit) : ""}</td>
@@ -1209,7 +1290,7 @@ ${inner}
               </tbody>
               <tfoot>
                 <tr className="border-t bg-muted/30 font-semibold">
-                  <td className="p-2" colSpan={allMode ? 5 : 4}>{t("dataIO.stmtTotals")}</td>
+                  <td className="p-2" colSpan={multiAcct ? 5 : 4}>{t("dataIO.stmtTotals")}</td>
                   <td className="p-2 whitespace-nowrap">{fmt(totals.debit)}</td>
                   <td className="p-2 whitespace-nowrap">{fmt(totals.credit)}</td>
                   <td className="p-2 whitespace-nowrap">{fmt(totals.debit - totals.credit)}</td>
