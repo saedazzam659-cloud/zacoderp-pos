@@ -19,10 +19,29 @@ function isZeroValue(value: React.ComponentProps<"input">["value"]): boolean {
   return false;
 }
 
+// Strip trailing fractional zeros from a numeric value for DISPLAY only.
+// e.g. "10.0000" -> "10", "300000.00" -> "300000", "10.50" -> "10.5".
+// Only touches plain decimal strings that actually have a fractional part;
+// integers, blanks, partial input ("10.") and non-numeric text pass through
+// unchanged. Never mutates the value the parent holds or submits.
+function trimTrailingZeros(value: React.ComponentProps<"input">["value"]): React.ComponentProps<"input">["value"] {
+  const s = typeof value === "number" ? String(value) : value;
+  if (typeof s !== "string") return value;
+  const t = s.trim();
+  if (!/^-?\d*\.\d+$/.test(t)) return value;
+  const trimmed = t.replace(/0+$/, "").replace(/\.$/, "");
+  if (trimmed === "" || trimmed === "-" || trimmed === "-0") return value;
+  return trimmed;
+}
+
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, value, placeholder, ...props }, ref) => {
+  ({ className, type, value, placeholder, onFocus, onBlur, ...props }, ref) => {
     const auth = React.useContext(AuthContext);
     const showZeros = (auth?.user as any)?.company?.showZeros === true;
+    // While the field is focused we render the EXACT parent value so the user
+    // can type decimals freely ("10.0" must not collapse to "10" mid-edit).
+    // The trailing-zero trim only applies once the field is at rest (blurred).
+    const [focused, setFocused] = React.useState(false);
 
     let displayValue = value;
     let displayPlaceholder = placeholder;
@@ -41,10 +60,16 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
       type === "number" ||
       props.inputMode === "numeric" ||
       props.inputMode === "decimal";
-    if (isNumericField && isControlled && !showZeros && isZeroValue(value)) {
-      displayValue = "";
-      // Faint "0" hint (placeholder:text-muted-foreground in the class list).
-      if (displayPlaceholder == null) displayPlaceholder = "0";
+    if (isNumericField && isControlled) {
+      if (!showZeros && isZeroValue(value)) {
+        displayValue = "";
+        // Faint "0" hint (placeholder:text-muted-foreground in the class list).
+        if (displayPlaceholder == null) displayPlaceholder = "0";
+      } else if (!focused) {
+        // Drop ugly trailing zeros (e.g. DB numeric strings like "10.0000")
+        // from the resting display, globally across every numeric input.
+        displayValue = trimTrailingZeros(value);
+      }
     }
 
     return (
@@ -57,6 +82,8 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
           className
         )}
         ref={ref}
+        onFocus={(e) => { setFocused(true); onFocus?.(e); }}
+        onBlur={(e) => { setFocused(false); onBlur?.(e); }}
         {...props}
       />
     )
