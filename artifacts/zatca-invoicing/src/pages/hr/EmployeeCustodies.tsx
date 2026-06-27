@@ -253,6 +253,8 @@ export default function EmployeeCustodies() {
       purpose: c.purpose,
       notes: c.notes,
       statusLabel: st.label,
+      bankName: c.empBankName,
+      bankAccountIban: c.empBankIban,
       settlements: (lines || []).map((s) => ({
         settleDate: fmtDmy(s.settleDate),
         kind: s.kind,

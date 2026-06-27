@@ -213,6 +213,8 @@ export default function EmployeeLoans() {
       reason: l.reason,
       statusLabel: st.label,
       paidAmount: l.paidAmount,
+      bankName: l.empBankName,
+      bankAccountIban: l.empBankIban,
     };
   }
 

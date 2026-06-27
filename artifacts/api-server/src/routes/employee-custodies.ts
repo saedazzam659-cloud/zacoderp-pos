@@ -77,6 +77,8 @@ router.get("/", async (req, res) => {
       empCode: employeesTable.code,
       empNameAr: employeesTable.nameAr,
       empNameEn: employeesTable.nameEn,
+      empBankName: employeesTable.bankName,
+      empBankIban: employeesTable.bankAccountIban,
     }).from(employeeCustodiesTable)
       .leftJoin(employeesTable, eq(employeesTable.id, employeeCustodiesTable.employeeId))
       .where(and(...conds))

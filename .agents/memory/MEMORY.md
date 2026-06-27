@@ -153,3 +153,4 @@
 - [Zacode Office module](office-module.md) — client-side Word+Excel editor; single `office` key mirrors sister_companies; sanitize external HTML before DOM insert; saveFile must surface real errors.
 - [DevStudio proposal review/approval gate](devstudio-proposal-review-gate.md) — submitted code proposals need MANUAL SA approval; advisory diff-text-only review (scope/danger/AI) + sha256 record; "published" is governance only, no auto code-apply.
 - [Sequence reset live-doc guard](sequence-reset-live-doc-guard.md) — reset to start allowed ONLY if no EXISTING doc references it (logs persist after delete); whitelist+sql.raw, company-scoped, fail-closed on unknown table / non-numeric ref_id.
+- [HR voucher print sources from list-row](hr-voucher-print-from-list-row.md) — a field on the HR custody/loan FORM prints only if the LIST endpoint selects it + doc-interface/builder/mapper carry it; custody vs loan list selects must stay in lockstep.

@@ -83,6 +83,8 @@ export interface LoanVoucherDoc {
   reason?: string | null;
   statusLabel?: string | null;
   paidAmount?: number | string | null;
+  bankName?: string | null;
+  bankAccountIban?: string | null;
 }
 
 export interface LoanVoucherArgs {
@@ -118,6 +120,8 @@ export function buildLoanVoucherHtml(args: LoanVoucherArgs): string {
     ["الحالة", esc(doc.statusLabel || "—")],
   ];
   if (doc.reason) dataRows.push(["السبب", esc(doc.reason)]);
+  if (doc.bankName) dataRows.push(["اسم البنك", esc(doc.bankName)]);
+  if (doc.bankAccountIban) dataRows.push(["الآيبان (IBAN)", `<span dir="ltr" style="unicode-bidi:embed">${esc(doc.bankAccountIban)}</span>`]);
 
   const dataHtml = dataRows
     .map(([k, v]) => `<tr><td class="k">${k}</td><td class="v">${v}</td></tr>`)

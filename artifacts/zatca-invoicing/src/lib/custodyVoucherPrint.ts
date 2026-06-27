@@ -86,6 +86,8 @@ export interface CustodyVoucherDoc {
   purpose?: string | null;
   notes?: string | null;
   statusLabel?: string | null;
+  bankName?: string | null;
+  bankAccountIban?: string | null;
   settlements?: CustodySettlementLine[];
 }
 
@@ -118,6 +120,8 @@ export function buildCustodyVoucherHtml(args: CustodyVoucherArgs): string {
     ["الحالة", esc(doc.statusLabel || "—")],
   ];
   if (doc.purpose) dataRows.push(["الغرض", esc(doc.purpose)]);
+  if (doc.bankName) dataRows.push(["اسم البنك", esc(doc.bankName)]);
+  if (doc.bankAccountIban) dataRows.push(["الآيبان (IBAN)", `<span dir="ltr" style="unicode-bidi:embed">${esc(doc.bankAccountIban)}</span>`]);
 
   const dataHtml = dataRows
     .map(([k, v]) => `<tr><td class="k">${k}</td><td class="v">${v}</td></tr>`)
