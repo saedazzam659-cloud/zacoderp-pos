@@ -1,7 +1,7 @@
 import { useRef, useState, useLayoutEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  FileSpreadsheet, FolderOpen, Save, FilePlus2, Plus, Trash2, Columns3, FileUp, ChevronDown,
+  FileSpreadsheet, FolderOpen, Save, FilePlus2, Plus, Trash2, Columns3, FileUp, ChevronDown, ArrowLeftRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -74,6 +74,9 @@ export default function ExcelEditor() {
   const [handle, setHandle] = useState<OpenedFile["handle"]>(null);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Grid column direction: RTL puts column A on the right (natural for Arabic
+  // documents like journal entries), LTR puts column A on the left.
+  const [gridDir, setGridDir] = useState<"rtl" | "ltr">(ar ? "rtl" : "ltr");
   const handleRef = useRef(handle);
   handleRef.current = handle;
   // Refs keep functional state updaters from reading stale `active`/`sheets`
@@ -193,14 +196,12 @@ export default function ExcelEditor() {
       if (!opened) return;
       setBusy(true);
       const pages = await extractPdf(opened.file);
-      const loaded: SheetData[] = pages
-        .map((p, i) => ({
-          name: `${ar ? "صفحة" : "Page"} ${i + 1}`,
-          lines: p.lines,
-        }))
-        .filter((p) => p.lines.length > 0)
-        .map((p) => ({ name: p.name, rows: rectify(p.lines.map((l) => l.cells)) }));
-      if (!loaded.length) {
+      // Concatenate ALL pages into ONE continuous table. A multi-page document
+      // (e.g. a 298-page journal-entries report) must open as a single editable
+      // sheet, NOT one sheet-tab per page — page-per-sheet is unusable for
+      // editing and was the source of the "hundreds of tabs" layout.
+      const allLines = pages.flatMap((p) => p.lines);
+      if (!allLines.length) {
         toast({
           title: ar ? "لا يوجد نص قابل للاستخراج" : "No extractable text",
           description: ar
@@ -210,7 +211,8 @@ export default function ExcelEditor() {
         });
         return;
       }
-      setSheets(loaded);
+      const rows = rectify(allLines.map((l) => l.cells));
+      setSheets([{ name: ar ? "البيانات" : "Data", rows }]);
       setActive(0);
       // Imported content has no original XLSX file → save creates a new one.
       setFileName(withExtension(opened.file.name, "xlsx"));
@@ -219,7 +221,9 @@ export default function ExcelEditor() {
       resetScroll();
       toast({
         title: ar ? "تم استيراد PDF" : "PDF imported",
-        description: ar ? "راجع الجدول ثم احفظه بصيغة Excel." : "Review the table, then save as Excel.",
+        description: ar
+          ? `تم استخراج ${rows.length} سطراً في جدول واحد. راجع البيانات ثم احفظها بصيغة Excel.`
+          : `Extracted ${rows.length} rows into one table. Review, then save as Excel.`,
       });
     } catch (e: any) {
       toast({ title: ar ? "تعذّر استيراد PDF" : "Could not import PDF", description: String(e?.message ?? e), variant: "destructive" });
@@ -414,6 +418,16 @@ export default function ExcelEditor() {
         <Button size="sm" variant="outline" onClick={removeRow} data-testid="button-excel-delrow"><Trash2 className="h-4 w-4 ms-1" /> {ar ? "صف" : "Row"}</Button>
         <Button size="sm" variant="outline" onClick={addCol} data-testid="button-excel-addcol"><Columns3 className="h-4 w-4 ms-1" /> {ar ? "عمود" : "Col"}</Button>
         <Button size="sm" variant="outline" onClick={removeCol} data-testid="button-excel-delcol"><Trash2 className="h-4 w-4 ms-1" /> {ar ? "عمود" : "Col"}</Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setGridDir((d) => (d === "rtl" ? "ltr" : "rtl"))}
+          title={ar ? "اتجاه الأعمدة (يمين/يسار)" : "Column direction (right/left)"}
+          data-testid="button-excel-gridir"
+        >
+          <ArrowLeftRight className="h-4 w-4 ms-1" />
+          {gridDir === "rtl" ? (ar ? "من اليمين" : "Right→Left") : (ar ? "من اليسار" : "Left→Right")}
+        </Button>
         <span className="text-xs text-muted-foreground ms-2">{sheet.rows.length} × {colCount}</span>
       </Card>
 
@@ -422,7 +436,7 @@ export default function ExcelEditor() {
         onScroll={(e) => setScrollTop((e.currentTarget as HTMLDivElement).scrollTop)}
         className="p-0 overflow-auto max-h-[60vh]"
       >
-        <table className="border-collapse text-sm" dir="ltr" data-testid="grid-excel">
+        <table className="border-collapse text-sm" dir={gridDir} data-testid="grid-excel">
           <thead ref={theadRef} className="sticky top-0 z-10">
             <tr>
               <th className="bg-muted border border-border w-10 text-xs text-muted-foreground sticky start-0 z-20" />

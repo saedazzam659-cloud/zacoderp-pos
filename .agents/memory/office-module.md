@@ -39,6 +39,15 @@ INSIDE handlers to keep the main bundle light — keep new file-format paths the
 - **Excel state.** Grid is array-of-arrays per sheet. Cell/sheet mutations read the
   active-sheet index from a ref (`activeRef`), NOT the render closure, to avoid
   stale-closure writes to the wrong sheet under rapid tab-switch + edit.
+- **PDF import = ONE continuous sheet, never page-per-sheet.** `handleImportPdf`
+  concatenates every page's lines into a single sheet (`pages.flatMap`). A real
+  document is hundreds of pages (e.g. a 298-page journal-entries report); the old
+  page-per-sheet output produced hundreds of unusable sheet-tabs. Any future
+  PDF-ingest tweak must keep the single-sheet output.
+  **Why:** users edit one table, not 298 tabs — page-per-sheet was reported as «غير مناسب».
+- **Grid column direction is user-toggleable (`gridDir`).** The grid `<table dir>`
+  is RTL by default for Arabic (column A on the right, natural for Arabic docs)
+  with a toolbar toggle to LTR. Don't hard-code `dir="ltr"` on the grid again.
 - **Excel grid MUST virtualize rows.** Every cell renders as a controlled
   `<input>`; rendering the whole sheet at once (`rows.map`) mounts tens/hundreds
   of thousands of inputs and HARD-FREEZES the browser on a large .xlsx. The grid
