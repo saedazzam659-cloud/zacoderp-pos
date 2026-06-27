@@ -236,6 +236,234 @@ export async function extractPdf(file: File): Promise<PdfPage[]> {
   return pages;
 }
 
+// ── Aligned tabular extraction ───────────────────────────────────────────────
+// itemsToLines splits each line independently by gaps, so an EMPTY cell (e.g. a
+// blank "debit" or "credit" column on a journal-entry line) is simply dropped —
+// which makes columns ragged and shifts numbers into the wrong column. For real
+// tables we detect column boundaries GLOBALLY from the vertical whitespace that
+// every row shares, so blank cells survive as empty strings and every row lines
+// up on the same columns.
+
+interface RawTok { str: string; x: number; y: number; w: number; }
+
+function pageRawToks(items: any[]): RawTok[] {
+  return items
+    .filter((it) => typeof it?.str === "string" && it.str.trim() !== "")
+    .map((it) => ({
+      str: it.str,
+      x: it.transform?.[4] ?? 0,
+      y: it.transform?.[5] ?? 0,
+      w: it.width ?? 0,
+    }));
+}
+
+function groupRowsByY(toks: RawTok[], yTol = 3): RawTok[][] {
+  const sorted = toks.slice().sort((a, b) => b.y - a.y || a.x - b.x);
+  const rows: RawTok[][] = [];
+  for (const tk of sorted) {
+    const row = rows.find((r) => Math.abs(r[0].y - tk.y) <= yTol);
+    if (row) row.push(tk);
+    else rows.push([tk]);
+  }
+  return rows;
+}
+
+function medianPositive(nums: number[]): number {
+  const a = nums.filter((n) => Number.isFinite(n) && n > 0).sort((x, y) => x - y);
+  if (!a.length) return 0;
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+// Column separator x-positions, derived from vertical whitespace shared by every
+// row. Returns ascending boundaries; the columns are the segments between them.
+function detectColumnBounds(toks: RawTok[]): number[] {
+  if (!toks.length) return [];
+  const intervals = toks
+    .map((t) => [t.x, t.x + Math.max(t.w, 1)] as [number, number])
+    .sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const iv of intervals) {
+    const last = merged[merged.length - 1];
+    if (last && iv[0] <= last[1] + 0.5) last[1] = Math.max(last[1], iv[1]);
+    else merged.push([iv[0], iv[1]]);
+  }
+  const glyphW = medianPositive(toks.map((t) => t.w / Math.max(t.str.length, 1)));
+  const minGap = Math.max(6, (glyphW || 4) * 1.6);
+  const bounds: number[] = [];
+  for (let i = 1; i < merged.length; i++) {
+    const gap = merged[i][0] - merged[i - 1][1];
+    if (gap >= minGap) bounds.push((merged[i - 1][1] + merged[i][0]) / 2);
+  }
+  return bounds;
+}
+
+function colIndexFor(centerX: number, bounds: number[]): number {
+  let i = 0;
+  while (i < bounds.length && centerX > bounds[i]) i++;
+  return i;
+}
+
+// Per-line gap split (fallback for prose / non-gridded PDFs), reading-direction
+// aware like itemsToLines.
+function splitRowByGaps(row: RawTok[]): string[] {
+  const physical = row.slice().sort((a, b) => a.x - b.x);
+  const rtl = isRtlLine(physical.map((t) => t.str).join(""));
+  const reading = rtl ? physical.slice().reverse() : physical;
+  const cells: string[] = [];
+  let cur = "";
+  let prev: { x: number; end: number } | null = null;
+  for (const tk of reading) {
+    const box = { x: tk.x, end: tk.x + tk.w };
+    const charW = tk.w / Math.max(tk.str.length, 1);
+    const gap = prev == null ? 0 : rtl ? prev.x - box.end : box.x - prev.end;
+    if (prev != null && gap > Math.max(charW * 2.2, 12)) {
+      cells.push(cur.trim());
+      cur = "";
+    } else if (cur && gap > charW * 0.3) {
+      cur += " ";
+    }
+    cur += tk.str;
+    prev = box;
+  }
+  if (cur.trim()) cells.push(cur.trim());
+  return cells.filter((_, i, a) => a.length > 0);
+}
+
+// Extract a PDF as ONE aligned table (rows × columns), with columns consistent
+// across every page. Falls back to per-line gap splitting when no stable column
+// grid is found (e.g. prose PDFs) so non-tabular files still import sensibly.
+export async function extractPdfTable(file: File): Promise<string[][]> {
+  const pdf = await loadPdf(file);
+  const pageRows: RawTok[][][] = [];
+  const all: RawTok[] = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const toks = pageRawToks(content.items);
+    if (!toks.length) continue;
+    pageRows.push(groupRowsByY(toks));
+    all.push(...toks);
+  }
+  if (!all.length) return [];
+  const rtl = isRtlLine(all.map((t) => t.str).join(""));
+  const bounds = detectColumnBounds(all);
+
+  // No usable grid (or absurdly many columns ⇒ prose, not a table): fall back to
+  // the per-line gap heuristic.
+  if (bounds.length === 0 || bounds.length > 40) {
+    const out: string[][] = [];
+    for (const rows of pageRows) {
+      for (const row of rows) {
+        const cells = splitRowByGaps(row);
+        if (cells.some((c) => c !== "")) out.push(cells);
+      }
+    }
+    return out;
+  }
+
+  const ncols = bounds.length + 1;
+  const out: string[][] = [];
+  for (const rows of pageRows) {
+    for (const row of rows) {
+      const buckets: RawTok[][] = Array.from({ length: ncols }, () => []);
+      for (const tk of row) buckets[colIndexFor(tk.x + tk.w / 2, bounds)].push(tk);
+      let cells = buckets.map((b) =>
+        b.sort((a, c) => a.x - c.x).map((t) => t.str).join(" ").replace(/\s+/g, " ").trim(),
+      );
+      if (rtl) cells = cells.reverse();
+      if (cells.some((c) => c !== "")) out.push(cells);
+    }
+  }
+  return out;
+}
+
+// ── Journal-entries report flattener ─────────────────────────────────────────
+export interface JournalEntriesFlat {
+  headers: string[];
+  rows: string[][];
+  entryCount: number;
+}
+
+const JE_FLAT_HEADERS = ["رقم القيد", "التاريخ", "الحساب", "البيان", "مدين", "دائن"];
+
+function parseAmount(s: string): string {
+  const cleaned = (s || "").replace(/[^\d.\-]/g, "");
+  if (cleaned === "" || cleaned === "-" || cleaned === ".") return "";
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? String(n) : "";
+}
+
+function findDate(s: string): string {
+  const m = s.match(/\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}/);
+  return m ? m[0] : "";
+}
+
+// Flatten a journal-entries PDF report (repeating "رقم القيد …" header blocks,
+// each with an الحساب/البيان/مدين/دائن sub-table) into ONE flat table whose
+// columns line up with the Data-Import wizard's `journalEntries` entity:
+// رقم القيد · التاريخ · الحساب · البيان · مدين · دائن — one row per posting line,
+// header values repeated on every line. Returns null when the table is not a
+// recognisable journal-entries report (caller then keeps the raw aligned table).
+export function flattenJournalEntries(table: string[][]): JournalEntriesFlat | null {
+  if (!table.length) return null;
+  const joined = table.map((r) => r.join(" "));
+  const hasDoc = joined.some((s) => /رقم\s*القيد/.test(s));
+  const hasDC = joined.some((s) => /مدين/.test(s) && /دائن/.test(s));
+  if (!hasDoc || !hasDC) return null;
+
+  const resolveHeader = (row: string[]) => {
+    let account = -1, desc = -1, debit = -1, credit = -1;
+    row.forEach((c, i) => {
+      const v = c.trim();
+      if (account < 0 && /(الحساب|رقم الحساب|كود الحساب)/.test(v)) account = i;
+      if (desc < 0 && /(البيان|الوصف)/.test(v)) desc = i;
+      if (debit < 0 && /مدين/.test(v)) debit = i;
+      if (credit < 0 && /دائن/.test(v)) credit = i;
+    });
+    if (account >= 0 && debit >= 0 && credit >= 0) return { account, desc, debit, credit };
+    return null;
+  };
+
+  let colMap: { account: number; desc: number; debit: number; credit: number } | null = null;
+  const rows: string[][] = [];
+  let curDoc = "";
+  let curDate = "";
+  let entryCount = 0;
+
+  for (const row of table) {
+    const line = row.join(" ").trim();
+    if (!line) continue;
+
+    // Header line: "رقم القيد: 1133  التاريخ: 2022/1/1 …"
+    if (/رقم\s*القيد/.test(line)) {
+      const docM = line.match(/رقم\s*القيد\s*[:：]?\s*(\d+)/);
+      if (docM) { curDoc = docM[1]; entryCount++; }
+      const d = findDate(line);
+      if (d) curDate = d;
+      continue;
+    }
+    // Column-header row → (re)learn the column layout, then skip.
+    const hdr = resolveHeader(row);
+    if (hdr) { colMap = hdr; continue; }
+    // Totals row → skip.
+    if (/(الإجمالي|الاجمالي|المجموع)/.test(line)) continue;
+    if (!colMap || !curDoc) continue;
+
+    const account = (row[colMap.account] ?? "").trim();
+    // A real posting line starts with a numeric account code.
+    if (!/^\d{2,}/.test(account)) continue;
+    const debit = parseAmount(row[colMap.debit] ?? "");
+    const credit = parseAmount(row[colMap.credit] ?? "");
+    if (debit === "" && credit === "") continue;
+    const desc = colMap.desc >= 0 ? (row[colMap.desc] ?? "").trim() : "";
+    rows.push([curDoc, curDate, account, desc, debit || "0", credit || "0"]);
+  }
+
+  if (!rows.length) return null;
+  return { headers: JE_FLAT_HEADERS.slice(), rows, entryCount };
+}
+
 export function readAsText(file: File): Promise<string> {
   return file.text();
 }

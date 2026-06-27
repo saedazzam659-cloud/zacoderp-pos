@@ -1,7 +1,8 @@
 import { useRef, useState, useLayoutEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "wouter";
 import {
-  FileSpreadsheet, FolderOpen, Save, FilePlus2, Plus, Trash2, Columns3, FileUp, ChevronDown, ArrowLeftRight,
+  FileSpreadsheet, FolderOpen, Save, FilePlus2, Plus, Trash2, Columns3, FileUp, ChevronDown, ArrowLeftRight, Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -9,7 +10,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { openFile, saveFile, printHtml, withExtension, extractPdf, type OpenedFile } from "./fileIo";
+import { openFile, saveFile, printHtml, withExtension, extractPdfTable, flattenJournalEntries, type OpenedFile } from "./fileIo";
 
 const XLSX_ACCEPT = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
@@ -77,6 +78,7 @@ export default function ExcelEditor() {
   // Grid column direction: RTL puts column A on the right (natural for Arabic
   // documents like journal entries), LTR puts column A on the left.
   const [gridDir, setGridDir] = useState<"rtl" | "ltr">(ar ? "rtl" : "ltr");
+  const [, navigate] = useLocation();
   const handleRef = useRef(handle);
   handleRef.current = handle;
   // Refs keep functional state updaters from reading stale `active`/`sheets`
@@ -195,13 +197,11 @@ export default function ExcelEditor() {
       });
       if (!opened) return;
       setBusy(true);
-      const pages = await extractPdf(opened.file);
-      // Concatenate ALL pages into ONE continuous table. A multi-page document
-      // (e.g. a 298-page journal-entries report) must open as a single editable
-      // sheet, NOT one sheet-tab per page — page-per-sheet is unusable for
-      // editing and was the source of the "hundreds of tabs" layout.
-      const allLines = pages.flatMap((p) => p.lines);
-      if (!allLines.length) {
+      const table = await extractPdfTable(opened.file);
+      // One continuous, column-aligned table for the WHOLE document (a 298-page
+      // report opens as a single editable sheet, not one tab per page). Columns
+      // are detected globally so blank debit/credit cells keep their position.
+      if (!table.length) {
         toast({
           title: ar ? "لا يوجد نص قابل للاستخراج" : "No extractable text",
           description: ar
@@ -211,8 +211,12 @@ export default function ExcelEditor() {
         });
         return;
       }
-      const rows = rectify(allLines.map((l) => l.cells));
-      setSheets([{ name: ar ? "البيانات" : "Data", rows }]);
+      // Journal-entries reports are flattened into the importer's column layout
+      // (رقم القيد · التاريخ · الحساب · البيان · مدين · دائن); other PDFs keep the
+      // raw aligned table.
+      const je = flattenJournalEntries(table);
+      const rows = rectify(je ? [je.headers, ...je.rows] : table);
+      setSheets([{ name: je ? (ar ? "القيود" : "Entries") : (ar ? "البيانات" : "Data"), rows }]);
       setActive(0);
       // Imported content has no original XLSX file → save creates a new one.
       setFileName(withExtension(opened.file.name, "xlsx"));
@@ -220,16 +224,59 @@ export default function ExcelEditor() {
       setDirty(true);
       resetScroll();
       toast({
-        title: ar ? "تم استيراد PDF" : "PDF imported",
-        description: ar
-          ? `تم استخراج ${rows.length} سطراً في جدول واحد. راجع البيانات ثم احفظها بصيغة Excel.`
-          : `Extracted ${rows.length} rows into one table. Review, then save as Excel.`,
+        title: je
+          ? (ar ? "تم استيراد القيود" : "Entries imported")
+          : (ar ? "تم استيراد PDF" : "PDF imported"),
+        description: je
+          ? (ar
+              ? `تم استخراج ${je.entryCount} قيد (${je.rows.length} سطر) في أعمدة منظّمة. راجعها ثم استخدم «إرسال إلى القيود المحاسبية».`
+              : `Extracted ${je.entryCount} entries (${je.rows.length} lines) into clean columns. Review, then use "Send to journal entries".`)
+          : (ar
+              ? `تم استخراج ${rows.length} سطراً في جدول واحد. راجع البيانات ثم احفظها بصيغة Excel.`
+              : `Extracted ${rows.length} rows into one table. Review, then save as Excel.`),
       });
     } catch (e: any) {
       toast({ title: ar ? "تعذّر استيراد PDF" : "Could not import PDF", description: String(e?.message ?? e), variant: "destructive" });
     } finally {
       setBusy(false);
     }
+  };
+
+  // Hand the active sheet to the Data-Import wizard, pre-seeded for journal
+  // entries (analyze → review → commit). The first non-empty row is treated as
+  // the header; the remaining rows become objects keyed by those headers.
+  const sendToJournalEntries = () => {
+    const s = sheets[active] ?? sheets[0];
+    const aoa = s?.rows ?? [];
+    const headerRow = aoa.find((r) => r.some((c) => String(c ?? "").trim() !== ""));
+    if (!headerRow) {
+      toast({ title: ar ? "لا توجد بيانات لإرسالها" : "No data to send", variant: "destructive" });
+      return;
+    }
+    const headerIdx = aoa.indexOf(headerRow);
+    const headers = headerRow.map((h, i) => {
+      const v = String(h ?? "").trim();
+      return v === "" ? `${ar ? "عمود" : "Column"} ${i + 1}` : v;
+    });
+    const dataRows = aoa
+      .slice(headerIdx + 1)
+      .filter((r) => r.some((c) => String(c ?? "").trim() !== ""))
+      .map((r) => {
+        const o: Record<string, any> = {};
+        headers.forEach((h, i) => { o[h] = r[i] ?? null; });
+        return o;
+      });
+    if (!dataRows.length) {
+      toast({ title: ar ? "لا توجد بيانات لإرسالها" : "No data to send", variant: "destructive" });
+      return;
+    }
+    try {
+      sessionStorage.setItem("office_je_import", JSON.stringify({ headers, rows: dataRows }));
+    } catch {
+      toast({ title: ar ? "تعذّر تجهيز البيانات" : "Could not stage data", variant: "destructive" });
+      return;
+    }
+    navigate("/settings/data-io?tab=import");
   };
 
   const doSave = async (kind: "xlsx" | "csv", saveAs: boolean) => {
@@ -379,6 +426,9 @@ export default function ExcelEditor() {
           </Button>
           <Button size="sm" variant="outline" onClick={handleImportPdf} disabled={busy} data-testid="button-excel-importpdf">
             <FileUp className="h-4 w-4 ms-1" /> {ar ? "استيراد PDF" : "Import PDF"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={sendToJournalEntries} disabled={busy} data-testid="button-excel-tojournal">
+            <Send className="h-4 w-4 ms-1" /> {ar ? "إرسال إلى القيود المحاسبية" : "Send to journal entries"}
           </Button>
           <Button size="sm" onClick={() => doSave("xlsx", false)} disabled={busy} data-testid="button-excel-save">
             <Save className="h-4 w-4 ms-1" /> {ar ? "حفظ XLSX" : "Save XLSX"}

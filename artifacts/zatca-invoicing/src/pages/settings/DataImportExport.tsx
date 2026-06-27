@@ -412,6 +412,12 @@ export default function DataImportExport() {
   const isAr = i18n.language?.startsWith("ar");
   const cid: number | undefined = user?.company?.id ?? user?.companyId ?? undefined;
 
+  // Open on the tab named in ?tab= (the Excel editor sends ?tab=import when
+  // handing off a sheet to the journal-entries importer).
+  const [tab, setTab] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get("tab") || "export"; } catch { return "export"; }
+  });
+
   const { data: entities = [], isLoading: entitiesLoading } = useQuery({
     queryKey: ["data-io-entities"],
     queryFn: () => fetchEntities(token),
@@ -428,7 +434,7 @@ export default function DataImportExport() {
         </div>
       </header>
 
-      <Tabs defaultValue="export" dir={isAr ? "rtl" : "ltr"}>
+      <Tabs value={tab} onValueChange={setTab} dir={isAr ? "rtl" : "ltr"}>
         <TabsList className="grid grid-cols-3 max-w-2xl">
           <TabsTrigger value="export"><Download className="w-4 h-4 ml-2" /> {t("dataIO.tabExport")}</TabsTrigger>
           <TabsTrigger value="import"><Upload className="w-4 h-4 ml-2" /> {t("dataIO.tabImport")}</TabsTrigger>
@@ -576,6 +582,42 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const entity = entities.find((e) => e.key === entityKey);
+
+  // Handoff from the Office Excel editor: a staged sheet in sessionStorage is
+  // auto-loaded as a journalEntries import and analyzed, dropping the user
+  // straight onto the mapping/review step (analyze → review → commit gate still
+  // applies — nothing is written without explicit confirmation).
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current || !token) return;
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem("office_je_import"); } catch { raw = null; }
+    if (!raw) return;
+    seededRef.current = true;
+    try { sessionStorage.removeItem("office_je_import"); } catch { /* ignore */ }
+    let payload: { headers?: unknown; rows?: unknown } | null = null;
+    try { payload = JSON.parse(raw); } catch { payload = null; }
+    if (!payload || !Array.isArray(payload.headers) || !Array.isArray(payload.rows)) return;
+    const ph = payload.headers.map((h) => String(h ?? ""));
+    const pr = payload.rows.filter((r) => r != null && typeof r === "object");
+    if (!ph.length || !pr.length) return;
+    setEntityKey("journalEntries");
+    setFileName(isAr ? "من محرر الإكسل" : "From Excel editor");
+    setHeaders(ph);
+    setRows(pr);
+    setBusy(true);
+    analyzeImport(token, { entity: "journalEntries", headers: ph, sampleRows: pr.slice(0, 8) })
+      .then((result) => {
+        setAnalysis(result);
+        const initialMap: Record<string, string | null> = {};
+        for (const [src, m] of Object.entries(result.mapping)) initialMap[src] = m.field;
+        setMapping(initialMap);
+        setStep("analyze");
+      })
+      .catch((e: any) => toast({ title: e?.message ?? t("dataIO.readFailed"), variant: "destructive" }))
+      .finally(() => setBusy(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   function reset() {
     setStep("upload"); setFileName(""); setHeaders([]); setRows([]);

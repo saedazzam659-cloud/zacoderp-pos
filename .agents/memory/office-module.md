@@ -57,3 +57,30 @@ INSIDE handlers to keep the main bundle light — keep new file-format paths the
   guess. Edits index by ABSOLUTE row (`startRow + i`); save/export must read the
   FULL `sheets` state, never the visible slice. Any new big-grid render path
   (Word tables, future sheets) must window too.
+
+## PDF → journal-entries feature (fileIo.ts + ExcelEditor → Data Import Wizard)
+- **JE-PDF extraction uses GLOBAL column-boundary detection, not per-row.**
+  `extractPdfTable` derives ONE set of vertical column bounds from whitespace
+  shared across ALL rows, so a blank debit/credit cell keeps its column position
+  (a per-row split would shift a 3-cell row left and misalign مدين/دائن).
+  `splitRowByGaps` is only the FALLBACK; it RTL-detects per row, so in rare
+  mixed-script rows its direction can diverge from the global path and drop JE
+  lines — degrades capture quality, never crashes.
+  **Why:** the source is a column-aligned JE report (الحساب/البيان/مدين/دائن);
+  losing blank-cell position scrambles the debit/credit columns.
+- **`flattenJournalEntries(table)` is pure + null-degrading.** It reads the
+  report's OWN header row to find the account/desc/debit/credit columns and
+  returns the fixed headers `["رقم القيد","التاريخ","الحساب","البيان","مدين","دائن"]`.
+  Returns `null` for any non-JE table → the caller falls back to the raw
+  `rectify(table)` sheet. Keep it side-effect-free and null-safe.
+- **"إرسال إلى القيود المحاسبية" handoff = sessionStorage, not props.** Excel
+  editor stages the active sheet as JSON in `sessionStorage["office_je_import"]`
+  then `navigate("/settings/data-io?tab=import")`. The ImportWizard one-shot
+  effect (a `seededRef` guard + `token` gate) reads-and-removes it, forces
+  `entity="journalEntries"`, runs `analyzeImport`, and lands the user on the
+  mapping/review step. The manual commit gate is UNCHANGED — nothing writes
+  without explicit confirmation.
+  **Why / invariant:** the seed payload is untrusted/stale-able, so the effect
+  MUST `Array.isArray`-guard both `headers` and `rows` (and coerce cells) before
+  `setRows`/`analyzeImport`; loose `?.length` checks let a malformed value through
+  and throw downstream (white-screen via ErrorBoundary).
