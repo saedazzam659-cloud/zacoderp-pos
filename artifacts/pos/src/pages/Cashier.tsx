@@ -486,14 +486,14 @@ export default function CashierPage() {
           </div>
         </div>
 
-        <div className="flex-1 max-w-xl">
+        <div className="flex-1 max-w-xs">
           <div className="relative">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="ابحث باسم المنتج أو الباركود..."
-              className="h-11 pr-10 pl-12 text-sm font-medium rounded-xl"
+              className="h-10 pr-10 pl-12 text-sm font-medium rounded-xl"
             />
             <button
               type="button"
@@ -931,14 +931,11 @@ function CartPanel(props: {
   return (
     <>
       {/* Header */}
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+      <div className="shrink-0 px-4 py-3 border-b border-border flex items-center justify-between">
         <div>
           <p className="text-sm font-extrabold">فاتورة جديدة</p>
           <p className="text-[11px] text-muted-foreground">
-            #{Math.floor(Date.now() / 1000)
-              .toString()
-              .slice(-6)}
-            • {itemCount} صنف
+            {itemCount} صنف
           </p>
         </div>
         <button className="px-2.5 h-8 rounded-lg border border-border bg-card text-xs font-bold inline-flex items-center gap-1 hover-elevate active-elevate-2">
@@ -948,7 +945,7 @@ function CartPanel(props: {
       </div>
 
       {/* Lines */}
-      <div className="flex-1 overflow-y-auto px-3 py-2">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
         {cart.length === 0 ? (
           <div className="h-full grid place-items-center text-center text-muted-foreground p-6">
             <div>
@@ -960,7 +957,7 @@ function CartPanel(props: {
             </div>
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-1.5">
             <AnimatePresence initial={false}>
               {cart.map((l) => (
                 <motion.li
@@ -969,9 +966,9 @@ function CartPanel(props: {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: 30 }}
-                  className="rounded-xl bg-card border border-border p-2.5 flex items-start gap-2.5"
+                  className="rounded-xl bg-card border border-border p-2 flex items-center gap-2"
                 >
-                  <div className="w-12 h-12 rounded-lg bg-muted grid place-items-center text-2xl shrink-0">
+                  <div className="w-9 h-9 rounded-lg bg-muted grid place-items-center text-lg shrink-0">
                     {emojiFor(l.item)}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -1025,7 +1022,7 @@ function CartPanel(props: {
       </div>
 
       {/* Totals + Pay */}
-      <div className="border-t border-border bg-gradient-to-b from-card to-muted/30 p-4 space-y-3">
+      <div className="shrink-0 border-t border-border bg-gradient-to-b from-card to-muted/30 p-4 space-y-3">
         {submitError && (
           <div className="text-xs font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
             {submitError}
