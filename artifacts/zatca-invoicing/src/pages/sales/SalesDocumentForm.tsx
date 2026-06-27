@@ -1185,6 +1185,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const autoPostingEnabled = _co?.autoPostSales === undefined || _co?.autoPostSales === null
     ? _gl
     : _co.autoPostSales !== false;
+  // Sales-invoice save policy: when the company opts in, an invoice whose stock
+  // lines have no warehouse is saved as a DRAFT and we SKIP the auto-post step
+  // (no error). Posting is deferred until a warehouse is chosen. Default OFF
+  // keeps the legacy behaviour (auto-post attempt fails if warehouse missing).
+  const allowDraftWithoutWarehouse = _co?.allowDraftWithoutWarehouse === true;
 
   // Per-doc-type print preferences for sales invoices. We don't open
   // the popup directly here — the list page (SalesInvoices) owns the
@@ -1201,8 +1206,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
 
+      // Sales-invoice save policy: when the company allows draft-without-
+      // warehouse, an invoice with any stock (non-service) line missing a
+      // warehouse is kept as a DRAFT — we SKIP the auto-post step entirely so
+      // the user gets a clean "saved as draft" message instead of the server's
+      // "cannot post: items without a warehouse" 400. Posting is deferred until
+      // a warehouse is selected and the invoice is saved again.
+      const deferDraftNoWarehouse =
+        allowDraftWithoutWarehouse && isInvoice &&
+        lines.some((l) => l.itemId && !l.warehouseId && !isServiceLine(l));
+
       // Auto-post immediately after save for invoices only (not quotations) — only when enabled system-wide
-      if (autoPostingEnabled && isInvoice && j?.id && (j.status ?? "draft") === "draft") {
+      if (autoPostingEnabled && isInvoice && !deferDraftNoWarehouse && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
           method: "PATCH", headers,
         });
@@ -1210,9 +1225,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         if (!postRes.ok) {
           throw new Error(postJson.error || postRes.statusText);
         }
-        return postJson;
+        return { ...postJson, __deferredDraft: false };
       }
-      return j;
+      return { ...j, __deferredDraft: deferDraftNoWarehouse };
     },
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : isOrder ? "sales-orders" : "sales-quotations"] });
@@ -1222,6 +1237,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // never auto-post (no journal entry), so for them `posted` stays
       // false. The toast wording falls back to the defaults baked into
       // the helper if the i18n keys are missing.
+      // Deferred-draft (saved without a warehouse under the opt-in policy):
+      // show a clear "saved as draft — pick a warehouse to post" message and
+      // skip the auto-print hand-off (a draft shouldn't auto-print).
+      const deferredDraft = !!saved?.__deferredDraft;
+      if (deferredDraft) {
+        toast({
+          title: "💾 حُفظت كمسودة",
+          description: "لم يتم ترحيل الفاتورة لعدم تحديد المستودع. اختر المستودع ثم احفظ الفاتورة مرة أخرى لترحيلها.",
+        });
+        navigate(basePath);
+        return;
+      }
       const didPost   = isInvoice && autoPostingEnabled;
       const didPrint  = autoPrintSalesInvoice && !!saved?.id;
       toast({ title: getSaveToastTitle(t, { posted: didPost, printed: didPrint }) });

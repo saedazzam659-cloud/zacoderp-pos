@@ -1379,6 +1379,35 @@ export default function GeneralSettings() {
             </div>
           </div>
 
+          {/* ── سياسة حفظ فواتير المبيعات (السماح بالحفظ كمسودة بدون مستودع) ── */}
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <Calculator className="h-4 w-4 text-muted-foreground" />
+              سياسة حفظ فواتير المبيعات
+            </h2>
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">
+                  {user?.company?.allowDraftWithoutWarehouse === true
+                    ? "السماح بالحفظ كمسودة بدون مستودع"
+                    : "إلزام تحديد المستودع (الوضع الافتراضي)"}
+                </Label>
+                <p className="text-xs text-muted-foreground leading-relaxed max-w-prose">
+                  عند التفعيل، يمكن حفظ فاتورة المبيعات كـ«مسودة» حتى لو لم يُحدَّد
+                  مستودع لأصنافها، ولن يتم ترحيلها تلقائياً — يظهر تنبيه بأنها حُفظت
+                  كمسودة. لترحيلها لاحقاً اختر المستودع ثم احفظ الفاتورة مرة أخرى.
+                  عند الإيقاف (الوضع الافتراضي) يبقى السلوك كما هو: المستودع مطلوب
+                  لترحيل الفاتورة.
+                </p>
+              </div>
+              <Switch
+                checked={user?.company?.allowDraftWithoutWarehouse === true}
+                disabled={postingSaving}
+                onCheckedChange={(v) => togglePostingMode({ allowDraftWithoutWarehouse: v })}
+              />
+            </div>
+          </div>
+
           {/* ── إظهار/إخفاء الصفر في حقول الإدخال الرقمية (عرض فقط) ── */}
           <div className="rounded-xl border bg-card p-5 space-y-4">
             <h2 className="font-semibold text-base flex items-center gap-2">

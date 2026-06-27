@@ -90,6 +90,12 @@ export const companiesTable = pgTable("companies", {
   // P&L per the financial-reports gotcha in replit.md.
   autoPostJournalEntry:  boolean("auto_post_journal_entry").notNull().default(true),
   autoPostSales:         boolean("auto_post_sales").notNull().default(true),
+  // Sales-invoice save policy (سياسة حفظ فواتير المبيعات): when ON, a sales
+  // invoice whose stock lines have no warehouse selected is saved as a DRAFT
+  // and the front-end skips the auto-post step (no error) — posting is
+  // deferred until a warehouse is chosen. Default OFF keeps the legacy
+  // behaviour (warehouse required to post; auto-post attempt fails if missing).
+  allowDraftWithoutWarehouse: boolean("allow_draft_without_warehouse").notNull().default(false),
   autoPostPurchase:      boolean("auto_post_purchase").notNull().default(true),
   autoPostReceipt:       boolean("auto_post_receipt").notNull().default(true),
   autoPostPayment:       boolean("auto_post_payment").notNull().default(true),

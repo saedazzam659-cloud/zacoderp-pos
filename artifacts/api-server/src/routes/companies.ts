@@ -135,7 +135,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     // whether saving that document immediately posts the resulting journal
     // entry. Validated as plain booleans below.
     autoPostJournalEntry,
-    autoPostSales, autoPostPurchase, autoPostReceipt, autoPostPayment,
+    autoPostSales, allowDraftWithoutWarehouse, autoPostPurchase, autoPostReceipt, autoPostPayment,
     autoPostFinancial, autoPostCashTransfer, autoPostPayroll,
     // Phase-1 additions: every other module that produces a JE.
     autoPostProduction, autoPostStockMovement, autoPostGoodsReceipt,
@@ -176,6 +176,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     decimalPlaces?: number; showZeros?: boolean; autoPostingEnabled?: boolean;
     autoPostJournalEntry?: boolean;
     autoPostSales?: boolean; autoPostPurchase?: boolean;
+    allowDraftWithoutWarehouse?: boolean;
     autoPostReceipt?: boolean; autoPostPayment?: boolean;
     autoPostFinancial?: boolean; autoPostCashTransfer?: boolean;
     autoPostPayroll?: boolean;
@@ -249,6 +250,8 @@ router.patch("/:id/general-settings", async (req, res) => {
   // a string "false" (which would be truthy in the form layer) by accident.
   if (autoPostJournalEntry !== undefined) updates.autoPostJournalEntry = !!autoPostJournalEntry;
   if (autoPostSales        !== undefined) updates.autoPostSales        = !!autoPostSales;
+  // Sales-invoice save policy — allow saving without a warehouse as a draft.
+  if (allowDraftWithoutWarehouse !== undefined) updates.allowDraftWithoutWarehouse = !!allowDraftWithoutWarehouse;
   if (autoPostPurchase     !== undefined) updates.autoPostPurchase     = !!autoPostPurchase;
   if (autoPostReceipt      !== undefined) updates.autoPostReceipt      = !!autoPostReceipt;
   if (autoPostPayment      !== undefined) updates.autoPostPayment      = !!autoPostPayment;
