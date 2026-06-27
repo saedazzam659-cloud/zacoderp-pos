@@ -10,7 +10,7 @@ import {
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requireAdminRole, audit } from "../middleware/permissions.js";
-import { subTypeFor } from "../lib/sequences.js";
+import { subTypeFor, foreignSubTypeFor } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -236,12 +236,15 @@ router.get("/peek/:txType", async (req: any, res) => {
     };
   }
 
-  // Opt-in per-payment-method split: when the client passes ?paymentType= and
-  // the (base, paymentType) pair maps to a configured sub-type series, preview
-  // THAT series; otherwise fall back to the unified base type. Mirrors the
-  // issuance-time resolution in `nextSequenceForPayment`.
+  // Opt-in split series: a non-SA buyer (?foreign=1) previews the foreign
+  // sub-type FIRST, then the per-payment-method sub-type (?paymentType=), then
+  // the unified base type. Mirrors the issuance-time resolution in
+  // `nextSequenceForPayment`.
+  const isForeign = ["1", "true"].includes(String(req.query?.foreign ?? "").toLowerCase());
+  const foreignSub = isForeign ? foreignSubTypeFor(txType, true) : null;
   const sub = subTypeFor(txType, req.query?.paymentType as string | undefined);
-  let result = sub ? await resolveForType(sub) : null;
+  let result = foreignSub ? await resolveForType(foreignSub) : null;
+  if (!result && sub) result = await resolveForType(sub);
   if (!result) result = await resolveForType(txType);
   if (!result) { res.json({ number: null, hasSequence: false }); return; }
   res.json(result);

@@ -187,16 +187,8 @@ export default function SalesReturns() {
   const [branchIds, setBranchIds] = useState<number[]>([]);
   const branchKey = branchIds.length ? branchIds.slice().sort((a, b) => a - b).join(",") : "all";
 
-  // Pull next return number from the central sequence engine while creating
-  // a new return. Skip when editing an existing record (its number is fixed)
-  // or when the form panel is closed.
-  const seqPeek = useNextSequenceNumber("sales_return", showForm && editingId == null, undefined, form.branchId, form.paymentType);
-  useEffect(() => {
-    if (!showForm || editingId != null) return;
-    if (seqPeek.hasSequence && seqPeek.number) {
-      setForm((p: any) => (p.docNumber === seqPeek.number ? p : { ...p, docNumber: seqPeek.number }));
-    }
-  }, [showForm, editingId, seqPeek.hasSequence, seqPeek.number]);
+  // The return-number peek lives below — after the `customers` query — so it
+  // can detect a foreign (non-SA) buyer and preview the separate foreign series.
 
   async function openPrint(r: any) {
     try {
@@ -243,6 +235,21 @@ export default function SalesReturns() {
     queryFn: () => fetchJsonArray(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, authH),
     enabled: !!user,
   });
+
+  // Pull next return number from the central sequence engine while creating a
+  // new return. A non-SA buyer previews the separate "sales_return_foreign"
+  // series when configured (server falls back to the unified base series).
+  // Skip when editing an existing record (its number is fixed) or panel closed.
+  const selRetCustomer = (customers as any[]).find((c: any) => String(c.id) === String(form.customerId));
+  const isForeignRetCustomer = !!selRetCustomer
+    && String((selRetCustomer as any).country ?? "SA").toUpperCase() !== "SA";
+  const seqPeek = useNextSequenceNumber("sales_return", showForm && editingId == null, undefined, form.branchId, form.paymentType, isForeignRetCustomer);
+  useEffect(() => {
+    if (!showForm || editingId != null) return;
+    if (seqPeek.hasSequence && seqPeek.number) {
+      setForm((p: any) => (p.docNumber === seqPeek.number ? p : { ...p, docNumber: seqPeek.number }));
+    }
+  }, [showForm, editingId, seqPeek.hasSequence, seqPeek.number]);
 
   const { data: invoices = [] } = useQuery<any[]>({
     queryKey: ["sales-invoices", cid],

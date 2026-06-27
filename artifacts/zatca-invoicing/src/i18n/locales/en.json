@@ -3709,6 +3709,8 @@
       "sales_return_cash": "Sales Return - Cash",
       "sales_return_credit": "Sales Return - Credit",
       "sales_return_bank": "Sales Return - Bank",
+      "sales_invoice_foreign": "Sales Invoice - Foreign",
+      "sales_return_foreign": "Sales Return - Foreign",
       "purchase_return_cash": "Purchase Return - Cash",
       "purchase_return_credit": "Purchase Return - Credit",
       "purchase_return_bank": "Purchase Return - Bank",

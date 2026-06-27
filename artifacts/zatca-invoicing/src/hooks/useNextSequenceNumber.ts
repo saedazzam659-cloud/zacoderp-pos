@@ -71,6 +71,12 @@ export function useNextSequenceNumber(
    *  meaningful for sales_invoice / purchase_invoice / receipt_voucher /
    *  payment_voucher — ignored (no-op) for every other tx type. */
   paymentType?: string | null,
+  /** Optional foreign-customer flag. When true AND the company configured a
+   *  separate foreign series for this tx type, the badge previews THAT series
+   *  (the server falls back to the payment-split / unified base series
+   *  otherwise). Only meaningful for sales_invoice / sales_return; ignored
+   *  (no-op) for every other tx type. */
+  foreign?: boolean,
 ) {
   const [data, setData] = useState<PeekResult>({ number: null, hasSequence: false });
   const [loading, setLoading] = useState(false);
@@ -86,6 +92,7 @@ export function useNextSequenceNumber(
       const bid = branchId != null && branchId !== "" ? Number(branchId) : 0;
       if (Number.isFinite(bid) && bid > 0) qs.set("branchId", String(bid));
       if (paymentType && paymentType !== "") qs.set("paymentType", String(paymentType));
+      if (foreign) qs.set("foreign", "1");
       const q = qs.toString();
       const url = `${API_BASE}/api/sequences/peek/${txType}${q ? `?${q}` : ""}`;
       const r = await fetch(url, { headers: authHeaders() });
@@ -100,7 +107,7 @@ export function useNextSequenceNumber(
     } finally {
       if (my === seq.current) setLoading(false);
     }
-  }, [txType, enabled, date, branchId, paymentType]);
+  }, [txType, enabled, date, branchId, paymentType, foreign]);
 
   useEffect(() => { refetch(); }, [refetch]);
 

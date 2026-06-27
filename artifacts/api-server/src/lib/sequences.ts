@@ -425,22 +425,47 @@ export function subTypeFor(
   return `${baseType}_${pt}`;
 }
 
+// Base transaction types that support an OPTIONAL "foreign-customer" series.
+// A non-SA buyer draws from `${baseType}_foreign` when configured. Scope is
+// deliberately limited to sales invoices + sales returns (per product spec).
+const FOREIGN_SPLIT_TYPES = new Set<string>(["sales_invoice", "sales_return"]);
+
 /**
- * Generate the next document number honouring an OPTIONAL per-payment-method
- * series. Tries the payment-specific sub-type first; if no active sequence is
- * bound to it (returns null), falls back to the unified base type. Each branch
- * is its own short transaction, and the sub-type attempt consumes nothing when
- * it returns null — so there is no number/sequence gap on fallback.
+ * Resolve the foreign-customer sub-type for a base transaction type, or null
+ * when the buyer is domestic (SA) or the base type does not support a foreign
+ * split. The caller then uses the payment-split / base type unchanged.
+ */
+export function foreignSubTypeFor(
+  baseType: string,
+  isForeign: boolean | null | undefined,
+): string | null {
+  if (!isForeign) return null;
+  if (!FOREIGN_SPLIT_TYPES.has(baseType)) return null;
+  return `${baseType}_foreign`;
+}
+
+/**
+ * Generate the next document number honouring OPTIONAL split series. Resolution
+ * order is: foreign-customer sub-type (when the buyer is non-SA) → per-payment
+ * sub-type → unified base type. Each attempt is its own short transaction and
+ * consumes nothing when it returns null — so there is no number/sequence gap on
+ * fallback. The foreign series takes PRECEDENCE over the payment-method split.
  *
- * Returns null only when NEITHER the sub-type NOR the base type has an active
- * sequence (i.e. the caller's legacy "no sequence configured" path).
+ * Returns null only when NONE of the candidate series has an active sequence
+ * (i.e. the caller's legacy "no sequence configured" path).
  */
 export async function nextSequenceForPayment(
   companyId: number,
   baseType: string,
   paymentType: string | null | undefined,
   ctx: NextSequenceCtx = {},
+  isForeign: boolean | null | undefined = false,
 ): Promise<string | null> {
+  const foreignSub = foreignSubTypeFor(baseType, isForeign);
+  if (foreignSub) {
+    const fromForeign = await nextSequenceNumber(companyId, foreignSub, ctx);
+    if (fromForeign != null) return fromForeign;
+  }
   const sub = subTypeFor(baseType, paymentType);
   if (sub) {
     const fromSub = await nextSequenceNumber(companyId, sub, ctx);
@@ -459,8 +484,9 @@ export async function nextSequenceForPaymentOrFallback(
   paymentType: string | null | undefined,
   ctx: NextSequenceCtx,
   fallback: () => string | Promise<string>,
+  isForeign: boolean | null | undefined = false,
 ): Promise<string> {
-  const fromSeq = await nextSequenceForPayment(companyId, baseType, paymentType, ctx);
+  const fromSeq = await nextSequenceForPayment(companyId, baseType, paymentType, ctx, isForeign);
   if (fromSeq != null) return fromSeq;
   return await fallback();
 }

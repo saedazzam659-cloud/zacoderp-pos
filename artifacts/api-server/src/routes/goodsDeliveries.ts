@@ -15,7 +15,7 @@ import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { loadMappings } from "../lib/accountingMappings.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 
@@ -771,13 +771,24 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
     const lines = await db.select().from(goodsDeliveryLinesTable)
       .where(eq(goodsDeliveryLinesTable.deliveryId, id));
 
+    // Foreign-customer numbering: a non-SA buyer draws from the separate
+    // "sales_invoice_foreign" series (when configured). paymentType is passed as
+    // null here so this conversion path keeps base numbering (no payment split,
+    // preserving prior behaviour) and only adds the foreign-first resolution.
+    let buyerIsForeign = false;
+    if (finalCustomerId) {
+      const [cc] = await db.select({ country: customersTable.country })
+        .from(customersTable)
+        .where(and(eq(customersTable.id, finalCustomerId), eq(customersTable.companyId, cid)));
+      buyerIsForeign = !!cc && String(cc.country ?? "SA").toUpperCase() !== "SA";
+    }
     let resolvedDocNumber: string | null = null;
     try {
-      resolvedDocNumber = await nextSequenceNumber(cid, "sales_invoice", {
+      resolvedDocNumber = await nextSequenceForPayment(cid, "sales_invoice", null, {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "sales_invoices",
         branchId: gd.branchId ?? null,
-      });
+      }, buyerIsForeign);
     } catch { resolvedDocNumber = null; }
 
     const inv = await db.transaction(async (tx) => {

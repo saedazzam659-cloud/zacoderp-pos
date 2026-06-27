@@ -9,6 +9,7 @@ import { currencySymbol } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
+import { getWorldCountryName } from "@/lib/worldCountries";
 import QRCode from "qrcode";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1773,6 +1774,7 @@ interface PrintLabels {
   createdAtLbl: string; byLbl: string; printedLbl: string;
   companyNameFallback: string; none: string;
   totalItemsLbl: string; totalQtyLbl: string; freeWord: string;
+  street: string; postalCode: string; city: string; country: string;
 }
 function getPrintLabels(lang: PrintLang): PrintLabels {
   if (lang === "en") {
@@ -1787,6 +1789,7 @@ function getPrintLabels(lang: PrintLang): PrintLabels {
       createdAtLbl: "Created", byLbl: "By", printedLbl: "Printed",
       companyNameFallback: "Company Name", none: "—",
       totalItemsLbl: "Total Items", totalQtyLbl: "Total Quantity (incl. free)", freeWord: "free",
+      street: "Street", postalCode: "Postal Code", city: "City", country: "Country",
     };
   }
   return {
@@ -1800,6 +1803,7 @@ function getPrintLabels(lang: PrintLang): PrintLabels {
     createdAtLbl: "تاريخ الإنشاء", byLbl: "بواسطة", printedLbl: "طُبع",
     companyNameFallback: "اسم الشركة", none: "—",
     totalItemsLbl: "إجمالي أصناف الفاتورة", totalQtyLbl: "إجمالي كميات الفاتورة (شاملة المجانية)", freeWord: "مجاني",
+    street: "اسم الشارع:", postalCode: "الرمز البريدي:", city: "المدينة:", country: "الدولة:",
   };
 }
 // English-only summary footer (no Arabic tafqeet) used when printing template
@@ -1903,6 +1907,16 @@ function template14(d: PrintData): string {
   // Saudi national address building number — pulled from the customer record
   // (already populated from the national-address service when available).
   const bldgNo = customer?.buildingNumber ?? (customer as any)?.buyerBuildingNumber ?? null;
+  // Foreign-customer address (template 14 «النموذج الأصلي» only): when the
+  // buyer's country is not SA, the customer block renders the international
+  // address in a fixed order — name → street → postal code → city → country.
+  // Saudi customers keep the original single-line (building number) layout.
+  const custCountryCode = String((customer as any)?.country ?? (doc as any)?.buyerCountry ?? "SA").toUpperCase();
+  const isForeignCust = custCountryCode !== "SA";
+  const custStreet = (customer as any)?.street ?? (doc as any)?.buyerStreet ?? null;
+  const custPostal = (customer as any)?.postalCode ?? (doc as any)?.buyerPostalCode ?? null;
+  const custCity   = (customer as any)?.city ?? (doc as any)?.buyerCity ?? null;
+  const custCountryName = getWorldCountryName(custCountryCode, isEn ? "en" : "ar");
   // Footer audit line — only render the "أنشئ بـ" line when we actually have
   // a timestamp; some legacy rows may not carry one.
   const createdAtRaw = doc.createdAt ?? doc.invoiceDate ?? doc.returnDate ?? doc.orderDate ?? doc.quotationDate ?? null;
@@ -2161,11 +2175,22 @@ function template14(d: PrintData): string {
       <div class="col-cu">
         <div class="label">${L.customerInfo}</div>
         <div class="cu-name">${(isEn ? (customer?.nameEn ?? customer?.nameAr) : (customer?.nameAr ?? customer?.nameEn)) ?? doc.buyerName ?? L.none}</div>
-        ${(customer?.vatNumber ?? doc.buyerVatNumber)
-          ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
-        ${acctCode ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
-        ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
-        ${bldgNo ? `<div class="row"><b>${L.customerAddress}</b><span class="mono">${bldgNo}</span></div>` : ""}
+        ${isForeignCust ? `
+          ${custStreet ? `<div class="row"><b>${L.street}</b><span class="mono">${custStreet}</span></div>` : ""}
+          ${custPostal ? `<div class="row"><b>${L.postalCode}</b><span class="mono">${custPostal}</span></div>` : ""}
+          ${custCity ? `<div class="row"><b>${L.city}</b><span class="mono">${custCity}</span></div>` : ""}
+          <div class="row"><b>${L.country}</b><span class="mono">${custCountryName}</span></div>
+          ${(customer?.vatNumber ?? doc.buyerVatNumber)
+            ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+          ${acctCode ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
+          ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
+        ` : `
+          ${(customer?.vatNumber ?? doc.buyerVatNumber)
+            ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+          ${acctCode ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
+          ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
+          ${bldgNo ? `<div class="row"><b>${L.customerAddress}</b><span class="mono">${bldgNo}</span></div>` : ""}
+        `}
       </div>
     </div>`;
 

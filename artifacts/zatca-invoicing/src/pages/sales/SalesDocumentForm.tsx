@@ -670,7 +670,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // the fetch — keeps the union type honest without runtime impact.
   const sequenceType: SequenceTxType = isOrder ? "sales_order" : "sales_invoice";
   const sequenceEnabled = (isInvoice || isOrder) && !editId;
-  const seqPeek = useNextSequenceNumber(sequenceType, sequenceEnabled, undefined, branchId, isInvoice ? paymentType : undefined);
+  // Foreign-customer numbering: a non-SA buyer previews the separate foreign
+  // series when one is configured (the server falls back to the base series).
+  const selectedSeqCustomer = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
+  const isForeignSeqCustomer = isInvoice && !!selectedSeqCustomer
+    && String((selectedSeqCustomer as any).country ?? "SA").toUpperCase() !== "SA";
+  const seqPeek = useNextSequenceNumber(sequenceType, sequenceEnabled, undefined, branchId, isInvoice ? paymentType : undefined, isForeignSeqCustomer);
   useEffect(() => {
     if (!sequenceEnabled) return;
     if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);

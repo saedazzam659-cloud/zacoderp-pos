@@ -47,6 +47,14 @@ export const SEQUENCE_TX_TYPES = [
   "receipt_voucher_bank",
   "payment_voucher_cash",
   "payment_voucher_bank",
+  // Foreign-customer numbering sub-types (opt-in). When the buyer's country is
+  // NOT "SA" and a company binds a sequence to one of these, the document draws
+  // its human-readable number from it — taking PRECEDENCE over the per-payment
+  // split — otherwise it falls back to the payment-split / unified base type.
+  // The ZATCA ICV/PIH cryptographic chain is NEVER split. Resolution lives in
+  // `nextSequenceForPayment` (api-server lib/sequences.ts).
+  "sales_invoice_foreign",
+  "sales_return_foreign",
   "pos_receipt",
   // Production & Manufacturing — production_order is already issued by the
   // backend via nextSequenceNumber, declaring it here closes the type drift.

@@ -23,6 +23,8 @@ import {
   Download, Loader2,
 } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { WORLD_COUNTRIES } from "@/lib/worldCountries";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { LocationCapture, type LocationValue } from "@/components/LocationCapture";
@@ -844,6 +846,23 @@ export default function CustomerNew() {
                             />
                           </FormControl>
                           <FormDescription>5 أرقام</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <FormField control={form.control} name="country" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>الدولة</FormLabel>
+                          <FormControl>
+                            <SearchCombobox
+                              items={WORLD_COUNTRIES.map(c => ({ value: c.code, label: c.nameAr, labelEn: c.nameEn, code: c.code }))}
+                              value={field.value || "SA"}
+                              onValueChange={field.onChange}
+                              placeholder="اختر الدولة..."
+                              searchPlaceholder="ابحث عن دولة..."
+                            />
+                          </FormControl>
+                          <FormDescription>دولة العميل — تُحدِّد ترتيب العنوان في طباعة «النموذج الأصلي» وتُفعّل التسلسل الأجنبي للفواتير والمرتجعات</FormDescription>
                           <FormMessage />
                         </FormItem>
                       )} />

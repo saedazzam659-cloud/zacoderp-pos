@@ -3709,6 +3709,8 @@
       "sales_return_cash": "مرتجع مبيعات - نقدي",
       "sales_return_credit": "مرتجع مبيعات - آجل",
       "sales_return_bank": "مرتجع مبيعات - بنك",
+      "sales_invoice_foreign": "فاتورة مبيعات - أجنبية",
+      "sales_return_foreign": "مرتجع مبيعات - أجنبي",
       "purchase_return_cash": "مرتجع مشتريات - نقدي",
       "purchase_return_credit": "مرتجع مشتريات - آجل",
       "purchase_return_bank": "مرتجع مشتريات - بنك",

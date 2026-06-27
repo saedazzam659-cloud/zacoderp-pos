@@ -837,6 +837,16 @@ router.post("/sales-invoices", async (req, res) => {
     // simultaneous submissions can never persist the same docNumber. When
     // no active sequence is configured, we fall back to the client-supplied
     // value or null (legacy free-numbering behaviour).
+    // Foreign-customer numbering: when the buyer's country is not SA, the
+    // invoice draws from the separate "sales_invoice_foreign" series (if the
+    // company configured one). The ZATCA ICV/PIH chain stays unified.
+    let buyerIsForeign = false;
+    if (customerId) {
+      const [cc] = await db.select({ country: customersTable.country })
+        .from(customersTable)
+        .where(and(eq(customersTable.id, Number(customerId)), eq(customersTable.companyId, cid)));
+      buyerIsForeign = !!cc && String(cc.country ?? "SA").toUpperCase() !== "SA";
+    }
     let resolvedDocNumber: string | null;
     try {
       const fromSeq = await nextSequenceForPayment(cid, "sales_invoice", pType, {
@@ -844,7 +854,7 @@ router.post("/sales-invoices", async (req, res) => {
         refTable: "sales_invoices",
         branchId: branchId ? Number(branchId) : null,
         docDate:  invoiceDate,
-      });
+      }, buyerIsForeign);
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
       res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
@@ -1892,6 +1902,15 @@ router.post("/sales-returns", async (req, res) => {
     // exists for "sales_return"; otherwise fall back to client-supplied
     // value or null. Server allocation is atomic so concurrent submits
     // can never persist the same number.
+    // Foreign-customer numbering: a non-SA buyer draws from the separate
+    // "sales_return_foreign" series (if configured). ZATCA chain stays unified.
+    let buyerIsForeign = false;
+    if (resolvedCustomerId) {
+      const [cc] = await db.select({ country: customersTable.country })
+        .from(customersTable)
+        .where(and(eq(customersTable.id, resolvedCustomerId), eq(customersTable.companyId, cid)));
+      buyerIsForeign = !!cc && String(cc.country ?? "SA").toUpperCase() !== "SA";
+    }
     let resolvedDocNumber: string | null;
     try {
       const fromSeq = await nextSequenceForPayment(cid, "sales_return", pType, {
@@ -1899,7 +1918,7 @@ router.post("/sales-returns", async (req, res) => {
         refTable: "sales_returns",
         branchId: branchId ? Number(branchId) : null,
         docDate:  returnDate,
-      });
+      }, buyerIsForeign);
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
       res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم المرتجع" });
