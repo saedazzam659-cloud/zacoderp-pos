@@ -1916,7 +1916,9 @@ function template14(d: PrintData): string {
   const custStreet = (customer as any)?.street ?? (doc as any)?.buyerStreet ?? null;
   const custPostal = (customer as any)?.postalCode ?? (doc as any)?.buyerPostalCode ?? null;
   const custCity   = (customer as any)?.city ?? (doc as any)?.buyerCity ?? null;
-  const custCountryName = getWorldCountryName(custCountryCode, isEn ? "en" : "ar");
+  // Foreign-customer country always prints in ENGLISH (international document
+  // convention), regardless of the print language (Arabic or English).
+  const custCountryName = getWorldCountryName(custCountryCode, "en");
   // Footer audit line — only render the "أنشئ بـ" line when we actually have
   // a timestamp; some legacy rows may not carry one.
   const createdAtRaw = doc.createdAt ?? doc.invoiceDate ?? doc.returnDate ?? doc.orderDate ?? doc.quotationDate ?? null;
