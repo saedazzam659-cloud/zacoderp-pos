@@ -1,8 +1,9 @@
-import { useRef, useState, useLayoutEffect } from "react";
+import { useRef, useState, useLayoutEffect, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
 import {
   FileSpreadsheet, FolderOpen, Save, FilePlus2, Plus, Trash2, Columns3, FileUp, ChevronDown, ArrowLeftRight, Send,
+  Search, X, ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -101,7 +102,80 @@ export default function ExcelEditor() {
     setScrollTop(0);
   };
 
+  // ── Find / search across the active sheet ────────────────────────────────
+  // `searchCol === -1` searches every column; otherwise it scopes to one column.
+  const [showFind, setShowFind] = useState(false);
+  const [query, setQuery] = useState("");
+  const [searchCol, setSearchCol] = useState(-1);
+  const [matchIdx, setMatchIdx] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
+
   const sheet = sheets[active] ?? sheets[0];
+
+  // All cell coordinates in the active sheet that contain the query (case-insensitive).
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [] as { r: number; c: number }[];
+    const out: { r: number; c: number }[] = [];
+    const rows = sheet?.rows ?? [];
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r] ?? [];
+      if (searchCol === -1) {
+        for (let c = 0; c < row.length; c++) {
+          if (String(row[c] ?? "").toLowerCase().includes(q)) out.push({ r, c });
+        }
+      } else if (searchCol < row.length) {
+        if (String(row[searchCol] ?? "").toLowerCase().includes(q)) out.push({ r, c: searchCol });
+      }
+    }
+    return out;
+  }, [query, searchCol, sheet]);
+
+  const matchSet = useMemo(() => new Set(matches.map((m) => `${m.r}:${m.c}`)), [matches]);
+  const safeMatchIdx = matches.length ? Math.min(matchIdx, matches.length - 1) : 0;
+  const current = matches[safeMatchIdx];
+  const currentKey = current ? `${current.r}:${current.c}` : "";
+
+  // Reset the cursor to the first hit whenever the query / scope / sheet changes.
+  useEffect(() => { setMatchIdx(0); }, [query, searchCol, active]);
+
+  // Bring a match into view. The grid is virtualized, so we drive the scroll
+  // container directly and sync `scrollTop` so the windowing renders that row.
+  const goToMatch = (idx: number) => {
+    if (!matches.length) return;
+    const n = ((idx % matches.length) + matches.length) % matches.length;
+    setMatchIdx(n);
+    const el = scrollRef.current;
+    if (el) {
+      const top = Math.max(0, matches[n].r * rowH - Math.max(0, viewportH / 2 - rowH));
+      el.scrollTop = top;
+      setScrollTop(top);
+    }
+  };
+
+  const openFind = () => {
+    setShowFind(true);
+    setTimeout(() => findInputRef.current?.focus(), 0);
+  };
+  const closeFind = () => {
+    setShowFind(false);
+    setQuery("");
+  };
+
+  // Ctrl/Cmd+F opens the find bar (overriding the browser's native find inside
+  // this editor, which only sees the rendered viewport rows anyway).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        openFind();
+      } else if (e.key === "Escape" && showFind) {
+        closeFind();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showFind]);
 
   const updateCell = (r: number, c: number, v: string) => {
     setSheets((prev) => {
@@ -478,8 +552,80 @@ export default function ExcelEditor() {
           <ArrowLeftRight className="h-4 w-4 ms-1" />
           {gridDir === "rtl" ? (ar ? "من اليمين" : "Right→Left") : (ar ? "من اليسار" : "Left→Right")}
         </Button>
+        <Button
+          size="sm"
+          variant={showFind ? "default" : "outline"}
+          onClick={() => (showFind ? closeFind() : openFind())}
+          title={ar ? "بحث (Ctrl+F)" : "Find (Ctrl+F)"}
+          data-testid="button-excel-find"
+        >
+          <Search className="h-4 w-4 ms-1" /> {ar ? "بحث" : "Find"}
+        </Button>
         <span className="text-xs text-muted-foreground ms-2">{sheet.rows.length} × {colCount}</span>
       </Card>
+
+      {showFind && (
+        <Card className="p-2 flex flex-wrap items-center gap-2" data-testid="excel-find-bar">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <input
+            ref={findInputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); goToMatch(safeMatchIdx + (e.shiftKey ? -1 : 1)); }
+              else if (e.key === "Escape") { e.preventDefault(); closeFind(); }
+            }}
+            placeholder={ar ? "بحث في الجدول..." : "Search the sheet..."}
+            dir="auto"
+            className="h-8 px-2 rounded border border-border bg-background text-sm outline-none focus:ring-1 focus:ring-blue-400 min-w-[12rem] flex-1"
+            data-testid="input-excel-find"
+          />
+          <select
+            value={searchCol}
+            onChange={(e) => setSearchCol(Number(e.target.value))}
+            className="h-8 px-2 rounded border border-border bg-background text-sm outline-none"
+            title={ar ? "نطاق البحث" : "Search scope"}
+            data-testid="select-excel-find-col"
+          >
+            <option value={-1}>{ar ? "كل الأعمدة" : "All columns"}</option>
+            {Array.from({ length: colCount }, (_, c) => (
+              <option key={c} value={c}>{ar ? `العمود ${colLabel(c)}` : `Column ${colLabel(c)}`}</option>
+            ))}
+          </select>
+          <span className="text-xs text-muted-foreground tabular-nums min-w-[4rem] text-center" data-testid="excel-find-count">
+            {query.trim() === "" ? "" : matches.length === 0 ? (ar ? "لا نتائج" : "No results") : `${safeMatchIdx + 1} / ${matches.length}`}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => goToMatch(safeMatchIdx - 1)}
+            disabled={matches.length === 0}
+            title={ar ? "السابق" : "Previous"}
+            data-testid="button-excel-find-prev"
+          >
+            <ChevronUp className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => goToMatch(safeMatchIdx + 1)}
+            disabled={matches.length === 0}
+            title={ar ? "التالي" : "Next"}
+            data-testid="button-excel-find-next"
+          >
+            <ChevronDown className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={closeFind}
+            title={ar ? "إغلاق" : "Close"}
+            data-testid="button-excel-find-close"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </Card>
+      )}
 
       <Card
         ref={scrollRef}
@@ -508,8 +654,17 @@ export default function ExcelEditor() {
               return (
                 <tr key={r} ref={i === 0 ? rowProbeRef : undefined} style={{ height: ROW_H }}>
                   <td className="bg-muted border border-border text-center text-xs text-muted-foreground sticky start-0 z-10">{r + 1}</td>
-                  {Array.from({ length: colCount }, (_, c) => (
-                    <td key={c} className="border border-border p-0">
+                  {Array.from({ length: colCount }, (_, c) => {
+                    const key = `${r}:${c}`;
+                    const isCurrent = key === currentKey;
+                    const isMatch = matchSet.has(key);
+                    return (
+                    <td
+                      key={c}
+                      className={`border border-border p-0 ${
+                        isCurrent ? "bg-orange-200 ring-2 ring-orange-500 ring-inset" : isMatch ? "bg-yellow-100" : ""
+                      }`}
+                    >
                       <input
                         value={row[c] ?? ""}
                         onChange={(e) => updateCell(r, c, e.target.value)}
@@ -518,7 +673,8 @@ export default function ExcelEditor() {
                         data-testid={`cell-${r}-${c}`}
                       />
                     </td>
-                  ))}
+                  );
+                  })}
                 </tr>
               );
             })}
