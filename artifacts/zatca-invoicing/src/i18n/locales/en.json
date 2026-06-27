@@ -740,6 +740,7 @@
     "currencies": "Currencies",
     "dataIo": "Data Import / Export",
     "sequences": "Document Numbering",
+    "sequenceMonitor": "Sequence Activity Monitor",
     "invoices": "Invoices",
     "vatDeclaration": "VAT Declaration",
     "posManagement": "POS Management",

@@ -323,6 +323,100 @@ function withUsage(r: any) {
   return { ...r, usedCount: used, capacity, usedPct };
 }
 
+// ─── Document-link verification ─────────────────────────────────────────────
+// `sequence_logs` is append-only and is NOT a foreign key — a logged number
+// survives the deletion of the document it was issued for. So to decide
+// whether a sequence is still "linked to a document" we must verify the
+// referenced row STILL EXISTS in its physical table, not merely that a log
+// row exists. ref_table values are real snake_case table names; we map them
+// through this whitelist before ever interpolating an identifier into SQL.
+// Anything NOT whitelisted is treated conservatively as "still linked"
+// (fail-closed) so an unknown source can never let a reset silently wipe a
+// live numbering trail.
+const REF_TABLE_WHITELIST: Record<string, string> = {
+  sales_invoices:      "sales_invoices",
+  sales_returns:       "sales_returns",
+  sales_orders:        "sales_orders",
+  sales_quotations:    "sales_quotations",
+  purchase_invoices:   "purchase_invoices",
+  purchase_orders:     "purchase_orders",
+  purchase_returns:    "purchase_returns",
+  journal_entries:     "journal_entries",
+  payment_vouchers:    "payment_vouchers",
+  receipt_vouchers:    "receipt_vouchers",
+  goods_deliveries:    "goods_deliveries",
+  goods_receipts:      "goods_receipts",
+  stock_transfers:     "stock_transfers",
+  stock_adjustments:   "stock_adjustments",
+  stock_counts:        "stock_counts",
+  sister_transfers:    "sister_transfers",
+  sister_returns:      "sister_returns",
+  sister_settlements:  "sister_settlements",
+  account_notes:       "account_notes",
+  employees:           "employees",
+  employee_contracts:  "employee_contracts",
+  production_orders:   "production_orders",
+};
+
+// Count, for one sequence, how many DISTINCT logged numbers still resolve to a
+// LIVE document. `dbx` accepts the global `db` or a tx handle so the reset can
+// run the check + counter wipe atomically under the same FOR UPDATE lock.
+async function liveLinkedDocs(dbx: any, cid: number, seqId: number): Promise<{
+  total: number;
+  breakdown: Array<{ refTable: string; count: number }>;
+}> {
+  const grp = await dbx.execute(sql`
+    SELECT DISTINCT ref_table FROM sequence_logs
+    WHERE sequence_id = ${seqId} AND company_id = ${cid}
+      AND transaction_type <> '__reset__'
+      AND ref_table IS NOT NULL AND ref_id IS NOT NULL
+  `);
+  const tables = ((grp.rows ?? []) as Array<{ ref_table: string }>)
+    .map(r => r.ref_table).filter(Boolean);
+  let total = 0;
+  const breakdown: Array<{ refTable: string; count: number }> = [];
+  for (const rt of tables) {
+    const phys = REF_TABLE_WHITELIST[rt];
+    if (!phys) {
+      // Unknown source table — cannot verify existence; count distinct logged
+      // ref_ids as linked (fail-closed, protects the numbering trail).
+      const c = await dbx.execute(sql`
+        SELECT COUNT(DISTINCT ref_id)::text AS c FROM sequence_logs
+        WHERE sequence_id = ${seqId} AND company_id = ${cid}
+          AND transaction_type <> '__reset__' AND ref_table = ${rt}
+          AND ref_id IS NOT NULL`);
+      const n = Number((c.rows ?? [])[0]?.c ?? 0);
+      if (n > 0) { total += n; breakdown.push({ refTable: rt, count: n }); }
+      continue;
+    }
+    // Guard against a missing table in this DB so a bad whitelist entry can
+    // never throw mid-transaction and abort an otherwise valid reset.
+    const reg = await dbx.execute(sql`SELECT to_regclass(${"public." + phys}) AS t`);
+    if (!((reg.rows ?? [])[0]?.t)) continue;
+    const c = await dbx.execute(sql`
+      SELECT COUNT(*)::text AS c FROM (
+        SELECT DISTINCT l.ref_id
+        FROM sequence_logs l
+        JOIN ${sql.raw(phys)} d ON d.id = l.ref_id::int AND d.company_id = ${cid}
+        WHERE l.sequence_id = ${seqId} AND l.company_id = ${cid}
+          AND l.transaction_type <> '__reset__' AND l.ref_table = ${rt}
+          AND l.ref_id IS NOT NULL AND l.ref_id ~ '^[0-9]+$'
+      ) s`);
+    // Fail-closed on UNVERIFIABLE references: a whitelisted table whose log row
+    // carries a non-numeric ref_id (legacy/import/corruption) can't be checked
+    // against the integer PK, so it must block reset rather than silently pass.
+    const bad = await dbx.execute(sql`
+      SELECT COUNT(DISTINCT l.ref_id)::text AS c
+      FROM sequence_logs l
+      WHERE l.sequence_id = ${seqId} AND l.company_id = ${cid}
+        AND l.transaction_type <> '__reset__' AND l.ref_table = ${rt}
+        AND l.ref_id IS NOT NULL AND l.ref_id !~ '^[0-9]+$'`);
+    const n = Number((c.rows ?? [])[0]?.c ?? 0) + Number((bad.rows ?? [])[0]?.c ?? 0);
+    if (n > 0) { total += n; breakdown.push({ refTable: rt, count: n }); }
+  }
+  return { total, breakdown };
+}
+
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
@@ -338,6 +432,89 @@ router.get("/", async (req, res) => {
 // ─── KNOWN TX TYPES (for the multi-select) ────────────────────────────────────
 router.get("/transaction-types", (_req, res) => {
   res.json(SEQUENCE_TX_TYPES);
+});
+
+// ─── COMPANY-WIDE ACTIVITY MONITOR (all sequences) ──────────────────────────
+// GET /api/sequences/logs/all?txTypes=a,b&sequenceId=&dateFrom=&dateTo=&q=&limit=&offset=&includeReset=
+// Returns issuance rows across ALL of the company's sequences, enriched with
+// the owning sequence code, the issuing user, and a `live` flag (does the
+// linked document still exist?). Powers the monitoring screen. MUST be
+// registered before "/:id" so the literal "logs" segment is never captured
+// by the :id param route (Express 5 / path-to-regexp).
+router.get("/logs/all", async (req: any, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const limit  = Math.min(500, Math.max(1, Number(req.query.limit ?? 100)));
+    const offset = Math.max(0, Number(req.query.offset ?? 0));
+    const includeReset = req.query.includeReset === "true";
+
+    const txTypes = String(req.query.txTypes ?? "")
+      .split(",").map((s) => s.trim()).filter(Boolean);
+    const sequenceId = req.query.sequenceId ? Number(req.query.sequenceId) : null;
+    const q        = String(req.query.q ?? "").trim();
+    const dateFrom = String(req.query.dateFrom ?? "").trim();
+    const dateTo   = String(req.query.dateTo ?? "").trim();
+
+    // Validate dates up front so a bad value yields a clean 400, not a DB-cast 500.
+    const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+    if (dateFrom && !ISO_DATE.test(dateFrom)) { res.status(400).json({ error: "dateFrom must be YYYY-MM-DD" }); return; }
+    if (dateTo && !ISO_DATE.test(dateTo))     { res.status(400).json({ error: "dateTo must be YYYY-MM-DD" }); return; }
+
+    const conds: any[] = [sql`l.company_id = ${cid}`];
+    if (!includeReset) conds.push(sql`l.transaction_type <> '__reset__'`);
+    if (txTypes.length) conds.push(sql`l.transaction_type = ANY(${txTypes}::text[])`);
+    if (sequenceId && Number.isInteger(sequenceId)) conds.push(sql`l.sequence_id = ${sequenceId}`);
+    if (q) conds.push(sql`l.generated_number ILIKE ${"%" + q + "%"}`);
+    if (dateFrom) conds.push(sql`l.created_at >= ${dateFrom}::date`);
+    if (dateTo)   conds.push(sql`l.created_at <  (${dateTo}::date + interval '1 day')`);
+    const whereSql = sql.join(conds, sql` AND `);
+
+    const totalExec = await db.execute(sql`
+      SELECT COUNT(*)::text AS c FROM sequence_logs l WHERE ${whereSql}`);
+    const total = Number(((totalExec.rows ?? []) as any[])[0]?.c ?? 0);
+
+    const rowsExec = await db.execute(sql`
+      SELECT l.id, l.sequence_id AS "sequenceId", l.transaction_type AS "transactionType",
+             l.generated_number AS "generatedNumber", l.user_id AS "userId",
+             l.ref_table AS "refTable", l.ref_id AS "refId", l.created_at AS "createdAt",
+             s.code AS "sequenceCode", s.name_ar AS "sequenceName", u.username AS "userName"
+      FROM sequence_logs l
+      LEFT JOIN sequences s ON s.id = l.sequence_id
+      LEFT JOIN users u ON u.id = l.user_id
+      WHERE ${whereSql}
+      ORDER BY l.created_at DESC, l.id DESC
+      LIMIT ${limit} OFFSET ${offset}`);
+    const rows = (rowsExec.rows ?? []) as any[];
+
+    // Batch live-check: group this page's whitelisted (refTable → numeric ids),
+    // query each physical table once, then stamp each row's `live` flag.
+    const byTable = new Map<string, Set<number>>();
+    for (const r of rows) {
+      const rt = r.refTable; const rid = r.refId;
+      if (!rt || rid == null || !/^[0-9]+$/.test(String(rid)) || !REF_TABLE_WHITELIST[rt]) continue;
+      if (!byTable.has(rt)) byTable.set(rt, new Set());
+      byTable.get(rt)!.add(Number(rid));
+    }
+    const liveSets = new Map<string, Set<number>>();
+    for (const [rt, ids] of byTable) {
+      const phys = REF_TABLE_WHITELIST[rt];
+      const reg = await db.execute(sql`SELECT to_regclass(${"public." + phys}) AS t`);
+      if (!(((reg.rows ?? []) as any[])[0]?.t)) continue;
+      const ex = await db.execute(sql`
+        SELECT id FROM ${sql.raw(phys)}
+        WHERE company_id = ${cid} AND id = ANY(${Array.from(ids)}::int[])`);
+      liveSets.set(rt, new Set(((ex.rows ?? []) as any[]).map((x) => Number(x.id))));
+    }
+    const out = rows.map((r) => {
+      let live: boolean | null = null;
+      const rt = r.refTable; const rid = r.refId;
+      if (rt && rid != null && /^[0-9]+$/.test(String(rid)) && REF_TABLE_WHITELIST[rt]) {
+        live = liveSets.get(rt)?.has(Number(rid)) ?? false;
+      }
+      return { ...r, live };
+    });
+    res.json({ rows: out, total, limit, offset });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── GET ONE ──────────────────────────────────────────────────────────────────
@@ -366,6 +543,25 @@ router.get("/:id/logs", async (req, res) => {
       .orderBy(desc(sequenceLogsTable.createdAt))
       .limit(limit);
     res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── RESET ELIGIBILITY (read-only pre-check) ──────────────────────────────────
+// GET /api/sequences/:id/reset-eligibility
+// Powers the reset dialog: a sequence may be rewound to its start ONLY when it
+// is not linked to any EXISTING document. Logs that point only at already
+// deleted rows do NOT block (see liveLinkedDocs). Returns the live-link count
+// + per-table breakdown so the UI can explain precisely why a reset is blocked.
+router.get("/:id/reset-eligibility", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id  = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+    const [row] = await db.select().from(sequencesTable)
+      .where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid)));
+    if (!row) { res.status(404).json({ error: "المسلسل غير موجود" }); return; }
+    const link = await liveLinkedDocs(db, cid, id);
+    res.json({ eligible: link.total === 0, linkedCount: link.total, breakdown: link.breakdown });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -785,25 +981,24 @@ router.post("/:id/reset", audit("sequences", "edit"), async (req, res) => {
       if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
       const startNumber = Number(existing.start_number ?? existing.startNumber);
 
-      // "Used" is now driven by audit history (real issuance footprint),
-      // not by master.current_number — which under the per-branch model is
-      // never bumped during issuance and would always look "unused".
-      // Filter out our own __reset__ rows so a previous reset doesn't
-      // permanently force the acknowledgeReuse prompt on every later reset.
-      const usedRows = await tx.execute<{ used: boolean }>(sql`
-        SELECT EXISTS(
-          SELECT 1 FROM sequence_logs
-          WHERE sequence_id = ${id}
-            AND transaction_type <> '__reset__'
-        ) AS used
-      `);
-      const isUsed = !!usedRows.rows?.[0]?.used;
-      if (isUsed && req.body?.acknowledgeReuse !== true) {
+      // The reset is allowed ONLY when this sequence is no longer linked to
+      // any EXISTING document. sequence_logs is append-only and survives a
+      // document deletion, so "linked" is verified against the live row in
+      // each referenced physical table (not mere log existence). This lets a
+      // user who consumed s1..s3 while testing and then deleted those test
+      // documents cleanly rewind the counter to s1 — while a sequence that
+      // still feeds real, persisted documents is hard-blocked to protect the
+      // numbering trail. Runs inside the same FOR UPDATE tx so a concurrent
+      // issuance cannot create a new live link between the check and the wipe.
+      const link = await liveLinkedDocs(tx, cid, id);
+      if (link.total > 0) {
         return {
           status: 409,
           body: {
-            error: "هذا المسلسل أصدر أرقاماً سابقاً. التصفير سيؤدي إلى احتمال تكرار أرقام صادرة. أكّد إعادة الاستخدام صراحةً للمتابعة.",
-            requiresAcknowledgement: true,
+            error: `لا يمكن تصفير هذا المسلسل لأنه مرتبط بـ ${link.total} مستنداً قائماً. لا يُسمح بالتصفير إلا إذا لم يكن مرتبطاً بأي مستند — احذف المستندات المرتبطة أو ألغِ ترحيلها أولاً.`,
+            blocked: true,
+            linkedCount: link.total,
+            breakdown: link.breakdown,
           },
         };
       }

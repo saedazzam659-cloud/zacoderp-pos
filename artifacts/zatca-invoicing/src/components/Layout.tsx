@@ -391,6 +391,7 @@ const dashboardSubNav: NavDef[] = [
   // Sequence management is admin-only at the backend, so the link is hidden
   // from non-admins regardless of permission grant (avoids 403/404 on click).
   { nameKey: "nav.sequences",       href: "/settings/sequences",  icon: ListOrdered, permKey: "sequences", requireAdmin: true },
+  { nameKey: "nav.sequenceMonitor", href: "/settings/sequences/monitor", icon: Activity, permKey: "sequences", requireAdmin: true },
   { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3,  permKey: "vat_declaration" },
   // SEO Manager — gated by the per-company seo_dashboard module toggle. Hidden
   // when the company hasn't been granted this module on the SuperAdmin →

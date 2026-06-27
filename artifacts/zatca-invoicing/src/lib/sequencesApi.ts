@@ -72,6 +72,36 @@ export type SequenceLogRow = {
   createdAt: string;
 };
 
+// Per-table breakdown of how many EXISTING documents still reference numbers
+// issued by a sequence. Drives the reset dialog + the 409 block message.
+export type SequenceLinkBreakdown = { refTable: string; count: number };
+
+export type ResetEligibility = {
+  eligible: boolean;
+  linkedCount: number;
+  breakdown: SequenceLinkBreakdown[];
+};
+
+// Enriched activity row for the monitoring screen. `live` = does the linked
+// document still exist? (null when the row has no resolvable document link.)
+export type SequenceActivityRow = SequenceLogRow & {
+  sequenceCode: string | null;
+  sequenceName: string | null;
+  userName: string | null;
+  live: boolean | null;
+};
+
+export type SequenceActivityParams = {
+  txTypes?: string[];
+  sequenceId?: number | null;
+  dateFrom?: string;
+  dateTo?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+  includeReset?: boolean;
+};
+
 export const sequencesApi = {
   list:             (cid?: number) => request<SequenceRow[]>("GET", `/sequences${cid ? `?companyId=${cid}` : ""}`),
   get:              (id: number)   => request<SequenceRow>("GET", `/sequences/${id}`),
@@ -80,7 +110,22 @@ export const sequencesApi = {
   remove:           (id: number)   => request<{ ok: true }>("DELETE", `/sequences/${id}`),
   reset:            (id: number, opts: { acknowledgeReuse?: boolean } = {}) =>
                       request<SequenceRow>("POST", `/sequences/${id}/reset`, opts),
+  resetEligibility: (id: number) => request<ResetEligibility>("GET", `/sequences/${id}/reset-eligibility`),
   logs:             (id: number, limit = 50) => request<SequenceLogRow[]>("GET", `/sequences/${id}/logs?limit=${limit}`),
+  activity:         (params: SequenceActivityParams = {}) => {
+    const qs = new URLSearchParams();
+    if (params.txTypes?.length) qs.set("txTypes", params.txTypes.join(","));
+    if (params.sequenceId)      qs.set("sequenceId", String(params.sequenceId));
+    if (params.dateFrom)        qs.set("dateFrom", params.dateFrom);
+    if (params.dateTo)          qs.set("dateTo", params.dateTo);
+    if (params.q)               qs.set("q", params.q);
+    if (params.limit != null)   qs.set("limit", String(params.limit));
+    if (params.offset != null)  qs.set("offset", String(params.offset));
+    if (params.includeReset)    qs.set("includeReset", "true");
+    const s = qs.toString();
+    return request<{ rows: SequenceActivityRow[]; total: number; limit: number; offset: number }>(
+      "GET", `/sequences/logs/all${s ? `?${s}` : ""}`);
+  },
   transactionTypes: () => request<string[]>("GET", "/sequences/transaction-types"),
   seedPaymentSplit: () =>
     request<{ created: string[]; skipped: string[]; createdCount: number }>(

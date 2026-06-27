@@ -5,7 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
-import { sequencesApi, type SequenceRow, type SequenceLogRow } from "@/lib/sequencesApi";
+import { Link } from "wouter";
+import { sequencesApi, type SequenceRow, type SequenceLogRow, type ResetEligibility } from "@/lib/sequencesApi";
+import { refTableLabel } from "@/lib/sequenceLabels";
 import { branchesApi } from "@/lib/branchesApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +23,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, RefreshCcw, ListOrdered, History, AlertTriangle, X, ChevronsUpDown, Search, Layers } from "lucide-react";
+import { Plus, Pencil, Trash2, RefreshCcw, ListOrdered, History, AlertTriangle, X, ChevronsUpDown, Search, Layers, Activity, ShieldCheck, Loader2 } from "lucide-react";
 
 const EMPTY_FORM = {
   code: "",
@@ -405,7 +407,6 @@ export default function Sequences() {
   const [form, setForm]           = useState<typeof EMPTY_FORM>(EMPTY_FORM);
   const [deleteId, setDeleteId]   = useState<number | null>(null);
   const [resetId, setResetId]     = useState<number | null>(null);
-  const [resetAck, setResetAck]   = useState(false);
   const [logsId,  setLogsId]      = useState<number | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -483,11 +484,21 @@ export default function Sequences() {
     onSuccess:  () => { inv(); setDeleteId(null); toast({ title: t("sequences.deleted") }); },
     onError:    (e: any) => { setDeleteId(null); errToast(e); },
   });
+  // Read-only pre-check that drives the reset dialog: a sequence may rewind to
+  // its start ONLY when it is not linked to any EXISTING document. Fetched
+  // fresh whenever the dialog opens so a recently-deleted test document is
+  // reflected immediately.
+  const { data: resetEligibility, isLoading: eligLoading } = useQuery<ResetEligibility>({
+    queryKey: ["sequence-reset-eligibility", resetId],
+    queryFn:  () => sequencesApi.resetEligibility(resetId as number),
+    enabled:  resetId != null,
+    staleTime: 0,
+    gcTime:   0,
+  });
   const resetMut = useMutation({
-    mutationFn: ({ id, acknowledgeReuse }: { id: number; acknowledgeReuse: boolean }) =>
-      sequencesApi.reset(id, { acknowledgeReuse }),
-    onSuccess:  () => { inv(); setResetId(null); setResetAck(false); toast({ title: t("sequences.resetDone") }); },
-    onError:    (e: any) => { setResetId(null); setResetAck(false); errToast(e); },
+    mutationFn: (id: number) => sequencesApi.reset(id),
+    onSuccess:  () => { inv(); setResetId(null); toast({ title: t("sequences.resetDone") }); },
+    onError:    (e: any) => { errToast(e); },
   });
 
   const seedSplit = useMutation({
@@ -603,6 +614,11 @@ export default function Sequences() {
           <p className="text-sm text-muted-foreground mt-1">{t("sequences.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/settings/sequences/monitor">
+            <Button variant="outline" data-testid="button-sequence-monitor">
+              <Activity className="w-4 h-4 me-1" /> متابعة الحركات
+            </Button>
+          </Link>
           <Button
             variant="outline"
             onClick={() => seedSplit.mutate()}
@@ -942,54 +958,68 @@ export default function Sequences() {
       {/* ─── Reset confirm ────────────────────────────────────────────────── */}
       <AlertDialog
         open={resetId != null}
-        onOpenChange={(o) => { if (!o) { setResetId(null); setResetAck(false); } }}
+        onOpenChange={(o) => { if (!o) setResetId(null); }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-orange-500" />
+              <RefreshCcw className="w-5 h-5 text-orange-500" />
               {t("sequences.resetConfirmTitle")}
             </AlertDialogTitle>
-            <AlertDialogDescription>{t("sequences.resetConfirmDesc")}</AlertDialogDescription>
+            <AlertDialogDescription>
+              سيتم إرجاع الرقم التالي إلى رقم البداية. يُسمح بالتصفير فقط إذا لم يكن المسلسل مرتبطاً بأي مستند قائم — المستندات التجريبية المحذوفة لا تمنع التصفير.
+            </AlertDialogDescription>
           </AlertDialogHeader>
-          {(() => {
-            const r = resetId != null ? rows.find(x => x.id === resetId) : null;
-            const used = !!r && r.currentNumber !== r.startNumber;
-            if (!used) return null;
-            return (
-              <div
-                className="flex items-start gap-2 text-sm cursor-pointer mt-2 px-1 select-none"
-                data-testid="label-ack-reuse"
-                onClick={() => setResetAck(v => !v)}
-              >
-                <Checkbox
-                  checked={resetAck}
-                  onCheckedChange={(v) => setResetAck(v === true)}
-                  data-testid="checkbox-ack-reuse"
-                  onClick={(e) => e.stopPropagation()}
-                />
-                <span>{t("sequences.ackReuseLabel")}</span>
+
+          {eligLoading ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> جارٍ التحقق من ارتباط المستندات…
+            </div>
+          ) : resetEligibility?.eligible ? (
+            <div
+              className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
+              data-testid="reset-eligible-banner"
+            >
+              <ShieldCheck className="w-5 h-5 mt-0.5 shrink-0 text-emerald-600" />
+              <div>
+                <p className="font-semibold">المسلسل غير مرتبط بأي مستند قائم — يمكن تصفيره بأمان.</p>
+                <p className="mt-1 text-emerald-700">سيبدأ الترقيم من جديد عند أول إصدار قادم.</p>
               </div>
-            );
-          })()}
+            </div>
+          ) : (
+            <div
+              className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+              data-testid="reset-blocked-banner"
+            >
+              <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0 text-red-600" />
+              <div>
+                <p className="font-semibold">
+                  لا يمكن التصفير: المسلسل مرتبط بـ {resetEligibility?.linkedCount ?? 0} مستنداً قائماً.
+                </p>
+                {(resetEligibility?.breakdown?.length ?? 0) > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {resetEligibility!.breakdown.map((b) => (
+                      <li key={b.refTable} className="flex items-center justify-between gap-3">
+                        <span>{refTableLabel(b.refTable)}</span>
+                        <Badge variant="secondary">{b.count}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-2 text-red-700">احذف المستندات المرتبطة أو ألغِ ترحيلها أولاً ثم أعد المحاولة.</p>
+              </div>
+            </div>
+          )}
+
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => {
-                if (!resetId) return;
-                const r = rows.find(x => x.id === resetId);
-                const used = !!r && r.currentNumber !== r.startNumber;
-                if (used && !resetAck) return;
-                resetMut.mutate({ id: resetId, acknowledgeReuse: used });
-              }}
-              disabled={(() => {
-                const r = resetId != null ? rows.find(x => x.id === resetId) : null;
-                const used = !!r && r.currentNumber !== r.startNumber;
-                return used && !resetAck;
-              })()}
+              onClick={() => { if (resetId && resetEligibility?.eligible) resetMut.mutate(resetId); }}
+              disabled={eligLoading || !resetEligibility?.eligible || resetMut.isPending}
               className="bg-orange-500 hover:bg-orange-600"
               data-testid="button-confirm-reset"
             >
+              {resetMut.isPending && <Loader2 className="w-4 h-4 me-1 animate-spin" />}
               {t("sequences.resetConfirmBtn")}
             </AlertDialogAction>
           </AlertDialogFooter>

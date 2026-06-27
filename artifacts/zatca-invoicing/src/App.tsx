@@ -301,6 +301,7 @@ import Currencies from "@/pages/settings/Currencies";
 import AccountingMappings from "@/pages/settings/AccountingMappings";
 import DataImportExport from "@/pages/settings/DataImportExport";
 import Sequences from "@/pages/settings/Sequences";
+import SequenceMonitor from "@/pages/settings/SequenceMonitor";
 import ExtensionsAdmin from "@/extensions/ExtensionsAdmin";
 import ExtensionScreen from "@/extensions/ExtensionScreen";
 import ExtensionTableScreen from "@/extensions/ExtensionTableScreen";
@@ -1090,6 +1091,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/settings/accounting-mappings" module="general_settings" component={AccountingMappings} />}
             <PermRoute path="/settings/data-io"             module="data_io"          component={DataImportExport} />
             {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/settings/sequences" module="sequences" component={Sequences} />}
+            {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/settings/sequences/monitor" module="sequences" component={SequenceMonitor} />}
             {!isSuperAdmin && <PermRoute path="/sales/reps/commissions"       module="sales_reps"       component={SalesRepCommissions} />}
             {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_reps"       component={SalesReps} />}
 

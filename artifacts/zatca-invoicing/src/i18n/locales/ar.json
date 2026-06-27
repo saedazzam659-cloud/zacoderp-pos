@@ -741,6 +741,7 @@
     "accountingMappings": "ربط القيود المحاسبية",
     "dataIo": "استيراد وتصدير البيانات",
     "sequences": "مسلسل الحركات",
+    "sequenceMonitor": "متابعة حركات المسلسل",
     "invoices": "الفواتير",
     "vatDeclaration": "الإقرار الضريبي",
     "posManagement": "إدارة نقاط البيع",
