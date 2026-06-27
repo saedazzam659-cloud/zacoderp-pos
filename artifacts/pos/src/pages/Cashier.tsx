@@ -217,6 +217,19 @@ export default function CashierPage() {
     [cashBoxes],
   );
 
+  // A payment method is only offered when its destination account is
+  // configured: cash needs a cash box (POS-specific or the branch default),
+  // card/apple/wallet each need their own bank account in POS settings.
+  const availableMethods = useMemo(
+    () => ({
+      cash:   (posSettings?.posCashCashBoxId ?? defaultCashBoxId) != null,
+      card:   posSettings?.posCardBankAccountId != null,
+      apple:  posSettings?.posAppleBankAccountId != null,
+      wallet: posSettings?.posWalletBankAccountId != null,
+    }),
+    [posSettings, defaultCashBoxId],
+  );
+
   const branchName = useMemo(() => {
     return branches.find((b) => b.id === branchId)?.nameAr || "—";
   }, [branches, branchId]);
@@ -455,7 +468,7 @@ export default function CashierPage() {
   return (
     <div
       dir="rtl"
-      className="min-h-screen w-full bg-background text-foreground flex flex-col"
+      className="h-screen w-full bg-background text-foreground flex flex-col overflow-hidden"
     >
       {/* TOP BAR */}
       <header className="h-16 border-b border-border bg-card/80 backdrop-blur-xl px-4 lg:px-6 flex items-center justify-between gap-4 sticky top-0 z-30">
@@ -699,6 +712,7 @@ export default function CashierPage() {
             grandTotal={grandTotal}
             itemCount={itemCount}
             pay={pay}
+            methods={availableMethods}
             submitting={submitting}
             submitError={submitError}
           />
@@ -748,6 +762,7 @@ export default function CashierPage() {
                   await pay(m);
                   setMobileCartOpen(false);
                 }}
+                methods={availableMethods}
                 submitting={submitting}
                 submitError={submitError}
               />
@@ -771,6 +786,7 @@ export default function CashierPage() {
             onClose={clearCart}
             companyLogo={((user?.company as any)?.logo ?? null) as string | null}
             companyNameAr={(user?.company?.nameAr ?? "") as string}
+            cashierName={(user?.nameAr || user?.username || "") as string}
           />
         )}
       </AnimatePresence>
@@ -890,6 +906,7 @@ function CartPanel(props: {
   grandTotal: number;
   itemCount: number;
   pay: (method: "cash" | "card" | "apple" | "wallet") => void | Promise<void>;
+  methods: { cash: boolean; card: boolean; apple: boolean; wallet: boolean };
   submitting: boolean;
   submitError: string | null;
 }) {
@@ -906,6 +923,7 @@ function CartPanel(props: {
     grandTotal,
     itemCount,
     pay,
+    methods,
     submitting,
     submitError,
   } = props;
@@ -1069,36 +1087,44 @@ function CartPanel(props: {
           </div>
         </div>
 
-        {/* Payment buttons */}
+        {/* Payment buttons — only methods whose account is configured */}
         <div className="grid grid-cols-2 gap-2 pt-1">
-          <PayButton
-            disabled={cart.length === 0 || submitting}
-            onClick={() => pay("cash")}
-            icon={<Banknote className="w-4 h-4" />}
-            label="نقداً"
-          />
-          <PayButton
-            disabled={cart.length === 0 || submitting}
-            onClick={() => pay("card")}
-            icon={<CreditCard className="w-4 h-4" />}
-            label="شبكة"
-          />
-          <PayButton
-            disabled={cart.length === 0 || submitting}
-            onClick={() => pay("apple")}
-            icon={<Smartphone className="w-4 h-4" />}
-            label="Apple Pay"
-          />
-          <PayButton
-            disabled={cart.length === 0 || submitting}
-            onClick={() => pay("wallet")}
-            icon={<Wallet className="w-4 h-4" />}
-            label="محفظة"
-          />
+          {methods.cash && (
+            <PayButton
+              disabled={cart.length === 0 || submitting}
+              onClick={() => pay("cash")}
+              icon={<Banknote className="w-4 h-4" />}
+              label="نقداً"
+            />
+          )}
+          {methods.card && (
+            <PayButton
+              disabled={cart.length === 0 || submitting}
+              onClick={() => pay("card")}
+              icon={<CreditCard className="w-4 h-4" />}
+              label="شبكة"
+            />
+          )}
+          {methods.apple && (
+            <PayButton
+              disabled={cart.length === 0 || submitting}
+              onClick={() => pay("apple")}
+              icon={<Smartphone className="w-4 h-4" />}
+              label="Apple Pay"
+            />
+          )}
+          {methods.wallet && (
+            <PayButton
+              disabled={cart.length === 0 || submitting}
+              onClick={() => pay("wallet")}
+              icon={<Wallet className="w-4 h-4" />}
+              label="محفظة"
+            />
+          )}
         </div>
 
         <Button
-          disabled={cart.length === 0 || submitting}
+          disabled={cart.length === 0 || submitting || !methods.cash}
           onClick={() => pay("cash")}
           className="w-full h-13 py-3.5 text-base font-extrabold rounded-xl bg-gradient-to-l from-primary via-primary to-chart-2 text-primary-foreground pos-glow disabled:opacity-50 disabled:pos-glow-none"
         >
@@ -1163,6 +1189,9 @@ function ReceiptModal(props: {
   // empty when the company has no logo / name configured.
   companyLogo: string | null;
   companyNameAr: string;
+  // The cashier who issued the sale. Shown on the printed slip; Arabic name
+  // preferred (this screen is Arabic-only), falling back to the username.
+  cashierName: string;
 }) {
   const {
     method,
@@ -1176,6 +1205,7 @@ function ReceiptModal(props: {
     onClose,
     companyLogo,
     companyNameAr,
+    cashierName,
   } = props;
 
   return (
@@ -1247,6 +1277,11 @@ function ReceiptModal(props: {
             <p className="text-[11px] text-muted-foreground mt-1 font-mono">
               فاتورة #{invoice?.docNumber || invoice?.id || "—"}
             </p>
+            {cashierName && (
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                الكاشير: <span className="font-bold">{cashierName}</span>
+              </p>
+            )}
           </div>
 
           <div className="bg-muted/40 rounded-xl p-3 space-y-1 text-xs">

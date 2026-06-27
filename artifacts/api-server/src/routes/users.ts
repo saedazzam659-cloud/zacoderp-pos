@@ -173,7 +173,7 @@ router.post("/", async (req, res) => {
       validBranchIds = ok.map(b => b.id);
     }
 
-    const newRole = role && ["admin", "user"].includes(role) ? role : "user";
+    const newRole = role && ["admin", "user", "cashier"].includes(role) ? role : "user";
 
     // Approval-permission sanitisation — clamp to safe ranges so a malformed
     // payload can't punch a hole in the workflow (e.g. negative levels or a
@@ -244,7 +244,7 @@ router.patch("/:id", async (req, res) => {
       }
     }
     if (email !== undefined) update.email = email || null;
-    if (role && ["admin", "user"].includes(role) && existing.role !== "superadmin") update.role = role;
+    if (role && ["admin", "user", "cashier"].includes(role) && existing.role !== "superadmin") update.role = role;
     if (code !== undefined) update.code = code || null;
     if (nameAr !== undefined) update.nameAr = nameAr || null;
     if (nameEn !== undefined) update.nameEn = nameEn || null;

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -154,6 +154,46 @@ router.post("/login", async (req, res) => {
     });
     res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
     return;
+  }
+
+  // ── Cashier surface gating ─────────────────────────────────────────────
+  // The "cashier" role is POS-only. Two rules, both enforced here so the
+  // server is the source of truth (the client cannot bypass by omitting
+  // `surface`):
+  //   1. A cashier may NEVER sign into the back-office ERP surface. The POS
+  //      client sends `surface: "pos"`; the ERP web app sends nothing.
+  //   2. On the POS surface, a cashier must be linked to at least one station
+  //      (pos_terminal_users). If not, fail with the SAME generic credentials
+  //      error — never reveal that the account exists but is unlinked.
+  if (user.role === "cashier") {
+    const isPos = String(req.body?.surface ?? "").toLowerCase() === "pos";
+    if (!isPos) {
+      await writeAudit({
+        userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+        module: "auth", action: "denied",
+        method: "POST", path: "/api/auth/login", statusCode: 403,
+        ip, userAgent: ua, metadata: { reason: "cashier_erp_blocked" },
+      });
+      res.status(403).json({ error: "هذا الحساب مخصص لنقاط البيع فقط ولا يمكنه الدخول للنظام الرئيسي." });
+      return;
+    }
+    const [link] = await db.select({ userId: posTerminalUsersTable.userId })
+      .from(posTerminalUsersTable)
+      .where(and(
+        eq(posTerminalUsersTable.userId, user.id),
+        eq(posTerminalUsersTable.companyId, tenantCompanyId),
+      ))
+      .limit(1);
+    if (!link) {
+      await writeAudit({
+        userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+        module: "auth", action: "denied",
+        method: "POST", path: "/api/auth/login", statusCode: 401,
+        ip, userAgent: ua, metadata: { reason: "cashier_no_station" },
+      });
+      res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+      return;
+    }
   }
 
   // Block login for tenants whose company has been suspended (e.g. by the

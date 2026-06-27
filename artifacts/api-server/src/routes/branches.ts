@@ -160,7 +160,14 @@ router.get("/branches", async (req, res) => {
       // Only restrict when the user has at least one explicit link. Zero
       // links means "no restriction was set" → fall back to the legacy
       // role-based filter (admins keep seeing all branches).
-      if (links.length > 0) allowed = links.map(l => l.branchId);
+      if (links.length > 0) {
+        allowed = links.map(l => l.branchId);
+      } else if (req.authUser.role === "cashier") {
+        // Cashiers are strictly branch-scoped: with no explicit branch links
+        // they see NOTHING. Never fall back to the role-based filter (which
+        // could otherwise expose every branch of the company).
+        allowed = [];
+      }
     }
 
     // Restricted user with zero linked branches → return empty list immediately.

@@ -106,7 +106,7 @@ const emptyForm = () => ({
   username: "",
   password: "",
   email: "",
-  role: "user" as "user" | "admin",
+  role: "user" as "user" | "admin" | "cashier",
   isActive: true,
   viewAllBranches: true,
   scopeOwnCustomersOnly: false,
@@ -321,7 +321,7 @@ export default function Users() {
       username: u.username,
       password: "",
       email: u.email ?? "",
-      role: (u.role === "admin" ? "admin" : "user"),
+      role: (u.role === "admin" ? "admin" : u.role === "cashier" ? "cashier" : "user"),
       isActive: u.isActive,
       viewAllBranches: u.viewAllBranches ?? true,
       scopeOwnCustomersOnly: !!u.scopeOwnCustomersOnly,
@@ -737,6 +737,7 @@ export default function Users() {
                     >
                       <option value="user">{t("users.roleUser")}</option>
                       <option value="admin">{t("users.roleAdmin")}</option>
+                      <option value="cashier">{t("users.roleCashier")}</option>
                     </select>
                   </div>
                   <div className="flex items-end gap-3 pb-2">
@@ -1317,6 +1318,7 @@ export default function Users() {
                           {u.role === "superadmin" && <Badge className="bg-purple-600">{t("users.roleSuperadmin")}</Badge>}
                           {u.role === "admin" && <Badge className="bg-blue-600">{t("users.roleAdminBadge")}</Badge>}
                           {u.role === "user" && <Badge variant="outline">{t("users.roleUserBadge")}</Badge>}
+                          {u.role === "cashier" && <Badge className="bg-teal-600">{t("users.roleCashierBadge")}</Badge>}
                         </TableCell>
                         <TableCell className="text-xs">
                           {branchNames.length === 0 ? (

@@ -48,6 +48,15 @@ router.post("/open", async (req, res) => {
   if (!u || !u.companyId) { res.status(401).json({ error: "غير مصرّح" }); return; }
   const { branchId, cashBoxId, openingCash, device, posTerminalId, machineCode } = req.body ?? {};
 
+  // Cashiers are POS-only and station-bound: they may never open a manual
+  // (no-terminal) session. A branch with zero stations therefore cannot be
+  // opened by a cashier at all (there is no terminal to select). Admins keep
+  // the flexibility of the manual path.
+  if (u.role === "cashier" && !posTerminalId) {
+    res.status(400).json({ error: "يجب اختيار محطة بيع لفتح الجلسة. لا توجد محطات بيع في هذا الفرع." });
+    return;
+  }
+
   // If user already has an open session, return it instead of creating a duplicate.
   const [existing] = await db.select().from(posSessionsTable)
     .where(and(
@@ -126,7 +135,16 @@ router.post("/open", async (req, res) => {
               eq(posTerminalUsersTable.companyId, u.companyId),
               eq(posTerminalUsersTable.posTerminalId, Number(posTerminalId)),
             ));
-          if (allow.length > 0 && !allow.some(a => a.userId === u.id)) {
+          const linked = allow.some(a => a.userId === u.id);
+          if (u.role === "cashier") {
+            // Cashiers are strictly station-bound: they may ONLY open a terminal
+            // they are explicitly linked to (even an unrestricted terminal).
+            if (!linked) {
+              throw Object.assign(new Error("ليس لديك صلاحية استخدام هذه المحطة. اطلب من المسؤول إضافتك."),
+                { status: 403 });
+            }
+          } else if (allow.length > 0 && !linked) {
+            // Other non-admin roles: the allow-list only restricts when populated.
             throw Object.assign(new Error("ليس لديك صلاحية استخدام هذه المحطة. اطلب من المسؤول إضافتك."),
               { status: 403 });
           }

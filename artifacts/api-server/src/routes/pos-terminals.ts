@@ -153,6 +153,11 @@ router.get("/", async (req, res) => {
     }
     if (isAdminLike) return true;
     const allow = allowedByTerminal.get(r.id);
+    if (u.role === "cashier") {
+      // Cashiers see ONLY terminals they are explicitly linked to — never an
+      // unrestricted terminal — so the picker matches what they can open.
+      return !!allow && allow.has(u.id);
+    }
     if (!allow || allow.size === 0) return true;       // open to all
     return allow.has(u.id);
   });

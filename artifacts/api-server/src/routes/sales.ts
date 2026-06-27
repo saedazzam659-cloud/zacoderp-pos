@@ -25,7 +25,7 @@ import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type BatchPick } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
-import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment, nextPosStationNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
 import { salesInvoiceRowToZatcaData } from "../lib/zatca-sales-mapper.js";
@@ -849,12 +849,27 @@ router.post("/sales-invoices", async (req, res) => {
     }
     let resolvedDocNumber: string | null;
     try {
-      const fromSeq = await nextSequenceForPayment(cid, "sales_invoice", pType, {
-        userId:   req.authUser?.id ?? null,
-        refTable: "sales_invoices",
-        branchId: branchId ? Number(branchId) : null,
-        docDate:  invoiceDate,
-      }, buyerIsForeign);
+      // POS-screen sales (posSessionId present) number from a PER-STATION
+      // sequence, auto-created on first use. The ZATCA ICV/PIH chain stays
+      // unified and is untouched — only the human docNumber differs. When the
+      // POS session has no linked terminal (admin manual session) we fall
+      // through to the normal payment/foreign-split sales-invoice series.
+      let fromSeq: string | null = null;
+      if (posSessionId) {
+        fromSeq = await nextPosStationNumber(cid, Number(posSessionId), {
+          userId:   req.authUser?.id ?? null,
+          refTable: "sales_invoices",
+          docDate:  invoiceDate,
+        });
+      }
+      if (fromSeq == null) {
+        fromSeq = await nextSequenceForPayment(cid, "sales_invoice", pType, {
+          userId:   req.authUser?.id ?? null,
+          refTable: "sales_invoices",
+          branchId: branchId ? Number(branchId) : null,
+          docDate:  invoiceDate,
+        }, buyerIsForeign);
+      }
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
       res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });

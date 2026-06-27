@@ -490,3 +490,91 @@ export async function nextSequenceForPaymentOrFallback(
   if (fromSeq != null) return fromSeq;
   return await fallback();
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Per-station POS invoice numbering
+//
+// POS-screen sales (invoices that carry a posSessionId) draw their human
+// document number from a DEDICATED PER-STATION sequence, auto-created on first
+// use. The visible number therefore encodes the originating station (prefix is
+// built from the branch + terminal code, e.g. "B2-T1-00042"). Each station is a
+// separate `sequences` row keyed by the synthetic txType `pos_sales:<id>`, so
+// every register runs its own independent counter.
+//
+// CRITICAL: this affects ONLY the human-readable docNumber. The ZATCA ICV/PIH
+// cryptographic chain stays completely unified per company — it is computed
+// elsewhere and never reads this number.
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve (and lazily create) the per-station POS sequence behind a POS session
+ * and issue its next number.
+ *
+ * @returns The formatted number string, or `null` when the session has no
+ *          linked terminal (e.g. an admin manual POS session) — the caller then
+ *          falls back to the normal sales-invoice series.
+ * @throws  SequenceCapacityExceededError when the station counter is exhausted.
+ */
+export async function nextPosStationNumber(
+  companyId: number,
+  posSessionId: number,
+  ctx: NextSequenceCtx = {},
+): Promise<string | null> {
+  // Resolve the station behind this POS session. Scoped by company so a
+  // cross-tenant posSessionId simply resolves to nothing (→ base series).
+  const sess = await db.execute<{ pos_terminal_id: number | null; branch_id: number | null }>(sql`
+    SELECT pos_terminal_id, branch_id
+    FROM pos_sessions
+    WHERE id = ${posSessionId} AND company_id = ${companyId}
+    LIMIT 1
+  `);
+  const terminalId = sess.rows?.[0]?.pos_terminal_id ?? null;
+  if (!terminalId) return null;            // no station → caller uses base series
+
+  const term = await db.execute<{ code: string | null; branch_id: number | null }>(sql`
+    SELECT code, branch_id
+    FROM pos_terminals
+    WHERE id = ${terminalId} AND company_id = ${companyId}
+    LIMIT 1
+  `);
+  const trow = term.rows?.[0];
+  if (!trow) return null;
+  const terminalBranchId = trow.branch_id ?? sess.rows?.[0]?.branch_id ?? null;
+
+  let branchCode: string | null = null;
+  if (terminalBranchId) {
+    const br = await db.execute<{ code: string | null }>(sql`
+      SELECT code FROM branches WHERE id = ${terminalBranchId} AND company_id = ${companyId} LIMIT 1
+    `);
+    branchCode = br.rows?.[0]?.code ?? null;
+  }
+
+  const clean = (s: string | null | undefined) =>
+    String(s ?? "").trim().replace(/\s+/g, "").toUpperCase();
+  const parts = [clean(branchCode), clean(trow.code)].filter(Boolean);
+  const prefix = parts.length ? `${parts.join("-")}-` : `POS${terminalId}-`;
+
+  const txType = `pos_sales:${terminalId}`;
+  const code   = `POS-STATION-${terminalId}`;
+
+  // Auto-create the per-station sequence on first use. Idempotent: a concurrent
+  // caller hits ON CONFLICT and the first-created row wins, so the prefix never
+  // silently changes once established (admins may later edit the row by hand).
+  await db.execute(sql`
+    INSERT INTO sequences
+      (company_id, code, name_ar, name_en, prefix, transaction_types,
+       start_number, current_number, end_number, pad_length, is_active)
+    VALUES
+      (${companyId}, ${code},
+       ${`مسلسل محطة البيع ${trow.code ?? terminalId}`},
+       ${`POS station ${trow.code ?? terminalId}`},
+       ${prefix}, ${JSON.stringify([txType])}::jsonb,
+       1, 1, 999999, 5, true)
+    ON CONFLICT (company_id, code) DO NOTHING
+  `);
+
+  return await nextSequenceNumber(companyId, txType, {
+    ...ctx,
+    branchId: terminalBranchId,
+  });
+}

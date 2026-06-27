@@ -6,7 +6,6 @@ import {
   EyeOff,
   Lock,
   User as UserIcon,
-  Store,
   ShieldCheck,
   Wifi,
   WifiOff,
@@ -291,9 +290,13 @@ export default function LoginPage() {
       {/* Top bar */}
       <header className="relative z-10 flex items-center justify-between px-6 lg:px-10 py-5">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-chart-2 grid place-items-center shadow-lg shadow-primary/30">
-            <Store className="w-6 h-6 text-primary-foreground" strokeWidth={2.4} />
-          </div>
+          <img
+            src={`${import.meta.env.BASE_URL}favicon.svg`}
+            alt="زاكود Zacode"
+            width={44}
+            height={44}
+            className="w-11 h-11 rounded-xl shadow-lg shadow-primary/30"
+          />
           <div>
             <p className="text-base font-extrabold leading-tight tracking-tight">
               زاكود <span className="text-primary">POS</span>
