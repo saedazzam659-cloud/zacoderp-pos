@@ -897,7 +897,7 @@ ${sections}
                         if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
                         toggleRow(rid);
                       }}
-                      onDoubleClick={() => navigate(`/purchasing/orders/${ord.id}`)}
+                      onDoubleClick={() => navigate(`/purchasing/orders/${ord.id}?view=1`)}
                       title={buildToneTooltip({ status: ord.status, hasConverted: !!ord.convertedInvoiceId })}
                     >
                       {visibleColumns.map(renderCell)}

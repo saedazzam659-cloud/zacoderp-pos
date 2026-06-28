@@ -19,7 +19,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
-import { useRoute, useLocation } from "wouter";
+import { useRoute, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useTranslation } from "react-i18next";
@@ -47,6 +47,7 @@ import {
   Wallet, CreditCard, CheckCircle, XCircle, FileCheck2, RotateCcw,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import PurchaseOrderDetails from "./PurchaseOrderDetails";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -115,6 +116,17 @@ export default function PurchaseOrderForm() {
   const [matchEdit, params] = useRoute("/purchasing/orders/:id");
   const isNew  = !!matchNew;
   const editId = matchEdit ? Number((params as any).id) : null;
+
+  // ── SAP-style tabbed shell (per-company, default ON) ───────────────────
+  // Double-clicking a row in the list opens the order with `?view=1`, which
+  // forces the read-only tabbed shell with the interactive التفاصيل tab even
+  // for companies that opted into the classic single-page layout.
+  const search = useSearch();
+  const viewMode = new URLSearchParams(search).get("view") === "1";
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "details">("basic");
+  useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
+  const _co = (user as any)?.company;
+  const useTabbedLayout = _co?.invoiceFormLayout !== "classic" || viewMode;
 
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
@@ -639,6 +651,87 @@ export default function PurchaseOrderForm() {
     "",
   ];
 
+  // ── tabbed-shell helpers ───────────────────────────────────────────────
+  // Purchase orders are permissive (supplier is optional, "بدون مورد"), so the
+  // only true gate before reaching the items tab is a present order date —
+  // every other mandatory check happens at save time (valid lines).
+  const basicFieldsValid = !!orderDate;
+  // In view-only mode the whole form is read-only; otherwise fields stay
+  // editable (converted/cancelled orders block only the Save button via
+  // `isLocked`, preserving the classic behavior).
+  const editLock = viewMode;
+
+  const nextButtonBlock = (
+    <div className="flex justify-end pt-2">
+      <Button type="button" onClick={() => setActiveTab("items")} disabled={!basicFieldsValid} className="gap-1.5">
+        التالي: الأصناف
+        {isRtl ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+      </Button>
+    </div>
+  );
+
+  const statusFlowButtons = (!isNew && !viewMode) ? (
+    <>
+      {orderStatus === "draft" && (
+        <>
+          <Button variant="outline" className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50"
+            onClick={() => statusMut.mutate("confirmed")} disabled={statusMut.isPending}>
+            <CheckCircle className="h-4 w-4" />{tr("confirm")}
+          </Button>
+          <Button variant="outline" className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50"
+            onClick={() => { if (confirm(tr("confirmCancel"))) statusMut.mutate("cancelled"); }}
+            disabled={statusMut.isPending}>
+            <XCircle className="h-4 w-4" />{tr("cancel")}
+          </Button>
+        </>
+      )}
+      {orderStatus === "confirmed" && !convertedInvoiceId && (
+        <>
+          <Button variant="outline" className="gap-1.5 text-orange-700 border-orange-300 hover:bg-orange-50"
+            onClick={() => { if (confirm(t("purchasingPages.purchaseOrders.confirms.unconfirmOne"))) statusMut.mutate("draft"); }}
+            disabled={statusMut.isPending}
+            title={t("purchasingPages.purchaseOrders.tooltips.unconfirm")}>
+            <RotateCcw className="h-4 w-4" />{t("purchasingPages.purchaseOrders.bulk.unconfirm")}
+          </Button>
+          <Button className="gap-1.5"
+            onClick={() => { if (confirm(tr("confirmConvert"))) convertMut.mutate(); }}
+            disabled={convertMut.isPending}>
+            <FileCheck2 className="h-4 w-4" />{convertMut.isPending ? tr("converting") : tr("convert")}
+          </Button>
+        </>
+      )}
+    </>
+  ) : null;
+
+  const saveButton = !editLock ? (
+    <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending || isLocked}>
+      {saveMut.isPending ? tr("saving") : isNew ? tr("saveOrder") : tr("saveEdit")}
+    </Button>
+  ) : null;
+
+  const topActionBar = (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3 mb-1">
+      <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={() => setActiveTab("basic")}>
+        {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+        البيانات الأساسية
+      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {statusFlowButtons}
+        {saveButton}
+      </div>
+    </div>
+  );
+
+  const detailsSection = (
+    <PurchaseOrderDetails
+      docId={editId}
+      convertedInvoiceId={convertedInvoiceId}
+      cid={cid}
+      token={token}
+      navigate={navigate}
+    />
+  );
+
   return (
     <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center gap-3 flex-wrap">
@@ -684,23 +777,40 @@ export default function PurchaseOrderForm() {
         )}
       </div>
 
-      <Tabs value="header" dir={isRtl ? "rtl" : "ltr"}>
+      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={(v) => setActiveTab(v as any)} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
             <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
               <p className="text-[11px] text-muted-foreground">
-                {tr("linesSummary", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
+                {useTabbedLayout && activeTab === "details"
+                  ? "تفاصيل العمليات المرتبطة بأمر الشراء"
+                  : tr("linesSummary", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
               </p>
-              <TabsList className="h-8 bg-background border gap-1">
-                <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <FileText className="h-3.5 w-3.5" />{tr("headerData")}
-                </TabsTrigger>
-              </TabsList>
+              {useTabbedLayout ? (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
+                  </TabsTrigger>
+                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                  </TabsTrigger>
+                </TabsList>
+              ) : (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />{tr("headerData")}
+                  </TabsTrigger>
+                </TabsList>
+              )}
             </div>
           </CardHeader>
 
-          <TabsContent value="header" className="mt-0">
+          <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-4">
+            <fieldset disabled={editLock} className="contents">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.docNumber")}</Label>
@@ -831,11 +941,15 @@ export default function PurchaseOrderForm() {
                   <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} placeholder={tr("notesPh")} />
                 </div>
               </div>
+              {useTabbedLayout && nextButtonBlock}
+            </fieldset>
             </CardContent>
           </TabsContent>
 
-          <TabsContent value="header" className="mt-0">
+          <TabsContent value={useTabbedLayout ? "items" : "header"} className="mt-0">
             <CardContent className="pt-2 pb-5 border-t">
+              {useTabbedLayout && topActionBar}
+              <fieldset disabled={editLock} className="contents">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground/80">
                 <ListOrdered className="h-4 w-4" />
                 <span>{tr("linesTitle")} ({lines.filter(l => l.itemName).length})</span>
@@ -998,47 +1112,29 @@ export default function PurchaseOrderForm() {
                   )}
                 </div>
               </div>
+              </fieldset>
             </CardContent>
           </TabsContent>
+
+          {useTabbedLayout && (
+            <TabsContent value="details" className="mt-0">
+              <CardContent className="pt-5 pb-5">
+                {detailsSection}
+              </CardContent>
+            </TabsContent>
+          )}
         </Card>
       </Tabs>
 
+      {!useTabbedLayout && (
       <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/orders")}>{tr("back")}</Button>
         {/* Status flow buttons sit next to Save so the action bar mirrors
             the invoice form's footer placement exactly. */}
-        {!isNew && orderStatus === "draft" && (
-          <>
-            <Button variant="outline" className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50"
-              onClick={() => statusMut.mutate("confirmed")} disabled={statusMut.isPending}>
-              <CheckCircle className="h-4 w-4" />{tr("confirm")}
-            </Button>
-            <Button variant="outline" className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50"
-              onClick={() => { if (confirm(tr("confirmCancel"))) statusMut.mutate("cancelled"); }}
-              disabled={statusMut.isPending}>
-              <XCircle className="h-4 w-4" />{tr("cancel")}
-            </Button>
-          </>
-        )}
-        {!isNew && orderStatus === "confirmed" && !convertedInvoiceId && (
-          <>
-            <Button variant="outline" className="gap-1.5 text-orange-700 border-orange-300 hover:bg-orange-50"
-              onClick={() => { if (confirm(t("purchasingPages.purchaseOrders.confirms.unconfirmOne"))) statusMut.mutate("draft"); }}
-              disabled={statusMut.isPending}
-              title={t("purchasingPages.purchaseOrders.tooltips.unconfirm")}>
-              <RotateCcw className="h-4 w-4" />{t("purchasingPages.purchaseOrders.bulk.unconfirm")}
-            </Button>
-            <Button className="gap-1.5"
-              onClick={() => { if (confirm(tr("confirmConvert"))) convertMut.mutate(); }}
-              disabled={convertMut.isPending}>
-              <FileCheck2 className="h-4 w-4" />{convertMut.isPending ? tr("converting") : tr("convert")}
-            </Button>
-          </>
-        )}
-        <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending || isLocked}>
-          {saveMut.isPending ? tr("saving") : isNew ? tr("saveOrder") : tr("saveEdit")}
-        </Button>
+        {statusFlowButtons}
+        {saveButton}
       </div>
+      )}
     </div>
   );
 }
