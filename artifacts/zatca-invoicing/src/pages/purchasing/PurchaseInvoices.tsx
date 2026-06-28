@@ -912,9 +912,9 @@ ${sections}
                                   <Undo2 className="h-3.5 w-3.5" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" className="h-6 w-6"
-                                title={t("purchasingPages.purchaseInvoices.tooltips.viewEdit")}
-                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/invoices/${inv.id}`); }}>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-700 hover:text-primary hover:bg-muted"
+                                title="عرض التفاصيل"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/invoices/${inv.id}?view=1`); }}>
                                 <Eye className="h-3.5 w-3.5" />
                               </Button>
                               <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
@@ -949,7 +949,7 @@ ${sections}
                       data-status={inv.status}
                       data-has-return={hasReturn ? "1" : "0"}
                       className={cn(
-                        "transition-colors cursor-pointer",
+                        "transition-colors cursor-pointer select-none",
                         isSel ? SEL_TONE : rowToneFor({ status: inv.status, hasReturn }),
                       )}
                       onClick={(e) => {

@@ -831,9 +831,9 @@ ${sections}
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <div className="flex items-center justify-center gap-0.5">
-                              <Button variant="ghost" size="icon" className="h-6 w-6"
-                                title={t("purchasingPages.purchaseOrders.tooltips.viewEdit")}
-                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/orders/${ord.id}`); }}>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-700 hover:text-primary hover:bg-muted"
+                                title="عرض التفاصيل"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/orders/${ord.id}?view=1`); }}>
                                 <Eye className="h-3.5 w-3.5" />
                               </Button>
                               <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
@@ -889,7 +889,7 @@ ${sections}
                       data-status={ord.status}
                       data-has-converted={ord.convertedInvoiceId ? "1" : "0"}
                       className={cn(
-                        "transition-colors cursor-pointer",
+                        "transition-colors cursor-pointer select-none",
                         isSel ? SEL_TONE : rowToneFor({ status: ord.status, hasConverted: !!ord.convertedInvoiceId }),
                       )}
                       onClick={(e) => {
