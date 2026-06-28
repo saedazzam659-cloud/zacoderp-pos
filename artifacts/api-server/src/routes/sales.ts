@@ -25,7 +25,7 @@ import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type BatchPick } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
-import { nextSequenceNumber, nextSequenceForPayment, nextPosStationNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment, nextPosStationNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
 import { salesInvoiceRowToZatcaData } from "../lib/zatca-sales-mapper.js";
@@ -48,6 +48,11 @@ export async function createJournalEntry(opts: {
   // Audit-trail fields (createdBy/Ip/UA + posted*) injected by callers via
   // `fullAuditFor(req)` so the JE remembers who/where created+posted it.
   audit?: Record<string, unknown>;
+  // Stable source-document identity used to RESERVE+REUSE the JE number across
+  // an unpost→edit→repost cycle (e.g. "sales_invoice" + invoice id). When
+  // omitted, the JE simply draws the next number with no reuse.
+  sourceType?: string;
+  sourceId?: number;
   lines: JLine[];
 }): Promise<number> {
   const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
@@ -100,11 +105,17 @@ export async function createJournalEntry(opts: {
   // stays in the description + the source.jeId link, so traceability and
   // unposting are unaffected. Falls back to the source docNumber when no active
   // "journal_entry" sequence is configured (back-compat).
-  const seqDocNumber = await nextSequenceNumber(opts.companyId, "journal_entry", {
-    userId:   (opts.audit?.req as any)?.authUser?.id ?? null,
-    refTable: "journal_entries",
-    branchId: opts.branchId ?? null,
-    docDate:  opts.date,
+  // Reuse the SAME journal-entry number when this source document is being
+  // RE-POSTED after an unpost→edit cycle (a reservation was stashed at unpost
+  // time). Otherwise draw the next continuous "journal_entry" number. Reuse
+  // NEVER consumes the counter, so unpost→repost leaves no sequence gap.
+  const seqDocNumber = await resolveJeNumber({
+    companyId:  opts.companyId,
+    sourceType: opts.sourceType,
+    sourceId:   opts.sourceId,
+    branchId:   opts.branchId ?? null,
+    docDate:    opts.date,
+    userId:     (opts.audit?.req as any)?.authUser?.id ?? null,
   });
   const jeDocNumber = seqDocNumber ?? (opts.docNumber ?? null);
   const [entry] = await db.insert(journalEntriesTable).values({
@@ -1404,6 +1415,8 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       date: inv.invoiceDate,
       docNumber: inv.docNumber,
       entryType: "sales_invoice",
+      sourceType: "sales_invoice",
+      sourceId: inv.id,
       exchangeRate: inv.exchangeRate,
       // Header-level cost center tags every JE line for cost-center reports.
       costCenter: (inv as any).costCenter ?? null,
@@ -1564,6 +1577,8 @@ router.patch("/sales-invoices/:id/unpost", requireAdminRole, async (req, res) =>
     }
 
     if (inv.journalEntryId) {
+      // Stash this JE's number so the next re-post reuses it (no gap).
+      await reserveJeNumberFromEntry(cid, "sales_invoice", id, inv.journalEntryId);
       await db.update(journalEntryLinesTable)
         .set({ debit: "0", credit: "0" })
         .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
@@ -2426,6 +2441,8 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       date: ret.returnDate,
       docNumber: ret.docNumber,
       entryType: "sales_return",
+      sourceType: "sales_return",
+      sourceId: ret.id,
       exchangeRate: ret.exchangeRate,
       // Inherit cost center from the original invoice when set so the
       // return tags the same CC as the sale it reverses.
@@ -2509,6 +2526,8 @@ router.patch("/sales-returns/:id/unpost", requireAdminRole, async (req, res) => 
       ));
 
     if (ret.journalEntryId) {
+      // Stash this JE's number so the next re-post reuses it (no gap).
+      await reserveJeNumberFromEntry(cid, "sales_return", id, ret.journalEntryId);
       await db.update(journalEntryLinesTable)
         .set({ debit: "0", credit: "0" })
         .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));

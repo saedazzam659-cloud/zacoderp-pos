@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, timestamp, integer, numeric } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, timestamp, integer, numeric, uniqueIndex } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { accountsTable } from "./accounts";
 import { branchesTable } from "./branches";
@@ -35,6 +35,28 @@ export const journalEntriesTable = pgTable("journal_entries", {
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 });
+
+// ─── Journal-entry number reservations (reuse-on-unpost→repost) ──────────────
+// When a source document (invoice / return / voucher / …) is UNPOSTED, its
+// linked journal entry is deleted (drafts have zero report impact). Before that
+// delete we stash the JE's number here, keyed by the source document. On the
+// next RE-POST the helper reuses the stashed number instead of consuming a new
+// one from the "journal_entry" sequence — so an unpost→edit→repost cycle never
+// leaves a permanent gap in the numbering. One live reservation per source
+// document (UNIQUE company+sourceType+sourceId); it is deleted the moment it is
+// consumed. Fully additive: when no reservation exists the helper falls back to
+// the normal next-number behaviour.
+export const jeNumberReservationsTable = pgTable("je_number_reservations", {
+  id:         serial("id").primaryKey(),
+  companyId:  integer("company_id").notNull(),
+  sourceType: text("source_type").notNull(),   // e.g. "purchase_invoice", "sales_return"
+  sourceId:   integer("source_id").notNull(),  // the source document's id
+  docNumber:  text("doc_number").notNull(),    // the JE number to reuse
+  branchId:   integer("branch_id"),            // captured for audit/back-compat
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  srcUnique: uniqueIndex("je_number_reservations_src_unq").on(t.companyId, t.sourceType, t.sourceId),
+}));
 
 export const journalEntryLinesTable = pgTable("journal_entry_lines", {
   id:           serial("id").primaryKey(),

@@ -20,7 +20,7 @@ import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, refreshItemCost } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
-import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { goodsReceiptsTable } from "@workspace/db";
 import { getReceivingClearingAccountId } from "./goodsReceipts.js";
@@ -45,6 +45,11 @@ async function createJournalEntry(opts: {
   costCenter?: string | null;
   // Audit-trail fields injected by callers via `fullAuditFor(req)`.
   audit?: Record<string, unknown>;
+  // Stable source-document identity used to RESERVE+REUSE the JE number across
+  // an unpost→edit→repost cycle (e.g. "purchase_invoice" + invoice id). When
+  // omitted, the JE simply draws the next number with no reuse.
+  sourceType?: string;
+  sourceId?: number;
   lines: JLine[];
 }): Promise<number> {
   // Filter out lines with zero amount or no account
@@ -78,11 +83,17 @@ async function createJournalEntry(opts: {
   // stays in the description + the source.jeId link, so traceability and
   // unposting are unaffected. Falls back to the source docNumber when no active
   // "journal_entry" sequence is configured (back-compat).
-  const seqDocNumber = await nextSequenceNumber(opts.companyId, "journal_entry", {
-    userId:   (opts.audit?.req as any)?.authUser?.id ?? null,
-    refTable: "journal_entries",
-    branchId: opts.branchId ?? null,
-    docDate:  opts.date,
+  // Reuse the SAME journal-entry number when this source document is being
+  // RE-POSTED after an unpost→edit cycle (a reservation was stashed at unpost
+  // time). Otherwise draw the next continuous "journal_entry" number. Reuse
+  // NEVER consumes the counter, so unpost→repost leaves no sequence gap.
+  const seqDocNumber = await resolveJeNumber({
+    companyId:  opts.companyId,
+    sourceType: opts.sourceType,
+    sourceId:   opts.sourceId,
+    branchId:   opts.branchId ?? null,
+    docDate:    opts.date,
+    userId:     (opts.audit?.req as any)?.authUser?.id ?? null,
   });
   const jeDocNumber = seqDocNumber ?? (opts.docNumber ?? null);
   const [entry] = await db.insert(journalEntriesTable).values({
@@ -1550,6 +1561,8 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       docNumber:    inv.docNumber,
       description:  desc,
       entryType:    "purchase_invoice",
+      sourceType:   "purchase_invoice",
+      sourceId:     inv.id,
       exchangeRate: inv.exchangeRate,
       // Header-level cost center tags every JE line for cost-center reports.
       costCenter:   (inv as any).costCenter ?? null,
@@ -1630,6 +1643,8 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
 
     // ── Zero-out the JE lines, then delete the JE ──
     if (inv.journalEntryId) {
+      // Stash this JE's number so the next re-post reuses it (no gap).
+      await reserveJeNumberFromEntry(cid, "purchase_invoice", id, inv.journalEntryId);
       await db.update(journalEntryLinesTable)
         .set({ debit: "0", credit: "0" })
         .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
@@ -2635,6 +2650,8 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       docNumber:    ret.docNumber,
       description:  desc,
       entryType:    "purchase_return",
+      sourceType:   "purchase_return",
+      sourceId:     ret.id,
       exchangeRate: ret.exchangeRate,
       // Inherit cost center from the original invoice when set so the
       // return tags the same CC as the purchase it reverses.
@@ -2726,6 +2743,8 @@ router.patch("/purchase-returns/:id/unpost", requireAdminRole, async (req, res) 
       ));
 
     if (ret.journalEntryId) {
+      // Stash this JE's number so the next re-post reuses it (no gap).
+      await reserveJeNumberFromEntry(cid, "purchase_return", id, ret.journalEntryId);
       await db.update(journalEntryLinesTable)
         .set({ debit: "0", credit: "0" })
         .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));

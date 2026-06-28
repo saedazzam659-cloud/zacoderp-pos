@@ -43,7 +43,7 @@
 // rewind a sequence — gaps in business numbering are acceptable and far
 // safer than reusing a previously-issued number.
 
-import { db, sequencesTable, sequenceLogsTable, sequenceCountersTable } from "@workspace/db";
+import { db, sequencesTable, sequenceLogsTable, sequenceCountersTable, journalEntriesTable, jeNumberReservationsTable } from "@workspace/db";
 import { sql, and, eq } from "drizzle-orm";
 
 export type NextSequenceCtx = {
@@ -576,5 +576,97 @@ export async function nextPosStationNumber(
   return await nextSequenceNumber(companyId, txType, {
     ...ctx,
     branchId: terminalBranchId,
+  });
+}
+
+// ─── Journal-entry number reuse (unpost → edit → repost) ─────────────────────
+// These helpers make a source document keep the SAME journal-entry number
+// across an unpost→repost cycle instead of burning a fresh number (which left
+// permanent gaps in the "journal_entry" series).
+//
+//   • On UNPOST  → `reserveJeNumberFromEntry` stashes the about-to-be-deleted
+//                  JE's number, keyed by the source document.
+//   • On RE-POST → `resolveJeNumber` returns the stashed number (and clears the
+//                  reservation) WITHOUT touching the sequence counter; if no
+//                  reservation exists it draws the next number normally.
+//
+// Fully additive and fail-safe: any mismatch simply degrades to the previous
+// "draw a new number" behaviour — it can never mint a duplicate, because the
+// reserved number was already issued once and the counter never rolls back.
+
+/** Stash a source document's journal-entry number for reuse on the next post. */
+export async function reserveJeNumberFromEntry(
+  companyId: number,
+  sourceType: string,
+  sourceId: number,
+  journalEntryId: number | null | undefined,
+): Promise<void> {
+  if (!journalEntryId || !sourceType || !sourceId) return;
+  const [je] = await db
+    .select({ docNumber: journalEntriesTable.docNumber, branchId: journalEntriesTable.branchId })
+    .from(journalEntriesTable)
+    .where(and(
+      eq(journalEntriesTable.id, journalEntryId),
+      eq(journalEntriesTable.companyId, companyId),
+    ));
+  if (!je || !je.docNumber) return;            // nothing to reuse (no number)
+  await db.insert(jeNumberReservationsTable)
+    .values({ companyId, sourceType, sourceId, docNumber: je.docNumber, branchId: je.branchId ?? null })
+    .onConflictDoUpdate({
+      target: [
+        jeNumberReservationsTable.companyId,
+        jeNumberReservationsTable.sourceType,
+        jeNumberReservationsTable.sourceId,
+      ],
+      set: { docNumber: je.docNumber, branchId: je.branchId ?? null, createdAt: new Date() },
+    });
+}
+
+/**
+ * Consume a stashed reservation (returns + deletes it) or null when none.
+ * Uses a single atomic `DELETE … RETURNING` so two concurrent reposts of the
+ * same source document can never both consume the same reservation — exactly
+ * one DELETE removes the row and returns its number; the other sees zero rows
+ * and falls back to drawing a fresh number. (A naive select-then-delete would
+ * let both reads win and mint a DUPLICATE JE number.)
+ */
+export async function takeReservedJeNumber(
+  companyId: number,
+  sourceType: string,
+  sourceId: number,
+): Promise<string | null> {
+  const deleted = await db.delete(jeNumberReservationsTable)
+    .where(and(
+      eq(jeNumberReservationsTable.companyId, companyId),
+      eq(jeNumberReservationsTable.sourceType, sourceType),
+      eq(jeNumberReservationsTable.sourceId, sourceId),
+    ))
+    .returning({ docNumber: jeNumberReservationsTable.docNumber });
+  return deleted[0]?.docNumber ?? null;
+}
+
+/**
+ * Resolve the journal-entry number for a source document. Reuses a reserved
+ * number (unpost→repost) when present, otherwise draws the next "journal_entry"
+ * number. Returns null only when no active "journal_entry" sequence exists —
+ * the caller then falls back to its source docNumber (legacy behaviour).
+ */
+export async function resolveJeNumber(opts: {
+  companyId: number;
+  sourceType?: string;
+  sourceId?: number;
+  branchId?: number | null;
+  docDate?: string | Date | null;
+  userId?: number | null;
+}): Promise<string | null> {
+  if (opts.sourceType && opts.sourceId) {
+    const reserved = await takeReservedJeNumber(opts.companyId, opts.sourceType, opts.sourceId);
+    if (reserved) return reserved;
+  }
+  return await nextSequenceNumber(opts.companyId, "journal_entry", {
+    userId:   opts.userId ?? null,
+    refTable: "journal_entries",
+    branchId: opts.branchId ?? null,
+    docDate:  opts.docDate ?? undefined,
   });
 }

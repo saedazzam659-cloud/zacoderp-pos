@@ -274,6 +274,21 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS approval_log_doc_idx ON approval_log (company_id, document_type, document_id)` },
     { label: "approval_log_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS approval_log_company_idx ON approval_log (company_id, created_at)` },
+    // ─── je_number_reservations: reuse the SAME journal-entry number across an
+    // unpost→edit→repost cycle (see schema/journalEntries.ts). Created here
+    // because ensureColumns only ALTERs existing tables. Idempotent.
+    { label: "create je_number_reservations table",
+      sql:   `CREATE TABLE IF NOT EXISTS je_number_reservations (
+        id          SERIAL PRIMARY KEY,
+        company_id  INTEGER NOT NULL,
+        source_type TEXT    NOT NULL,
+        source_id   INTEGER NOT NULL,
+        doc_number  TEXT    NOT NULL,
+        branch_id   INTEGER,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "je_number_reservations_src_unq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS je_number_reservations_src_unq ON je_number_reservations (company_id, source_type, source_id)` },
     // ─── pos_terminal_users: optional per-terminal user allow-list (see
     // schema/pos.ts). Same rationale as approval_log — created here because
     // ensureColumns only ALTERs.
