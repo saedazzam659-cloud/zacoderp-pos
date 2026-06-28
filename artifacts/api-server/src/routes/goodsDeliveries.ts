@@ -256,18 +256,25 @@ router.post("/", async (req, res) => {
     });
     if (tenantErr) { res.status(400).json({ error: tenantErr }); return; }
 
-    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
-    if (!resolvedDocNumber) {
-      try {
-        resolvedDocNumber = await nextSequenceNumber(cid, "goods_delivery", {
-          userId:   (req as any).authUser?.id ?? null,
-          refTable: "goods_deliveries",
-          branchId: branchId ? Number(branchId) : null,
-          docDate:  deliveryDate,
-        });
-      } catch {
-        resolvedDocNumber = null;
-      }
+    // Sequence engine authoritative: consume it first (atomic) and ignore the
+    // peeked client docNumber — otherwise every delivery reuses the same
+    // previewed number. Manual number honoured only when no sequence configured.
+    let resolvedDocNumber: string | null = null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "goods_delivery", {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "goods_deliveries",
+        branchId: branchId ? Number(branchId) : null,
+        docDate:  deliveryDate,
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      // A null return ("no sequence configured") is handled above via the
+      // `??` fallback; reaching here means a REAL engine error (e.g. capacity
+      // exhausted) — surface it instead of silently bypassing the engine and
+      // minting an unguarded number. Mirrors the purchase-invoice path.
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم السند" });
+      return;
     }
 
     const [gd] = await db.insert(goodsDeliveriesTable).values({

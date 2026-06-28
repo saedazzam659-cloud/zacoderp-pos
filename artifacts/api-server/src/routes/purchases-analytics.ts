@@ -408,6 +408,11 @@ router.get("/supplier-statement", async (req, res) => {
     const invs = await db.select({
       id: purchaseInvoicesTable.id, date: purchaseInvoicesTable.invoiceDate,
       docNumber: purchaseInvoicesTable.docNumber,
+      // Supplier's OWN invoice number (the number printed on the vendor's
+      // physical bill). The statement shows this in the "الرقم" column instead
+      // of our internal docNumber, per user request — falling back to our
+      // docNumber for legacy rows that have no supplier number recorded.
+      supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
       journalEntryId: purchaseInvoicesTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       total: purchaseInvoicesTable.totalAmount,
@@ -507,7 +512,7 @@ router.get("/supplier-statement", async (req, res) => {
     const lines: Line[] = [
       // Invoice "الشرح" loads from the purchase invoice itself: the user-typed
       // header note when present, otherwise the item name(s) on the invoice.
-      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—") })),
+      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: (i.supplierInvoiceNumber && String(i.supplierInvoiceNumber).trim()) ? String(i.supplierInvoiceNumber).trim() : i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—") })),
       ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
       ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: withNote("سند صرف", p.notes) })),
       // Manual / direct JE rows: show the actual journal-line text the user

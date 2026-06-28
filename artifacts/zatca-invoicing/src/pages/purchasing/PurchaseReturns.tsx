@@ -18,11 +18,13 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   Plus, Trash2, RotateCcw, CheckCircle2, Printer, Wallet, CreditCard, TrendingUp,
   TrendingDown, Undo2, Pencil, FileText, ListOrdered, Copy,
-  FileSpreadsheet, FileDown, X, Loader2,
+  FileSpreadsheet, FileDown, X, Loader2, Info,
 } from "lucide-react";
+import { useLocation } from "wouter";
 import * as XLSX from "xlsx";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import ReturnDocumentDetails from "@/components/documents/ReturnDocumentDetails";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { DiscountRow } from "@/components/DiscountRow";
@@ -100,6 +102,7 @@ export default function PurchaseReturns() {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -110,6 +113,13 @@ export default function PurchaseReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+
+  // SAP-style tabbed layout (default) vs classic single-page (per-company opt-out).
+  // viewMode = read-only inspection (opened via grid double-click), forces tabbed
+  // layout and opens on the details tab.
+  const useTabbedLayout = (user?.company?.invoiceFormLayout ?? "tabbed") !== "classic";
+  const [viewMode, setViewMode] = useState(false);
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "details">("basic");
 
   const seqPeek = useNextSequenceNumber("purchase_return", showForm && editingId == null, undefined, form.branchId, form.paymentType);
   useEffect(() => {
@@ -358,11 +368,13 @@ export default function PurchaseReturns() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  async function startEdit(retId: number) {
+  async function startEdit(retId: number, asView = false) {
     try {
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${retId}`, { headers: authH });
       if (!res.ok) { toast({ title: tr("toasts.loadFail"), variant: "destructive" }); return; }
       const full = await res.json();
+      setViewMode(asView);
+      setActiveTab(asView ? "details" : "basic");
       setEditingId(retId);
       setHeaderTaxId(full.taxId != null ? String(full.taxId) : "");
       setForm({
@@ -483,6 +495,8 @@ export default function PurchaseReturns() {
     setForm({ ...EMPTY, ...loadAcctDefaults(), priceIncludesVat: stickyPriceIncl.read() });
     setLines([newLine()]);
     setEditingId(null);
+    setViewMode(false);
+    setActiveTab("basic");
     setShowForm(false);
     const url = new URL(window.location.href);
     url.searchParams.delete("fromInvoice");
@@ -1276,19 +1290,34 @@ ${sections}
             : tr("createSubtitle")}
           width="6xl"
           onClose={reset}
-          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          onSave={viewMode ? undefined : () => handleSubmit({ preventDefault() {} } as any)}
           saving={saveMut.isPending}
           saveDisabled={!form.returnDate}
           saveLabel={tr("saveLabel")}
+          cancelLabel={viewMode ? (t("common.close") as string) : undefined}
         >
-          <Tabs defaultValue="header" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
+          <Tabs
+            value={useTabbedLayout ? activeTab : "header"}
+            onValueChange={(v) => setActiveTab(v as any)}
+            dir={isRtl ? "rtl" : "ltr"}
+            className="space-y-4"
+          >
+            {useTabbedLayout && (
             <TabsList className="h-9 bg-muted/40 border gap-1">
-              <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <FileText className="h-3.5 w-3.5" />{tr("headerData")}
               </TabsTrigger>
+              <TabsTrigger value="items" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <ListOrdered className="h-3.5 w-3.5" />{tr("linesTitle")}
+              </TabsTrigger>
+              <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <Info className="h-3.5 w-3.5" />التفاصيل
+              </TabsTrigger>
             </TabsList>
+            )}
 
-            <TabsContent value="header" className="mt-0 space-y-4">
+            <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0 space-y-4">
+            <fieldset disabled={viewMode} className="space-y-4 disabled:opacity-100 m-0 p-0 border-0">
             <FormGrid cols={4}>
               <Field label={tr("returnNumber")}><Input
                 ref={docNumberRef}
@@ -1567,10 +1596,26 @@ ${sections}
                 );
               })()
             )}
+            </fieldset>
 
+            {useTabbedLayout && !viewMode && (
+              <div className="flex justify-end pt-2">
+                <Button type="button" size="sm" className="gap-1.5" onClick={() => setActiveTab("items")}>
+                  {tr("linesTitle")} <ListOrdered className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
             </TabsContent>
 
-            <TabsContent value="header" className="mt-0 space-y-5">
+            <TabsContent value={useTabbedLayout ? "items" : "header"} className="mt-0 space-y-5">
+            {useTabbedLayout && !viewMode && (
+              <div className="flex justify-start">
+                <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setActiveTab("basic")}>
+                  <FileText className="h-4 w-4" /> {tr("headerData")}
+                </Button>
+              </div>
+            )}
+            <fieldset disabled={viewMode} className="space-y-5 disabled:opacity-100 m-0 p-0 border-0">
             {/* Lines */}
             <div data-enter-nav-container="lines" className="space-y-1.5">
               <div className="border-t pt-4 flex items-center gap-2 text-sm font-semibold text-foreground/80">
@@ -1732,7 +1777,25 @@ ${sections}
                 )}
               </div>
             </div>
+            </fieldset>
             </TabsContent>
+
+            {useTabbedLayout && (
+            <TabsContent value="details" className="mt-0">
+              <ReturnDocumentDetails
+                docId={editingId}
+                doc={currentRet}
+                cid={cid}
+                token={token}
+                navigate={navigate}
+                sourceInvoiceId={form.invoiceId ? Number(form.invoiceId) : null}
+                sourceInvoiceLabel="فاتورة الشراء المصدر"
+                sourceInvoicePrefix="PI-"
+                sourceInvoiceRoute="/purchasing/invoices"
+                emptyStateText="ستظهر هنا تفاصيل العمليات الناتجة عن هذا المرتجع — القيد المحاسبي والفاتورة المصدر — بعد حفظ المرتجع وترحيله."
+              />
+            </TabsContent>
+            )}
           </Tabs>
         </FormPanel>
         </>
@@ -2030,7 +2093,7 @@ ${sections}
                         if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
                         toggleRow(rid);
                       }}
-                      onDoubleClick={() => startEdit(r.id)}
+                      onDoubleClick={() => startEdit(r.id, true)}
                       title={buildToneTooltip({ status: r.status })}
                     >
                       {visibleColumns.map(renderCell)}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
-import { useRoute, useLocation } from "wouter";
+import { useRoute, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useTranslation } from "react-i18next";
@@ -26,8 +26,9 @@ import { currencySymbol } from "@/lib/format";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, ClipboardList, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import PurchaseInvoiceDetails from "./PurchaseInvoiceDetails";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -116,7 +117,14 @@ export default function PurchaseInvoiceForm() {
   const isNew  = !!matchNew;
   const editId = matchEdit ? Number((params as any).id) : null;
 
-  const [activeTab,    setActiveTab]    = useState("header");
+  // SAP-style tabbed layout (default) vs classic single-page (per-company
+  // opt-out). `?view=1` forces tabbed+read-only and opens on the details tab.
+  const search = useSearch();
+  const viewMode = new URLSearchParams(search).get("view") === "1";
+  const _co = (user as any)?.company;
+  const useTabbedLayout = _co?.invoiceFormLayout !== "classic" || viewMode;
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "details">("basic");
+  useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
   const [invoiceDate,  setInvoiceDate]  = useState(today());
@@ -678,7 +686,6 @@ export default function PurchaseInvoiceForm() {
 
   // Per-doc-type auto-posting flag with global fallback. See
   // SalesDocumentForm for the full rationale on the legacy fallback.
-  const _co = (user as any)?.company;
   const _gl = _co?.autoPostingEnabled !== false;
   const autoPostingEnabled = _co?.autoPostPurchase === undefined || _co?.autoPostPurchase === null
     ? _gl
@@ -806,6 +813,50 @@ export default function PurchaseInvoiceForm() {
     "",
   ];
 
+  // ── tabbed-shell helpers ──────────────────────────────────────────────
+  const isPosted = !isNew && (existing as any)?.status === "posted";
+  // In view-only mode OR on a posted invoice the whole form is read-only.
+  const editLock = viewMode || isPosted;
+  // A purchase invoice needs a date AND a supplier before the items tab.
+  const basicFieldsValid = !!invoiceDate && !!supplierId;
+
+  const nextButtonBlock = (
+    <div className="flex justify-end pt-2">
+      <Button type="button" onClick={() => setActiveTab("items")} disabled={!basicFieldsValid} className="gap-1.5">
+        التالي: الأصناف
+        {isRtl ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+      </Button>
+    </div>
+  );
+
+  const saveButton = !editLock ? (
+    <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
+      {saveMut.isPending ? tr("saving") : isNew ? tr("saveInvoice") : tr("saveEdit")}
+    </Button>
+  ) : null;
+
+  const topActionBar = (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3 mb-1">
+      <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={() => setActiveTab("basic")}>
+        {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+        البيانات الأساسية
+      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {saveButton}
+      </div>
+    </div>
+  );
+
+  const detailsSection = (
+    <PurchaseInvoiceDetails
+      docId={editId}
+      doc={existing}
+      cid={cid}
+      token={token}
+      navigate={navigate}
+    />
+  );
+
   return (
     <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center gap-3 flex-wrap">
@@ -859,24 +910,40 @@ export default function PurchaseInvoiceForm() {
           <span>{tr("postedReadOnly")}</span>
         </div>
       )}
-      <fieldset disabled={!isNew && (existing as any)?.status === "posted"} className="contents">
-      <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
+      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={(v) => setActiveTab(v as any)} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
             <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
               <p className="text-[11px] text-muted-foreground">
-                {tr("linesSummary", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount + totalExpLoaded) })}
+                {useTabbedLayout && activeTab === "details"
+                  ? "تفاصيل العمليات المرتبطة بفاتورة الشراء"
+                  : tr("linesSummary", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount + totalExpLoaded) })}
               </p>
-              <TabsList className="h-8 bg-background border gap-1">
-                <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <FileText className="h-3.5 w-3.5" />{tr("headerData")}
-                </TabsTrigger>
-              </TabsList>
+              {useTabbedLayout ? (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
+                  </TabsTrigger>
+                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                  </TabsTrigger>
+                </TabsList>
+              ) : (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />{tr("headerData")}
+                  </TabsTrigger>
+                </TabsList>
+              )}
             </div>
           </CardHeader>
 
-          <TabsContent value="header" className="mt-0">
+          <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-4">
+            <fieldset disabled={editLock} className="contents">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.invoiceNumber")}</Label>
@@ -1263,11 +1330,15 @@ export default function PurchaseInvoiceForm() {
                 );
               })()}
 
+            </fieldset>
+              {useTabbedLayout && nextButtonBlock}
             </CardContent>
           </TabsContent>
 
-          <TabsContent value="header" className="mt-0">
+          <TabsContent value={useTabbedLayout ? "items" : "header"} className="mt-0">
             <CardContent className="pt-2 pb-5 border-t">
+              {useTabbedLayout && topActionBar}
+              <fieldset disabled={editLock} className="contents">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground/80">
                 <ListOrdered className="h-4 w-4" />
                 <span>{tr("linesTitle")} ({lines.filter(l => l.itemName).length})</span>
@@ -1451,22 +1522,32 @@ export default function PurchaseInvoiceForm() {
                   )}
                 </div>
               </div>
+              </fieldset>
             </CardContent>
           </TabsContent>
+
+          {useTabbedLayout && (
+            <TabsContent value="details" className="mt-0">
+              <CardContent className="pt-5 pb-5">
+                {detailsSection}
+              </CardContent>
+            </TabsContent>
+          )}
         </Card>
       </Tabs>
-      </fieldset>
 
+      {!useTabbedLayout && (
       <div className="flex justify-end gap-2">
         <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/invoices")}>
-          {!isNew && (existing as any)?.status === "posted" ? tr("back") : tr("cancel")}
+          {isPosted ? tr("back") : tr("cancel")}
         </Button>
-        {!(!isNew && (existing as any)?.status === "posted") && (
+        {!isPosted && (
           <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
             {saveMut.isPending ? tr("saving") : isNew ? tr("saveInvoice") : tr("saveEdit")}
           </Button>
         )}
       </div>
+      )}
     </div>
   );
 }

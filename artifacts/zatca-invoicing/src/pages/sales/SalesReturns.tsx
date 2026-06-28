@@ -41,6 +41,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import ReturnDocumentDetails from "@/components/documents/ReturnDocumentDetails";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -148,6 +149,13 @@ export default function SalesReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+
+  // SAP-style tabbed layout (default) vs classic single-page (per-company opt-out).
+  // viewMode = read-only inspection (opened via grid double-click), forces tabbed
+  // layout and opens on the details tab.
+  const useTabbedLayout = (user?.company?.invoiceFormLayout ?? "tabbed") !== "classic";
+  const [viewMode, setViewMode] = useState(false);
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "details">("basic");
   // Inline-error state for the mandatory "ملاحظات / سبب المرتجع" field.
   // Goes red+shake when the user tries to save without writing anything,
   // and clears automatically as soon as they start typing. Pair with the
@@ -498,16 +506,20 @@ export default function SalesReturns() {
     setHeaderTaxId("");
     setShowForm(false);
     setEditingId(null);
+    setViewMode(false);
+    setActiveTab("basic");
     const url = new URL(window.location.href);
     url.searchParams.delete("fromInvoice");
     window.history.replaceState({}, "", url.toString());
   }
 
-  async function editReturn(id: number) {
+  async function editReturn(id: number, asView = false) {
     try {
       const res = await fetch(`${API}/api/sales/sales-returns/${id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || t("salesReturns.loadFailed")); }
       const r = await res.json();
+      setViewMode(asView);
+      setActiveTab(asView ? "details" : "basic");
       setEditingId(id);
       setForm({
         docNumber: r.docNumber ?? "",
@@ -1837,19 +1849,34 @@ ${sections}
             : t("salesReturns.formSubtitleDefault")}
           width="6xl"
           onClose={reset}
-          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          onSave={viewMode ? undefined : () => handleSubmit({ preventDefault() {} } as any)}
           saving={saveMut.isPending}
           saveDisabled={!form.returnDate}
           saveLabel={t("salesReturns.saveReturn")}
+          cancelLabel={viewMode ? (t("common.close") as string) : undefined}
         >
-          <Tabs defaultValue="header" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
+          <Tabs
+            value={useTabbedLayout ? activeTab : "header"}
+            onValueChange={(v) => setActiveTab(v as any)}
+            dir={isRtl ? "rtl" : "ltr"}
+            className="space-y-4"
+          >
+            {useTabbedLayout && (
             <TabsList className="h-9 bg-muted/40 border gap-1">
-              <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <FileText className="h-3.5 w-3.5" />{t("salesReturns.tabHeader")}
               </TabsTrigger>
+              <TabsTrigger value="items" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <ListOrdered className="h-3.5 w-3.5" />الأصناف
+              </TabsTrigger>
+              <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <Info className="h-3.5 w-3.5" />التفاصيل
+              </TabsTrigger>
             </TabsList>
+            )}
 
-            <TabsContent value="header" className="mt-0 space-y-5">
+            <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0 space-y-5">
+            <fieldset disabled={viewMode} className="space-y-5 disabled:opacity-100 m-0 p-0 border-0">
             <FormGrid cols={4}>
               <Field label={t("salesReturns.returnNumber")}><Input
                 ref={docNumberRef}
@@ -2054,9 +2081,26 @@ ${sections}
                 )}
               </Field>
             </FormGrid>
+            </fieldset>
+
+            {useTabbedLayout && !viewMode && (
+              <div className="flex justify-end pt-2">
+                <Button type="button" size="sm" className="gap-1.5" onClick={() => setActiveTab("items")}>
+                  الأصناف <ListOrdered className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
             </TabsContent>
 
-            <TabsContent value="header" className="mt-0 space-y-5">
+            <TabsContent value={useTabbedLayout ? "items" : "header"} className="mt-0 space-y-5">
+            {useTabbedLayout && !viewMode && (
+              <div className="flex justify-start">
+                <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setActiveTab("basic")}>
+                  <FileText className="h-4 w-4" /> {t("salesReturns.tabHeader")}
+                </Button>
+              </div>
+            )}
+            <fieldset disabled={viewMode} className="space-y-5 disabled:opacity-100 m-0 p-0 border-0">
             <div data-enter-nav-container="lines" className="space-y-1.5">
               <div className="border-t pt-4 flex items-center gap-2 text-sm font-semibold text-foreground/80">
                 <ListOrdered className="h-4 w-4" />
@@ -2242,7 +2286,25 @@ ${sections}
                 </div>
               </div>
             </div>
+            </fieldset>
             </TabsContent>
+
+            {useTabbedLayout && (
+            <TabsContent value="details" className="mt-0">
+              <ReturnDocumentDetails
+                docId={editingId}
+                doc={currentRet}
+                cid={cid}
+                token={token}
+                navigate={navigate}
+                sourceInvoiceId={form.invoiceId ? Number(form.invoiceId) : null}
+                sourceInvoiceLabel="فاتورة المبيعات المصدر"
+                sourceInvoicePrefix="SI-"
+                sourceInvoiceRoute="/sales/invoices"
+                emptyStateText="ستظهر هنا تفاصيل العمليات الناتجة عن هذا المرتجع — القيد المحاسبي وفاتورة المبيعات المصدر — بعد حفظ المرتجع وترحيله."
+              />
+            </TabsContent>
+            )}
           </Tabs>
         </FormPanel>
         </>
@@ -2630,7 +2692,7 @@ ${sections}
                         if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
                         toggleRow(rid);
                       }}
-                      onDoubleClick={() => editReturn(r.id)}
+                      onDoubleClick={() => editReturn(r.id, true)}
                       title={buildToneTooltip({ status: r.status })}
                     >
                       {visibleColumns.map(renderCell)}

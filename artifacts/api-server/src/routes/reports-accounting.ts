@@ -708,12 +708,16 @@ router.get("/account-statement", async (req, res) => {
       const hdrs = await db.select({
         id: purchaseInvoicesTable.id,
         docNumber: purchaseInvoicesTable.docNumber,
+        // Supplier's own invoice number — preferred in the statement "الشرح"
+        // over our internal docNumber (per user request), falling back to our
+        // docNumber for legacy rows with no supplier number recorded.
+        supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
         party: suppliersTable.nameAr,
       })
         .from(purchaseInvoicesTable)
         .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseInvoicesTable.supplierId))
         .where(and(eq(purchaseInvoicesTable.companyId, cid), inArray(purchaseInvoicesTable.id, pInvIds)));
-      for (const h of hdrs) pInvInfo.set(h.id, { names: "", docNumber: h.docNumber, party: h.party ?? null });
+      for (const h of hdrs) pInvInfo.set(h.id, { names: "", docNumber: (h.supplierInvoiceNumber && String(h.supplierInvoiceNumber).trim()) ? String(h.supplierInvoiceNumber).trim() : h.docNumber, party: h.party ?? null });
       const liRows = await db.select({ invoiceId: purchaseInvoiceLinesTable.invoiceId, itemName: purchaseInvoiceLinesTable.itemName })
         .from(purchaseInvoiceLinesTable)
         .where(and(eq(purchaseInvoiceLinesTable.companyId, cid), inArray(purchaseInvoiceLinesTable.invoiceId, pInvIds)))

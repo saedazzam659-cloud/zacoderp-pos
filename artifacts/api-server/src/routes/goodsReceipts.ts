@@ -270,21 +270,26 @@ router.post("/", async (req, res) => {
     });
     if (tenantErr) { res.status(400).json({ error: tenantErr }); return; }
 
-    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
-    if (!resolvedDocNumber) {
-      try {
-        resolvedDocNumber = await nextSequenceNumber(cid, "goods_receipt", {
-          userId:   (req as any).authUser?.id ?? null,
-          refTable: "goods_receipts",
-          branchId: branchId ? Number(branchId) : null,
-          docDate:  receiptDate,
-        });
-      } catch {
-        // No sequence configured for goods_receipt — fall back to GRN-<id>
-        // via the post-insert default in the UI; keep null here so the UI
-        // can render the placeholder.
-        resolvedDocNumber = null;
-      }
+    // Sequence engine authoritative: consume it first (atomic) and ignore the
+    // peeked client docNumber — otherwise every receipt reuses the same
+    // previewed number. Falls back to a manually-typed number only when no
+    // sequence is configured, else GRN-<id> default in the UI (null → placeholder).
+    let resolvedDocNumber: string | null = null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "goods_receipt", {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "goods_receipts",
+        branchId: branchId ? Number(branchId) : null,
+        docDate:  receiptDate,
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      // A null return ("no sequence configured") is handled above via the
+      // `??` fallback; reaching here means a REAL engine error (e.g. capacity
+      // exhausted) — surface it instead of silently bypassing the engine and
+      // minting an unguarded number. Mirrors the purchase-invoice path.
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم السند" });
+      return;
     }
 
     const [gr] = await db.insert(goodsReceiptsTable).values({

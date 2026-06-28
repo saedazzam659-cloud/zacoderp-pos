@@ -1070,22 +1070,24 @@ router.post("/purchase-invoices", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
 
-    // Pull the next number from the central sequence engine when the client
-    // didn't supply one. Falls back to null (legacy) if no active sequence
-    // is bound to "purchase_invoice".
-    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
-    if (!resolvedDocNumber) {
-      try {
-        resolvedDocNumber = await nextSequenceForPayment(cid, "purchase_invoice", pType, {
-          userId:   (req as any).authUser?.id ?? null,
-          refTable: "purchase_invoices",
-          branchId: branchId ? Number(branchId) : null,
-          docDate:  invoiceDate,
-        });
-      } catch (seqErr: any) {
-        res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
-        return;
-      }
+    // Central sequence engine is AUTHORITATIVE: when an active sequence is
+    // bound to "purchase_invoice" we consume it (atomic increment) and ignore
+    // any client-supplied docNumber — the form peeks the next number purely to
+    // preview it, so trusting that peeked value would bypass the engine and
+    // mint the SAME number for every invoice. Only when NO sequence is
+    // configured do we honour a manually-typed docNumber.
+    let resolvedDocNumber: string | null = null;
+    try {
+      const fromSeq = await nextSequenceForPayment(cid, "purchase_invoice", pType, {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "purchase_invoices",
+        branchId: branchId ? Number(branchId) : null,
+        docDate:  invoiceDate,
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
+      return;
     }
 
     const [inv] = await db.insert(purchaseInvoicesTable).values({
@@ -1836,19 +1838,21 @@ router.post("/purchase-orders", async (req, res) => {
     if (!orderDate)  { res.status(400).json({ error: "تاريخ الأمر مطلوب" }); return; }
     if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد" }); return; }
 
-    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
-    if (!resolvedDocNumber) {
-      try {
-        resolvedDocNumber = await nextSequenceNumber(cid, "purchase_order", {
-          userId:   (req as any).authUser?.id ?? null,
-          refTable: "purchase_orders",
-          branchId: branchId ? Number(branchId) : null,
-          docDate:  orderDate,
-        });
-      } catch (seqErr: any) {
-        res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الأمر" });
-        return;
-      }
+    // Sequence engine authoritative (see purchase_invoice note above): consume
+    // it first and ignore the peeked client docNumber, else every order reuses
+    // the same previewed number.
+    let resolvedDocNumber: string | null = null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "purchase_order", {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "purchase_orders",
+        branchId: branchId ? Number(branchId) : null,
+        docDate:  orderDate,
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الأمر" });
+      return;
     }
 
     const [ord] = await db.insert(purchaseOrdersTable).values({
