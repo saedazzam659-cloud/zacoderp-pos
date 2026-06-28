@@ -3001,7 +3001,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                         // accidental text selection before navigating to edit.
                         if (rowClickTimer.current) { clearTimeout(rowClickTimer.current); rowClickTimer.current = null; }
                         window.getSelection()?.removeAllRanges();
-                        navigate(`/sales/invoices/${inv.id}`);
+                        navigate(`/sales/invoices/${inv.id}?view=1`);
                       }}
                       title={rowTitle}
                     >

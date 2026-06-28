@@ -78,6 +78,14 @@ export const companiesTable = pgTable("companies", {
   // or "topnav" (horizontal menu bar across the top). Presentation only —
   // same menu data + permission gating either way.
   menuLayout: text("menu_layout").notNull().default("sidebar"),
+  // ─── Invoice/document entry-form layout (company-wide UX) ─────────────
+  // "tabbed"  = new SAP-style 3-tab entry form (البيانات الأساسية / الأصناف /
+  //             التفاصيل) — the default for every company.
+  // "classic" = the legacy single-page form (header card + lines + footer
+  //             actions). Opt-in fallback for tenants who prefer the old look.
+  // Applies to the sales invoice, quotation, sales order, and purchase order
+  // entry forms. Presentation only — save/post/validation rules are unchanged.
+  invoiceFormLayout: text("invoice_form_layout").notNull().default("tabbed"),
   // ─── Per-document-type auto-posting toggles ───────────────────────────
   // Each flag controls whether saving a document of that type immediately
   // posts the resulting journal entry (true) or leaves it as a draft for

@@ -933,6 +933,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS journal_smart_form BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "companies add menu_layout",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS menu_layout TEXT NOT NULL DEFAULT 'sidebar'` },
+    { label: "companies add invoice_form_layout",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS invoice_form_layout TEXT NOT NULL DEFAULT 'tabbed'` },
     // Phase 1B.2 — explicit Basic-auth secret storage and rotation marker
     { label: "gateway_clients add zatca_csid_secret_enc",
       sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS zatca_csid_secret_enc TEXT` },

@@ -167,6 +167,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     // "model" journal-entry form; `menuLayout` is "sidebar" | "topnav".
     journalSmartForm,
     menuLayout,
+    // Invoice/document entry-form layout: "tabbed" (new SAP-style) | "classic".
+    invoiceFormLayout,
     // VAT calc mode: "before_discount" | "after_discount". Validated below.
     taxCalculationMode,
     // Document-archiving control center config. Validated + coerced below.
@@ -206,6 +208,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     journalEntryFormMode?: string;
     journalSmartForm?: boolean;
     menuLayout?: string;
+    invoiceFormLayout?: string;
     taxCalculationMode?: string;
     archiveSettings?: {
       defaultMode?: string;
@@ -381,6 +384,14 @@ router.patch("/:id/general-settings", async (req, res) => {
       return;
     }
     updates.menuLayout = menuLayout;
+  }
+  // Invoice/document entry-form layout — only the two layouts the UI implements.
+  if (invoiceFormLayout !== undefined) {
+    if (invoiceFormLayout !== "tabbed" && invoiceFormLayout !== "classic") {
+      res.status(400).json({ error: "invoiceFormLayout يجب أن يكون 'tabbed' أو 'classic'" });
+      return;
+    }
+    updates.invoiceFormLayout = invoiceFormLayout;
   }
   // Tax calc mode — only the two values the line calculators understand.
   if (taxCalculationMode !== undefined) {

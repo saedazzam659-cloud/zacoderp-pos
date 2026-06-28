@@ -34,10 +34,11 @@ import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save } from "lucide-react";
 import { offersApi } from "@/lib/offersApi";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { DateField } from "@/components/ui/date-field";
+import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -180,6 +181,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [matchEdit, params]   = useRoute(`${basePath}/:id`);
   const isNew  = !!matchNew;
   const editId = matchEdit ? Number((params as any).id) : null;
+  // View-only open (double-click from the audit grid): `?view=1` locks every
+  // editable field and lands the user on the التفاصيل tab. The details tab is
+  // intentionally kept OUTSIDE the read-only fieldsets so it stays interactive.
+  const viewMode = new URLSearchParams(window.location.search).get("view") === "1";
 
   // SuperAdmin "Invoice Field Policies" governance — controls which header
   // fields are visible / readonly / required, and locks the date to today
@@ -189,7 +194,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const fp = useFieldPolicy("sales");
   const dateBounds = fp.dateBounds("date") ?? {};
 
-  const [activeTab, setActiveTab]       = useState("header");
+  const [activeTab, setActiveTab]       = useState("basic");
+  // Land a view-only open straight on the التفاصيل tab.
+  useEffect(() => {
+    if (viewMode) setActiveTab("details");
+  }, [viewMode]);
   const [docNumber, setDocNumber]       = useState("");
   const [docDate,   setDocDate]         = useState(today());
   const [validUntil,setValidUntil]      = useState("");
@@ -2162,6 +2171,126 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // not been populated yet would PUT default/empty values.
   useRegisterScreenActions(showLoadingPlaceholder ? null : screenActionsCtx);
 
+  // ── SAP-style tabbed layout (per-company) ─────────────────────────────
+  // The company chooses between the new 3-tab entry form (default) and the
+  // legacy single-page "classic" layout via General Settings. Only the
+  // PRESENTATION changes — every save / post / validation path is identical.
+  // View-only opens (double-click from the audit grid) ALWAYS use the tabbed
+  // shell so the interactive التفاصيل tab is reachable even for companies whose
+  // default layout is "classic".
+  const useTabbedLayout = _co?.invoiceFormLayout !== "classic" || viewMode;
+
+  // Tab 1 ("البيانات الأساسية") gates advancing to the items tab: the user can
+  // only proceed once the mandatory header fields are valid. This mirrors (a
+  // subset of) the hard gate in handleSave so the user never reaches the items
+  // step with a doc that can't be saved. We respect the company's
+  // draft-without-warehouse policy: when warehouses are mandatory (policy OFF)
+  // the header warehouse must be chosen before advancing.
+  const basicFieldsValid = (() => {
+    if (isInvoice || isOrder) {
+      if (!customerId) return false;
+      if (usesBranch && !branchId) return false;
+    } else if (fp.isRequired("customer") && !customerId) {
+      return false;
+    }
+    if (!docDate) return false;
+    if (isInvoice && !allowDraftWithoutWarehouse && !headerWarehouseId) return false;
+    return true;
+  })();
+
+  const isPostedLock = isInvoice && !isNew && (existing as any)?.status === "posted";
+  // Any read-only context: a posted invoice OR an explicit view-only open.
+  // Drives the per-tab fieldset disabling (NOT the details tab).
+  const editLock = isPostedLock || viewMode;
+
+  // Print-only hand-off (shared by the classic footer + the tabbed top bar).
+  const handlePrintOnly = () => {
+    if (!editId) {
+      toast({
+        title: "احفظ المستند أولاً قبل الطباعة",
+        description: "يصبح زر الطباعة فعّالاً بعد حفظ المستند مرة واحدة.",
+      });
+      return;
+    }
+    try {
+      sessionStorage.setItem(
+        "autoPrintSalesInvoice",
+        JSON.stringify({ id: editId, template: salesTemplate, ts: Date.now() }),
+      );
+    } catch { /* ignore storage failures */ }
+    navigate(basePath);
+  };
+
+  const linesHeaderBlock = (
+    <div className="border-t pt-4 mt-2 flex items-center gap-2 text-sm font-semibold text-foreground/80">
+      <ListOrdered className="h-4 w-4" />
+      <span>{t("salesDocForm.tabLines", { count: lines.filter(l => l.itemName).length })}</span>
+    </div>
+  );
+
+  // Tab 1 footer: a single "next" action gated on the mandatory fields.
+  const nextButtonBlock = (
+    <div className="border-t pt-4 mt-2 flex items-center justify-between gap-3">
+      <p className="text-[11px] text-muted-foreground">
+        {basicFieldsValid
+          ? "اكتملت البيانات الأساسية — انتقل إلى الأصناف."
+          : "أكمل الحقول الأساسية المطلوبة (العميل" + (usesBranch ? "، الفرع" : "") + (isInvoice && !allowDraftWithoutWarehouse ? "، المستودع" : "") + ") للمتابعة."}
+      </p>
+      <Button
+        type="button"
+        onClick={() => setActiveTab("items")}
+        disabled={!basicFieldsValid}
+        className="gap-1.5"
+        data-testid="button-next-to-items"
+      >
+        الأصناف
+        {isRtl ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+      </Button>
+    </div>
+  );
+
+  // Tab 2 ("الأصناف") top bar: Save + Print pulled to the TOP per the SAP
+  // layout, plus a back-link to the basic tab.
+  const topActionBar = (
+    <div className="flex items-center justify-between gap-2 rounded-xl border bg-muted/20 px-3 py-2">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setActiveTab("basic")}
+        className="gap-1.5"
+        data-testid="button-back-to-basic"
+      >
+        {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+        البيانات الأساسية
+      </Button>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={handlePrintOnly} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-print-top">
+          <Printer className="h-4 w-4" /> طباعة
+        </Button>
+        {!editLock && (
+          <Button size="sm" onClick={handleSave} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-save-top">
+            <Save className="h-4 w-4" />
+            {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Tab 3 ("التفاصيل") — read-only SAP-style downstream view.
+  const detailsSection = (
+    <SalesDocumentDetails
+      docId={editId ? Number(editId) : null}
+      doc={existing}
+      isInvoice={isInvoice}
+      isOrder={isOrder}
+      isQuotation={isQuotation}
+      cid={cid}
+      token={token}
+      navigate={navigate}
+    />
+  );
+
   // Defer the loading placeholder until AFTER all hooks above have run, so
   // the hook count is identical between the loading and loaded renders
   // (see the note next to `showLoadingPlaceholder` for full context).
@@ -2344,26 +2473,45 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         );
       })()}
 
-      <fieldset disabled={isInvoice && !isNew && (existing as any)?.status === "posted"} className="contents">
-      <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
+      <div className="contents">
+      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
             <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
               <p className="text-[11px] text-muted-foreground">
-                {activeTab === "header"
+                {!useTabbedLayout
                   ? t("salesDocForm.headerHint")
-                  : t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
+                  : activeTab === "items"
+                    ? t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })
+                    : activeTab === "details"
+                      ? "تفاصيل العمليات الناتجة عن هذا المستند"
+                      : t("salesDocForm.headerHint")}
               </p>
-              <TabsList className="h-8 bg-background border gap-1">
-                <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
-                </TabsTrigger>
-              </TabsList>
+              {useTabbedLayout ? (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
+                  </TabsTrigger>
+                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                  </TabsTrigger>
+                </TabsList>
+              ) : (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
+                  </TabsTrigger>
+                </TabsList>
+              )}
             </div>
           </CardHeader>
 
-          <TabsContent value="header" className="mt-0">
+          <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-4">
+            <fieldset disabled={editLock} className="contents">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {fp.isVisible("docNumber") && (
                 <div className="space-y-1.5">
@@ -2623,18 +2771,41 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 )}
               </div>
 
-              <div className="border-t pt-4 mt-2 flex items-center gap-2 text-sm font-semibold text-foreground/80">
-                <ListOrdered className="h-4 w-4" />
-                <span>{t("salesDocForm.tabLines", { count: lines.filter(l => l.itemName).length })}</span>
-              </div>
-              {linesSection}
+              {!useTabbedLayout && (
+                <>
+                  {linesHeaderBlock}
+                  {linesSection}
+                </>
+              )}
+              {useTabbedLayout && nextButtonBlock}
+            </fieldset>
             </CardContent>
           </TabsContent>
 
+          {useTabbedLayout && (
+            <>
+              <TabsContent value="items" className="mt-0">
+                <CardContent className="pt-5 pb-5 space-y-4">
+                  {topActionBar}
+                  <fieldset disabled={editLock} className="contents">
+                    {linesHeaderBlock}
+                    {linesSection}
+                  </fieldset>
+                </CardContent>
+              </TabsContent>
+              <TabsContent value="details" className="mt-0">
+                <CardContent className="pt-5 pb-5">
+                  {detailsSection}
+                </CardContent>
+              </TabsContent>
+            </>
+          )}
+
         </Card>
       </Tabs>
-      </fieldset>
+      </div>
 
+      {!useTabbedLayout && (
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => navigate(basePath)}>
           {isInvoice && !isNew && (existing as any)?.status === "posted" ? t("common.back", "رجوع") : t("common.cancel")}
@@ -2676,12 +2847,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <Printer className="h-4 w-4" />
           طباعة
         </Button>
-        {!(isInvoice && !isNew && (existing as any)?.status === "posted") && (
+        {!editLock && (
           <Button onClick={handleSave} disabled={saveMut.isPending}>
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
         )}
       </div>
+      )}
     </div>
   );
 }
