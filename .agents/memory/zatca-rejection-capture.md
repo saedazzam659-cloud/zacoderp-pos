@@ -34,3 +34,20 @@ tenant and looks like a system bug. The fallback guarantees actionable text.
 text-first + dual-shape + fallback pattern. (As of this writing the sales path
 has it; the legacy `zatca.ts` path still reads only top-level `errorMessages`
 and would benefit from the same treatment.)
+
+## Bridge UI status contract: approved/rejected/pending only
+
+The ZATCA bridge screen (`ZatcaBridge.tsx`) renders badges, stat counters AND
+the filter off `zatcaStatus ∈ {approved, rejected, pending, null}`. But the
+submit handler persists the DETAILED success status `cleared`/`reported` to
+`sales_invoices.zatca_status`. A cleared invoice therefore showed NO badge and
+was counted in NEITHER the approved nor rejected totals (looked like "nothing
+happened").
+
+**Rule:** the bridge GET (`/sales-invoices-zatca-bridge`) MUST normalize each
+row's status to the 3 UI buckets (`cleared|reported|approved → approved`,
+`rejected → rejected`, else `pending`) before responding; and the submit
+success response's top-level `status` must be `"approved"` (the detailed
+cleared/reported value travels in a separate `zatcaStatus` field).
+**Why:** the DB keeps the precise ZATCA verdict, but the UI speaks a coarser
+3-state vocabulary — never leak the DB enum straight to this screen.

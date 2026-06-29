@@ -3540,7 +3540,10 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
     }
 
     res.json({
-      status: succeeded ? (mapped.invoiceType === "simplified" ? "reported" : "cleared") : "rejected",
+      // Frontend bridge understands only approved/rejected/pending. This path
+      // is reached only when succeeded === true, so report "approved" (detailed
+      // cleared/reported value stays in zatcaStatus below).
+      status: "approved",
       uuid,
       zatcaStatus: newStatus,
       clearanceStatus: data.clearanceStatus,
@@ -3594,7 +3597,16 @@ router.get("/sales-invoices-zatca-bridge", async (req, res) => {
         ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ))
       .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id));
-    res.json(rows);
+    // Normalize the persisted ZATCA status to the 3 buckets the bridge UI
+    // renders (approved/rejected/pending). The DB stores the detailed
+    // cleared/reported on success — without this, a cleared invoice has NO
+    // badge and is counted in neither approved nor rejected totals.
+    const normZatca = (s: string | null): "approved" | "rejected" | "pending" => {
+      if (s === "cleared" || s === "reported" || s === "approved") return "approved";
+      if (s === "rejected") return "rejected";
+      return "pending";
+    };
+    res.json(rows.map((r) => ({ ...r, zatcaStatus: normZatca(r.zatcaStatus) })));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
