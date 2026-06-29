@@ -290,7 +290,7 @@ function RoutingEditor({
     const t = setTimeout(async () => {
       try {
         const r = await fetch(
-          `${API}/api/inventory/items?q=${encodeURIComponent(productSearch.trim())}&limit=20`,
+          `${API}/api/inventory/items?includeHidden=1&q=${encodeURIComponent(productSearch.trim())}&limit=20`,
           { headers: { Authorization: `Bearer ${token}` } },
         );
         if (!r.ok) return;

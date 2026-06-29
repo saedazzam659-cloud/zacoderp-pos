@@ -227,7 +227,7 @@ export default function PurchaseInvoiceForm() {
 
   const { data: inventoryItems = [] } = useQuery<any[]>({
     queryKey: ["inventory-items", cid],
-    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, authH),
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}&includeHidden=1` : `${API}/api/inventory/items?includeHidden=1`, authH),
     enabled: !!user,
   });
 

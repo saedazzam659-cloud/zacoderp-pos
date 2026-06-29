@@ -2423,7 +2423,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     enabled: !!open && printLang === "en" && !!itemsCompanyId,
     staleTime: 60_000,
     queryFn: async () => {
-      const r = await fetch(`${API}/api/inventory/items?companyId=${itemsCompanyId}`, {
+      const r = await fetch(`${API}/api/inventory/items?companyId=${itemsCompanyId}&includeHidden=1`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) return [] as any[];

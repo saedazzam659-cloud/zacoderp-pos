@@ -83,7 +83,7 @@ export default function QualityTemplates() {
     try {
       const [tplR, itR] = await Promise.all([
         fetch(`${API}/api/production/quality-templates`, { headers }),
-        fetch(`${API}/api/inventory/items?limit=500`, { headers }),
+        fetch(`${API}/api/inventory/items?includeHidden=1&limit=500`, { headers }),
       ]);
       if (!tplR.ok) throw new Error(`HTTP ${tplR.status}`);
       const tpls = await tplR.json();

@@ -72,7 +72,7 @@ export default function Onboarding() {
     done: (d.customers?.length ?? 0) > 0,
     detail: d.customers?.length ? `${d.customers.length} عميل` : undefined,
   }));
-  const items     = useStep<ApiItems>("/api/inventory/items", d => ({
+  const items     = useStep<ApiItems>("/api/inventory/items?includeHidden=1", d => ({
     done: (d.items?.length ?? 0) > 0,
     detail: d.items?.length ? `${d.items.length} صنف` : undefined,
   }));

@@ -99,7 +99,7 @@ export default function MrpPlanning() {
     try {
       const [fR, iR] = await Promise.all([
         fetch(`${API}/api/production/forecasts`, { headers }),
-        fetch(`${API}/api/inventory/items?limit=1000`, { headers }),
+        fetch(`${API}/api/inventory/items?includeHidden=1&limit=1000`, { headers }),
       ]);
       if (fR.ok) setList(await fR.json());
       if (iR.ok) {

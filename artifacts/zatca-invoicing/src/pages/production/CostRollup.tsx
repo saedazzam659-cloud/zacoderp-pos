@@ -56,7 +56,7 @@ export default function CostRollup() {
   useEffect(() => {
     if (!token) return;
     (async () => {
-      const r = await fetch(`${API}/api/inventory/items?limit=1000`, { headers });
+      const r = await fetch(`${API}/api/inventory/items?includeHidden=1&limit=1000`, { headers });
       if (r.ok) {
         const d = await r.json();
         setItems(Array.isArray(d) ? d : d?.items ?? []);

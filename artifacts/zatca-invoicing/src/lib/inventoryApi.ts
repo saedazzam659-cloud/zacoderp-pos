@@ -133,7 +133,10 @@ export const inventoryApi = {
   updateUnit: (id: number, data: any) => put<any>(`/units/${id}`, data),
   deleteUnit: (id: number)   => del(`/units/${id}`),
   // Items
-  getItems:   (cid?: number) => get<any[]>(`/items${cid ? `?companyId=${cid}` : ""}`),
+  // includeHidden=1: the web ERP (items master, stock, invoices, reports) must
+  // see ALL items including those unchecked from "show in POS". The show_in_pos
+  // flag is meant to hide an item from the POS apps ONLY, never from the ERP.
+  getItems:   (cid?: number) => get<any[]>(`/items?includeHidden=1${cid ? `&companyId=${cid}` : ""}`),
   getItem:    (id: number)   => get<any>(`/items/${id}`),
   createItem: (data: any)    => post<any>("/items", data),
   updateItem: (id: number, data: any) => put<any>(`/items/${id}`, data),

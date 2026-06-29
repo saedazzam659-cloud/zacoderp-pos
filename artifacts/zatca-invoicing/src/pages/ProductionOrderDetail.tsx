@@ -227,7 +227,7 @@ export default function ProductionOrderDetail() {
       const [whs, accs, its, wcs] = await Promise.all([
         fetch(`${API}/api/inventory/warehouses`, { headers: h }).then((r) => r.ok ? r.json() : []),
         fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
-        fetch(`${API}/api/inventory/items?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
+        fetch(`${API}/api/inventory/items?includeHidden=1&limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
         fetch(`${API}/api/production/work-centers`, { headers: h }).then((r) => r.ok ? r.json() : []),
       ]);
       setWarehouses(Array.isArray(whs) ? whs : (whs?.rows ?? whs?.data ?? []));
