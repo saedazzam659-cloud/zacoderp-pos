@@ -3455,12 +3455,25 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
       body: JSON.stringify({ invoiceHash: hashBase64, uuid, invoice: xmlBase64 }),
     });
 
-    const data = await response.json() as {
+    // Read the body as text FIRST, then JSON.parse. ZATCA can answer a
+    // rejection with a non-JSON body (HTML error page / empty body); calling
+    // response.json() directly would throw → fall into the catch → a generic
+    // "فشل الاتصال" 500 with no stored reason. Parsing defensively lets us keep
+    // the raw text as the error message instead.
+    const rawText = await response.text();
+    let data: {
       reportingStatus?: string;
       clearanceStatus?: string;
       warningMessages?: Array<{ code: string; message: string }>;
       errorMessages?: Array<{ code: string; message: string }>;
-    };
+      validationResults?: {
+        warningMessages?: Array<{ code: string; message: string }>;
+        errorMessages?: Array<{ code: string; message: string }>;
+      };
+      message?: string;
+      code?: string | number;
+    } = {};
+    try { data = rawText ? JSON.parse(rawText) : {}; } catch { data = {}; }
 
     // Verdict from ZATCA's real document status, never just HTTP 200.
     const clearance = (data.clearanceStatus ?? "").toUpperCase();
@@ -3473,13 +3486,35 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
       ? (mapped.invoiceType === "simplified" ? "reported" : "cleared")
       : "rejected";
 
+    // Normalize ZATCA validation messages from EVERY shape the gateway uses
+    // (top-level *Messages OR nested validationResults.*Messages), and ALWAYS
+    // synthesize a reason on rejection so the ZATCA bridge never shows
+    // "0 خطأ" with no detail. Falls back to the gateway message / raw body /
+    // HTTP status when no structured validation errors are present.
+    const normMsgs = (arr: unknown): Array<{ code: string; message: string }> =>
+      (Array.isArray(arr) ? arr : []).map((m: any) => ({
+        code: String(m?.code ?? m?.type ?? "ZATCA"),
+        message: String(m?.message ?? m ?? "").trim() || "—",
+      }));
+    const zErrors = normMsgs(data.errorMessages ?? data.validationResults?.errorMessages);
+    const zWarnings = normMsgs(data.warningMessages ?? data.validationResults?.warningMessages);
+    const finalErrors = succeeded
+      ? zErrors
+      : (zErrors.length ? zErrors : [{
+          code: data.code != null ? String(data.code) : `HTTP-${response.status}`,
+          message:
+            (data.message && String(data.message).trim())
+            || (rawText && rawText.trim().length > 0 && rawText.trim().length < 1500 ? rawText.trim() : "")
+            || `رفضت بوابة ZATCA الفاتورة (رمز ${response.status}) دون تفاصيل تحقق. راجع بيانات الفاتورة وأعد الإرسال.`,
+        }]);
+
     await db.update(salesInvoicesTable).set({
       zatcaStatus: newStatus,
       zatcaSubmittedAt: now,
       zatcaUuid: succeeded ? uuid : null,
       zatcaResponseCode: String(response.status),
-      zatcaErrorMessages: data.errorMessages ? JSON.stringify(data.errorMessages) : null,
-      zatcaWarningMessages: data.warningMessages ? JSON.stringify(data.warningMessages) : (warnings.length ? JSON.stringify(warnings) : null),
+      zatcaErrorMessages: finalErrors.length ? JSON.stringify(finalErrors) : null,
+      zatcaWarningMessages: zWarnings.length ? JSON.stringify(zWarnings) : (warnings.length ? JSON.stringify(warnings) : null),
       zatcaAiSuggestion: null,
       xmlContent: built.finalXml,
       invoiceHash: succeeded ? built.invoiceHash : null,
@@ -3494,8 +3529,8 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
         zatcaStatus: newStatus,
         clearanceStatus: data.clearanceStatus,
         reportingStatus: data.reportingStatus,
-        errors: data.errorMessages ?? [],
-        warnings: data.warningMessages ?? warnings,
+        errors: finalErrors,
+        warnings: zWarnings.length ? zWarnings : warnings,
         zatcaResponse: data,
         hint: response.ok
           ? "قبلت بوابة ZATCA الطلب لكن لم يتم تخليص/إبلاغ الفاتورة. راجع رسائل التحقق وصحّح البيانات."
@@ -3510,7 +3545,7 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
       zatcaStatus: newStatus,
       clearanceStatus: data.clearanceStatus,
       reportingStatus: data.reportingStatus,
-      warnings: data.warningMessages ?? warnings,
+      warnings: zWarnings.length ? zWarnings : warnings,
       message: mapped.invoiceType === "simplified"
         ? "تم إبلاغ ZATCA بالفاتورة المبسطة بنجاح."
         : "تم تخليص الفاتورة الضريبية بنجاح.",
