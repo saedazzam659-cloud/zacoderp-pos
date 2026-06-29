@@ -1121,9 +1121,33 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     // out against the GDN's debit to that same clearing account.
     const gdnSourced = !!(inv as any).sourceGdnId;
 
+    // Load per-item metadata once: batch mode (stock costing), item TYPE
+    // (service vs stock) and the per-item revenue account. SERVICE items (خدمي)
+    // are SAP-style — they NEVER affect stock/COGS and their revenue is credited
+    // to the item's own revenue account instead of the generic sales account.
+    const lineItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const itemMetaRows = lineItemIds.length
+      ? await db
+          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType, revAcc: itemsTable.revenueAccountId })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
+      : [];
+    const modeById = new Map<number, "none" | "fifo" | "fefo">();
+    const typeById = new Map<number, string>();
+    const revAccById = new Map<number, number | null>();
+    for (const r of itemMetaRows) {
+      const m = (r.mode ?? "none") as string;
+      modeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
+      typeById.set(r.id, (r.type ?? "stock") as string);
+      revAccById.set(r.id, r.revAcc ?? null);
+    }
+    const isServiceLine = (l: any) => !!l.itemId && typeById.get(l.itemId) === "service";
+
     // Guard: every stock-affecting (item-bearing) line must specify a warehouse.
-    // (Skip when GDN-sourced — the GDN already validated this.)
-    const noWh = gdnSourced ? [] : lines.filter(l => l.itemId && !l.warehouseId);
+    // SERVICE items (خدمي) never touch stock, so they are EXEMPT — a pure
+    // service line legitimately carries no warehouse and must still post.
+    // (Skip entirely when GDN-sourced — the GDN already validated this.)
+    const noWh = gdnSourced ? [] : lines.filter(l => l.itemId && !l.warehouseId && !isServiceLine(l));
     if (noWh.length) {
       res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
       return;
@@ -1177,28 +1201,6 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       notes: string | null;
       picks: BatchPick[] | null; // null = legacy single-row, [] = nothing to pick
     };
-    // Load per-item metadata once: batch mode (stock costing), item TYPE
-    // (service vs stock) and the per-item revenue account. SERVICE items (خدمي)
-    // are SAP-style — they NEVER affect stock/COGS and their revenue is credited
-    // to the item's own revenue account instead of the generic sales account.
-    const lineItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
-    const itemMetaRows = lineItemIds.length
-      ? await db
-          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType, revAcc: itemsTable.revenueAccountId })
-          .from(itemsTable)
-          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
-      : [];
-    const modeById = new Map<number, "none" | "fifo" | "fefo">();
-    const typeById = new Map<number, string>();
-    const revAccById = new Map<number, number | null>();
-    for (const r of itemMetaRows) {
-      const m = (r.mode ?? "none") as string;
-      modeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
-      typeById.set(r.id, (r.type ?? "stock") as string);
-      revAccById.set(r.id, r.revAcc ?? null);
-    }
-    const isServiceLine = (l: any) => !!l.itemId && typeById.get(l.itemId) === "service";
-
     const stockOps: StockOp[] = [];
     if (!gdnSourced) {
       for (const line of lines) {
@@ -2137,7 +2139,26 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       .where(eq(salesReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
 
-    const noWh = lines.filter(l => l.itemId && !l.warehouseId);
+    // Per-item metadata (batch mode + TYPE). SERVICE items (خدمي) never touch
+    // stock, so they are EXEMPT from the warehouse requirement below — a pure
+    // service return line legitimately carries no warehouse and must still post.
+    const retItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const retItemRows = retItemIds.length
+      ? await db
+          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, retItemIds)))
+      : [];
+    const retModeById = new Map<number, "none" | "fifo" | "fefo">();
+    const retTypeById = new Map<number, string>();
+    for (const r of retItemRows) {
+      const m = (r.mode ?? "none") as string;
+      retModeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
+      retTypeById.set(r.id, (r.type ?? "stock") as string);
+    }
+    const isServiceLine = (l: any) => !!l.itemId && retTypeById.get(l.itemId) === "service";
+
+    const noWh = lines.filter(l => l.itemId && !l.warehouseId && !isServiceLine(l));
     if (noWh.length) {
       res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
       return;
@@ -2158,19 +2179,6 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     //       beyond the original shipment falls back to an unbatched IN row.
     //   * batch-tracked with NO source invoice (orphan return) → legacy WAC
     //       path. We refuse to fabricate a batch for unlinked returns.
-    const retItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
-    const retItemRows = retItemIds.length
-      ? await db
-          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
-          .from(itemsTable)
-          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, retItemIds)))
-      : [];
-    const retModeById = new Map<number, "none" | "fifo" | "fefo">();
-    for (const r of retItemRows) {
-      const m = (r.mode ?? "none") as string;
-      retModeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
-    }
-
     let totalCogs = 0;
     const cogsByWarehouse: Record<number, number> = {};
     // Cross-line bucket consumption — when the same return document has
