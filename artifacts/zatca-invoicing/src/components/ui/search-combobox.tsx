@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronsUpDown, X } from "lucide-react";
+import { Check, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Popover,
@@ -136,14 +136,6 @@ export function SearchCombobox({
     }
   };
 
-  const handleClear = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onValueChange("");
-    setSearch("");
-    setOpen(true);
-    inputRef.current?.focus();
-  };
-
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -247,18 +239,6 @@ export function SearchCombobox({
             )}
           />
           <div className="absolute inset-y-0 end-2 flex items-center gap-1 pointer-events-none">
-            {selectedItem && !open && (
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={handleClear}
-                className="pointer-events-auto rounded p-0.5 hover:bg-muted text-muted-foreground"
-                tabIndex={-1}
-                aria-label="مسح"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
             <ChevronsUpDown className="h-3.5 w-3.5 opacity-40" />
           </div>
         </div>
