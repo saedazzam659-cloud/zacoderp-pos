@@ -573,6 +573,13 @@ router.get("/account-statement", async (req, res) => {
         purchaseReturnId:         purchaseReturnsTable.id,
         receiptVoucherId:         receiptVouchersTable.id,
         paymentVoucherId:         paymentVouchersTable.id,
+        // Voucher's own الشرح + second-party (الطرف الثاني) name, so the GL
+        // account-statement reads the same description the Cash & Banks bank/
+        // cash statement shows for receipt/payment voucher rows.
+        receiptVoucherDesc:       receiptVouchersTable.description,
+        receiptVoucherEntity:     receiptVouchersTable.entityName,
+        paymentVoucherDesc:       paymentVouchersTable.description,
+        paymentVoucherEntity:     paymentVouchersTable.entityName,
         goodsReceiptId:           goodsReceiptsTable.id,
         goodsDeliveryId:          goodsDeliveriesTable.id,
         contractingProgressBillId:contractingProgressBillsTable.id,
@@ -776,11 +783,20 @@ router.get("/account-statement", async (req, res) => {
       const d = Number(r.debit  || 0);
       const c = Number(r.credit || 0);
       runningBalance += d - c;
+      // Receipt/payment voucher rows: mirror the Cash & Banks bank/cash
+      // statement — prefer the voucher's own typed الشرح, else fall back to
+      // "سند قبض/صرف — <الطرف الثاني>" so the GL account-statement shows the
+      // second-party name next to every voucher movement.
+      const voucherDesc = r.receiptVoucherId
+        ? ((r.receiptVoucherDesc ?? "").trim() || `سند قبض${(r.receiptVoucherEntity ?? "").trim() ? ` — ${(r.receiptVoucherEntity ?? "").trim()}` : ""}`)
+        : r.paymentVoucherId
+        ? ((r.paymentVoucherDesc ?? "").trim() || `سند صرف${(r.paymentVoucherEntity ?? "").trim() ? ` — ${(r.paymentVoucherEntity ?? "").trim()}` : ""}`)
+        : null;
       const srcDesc = r.purchaseInvoiceId
         ? invoiceDescription(pInvInfo.get(r.purchaseInvoiceId))
         : r.salesInvoiceId
         ? invoiceDescription(sInvInfo.get(r.salesInvoiceId))
-        : null;
+        : voucherDesc;
       return { ...r, description: srcDesc ?? r.description, debit: d, credit: c, balance: runningBalance };
     });
 

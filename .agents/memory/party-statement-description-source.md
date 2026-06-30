@@ -32,6 +32,14 @@ manual JEs and "—" for invoices with no header note — useless for reconcilia
   for EVERY account touched by that invoice JE (AP/AR, inventory, VAT), not just
   the placeholder line — intentional (source-true) but surprising for VAT/inventory
   accounts; narrow to known-generic labels only if a user objects.
+  - **Receipt/payment voucher rows** (`receiptVoucherId`/`paymentVoucherId`, also
+    already left-joined): MIRROR the Cash & Banks bank/cash statement
+    (`cash-analytics.ts buildAccountStatement`): description = voucher's own typed
+    `description` (trimmed) else `"سند قبض/صرف — <entityName>"` (الطرف الثاني). Same
+    unconditional-per-account-line caveat as invoices (the override fires on every
+    account the voucher JE touches — bank/cash side AND counter-party/expense side),
+    which is exactly what the user wanted. Precedence: invoice override wins, then
+    voucher, then raw GL line/header text.
 
 Batch item-name loading (`inArray` invoice ids, `companyId`-scoped, `orderBy id`,
 dedupe via Set) — never per-row. The frontend (AccountStatementView / export
