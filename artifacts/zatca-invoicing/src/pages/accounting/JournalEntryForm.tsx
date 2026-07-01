@@ -351,6 +351,35 @@ export default function JournalEntryForm() {
     return a ? `${a.code} — ${a.nameAr || a.nameEn || ""}` : "—";
   };
 
+  // A line is a "VAT line" when its selected account is a tax account. The
+  // supplier-tax ⋮ menu shows ONLY on VAT lines so the user can't mistakenly
+  // attach supplier details to a normal (non-tax) line. Detection is PRIMARILY
+  // driven by the account IDs actually routed by the company's tax catalog
+  // (sales/purchase/generic tax accounts — handles custom-mapped VAT accounts
+  // that don't use the standard COA codes), then falls back to the standard COA
+  // codes (11071 input / 21041 output) and an Arabic/English VAT name match.
+  // NOTE: reads `jeTaxes` via closure — it is declared later in this component
+  // but this helper is only invoked during render (after all consts init).
+  const VAT_ACCOUNT_CODES = new Set(["11071", "21041"]);
+  const isVatAccountLine = (line: JournalLine) => {
+    if (!line.accountId) return false;
+    const accId = String(line.accountId);
+    for (const t of jeTaxes as any[]) {
+      for (const id of [t?.salesTaxAccountId, t?.purchaseTaxAccountId, t?.accountId]) {
+        if (id != null && String(id) === accId) return true;
+      }
+    }
+    const a = acctMap.get(Number(line.accountId));
+    if (!a) return false;
+    const code = String(a.code ?? "");
+    const name = String(a.nameAr ?? a.nameEn ?? "");
+    return (
+      VAT_ACCOUNT_CODES.has(code) ||
+      /ضريبة\s+(القيمة المضافة|المدخلات|المخرجات)/.test(name) ||
+      /\bVAT\b|value[\s-]?added tax/i.test(name)
+    );
+  };
+
   // Cost-center lookup: the value stored on a JE line MAY be either the
   // numeric id (system-generated JEs e.g. fa-journals, contracting,
   // production all stringify the id) OR the code (manual JEs created in
@@ -1971,16 +2000,24 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       );
                     })()}
 
-                    <SupplierTaxDetailsMenu
-                      testId={`je-line-${idx}`}
-                      value={{
-                        supplierName: line.supplierName,
-                        supplierVatNumber: line.supplierVatNumber,
-                        supplierInvoiceNumber: line.supplierInvoiceNumber,
-                        supplierInvoiceDate: line.supplierInvoiceDate,
-                      }}
-                      onChange={(v: SupplierTaxDetails) => patchLine(line.id, v)}
-                    />
+                    {/* Supplier-tax ⋮ menu ONLY on VAT lines — hidden on
+                        normal lines so the user can't mistakenly attach
+                        supplier details to a non-tax line. A same-size spacer
+                        keeps the row columns aligned. */}
+                    {isVatAccountLine(line) ? (
+                      <SupplierTaxDetailsMenu
+                        testId={`je-line-${idx}`}
+                        value={{
+                          supplierName: line.supplierName,
+                          supplierVatNumber: line.supplierVatNumber,
+                          supplierInvoiceNumber: line.supplierInvoiceNumber,
+                          supplierInvoiceDate: line.supplierInvoiceDate,
+                        }}
+                        onChange={(v: SupplierTaxDetails) => patchLine(line.id, v)}
+                      />
+                    ) : (
+                      <div className="h-7 w-7 shrink-0" aria-hidden />
+                    )}
 
                     <Button
                       variant="ghost" size="icon"
