@@ -94,13 +94,28 @@ export interface CashVoucherDoc {
   invoiceNumber?: string | null;
 }
 
+/** One allocation line of a multi-allocation voucher (الحساب/البيان/المبلغ). */
+export interface CashVoucherLine {
+  code?: string | null;
+  name?: string | null;
+  description?: string | null;
+  /** Net amount (before VAT). */
+  amount?: number | string | null;
+  /** Per-line VAT (payment vouchers only; receipts have none). */
+  tax?: number | string | null;
+}
+
 export interface CashVoucherArgs {
   kind: CashVoucherKind;
   doc: CashVoucherDoc;
   /** Cash box / bank account (رمز النقدية / اسم النقدية). */
   treasury: { code?: string | null; name?: string | null } | null;
-  /** Counterparty or GL account shown in the table row (رمز/اسم الحساب). */
+  /** Counterparty or GL account shown in the table row (رمز/اسم الحساب).
+   *  Used only for legacy single-amount vouchers (no `lines`). */
   account: { code?: string | null; name?: string | null } | null;
+  /** Multi-allocation lines. When present, the table renders one row per line
+   *  and the single-account info rows are suppressed. */
+  lines?: CashVoucherLine[] | null;
   company?: CashVoucherCompany | null;
   /** إعداد — name of the user who prepared the voucher. */
   preparedBy?: string | null;
@@ -114,8 +129,10 @@ function companyAddress(c?: CashVoucherCompany | null): string {
 }
 
 export function buildCashVoucherHtml(args: CashVoucherArgs): string {
-  const { kind, doc, treasury, account, company, preparedBy } = args;
+  const { kind, doc, treasury, account, lines, company, preparedBy } = args;
   const isReceipt = kind === "receipt";
+  const hasLines = Array.isArray(lines) && lines.length > 0;
+  const isMulti = Array.isArray(lines) && lines.length > 1;
   const title = isReceipt ? "سند قبض نقدي" : "سند صرف نقدي";
   const accentBar = isReceipt ? "#15803d" : "#b45309";
   const amount = Number(doc.amount || 0);
@@ -124,6 +141,33 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
   const desc = doc.description || "";
   const invoiceNumber = doc.invoiceNumber || "";
   const tafqeet = numberToArabicWords(amount);
+  // Table rows: one per allocation line when present, else the legacy single
+  // account row. المبلغ = net, الإجمالي = net + per-line VAT (0 for receipts).
+  const bodyRows = hasLines
+    ? lines!.map((l) => {
+        const net = Number(l.amount || 0);
+        const tax = Number(l.tax || 0);
+        return `    <tr>
+      <td class="num">${esc(l.code ?? "")}</td>
+      <td>${esc(l.name ?? "—")}</td>
+      <td>${esc(l.description ?? "")}</td>
+      <td class="num">${fmtMoney(net)}</td>
+      <td class="num">${fmtMoney(net + tax)}</td>
+    </tr>`;
+      }).join("\n")
+    : `    <tr>
+      <td class="num">${esc(account?.code ?? "")}</td>
+      <td>${esc(account?.name ?? "—")}</td>
+      <td>${esc(desc || "")}</td>
+      <td class="num">${fmtMoney(amount)}</td>
+      <td class="num">${fmtMoney(amount)}</td>
+    </tr>`;
+  const footNet = hasLines
+    ? lines!.reduce((s, l) => s + Number(l.amount || 0), 0)
+    : amount;
+  const footTotal = hasLines
+    ? lines!.reduce((s, l) => s + Number(l.amount || 0) + Number(l.tax || 0), 0)
+    : amount;
   const safeLogo = safeLogoSrc(company?.logo);
   const addr = companyAddress(company);
   const printedAt = new Date().toLocaleString("en-US", {
@@ -204,8 +248,8 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
   <div class="row"><span class="k">تاريخ السند</span><span class="v">: ${esc(date)}</span></div>
   <div class="row"><span class="k">رمز النقدية</span><span class="v">: ${esc(treasury?.code ?? "")}</span></div>
   <div class="row"><span class="k">اسم النقدية</span><span class="v">: ${esc(treasury?.name ?? "—")}</span></div>
-  <div class="row"><span class="k">رمز الحساب</span><span class="v">: ${esc(account?.code ?? "—")}</span></div>
-  <div class="row"><span class="k">اسم الحساب</span><span class="v">: ${esc(account?.name ?? "—")}</span></div>
+  ${isMulti ? "" : `<div class="row"><span class="k">رمز الحساب</span><span class="v">: ${esc((hasLines ? lines![0]!.code : account?.code) ?? "—")}</span></div>
+  <div class="row"><span class="k">اسم الحساب</span><span class="v">: ${esc((hasLines ? lines![0]!.name : account?.name) ?? "—")}</span></div>`}
   ${invoiceNumber ? `<div class="row"><span class="k">رقم الفاتورة</span><span class="v">: ${esc(invoiceNumber)}</span></div>` : ""}
   <div class="row" style="grid-column:1 / -1;"><span class="k">بيان السند</span><span class="v">: ${esc(desc || "—")}</span></div>
 </div>
@@ -220,19 +264,13 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
     </tr>
   </thead>
   <tbody>
-    <tr>
-      <td class="num">${esc(account?.code ?? "")}</td>
-      <td>${esc(account?.name ?? "—")}</td>
-      <td>${esc(desc || "")}</td>
-      <td class="num">${fmtMoney(amount)}</td>
-      <td class="num">${fmtMoney(amount)}</td>
-    </tr>
+${bodyRows}
   </tbody>
   <tfoot>
     <tr>
       <td colspan="3" style="text-align:left;">الإجمالي</td>
-      <td class="num">${fmtMoney(amount)}</td>
-      <td class="num">${fmtMoney(amount)}</td>
+      <td class="num">${fmtMoney(footNet)}</td>
+      <td class="num">${fmtMoney(footTotal)}</td>
     </tr>
   </tfoot>
 </table>
@@ -250,16 +288,35 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
 </body></html>`;
 }
 
-/** Opens a print window (synchronously, popup-blocker safe) and writes the
- *  voucher HTML. Calls onError with an Arabic message if the popup is blocked. */
-export function printCashVoucher(args: CashVoucherArgs): void {
+/** Opens a blank print window synchronously (popup-blocker safe) with a small
+ *  "جاري التحضير…" placeholder. Returns the window, or null (and fires onError)
+ *  when the popup is blocked. Use with `writeCashVoucher` for async flows that
+ *  must fetch the voucher's allocation lines before rendering. */
+export function openCashVoucherWindow(onError?: (msg: string) => void): Window | null {
   const w = window.open("", "_blank", "width=900,height=800");
   if (!w) {
-    args.onError?.("تم منع النوافذ المنبثقة — اسمح بفتح النوافذ المنبثقة من هذا الموقع لإجراء الطباعة.");
-    return;
+    onError?.("تم منع النوافذ المنبثقة — اسمح بفتح النوافذ المنبثقة من هذا الموقع لإجراء الطباعة.");
+    return null;
   }
+  w.document.write(
+    "<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'/><title>…</title></head>" +
+    "<body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;padding:24px;color:#334155\">جاري التحضير…</body></html>",
+  );
+  return w;
+}
+
+/** Writes the final voucher HTML into an already-open window. */
+export function writeCashVoucher(w: Window, args: CashVoucherArgs): void {
   const html = buildCashVoucherHtml(args);
   w.document.open();
   w.document.write(html);
   w.document.close();
+}
+
+/** Opens a print window (synchronously, popup-blocker safe) and writes the
+ *  voucher HTML. Calls onError with an Arabic message if the popup is blocked. */
+export function printCashVoucher(args: CashVoucherArgs): void {
+  const w = openCashVoucherWindow(args.onError);
+  if (!w) return;
+  writeCashVoucher(w, args);
 }

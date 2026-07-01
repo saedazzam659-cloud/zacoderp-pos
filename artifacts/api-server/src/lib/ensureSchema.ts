@@ -329,6 +329,40 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS approval_log_doc_idx ON approval_log (company_id, document_type, document_id)` },
     { label: "approval_log_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS approval_log_company_idx ON approval_log (company_id, created_at)` },
+    // ─── Voucher allocation lines (multi-allocation model, see schema/cash.ts).
+    // Created here because ensureColumns only ALTERs existing tables. Legacy
+    // single-`amount` vouchers keep posting without any line rows. Idempotent.
+    { label: "create receipt_voucher_lines table",
+      sql:   `CREATE TABLE IF NOT EXISTS receipt_voucher_lines (
+        id               SERIAL PRIMARY KEY,
+        voucher_id       INTEGER NOT NULL REFERENCES receipt_vouchers(id) ON DELETE CASCADE,
+        account_id       INTEGER REFERENCES accounts(id),
+        description      TEXT,
+        amount           NUMERIC(15,2) NOT NULL DEFAULT '0',
+        cost_center      TEXT,
+        branch_id        INTEGER REFERENCES branches(id),
+        sales_invoice_id INTEGER REFERENCES sales_invoices(id) ON DELETE SET NULL,
+        sort_order       INTEGER NOT NULL DEFAULT 0
+      )` },
+    { label: "receipt_voucher_lines_voucher_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS receipt_voucher_lines_voucher_idx ON receipt_voucher_lines (voucher_id)` },
+    { label: "create payment_voucher_lines table",
+      sql:   `CREATE TABLE IF NOT EXISTS payment_voucher_lines (
+        id                  SERIAL PRIMARY KEY,
+        voucher_id          INTEGER NOT NULL REFERENCES payment_vouchers(id) ON DELETE CASCADE,
+        account_id          INTEGER REFERENCES accounts(id),
+        description         TEXT,
+        amount              NUMERIC(15,2) NOT NULL DEFAULT '0',
+        tax_rate            NUMERIC(15,2) NOT NULL DEFAULT '0',
+        tax_amount          NUMERIC(15,2) NOT NULL DEFAULT '0',
+        tax_account_id      INTEGER REFERENCES accounts(id),
+        cost_center         TEXT,
+        branch_id           INTEGER REFERENCES branches(id),
+        purchase_invoice_id INTEGER REFERENCES purchase_invoices(id) ON DELETE SET NULL,
+        sort_order          INTEGER NOT NULL DEFAULT 0
+      )` },
+    { label: "payment_voucher_lines_voucher_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS payment_voucher_lines_voucher_idx ON payment_voucher_lines (voucher_id)` },
     // ─── je_number_reservations: reuse the SAME journal-entry number across an
     // unpost→edit→repost cycle (see schema/journalEntries.ts). Created here
     // because ensureColumns only ALTERs existing tables. Idempotent.

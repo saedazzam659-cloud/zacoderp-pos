@@ -13,7 +13,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { TablePagination, usePagination } from "@/components/TablePagination";
 import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Copy, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { printCashVoucher } from "@/lib/cashVoucherPrint";
+import { openCashVoucherWindow, writeCashVoucher } from "@/lib/cashVoucherPrint";
 import {
   rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
@@ -101,7 +101,9 @@ export default function PaymentVouchers() {
   function openEdit(r: any) { navigate(`/cash/payment-vouchers/${r.id}`); }
 
   // ── Print a single voucher straight from the list (RAGM layout) ──
-  function printRow(row: any) {
+  // Multi-allocation vouchers keep their lines server-side, so open the window
+  // synchronously (popup-safe) then fetch lines before rendering.
+  async function printRow(row: any) {
     const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === String(row.cashBoxId));
     const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === String(row.bankAccountId));
     const treasury = row.paymentType === "bank"
@@ -119,7 +121,27 @@ export default function PaymentVouchers() {
         || (supp ? (isRtl ? supp.nameAr : (supp.nameEn || supp.nameAr)) : "")
         || (acct ? (isRtl ? acct.nameAr : (acct.nameEn || acct.nameAr)) : ""),
     };
-    printCashVoucher({
+    const w = openCashVoucherWindow((msg) =>
+      toast({ title: "تم منع النوافذ المنبثقة", description: msg, variant: "destructive" }));
+    if (!w) return;
+    let printLines: any[] = [];
+    try {
+      const res = await fetch(`${API}/api/payment-vouchers/${row.id}`, { headers: h });
+      if (res.ok) {
+        const full = await res.json();
+        printLines = ((full.lines as any[]) ?? []).map((l: any) => {
+          const a = (accounts as any[]).find((x: any) => String(x.id) === String(l.accountId));
+          return {
+            code: a?.code ?? "",
+            name: a ? (isRtl ? a.nameAr : (a.nameEn || a.nameAr)) : "—",
+            description: l.description ?? "",
+            amount: l.amount,
+            tax: l.taxAmount,
+          };
+        });
+      }
+    } catch { /* fall back to single-account row */ }
+    writeCashVoucher(w, {
       kind: "payment",
       doc: {
         code: row.code,
@@ -130,10 +152,9 @@ export default function PaymentVouchers() {
       },
       treasury,
       account,
+      lines: printLines.length ? printLines : null,
       company: (user as any)?.company ?? null,
       preparedBy: user?.username ?? null,
-      onError: (msg) =>
-        toast({ title: "تم منع النوافذ المنبثقة", description: msg, variant: "destructive" }),
     });
   }
 

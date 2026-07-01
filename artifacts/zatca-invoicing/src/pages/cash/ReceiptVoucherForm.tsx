@@ -21,6 +21,7 @@ import {
   ArrowDownCircle, ArrowRight, ChevronLeft, Search,
   Loader2, Save, Send, Lock, FileText, Banknote,
   Wallet, Building2, User2, Layers, Printer, Link2, X, Settings2,
+  Plus, Trash2,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
@@ -29,24 +30,46 @@ import { printCashVoucher } from "@/lib/cashVoucherPrint";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
+// A single allocation line (multi-line model). Receipt lines carry NO VAT.
+// Numeric fields stay strings for controlled inputs; backend parses both.
+interface RvLine {
+  key: string;            // local React key only (never sent)
+  accountId: string;      // CR GL account (required)
+  description: string;
+  amount: string;         // credited amount
+  costCenter: string;     // inherits header default on add
+  salesInvoiceId: string; // optional link to a sales invoice
+}
+
+let _rvLineSeq = 0;
+function newRvLine(init: Partial<RvLine> = {}): RvLine {
+  return {
+    key: `rvl_${Date.now()}_${_rvLineSeq++}`,
+    accountId: "",
+    description: "",
+    amount: "",
+    costCenter: "",
+    salesInvoiceId: "",
+    ...init,
+  };
+}
+
 interface FormState {
   date: string;
   paymentType: "cash" | "bank";
   branchId: string;
   cashBoxId: string;
   bankAccountId: string;
-  entityId: string;       // customer id (party mode)
-  accountId: string;      // GL account id (general-account mode)
+  entityId: string;       // customer id (optional party context)
   entityName: string;     // cached name for JE preview
-  amount: string;
   currencyId: string;
   exchangeRate: string;
-  salesInvoiceId: string; // optional link
   refType: string;
   refNumber: string;
   description: string;
   notes: string;
-  costCenter: string;
+  costCenter: string;     // header default inherited by new lines
+  lines: RvLine[];        // multi-allocation grid
 }
 
 const EMPTY: FormState = {
@@ -56,17 +79,15 @@ const EMPTY: FormState = {
   cashBoxId: "",
   bankAccountId: "",
   entityId: "",
-  accountId: "",
   entityName: "",
-  amount: "",
   currencyId: "",
   exchangeRate: "1",
-  salesInvoiceId: "",
   refType: "",
   refNumber: "",
   description: "",
   notes: "",
   costCenter: "",
+  lines: [],
 };
 
 // ── Branch matching for treasuries ───────────────────────────────
@@ -118,37 +139,12 @@ export default function ReceiptVoucherForm() {
   const cid = user?.companyId;
   const h = { Authorization: `Bearer ${token}` };
 
-  const [form, setForm] = useState<FormState>(EMPTY);
-  const [linkInvoice, setLinkInvoice] = useState(false);
-  // "party"   → settle against a customer (default, legacy behaviour)
-  // "account" → settle against a general GL account picked from the tree
-  const [entityMode, setEntityMode] = useState<"party" | "account">("party");
+  const [form, setForm] = useState<FormState>(() => ({ ...EMPTY, lines: [newRvLine()] }));
 
   // ── Field-level governance (شاشة «سياسات حقول الفواتير» → tab «سند قبض») ──
-  // Mirrors the sales/JE forms: hide/lock/require header + creditor-side fields
-  // per the company's active policy profile. Fail-open (missing key = editable).
+  // Mirrors the sales/JE forms: hide/lock/require header fields per the
+  // company's active policy profile. Fail-open (missing key = editable).
   const fp = useFieldPolicy("receipt_voucher");
-
-  // When the "حساب عام" creditor option is hidden, the toggle can only offer
-  // "عميل" → force party mode. Symmetrically, if "العميل" is hidden but the
-  // general-account option is allowed, force account mode. This keeps a NEW
-  // voucher from starting in a mode whose picker the admin has hidden.
-  //
-  // IMPORTANT — non-destructive on edit: we only coerce the mode for new
-  // vouchers. switchEntityMode() clears the opposite side (accountId/entityId),
-  // so running it on an EXISTING voucher whose persisted side is now hidden
-  // would silently rewrite the saved counterparty. For existing vouchers we
-  // leave the loaded mode + data untouched (the hidden picker just doesn't
-  // render, and the preserved id is sent back on save).
-  useEffect(() => {
-    if (!isNew) return;
-    if (!fp.isVisible("generalAccount") && entityMode === "account") {
-      switchEntityMode("party");
-    } else if (!fp.isVisible("customer") && fp.isVisible("generalAccount") && entityMode === "party") {
-      switchEntityMode("account");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fp, entityMode, isNew]);
 
   // ── Sequence preview for new vouchers ───────────────────────────
   const seqPeek = useNextSequenceNumber("receipt_voucher", isNew, undefined, undefined, form.paymentType);
@@ -271,6 +267,29 @@ export default function ReceiptVoucherForm() {
 
   useEffect(() => {
     if (!existing) return;
+    const headerCostCenter = existing.costCenter ?? "";
+    // Hydrate the allocation grid from the returned lines. Old vouchers have
+    // no lines[] → synthesize ONE line from the legacy header so they remain
+    // editable and re-saveable under the multi-line model.
+    const rawLines: any[] = Array.isArray(existing.lines) ? existing.lines : [];
+    let lines: RvLine[];
+    if (rawLines.length > 0) {
+      lines = rawLines.map((ln: any) => newRvLine({
+        accountId: ln.accountId != null ? String(ln.accountId) : "",
+        description: ln.description ?? "",
+        amount: ln.amount != null ? String(ln.amount) : "",
+        costCenter: ln.costCenter ?? headerCostCenter,
+        salesInvoiceId: ln.salesInvoiceId != null ? String(ln.salesInvoiceId) : "",
+      }));
+    } else {
+      lines = [newRvLine({
+        accountId: existing.accountId != null ? String(existing.accountId) : "",
+        description: existing.description ?? "",
+        amount: existing.amount != null ? String(existing.amount) : "",
+        costCenter: headerCostCenter,
+        salesInvoiceId: existing.salesInvoiceId != null ? String(existing.salesInvoiceId) : "",
+      })];
+    }
     setForm({
       date: existing.date ?? today(),
       paymentType: (existing.paymentType ?? "cash") as "cash" | "bank",
@@ -278,32 +297,33 @@ export default function ReceiptVoucherForm() {
       cashBoxId: existing.cashBoxId ? String(existing.cashBoxId) : "",
       bankAccountId: existing.bankAccountId ? String(existing.bankAccountId) : "",
       entityId: existing.entityId ? String(existing.entityId) : "",
-      accountId: existing.accountId ? String(existing.accountId) : "",
       entityName: existing.entityName ?? "",
-      amount: existing.amount ?? "",
       currencyId: existing.currencyId ? String(existing.currencyId) : "",
       exchangeRate: existing.exchangeRate ?? "1",
-      salesInvoiceId: existing.salesInvoiceId ? String(existing.salesInvoiceId) : "",
       refType: existing.refType ?? "",
       refNumber: existing.refNumber ?? "",
       description: existing.description ?? "",
       notes: existing.notes ?? "",
-      costCenter: existing.costCenter ?? "",
+      costCenter: headerCostCenter,
+      lines,
     });
-    setLinkInvoice(!!existing.salesInvoiceId);
-    setEntityMode(existing.accountId && !existing.entityId ? "account" : "party");
   }, [existing]);
 
-  // Toggle between settling a party (customer) and a general GL account.
-  // Switching clears the now-irrelevant side so we never submit both.
-  function switchEntityMode(m: "party" | "account") {
-    setEntityMode(m);
-    if (m === "account") {
-      setLinkInvoice(false);
-      setForm(p => ({ ...p, entityId: "", salesInvoiceId: "", entityName: "" }));
-    } else {
-      setForm(p => ({ ...p, accountId: "", entityName: "" }));
-    }
+  // ── Allocation-line helpers ────────────────────────────────────
+  function addLine() {
+    setForm(p => ({ ...p, lines: [...p.lines, newRvLine({ costCenter: p.costCenter })] }));
+  }
+  function removeLine(key: string) {
+    setForm(p => {
+      const next = p.lines.filter(l => l.key !== key);
+      return { ...p, lines: next.length ? next : [newRvLine({ costCenter: p.costCenter })] };
+    });
+  }
+  function updateLine(key: string, patch: Partial<RvLine>) {
+    setForm(p => ({
+      ...p,
+      lines: p.lines.map(l => (l.key === key ? { ...l, ...patch } : l)),
+    }));
   }
 
   // ── Document navigation (prev/next/jump-by-search) ─────────────
@@ -362,7 +382,7 @@ export default function ReceiptVoucherForm() {
   const invoiceItems: ComboboxItem[] = useMemo(() => {
     if (!form.entityId) return [];
     const cid_filter = Number(form.entityId);
-    const list = (salesInvoices as any[])
+    return (salesInvoices as any[])
       .filter((inv: any) => Number(inv.customerId) === cid_filter && inv.status !== "cancelled")
       .map((inv: any) => ({
         value: String(inv.id),
@@ -370,26 +390,28 @@ export default function ReceiptVoucherForm() {
         description: `${inv.invoiceDate} • ${Number(inv.totalAmount || 0).toFixed(2)} ${inv.currencyCode || "SAR"}`,
         code: inv.status,
       }));
-    // Make sure the currently-linked invoice is always selectable, even
-    // if it's owned by a different customer or is cancelled.
-    if (form.salesInvoiceId && !list.some(i => i.value === form.salesInvoiceId)) {
-      const inv = (salesInvoices as any[]).find((x: any) => String(x.id) === form.salesInvoiceId);
-      if (inv) {
-        list.unshift({
-          value: String(inv.id),
-          label: inv.docNumber ?? `SI-${inv.id}`,
-          description: `${inv.invoiceDate} • ${Number(inv.totalAmount || 0).toFixed(2)} ${inv.currencyCode || "SAR"}`,
-          code: inv.status,
-        });
-      }
-    }
-    return list;
-  }, [salesInvoices, form.entityId, form.salesInvoiceId]);
+  }, [salesInvoices, form.entityId]);
+
+  // Account name lookup for JE preview line labels.
+  function accountName(aid: string): string {
+    const a = (accounts as any[]).find((x: any) => String(x.id) === aid);
+    if (!a) return "";
+    return (isRtl ? (a.nameAr || a.nameEn) : (a.nameEn || a.nameAr)) || "";
+  }
+
+  // Live grand total (treasury debit) = Σ line amounts.
+  const totals = useMemo(() => {
+    const grand = form.lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    return { grand };
+  }, [form.lines]);
 
   // ── Live Journal-Entry preview (mirrors backend posting logic) ──
+  // Single DR treasury = Σ(amount); one CR row per valid allocation line.
   function jePreview() {
-    const amt = Number(form.amount || 0);
-    if (!isFinite(amt) || amt <= 0) return null;
+    const validLines = form.lines.filter(l => l.accountId && (Number(l.amount) || 0) > 0);
+    if (validLines.length === 0) return null;
+    const total = validLines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    if (!isFinite(total) || total <= 0) return null;
     const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === form.cashBoxId);
     const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === form.bankAccountId);
     const cbName = cb ? (isRtl ? cb.nameAr : (cb.nameEn || cb.nameAr)) : "";
@@ -397,14 +419,11 @@ export default function ReceiptVoucherForm() {
     const drLabel = form.paymentType === "bank"
       ? (ba ? t(`${NS}.bankPrefix`, { name: baName }) : t(`${NS}.noBankSelected`))
       : (cb ? t(`${NS}.cashPrefix`, { name: cbName }) : t(`${NS}.noCashSelected`));
-    const crLabel = form.entityName
-      ? (entityMode === "account"
-          ? form.entityName
-          : t(`${NS}.customerPrefix`, { name: form.entityName }))
-      : (entityMode === "account"
-          ? t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —")
-          : t(`${NS}.noCustomerSelected`, "— لم يتم اختيار العميل —"));
-    return { drLabel, crLabel, amount: amt };
+    const crRows = validLines.map(l => ({
+      label: accountName(l.accountId) || t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —"),
+      amount: Number(l.amount) || 0,
+    }));
+    return { drLabel, crRows, total };
   }
 
   // ── Save / Save-and-post mutation ──────────────────────────────
@@ -413,9 +432,16 @@ export default function ReceiptVoucherForm() {
 
   const saveMut = useMutation({
     mutationFn: async (mode: "draft" | "post") => {
-      const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
-      const amtNum = Number(cleanAmt);
-      if (!isFinite(amtNum) || amtNum <= 0) throw new Error(t(`${NS}.invalidAmount`));
+      // Build the allocation payload — drop rows with no account AND zero amount.
+      const cleanLines = form.lines.filter(l => l.accountId || (Number(l.amount) || 0) > 0);
+      if (cleanLines.length === 0) throw new Error(t(`${NS}.noLines`, "أضف بنداً واحداً على الأقل"));
+      for (const l of cleanLines) {
+        if (!l.accountId) throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب"));
+        if (!((Number(l.amount) || 0) > 0)) throw new Error(t(`${NS}.lineAmountRequired`, "كل بند يجب أن يحتوي على مبلغ أكبر من صفر"));
+      }
+      const grandTotal = cleanLines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+      if (!isFinite(grandTotal) || grandTotal <= 0) throw new Error(t(`${NS}.invalidAmount`));
+
       if (fp.isVisible("date") && !form.date) throw new Error(t(`${NS}.dateRequired`, "التاريخ مطلوب"));
       if (fp.isVisible("branch") && !form.branchId) throw new Error(t(`${NS}.branchRequired`, "الرجاء اختيار الفرع"));
       if (fp.isVisible("treasury")) {
@@ -424,18 +450,6 @@ export default function ReceiptVoucherForm() {
         if (form.paymentType === "bank" && !form.bankAccountId)
           throw new Error(t(`${NS}.bankRequired`, "الحساب البنكي مطلوب عند الدفع بنكاً"));
       }
-      if (entityMode === "party") {
-        if (fp.isVisible("customer") && !form.entityId)
-          throw new Error(t(`${NS}.customerRequired`, "اختيار العميل مطلوب"));
-      } else if (fp.isVisible("generalAccount") && !form.accountId) {
-        throw new Error(t(`${NS}.accountRequired`, "اختيار الحساب مطلوب"));
-      }
-      // Safety net for a both-hidden creditor-side misconfiguration: if the
-      // admin has hidden BOTH "العميل" and "حساب عام", neither check above can
-      // fire — refuse to save a voucher with no creditor counterparty rather
-      // than silently letting the backend fall back to a default receivable.
-      if (!form.entityId && !form.accountId)
-        throw new Error(t(`${NS}.counterpartyRequired`, "يجب تحديد العميل أو الحساب الدائن"));
       // Policy-driven required checks for the optional textual fields.
       const reqMsg = (label: string) =>
         t(`${NS}.fieldRequired`, "هذا الحقل مطلوب") + ": " + label;
@@ -450,23 +464,30 @@ export default function ReceiptVoucherForm() {
       if (fp.isVisible("notes") && fp.isRequired("notes") && !form.notes.trim())
         throw new Error(reqMsg(t("cashCommon.notes")));
 
-      const isAccountMode = entityMode === "account";
+      const linesPayload = cleanLines.map(l => ({
+        accountId:      l.accountId ? parseInt(l.accountId) : null,
+        description:    l.description || null,
+        amount:         String(Number(l.amount) || 0),
+        costCenter:     l.costCenter || form.costCenter || null,
+        branchId:       form.branchId ? parseInt(form.branchId) : null,
+        salesInvoiceId: l.salesInvoiceId ? parseInt(l.salesInvoiceId) : null,
+      }));
+
+      const { lines: _omitLines, ...formRest } = form;
       const body = {
-        ...form,
-        amount: amtNum.toFixed(2),
+        ...formRest,
+        amount: grandTotal.toFixed(2),
         companyId: cid,
         // Server force-overrides to "customer" but we send it for clarity.
         entityType: "customer",
         branchId:     form.branchId     ? parseInt(form.branchId)     : null,
         cashBoxId:    form.cashBoxId    ? parseInt(form.cashBoxId)    : null,
         bankAccountId:form.bankAccountId? parseInt(form.bankAccountId): null,
-        // Account mode credits a general GL account (accountId) with no party;
-        // party mode credits the customer and leaves accountId null.
-        accountId:    isAccountMode && form.accountId ? parseInt(form.accountId) : null,
-        entityId:     isAccountMode ? null : (form.entityId ? parseInt(form.entityId) : null),
+        // Multi-line model: header account is nulled server-side from lines.
+        accountId:    null,
+        entityId:     form.entityId ? parseInt(form.entityId) : null,
         currencyId:   form.currencyId   ? parseInt(form.currencyId)   : null,
-        salesInvoiceId: !isAccountMode && linkInvoice && form.salesInvoiceId
-          ? parseInt(form.salesInvoiceId) : null,
+        lines: linesPayload,
       };
 
       const url = isNew
@@ -612,6 +633,16 @@ export default function ReceiptVoucherForm() {
     const linkedInv = existing.salesInvoiceId
       ? (salesInvoices as any[]).find((x: any) => String(x.id) === String(existing.salesInvoiceId))
       : null;
+    // Multi-allocation lines (each CR side). Resolve account code/name for print.
+    const printLines = ((existing.lines as any[]) ?? []).map((l: any) => {
+      const a = (accounts as any[]).find((x: any) => String(x.id) === String(l.accountId));
+      return {
+        code: a?.code ?? "",
+        name: a ? (isRtl ? a.nameAr : (a.nameEn || a.nameAr)) : "—",
+        description: l.description ?? "",
+        amount: l.amount,
+      };
+    });
     printCashVoucher({
       kind: "receipt",
       doc: {
@@ -624,6 +655,7 @@ export default function ReceiptVoucherForm() {
       },
       treasury,
       account,
+      lines: printLines.length ? printLines : null,
       company: (user as any)?.company ?? null,
       preparedBy: user?.username ?? null,
       onError: (msg) =>
@@ -843,7 +875,7 @@ export default function ReceiptVoucherForm() {
                     {(() => {
                       const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
                       const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
-                      const amt = Number(form.amount || 0);
+                      const amt = totals.grand;
                       const r = Number(form.exchangeRate);
                       if (!sel || !base || sel.id === base.id || !(amt > 0) || !(r > 0)) return null;
                       return (
@@ -925,188 +957,163 @@ export default function ReceiptVoucherForm() {
               </CardContent>
             </Card>
 
-            {/* Section: Customer + Amount */}
+            {/* Section: Customer (optional party context for per-line invoice links) */}
+            {fp.isVisible("customer") && (
             <Card className="border-2 border-blue-100">
               <CardHeader className="py-3 px-4 border-b bg-blue-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2 text-blue-900">
                   <User2 className="h-4 w-4" />
-                  {t(`${NS}.section_customer`, "العميل والمبلغ")}
+                  {t(`${NS}.section_customer`, "العميل")}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="pt-4 pb-4 space-y-4">
-                {/* Credit-side mode: customer vs general GL account.
-                    Each option is gated by its own policy key — when the admin
-                    hides "حساب عام" (generalAccount) the toggle drops that button
-                    (and a forced-mode effect keeps the form in party mode). */}
-                {(fp.isVisible("customer") || fp.isVisible("generalAccount")) && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.creditSide`, "الطرف الدائن")}</Label>
-                  <div className="inline-flex rounded-lg border bg-muted/20 p-0.5">
-                    {fp.isVisible("customer") && (
-                    <button type="button"
-                      onClick={() => switchEntityMode("party")}
-                      data-testid="rv-entitymode-party"
-                      className={cn(
-                        "px-4 h-8 rounded-md text-xs font-medium flex items-center gap-1.5 transition",
-                        entityMode === "party"
-                          ? "bg-blue-100 text-blue-800 shadow-sm"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}>
-                      <User2 className="h-3.5 w-3.5" /> {t(`${NS}.modeCustomer`, "عميل")}
-                    </button>
-                    )}
-                    {fp.isVisible("generalAccount") && (
-                    <button type="button"
-                      onClick={() => switchEntityMode("account")}
-                      data-testid="rv-entitymode-account"
-                      className={cn(
-                        "px-4 h-8 rounded-md text-xs font-medium flex items-center gap-1.5 transition",
-                        entityMode === "account"
-                          ? "bg-emerald-100 text-emerald-800 shadow-sm"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}>
-                      <Layers className="h-3.5 w-3.5" /> {t(`${NS}.modeAccount`, "حساب عام")}
-                    </button>
-                    )}
-                  </div>
-                </div>
-                )}
+              <CardContent className="pt-4 pb-4 space-y-2">
+                <Label className="text-xs font-medium">{t(`${NS}.customer`)}</Label>
+                <SearchCombobox
+                  items={customerItems}
+                  value={form.entityId}
+                  disabled={fp.isReadOnly("customer")}
+                  onValueChange={v => {
+                    const found = (customers as any[]).find((x: any) => String(x.id) === v);
+                    setForm(p => ({
+                      ...p,
+                      entityId: v,
+                      entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
+                      // Changing the customer invalidates any per-line invoice links.
+                      lines: p.lines.map(l => ({ ...l, salesInvoiceId: "" })),
+                    }));
+                  }}
+                  placeholder={t(`${NS}.selectCustomer`, "— اختر العميل —")}
+                  searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
+                  emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {t(`${NS}.customerHintOptional`, "اختياري — يُستخدم لتصفية فواتير المبيعات القابلة للربط في البنود.")}
+                </p>
+              </CardContent>
+            </Card>
+            )}
 
-                {entityMode === "party" ? (
-                  /* Customer */
-                  fp.isVisible("customer") && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">
-                      {t(`${NS}.customer`)} <span className="text-destructive">*</span>
-                    </Label>
-                    <SearchCombobox
-                      items={customerItems}
-                      value={form.entityId}
-                      disabled={fp.isReadOnly("customer")}
-                      onValueChange={v => {
-                        const found = (customers as any[]).find((x: any) => String(x.id) === v);
-                        setForm(p => ({
-                          ...p,
-                          entityId: v,
-                          entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
-                          // Linking a different customer invalidates the linked invoice.
-                          salesInvoiceId: "",
-                        }));
-                      }}
-                      placeholder={t(`${NS}.selectCustomer`, "— اختر العميل —")}
-                      searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
-                      emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
-                    />
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      {t(`${NS}.jeHintCr`, "العميل سيكون دائناً في القيد المحاسبي")}
-                    </p>
-                  </div>
-                  )
-                ) : (
-                  /* General GL account (main → sub cascade) */
-                  fp.isVisible("generalAccount") && (
-                  <div className="space-y-1.5">
-                    <AccountCascadePicker
-                      accounts={accounts as any[]}
-                      value={form.accountId}
-                      isRtl={isRtl}
-                      disabled={fp.isReadOnly("generalAccount")}
-                      onValueChange={(aid) => {
-                        const a = (accounts as any[]).find((x: any) => String(x.id) === aid);
-                        setForm(p => ({
-                          ...p,
-                          accountId: aid,
-                          entityName: a ? ((isRtl ? (a.nameAr || a.nameEn) : (a.nameEn || a.nameAr)) || "") : "",
-                        }));
-                      }}
-                    />
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      {t(`${NS}.jeHintCrAccount`, "الحساب المختار سيكون دائناً في القيد المحاسبي")}
-                    </p>
-                  </div>
-                  )
-                )}
-
-                {/* Amount — large prominent input */}
-                {fp.isVisible("amount") && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">
-                    {t(`${NS}.amount`)} <span className="text-destructive">*</span>
-                  </Label>
-                  <div className="relative">
-                    <Banknote className={cn("h-5 w-5 absolute top-1/2 -translate-y-1/2 text-green-600 pointer-events-none", isRtl ? "right-3" : "left-3")} />
-                    <Input
-                      type="number" step="0.01" placeholder="0.00"
-                      value={form.amount}
-                      onChange={e => { if (!fp.isReadOnly("amount")) setForm(p => ({ ...p, amount: e.target.value })); }}
-                      readOnly={fp.isReadOnly("amount")}
-                      onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
-                      dir="ltr"
-                      data-testid="rv-amount"
-                      className={cn("h-12 text-xl font-mono font-bold text-left", isRtl ? "pr-11" : "pl-11", fp.isReadOnly("amount") && "bg-muted/40 cursor-not-allowed")}
-                    />
-                  </div>
-                </div>
-                )}
-
-                {/* Optional: link to a sales invoice (party mode only) */}
-                {fp.isVisible("settleSalesInvoice") && entityMode === "party" && (
-                <div className="rounded-lg border border-dashed border-blue-200 bg-blue-50/30 p-3 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Link2 className="h-4 w-4 text-blue-700" />
-                      <Label htmlFor="rv-link-toggle" className="text-xs font-semibold text-blue-900 cursor-pointer">
-                        {t(`${NS}.linkInvoiceTitle`, "سداد مقابل فاتورة مبيعات (اختياري)")}
-                      </Label>
-                    </div>
-                    <Switch
-                      id="rv-link-toggle"
-                      checked={linkInvoice}
-                      onCheckedChange={(v) => {
-                        setLinkInvoice(v);
-                        if (!v) setForm(p => ({ ...p, salesInvoiceId: "" }));
-                      }}
-                      data-testid="rv-link-toggle"
-                    />
-                  </div>
-                  {linkInvoice && (
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium">
-                        {t(`${NS}.selectInvoiceToLink`, "اختر فاتورة المبيعات")}
-                      </Label>
-                      <div className="flex gap-2 items-stretch">
-                        <div className="flex-1">
-                          <SearchCombobox
-                            items={invoiceItems}
-                            value={form.salesInvoiceId}
-                            onValueChange={v => setForm(p => ({ ...p, salesInvoiceId: v }))}
-                            placeholder={form.entityId
-                              ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
-                              : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
-                            searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
-                            emptyText={form.entityId
-                              ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا العميل")
-                              : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
-                          />
-                        </div>
-                        {form.salesInvoiceId && (
-                          <Button
-                            type="button" variant="ghost" size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                            onClick={() => setForm(p => ({ ...p, salesInvoiceId: "" }))}
-                            title={t(`${NS}.clearLink`, "إلغاء الربط")}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
+            {/* Section: Allocation lines (multi-line receipt, no VAT) */}
+            <Card className="border-2 border-green-100">
+              <CardHeader className="py-3 px-4 border-b bg-green-50/40">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-900">
+                  <Layers className="h-4 w-4" />
+                  {t(`${NS}.section_lines`, "بنود القبض")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 pb-4 space-y-3">
+                <div className="overflow-x-auto -mx-1">
+                  <table className="w-full text-xs border-separate border-spacing-y-2 min-w-[820px]">
+                    <thead>
+                      <tr className="text-muted-foreground">
+                        <th className="text-start font-medium w-8 px-1">#</th>
+                        <th className="text-start font-medium px-1 min-w-[220px]">{t(`${NS}.colAccount`, "الحساب")} <span className="text-destructive">*</span></th>
+                        <th className="text-start font-medium px-1 min-w-[130px]">{t(`${NS}.colDescription`, "البيان")}</th>
+                        <th className="text-start font-medium px-1 w-28">{t(`${NS}.colAmount`, "المبلغ")} <span className="text-destructive">*</span></th>
+                        <th className="text-start font-medium px-1 w-32">{t(`${NS}.colCostCenter`, "مركز التكلفة")}</th>
+                        {fp.isVisible("settleSalesInvoice") && (
+                        <th className="text-start font-medium px-1 min-w-[160px]"><span className="inline-flex items-center gap-1"><Link2 className="h-3 w-3" />{t(`${NS}.colSalesInvoice`, "ربط فاتورة مبيعات")}</span></th>
                         )}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        {t(`${NS}.linkHint`, "عند الربط ستظهر فاتورة المبيعات «مسددة» في قائمة فواتير المبيعات بنوع السداد المحدد.")}
-                      </p>
-                    </div>
-                  )}
+                        <th className="text-start font-medium px-1 w-24">{t(`${NS}.colLineTotal`, "الإجمالي")}</th>
+                        <th className="px-1 w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {form.lines.map((l, idx) => (
+                        <tr key={l.key} className="align-top" data-testid={`rv-line-${idx}`}>
+                          <td className="px-1 pt-2 text-muted-foreground tabular-nums">{idx + 1}</td>
+                          <td className="px-1">
+                            <AccountCascadePicker
+                              accounts={accounts as any[]}
+                              value={l.accountId}
+                              isRtl={isRtl}
+                              onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
+                            />
+                          </td>
+                          <td className="px-1">
+                            <Input
+                              value={l.description}
+                              onChange={e => updateLine(l.key, { description: e.target.value })}
+                              placeholder={t(`${NS}.colDescription`, "البيان")}
+                              className="h-9 text-sm"
+                            />
+                          </td>
+                          <td className="px-1">
+                            <Input
+                              type="number" step="0.01" placeholder="0.00" dir="ltr"
+                              value={l.amount}
+                              onChange={e => updateLine(l.key, { amount: e.target.value })}
+                              onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
+                              className="h-9 text-sm text-left font-mono"
+                              data-testid={`rv-line-amount-${idx}`}
+                            />
+                          </td>
+                          <td className="px-1">
+                            <select
+                              value={l.costCenter}
+                              onChange={e => updateLine(l.key, { costCenter: e.target.value })}
+                              className="w-full h-9 border border-input rounded-md px-2 text-sm bg-background"
+                            >
+                              <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
+                              {(costCentersList as any[])
+                                .filter((c: any) => c.isActive !== false)
+                                .map((c: any) => (
+                                  <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>
+                                ))}
+                            </select>
+                          </td>
+                          {fp.isVisible("settleSalesInvoice") && (
+                          <td className="px-1">
+                            <SearchCombobox
+                              items={invoiceItems}
+                              value={l.salesInvoiceId}
+                              onValueChange={v => updateLine(l.key, { salesInvoiceId: v })}
+                              placeholder={form.entityId
+                                ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
+                                : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
+                              searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
+                              emptyText={form.entityId
+                                ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا العميل")
+                                : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
+                            />
+                          </td>
+                          )}
+                          <td className="px-1 pt-2 text-left font-mono tabular-nums whitespace-nowrap">{fmt(Number(l.amount) || 0)}</td>
+                          <td className="px-1 pt-1">
+                            <Button
+                              type="button" variant="ghost" size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeLine(l.key)}
+                              title={t(`${NS}.removeLine`, "حذف البند")}
+                              data-testid={`rv-line-remove-${idx}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                )}
+
+                <Button
+                  type="button" variant="outline" size="sm"
+                  onClick={addLine}
+                  className="gap-1.5"
+                  data-testid="rv-add-line"
+                >
+                  <Plus className="h-4 w-4" />
+                  {t(`${NS}.addLine`, "إضافة بند")}
+                </Button>
+
+                {/* Totals footer */}
+                <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3 mt-1 text-sm">
+                  <div className="flex items-center gap-2">
+                    <Banknote className="h-4 w-4 text-green-600" />
+                    <span className="text-muted-foreground text-xs">{t(`${NS}.grandTotal`, "الإجمالي")}</span>
+                    <span className="font-mono font-bold text-base tabular-nums text-green-700" data-testid="rv-grand-total">{fmt(totals.grand)}</span>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
@@ -1201,14 +1208,16 @@ export default function ReceiptVoucherForm() {
                     <tbody className="font-mono">
                       <tr className="border-b border-blue-200/40">
                         <td className="py-1.5 text-start text-[11px]">{preview.drLabel}</td>
-                        <td className={cn("text-green-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(preview.amount)}</td>
+                        <td className={cn("text-green-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(preview.total)}</td>
                         <td className={cn("text-muted-foreground", isRtl ? "text-left" : "text-right")}>—</td>
                       </tr>
-                      <tr>
-                        <td className="py-1.5 text-start text-[11px]">{preview.crLabel}</td>
+                      {preview.crRows.map((r, i) => (
+                      <tr key={i} className="border-b border-blue-200/40 last:border-0">
+                        <td className="py-1.5 text-start text-[11px]">{r.label}</td>
                         <td className={cn("text-muted-foreground", isRtl ? "text-left" : "text-right")}>—</td>
-                        <td className={cn("text-red-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(preview.amount)}</td>
+                        <td className={cn("text-red-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(r.amount)}</td>
                       </tr>
+                      ))}
                     </tbody>
                   </table>
                 )}

@@ -1,18 +1,18 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import {
-  paymentVouchersTable,
+  paymentVouchersTable, paymentVoucherLinesTable,
   cashBoxesTable, bankAccountsTable,
   suppliersTable,
   purchaseInvoicesTable,
   journalEntriesTable, journalEntryLinesTable,
   accountsTable,
 } from "@workspace/db";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
 import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
-import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
+import { loadMappings, pickAccount, resolveVatInputAccountId } from "../lib/accountingMappings.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -66,42 +66,97 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
     throw new Error("لا يوجد حساب محاسبي للخزنة/البنك — اربط الخزنة بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية الموردين»");
   }
 
-  // ─── DR side: supplier payable account ──────────────────────────
-  // The form is now supplier-only; legacy rows that had customer/other
-  // entityType still load (read-only) but cannot be posted from this UI.
-  let drAccountId: number | null = v.accountId ?? null;   // legacy override
-  let drLabel = "";
-  if (!drAccountId) {
-    if (v.entityId) {
-      const [s] = await db.select().from(suppliersTable)
-        .where(and(eq(suppliersTable.id, v.entityId), eq(suppliersTable.companyId, cid)));
-      drAccountId = pickAccount(s?.accountId ?? null, lookup("supplier_settlement", "payable"));
-      drLabel = `مورّد ${s?.nameAr ?? ""}`.trim();
-    } else {
-      drAccountId = lookup("supplier_settlement", "payable");
+  const desc = `سند صرف ${v.code}${v.description ? " - " + v.description : ""}`;
+  const cc = v.costCenter ? String(v.costCenter).trim() || null : null;
+
+  // Multi-allocation model: one treasury CR side + many DR allocation lines,
+  // each optionally carrying its own input-VAT DR line. When no lines exist
+  // (legacy single-`amount` voucher) we fall back to the classic two-line JE.
+  const lines = await db.select().from(paymentVoucherLinesTable)
+    .where(eq(paymentVoucherLinesTable.voucherId, v.id))
+    .orderBy(asc(paymentVoucherLinesTable.sortOrder), asc(paymentVoucherLinesTable.id));
+
+  const jeLines: {
+    accountId: number; debit: string; credit: string;
+    description: string; sortOrder: number; costCenter: string | null;
+  }[] = [];
+  const acctIds = new Set<number>([crAccountId]);
+  let total = 0;
+  let so = 0;
+
+  if (lines.length > 0) {
+    // ─── DR side: per-line allocation (+ optional per-line input VAT) ──
+    let vatInputId: number | null | undefined = undefined; // lazily resolved fallback
+    for (const l of lines) {
+      const lineAcct = l.accountId ?? null;
+      if (!lineAcct) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
+      const net = parseFloat(l.amount || "0");
+      const tax = parseFloat(l.taxAmount || "0");
+      if (net <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
+      if (tax < 0) throw new Error("مبلغ الضريبة غير صالح");
+      const lineCc = (l.costCenter ? String(l.costCenter).trim() || null : null) ?? cc;
+      acctIds.add(lineAcct);
+      jeLines.push({ accountId: lineAcct, debit: net.toFixed(2), credit: "0.00", description: l.description || desc, sortOrder: so++, costCenter: lineCc });
+      total += net;
+      if (tax > 0) {
+        let taxAcc = l.taxAccountId ?? null;
+        if (!taxAcc) {
+          if (vatInputId === undefined) vatInputId = await resolveVatInputAccountId(cid);
+          taxAcc = vatInputId ?? null;
+        }
+        if (!taxAcc) {
+          throw new Error("لا يوجد حساب ضريبة المدخلات — حدّد حساب الضريبة في البند أو اربط «ضريبة المدخلات» في ربط القيود المحاسبية");
+        }
+        acctIds.add(taxAcc);
+        jeLines.push({ accountId: taxAcc, debit: tax.toFixed(2), credit: "0.00", description: `ضريبة مدخلات - ${l.description || v.code}`, sortOrder: so++, costCenter: lineCc });
+        total += tax;
+      }
     }
+    if (total <= 0) throw new Error("إجمالي السند يجب أن يكون أكبر من صفر");
+    // ─── CR side: single treasury line for the grand total ────────────
+    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: total.toFixed(2), description: crLabel || desc, sortOrder: so++, costCenter: cc });
   } else {
-    drLabel = v.entityName || "حساب الطرف الآخر";
-  }
-  if (!drAccountId) {
-    throw new Error("لا يوجد حساب محاسبي للمورد — اربط المورد بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية الموردين»");
+    // ─── Legacy fallback: single supplier-payable DR / treasury CR ────
+    if (amount <= 0) throw new Error("المبلغ يجب أن يكون أكبر من صفر");
+    let drAccountId: number | null = v.accountId ?? null;   // legacy override
+    let drLabel = "";
+    if (!drAccountId) {
+      if (v.entityId) {
+        const [s] = await db.select().from(suppliersTable)
+          .where(and(eq(suppliersTable.id, v.entityId), eq(suppliersTable.companyId, cid)));
+        drAccountId = pickAccount(s?.accountId ?? null, lookup("supplier_settlement", "payable"));
+        drLabel = `مورّد ${s?.nameAr ?? ""}`.trim();
+      } else {
+        drAccountId = lookup("supplier_settlement", "payable");
+      }
+    } else {
+      drLabel = v.entityName || "حساب الطرف الآخر";
+    }
+    if (!drAccountId) {
+      throw new Error("لا يوجد حساب محاسبي للمورد — اربط المورد بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية الموردين»");
+    }
+    acctIds.add(drAccountId);
+    total = amount;
+    jeLines.push({ accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc });
+    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc });
   }
 
-  // Guard against dangling account links: a supplier/cashbox/bank may carry an
-  // accountId whose account row was later deleted. Without this check the JE
-  // header inserts and then the LINES insert fails on the account_id FK,
-  // stranding an orphan zero-balance journal entry (the reported bug).
+  // Guard against dangling account links: a supplier/cashbox/bank/line may
+  // carry an accountId whose account row was later deleted. Without this the
+  // JE header inserts and then the LINES insert fails on the account_id FK,
+  // stranding an orphan zero-balance journal entry.
   const acctRows = await db.select({ id: accountsTable.id }).from(accountsTable)
-    .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, [drAccountId, crAccountId])));
+    .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, [...acctIds])));
   const foundAccts = new Set(acctRows.map((a) => a.id));
-  if (!foundAccts.has(drAccountId)) {
-    throw new Error("حساب المورد المرتبط غير موجود في شجرة الحسابات — يرجى ربط المورد بحساب صحيح من شاشة «الموردين» أو «ربط القيود المحاسبية»");
-  }
   if (!foundAccts.has(crAccountId)) {
     throw new Error("حساب الخزنة/البنك المرتبط غير موجود في شجرة الحسابات — يرجى ربطه بحساب صحيح");
   }
+  for (const id of acctIds) {
+    if (!foundAccts.has(id)) {
+      throw new Error("أحد الحسابات المرتبطة غير موجود في شجرة الحسابات — يرجى مراجعة حسابات البنود والموردين");
+    }
+  }
 
-  const desc = `سند صرف ${v.code}${v.description ? " - " + v.description : ""}`;
   // Period guard: prevent payment posting into a closed fiscal period.
   const writability = await assertWritableForDate(cid, v.date);
   if (!writability.ok) {
@@ -118,10 +173,7 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
     userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
     branchId: v.branchId ?? null, docDate: v.date as any,
   })) ?? v.code;
-  // Header-level cost center propagates to BOTH JE lines so cost-center
-  // reports pick up the payment activity.
-  const cc = v.costCenter ? String(v.costCenter).trim() || null : null;
-  // Atomic: header + both lines commit together, so a mid-way failure never
+  // Atomic: header + all lines commit together, so a mid-way failure never
   // strands an orphan (zero-balance) journal entry.
   const entryId = await db.transaction(async (tx) => {
     const [entry] = await tx.insert(journalEntriesTable).values({
@@ -133,10 +185,9 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
       periodId: writability.period?.id ?? null,
       ...fullAuditFor(req, jeStatus),
     }).returning();
-    await tx.insert(journalEntryLinesTable).values([
-      { entryId: entry.id, accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc },
-      { entryId: entry.id, accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc },
-    ]);
+    await tx.insert(journalEntryLinesTable).values(
+      jeLines.map((jl) => ({ entryId: entry.id, ...jl })),
+    );
     return entry.id;
   });
   return entryId;
@@ -168,8 +219,98 @@ router.get("/:id", async (req, res) => {
       eq(paymentVouchersTable.companyId, cid),
     ));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
-  res.json(row);
+  const lines = await db.select().from(paymentVoucherLinesTable)
+    .where(eq(paymentVoucherLinesTable.voucherId, row.id))
+    .orderBy(asc(paymentVoucherLinesTable.sortOrder), asc(paymentVoucherLinesTable.id));
+  res.json({ ...row, lines });
 });
+
+// Normalize a raw request `lines[]` payload into typed allocation rows,
+// dropping fully-empty rows. Returns null when the caller didn't send a
+// `lines` array at all (legacy single-`amount` callers keep working).
+interface RawPvLine {
+  accountId: number | null;
+  description: string | null;
+  amount: number;
+  taxRate: number;
+  taxAmount: number;
+  taxAccountId: number | null;
+  costCenter: string | null;
+  branchId: number | null;
+  purchaseInvoiceId: number | null;
+}
+function normalizePaymentLines(raw: any): RawPvLine[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: RawPvLine[] = [];
+  for (const l of raw) {
+    const accountId = l?.accountId ? parseInt(l.accountId) : null;
+    const amount = parseFloat(l?.amount ?? "0") || 0;
+    const taxAmount = parseFloat(l?.taxAmount ?? "0") || 0;
+    if (!accountId && amount === 0 && taxAmount === 0) continue; // skip blank row
+    out.push({
+      accountId,
+      description: l?.description ?? null,
+      amount,
+      taxRate: parseFloat(l?.taxRate ?? "0") || 0,
+      taxAmount,
+      taxAccountId: l?.taxAccountId ? parseInt(l.taxAccountId) : null,
+      costCenter: l?.costCenter ? String(l.costCenter).trim() || null : null,
+      branchId: l?.branchId ? parseInt(l.branchId) : null,
+      purchaseInvoiceId: l?.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
+    });
+  }
+  return out;
+}
+
+// Validate normalized lines: every line needs an account + positive amount,
+// all account/tax-account ids must belong to the tenant, and any per-line
+// invoice link must resolve to the same tenant/supplier.
+async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId: number | null): Promise<void> {
+  if (lines.length === 0) throw new Error("يجب إضافة بند واحد على الأقل");
+  const acctIds = new Set<number>();
+  for (const l of lines) {
+    if (!l.accountId) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
+    if (l.amount <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
+    if (l.taxAmount < 0) throw new Error("مبلغ الضريبة غير صالح");
+    acctIds.add(l.accountId);
+    if (l.taxAccountId) acctIds.add(l.taxAccountId);
+  }
+  if (acctIds.size) {
+    const found = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, [...acctIds])));
+    const fs = new Set(found.map((a) => a.id));
+    for (const id of acctIds) {
+      if (!fs.has(id)) throw new Error("أحد الحسابات المحددة في البنود غير موجود في هذه الشركة");
+    }
+  }
+  for (const l of lines) {
+    if (l.purchaseInvoiceId) await validatePurchaseInvoiceLink(cid, l.purchaseInvoiceId, supplierId);
+  }
+}
+
+// Sum a voucher's grand total from its allocation lines (net + input VAT).
+function paymentLinesTotal(lines: RawPvLine[]): number {
+  return lines.reduce((s, l) => s + l.amount + l.taxAmount, 0);
+}
+
+// Persist allocation lines for a voucher, replacing any existing rows.
+async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promise<void> {
+  await db.delete(paymentVoucherLinesTable).where(eq(paymentVoucherLinesTable.voucherId, voucherId));
+  if (lines.length === 0) return;
+  await db.insert(paymentVoucherLinesTable).values(lines.map((l, i) => ({
+    voucherId,
+    accountId: l.accountId,
+    description: l.description,
+    amount: l.amount.toFixed(2),
+    taxRate: l.taxRate.toFixed(2),
+    taxAmount: l.taxAmount.toFixed(2),
+    taxAccountId: l.taxAccountId,
+    costCenter: l.costCenter,
+    branchId: l.branchId,
+    purchaseInvoiceId: l.purchaseInvoiceId,
+    sortOrder: i,
+  })));
+}
 
 // Validate that a purchaseInvoiceId — when provided — actually belongs to the
 // same tenant AND to the supplier being settled. We tolerate the supplier
@@ -193,11 +334,23 @@ router.post("/", async (req, res) => {
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
   const entityId = d.entityId ? parseInt(d.entityId) : null;
-  const purchaseInvoiceId = d.purchaseInvoiceId ? parseInt(d.purchaseInvoiceId) : null;
-  if (purchaseInvoiceId) {
-    try { await validatePurchaseInvoiceLink(cid, purchaseInvoiceId, entityId); }
+  // Multi-allocation lines (optional). When present they drive the header
+  // amount + invoice link; legacy single-`amount` callers send no `lines`.
+  const lines = normalizePaymentLines(d.lines);
+  if (lines) {
+    try { await validatePaymentLines(cid, lines, entityId); }
+    catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
+  }
+  const headerPurchaseInvoiceId = d.purchaseInvoiceId ? parseInt(d.purchaseInvoiceId) : null;
+  // Prefer an explicit header link; else adopt the first line's invoice so
+  // the list view keeps showing a linked-invoice badge.
+  const purchaseInvoiceId = headerPurchaseInvoiceId
+    ?? (lines?.find((l) => l.purchaseInvoiceId)?.purchaseInvoiceId ?? null);
+  if (headerPurchaseInvoiceId) {
+    try { await validatePurchaseInvoiceLink(cid, headerPurchaseInvoiceId, entityId); }
     catch (e: any) { res.status(400).json({ error: e?.message || "فاتورة غير صالحة" }); return; }
   }
+  const headerAmount = lines ? paymentLinesTotal(lines).toFixed(2) : (d.amount || "0");
 
   // Auto code — prefer the configured "payment_voucher" sequence when no
   // explicit code was supplied. Falls back to the legacy PV-#### scheme so
@@ -234,8 +387,10 @@ router.post("/", async (req, res) => {
     entityType:    "supplier",
     entityId,
     entityName:    d.entityName    ?? null,
-    accountId:     d.accountId     ? parseInt(d.accountId)     : null,
-    amount:        d.amount        || "0",
+    // Multi-line vouchers keep the header override null (lines carry the
+    // allocation accounts); legacy single-account callers still honor it.
+    accountId:     lines ? null : (d.accountId ? parseInt(d.accountId) : null),
+    amount:        headerAmount,
     currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
     exchangeRate:  d.exchangeRate  || "1",
     refType:       d.refType       ?? (purchaseInvoiceId ? "purchase_invoice" : null),
@@ -249,6 +404,7 @@ router.post("/", async (req, res) => {
     // resolved by extractAuth from the trusted x-session-id header.
     sessionId:     (req as any).manualSessionId ?? null,
   }).returning();
+  if (lines) await replacePaymentLines(row.id, lines);
   res.status(201).json(row);
 });
 
@@ -264,11 +420,21 @@ router.put("/:id", async (req, res) => {
   if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن تعديل سند مرحّل" }); return; }
 
   const entityId = d.entityId ? parseInt(d.entityId) : null;
-  const purchaseInvoiceId = d.purchaseInvoiceId ? parseInt(d.purchaseInvoiceId) : null;
-  if (purchaseInvoiceId) {
-    try { await validatePurchaseInvoiceLink(existing.companyId, purchaseInvoiceId, entityId); }
+  const lines = normalizePaymentLines(d.lines);
+  if (lines) {
+    try { await validatePaymentLines(cid, lines, entityId); }
+    catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
+  }
+  const headerPurchaseInvoiceId = d.purchaseInvoiceId ? parseInt(d.purchaseInvoiceId) : null;
+  const purchaseInvoiceId = headerPurchaseInvoiceId
+    ?? (lines?.find((l) => l.purchaseInvoiceId)?.purchaseInvoiceId ?? null);
+  if (headerPurchaseInvoiceId) {
+    try { await validatePurchaseInvoiceLink(existing.companyId, headerPurchaseInvoiceId, entityId); }
     catch (e: any) { res.status(400).json({ error: e?.message || "فاتورة غير صالحة" }); return; }
   }
+  // When `lines` is present, header amount is derived from them; a legacy
+  // caller (no `lines`) keeps sending its own `amount`.
+  const headerAmount = lines ? paymentLinesTotal(lines).toFixed(2) : d.amount;
 
   const [row] = await db.update(paymentVouchersTable).set({
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
@@ -281,8 +447,8 @@ router.put("/:id", async (req, res) => {
     entityType:    "supplier",
     entityId,
     entityName:    d.entityName    ?? null,
-    accountId:     d.accountId     ? parseInt(d.accountId)     : null,
-    amount:        d.amount,
+    accountId:     lines ? null : (d.accountId ? parseInt(d.accountId) : null),
+    amount:        headerAmount,
     currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
     exchangeRate:  d.exchangeRate  || "1",
     refType:       d.refType       ?? (purchaseInvoiceId ? "purchase_invoice" : null),
@@ -292,6 +458,9 @@ router.put("/:id", async (req, res) => {
     notes:         d.notes         ?? null,
     costCenter:    d.costCenter ? String(d.costCenter).trim() || null : null,
   }).where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+  // Replace lines only when the caller sent a `lines` array (undefined =
+  // legacy update that shouldn't wipe existing allocations).
+  if (lines) await replacePaymentLines(row.id, lines);
   res.json(row);
 });
 

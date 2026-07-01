@@ -21,6 +21,7 @@ import {
   ArrowUpCircle, ArrowRight, ChevronLeft, Search,
   Loader2, Save, Send, Lock, FileText, Banknote,
   Wallet, Building2, Truck, Layers, Printer, Link2, X, Settings2,
+  Trash2, Plus,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
@@ -28,24 +29,52 @@ import { printCashVoucher } from "@/lib/cashVoucherPrint";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
+// A single allocation line (multi-line model). Numeric fields are kept as
+// strings for controlled inputs; the backend parses both strings & numbers.
+interface PvLine {
+  key: string;               // local React key only (never sent)
+  accountId: string;         // DR GL account (required)
+  description: string;
+  amount: string;            // NET (pre-VAT)
+  taxRate: string;           // percent, e.g. "15"
+  taxAmount: string;         // VAT value (auto, user-editable)
+  taxAccountId: string;      // optional input-VAT GL account override
+  costCenter: string;        // inherits header default on add
+  purchaseInvoiceId: string; // optional link to a purchase invoice
+}
+
+let _pvLineSeq = 0;
+function newPvLine(init: Partial<PvLine> = {}): PvLine {
+  return {
+    key: `pvl_${Date.now()}_${_pvLineSeq++}`,
+    accountId: "",
+    description: "",
+    amount: "",
+    taxRate: "",
+    taxAmount: "",
+    taxAccountId: "",
+    costCenter: "",
+    purchaseInvoiceId: "",
+    ...init,
+  };
+}
+
 interface FormState {
   date: string;
   paymentType: "cash" | "bank";
   branchId: string;
   cashBoxId: string;
   bankAccountId: string;
-  entityId: string;          // supplier id (party mode)
-  accountId: string;         // GL account id (general-account mode)
+  entityId: string;          // supplier id (optional party context)
   entityName: string;        // cached name for JE preview
-  amount: string;
   currencyId: string;
   exchangeRate: string;
-  purchaseInvoiceId: string; // optional link
   refType: string;
   refNumber: string;
   description: string;
   notes: string;
-  costCenter: string;
+  costCenter: string;        // header default inherited by new lines
+  lines: PvLine[];           // multi-allocation grid
 }
 
 const EMPTY: FormState = {
@@ -55,17 +84,15 @@ const EMPTY: FormState = {
   cashBoxId: "",
   bankAccountId: "",
   entityId: "",
-  accountId: "",
   entityName: "",
-  amount: "",
   currencyId: "",
   exchangeRate: "1",
-  purchaseInvoiceId: "",
   refType: "",
   refNumber: "",
   description: "",
   notes: "",
   costCenter: "",
+  lines: [],
 };
 
 // ── Branch matching for treasuries ───────────────────────────────
@@ -115,11 +142,7 @@ export default function PaymentVoucherForm() {
   const cid = user?.companyId;
   const h = { Authorization: `Bearer ${token}` };
 
-  const [form, setForm] = useState<FormState>(EMPTY);
-  const [linkInvoice, setLinkInvoice] = useState(false);
-  // "party"   → settle against a supplier (default, legacy behaviour)
-  // "account" → settle against a general GL account picked from the tree
-  const [entityMode, setEntityMode] = useState<"party" | "account">("party");
+  const [form, setForm] = useState<FormState>(() => ({ ...EMPTY, lines: [newPvLine()] }));
 
   // ── Sequence preview for new vouchers ───────────────────────────
   const seqPeek = useNextSequenceNumber("payment_voucher", isNew, undefined, undefined, form.paymentType);
@@ -240,6 +263,35 @@ export default function PaymentVoucherForm() {
 
   useEffect(() => {
     if (!existing) return;
+    // Hydrate the allocation grid: prefer the persisted `lines` array; fall
+    // back to synthesizing ONE line from the legacy single-amount header so
+    // pre-migration vouchers stay editable and re-saveable as lines.
+    const rawLines: any[] = Array.isArray(existing.lines) ? existing.lines : [];
+    let lines: PvLine[];
+    if (rawLines.length > 0) {
+      lines = rawLines.map((l: any) => newPvLine({
+        accountId: l.accountId != null ? String(l.accountId) : "",
+        description: l.description ?? "",
+        amount: l.amount != null ? String(l.amount) : "",
+        taxRate: l.taxRate != null ? String(l.taxRate) : "",
+        taxAmount: l.taxAmount != null ? String(l.taxAmount) : "",
+        taxAccountId: l.taxAccountId != null ? String(l.taxAccountId) : "",
+        costCenter: l.costCenter ?? "",
+        purchaseInvoiceId: l.purchaseInvoiceId != null ? String(l.purchaseInvoiceId) : "",
+      }));
+    } else {
+      lines = [newPvLine({
+        accountId: existing.accountId != null ? String(existing.accountId) : "",
+        description: existing.description ?? "",
+        amount: existing.amount != null ? String(existing.amount) : "",
+        taxRate: existing.taxRate != null ? String(existing.taxRate) : "",
+        taxAmount: (existing.vatAmount ?? existing.taxAmount) != null
+          ? String(existing.vatAmount ?? existing.taxAmount) : "",
+        taxAccountId: "",
+        costCenter: existing.costCenter ?? "",
+        purchaseInvoiceId: existing.purchaseInvoiceId != null ? String(existing.purchaseInvoiceId) : "",
+      })];
+    }
     setForm({
       date: existing.date ?? today(),
       paymentType: (existing.paymentType ?? "cash") as "cash" | "bank",
@@ -247,32 +299,61 @@ export default function PaymentVoucherForm() {
       cashBoxId: existing.cashBoxId ? String(existing.cashBoxId) : "",
       bankAccountId: existing.bankAccountId ? String(existing.bankAccountId) : "",
       entityId: existing.entityId ? String(existing.entityId) : "",
-      accountId: existing.accountId ? String(existing.accountId) : "",
       entityName: existing.entityName ?? "",
-      amount: existing.amount ?? "",
       currencyId: existing.currencyId ? String(existing.currencyId) : "",
       exchangeRate: existing.exchangeRate ?? "1",
-      purchaseInvoiceId: existing.purchaseInvoiceId ? String(existing.purchaseInvoiceId) : "",
       refType: existing.refType ?? "",
       refNumber: existing.refNumber ?? "",
       description: existing.description ?? "",
       notes: existing.notes ?? "",
       costCenter: existing.costCenter ?? "",
+      lines,
     });
-    setLinkInvoice(!!existing.purchaseInvoiceId);
-    setEntityMode(existing.accountId && !existing.entityId ? "account" : "party");
   }, [existing]);
 
-  // Toggle between settling a party (supplier) and a general GL account.
-  // Switching clears the now-irrelevant side so we never submit both.
-  function switchEntityMode(m: "party" | "account") {
-    setEntityMode(m);
-    if (m === "account") {
-      setLinkInvoice(false);
-      setForm(p => ({ ...p, entityId: "", purchaseInvoiceId: "", entityName: "" }));
-    } else {
-      setForm(p => ({ ...p, accountId: "", entityName: "" }));
-    }
+  // ── Default input-VAT account (optional per-line override prefill) ──
+  // If a chart account with code "11071" exists we offer it as the default
+  // tax account for new lines; otherwise we leave it empty and let the
+  // backend resolve the company vat_input mapping.
+  const defaultTaxAccountId = useMemo(() => {
+    const a = (accounts as any[]).find((x: any) => String(x.code) === "11071");
+    return a ? String(a.id) : "";
+  }, [accounts]);
+
+  // ── Allocation-line helpers ────────────────────────────────────
+  function addLine() {
+    setForm(p => ({
+      ...p,
+      lines: [...p.lines, newPvLine({ taxAccountId: defaultTaxAccountId, costCenter: p.costCenter })],
+    }));
+  }
+  function removeLine(key: string) {
+    setForm(p => {
+      const rest = p.lines.filter(l => l.key !== key);
+      return {
+        ...p,
+        lines: rest.length ? rest : [newPvLine({ taxAccountId: defaultTaxAccountId, costCenter: p.costCenter })],
+      };
+    });
+  }
+  function updateLine(key: string, patch: Partial<PvLine>) {
+    setForm(p => ({
+      ...p,
+      lines: p.lines.map(l => {
+        if (l.key !== key) return l;
+        const next = { ...l, ...patch };
+        // Auto-recompute VAT when the net amount or rate changes; the field
+        // stays editable so users can override the computed value afterwards.
+        if ("amount" in patch || "taxRate" in patch) {
+          const amt = Number(next.amount) || 0;
+          const rate = Number(next.taxRate) || 0;
+          next.taxAmount = amt > 0 && rate > 0
+            ? (Math.round(amt * rate) / 100).toFixed(2)
+            : "0.00";
+        }
+        return next;
+      }),
+    }));
   }
 
   // ── Document navigation (prev/next/jump-by-search) ─────────────
@@ -331,7 +412,7 @@ export default function PaymentVoucherForm() {
   const invoiceItems: ComboboxItem[] = useMemo(() => {
     if (!form.entityId) return [];
     const sid = Number(form.entityId);
-    const list = (purchaseInvoices as any[])
+    return (purchaseInvoices as any[])
       .filter((inv: any) => Number(inv.supplierId) === sid && inv.status !== "cancelled")
       .map((inv: any) => ({
         value: String(inv.id),
@@ -339,26 +420,29 @@ export default function PaymentVoucherForm() {
         description: `${inv.invoiceDate} • ${Number(inv.totalAmount || 0).toFixed(2)} ${inv.currencyCode || "SAR"}`,
         code: inv.status,
       }));
-    // Make sure the currently-linked invoice is always selectable, even
-    // if it's owned by a different supplier or is cancelled.
-    if (form.purchaseInvoiceId && !list.some(i => i.value === form.purchaseInvoiceId)) {
-      const inv = (purchaseInvoices as any[]).find((x: any) => String(x.id) === form.purchaseInvoiceId);
-      if (inv) {
-        list.unshift({
-          value: String(inv.id),
-          label: inv.docNumber ?? `PI-${inv.id}`,
-          description: `${inv.invoiceDate} • ${Number(inv.totalAmount || 0).toFixed(2)} ${inv.currencyCode || "SAR"}`,
-          code: inv.status,
-        });
-      }
+  }, [purchaseInvoices, form.entityId]);
+
+  // ── Account-name lookup (for JE preview line labels) ───────────
+  const accountName = (id: string) => {
+    const a = (accounts as any[]).find((x: any) => String(x.id) === String(id));
+    return a ? ((isRtl ? (a.nameAr || a.nameEn) : (a.nameEn || a.nameAr)) || "") : "";
+  };
+
+  // ── Live totals derived from the allocation grid ───────────────
+  const totals = useMemo(() => {
+    let net = 0, tax = 0;
+    for (const l of form.lines) {
+      const a = Number(l.amount) || 0;
+      const tx = Number(l.taxAmount) || 0;
+      if (a > 0 || l.accountId) { net += a; tax += tx; }
     }
-    return list;
-  }, [purchaseInvoices, form.entityId, form.purchaseInvoiceId]);
+    return { net, tax, grand: net + tax };
+  }, [form.lines]);
 
   // ── Live Journal-Entry preview (mirrors backend posting logic) ──
   function jePreview() {
-    const amt = Number(form.amount || 0);
-    if (!isFinite(amt) || amt <= 0) return null;
+    const valid = form.lines.filter(l => l.accountId && (Number(l.amount) || 0) > 0);
+    if (valid.length === 0) return null;
     const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === form.cashBoxId);
     const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === form.bankAccountId);
     const cbName = cb ? (isRtl ? cb.nameAr : (cb.nameEn || cb.nameAr)) : "";
@@ -366,14 +450,24 @@ export default function PaymentVoucherForm() {
     const crLabel = form.paymentType === "bank"
       ? (ba ? t(`${NS}.bankPrefix`, { name: baName }) : t(`${NS}.noBankSelected`))
       : (cb ? t(`${NS}.cashPrefix`, { name: cbName }) : t(`${NS}.noCashSelected`));
-    const drLabel = form.entityName
-      ? (entityMode === "account"
-          ? form.entityName
-          : t(`${NS}.supplierPrefix`, { name: form.entityName }))
-      : (entityMode === "account"
-          ? t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —")
-          : t(`${NS}.noSupplierSelected`, "— لم يتم اختيار المورد —"));
-    return { drLabel, crLabel, amount: amt };
+    const drRows: { label: string; amount: number }[] = [];
+    let total = 0;
+    for (const l of valid) {
+      const net = Number(l.amount) || 0;
+      const tax = Number(l.taxAmount) || 0;
+      total += net + tax;
+      drRows.push({
+        label: accountName(l.accountId) || t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —"),
+        amount: net,
+      });
+      if (tax > 0) {
+        const taxName = l.taxAccountId
+          ? accountName(l.taxAccountId)
+          : t(`${NS}.vatInputDefault`, "ضريبة القيمة المضافة (مدخلات)");
+        drRows.push({ label: `${t(`${NS}.vatLabel`, "ضريبة مدخلات")} — ${taxName}`, amount: tax });
+      }
+    }
+    return { drRows, crLabel, total };
   }
 
   // ── Save / Save-and-post mutation ──────────────────────────────
@@ -382,39 +476,54 @@ export default function PaymentVoucherForm() {
 
   const saveMut = useMutation({
     mutationFn: async (mode: "draft" | "post") => {
-      const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
-      const amtNum = Number(cleanAmt);
-      if (!isFinite(amtNum) || amtNum <= 0) throw new Error(t(`${NS}.invalidAmount`));
       if (!form.date) throw new Error(t(`${NS}.dateRequired`, "التاريخ مطلوب"));
       if (!form.branchId) throw new Error(t(`${NS}.branchRequired`, "الرجاء اختيار الفرع"));
       if (form.paymentType === "cash" && !form.cashBoxId)
         throw new Error(t(`${NS}.cashBoxRequired`, "الخزنة مطلوبة عند الدفع نقداً"));
       if (form.paymentType === "bank" && !form.bankAccountId)
         throw new Error(t(`${NS}.bankRequired`, "الحساب البنكي مطلوب عند الدفع بنكاً"));
-      if (entityMode === "party") {
-        if (!form.entityId)
-          throw new Error(t(`${NS}.supplierRequired`, "اختيار المورد مطلوب"));
-      } else if (!form.accountId) {
-        throw new Error(t(`${NS}.accountRequired`, "اختيار الحساب مطلوب"));
-      }
 
-      const isAccountMode = entityMode === "account";
+      // Build allocation lines: drop fully-empty rows (no account AND zero
+      // amount), then validate each remaining row needs an account + amount>0.
+      const kept = form.lines.filter(l => l.accountId || (Number(l.amount) || 0) > 0);
+      if (kept.length === 0)
+        throw new Error(t(`${NS}.linesRequired`, "يجب إضافة بند واحد على الأقل"));
+      for (const l of kept) {
+        if (!l.accountId)
+          throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب محاسبي"));
+        if (!((Number(l.amount) || 0) > 0))
+          throw new Error(t(`${NS}.lineAmountRequired`, "مبلغ البند يجب أن يكون أكبر من صفر"));
+      }
+      const linesPayload = kept.map(l => ({
+        accountId:         l.accountId ? parseInt(l.accountId) : null,
+        description:       l.description || null,
+        amount:            String(Number(l.amount) || 0),
+        taxRate:           String(Number(l.taxRate) || 0),
+        taxAmount:         String(Number(l.taxAmount) || 0),
+        taxAccountId:      l.taxAccountId ? parseInt(l.taxAccountId) : null,
+        costCenter:        l.costCenter || null,
+        branchId:          form.branchId ? parseInt(form.branchId) : null,
+        purchaseInvoiceId: l.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
+      }));
+      const grandTotal = kept.reduce(
+        (s, l) => s + (Number(l.amount) || 0) + (Number(l.taxAmount) || 0), 0);
+
+      const { lines: _drop, ...header } = form;
       const body = {
-        ...form,
-        amount: amtNum.toFixed(2),
+        ...header,
+        lines: linesPayload,
+        // Header amount kept for back-compat; server re-derives from lines.
+        amount: grandTotal.toFixed(2),
         companyId: cid,
         // Server force-overrides to "supplier" but we send it for clarity.
         entityType: "supplier",
         branchId:     form.branchId     ? parseInt(form.branchId)     : null,
         cashBoxId:    form.cashBoxId    ? parseInt(form.cashBoxId)    : null,
         bankAccountId:form.bankAccountId? parseInt(form.bankAccountId): null,
-        // Account mode debits a general GL account (accountId) with no party;
-        // party mode debits the supplier and leaves accountId null.
-        accountId:    isAccountMode && form.accountId ? parseInt(form.accountId) : null,
-        entityId:     isAccountMode ? null : (form.entityId ? parseInt(form.entityId) : null),
+        // Multi-line vouchers null the header account (lines carry accounts).
+        accountId:    null,
+        entityId:     form.entityId ? parseInt(form.entityId) : null,
         currencyId:   form.currencyId   ? parseInt(form.currencyId)   : null,
-        purchaseInvoiceId: !isAccountMode && linkInvoice && form.purchaseInvoiceId
-          ? parseInt(form.purchaseInvoiceId) : null,
       };
 
       const url = isNew
@@ -560,6 +669,17 @@ export default function PaymentVoucherForm() {
     const linkedInv = existing.purchaseInvoiceId
       ? (purchaseInvoices as any[]).find((x: any) => String(x.id) === String(existing.purchaseInvoiceId))
       : null;
+    // Multi-allocation lines (each DR side) with per-line input VAT.
+    const printLines = ((existing.lines as any[]) ?? []).map((l: any) => {
+      const a = (accounts as any[]).find((x: any) => String(x.id) === String(l.accountId));
+      return {
+        code: a?.code ?? "",
+        name: a ? (isRtl ? a.nameAr : (a.nameEn || a.nameAr)) : "—",
+        description: l.description ?? "",
+        amount: l.amount,
+        tax: l.taxAmount,
+      };
+    });
     printCashVoucher({
       kind: "payment",
       doc: {
@@ -572,6 +692,7 @@ export default function PaymentVoucherForm() {
       },
       treasury,
       account,
+      lines: printLines.length ? printLines : null,
       company: (user as any)?.company ?? null,
       preparedBy: user?.username ?? null,
       onError: (msg) =>
@@ -775,7 +896,7 @@ export default function PaymentVoucherForm() {
                     {(() => {
                       const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
                       const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
-                      const amt = Number(form.amount || 0);
+                      const amt = totals.grand;
                       const r = Number(form.exchangeRate);
                       if (!sel || !base || sel.id === base.id || !(amt > 0) || !(r > 0)) return null;
                       return (
@@ -852,170 +973,216 @@ export default function PaymentVoucherForm() {
               </CardContent>
             </Card>
 
-            {/* Section: Supplier + Amount */}
+            {/* Section: Supplier (optional header context) */}
             <Card className="border-2 border-red-100">
               <CardHeader className="py-3 px-4 border-b bg-red-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-900">
                   <Truck className="h-4 w-4" />
-                  {t(`${NS}.section_supplier`, "المورد والمبلغ")}
+                  {t(`${NS}.section_supplier`, "المورد")}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
-                {/* Debit-side mode: supplier vs general GL account */}
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.debitSide`, "الطرف المدين")}</Label>
-                  <div className="inline-flex rounded-lg border bg-muted/20 p-0.5">
-                    <button type="button"
-                      onClick={() => switchEntityMode("party")}
-                      data-testid="pv-entitymode-party"
-                      className={cn(
-                        "px-4 h-8 rounded-md text-xs font-medium flex items-center gap-1.5 transition",
-                        entityMode === "party"
-                          ? "bg-red-100 text-red-800 shadow-sm"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}>
-                      <Truck className="h-3.5 w-3.5" /> {t(`${NS}.modeSupplier`, "مورد")}
-                    </button>
-                    <button type="button"
-                      onClick={() => switchEntityMode("account")}
-                      data-testid="pv-entitymode-account"
-                      className={cn(
-                        "px-4 h-8 rounded-md text-xs font-medium flex items-center gap-1.5 transition",
-                        entityMode === "account"
-                          ? "bg-emerald-100 text-emerald-800 shadow-sm"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}>
-                      <Layers className="h-3.5 w-3.5" /> {t(`${NS}.modeAccount`, "حساب عام")}
-                    </button>
-                  </div>
-                </div>
-
-                {entityMode === "party" ? (
-                  /* Supplier */
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">
-                      {t(`${NS}.supplier`)} <span className="text-destructive">*</span>
-                    </Label>
-                    <SearchCombobox
-                      items={supplierItems}
-                      value={form.entityId}
-                      onValueChange={v => {
-                        const found = (suppliers as any[]).find((x: any) => String(x.id) === v);
-                        setForm(p => ({
-                          ...p,
-                          entityId: v,
-                          entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
-                          // Linking a different supplier invalidates the linked invoice.
-                          purchaseInvoiceId: "",
-                        }));
-                      }}
-                      placeholder={t(`${NS}.selectSupplier`, "— اختر المورد —")}
-                      searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
-                      emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
-                    />
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      {t(`${NS}.jeHintEntity`, "المورد سيكون مديناً في القيد المحاسبي")}
-                    </p>
-                  </div>
-                ) : (
-                  /* General GL account (main → sub cascade) */
-                  <div className="space-y-1.5">
-                    <AccountCascadePicker
-                      accounts={accounts as any[]}
-                      value={form.accountId}
-                      isRtl={isRtl}
-                      onValueChange={(aid) => {
-                        const a = (accounts as any[]).find((x: any) => String(x.id) === aid);
-                        setForm(p => ({
-                          ...p,
-                          accountId: aid,
-                          entityName: a ? ((isRtl ? (a.nameAr || a.nameEn) : (a.nameEn || a.nameAr)) || "") : "",
-                        }));
-                      }}
-                    />
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      {t(`${NS}.jeHintDrAccount`, "الحساب المختار سيكون مديناً في القيد المحاسبي")}
-                    </p>
-                  </div>
-                )}
-
-                {/* Amount — large prominent input */}
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">
-                    {t(`${NS}.amount`)} <span className="text-destructive">*</span>
+                    {t(`${NS}.supplier`)} <span className="text-muted-foreground font-normal">({t(`${NS}.optional`, "اختياري")})</span>
                   </Label>
-                  <div className="relative">
-                    <Banknote className={cn("h-5 w-5 absolute top-1/2 -translate-y-1/2 text-red-600 pointer-events-none", isRtl ? "right-3" : "left-3")} />
-                    <Input
-                      type="number" step="0.01" placeholder="0.00"
-                      value={form.amount}
-                      onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
-                      onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
-                      dir="ltr"
-                      data-testid="pv-amount"
-                      className={cn("h-12 text-xl font-mono font-bold text-left", isRtl ? "pr-11" : "pl-11")}
-                    />
+                  <div className="flex gap-2 items-stretch">
+                    <div className="flex-1">
+                      <SearchCombobox
+                        items={supplierItems}
+                        value={form.entityId}
+                        onValueChange={v => {
+                          const found = (suppliers as any[]).find((x: any) => String(x.id) === v);
+                          setForm(p => ({
+                            ...p,
+                            entityId: v,
+                            entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
+                            // Switching supplier invalidates every per-line invoice link.
+                            lines: p.lines.map(l => ({ ...l, purchaseInvoiceId: "" })),
+                          }));
+                        }}
+                        placeholder={t(`${NS}.selectSupplier`, "— اختر المورد —")}
+                        searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
+                        emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
+                      />
+                    </div>
+                    {form.entityId && (
+                      <Button
+                        type="button" variant="ghost" size="icon"
+                        className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                        onClick={() => setForm(p => ({ ...p, entityId: "", entityName: "", lines: p.lines.map(l => ({ ...l, purchaseInvoiceId: "" })) }))}
+                        title={t(`${NS}.clearSupplier`, "إزالة المورد")}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {t(`${NS}.supplierHint`, "المورد اختياري — يُستخدم لتصفية ربط فواتير الشراء في البنود.")}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Section: Allocation lines grid */}
+            <Card className="border-2 border-red-100">
+              <CardHeader className="py-3 px-4 border-b bg-red-50/40">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-900">
+                  <Layers className="h-4 w-4" />
+                  {t(`${NS}.section_lines`, "بنود الصرف")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 pb-4 space-y-3">
+                <div className="overflow-x-auto -mx-1">
+                  <table className="w-full text-xs border-separate border-spacing-y-2 min-w-[1080px]">
+                    <thead>
+                      <tr className="text-muted-foreground">
+                        <th className="text-start font-medium w-8 px-1">#</th>
+                        <th className="text-start font-medium px-1 min-w-[220px]">{t(`${NS}.colAccount`, "الحساب")} <span className="text-destructive">*</span></th>
+                        <th className="text-start font-medium px-1 min-w-[130px]">{t(`${NS}.colDescription`, "البيان")}</th>
+                        <th className="text-start font-medium px-1 w-28">{t(`${NS}.colAmount`, "المبلغ")} <span className="text-destructive">*</span></th>
+                        <th className="text-start font-medium px-1 w-20">{t(`${NS}.colTaxRate`, "نسبة الضريبة %")}</th>
+                        <th className="text-start font-medium px-1 w-24">{t(`${NS}.colTaxAmount`, "مبلغ الضريبة")}</th>
+                        <th className="text-start font-medium px-1 min-w-[220px]">{t(`${NS}.colTaxAccount`, "حساب الضريبة")}</th>
+                        <th className="text-start font-medium px-1 w-32">{t(`${NS}.colCostCenter`, "مركز التكلفة")}</th>
+                        <th className="text-start font-medium px-1 min-w-[160px]"><span className="inline-flex items-center gap-1"><Link2 className="h-3 w-3" />{t(`${NS}.colPurchaseInvoice`, "ربط فاتورة شراء")}</span></th>
+                        <th className="text-start font-medium px-1 w-24">{t(`${NS}.colLineTotal`, "الإجمالي")}</th>
+                        <th className="px-1 w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {form.lines.map((l, idx) => {
+                        const lineTotal = (Number(l.amount) || 0) + (Number(l.taxAmount) || 0);
+                        return (
+                          <tr key={l.key} className="align-top" data-testid={`pv-line-${idx}`}>
+                            <td className="px-1 pt-2 text-muted-foreground tabular-nums">{idx + 1}</td>
+                            <td className="px-1">
+                              <AccountCascadePicker
+                                accounts={accounts as any[]}
+                                value={l.accountId}
+                                isRtl={isRtl}
+                                onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
+                              />
+                            </td>
+                            <td className="px-1">
+                              <Input
+                                value={l.description}
+                                onChange={e => updateLine(l.key, { description: e.target.value })}
+                                placeholder={t(`${NS}.colDescription`, "البيان")}
+                                className="h-9 text-sm"
+                              />
+                            </td>
+                            <td className="px-1">
+                              <Input
+                                type="number" step="0.01" placeholder="0.00" dir="ltr"
+                                value={l.amount}
+                                onChange={e => updateLine(l.key, { amount: e.target.value })}
+                                onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
+                                className="h-9 text-sm text-left font-mono"
+                                data-testid={`pv-line-amount-${idx}`}
+                              />
+                            </td>
+                            <td className="px-1">
+                              <Input
+                                type="number" step="0.01" placeholder="0" dir="ltr"
+                                value={l.taxRate}
+                                onChange={e => updateLine(l.key, { taxRate: e.target.value })}
+                                onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
+                                className="h-9 text-sm text-left font-mono"
+                              />
+                            </td>
+                            <td className="px-1">
+                              <Input
+                                type="number" step="0.01" placeholder="0.00" dir="ltr"
+                                value={l.taxAmount}
+                                onChange={e => updateLine(l.key, { taxAmount: e.target.value })}
+                                onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
+                                className="h-9 text-sm text-left font-mono"
+                              />
+                            </td>
+                            <td className="px-1">
+                              <AccountCascadePicker
+                                accounts={accounts as any[]}
+                                value={l.taxAccountId}
+                                isRtl={isRtl}
+                                mainLabel={t(`${NS}.taxMainLabel`, "حساب الضريبة الرئيسي")}
+                                subLabel={t(`${NS}.taxSubLabel`, "حساب الضريبة الفرعي")}
+                                onValueChange={(aid) => updateLine(l.key, { taxAccountId: aid })}
+                              />
+                            </td>
+                            <td className="px-1">
+                              <select
+                                value={l.costCenter}
+                                onChange={e => updateLine(l.key, { costCenter: e.target.value })}
+                                className="w-full h-9 border border-input rounded-md px-2 text-sm bg-background"
+                              >
+                                <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
+                                {(costCentersList as any[])
+                                  .filter((c: any) => c.isActive !== false)
+                                  .map((c: any) => (
+                                    <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>
+                                  ))}
+                              </select>
+                            </td>
+                            <td className="px-1">
+                              <SearchCombobox
+                                items={invoiceItems}
+                                value={l.purchaseInvoiceId}
+                                onValueChange={v => updateLine(l.key, { purchaseInvoiceId: v })}
+                                placeholder={form.entityId
+                                  ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
+                                  : t(`${NS}.pickSupplierFirst`, "اختر المورد أولاً")}
+                                searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
+                                emptyText={form.entityId
+                                  ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا المورد")
+                                  : t(`${NS}.pickSupplierFirst`, "اختر المورد أولاً")}
+                              />
+                            </td>
+                            <td className="px-1 pt-2 text-left font-mono tabular-nums whitespace-nowrap">{fmt(lineTotal)}</td>
+                            <td className="px-1 pt-1">
+                              <Button
+                                type="button" variant="ghost" size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => removeLine(l.key)}
+                                title={t(`${NS}.removeLine`, "حذف البند")}
+                                data-testid={`pv-line-remove-${idx}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
 
-                {/* Optional: link to a purchase invoice (party mode only) */}
-                {entityMode === "party" && (
-                <div className="rounded-lg border border-dashed border-red-200 bg-red-50/30 p-3 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Link2 className="h-4 w-4 text-red-700" />
-                      <Label htmlFor="pv-link-toggle" className="text-xs font-semibold text-red-900 cursor-pointer">
-                        {t(`${NS}.linkInvoiceTitle`, "سداد مقابل فاتورة شراء (اختياري)")}
-                      </Label>
-                    </div>
-                    <Switch
-                      id="pv-link-toggle"
-                      checked={linkInvoice}
-                      onCheckedChange={(v) => {
-                        setLinkInvoice(v);
-                        if (!v) setForm(p => ({ ...p, purchaseInvoiceId: "" }));
-                      }}
-                      data-testid="pv-link-toggle"
-                    />
+                <Button
+                  type="button" variant="outline" size="sm"
+                  onClick={addLine}
+                  className="gap-1.5"
+                  data-testid="pv-add-line"
+                >
+                  <Plus className="h-4 w-4" />
+                  {t(`${NS}.addLine`, "إضافة بند")}
+                </Button>
+
+                {/* Totals footer */}
+                <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3 mt-1 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground text-xs">{t(`${NS}.totalNet`, "إجمالي الصافي")}</span>
+                    <span className="font-mono font-semibold tabular-nums">{fmt(totals.net)}</span>
                   </div>
-                  {linkInvoice && (
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium">
-                        {t(`${NS}.selectInvoiceToLink`, "اختر فاتورة الشراء")}
-                      </Label>
-                      <div className="flex gap-2 items-stretch">
-                        <div className="flex-1">
-                          <SearchCombobox
-                            items={invoiceItems}
-                            value={form.purchaseInvoiceId}
-                            onValueChange={v => setForm(p => ({ ...p, purchaseInvoiceId: v }))}
-                            placeholder={form.entityId
-                              ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
-                              : t(`${NS}.pickSupplierFirst`, "اختر المورد أولاً")}
-                            searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
-                            emptyText={form.entityId
-                              ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا المورد")
-                              : t(`${NS}.pickSupplierFirst`, "اختر المورد أولاً")}
-                          />
-                        </div>
-                        {form.purchaseInvoiceId && (
-                          <Button
-                            type="button" variant="ghost" size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                            onClick={() => setForm(p => ({ ...p, purchaseInvoiceId: "" }))}
-                            title={t(`${NS}.clearLink`, "إلغاء الربط")}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        {t(`${NS}.linkHint`, "عند الربط ستظهر فاتورة الشراء «مسددة» في قائمة فواتير المشتريات بنوع السداد المحدد.")}
-                      </p>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground text-xs">{t(`${NS}.totalTax`, "إجمالي الضريبة")}</span>
+                    <span className="font-mono font-semibold tabular-nums">{fmt(totals.tax)}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Banknote className="h-4 w-4 text-red-600" />
+                    <span className="text-muted-foreground text-xs">{t(`${NS}.grandTotal`, "الإجمالي")}</span>
+                    <span className="font-mono font-bold text-base tabular-nums text-red-700" data-testid="pv-grand-total">{fmt(totals.grand)}</span>
+                  </div>
                 </div>
-                )}
               </CardContent>
             </Card>
 
@@ -1083,7 +1250,7 @@ export default function PaymentVoucherForm() {
               <CardContent className="pt-3 pb-3">
                 {!preview ? (
                   <p className="text-xs text-muted-foreground text-center py-6">
-                    {t(`${NS}.previewEmpty`, "أدخل المبلغ لمعاينة القيد")}
+                    {t(`${NS}.previewEmpty`, "أدخل بنود الصرف لمعاينة القيد")}
                   </p>
                 ) : (
                   <table className="w-full text-xs">
@@ -1095,15 +1262,17 @@ export default function PaymentVoucherForm() {
                       </tr>
                     </thead>
                     <tbody className="font-mono">
-                      <tr className="border-b border-blue-200/40">
-                        <td className="py-1.5 text-start text-[11px]">{preview.drLabel}</td>
-                        <td className={cn("text-red-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(preview.amount)}</td>
-                        <td className={cn("text-muted-foreground", isRtl ? "text-left" : "text-right")}>—</td>
-                      </tr>
+                      {preview.drRows.map((r, i) => (
+                        <tr key={`dr-${i}`} className="border-b border-blue-200/40">
+                          <td className="py-1.5 text-start text-[11px]">{r.label}</td>
+                          <td className={cn("text-red-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(r.amount)}</td>
+                          <td className={cn("text-muted-foreground", isRtl ? "text-left" : "text-right")}>—</td>
+                        </tr>
+                      ))}
                       <tr>
                         <td className="py-1.5 text-start text-[11px]">{preview.crLabel}</td>
                         <td className={cn("text-muted-foreground", isRtl ? "text-left" : "text-right")}>—</td>
-                        <td className={cn("text-green-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(preview.amount)}</td>
+                        <td className={cn("text-green-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(preview.total)}</td>
                       </tr>
                     </tbody>
                   </table>

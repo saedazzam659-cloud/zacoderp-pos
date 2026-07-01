@@ -125,6 +125,48 @@ export const paymentVouchersTable = pgTable("payment_vouchers", {
   createdAt:     timestamp("created_at").defaultNow().notNull(),
 });
 
+// ─── Receipt Voucher Lines (بنود سند القبض) ──────────────────────────────────
+// Multi-allocation model: one receipt voucher carries a single cash/bank
+// treasury side and MANY allocation lines (each crediting an account —
+// typically a customer receivable or income account). Receipt lines carry
+// NO VAT (output VAT belongs on the sales tax invoice only). Legacy
+// single-`amount` vouchers that predate this table keep posting unchanged.
+export const receiptVoucherLinesTable = pgTable("receipt_voucher_lines", {
+  id:             serial("id").primaryKey(),
+  voucherId:      integer("voucher_id").notNull().references(() => receiptVouchersTable.id, { onDelete: "cascade" }),
+  accountId:      integer("account_id").references(() => accountsTable.id),
+  description:    text("description"),
+  amount:         numeric("amount", { precision: 15, scale: 2 }).notNull().default("0"),
+  costCenter:     text("cost_center"),
+  branchId:       integer("branch_id").references(() => branchesTable.id),
+  // Optional per-line link to the sales invoice this allocation settles.
+  salesInvoiceId: integer("sales_invoice_id").references(() => salesInvoicesTable.id, { onDelete: "set null" }),
+  sortOrder:      integer("sort_order").notNull().default(0),
+});
+
+// ─── Payment Voucher Lines (بنود سند الصرف) ──────────────────────────────────
+// Same multi-allocation model as receipt lines but each line MAY carry its
+// own input VAT (rate + amount + input-VAT account), so one payment voucher
+// can record several different taxes at once. The VAT declaration report
+// reads `taxAmount` here as an additive INPUT-VAT source.
+export const paymentVoucherLinesTable = pgTable("payment_voucher_lines", {
+  id:                serial("id").primaryKey(),
+  voucherId:         integer("voucher_id").notNull().references(() => paymentVouchersTable.id, { onDelete: "cascade" }),
+  accountId:         integer("account_id").references(() => accountsTable.id),
+  description:       text("description"),
+  amount:            numeric("amount", { precision: 15, scale: 2 }).notNull().default("0"),
+  // Per-line VAT (input side). taxRate is informational; taxAmount drives
+  // both the JE input-VAT line and the VAT declaration report.
+  taxRate:           numeric("tax_rate",   { precision: 15, scale: 2 }).notNull().default("0"),
+  taxAmount:         numeric("tax_amount", { precision: 15, scale: 2 }).notNull().default("0"),
+  taxAccountId:      integer("tax_account_id").references(() => accountsTable.id),
+  costCenter:        text("cost_center"),
+  branchId:          integer("branch_id").references(() => branchesTable.id),
+  // Optional per-line link to the purchase invoice this allocation settles.
+  purchaseInvoiceId: integer("purchase_invoice_id").references(() => purchaseInvoicesTable.id, { onDelete: "set null" }),
+  sortOrder:         integer("sort_order").notNull().default(0),
+});
+
 // ─── Cash/Bank Transfers (التحويلات) ──────────────────────────────────────────
 export const cashTransfersTable = pgTable("cash_transfers", {
   id:              serial("id").primaryKey(),

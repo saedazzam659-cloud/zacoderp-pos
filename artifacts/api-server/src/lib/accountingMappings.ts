@@ -20,6 +20,27 @@ export function pickAccount(current: number | null | undefined, mapped: number |
   return current ?? mapped ?? null;
 }
 
+// Default Chart-of-Accounts code for the recoverable input-VAT (asset) account.
+// Matches VAT_INPUT_DEFAULT_CODE used by the VAT declaration report.
+const VAT_INPUT_DEFAULT_CODE = "11071";
+
+// Resolve the company's input-VAT (ضريبة المدخلات) account: prefer the
+// explicit `vat_input` accounting mapping, else fall back to the standard COA
+// code. Used by payment vouchers to default a line's tax account when the
+// caller doesn't specify one. Returns null when neither exists.
+export async function resolveVatInputAccountId(companyId: number): Promise<number | null> {
+  const [m] = await db.select().from(accountingMappingsTable).where(and(
+    eq(accountingMappingsTable.companyId, companyId),
+    eq(accountingMappingsTable.roleKey, "vat_input"),
+  ));
+  if (m?.accountId != null) return m.accountId;
+  const [a] = await db.select().from(accountsTable).where(and(
+    eq(accountsTable.companyId, companyId),
+    eq(accountsTable.code, VAT_INPUT_DEFAULT_CODE),
+  ));
+  return a?.id ?? null;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // DEFAULT MAPPING TEMPLATE
 // ───────────────────────────────────────────────────────────────────────────

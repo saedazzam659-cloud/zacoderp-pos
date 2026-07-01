@@ -1,14 +1,14 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import {
-  receiptVouchersTable,
+  receiptVouchersTable, receiptVoucherLinesTable,
   cashBoxesTable, bankAccountsTable,
   customersTable,
   salesInvoicesTable,
   journalEntriesTable, journalEntryLinesTable,
   accountsTable,
 } from "@workspace/db";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
 import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
@@ -65,42 +65,82 @@ async function buildReceiptJournal(cid: number, v: any, req: any): Promise<numbe
     throw new Error("لا يوجد حساب محاسبي للخزنة/البنك — اربط الخزنة بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية العملاء»");
   }
 
-  // ─── CR side: customer receivable account ───────────────────────
-  // The form is now customer-only; legacy rows that had supplier/other
-  // entityType still load (read-only) but cannot be posted from this UI.
-  let crAccountId: number | null = v.accountId ?? null;   // legacy override
-  let crLabel = "";
-  if (!crAccountId) {
-    if (v.entityId) {
-      const [c] = await db.select().from(customersTable)
-        .where(and(eq(customersTable.id, v.entityId), eq(customersTable.companyId, cid)));
-      crAccountId = pickAccount(c?.accountId ?? null, lookup("customer_settlement", "receivable"));
-      crLabel = `عميل ${c?.nameAr ?? ""}`.trim();
-    } else {
-      crAccountId = lookup("customer_settlement", "receivable");
+  const desc = `سند قبض ${v.code}${v.description ? " - " + v.description : ""}`;
+  const cc = v.costCenter ? String(v.costCenter).trim() || null : null;
+
+  // Multi-allocation model: one treasury DR side + many CR allocation lines
+  // (each crediting a customer receivable or income account). Receipt lines
+  // carry NO VAT. When no lines exist (legacy single-`amount` voucher) we
+  // fall back to the classic two-line JE.
+  const lines = await db.select().from(receiptVoucherLinesTable)
+    .where(eq(receiptVoucherLinesTable.voucherId, v.id))
+    .orderBy(asc(receiptVoucherLinesTable.sortOrder), asc(receiptVoucherLinesTable.id));
+
+  const jeLines: {
+    accountId: number; debit: string; credit: string;
+    description: string; sortOrder: number; costCenter: string | null;
+  }[] = [];
+  const acctIds = new Set<number>([drAccountId]);
+  let total = 0;
+  let so = 1; // sortOrder 0 reserved for the treasury DR line
+
+  if (lines.length > 0) {
+    // ─── CR side: per-line allocation ─────────────────────────────────
+    for (const l of lines) {
+      const lineAcct = l.accountId ?? null;
+      if (!lineAcct) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
+      const net = parseFloat(l.amount || "0");
+      if (net <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
+      const lineCc = (l.costCenter ? String(l.costCenter).trim() || null : null) ?? cc;
+      acctIds.add(lineAcct);
+      jeLines.push({ accountId: lineAcct, debit: "0.00", credit: net.toFixed(2), description: l.description || desc, sortOrder: so++, costCenter: lineCc });
+      total += net;
     }
+    if (total <= 0) throw new Error("إجمالي السند يجب أن يكون أكبر من صفر");
+    // ─── DR side: single treasury line for the grand total ────────────
+    jeLines.unshift({ accountId: drAccountId, debit: total.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc });
   } else {
-    crLabel = v.entityName || "حساب الطرف الآخر";
-  }
-  if (!crAccountId) {
-    throw new Error("لا يوجد حساب محاسبي للعميل — اربط العميل بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية العملاء»");
+    // ─── Legacy fallback: single treasury DR / customer-receivable CR ──
+    if (amount <= 0) throw new Error("المبلغ يجب أن يكون أكبر من صفر");
+    let crAccountId: number | null = v.accountId ?? null;   // legacy override
+    let crLabel = "";
+    if (!crAccountId) {
+      if (v.entityId) {
+        const [c] = await db.select().from(customersTable)
+          .where(and(eq(customersTable.id, v.entityId), eq(customersTable.companyId, cid)));
+        crAccountId = pickAccount(c?.accountId ?? null, lookup("customer_settlement", "receivable"));
+        crLabel = `عميل ${c?.nameAr ?? ""}`.trim();
+      } else {
+        crAccountId = lookup("customer_settlement", "receivable");
+      }
+    } else {
+      crLabel = v.entityName || "حساب الطرف الآخر";
+    }
+    if (!crAccountId) {
+      throw new Error("لا يوجد حساب محاسبي للعميل — اربط العميل بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية العملاء»");
+    }
+    acctIds.add(crAccountId);
+    total = amount;
+    jeLines.push({ accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc });
+    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc });
   }
 
-  // Guard against dangling account links: a customer/cashbox/bank may carry an
-  // accountId whose account row was later deleted. Without this check the JE
-  // header inserts and then the LINES insert fails on the account_id FK,
-  // stranding an orphan zero-balance journal entry (the reported bug).
+  // Guard against dangling account links: a customer/cashbox/bank/line may
+  // carry an accountId whose account row was later deleted. Without this the
+  // JE header inserts and then the LINES insert fails on the account_id FK,
+  // stranding an orphan zero-balance journal entry.
   const acctRows = await db.select({ id: accountsTable.id }).from(accountsTable)
-    .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, [drAccountId, crAccountId])));
+    .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, [...acctIds])));
   const foundAccts = new Set(acctRows.map((a) => a.id));
   if (!foundAccts.has(drAccountId)) {
     throw new Error("حساب الخزنة/البنك المرتبط غير موجود في شجرة الحسابات — يرجى ربطه بحساب صحيح");
   }
-  if (!foundAccts.has(crAccountId)) {
-    throw new Error("حساب العميل المرتبط غير موجود في شجرة الحسابات — يرجى ربط العميل بحساب صحيح من شاشة «العملاء» أو «ربط القيود المحاسبية»");
+  for (const id of acctIds) {
+    if (!foundAccts.has(id)) {
+      throw new Error("أحد الحسابات المرتبطة غير موجود في شجرة الحسابات — يرجى مراجعة حسابات البنود والعملاء");
+    }
   }
 
-  const desc = `سند قبض ${v.code}${v.description ? " - " + v.description : ""}`;
   // Period guard: prevent receipt posting into a closed fiscal period.
   const writability = await assertWritableForDate(cid, v.date);
   if (!writability.ok) {
@@ -117,10 +157,7 @@ async function buildReceiptJournal(cid: number, v: any, req: any): Promise<numbe
     userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
     branchId: v.branchId ?? null, docDate: v.date as any,
   })) ?? v.code;
-  // Header-level cost center propagates to BOTH JE lines so cost-center
-  // reports pick up the receipt activity.
-  const cc = v.costCenter ? String(v.costCenter).trim() || null : null;
-  // Atomic: header + both lines commit together, so a mid-way failure never
+  // Atomic: header + all lines commit together, so a mid-way failure never
   // strands an orphan (zero-balance) journal entry.
   const entryId = await db.transaction(async (tx) => {
     const [entry] = await tx.insert(journalEntriesTable).values({
@@ -132,10 +169,9 @@ async function buildReceiptJournal(cid: number, v: any, req: any): Promise<numbe
       periodId: writability.period?.id ?? null,
       ...fullAuditFor(req, jeStatus),
     }).returning();
-    await tx.insert(journalEntryLinesTable).values([
-      { entryId: entry.id, accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc },
-      { entryId: entry.id, accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc },
-    ]);
+    await tx.insert(journalEntryLinesTable).values(
+      jeLines.map((jl) => ({ entryId: entry.id, ...jl })),
+    );
     return entry.id;
   });
   return entryId;
@@ -167,8 +203,87 @@ router.get("/:id", async (req, res) => {
       eq(receiptVouchersTable.companyId, cid),
     ));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
-  res.json(row);
+  const lines = await db.select().from(receiptVoucherLinesTable)
+    .where(eq(receiptVoucherLinesTable.voucherId, row.id))
+    .orderBy(asc(receiptVoucherLinesTable.sortOrder), asc(receiptVoucherLinesTable.id));
+  res.json({ ...row, lines });
 });
+
+// Normalize a raw request `lines[]` payload into typed allocation rows,
+// dropping fully-empty rows. Returns null when the caller didn't send a
+// `lines` array at all (legacy single-`amount` callers keep working).
+// Receipt lines carry NO tax fields.
+interface RawRvLine {
+  accountId: number | null;
+  description: string | null;
+  amount: number;
+  costCenter: string | null;
+  branchId: number | null;
+  salesInvoiceId: number | null;
+}
+function normalizeReceiptLines(raw: any): RawRvLine[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: RawRvLine[] = [];
+  for (const l of raw) {
+    const accountId = l?.accountId ? parseInt(l.accountId) : null;
+    const amount = parseFloat(l?.amount ?? "0") || 0;
+    if (!accountId && amount === 0) continue; // skip blank row
+    out.push({
+      accountId,
+      description: l?.description ?? null,
+      amount,
+      costCenter: l?.costCenter ? String(l.costCenter).trim() || null : null,
+      branchId: l?.branchId ? parseInt(l.branchId) : null,
+      salesInvoiceId: l?.salesInvoiceId ? parseInt(l.salesInvoiceId) : null,
+    });
+  }
+  return out;
+}
+
+// Validate normalized lines: every line needs an account + positive amount,
+// all account ids must belong to the tenant, and any per-line invoice link
+// must resolve to the same tenant/customer.
+async function validateReceiptLines(cid: number, lines: RawRvLine[], customerId: number | null): Promise<void> {
+  if (lines.length === 0) throw new Error("يجب إضافة بند واحد على الأقل");
+  const acctIds = new Set<number>();
+  for (const l of lines) {
+    if (!l.accountId) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
+    if (l.amount <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
+    acctIds.add(l.accountId);
+  }
+  if (acctIds.size) {
+    const found = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, [...acctIds])));
+    const fs = new Set(found.map((a) => a.id));
+    for (const id of acctIds) {
+      if (!fs.has(id)) throw new Error("أحد الحسابات المحددة في البنود غير موجود في هذه الشركة");
+    }
+  }
+  for (const l of lines) {
+    if (l.salesInvoiceId) await validateSalesInvoiceLink(cid, l.salesInvoiceId, customerId);
+  }
+}
+
+// Sum a voucher's grand total from its allocation lines (no VAT on receipts).
+function receiptLinesTotal(lines: RawRvLine[]): number {
+  return lines.reduce((s, l) => s + l.amount, 0);
+}
+
+// Persist allocation lines for a voucher, replacing any existing rows.
+async function replaceReceiptLines(voucherId: number, lines: RawRvLine[]): Promise<void> {
+  await db.delete(receiptVoucherLinesTable).where(eq(receiptVoucherLinesTable.voucherId, voucherId));
+  if (lines.length === 0) return;
+  await db.insert(receiptVoucherLinesTable).values(lines.map((l, i) => ({
+    voucherId,
+    accountId: l.accountId,
+    description: l.description,
+    amount: l.amount.toFixed(2),
+    costCenter: l.costCenter,
+    branchId: l.branchId,
+    salesInvoiceId: l.salesInvoiceId,
+    sortOrder: i,
+  })));
+}
 
 // Validate that a salesInvoiceId — when provided — actually belongs to the
 // same tenant AND to the customer being settled. We tolerate the customer
@@ -192,11 +307,23 @@ router.post("/", async (req, res) => {
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
   const entityId = d.entityId ? parseInt(d.entityId) : null;
-  const salesInvoiceId = d.salesInvoiceId ? parseInt(d.salesInvoiceId) : null;
-  if (salesInvoiceId) {
-    try { await validateSalesInvoiceLink(cid, salesInvoiceId, entityId); }
+  // Multi-allocation lines (optional). When present they drive the header
+  // amount + invoice link; legacy single-`amount` callers send no `lines`.
+  const lines = normalizeReceiptLines(d.lines);
+  if (lines) {
+    try { await validateReceiptLines(cid, lines, entityId); }
+    catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
+  }
+  const headerSalesInvoiceId = d.salesInvoiceId ? parseInt(d.salesInvoiceId) : null;
+  // Prefer an explicit header link; else adopt the first line's invoice so
+  // the list view keeps showing a linked-invoice badge.
+  const salesInvoiceId = headerSalesInvoiceId
+    ?? (lines?.find((l) => l.salesInvoiceId)?.salesInvoiceId ?? null);
+  if (headerSalesInvoiceId) {
+    try { await validateSalesInvoiceLink(cid, headerSalesInvoiceId, entityId); }
     catch (e: any) { res.status(400).json({ error: e?.message || "فاتورة غير صالحة" }); return; }
   }
+  const headerAmount = lines ? receiptLinesTotal(lines).toFixed(2) : (d.amount || "0");
 
   // Auto code — prefer the configured "receipt_voucher" sequence when no
   // explicit code was supplied. If no sequence is configured for this tenant
@@ -234,8 +361,10 @@ router.post("/", async (req, res) => {
     entityType:    "customer",
     entityId,
     entityName:    d.entityName    ?? null,
-    accountId:     d.accountId     ? parseInt(d.accountId)     : null,
-    amount:        d.amount        || "0",
+    // Multi-line vouchers keep the header override null (lines carry the
+    // allocation accounts); legacy single-account callers still honor it.
+    accountId:     lines ? null : (d.accountId ? parseInt(d.accountId) : null),
+    amount:        headerAmount,
     currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
     exchangeRate:  d.exchangeRate  || "1",
     refType:       d.refType       ?? (salesInvoiceId ? "sales_invoice" : null),
@@ -249,6 +378,7 @@ router.post("/", async (req, res) => {
     // resolved by extractAuth from the trusted x-session-id header.
     sessionId:     (req as any).manualSessionId ?? null,
   }).returning();
+  if (lines) await replaceReceiptLines(row.id, lines);
   res.status(201).json(row);
 });
 
@@ -264,11 +394,21 @@ router.put("/:id", async (req, res) => {
   if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن تعديل سند مرحّل" }); return; }
 
   const entityId = d.entityId ? parseInt(d.entityId) : null;
-  const salesInvoiceId = d.salesInvoiceId ? parseInt(d.salesInvoiceId) : null;
-  if (salesInvoiceId) {
-    try { await validateSalesInvoiceLink(existing.companyId, salesInvoiceId, entityId); }
+  const lines = normalizeReceiptLines(d.lines);
+  if (lines) {
+    try { await validateReceiptLines(cid, lines, entityId); }
+    catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
+  }
+  const headerSalesInvoiceId = d.salesInvoiceId ? parseInt(d.salesInvoiceId) : null;
+  const salesInvoiceId = headerSalesInvoiceId
+    ?? (lines?.find((l) => l.salesInvoiceId)?.salesInvoiceId ?? null);
+  if (headerSalesInvoiceId) {
+    try { await validateSalesInvoiceLink(existing.companyId, headerSalesInvoiceId, entityId); }
     catch (e: any) { res.status(400).json({ error: e?.message || "فاتورة غير صالحة" }); return; }
   }
+  // When `lines` is present, header amount is derived from them; a legacy
+  // caller (no `lines`) keeps sending its own `amount`.
+  const headerAmount = lines ? receiptLinesTotal(lines).toFixed(2) : d.amount;
 
   const [row] = await db.update(receiptVouchersTable).set({
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
@@ -281,8 +421,8 @@ router.put("/:id", async (req, res) => {
     entityType:    "customer",
     entityId,
     entityName:    d.entityName    ?? null,
-    accountId:     d.accountId     ? parseInt(d.accountId)     : null,
-    amount:        d.amount,
+    accountId:     lines ? null : (d.accountId ? parseInt(d.accountId) : null),
+    amount:        headerAmount,
     currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
     exchangeRate:  d.exchangeRate  || "1",
     refType:       d.refType       ?? (salesInvoiceId ? "sales_invoice" : null),
@@ -292,6 +432,9 @@ router.put("/:id", async (req, res) => {
     notes:         d.notes         ?? null,
     costCenter:    d.costCenter ? String(d.costCenter).trim() || null : null,
   }).where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+  // Replace lines only when the caller sent a `lines` array (undefined =
+  // legacy update that shouldn't wipe existing allocations).
+  if (lines) await replaceReceiptLines(row.id, lines);
   res.json(row);
 });
 

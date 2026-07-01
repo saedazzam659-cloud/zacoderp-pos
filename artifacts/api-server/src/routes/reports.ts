@@ -11,6 +11,8 @@ import {
   journalEntryLinesTable,
   accountsTable,
   accountingMappingsTable,
+  paymentVouchersTable,
+  paymentVoucherLinesTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, inArray, notInArray, sql as dsql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -231,6 +233,52 @@ router.get("/vat-declaration", async (req, res) => {
   const outputTax = net(outputSales, outputReturnsCls);
   const inputTax  = net(inputPurch,  inputReturnsCls);
 
+  // ─── Payment-voucher input VAT (additive) ──────────────────────────────
+  // The multi-allocation payment voucher (سند الصرف) lets an accountant
+  // record input VAT directly on a payment line (e.g. a cash expense with
+  // recoverable VAT that never flowed through a purchase invoice). Each
+  // posted line's `taxAmount` is the EXPLICIT input-VAT source — we read it
+  // here rather than off the journal, because the voucher's JE carries the
+  // "payment_voucher" entryType which is intentionally excluded from the
+  // manual-adjustment query above (so there is NO double counting). Lines
+  // with a positive taxAmount are treated as standard-rated purchases:
+  // `amount` is the taxable base, `taxAmount` the VAT. Legacy single-amount
+  // vouchers have no lines, so they contribute nothing here.
+  const pvLines = await db
+    .select({
+      amount:    paymentVoucherLinesTable.amount,
+      taxAmount: paymentVoucherLinesTable.taxAmount,
+    })
+    .from(paymentVoucherLinesTable)
+    .innerJoin(
+      paymentVouchersTable,
+      eq(paymentVoucherLinesTable.voucherId, paymentVouchersTable.id),
+    )
+    .where(and(
+      eq(paymentVouchersTable.companyId, companyId),
+      eq(paymentVouchersTable.status, "posted"),
+      gte(paymentVouchersTable.date, from),
+      lte(paymentVouchersTable.date, to),
+    ));
+
+  let paymentVoucherInputBase = 0;
+  let paymentVoucherInputVat  = 0;
+  for (const l of pvLines) {
+    const tax = Number(l.taxAmount);
+    if (Math.abs(tax) > 0.005) {
+      paymentVoucherInputVat  += tax;
+      paymentVoucherInputBase += Number(l.amount);
+    }
+  }
+  // Fold into the standard-rated input bucket + totals so it flows through
+  // netVat and the frontend's existing input-tax rendering unchanged.
+  if (Math.abs(paymentVoucherInputVat) > 0.005 || paymentVoucherInputBase !== 0) {
+    inputTax.standardRated.base += paymentVoucherInputBase;
+    inputTax.standardRated.vat  += paymentVoucherInputVat;
+    inputTax.total.base         += paymentVoucherInputBase;
+    inputTax.total.vat          += paymentVoucherInputVat;
+  }
+
   // ─── Manual journal-entry adjustments to VAT ───────────────────────────
   // Tenants sometimes record VAT corrections, accruals, or write-offs
   // directly via a journal entry instead of a sales/purchase invoice
@@ -366,6 +414,9 @@ router.get("/vat-declaration", async (req, res) => {
     },
     netVat,
     discountTotal,
+    // Explicit disclosure of the input VAT that came from payment-voucher
+    // lines (already folded into inputTax.standardRated / inputTax.total).
+    paymentVoucherInputVat,
     invoiceBreakdown,
     // Manual VAT adjustments recorded directly in the journal (NOT auto-
     // generated from invoices). The frontend renders these as a separate
@@ -490,6 +541,41 @@ router.get("/vat-declaration/details", async (req, res) => {
         base, vat, total: Number(r.total),
         link: `/purchasing/invoices/${r.id}`,
       });
+    }
+    // Payment-voucher lines with input VAT are standard-rated purchases.
+    if (target === "standard") {
+      const pvRows = await db
+        .select({
+          voucherId:  paymentVouchersTable.id,
+          docNumber:  paymentVouchersTable.code,
+          date:       paymentVouchersTable.date,
+          entityName: paymentVouchersTable.entityName,
+          amount:     paymentVoucherLinesTable.amount,
+          taxAmount:  paymentVoucherLinesTable.taxAmount,
+        })
+        .from(paymentVoucherLinesTable)
+        .innerJoin(
+          paymentVouchersTable,
+          eq(paymentVoucherLinesTable.voucherId, paymentVouchersTable.id),
+        )
+        .where(and(
+          eq(paymentVouchersTable.companyId, companyId),
+          eq(paymentVouchersTable.status, "posted"),
+          gte(paymentVouchersTable.date, from),
+          lte(paymentVouchersTable.date, to),
+        ));
+      for (const r of pvRows) {
+        const vat = Number(r.taxAmount);
+        if (Math.abs(vat) <= 0.005) continue;
+        const base = Number(r.amount);
+        out.push({
+          id: r.voucherId, source: "payment_voucher",
+          docNumber: r.docNumber, date: r.date,
+          partyName: r.entityName ?? null,
+          base, vat, total: base + vat,
+          link: `/cash/payment-vouchers/${r.voucherId}`,
+        });
+      }
     }
   } else if (want === "sales_returns") {
     const rows = await db
