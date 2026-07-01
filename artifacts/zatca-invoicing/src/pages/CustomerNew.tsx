@@ -97,6 +97,9 @@ export default function CustomerNew() {
   // Superadmin: company text input state
   const [companyText, setCompanyText] = useState("");
   const [custAccountId, setCustAccountId] = useState("");
+  // Category used only when NO account is picked — decides which parent the
+  // auto-created AR sub-account nests under (محلي/تصدير). Defaults to محلي.
+  const [custAccountCategory, setCustAccountCategory] = useState<"local" | "export">("local");
   const [branchId, setBranchId] = useState("");
   const [customerGroupId, setCustomerGroupId] = useState("");
   const [location, setLocation_] = useState<LocationValue>({ lat: null, lng: null, link: null });
@@ -298,6 +301,7 @@ export default function CustomerNew() {
     const payload = {
       ...rest,
       accountId: custAccountId ? Number(custAccountId) : null,
+      accountCategory: custAccountId ? undefined : custAccountCategory,
       branchId: branchId ? Number(branchId) : null,
       customerGroupId: customerGroupId ? Number(customerGroupId) : null,
       locationLat: location.lat,
@@ -943,6 +947,24 @@ export default function CustomerNew() {
                       />
                       <p className="text-xs text-muted-foreground">اختياري — الحساب المرتبط بهذا العميل في دفتر الأستاذ</p>
                     </div>
+                    {!custAccountId && (
+                      <div className="space-y-1.5 md:col-span-2 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4">
+                        <label className="text-sm font-medium">تصنيف العميل (للإنشاء التلقائي للحساب)</label>
+                        <select
+                          value={custAccountCategory}
+                          onChange={e => setCustAccountCategory(e.target.value as "local" | "export")}
+                          className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                          data-testid="customer-account-category"
+                        >
+                          <option value="local">عميل محلي (عملاء محليون)</option>
+                          <option value="export">عميل تصدير (عملاء تصدير)</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                          لم تختر حساباً — سيُنشئ النظام حساباً فرعياً تلقائياً باسم العميل تحت الحساب الأب لهذا التصنيف
+                          (يُضبط من «الإعدادات ← ربط القيود المحاسبية»).
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex justify-between pt-4 border-t">

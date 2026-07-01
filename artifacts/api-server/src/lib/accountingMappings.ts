@@ -147,6 +147,13 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "entity_account_parents", roleKey: "customer_account_parent",  accountCode: "1103" },
   { documentType: "entity_account_parents", roleKey: "warehouse_account_parent", accountCode: "1105" },
   { documentType: "entity_account_parents", roleKey: "supplier_account_parent",  accountCode: "2101" },
+  // Category-specific parents (local/foreign customers & suppliers). Default to
+  // the same generic parent so day-1 works; the admin re-points foreign/export
+  // to dedicated accounts from the «ربط القيود المحاسبية» screen.
+  { documentType: "entity_account_parents", roleKey: "customer_local_account_parent",  accountCode: "1103" },
+  { documentType: "entity_account_parents", roleKey: "customer_export_account_parent", accountCode: "1103" },
+  { documentType: "entity_account_parents", roleKey: "supplier_local_account_parent",  accountCode: "2101" },
+  { documentType: "entity_account_parents", roleKey: "supplier_foreign_account_parent", accountCode: "2101" },
 
   // مستخلصات المقاولات الصادرة (IFRS 15)
   { documentType: "contracting_outgoing_bill", roleKey: "receivable",           accountCode: "11031" },

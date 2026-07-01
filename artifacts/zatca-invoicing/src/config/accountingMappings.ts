@@ -141,9 +141,13 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
     roles: [
       { key: "cash_account_parent",      label: "أب حسابات الخزن (الصناديق النقدية)", description: "كل خزنة جديدة بدون حساب يتم إنشاؤها كحساب فرعي تحت هذا الحساب.", defaultHintCode: "1101", accountType: "asset" },
       { key: "bank_account_parent",      label: "أب الحسابات البنكية", description: "كل حساب بنكي جديد بدون حساب يتم إنشاؤه كحساب فرعي تحت هذا الحساب.", defaultHintCode: "1102", accountType: "asset" },
-      { key: "customer_account_parent",  label: "أب حسابات العملاء", description: "كل عميل جديد بدون حساب يتم إنشاؤه كحساب فرعي تحت هذا الحساب.", defaultHintCode: "1103", accountType: "asset" },
+      { key: "customer_account_parent",  label: "أب حسابات العملاء (عام)", description: "الحساب الأب الافتراضي للعملاء عند عدم اختيار تصنيف (محلي/تصدير) أو عدم ربط حساب التصنيف.", defaultHintCode: "1103", accountType: "asset" },
+      { key: "customer_local_account_parent",  label: "أب حسابات العملاء (محليون)", description: "عند اختيار تصنيف «عميل محلي» بدون حساب، يُنشأ الحساب الفرعي تحت هذا الأب.", defaultHintCode: "1103", accountType: "asset" },
+      { key: "customer_export_account_parent", label: "أب حسابات العملاء (تصدير)", description: "عند اختيار تصنيف «عميل تصدير» بدون حساب، يُنشأ الحساب الفرعي تحت هذا الأب.", defaultHintCode: "1103", accountType: "asset" },
       { key: "warehouse_account_parent", label: "أب حسابات المخازن", description: "كل مخزن جديد بدون حساب يتم إنشاؤه كحساب فرعي تحت هذا الحساب.", defaultHintCode: "1105", accountType: "asset" },
-      { key: "supplier_account_parent",  label: "أب حسابات الموردين", description: "كل مورد جديد بدون حساب يتم إنشاؤه كحساب فرعي تحت هذا الحساب.", defaultHintCode: "2101", accountType: "liability" },
+      { key: "supplier_account_parent",  label: "أب حسابات الموردين (عام)", description: "الحساب الأب الافتراضي للموردين عند عدم اختيار تصنيف (محلي/أجنبي) أو عدم ربط حساب التصنيف.", defaultHintCode: "2101", accountType: "liability" },
+      { key: "supplier_local_account_parent",  label: "أب حسابات الموردين (محليون)", description: "عند اختيار تصنيف «مورد محلي» بدون حساب، يُنشأ الحساب الفرعي تحت هذا الأب.", defaultHintCode: "2101", accountType: "liability" },
+      { key: "supplier_foreign_account_parent", label: "أب حسابات الموردين (أجانب)", description: "عند اختيار تصنيف «مورد أجنبي» بدون حساب، يُنشأ الحساب الفرعي تحت هذا الأب.", defaultHintCode: "2101", accountType: "liability" },
     ],
   },
   {

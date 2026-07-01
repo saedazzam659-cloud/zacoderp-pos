@@ -5,7 +5,7 @@ import { and, asc, eq, sql, gte, lte } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
-import { ensureCustomerLedger } from "../lib/entityAccounts.js";
+import { ensureCustomerLedger, type CustomerCategory } from "../lib/entityAccounts.js";
 import { importPartyOpeningBalances } from "../lib/openingBalanceImport.js";
 import { importPartyMasterData } from "../lib/partyMasterImport.js";
 
@@ -13,8 +13,8 @@ import { importPartyMasterData } from "../lib/partyMasterImport.js";
 // Delegates to the shared entity-account helper which reads the parent
 // from the Account Mapping screen (entity_account_parents.customer_account_parent)
 // and falls back to code-prefix / name-like lookup when the mapping isn't set.
-async function ensureCustomerAccount(companyId: number, customerName: string): Promise<number | null> {
-  return ensureCustomerLedger(companyId, customerName);
+async function ensureCustomerAccount(companyId: number, customerName: string, category?: CustomerCategory): Promise<number | null> {
+  return ensureCustomerLedger(companyId, customerName, false, category);
 }
 
 const router = Router();
@@ -231,10 +231,18 @@ router.post("/", async (req, res) => {
     if (!g) { res.status(400).json({ error: "مجموعة العملاء المحدّدة غير موجودة في هذه الشركة" }); return; }
   }
 
+  // Optional `accountCategory` (محلي/تصدير) picks WHICH parent the auto-created
+  // AR sub-account nests under. Read from the RAW body since the generated
+  // CreateCustomerBody zod schema strips unknown fields.
+  const rawCategory = (req.body as any)?.accountCategory;
+  const customerCategory: CustomerCategory | undefined =
+    rawCategory === "export" ? "export"
+    : rawCategory === "local" ? "local"
+    : undefined;
   let accountId: number | null = (data as any).accountId ? Number((data as any).accountId) : null;
   if (!accountId) {
     try {
-      accountId = await ensureCustomerAccount(effectiveCompanyId, String(data.nameAr).trim());
+      accountId = await ensureCustomerAccount(effectiveCompanyId, String(data.nameAr).trim(), customerCategory);
     } catch (err) {
       console.error("ensureCustomerAccount failed:", err);
       accountId = null;

@@ -17,7 +17,7 @@ type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
  */
 async function resolveEntityParent(
   companyId: number,
-  roleKey: string,
+  roleKeys: string[],
   fallbackCodePrefixes: string[],
   nameLikes: string[],
   accountType: AccountType,
@@ -27,18 +27,25 @@ async function resolveEntityParent(
   // an asset child under it.  When the type doesn't match we silently fall
   // through to the heuristic; a hard failure here would be worse since it
   // would block entity creation entirely.
-  const [m] = await db.select().from(accountingMappingsTable).where(and(
-    eq(accountingMappingsTable.companyId, companyId),
-    eq(accountingMappingsTable.documentType, "entity_account_parents"),
-    eq(accountingMappingsTable.roleKey, roleKey),
-  ));
-  if (m?.accountId) {
-    const [acc] = await db.select().from(accountsTable).where(and(
-      eq(accountsTable.id, m.accountId),
-      eq(accountsTable.companyId, companyId), // tenant guard
-      eq(accountsTable.accountType, accountType), // type guard
+  //
+  // `roleKeys` is an ORDERED priority list: the category-specific parent
+  // (e.g. supplier_foreign_account_parent) is tried first, then the generic
+  // parent (supplier_account_parent) as a back-compat fallback. The first
+  // role whose mapping resolves to a valid same-type account wins.
+  for (const roleKey of roleKeys) {
+    const [m] = await db.select().from(accountingMappingsTable).where(and(
+      eq(accountingMappingsTable.companyId, companyId),
+      eq(accountingMappingsTable.documentType, "entity_account_parents"),
+      eq(accountingMappingsTable.roleKey, roleKey),
     ));
-    if (acc) return acc;
+    if (m?.accountId) {
+      const [acc] = await db.select().from(accountsTable).where(and(
+        eq(accountsTable.id, m.accountId),
+        eq(accountsTable.companyId, companyId), // tenant guard
+        eq(accountsTable.accountType, accountType), // type guard
+      ));
+      if (acc) return acc;
+    }
   }
 
   // 2/3) heuristic fallback — code prefixes then name like
@@ -121,7 +128,12 @@ async function nextChildCode(companyId: number, parent: { id: number; code: stri
  */
 export async function ensureEntitySubAccount(args: {
   companyId: number;
-  roleKey: "cash_account_parent" | "bank_account_parent" | "customer_account_parent" | "supplier_account_parent" | "warehouse_account_parent";
+  /**
+   * Ordered priority list of entity_account_parents role keys. The first role
+   * whose mapping resolves wins; later entries act as back-compat fallbacks
+   * (e.g. ["supplier_foreign_account_parent", "supplier_account_parent"]).
+   */
+  roleKeys: string[];
   name: string;
   fallbackCodePrefixes: string[];
   nameLikes: string[];
@@ -134,8 +146,8 @@ export async function ensureEntitySubAccount(args: {
    */
   forceNew?: boolean;
 }): Promise<number | null> {
-  const { companyId, roleKey, name, fallbackCodePrefixes, nameLikes, accountType, forceNew = false } = args;
-  const parent = await resolveEntityParent(companyId, roleKey, fallbackCodePrefixes, nameLikes, accountType);
+  const { companyId, roleKeys, name, fallbackCodePrefixes, nameLikes, accountType, forceNew = false } = args;
+  const parent = await resolveEntityParent(companyId, roleKeys, fallbackCodePrefixes, nameLikes, accountType);
   if (!parent) return null;
 
   // Idempotency: same-name sibling under this parent (bypassed when forceNew)
@@ -189,7 +201,7 @@ export async function ensureEntitySubAccount(args: {
 
 export const ensureCashBoxAccount = (companyId: number, name: string) =>
   ensureEntitySubAccount({
-    companyId, roleKey: "cash_account_parent", name,
+    companyId, roleKeys: ["cash_account_parent"], name,
     fallbackCodePrefixes: ["1101", "1110", "111"],
     nameLikes: ["نقد", "خزين", "خزن", "صندوق", "cash"],
     accountType: "asset",
@@ -197,24 +209,53 @@ export const ensureCashBoxAccount = (companyId: number, name: string) =>
 
 export const ensureBankAccountLedger = (companyId: number, name: string) =>
   ensureEntitySubAccount({
-    companyId, roleKey: "bank_account_parent", name,
+    companyId, roleKeys: ["bank_account_parent"], name,
     fallbackCodePrefixes: ["1102", "1130", "112"],
     nameLikes: ["بنك", "bank"],
     accountType: "asset",
   });
 
-export const ensureCustomerLedger = (companyId: number, name: string, forceNew = false) =>
+/** Customer commercial category → which parent account the auto-created
+ *  AR sub-account nests under. `local` = عملاء محليون, `export` = عملاء تصدير.
+ *  Undefined keeps the legacy single-parent behavior. */
+export type CustomerCategory = "local" | "export";
+export type SupplierCategory = "local" | "foreign";
+
+export const ensureCustomerLedger = (
+  companyId: number,
+  name: string,
+  forceNew = false,
+  category?: CustomerCategory,
+) =>
   ensureEntitySubAccount({
-    companyId, roleKey: "customer_account_parent", name,
+    companyId,
+    // Category-specific parent first, generic parent as fallback.
+    roleKeys: category === "export"
+      ? ["customer_export_account_parent", "customer_account_parent"]
+      : category === "local"
+      ? ["customer_local_account_parent", "customer_account_parent"]
+      : ["customer_account_parent"],
+    name,
     fallbackCodePrefixes: ["1103", "1130", "121"],
     nameLikes: ["عملاء", "ذمم مدين", "مدين", "customer", "receiv"],
     accountType: "asset",
     forceNew,
   });
 
-export const ensureSupplierLedger = (companyId: number, name: string) =>
+export const ensureSupplierLedger = (
+  companyId: number,
+  name: string,
+  category?: SupplierCategory,
+) =>
   ensureEntitySubAccount({
-    companyId, roleKey: "supplier_account_parent", name,
+    companyId,
+    // Category-specific parent first, generic parent as fallback.
+    roleKeys: category === "foreign"
+      ? ["supplier_foreign_account_parent", "supplier_account_parent"]
+      : category === "local"
+      ? ["supplier_local_account_parent", "supplier_account_parent"]
+      : ["supplier_account_parent"],
+    name,
     fallbackCodePrefixes: ["2101", "2110", "211"],
     nameLikes: ["موردين", "ذمم دائن", "دائن", "supplier", "payab"],
     accountType: "liability",
@@ -222,7 +263,7 @@ export const ensureSupplierLedger = (companyId: number, name: string) =>
 
 export const ensureWarehouseAccount = (companyId: number, name: string) =>
   ensureEntitySubAccount({
-    companyId, roleKey: "warehouse_account_parent", name,
+    companyId, roleKeys: ["warehouse_account_parent"], name,
     fallbackCodePrefixes: ["1105", "1220", "112"],
     nameLikes: ["مخزون", "مخزن", "بضاعة", "inventory", "stock", "warehouse"],
     accountType: "asset",

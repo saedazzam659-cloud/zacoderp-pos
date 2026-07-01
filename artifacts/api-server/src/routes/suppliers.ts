@@ -6,7 +6,7 @@ import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSe
 import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
-import { ensureSupplierLedger } from "../lib/entityAccounts.js";
+import { ensureSupplierLedger, type SupplierCategory } from "../lib/entityAccounts.js";
 import { importPartyOpeningBalances } from "../lib/openingBalanceImport.js";
 import { importPartyMasterData } from "../lib/partyMasterImport.js";
 
@@ -14,8 +14,8 @@ import { importPartyMasterData } from "../lib/partyMasterImport.js";
 // Delegates to the shared entity-account helper which reads the parent
 // from the Account Mapping screen (entity_account_parents.supplier_account_parent)
 // and falls back to code-prefix / name-like lookup when the mapping isn't set.
-async function ensureSupplierAccount(companyId: number, supplierName: string): Promise<number | null> {
-  return ensureSupplierLedger(companyId, supplierName);
+async function ensureSupplierAccount(companyId: number, supplierName: string, category?: SupplierCategory): Promise<number | null> {
+  return ensureSupplierLedger(companyId, supplierName, category);
 }
 
 const router = Router();
@@ -199,10 +199,16 @@ router.post("/", async (req, res) => {
   }
 
   // Auto-create a sub-account under the suppliers parent if none was provided.
+  // The optional `accountCategory` (محلي/أجنبي) picks WHICH parent to nest
+  // under (falls back to the generic supplier parent when unset/unmapped).
+  const supplierCategory: SupplierCategory | undefined =
+    data.accountCategory === "foreign" ? "foreign"
+    : data.accountCategory === "local" ? "local"
+    : undefined;
   let accountId: number | null = data.accountId ? Number(data.accountId) : null;
   if (!accountId) {
     try {
-      accountId = await ensureSupplierAccount(companyId, String(data.nameAr).trim());
+      accountId = await ensureSupplierAccount(companyId, String(data.nameAr).trim(), supplierCategory);
     } catch (err) {
       console.error("ensureSupplierAccount failed:", err);
       accountId = null;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
@@ -933,7 +933,7 @@ const PLAN_KEYS: Record<string, string> = {
 };
 
 // ─── NavItem (stable, top-level component) ─────────────────────────────────────
-function NavItem({
+const NavItem = React.memo(function NavItem({
   item, location, onClick, indent = false,
 }: {
   item: NavDef;
@@ -987,7 +987,7 @@ function NavItem({
       </a>
     </div>
   );
-}
+});
 
 // ─── PurchasingNavGroup ────────────────────────────────────────────────────────
 // Suppliers/purchasing reports are nested INSIDE this group (per the user's
@@ -2320,8 +2320,8 @@ function TopNavBar(props: any) {
     );
   }
 
-  const filteredBusiness = companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
-  const filteredSystem = companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
+  const filteredBusiness = useMemo(() => companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
+  const filteredSystem = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
   const groups: { key: string; label: string; node: (close: () => void) => React.ReactNode }[] = [
     {
@@ -2672,8 +2672,8 @@ function SidebarInner({
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
-  const filteredBusiness = companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
-  const filteredSystem   = companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
+  const filteredBusiness = useMemo(() => companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
+  const filteredSystem   = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
   const planColor =
     user?.subscription?.plan === "starter"      ? "text-blue-700 bg-blue-50 border-blue-200" :
@@ -3604,7 +3604,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // see the tenant sidebar (Dashboard / Sales / Inventory / …), not the
   // SuperAdmin sidebar. The amber banner remains the safe exit.
   const isSuperAdmin = user?.role === "superadmin" && !actingCompanyId;
-  const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
+  const menuPerms    = useMemo(() => parseMenuPerms(user?.company?.menuPermissions), [user?.company?.menuPermissions]);
 
   // Accordion behavior — only ONE top-level group may be expanded at a time.
   // When the user opens a main group, every other top-level group collapses.
@@ -3697,7 +3697,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handlePurchasingReportsToggle = () => setPurchasingReportsOpen(v => !v);
   const handleSalesReportsToggle      = () => setSalesReportsOpen(v => !v);
   const handleCashReportsToggle       = () => setCashReportsOpen(v => !v);
-  const closeMobile = () => setMobileOpen(false);
+  const closeMobile = useCallback(() => setMobileOpen(false), []);
 
   // Lock body scroll while the mobile drawer is open so the page behind
   // the dim backdrop doesn't scroll under the user's finger when they

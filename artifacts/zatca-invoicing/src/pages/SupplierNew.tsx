@@ -50,7 +50,7 @@ export default function SupplierNew() {
       const res = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/suppliers`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...values, companyId: user?.companyId, accountId: accountId ? Number(accountId) : null, branchId: branchId ? Number(branchId) : null }),
+        body: JSON.stringify({ ...values, companyId: user?.companyId, accountId: accountId ? Number(accountId) : null, accountCategory: accountId ? undefined : accountCategory, branchId: branchId ? Number(branchId) : null }),
       });
       if (!res.ok) {
         const txt = await res.text();
@@ -69,6 +69,9 @@ export default function SupplierNew() {
   });
 
   const [accountId, setAccountId] = useState("");
+  // Category used only when NO account is picked — decides which parent the
+  // auto-created AP sub-account nests under (محلي/أجنبي). Defaults to محلي.
+  const [accountCategory, setAccountCategory] = useState<"local" | "foreign">("local");
   const [branchId, setBranchId] = useState("");
   const vatVal = form.watch("vatNumber");
 
@@ -261,6 +264,25 @@ export default function SupplierNew() {
                   <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ</p>
                 </div>
               </div>
+
+              {!accountId && (
+                <div className="space-y-1.5 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4">
+                  <label className="text-sm font-medium">تصنيف المورد (للإنشاء التلقائي للحساب)</label>
+                  <select
+                    value={accountCategory}
+                    onChange={e => setAccountCategory(e.target.value as "local" | "foreign")}
+                    className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                    data-testid="supplier-account-category"
+                  >
+                    <option value="local">مورد محلي (موردون محليون)</option>
+                    <option value="foreign">مورد أجنبي (موردون أجانب)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    لم تختر حساباً — سيُنشئ النظام حساباً فرعياً تلقائياً باسم المورد تحت الحساب الأب لهذا التصنيف
+                    (يُضبط من «الإعدادات ← ربط القيود المحاسبية»).
+                  </p>
+                </div>
+              )}
 
             </CardContent>
           </Card>
