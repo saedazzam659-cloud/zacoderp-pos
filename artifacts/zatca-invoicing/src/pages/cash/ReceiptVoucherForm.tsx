@@ -17,6 +17,7 @@ import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { AccountCascadePicker } from "@/components/ui/account-cascade-picker";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ArrowDownCircle, ArrowRight, ChevronLeft, Search,
   Loader2, Save, Send, Lock, FileText, Banknote,
@@ -784,8 +785,16 @@ export default function ReceiptVoucherForm() {
       {/* ─── Two-column body: form + live preview ─────────────── */}
       <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
-          {/* ── Left column: SINGLE-TAB form ──────────────────── */}
-          <div className="space-y-4">
+          {/* ── Left column: TABBED form ──────────────────── */}
+          <Tabs defaultValue="voucher" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
+            <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full h-auto gap-1 p-1">
+              <TabsTrigger value="voucher" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_header`, "بيانات السند")}</TabsTrigger>
+              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{t(`${NS}.tab_party`, "العميل والمبلغ")}</TabsTrigger>
+              <TabsTrigger value="lines" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_lines`, "بنود القبض")}</TabsTrigger>
+              <TabsTrigger value="refs" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_refs`, "المراجع والبيان")}</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="voucher" className="mt-0">
             {/* Section: Header */}
             <Card className="border-2">
               <CardHeader className="py-3 px-4 border-b bg-muted/30">
@@ -887,7 +896,20 @@ export default function ReceiptVoucherForm() {
                   </div>
                   )}
                 </div>
+              </CardContent>
+            </Card>
+            </TabsContent>
 
+            <TabsContent value="party" className="mt-0 space-y-4">
+            {/* Section: Payment method + treasury (money source) */}
+            <Card className="border-2 border-green-100">
+              <CardHeader className="py-3 px-4 border-b bg-green-50/40">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-900">
+                  <Wallet className="h-4 w-4" />
+                  {t(`${NS}.tab_party`, "العميل والمبلغ")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 pb-4 space-y-4">
                 {/* Payment method as visual segmented buttons (cash | bank) */}
                 {fp.isVisible("paymentType") && (
                 <div className="space-y-1.5">
@@ -992,7 +1014,9 @@ export default function ReceiptVoucherForm() {
               </CardContent>
             </Card>
             )}
+            </TabsContent>
 
+            <TabsContent value="lines" className="mt-0">
             {/* Section: Allocation lines (multi-line receipt, no VAT) */}
             <Card className="border-2 border-green-100">
               <CardHeader className="py-3 px-4 border-b bg-green-50/40">
@@ -1002,98 +1026,103 @@ export default function ReceiptVoucherForm() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-3">
-                <div className="overflow-x-auto -mx-1">
-                  <table className="w-full text-xs border-separate border-spacing-y-2 min-w-[820px]">
-                    <thead>
-                      <tr className="text-muted-foreground">
-                        <th className="text-start font-medium w-8 px-1">#</th>
-                        <th className="text-start font-medium px-1 min-w-[220px]">{t(`${NS}.colAccount`, "الحساب")} <span className="text-destructive">*</span></th>
-                        <th className="text-start font-medium px-1 min-w-[130px]">{t(`${NS}.colDescription`, "البيان")}</th>
-                        <th className="text-start font-medium px-1 w-28">{t(`${NS}.colAmount`, "المبلغ")} <span className="text-destructive">*</span></th>
-                        <th className="text-start font-medium px-1 w-32">{t(`${NS}.colCostCenter`, "مركز التكلفة")}</th>
+                <div className="space-y-4">
+                  {form.lines.map((l, idx) => (
+                    <div
+                      key={l.key}
+                      className="rounded-xl border-2 border-green-100 bg-green-50/20 p-4 md:p-5 space-y-4"
+                      data-testid={`rv-line-${idx}`}
+                    >
+                      {/* Row 1: line number + main account + remove */}
+                      <div className="flex items-start gap-3">
+                        <span className="mt-7 shrink-0 h-8 w-8 rounded-full bg-green-100 text-green-800 text-sm font-bold flex items-center justify-center tabular-nums">{idx + 1}</span>
+                        <div className="flex-1 space-y-1.5 min-w-0">
+                          <Label className="text-sm font-semibold">{t(`${NS}.colAccount`, "الحساب")} <span className="text-destructive">*</span></Label>
+                          <AccountCascadePicker
+                            accounts={accounts as any[]}
+                            value={l.accountId}
+                            isRtl={isRtl}
+                            onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
+                          />
+                        </div>
+                        <Button
+                          type="button" variant="ghost" size="icon"
+                          className="mt-7 h-10 w-10 text-muted-foreground hover:text-destructive shrink-0"
+                          onClick={() => removeLine(l.key)}
+                          title={t(`${NS}.removeLine`, "حذف البند")}
+                          data-testid={`rv-line-remove-${idx}`}
+                        >
+                          <Trash2 className="h-5 w-5" />
+                        </Button>
+                      </div>
+
+                      {/* Row 2: description */}
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-semibold">{t(`${NS}.colDescription`, "البيان")}</Label>
+                        <Input
+                          value={l.description}
+                          onChange={e => updateLine(l.key, { description: e.target.value })}
+                          placeholder={t(`${NS}.colDescription`, "البيان")}
+                          className="h-12 text-base"
+                        />
+                      </div>
+
+                      {/* Row 3: amount — enlarged */}
+                      <div className="space-y-1.5 rounded-lg bg-background/70 border border-green-100 p-3 md:p-4">
+                        <Label className="text-sm font-semibold">{t(`${NS}.colAmount`, "المبلغ")} <span className="text-destructive">*</span></Label>
+                        <Input
+                          type="number" step="0.01" placeholder="0.00" dir="ltr"
+                          value={l.amount}
+                          onChange={e => updateLine(l.key, { amount: e.target.value })}
+                          onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
+                          className="h-14 text-lg text-left font-mono font-semibold"
+                          data-testid={`rv-line-amount-${idx}`}
+                        />
+                      </div>
+
+                      {/* Row 4: cost center + sales-invoice link */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <Label className="text-sm font-semibold">{t(`${NS}.colCostCenter`, "مركز التكلفة")}</Label>
+                          <select
+                            value={l.costCenter}
+                            onChange={e => updateLine(l.key, { costCenter: e.target.value })}
+                            className="w-full h-12 border border-input rounded-md px-3 text-base bg-background"
+                          >
+                            <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
+                            {(costCentersList as any[])
+                              .filter((c: any) => c.isActive !== false)
+                              .map((c: any) => (
+                                <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>
+                              ))}
+                          </select>
+                        </div>
                         {fp.isVisible("settleSalesInvoice") && (
-                        <th className="text-start font-medium px-1 min-w-[160px]"><span className="inline-flex items-center gap-1"><Link2 className="h-3 w-3" />{t(`${NS}.colSalesInvoice`, "ربط فاتورة مبيعات")}</span></th>
+                        <div className="space-y-1.5">
+                          <Label className="text-sm font-semibold inline-flex items-center gap-1"><Link2 className="h-4 w-4" />{t(`${NS}.colSalesInvoice`, "ربط فاتورة مبيعات")}</Label>
+                          <SearchCombobox
+                            items={invoiceItems}
+                            value={l.salesInvoiceId}
+                            onValueChange={v => updateLine(l.key, { salesInvoiceId: v })}
+                            placeholder={form.entityId
+                              ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
+                              : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
+                            searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
+                            emptyText={form.entityId
+                              ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا العميل")
+                              : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
+                          />
+                        </div>
                         )}
-                        <th className="text-start font-medium px-1 w-24">{t(`${NS}.colLineTotal`, "الإجمالي")}</th>
-                        <th className="px-1 w-8"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {form.lines.map((l, idx) => (
-                        <tr key={l.key} className="align-top" data-testid={`rv-line-${idx}`}>
-                          <td className="px-1 pt-2 text-muted-foreground tabular-nums">{idx + 1}</td>
-                          <td className="px-1">
-                            <AccountCascadePicker
-                              accounts={accounts as any[]}
-                              value={l.accountId}
-                              isRtl={isRtl}
-                              onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
-                            />
-                          </td>
-                          <td className="px-1">
-                            <Input
-                              value={l.description}
-                              onChange={e => updateLine(l.key, { description: e.target.value })}
-                              placeholder={t(`${NS}.colDescription`, "البيان")}
-                              className="h-9 text-sm"
-                            />
-                          </td>
-                          <td className="px-1">
-                            <Input
-                              type="number" step="0.01" placeholder="0.00" dir="ltr"
-                              value={l.amount}
-                              onChange={e => updateLine(l.key, { amount: e.target.value })}
-                              onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
-                              className="h-9 text-sm text-left font-mono"
-                              data-testid={`rv-line-amount-${idx}`}
-                            />
-                          </td>
-                          <td className="px-1">
-                            <select
-                              value={l.costCenter}
-                              onChange={e => updateLine(l.key, { costCenter: e.target.value })}
-                              className="w-full h-9 border border-input rounded-md px-2 text-sm bg-background"
-                            >
-                              <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
-                              {(costCentersList as any[])
-                                .filter((c: any) => c.isActive !== false)
-                                .map((c: any) => (
-                                  <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>
-                                ))}
-                            </select>
-                          </td>
-                          {fp.isVisible("settleSalesInvoice") && (
-                          <td className="px-1">
-                            <SearchCombobox
-                              items={invoiceItems}
-                              value={l.salesInvoiceId}
-                              onValueChange={v => updateLine(l.key, { salesInvoiceId: v })}
-                              placeholder={form.entityId
-                                ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
-                                : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
-                              searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
-                              emptyText={form.entityId
-                                ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا العميل")
-                                : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
-                            />
-                          </td>
-                          )}
-                          <td className="px-1 pt-2 text-left font-mono tabular-nums whitespace-nowrap">{fmt(Number(l.amount) || 0)}</td>
-                          <td className="px-1 pt-1">
-                            <Button
-                              type="button" variant="ghost" size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                              onClick={() => removeLine(l.key)}
-                              title={t(`${NS}.removeLine`, "حذف البند")}
-                              data-testid={`rv-line-remove-${idx}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </div>
+
+                      {/* Line total — prominent, always visible */}
+                      <div className="flex items-center justify-between border-t border-green-200/60 pt-3">
+                        <span className="text-sm font-semibold text-muted-foreground">{t(`${NS}.colLineTotal`, "إجمالي البند")}</span>
+                        <span className="font-mono font-bold text-xl tabular-nums text-green-700" data-testid={`rv-line-total-${idx}`}>{fmt(Number(l.amount) || 0)}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 <Button
@@ -1116,7 +1145,9 @@ export default function ReceiptVoucherForm() {
                 </div>
               </CardContent>
             </Card>
+            </TabsContent>
 
+            <TabsContent value="refs" className="mt-0">
             {/* Section: References & Notes */}
             <Card className="border-2 border-slate-100">
               <CardHeader className="py-3 px-4 border-b bg-slate-50/40">
@@ -1180,7 +1211,8 @@ export default function ReceiptVoucherForm() {
                 )}
               </CardContent>
             </Card>
-          </div>
+            </TabsContent>
+          </Tabs>
 
           {/* ── Right column: live JE preview (sticky on desktop) ── */}
           <aside className="lg:sticky lg:top-4 space-y-4">
