@@ -246,8 +246,15 @@ router.get("/vat-declaration", async (req, res) => {
   // vouchers have no lines, so they contribute nothing here.
   const pvLines = await db
     .select({
+      voucherId:  paymentVouchersTable.id,
+      docNumber:  paymentVouchersTable.code,
+      date:       paymentVouchersTable.date,
       amount:    paymentVoucherLinesTable.amount,
       taxAmount: paymentVoucherLinesTable.taxAmount,
+      supplierName:          paymentVoucherLinesTable.supplierName,
+      supplierVatNumber:     paymentVoucherLinesTable.supplierVatNumber,
+      supplierInvoiceNumber: paymentVoucherLinesTable.supplierInvoiceNumber,
+      supplierInvoiceDate:   paymentVoucherLinesTable.supplierInvoiceDate,
     })
     .from(paymentVoucherLinesTable)
     .innerJoin(
@@ -261,6 +268,25 @@ router.get("/vat-declaration", async (req, res) => {
       lte(paymentVouchersTable.date, to),
     ));
 
+  // Per-line supplier-tax breakdown surfaced on the declaration so the
+  // accountant can see WHO the recoverable input VAT was paid to, straight
+  // from the payment-voucher and manual-JE lines that carry the metadata.
+  type SupplierTaxLine = {
+    source: string;
+    docNumber: string | null;
+    date: string;
+    supplierName: string | null;
+    supplierVatNumber: string | null;
+    supplierInvoiceNumber: string | null;
+    supplierInvoiceDate: string | null;
+    base: number;
+    vat: number;
+  };
+  const supplierTaxLines: SupplierTaxLine[] = [];
+  const hasSup = (l: { supplierName: string | null; supplierVatNumber: string | null; supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null }) =>
+    !!((l.supplierName ?? "").trim() || (l.supplierVatNumber ?? "").trim() ||
+       (l.supplierInvoiceNumber ?? "").trim() || (l.supplierInvoiceDate ?? "").trim());
+
   let paymentVoucherInputBase = 0;
   let paymentVoucherInputVat  = 0;
   for (const l of pvLines) {
@@ -268,6 +294,19 @@ router.get("/vat-declaration", async (req, res) => {
     if (Math.abs(tax) > 0.005) {
       paymentVoucherInputVat  += tax;
       paymentVoucherInputBase += Number(l.amount);
+      if (hasSup(l)) {
+        supplierTaxLines.push({
+          source: "payment_voucher",
+          docNumber: l.docNumber ?? null,
+          date: l.date,
+          supplierName:          (l.supplierName ?? "").trim() || null,
+          supplierVatNumber:     (l.supplierVatNumber ?? "").trim() || null,
+          supplierInvoiceNumber: (l.supplierInvoiceNumber ?? "").trim() || null,
+          supplierInvoiceDate:   (l.supplierInvoiceDate ?? "").trim() || null,
+          base: Number(l.amount),
+          vat:  tax,
+        });
+      }
     }
   }
   // Fold into the standard-rated input bucket + totals so it flows through
@@ -322,6 +361,10 @@ router.get("/vat-declaration", async (req, res) => {
         lineAccount:  journalEntryLinesTable.accountId,
         lineDebit:    journalEntryLinesTable.debit,
         lineCredit:   journalEntryLinesTable.credit,
+        supplierName:          journalEntryLinesTable.supplierName,
+        supplierVatNumber:     journalEntryLinesTable.supplierVatNumber,
+        supplierInvoiceNumber: journalEntryLinesTable.supplierInvoiceNumber,
+        supplierInvoiceDate:   journalEntryLinesTable.supplierInvoiceDate,
       })
       .from(journalEntriesTable)
       .innerJoin(
@@ -350,11 +393,27 @@ router.get("/vat-declaration", async (req, res) => {
       }
       const debit  = Number(r.lineDebit);
       const credit = Number(r.lineCredit);
-      if (vatOutAcctId != null && r.lineAccount === vatOutAcctId) {
+      const isVatOut = vatOutAcctId != null && r.lineAccount === vatOutAcctId;
+      const isVatIn  = vatInAcctId  != null && r.lineAccount === vatInAcctId;
+      if (isVatOut) {
         agg.outputVat += credit - debit;
       }
-      if (vatInAcctId != null && r.lineAccount === vatInAcctId) {
+      if (isVatIn) {
         agg.inputVat += debit - credit;
+      }
+      // Surface manual-JE supplier tax metadata on the VAT lines only.
+      if ((isVatOut || isVatIn) && hasSup(r)) {
+        supplierTaxLines.push({
+          source: isVatOut ? "journal_output" : "journal_input",
+          docNumber: r.docNumber ?? null,
+          date: r.entryDate,
+          supplierName:          (r.supplierName ?? "").trim() || null,
+          supplierVatNumber:     (r.supplierVatNumber ?? "").trim() || null,
+          supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
+          supplierInvoiceDate:   (r.supplierInvoiceDate ?? "").trim() || null,
+          base: 0,
+          vat:  isVatOut ? (credit - debit) : (debit - credit),
+        });
       }
     }
     // Drop entries whose net VAT impact rounds to zero — those are pure
@@ -417,6 +476,12 @@ router.get("/vat-declaration", async (req, res) => {
     // Explicit disclosure of the input VAT that came from payment-voucher
     // lines (already folded into inputTax.standardRated / inputTax.total).
     paymentVoucherInputVat,
+    // Per-line supplier tax metadata (from payment-voucher lines + manual-JE
+    // VAT lines) entered via the ⋮ supplier-details menu. Sorted by date so
+    // the frontend renders a clean chronological supplier VAT breakdown.
+    supplierTaxLines: supplierTaxLines
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date)),
     invoiceBreakdown,
     // Manual VAT adjustments recorded directly in the journal (NOT auto-
     // generated from invoices). The frontend renders these as a separate

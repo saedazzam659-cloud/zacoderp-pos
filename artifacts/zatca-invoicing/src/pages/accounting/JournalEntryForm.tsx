@@ -37,6 +37,11 @@ import {
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import {
+  SupplierTaxDetailsMenu,
+  type SupplierTaxDetails,
+  hasSupplierTaxDetails,
+} from "@/components/SupplierTaxDetailsDialog";
 import * as XLSX from "xlsx";
 
 const ENTRY_TYPES = [
@@ -85,10 +90,19 @@ interface JournalLine {
   debit:       string;
   credit:      string;
   description: string;
+  // Per-line supplier tax metadata (entered via the ⋮ dialog) — surfaces in the
+  // VAT declaration report + tax account statement for input/output-VAT lines.
+  supplierName:          string;
+  supplierVatNumber:     string;
+  supplierInvoiceNumber: string;
+  supplierInvoiceDate:   string;
 }
 
 function newLine(): JournalLine {
-  return { id: crypto.randomUUID(), accountId: "", costCenter: "", debit: "", credit: "", description: "" };
+  return {
+    id: crypto.randomUUID(), accountId: "", costCenter: "", debit: "", credit: "", description: "",
+    supplierName: "", supplierVatNumber: "", supplierInvoiceNumber: "", supplierInvoiceDate: "",
+  };
 }
 function today() {
   const d = new Date();
@@ -385,6 +399,10 @@ export default function JournalEntryForm() {
             debit:       l.debit  ? String(Number(l.debit))  : "",
             credit:      l.credit ? String(Number(l.credit)) : "",
             description: l.description ?? "",
+            supplierName:          l.supplierName ?? "",
+            supplierVatNumber:     l.supplierVatNumber ?? "",
+            supplierInvoiceNumber: l.supplierInvoiceNumber ?? "",
+            supplierInvoiceDate:   l.supplierInvoiceDate ?? "",
           }))
         : [newLine(), newLine()]
     );
@@ -409,11 +427,25 @@ export default function JournalEntryForm() {
   function updateLine(id: string, field: keyof JournalLine, value: string) {
     setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
   }
+  // Multi-field patch (used by the supplier-tax ⋮ dialog which sets 4 fields
+  // at once). Kept separate from the single-field updateLine signature.
+  function patchLine(id: string, patch: Partial<JournalLine>) {
+    setLines(prev => prev.map(l => l.id === id ? { ...l, ...patch } : l));
+  }
   function addLine() {
     // Inherit the general description so a newly-added line is consistent
     // with all the others — the user explicitly asked the البيان العام to
     // appear on every row, even when adding more rows after the fact.
     const l = { ...newLine(), description: description || "" };
+    // Inherit supplier tax metadata from the last line so a multi-tax entry for
+    // the same supplier never re-types the details.
+    const prev = lines[lines.length - 1];
+    if (prev && hasSupplierTaxDetails(prev)) {
+      l.supplierName          = prev.supplierName;
+      l.supplierVatNumber     = prev.supplierVatNumber;
+      l.supplierInvoiceNumber = prev.supplierInvoiceNumber;
+      l.supplierInvoiceDate   = prev.supplierInvoiceDate;
+    }
     // Smart "model" mode: pre-fill the OPPOSITE side with the remaining
     // imbalance so the entry stays balanced after each added line. The
     // user can still overwrite the suggested amount freely.
@@ -648,6 +680,10 @@ export default function JournalEntryForm() {
       description: direction === "input"
         ? `ضريبة المدخلات ${ratePctLabel}${incTag} ${vatInclusive ? "من" : "على"} ${amount.toFixed(2)}`
         : `ضريبة المخرجات ${ratePctLabel}${incTag} ${vatInclusive ? "من" : "على"} ${amount.toFixed(2)}`,
+      supplierName:          sourceLine.supplierName ?? "",
+      supplierVatNumber:     sourceLine.supplierVatNumber ?? "",
+      supplierInvoiceNumber: sourceLine.supplierInvoiceNumber ?? "",
+      supplierInvoiceDate:   sourceLine.supplierInvoiceDate ?? "",
     };
 
     setLines(prev => {
@@ -899,6 +935,10 @@ export default function JournalEntryForm() {
         debit:       l.debit  || "0",
         credit:      l.credit || "0",
         description: l.description || null,
+        supplierName:          l.supplierName?.trim() || null,
+        supplierVatNumber:     l.supplierVatNumber?.trim() || null,
+        supplierInvoiceNumber: l.supplierInvoiceNumber?.trim() || null,
+        supplierInvoiceDate:   l.supplierInvoiceDate?.trim() || null,
       })),
     });
   }
@@ -1754,13 +1794,14 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
               />
 
               {/* Column headers — same grid template as line rows */}
-              <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 px-4 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
+              <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px] gap-2 px-4 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
                 <span />
                 <span>الحساب</span>
                 <span>مدين</span>
                 <span>دائن</span>
                 <span>البيان</span>
                 <span>مركز التكلفة</span>
+                <span />
                 <span />
               </div>
 
@@ -1769,7 +1810,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 {lines.map((line, idx) => (
                   <div
                     key={line.id}
-                    className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 px-4 py-2.5 items-center hover:bg-muted/10"
+                    className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px] gap-2 px-4 py-2.5 items-center hover:bg-muted/10"
                   >
                     <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
 
@@ -1930,6 +1971,17 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       );
                     })()}
 
+                    <SupplierTaxDetailsMenu
+                      testId={`je-line-${idx}`}
+                      value={{
+                        supplierName: line.supplierName,
+                        supplierVatNumber: line.supplierVatNumber,
+                        supplierInvoiceNumber: line.supplierInvoiceNumber,
+                        supplierInvoiceDate: line.supplierInvoiceDate,
+                      }}
+                      onChange={(v: SupplierTaxDetails) => patchLine(line.id, v)}
+                    />
+
                     <Button
                       variant="ghost" size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-destructive"
@@ -1989,7 +2041,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 
               {/* Totals footer */}
               <div className="border-t bg-muted/20 px-4 py-3">
-                <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 items-center">
+                <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px] gap-2 items-center">
                   <span />
                   <span className="text-xs font-semibold text-muted-foreground">الإجماليات</span>
                   <span className={cn(
@@ -2011,6 +2063,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     {!isBalanced && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
                     {isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}
                   </div>
+                  <span />
                   <span />
                   <span />
                 </div>

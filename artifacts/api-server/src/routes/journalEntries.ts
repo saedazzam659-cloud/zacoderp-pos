@@ -29,6 +29,13 @@ function guard(req: any, res: any): number | null {
   return cid;
 }
 
+// Trim a free-text per-line supplier-tax metadata field to null when blank.
+function jeTxtOrNull(v: any): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
+}
+
 /**
  * Resolves and authorizes a branchId for a journal-entry write. Mirrors the
  * payroll-runs flow:
@@ -362,6 +369,10 @@ router.post("/", async (req, res) => {
           debit:       l.debit  ?? "0",
           credit:      l.credit ?? "0",
           description: l.description || null,
+          supplierName:          jeTxtOrNull(l.supplierName),
+          supplierVatNumber:     jeTxtOrNull(l.supplierVatNumber),
+          supplierInvoiceNumber: jeTxtOrNull(l.supplierInvoiceNumber),
+          supplierInvoiceDate:   jeTxtOrNull(l.supplierInvoiceDate),
           sortOrder:   i,
         }))
       );
@@ -485,6 +496,10 @@ router.put("/:id", async (req, res) => {
             debit:       l.debit  ?? "0",
             credit:      l.credit ?? "0",
             description: l.description || null,
+            supplierName:          jeTxtOrNull(l.supplierName),
+            supplierVatNumber:     jeTxtOrNull(l.supplierVatNumber),
+            supplierInvoiceNumber: jeTxtOrNull(l.supplierInvoiceNumber),
+            supplierInvoiceDate:   jeTxtOrNull(l.supplierInvoiceDate),
             sortOrder:   i,
           }))
         );

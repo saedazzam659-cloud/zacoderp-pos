@@ -558,6 +558,13 @@ router.get("/account-statement", async (req, res) => {
         description: sql<string>`COALESCE(${journalEntryLinesTable.description}, ${journalEntriesTable.description}, '')`,
         debit:       journalEntryLinesTable.debit,
         credit:      journalEntryLinesTable.credit,
+        // Per-line supplier tax metadata (manual JE / adjustment lines). When
+        // present these enrich the الشرح so the tax account statement (كشف
+        // حساب الضريبة) shows exactly which supplier/invoice the VAT relates to.
+        lineSupplierName:          journalEntryLinesTable.supplierName,
+        lineSupplierVatNumber:     journalEntryLinesTable.supplierVatNumber,
+        lineSupplierInvoiceNumber: journalEntryLinesTable.supplierInvoiceNumber,
+        lineSupplierInvoiceDate:   journalEntryLinesTable.supplierInvoiceDate,
         // sourceId = pk of the source document, if any. Resolved per entryType
         // by left-joining against the table that owns this journal entry.
         // Each module (sales, purchasing, cash, contracting, FA, payroll,
@@ -797,7 +804,27 @@ router.get("/account-statement", async (req, res) => {
         : r.salesInvoiceId
         ? invoiceDescription(sInvInfo.get(r.salesInvoiceId))
         : voucherDesc;
-      return { ...r, description: srcDesc ?? r.description, debit: d, credit: c, balance: runningBalance };
+      // Per-line supplier tax metadata (manual JE lines AND PV-origin VAT
+      // lines): fold it into the الشرح so the tax account statement (كشف حساب
+      // الضريبة) discloses the supplier/invoice behind each VAT movement.
+      const supName = (r.lineSupplierName ?? "").trim();
+      const supVat  = (r.lineSupplierVatNumber ?? "").trim();
+      const supInv  = (r.lineSupplierInvoiceNumber ?? "").trim();
+      const supDate = (r.lineSupplierInvoiceDate ?? "").trim();
+      let supplierSuffix = "";
+      if (supName || supVat || supInv || supDate) {
+        const bits: string[] = [];
+        if (supName) bits.push(`المورد: ${supName}`);
+        if (supVat)  bits.push(`الرقم الضريبي: ${supVat}`);
+        if (supInv)  bits.push(`فاتورة: ${supInv}`);
+        if (supDate) bits.push(`بتاريخ: ${supDate}`);
+        supplierSuffix = bits.join(" — ");
+      }
+      const baseDesc = srcDesc ?? r.description;
+      const finalDesc = supplierSuffix
+        ? (baseDesc ? `${baseDesc} — ${supplierSuffix}` : supplierSuffix)
+        : baseDesc;
+      return { ...r, description: finalDesc, debit: d, credit: c, balance: runningBalance };
     });
 
     res.json({ previousBalance, previousDebit, previousCredit, rows: withBalance });

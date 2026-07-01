@@ -66,5 +66,13 @@ export const journalEntryLinesTable = pgTable("journal_entry_lines", {
   debit:        numeric("debit", { precision: 18, scale: 2 }).notNull().default("0"),
   credit:       numeric("credit", { precision: 18, scale: 2 }).notNull().default("0"),
   description:  text("description"),
+  // Per-line supplier tax metadata (entered via the ⋮ dialog, mainly on VAT
+  // "قيد الضريبة" lines). Mirrors payment_voucher_lines so a manual JE that
+  // records input VAT can attribute the tax to a supplier and surface it in
+  // the VAT report + tax account statement. Stored as text (date ISO YYYY-MM-DD).
+  supplierName:          text("supplier_name"),
+  supplierVatNumber:     text("supplier_vat_number"),
+  supplierInvoiceNumber: text("supplier_invoice_number"),
+  supplierInvoiceDate:   text("supplier_invoice_date"),
   sortOrder:    integer("sort_order").notNull().default(0),
 });

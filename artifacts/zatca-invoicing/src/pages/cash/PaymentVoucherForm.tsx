@@ -25,6 +25,11 @@ import {
   Trash2, Plus,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import {
+  SupplierTaxDetailsMenu,
+  type SupplierTaxDetails,
+  hasSupplierTaxDetails,
+} from "@/components/SupplierTaxDetailsDialog";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -42,6 +47,13 @@ interface PvLine {
   taxAccountId: string;      // optional input-VAT GL account override
   costCenter: string;        // inherits header default on add
   purchaseInvoiceId: string; // optional link to a purchase invoice
+  // Per-line supplier tax metadata (entered via the ⋮ dialog). Used when no
+  // header supplier is chosen so a consolidated voucher can attribute each tax
+  // line to its own supplier. Flows into the VAT report + tax account statement.
+  supplierName: string;
+  supplierVatNumber: string;
+  supplierInvoiceNumber: string;
+  supplierInvoiceDate: string;
 }
 
 let _pvLineSeq = 0;
@@ -56,6 +68,10 @@ function newPvLine(init: Partial<PvLine> = {}): PvLine {
     taxAccountId: "",
     costCenter: "",
     purchaseInvoiceId: "",
+    supplierName: "",
+    supplierVatNumber: "",
+    supplierInvoiceNumber: "",
+    supplierInvoiceDate: "",
     ...init,
   };
 }
@@ -279,6 +295,10 @@ export default function PaymentVoucherForm() {
         taxAccountId: l.taxAccountId != null ? String(l.taxAccountId) : "",
         costCenter: l.costCenter ?? "",
         purchaseInvoiceId: l.purchaseInvoiceId != null ? String(l.purchaseInvoiceId) : "",
+        supplierName: l.supplierName ?? "",
+        supplierVatNumber: l.supplierVatNumber ?? "",
+        supplierInvoiceNumber: l.supplierInvoiceNumber ?? "",
+        supplierInvoiceDate: l.supplierInvoiceDate ?? "",
       }));
     } else {
       lines = [newPvLine({
@@ -323,10 +343,23 @@ export default function PaymentVoucherForm() {
 
   // ── Allocation-line helpers ────────────────────────────────────
   function addLine() {
-    setForm(p => ({
-      ...p,
-      lines: [...p.lines, newPvLine({ taxAccountId: defaultTaxAccountId, costCenter: p.costCenter })],
-    }));
+    setForm(p => {
+      // Inherit supplier tax metadata from the last line so a consolidated
+      // (multi-tax) voucher for the same supplier never re-types the details.
+      const prev = p.lines[p.lines.length - 1];
+      const inherit = prev && hasSupplierTaxDetails(prev)
+        ? {
+            supplierName: prev.supplierName,
+            supplierVatNumber: prev.supplierVatNumber,
+            supplierInvoiceNumber: prev.supplierInvoiceNumber,
+            supplierInvoiceDate: prev.supplierInvoiceDate,
+          }
+        : {};
+      return {
+        ...p,
+        lines: [...p.lines, newPvLine({ taxAccountId: defaultTaxAccountId, costCenter: p.costCenter, ...inherit })],
+      };
+    });
   }
   function removeLine(key: string) {
     setForm(p => {
@@ -513,6 +546,10 @@ export default function PaymentVoucherForm() {
         costCenter:        l.costCenter || null,
         branchId:          form.branchId ? parseInt(form.branchId) : null,
         purchaseInvoiceId: l.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
+        supplierName:          l.supplierName?.trim() || null,
+        supplierVatNumber:     l.supplierVatNumber?.trim() || null,
+        supplierInvoiceNumber: l.supplierInvoiceNumber?.trim() || null,
+        supplierInvoiceDate:   l.supplierInvoiceDate?.trim() || null,
       }));
       const grandTotal = kept.reduce(
         (s, l) => s + (Number(l.amount) || 0) + (Number(l.taxAmount) || 0), 0);
@@ -1086,9 +1123,21 @@ export default function PaymentVoucherForm() {
                               onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
                             />
                           </div>
+                          <div className="mt-6 shrink-0 flex items-center">
+                            <SupplierTaxDetailsMenu
+                              testId={`pv-line-${idx}`}
+                              value={{
+                                supplierName: l.supplierName,
+                                supplierVatNumber: l.supplierVatNumber,
+                                supplierInvoiceNumber: l.supplierInvoiceNumber,
+                                supplierInvoiceDate: l.supplierInvoiceDate,
+                              }}
+                              onChange={(v: SupplierTaxDetails) => updateLine(l.key, v)}
+                            />
+                          </div>
                           <Button
                             type="button" variant="ghost" size="icon"
-                            className="mt-7 h-10 w-10 text-muted-foreground hover:text-destructive shrink-0"
+                            className="mt-6 h-10 w-10 text-muted-foreground hover:text-destructive shrink-0"
                             onClick={() => removeLine(l.key)}
                             title={t(`${NS}.removeLine`, "حذف البند")}
                             data-testid={`pv-line-remove-${idx}`}
@@ -1096,6 +1145,20 @@ export default function PaymentVoucherForm() {
                             <Trash2 className="h-5 w-5" />
                           </Button>
                         </div>
+                        {hasSupplierTaxDetails(l) && (
+                          <div className="flex flex-wrap items-center gap-2 -mt-1 text-xs">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5 font-medium">
+                              <FileText className="h-3 w-3" />
+                              {l.supplierName || t(`${NS}.supplierUnnamed`, "مورد")}
+                            </span>
+                            {l.supplierVatNumber && (
+                              <span className="text-muted-foreground font-mono" dir="ltr">{l.supplierVatNumber}</span>
+                            )}
+                            {l.supplierInvoiceNumber && (
+                              <span className="text-muted-foreground">#{l.supplierInvoiceNumber}</span>
+                            )}
+                          </div>
+                        )}
 
                         {/* Row 2: description */}
                         <div className="space-y-1.5">

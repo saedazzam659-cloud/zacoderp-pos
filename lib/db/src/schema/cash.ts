@@ -164,6 +164,14 @@ export const paymentVoucherLinesTable = pgTable("payment_voucher_lines", {
   branchId:          integer("branch_id").references(() => branchesTable.id),
   // Optional per-line link to the purchase invoice this allocation settles.
   purchaseInvoiceId: integer("purchase_invoice_id").references(() => purchaseInvoicesTable.id, { onDelete: "set null" }),
+  // Per-line supplier tax metadata (entered via the ⋮ dialog). Captured when
+  // NO header supplier is chosen so a consolidated voucher can still attribute
+  // each tax line to its own supplier. These flow into the VAT declaration
+  // report + tax account statement. Stored as text (invoiceDate is ISO YYYY-MM-DD).
+  supplierName:          text("supplier_name"),
+  supplierVatNumber:     text("supplier_vat_number"),
+  supplierInvoiceNumber: text("supplier_invoice_number"),
+  supplierInvoiceDate:   text("supplier_invoice_date"),
   sortOrder:         integer("sort_order").notNull().default(0),
 });
 

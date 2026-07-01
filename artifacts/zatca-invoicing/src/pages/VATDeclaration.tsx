@@ -98,6 +98,20 @@ interface VATData {
       inputVat:  number;
     }>;
   };
+  // Per-line supplier tax metadata entered via the ⋮ supplier-details menu on
+  // payment-voucher / journal-entry lines. Surfaced so the accountant sees who
+  // the recoverable input VAT was paid to.
+  supplierTaxLines?: Array<{
+    source: string;
+    docNumber: string | null;
+    date: string;
+    supplierName: string | null;
+    supplierVatNumber: string | null;
+    supplierInvoiceNumber: string | null;
+    supplierInvoiceDate: string | null;
+    base: number;
+    vat: number;
+  }>;
 }
 
 async function fetchVAT(from: string, to: string, token: string | null, errMsg: string): Promise<VATData> {
@@ -763,6 +777,51 @@ export default function VATDeclaration() {
             <div className="px-5 py-6 text-center text-sm text-muted-foreground border-b border-border/40">
               {t("vatDeclaration.journalAdjustmentsEmpty")}
             </div>
+          )}
+
+          {/* ── SUPPLIER TAX BREAKDOWN (بيانات الموردين الضريبية) ───────────── */}
+          {/* Per-line supplier metadata entered via the ⋮ supplier-details menu */}
+          {/* on payment-voucher / journal-entry lines.                          */}
+          {data.supplierTaxLines && data.supplierTaxLines.length > 0 && (
+            <>
+              <div className="border-t border-border">
+                <SectionHeader color="blue" icon={ReceiptText} title="بيانات الموردين الضريبية" />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-xs font-semibold text-muted-foreground bg-muted/50 border-b border-border">
+                      <th className="px-4 py-2.5 text-right">التاريخ</th>
+                      <th className="px-4 py-2.5 text-right">المستند</th>
+                      <th className="px-4 py-2.5 text-right">اسم المورد</th>
+                      <th className="px-4 py-2.5 text-right">الرقم الضريبي</th>
+                      <th className="px-4 py-2.5 text-right">رقم الفاتورة</th>
+                      <th className="px-4 py-2.5 text-right">تاريخ الفاتورة</th>
+                      <th className="px-4 py-2.5 text-left w-32">الضريبة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.supplierTaxLines.map((s, i) => (
+                      <tr key={i} className="border-b border-border/40 text-sm hover:bg-muted/30">
+                        <td className="px-4 py-3 tabular-nums">{s.date ? fmtDate(s.date) : "—"}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{s.docNumber ?? "—"}</td>
+                        <td className="px-4 py-3">{s.supplierName ?? "—"}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{s.supplierVatNumber ?? "—"}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{s.supplierInvoiceNumber ?? "—"}</td>
+                        <td className="px-4 py-3 tabular-nums">{s.supplierInvoiceDate ? fmtDate(s.supplierInvoiceDate) : "—"}</td>
+                        <td className="px-4 py-3 text-left tabular-nums font-mono">{fmtNum(s.vat)}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-blue-50 dark:bg-blue-950/30 font-bold border-t-2 border-border text-sm">
+                      <td className="px-4 py-3" colSpan={6}>إجمالي ضريبة الموردين</td>
+                      <td className="px-4 py-3 text-left tabular-nums font-mono">
+                        {fmtNum(data.supplierTaxLines.reduce((sum, s) => sum + s.vat, 0))}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {/* ── NOTE ──────────────────────────────────────────────────────────── */}

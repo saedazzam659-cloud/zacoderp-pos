@@ -79,6 +79,8 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
   const jeLines: {
     accountId: number; debit: string; credit: string;
     description: string; sortOrder: number; costCenter: string | null;
+    supplierName?: string | null; supplierVatNumber?: string | null;
+    supplierInvoiceNumber?: string | null; supplierInvoiceDate?: string | null;
   }[] = [];
   const acctIds = new Set<number>([crAccountId]);
   let total = 0;
@@ -108,7 +110,17 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
           throw new Error("لا يوجد حساب ضريبة المدخلات — حدّد حساب الضريبة في البند أو اربط «ضريبة المدخلات» في ربط القيود المحاسبية");
         }
         acctIds.add(taxAcc);
-        jeLines.push({ accountId: taxAcc, debit: tax.toFixed(2), credit: "0.00", description: `ضريبة مدخلات - ${l.description || v.code}`, sortOrder: so++, costCenter: lineCc });
+        jeLines.push({
+          accountId: taxAcc, debit: tax.toFixed(2), credit: "0.00",
+          description: `ضريبة مدخلات - ${l.description || v.code}`,
+          sortOrder: so++, costCenter: lineCc,
+          // Carry per-line supplier tax metadata onto the VAT-account JE line so
+          // it surfaces in كشف حساب الضريبة (account-statement description suffix).
+          supplierName:          l.supplierName ?? null,
+          supplierVatNumber:     l.supplierVatNumber ?? null,
+          supplierInvoiceNumber: l.supplierInvoiceNumber ?? null,
+          supplierInvoiceDate:   l.supplierInvoiceDate ?? null,
+        });
         total += tax;
       }
     }
@@ -238,6 +250,17 @@ interface RawPvLine {
   costCenter: string | null;
   branchId: number | null;
   purchaseInvoiceId: number | null;
+  supplierName: string | null;
+  supplierVatNumber: string | null;
+  supplierInvoiceNumber: string | null;
+  supplierInvoiceDate: string | null;
+}
+
+// Trim a free-text metadata field to null when blank.
+function txtOrNull(v: any): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
 }
 function normalizePaymentLines(raw: any): RawPvLine[] | null {
   if (!Array.isArray(raw)) return null;
@@ -257,6 +280,10 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
       costCenter: l?.costCenter ? String(l.costCenter).trim() || null : null,
       branchId: l?.branchId ? parseInt(l.branchId) : null,
       purchaseInvoiceId: l?.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
+      supplierName: txtOrNull(l?.supplierName),
+      supplierVatNumber: txtOrNull(l?.supplierVatNumber),
+      supplierInvoiceNumber: txtOrNull(l?.supplierInvoiceNumber),
+      supplierInvoiceDate: txtOrNull(l?.supplierInvoiceDate),
     });
   }
   return out;
@@ -308,6 +335,10 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promi
     costCenter: l.costCenter,
     branchId: l.branchId,
     purchaseInvoiceId: l.purchaseInvoiceId,
+    supplierName: l.supplierName,
+    supplierVatNumber: l.supplierVatNumber,
+    supplierInvoiceNumber: l.supplierInvoiceNumber,
+    supplierInvoiceDate: l.supplierInvoiceDate,
     sortOrder: i,
   })));
 }
