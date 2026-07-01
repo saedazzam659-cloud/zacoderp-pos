@@ -6,8 +6,9 @@ import {
   suppliersTable,
   purchaseInvoicesTable,
   journalEntriesTable, journalEntryLinesTable,
+  accountsTable,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
 import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
@@ -86,6 +87,20 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
     throw new Error("لا يوجد حساب محاسبي للمورد — اربط المورد بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية الموردين»");
   }
 
+  // Guard against dangling account links: a supplier/cashbox/bank may carry an
+  // accountId whose account row was later deleted. Without this check the JE
+  // header inserts and then the LINES insert fails on the account_id FK,
+  // stranding an orphan zero-balance journal entry (the reported bug).
+  const acctRows = await db.select({ id: accountsTable.id }).from(accountsTable)
+    .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, [drAccountId, crAccountId])));
+  const foundAccts = new Set(acctRows.map((a) => a.id));
+  if (!foundAccts.has(drAccountId)) {
+    throw new Error("حساب المورد المرتبط غير موجود في شجرة الحسابات — يرجى ربط المورد بحساب صحيح من شاشة «الموردين» أو «ربط القيود المحاسبية»");
+  }
+  if (!foundAccts.has(crAccountId)) {
+    throw new Error("حساب الخزنة/البنك المرتبط غير موجود في شجرة الحسابات — يرجى ربطه بحساب صحيح");
+  }
+
   const desc = `سند صرف ${v.code}${v.description ? " - " + v.description : ""}`;
   // Period guard: prevent payment posting into a closed fiscal period.
   const writability = await assertWritableForDate(cid, v.date);
@@ -103,23 +118,28 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
     userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
     branchId: v.branchId ?? null, docDate: v.date as any,
   })) ?? v.code;
-  const [entry] = await db.insert(journalEntriesTable).values({
-    companyId: cid, branchId: v.branchId ?? null,
-    docNumber: jeDocNumber, entryDate: v.date,
-    currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
-    description: desc, entryType: "payment",
-    status: jeStatus,
-    periodId: writability.period?.id ?? null,
-    ...fullAuditFor(req, jeStatus),
-  }).returning();
   // Header-level cost center propagates to BOTH JE lines so cost-center
   // reports pick up the payment activity.
   const cc = v.costCenter ? String(v.costCenter).trim() || null : null;
-  await db.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc },
-    { entryId: entry.id, accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc },
-  ]);
-  return entry.id;
+  // Atomic: header + both lines commit together, so a mid-way failure never
+  // strands an orphan (zero-balance) journal entry.
+  const entryId = await db.transaction(async (tx) => {
+    const [entry] = await tx.insert(journalEntriesTable).values({
+      companyId: cid, branchId: v.branchId ?? null,
+      docNumber: jeDocNumber, entryDate: v.date,
+      currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
+      description: desc, entryType: "payment",
+      status: jeStatus,
+      periodId: writability.period?.id ?? null,
+      ...fullAuditFor(req, jeStatus),
+    }).returning();
+    await tx.insert(journalEntryLinesTable).values([
+      { entryId: entry.id, accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc },
+      { entryId: entry.id, accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc },
+    ]);
+    return entry.id;
+  });
+  return entryId;
 }
 
 router.get("/", async (req, res) => {
