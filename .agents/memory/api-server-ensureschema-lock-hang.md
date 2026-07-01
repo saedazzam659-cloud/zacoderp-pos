@@ -1,7 +1,11 @@
 ---
 name: api-server ensureSchema startup lock-hang
-description: api-server fails to open its port because startup schema reconciliation blocks on relation locks held by the test workflow's stuck queries.
+description: api-server fails to open its port because startup schema reconciliation blocks on relation locks — locally from the test workflow, and in PRODUCTION during an autoscale promote — now hardened with lock_timeout + a boot budget.
 ---
+
+**Hardened (durable fix in place):** boot DDL now runs through `execDDL()` which wraps each statement in a transaction with `SET LOCAL lock_timeout` (default 4s, `SCHEMA_DDL_LOCK_TIMEOUT_MS`) — a blocked ALTER/CREATE aborts fast (caught+logged+continues, re-applies next boot) instead of hanging or holding the table hostage. And `bootstrap()` races `ensureSchemaUpToDate()` against a boot budget (default 20s, `SCHEMA_BOOT_BUDGET_MS`): if reconciliation overruns, the port opens anyway and reconciliation finishes in the background. So the startup probe can no longer time out on a lock. Applied to ALTER TABLE ADD COLUMN + the tenant-identity CREATE INDEX/ALTER loop (the `ALTER TABLE users DROP CONSTRAINT …` steps were the real prod blocker). Enum DDL (`CREATE TYPE` / `ALTER TYPE … ADD VALUE`) is bounded via `execTypeDDL()` on a DEDICATED pooled client (`SET`/`RESET lock_timeout`, no txn — `ALTER TYPE ADD VALUE` has in-txn restrictions) and made non-fatal (continues) too. The tenant-identity loop CREATEs the replacement partial-unique indexes on `users` BEFORE dropping the legacy global constraint, so uniqueness is never absent even if the port opens mid-reconciliation. The sections below are the manual recovery if you ever hit the hang pre-fix (or on an older revision).
+
+**PRODUCTION relevance:** this same hang is what fails a *Publish* — during an autoscale promote the previous revision still holds relation locks while the new revision's boot DDL waits, so the new container never opens its port → `/api/healthz` startup probe times out → publish fails with `DIDNT_OPEN_A_PORT`. The build itself compiles fine; the failure is purely in the promote/startup phase. Zero schema drift still boots in ~0.6s.
 
 The `artifacts/api-server: API Server` workflow can fail to restart with `DIDNT_OPEN_A_PORT` even when the code is fine and the esbuild bundle succeeds. The log stops dead at `INFO ensureSchema: starting schema reconciliation (tableCount: …)` with nothing after.
 

@@ -305,11 +305,38 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 async function bootstrap() {
-  try {
-    await ensureSchemaUpToDate();
-  } catch (err) {
+  // Schema reconciliation runs before we open the port so requests never race a
+  // migration. But it must never be able to BLOCK the port from opening: if a
+  // DDL statement stalls waiting on a relation lock (e.g. the previous revision
+  // is still serving traffic during an autoscale promote), awaiting it forever
+  // means the port never binds → the deployment's /api/healthz startup probe
+  // times out → the whole publish fails (DIDNT_OPEN_A_PORT). Cap the wait: if
+  // reconciliation exceeds the budget, open the port anyway and let it finish in
+  // the background (each DDL statement carries its own lock_timeout, so a
+  // contended one aborts fast and re-applies on the next boot instead of holding
+  // the table hostage).
+  const schemaBootBudgetMs = (() => {
+    const n = Number(process.env["SCHEMA_BOOT_BUDGET_MS"]);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 20_000;
+  })();
+  const schemaReady = ensureSchemaUpToDate().catch((err) => {
     logger.error({ err }, "Failed to ensure schema is up to date — server will continue but auth may fail");
-  }
+  });
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    schemaReady,
+    new Promise<void>((resolve) => {
+      budgetTimer = setTimeout(() => {
+        logger.warn(
+          { budgetMs: schemaBootBudgetMs },
+          "ensureSchema exceeded boot budget — opening port now; reconciliation continues in background",
+        );
+        resolve();
+      }, schemaBootBudgetMs);
+      budgetTimer.unref?.();
+    }),
+  ]);
+  if (budgetTimer) clearTimeout(budgetTimer);
 
   // Eagerly read DB-stored SMTP config so `emailConfigured()` (sync) reflects
   // it from the very first request. Failures are swallowed; env-only path

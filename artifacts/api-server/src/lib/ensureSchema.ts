@@ -1,4 +1,4 @@
-import { db } from "@workspace/db";
+import { db, pool } from "@workspace/db";
 import * as schema from "@workspace/db";
 import { sql, is } from "drizzle-orm";
 import { PgTable, PgEnumColumn } from "drizzle-orm/pg-core";
@@ -7,6 +7,47 @@ import { PgEnum } from "drizzle-orm/pg-core";
 import { logger } from "./logger";
 
 let healPromise: Promise<void> | null = null;
+
+// Boot-time DDL (ALTER TABLE ADD COLUMN / CREATE INDEX) must never hang forever
+// waiting on a relation lock held by another backend — most importantly the
+// PREVIOUS revision still serving traffic during an autoscale promote. A blocked
+// ALTER would keep the HTTP port closed (see bootstrap in index.ts) and fail the
+// deployment's startup probe, and worse, an ACCESS EXCLUSIVE lock request queues
+// AHEAD of new queries on that table, freezing it. Scope a short lock_timeout
+// via a transaction (SET LOCAL auto-resets on commit/rollback, so it never leaks
+// onto a pooled connection): a contended statement aborts quickly, the caller
+// catches the error and continues, and the change re-applies on the next boot.
+const DDL_LOCK_TIMEOUT_MS = (() => {
+  const n = Number(process.env["SCHEMA_DDL_LOCK_TIMEOUT_MS"]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 4000;
+})();
+
+async function execDDL(stmt: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql.raw(`SET LOCAL lock_timeout = '${DDL_LOCK_TIMEOUT_MS}ms'`));
+    await tx.execute(sql.raw(stmt));
+  });
+}
+
+// Enum DDL (`CREATE TYPE` / `ALTER TYPE … ADD VALUE`) can't reliably use the
+// transaction wrapper above — `ALTER TYPE … ADD VALUE` has historical
+// in-transaction restrictions. Bound it on a DEDICATED pooled client with a
+// session lock_timeout, then RESET before releasing so the timeout never leaks
+// onto a connection reused for normal request traffic.
+async function execTypeDDL(stmt: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(`SET lock_timeout = '${DDL_LOCK_TIMEOUT_MS}ms'`);
+    await client.query(stmt);
+  } finally {
+    try {
+      await client.query("RESET lock_timeout");
+    } catch {
+      /* best-effort reset; release still returns the client to the pool */
+    }
+    client.release();
+  }
+}
 
 interface ExistingColumn {
   table_name: string;
@@ -98,8 +139,12 @@ async function ensureEnums(enums: { name: string; values: readonly string[] }[])
     if (!existingTypeSet.has(e.name)) {
       const valuesSql = e.values.map(qstr).join(", ");
       const stmt = `CREATE TYPE ${qid(e.name)} AS ENUM (${valuesSql})`;
-      await db.execute(sql.raw(stmt));
-      applied.push(stmt);
+      try {
+        await execTypeDDL(stmt);
+        applied.push(stmt);
+      } catch (err) {
+        logger.warn({ err, stmt }, "ensureSchema: failed to create enum type (continuing)");
+      }
       continue;
     }
     // Type exists — ensure every label is present (additive only).
@@ -107,8 +152,12 @@ async function ensureEnums(enums: { name: string; values: readonly string[] }[])
     for (const v of e.values) {
       if (!have.has(v)) {
         const stmt = `ALTER TYPE ${qid(e.name)} ADD VALUE IF NOT EXISTS ${qstr(v)}`;
-        await db.execute(sql.raw(stmt));
-        applied.push(stmt);
+        try {
+          await execTypeDDL(stmt);
+          applied.push(stmt);
+        } catch (err) {
+          logger.warn({ err, stmt }, "ensureSchema: failed to add enum value (continuing)");
+        }
       }
     }
   }
@@ -204,7 +253,7 @@ async function ensureColumns(
 
       const stmt = `ALTER TABLE ${qid(t.name)} ADD COLUMN IF NOT EXISTS ${qid(col.name)} ${typeForSql}${defaultClause}${notNullClause}`;
       try {
-        await db.execute(sql.raw(stmt));
+        await execDDL(stmt);
         applied.push(stmt);
       } catch (err) {
         logger.warn({ err, stmt }, "ensureSchema: failed to add column (continuing)");
@@ -229,15 +278,21 @@ async function ensureColumns(
 async function ensureTenantIdentityIndexes(): Promise<string[]> {
   const applied: string[] = [];
   const stmts: { label: string; sql: string }[] = [
-    // Drop the legacy global-unique on users.username if it survived.
-    { label: "drop legacy users_username_unique", sql: `ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_unique` },
-    { label: "drop legacy users_username_key",    sql: `ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_key` },
+    // Create the replacement partial-unique indexes BEFORE dropping the legacy
+    // global constraint, so users.username uniqueness is NEVER absent — even if a
+    // later step is skipped by lock_timeout or the boot budget opens the port
+    // mid-reconciliation. All statements are idempotent (IF NOT EXISTS / IF
+    // EXISTS), so ordering only affects the transient window, not the end state.
     // Tenant users: (company_id, username) is unique per company.
     { label: "users_company_username_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS users_company_username_uniq ON users (company_id, username) WHERE company_id IS NOT NULL` },
     // SuperAdmins (company_id IS NULL): username stays globally unique.
     { label: "users_username_superadmin_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS users_username_superadmin_uniq ON users (username) WHERE company_id IS NULL` },
+    // Now that the partial indexes enforce uniqueness, drop the legacy
+    // global-unique on users.username if it survived.
+    { label: "drop legacy users_username_unique", sql: `ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_unique` },
+    { label: "drop legacy users_username_key",    sql: `ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_key` },
     // companies.code is unique whenever populated.
     { label: "companies_code_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS companies_code_uniq ON companies (code) WHERE code IS NOT NULL` },
@@ -1882,7 +1937,7 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
   ];
   for (const { label, sql: stmt } of stmts) {
     try {
-      await db.execute(sql.raw(stmt));
+      await execDDL(stmt);
       applied.push(label);
     } catch (err) {
       logger.warn({ err, label, stmt }, "ensureSchema: tenant-identity step failed (continuing)");
