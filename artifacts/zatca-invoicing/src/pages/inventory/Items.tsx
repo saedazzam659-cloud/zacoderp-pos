@@ -40,6 +40,37 @@ import {
 } from "@/lib/docRowTone";
 import { DateField } from "@/components/ui/date-field";
 
+/** CollapsibleSection — labeled, togglable section for the item form (SAP-style). */
+function CollapsibleSection({
+  icon: Icon,
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  icon: React.ElementType;
+  title: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/40 transition-colors"
+      >
+        <span className="flex items-center gap-2">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          {title}
+        </span>
+        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
+      {open && <div className="border-t px-4 py-4">{children}</div>}
+    </div>
+  );
+}
+
 const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock", itemNature: "merchandise",
   groupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
@@ -1150,14 +1181,16 @@ export default function Items() {
           icon={Package}
           title={editId ? t("pages.items.editItem") : t("pages.items.newItem")}
           subtitle={t("pages.items.itemFormSubtitle")}
-          width="4xl"
+          width="full"
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
           saveDisabled={!form.code || !form.nameAr}
           saveLabel={editId ? t("pages.items.saveEdit") : t("pages.items.addItem")}
         >
-          <div className="flex justify-end mb-3">
+          <div className="flex flex-col lg:flex-row gap-6" dir="rtl">
+            <div className="flex-1 min-w-0 space-y-5">
+              <div className="flex justify-end">
             <Button
               type="button"
               size="sm"
@@ -1172,14 +1205,17 @@ export default function Items() {
             </Button>
           </div>
           <Tabs value={activeItemTab} onValueChange={setActiveItemTab} className="w-full">
-            <TabsList className="w-full h-9 mb-5">
-              <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />{t("pages.items.basicData")}</TabsTrigger>
-              <TabsTrigger value="pricing"  className="flex-1 text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />{t("pages.items.pricingAndControl")}</TabsTrigger>
-              <TabsTrigger value="pos"      className="flex-1 text-xs gap-1.5"><Store      className="h-3.5 w-3.5" />{t("inventoryMaster.items.posTab")}</TabsTrigger>
-              <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
+            <TabsList className="w-full h-auto flex-wrap justify-start gap-1 mb-5 bg-muted/50 p-1">
+              <TabsTrigger value="basic"      className="text-xs gap-1.5"><Package    className="h-3.5 w-3.5" />{t("pages.items.basicData")}</TabsTrigger>
+              <TabsTrigger value="pricing"    className="text-xs gap-1.5"><DollarSign className="h-3.5 w-3.5" />{t("pages.items.pricingAndQuantities")}</TabsTrigger>
+              <TabsTrigger value="accounts"   className="text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
+              <TabsTrigger value="inventory"  className="text-xs gap-1.5"><Warehouse  className="h-3.5 w-3.5" />{t("pages.items.inventoryAndWarehouses")}</TabsTrigger>
+              <TabsTrigger value="additional" className="text-xs gap-1.5"><Layers     className="h-3.5 w-3.5" />{t("pages.items.additionalData")}</TabsTrigger>
+              <TabsTrigger value="usage"      className="text-xs gap-1.5"><Cog        className="h-3.5 w-3.5" />{t("pages.items.usageControlTab")}</TabsTrigger>
+              <TabsTrigger value="notes"      className="text-xs gap-1.5"><FileText   className="h-3.5 w-3.5" />{t("pages.items.notesTab")}</TabsTrigger>
             </TabsList>
-            <TabsContent value="basic" className="mt-0">
-              <FormGrid>
+            <TabsContent value="basic" className="mt-0 space-y-6">
+              <FormGrid cols={3}>
                 <Field label={t("pages.items.itemCode")} required><Input placeholder="ITM-001" dir="ltr" className="text-left" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} /></Field>
                 <Field label={t("pages.items.nameAr")} required><Input placeholder={t("pages.items.nameAr")} value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} /></Field>
                 <Field label={t("pages.items.nameEn")}><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
@@ -1212,36 +1248,26 @@ export default function Items() {
                 <Field label={t("common.status")}>
                   <SearchCombobox items={[{ value: "active", label: t("pages.items.active") }, { value: "inactive", label: t("pages.items.inactive") }]} value={form.status} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))} placeholder={t("common.status")} />
                 </Field>
-                <Field label={t("inventoryMaster.items.itemImageLabel")} className="md:col-span-2">
-                  <ItemImageUpload value={form.imageUrl ?? ""} onChange={(v) => setForm((p: any) => ({ ...p, imageUrl: v }))} />
-                </Field>
-                <Field label={t("pages.items.tagsLabel")} hint={t("pages.items.tagsHint")} className="md:col-span-2">
-                  <TagsInput
-                    value={form.tags ?? ""}
-                    onChange={(v) => setForm((p: any) => ({ ...p, tags: v }))}
-                    placeholder={t("pages.items.tagsPlaceholder")}
-                  />
-                </Field>
-                {editId && (
-                  <Field label={t("pages.items.qr.label")} className="md:col-span-2">
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" variant="outline" size="sm" onClick={() => setQrItem({ id: editId, nameAr: form.nameAr, code: form.code, barcode: form.barcode })} className="gap-1.5 h-9">
-                        <QrCode className="h-4 w-4" />
-                        {t("pages.items.qr.show")}
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" onClick={() => setHistoryItem({ id: editId, nameAr: form.nameAr, code: form.code })} className="gap-1.5 h-9">
-                        <History className="h-4 w-4" />
-                        {t("pages.items.history.show")}
-                      </Button>
-                    </div>
-                  </Field>
-                )}
               </FormGrid>
+              <div className="space-y-3">
+                <CollapsibleSection icon={Ruler} title={t("pages.items.dimensionsWeight")}>
+                  <p className="text-xs text-muted-foreground">{t("pages.items.sectionComingSoon")}</p>
+                </CollapsibleSection>
+                <CollapsibleSection icon={Star} title={t("pages.items.warrantyService")}>
+                  <p className="text-xs text-muted-foreground">{t("pages.items.sectionComingSoon")}</p>
+                </CollapsibleSection>
+                <CollapsibleSection icon={Cog} title={t("pages.items.manufacturingOptions")}>
+                  <p className="text-xs text-muted-foreground">{t("pages.items.sectionComingSoon")}</p>
+                </CollapsibleSection>
+                <CollapsibleSection icon={Truck} title={t("pages.items.importExportData")}>
+                  <p className="text-xs text-muted-foreground">{t("pages.items.sectionComingSoon")}</p>
+                </CollapsibleSection>
+              </div>
             </TabsContent>
             <TabsContent value="pricing" className="mt-0 space-y-6">
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("pages.items.defaultPricing")}</p>
-                <FormGrid>
+                <FormGrid cols={3}>
                   <Field label={t("pages.items.costPriceLabel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} /></Field>
                   <Field label={t("pages.items.salePriceLabel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></Field>
                   <Field label={t("pages.items.vatRate")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></Field>
@@ -1287,17 +1313,16 @@ export default function Items() {
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("pages.items.controlData")}</p>
-                <FormGrid>
+                <FormGrid cols={3}>
                   {/* Reorder / max-stock are stock-planning fields — hidden for SERVICE items. */}
                   {form.itemType !== "service" && (<>
                   <Field label={t("pages.items.reorderLevel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></Field>
                   <Field label={t("pages.items.maxStockLevel")}><Input type="number" step="any" placeholder={t("pages.items.optional")} dir="ltr" className="text-left" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></Field>
                   </>)}
-                  <Field label={t("pages.items.notesDescription")} className="md:col-span-2"><Input placeholder={t("pages.items.descriptionPlaceholder")} value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></Field>
                 </FormGrid>
               </div>
             </TabsContent>
-            <TabsContent value="pos" className="mt-0 space-y-6">
+            <TabsContent value="inventory" className="mt-0 space-y-6">
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("inventoryMaster.items.posSettingsTitle")}</p>
                 <div className="rounded-lg border border-border bg-card p-4 space-y-3">
@@ -1356,7 +1381,7 @@ export default function Items() {
               </>)}
             </TabsContent>
             <TabsContent value="accounts" className="mt-0">
-              <FormGrid>
+              <FormGrid cols={3}>
                 <Field label={t("pages.items.costAccount")} required={form.itemType === "service"} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceAccountsRequired") : undefined}>
                   <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder={t("pages.items.chooseCostAccount")} filterTypes={["expense", "asset"]} grouped={false} />
                 </Field>
@@ -1365,7 +1390,83 @@ export default function Items() {
                 </Field>
               </FormGrid>
             </TabsContent>
+            <TabsContent value="additional" className="mt-0 space-y-6">
+              <FormGrid cols={3}>
+                <Field label={t("pages.items.tagsLabel")} hint={t("pages.items.tagsHint")} className="md:col-span-2 lg:col-span-3">
+                  <TagsInput
+                    value={form.tags ?? ""}
+                    onChange={(v) => setForm((p: any) => ({ ...p, tags: v }))}
+                    placeholder={t("pages.items.tagsPlaceholder")}
+                  />
+                </Field>
+                {editId && (
+                  <Field label={t("pages.items.qr.label")} className="md:col-span-2 lg:col-span-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => setQrItem({ id: editId, nameAr: form.nameAr, code: form.code, barcode: form.barcode })} className="gap-1.5 h-9">
+                        <QrCode className="h-4 w-4" />
+                        {t("pages.items.qr.show")}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setHistoryItem({ id: editId, nameAr: form.nameAr, code: form.code })} className="gap-1.5 h-9">
+                        <History className="h-4 w-4" />
+                        {t("pages.items.history.show")}
+                      </Button>
+                    </div>
+                  </Field>
+                )}
+              </FormGrid>
+            </TabsContent>
+            <TabsContent value="usage" className="mt-0">
+              <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-6 text-center space-y-3">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"><Cog className="h-6 w-6" /></div>
+                <h3 className="text-sm font-semibold">{t("pages.items.usageControlTab")}</h3>
+                <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">{t("pages.items.usageControlComingSoon")}</p>
+              </div>
+            </TabsContent>
+            <TabsContent value="notes" className="mt-0">
+              <Field label={t("pages.items.notesDescription")}>
+                <textarea
+                  className="flex min-h-[140px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  placeholder={t("pages.items.descriptionPlaceholder")}
+                  value={form.description}
+                  onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))}
+                />
+              </Field>
+            </TabsContent>
           </Tabs>
+            </div>
+            {/* SIDEBAR — appears on the LEFT in RTL */}
+            <aside className="w-full lg:w-72 shrink-0 space-y-4">
+              <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">{t("pages.items.mainImage")}</p>
+                <ItemImageUpload value={form.imageUrl ?? ""} onChange={(v) => setForm((p: any) => ({ ...p, imageUrl: v }))} />
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4 space-y-2.5">
+                <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">{t("pages.items.quickInfo")}</p>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between gap-2"><span className="text-muted-foreground">{t("pages.items.itemCode")}</span><span className="font-medium truncate max-w-[55%]">{form.code || "—"}</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted-foreground">{t("pages.items.nameAr")}</span><span className="font-medium truncate max-w-[55%]">{form.nameAr || "—"}</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted-foreground">{t("pages.items.group")}</span><span className="font-medium truncate max-w-[55%]">{pickName((groups as any[]).find((g: any) => String(g.id) === String(form.groupId))?.nameAr, (groups as any[]).find((g: any) => String(g.id) === String(form.groupId))?.nameEn) || "—"}</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted-foreground">{t("pages.items.salePriceLabel")}</span><span className="font-medium">{fmt(form.salePrice || 0)}</span></div>
+                  <div className="flex justify-between gap-2 items-center"><span className="text-muted-foreground">{t("common.status")}</span>{form.status === "active" ? <Badge variant="outline" className="text-emerald-600 border-emerald-300 dark:text-emerald-400">{t("pages.items.active")}</Badge> : <Badge variant="outline" className="text-muted-foreground">{t("pages.items.inactive")}</Badge>}</div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">{t("pages.items.quickOptions")}</p>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-sm">
+                  <Checkbox checked={Number(form.vatRate) > 0} onCheckedChange={(v) => setForm((p: any) => ({ ...p, vatRate: v === true ? "15" : "0" }))} />
+                  {t("pages.items.taxableItem")}
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-sm">
+                  <Checkbox checked={form.showInPos !== false} onCheckedChange={(v) => setForm((p: any) => ({ ...p, showInPos: v === true }))} />
+                  {t("pages.items.usedInPos")}
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-sm">
+                  <Checkbox checked={form.status === "inactive"} onCheckedChange={(v) => setForm((p: any) => ({ ...p, status: v === true ? "inactive" : "active" }))} />
+                  {t("pages.items.itemSuspended")}
+                </label>
+              </div>
+            </aside>
+          </div>
           <AIAssistDialog
             open={aiOpen}
             onOpenChange={setAiOpen}
