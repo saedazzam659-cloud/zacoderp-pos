@@ -8,6 +8,7 @@ import {
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
 import { listItemGroups } from "../lib/itemGroups";
+import { listBrands, listItemBrandLinks, setItemBrands, dropItemBrands, type ItemBrandLink } from "../lib/brands";
 import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
@@ -407,7 +408,7 @@ export default function ItemsAdmin() {
 
   async function handleDelete(it: LocalItem) {
     if (!confirm(`حذف الصنف «${it.nameAr}»؟`)) return;
-    try { await deleteItem(it.id); emitData("items"); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
+    try { await deleteItem(it.id); dropItemBrands(it.id); emitData("items"); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
     catch (e: any) { setToast({ kind: "err", text: e?.message ?? "فشل الحذف" }); }
   }
 
@@ -1067,6 +1068,30 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   // in the LS overlay only (via create/updateItem), never in SQLite.
   const [units, setUnits] = useState<ItemUnit[]>(initial?.units ?? []);
 
+  // Brand links — additive/optional. One item may carry many brands, each with
+  // its own price/cost/barcode/part-number. Pure LS overlay (lib/brands.ts);
+  // brandName is PRINT-ONLY at sale time and never enters ZATCA UBL/hash/QR.
+  const allBrands = useMemo(() => listBrands().filter((b) => b.status === "active"), []);
+  const [brandLinks, setBrandLinks] = useState<ItemBrandLink[]>(
+    () => (initial ? listItemBrandLinks(initial.id) : []),
+  );
+
+  function newLinkId(): string {
+    return (crypto as any).randomUUID?.() ?? `bl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+  function addBrandLink() {
+    setBrandLinks((prev) => [
+      ...prev,
+      { id: newLinkId(), brandId: 0, barcode: "", partNumber: "", purchaseCost: 0, salePrice1: 0, status: "active" },
+    ]);
+  }
+  function updateBrandLink(id: string, patch: Partial<ItemBrandLink>) {
+    setBrandLinks((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  }
+  function removeBrandLink(id: string) {
+    setBrandLinks((prev) => prev.filter((l) => l.id !== id));
+  }
+
   function newUnitId(): string {
     return (crypto as any).randomUUID?.() ?? `u_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -1118,6 +1143,23 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
       if (!(form.dosageForm ?? "").trim()) { setErr("الشكل الصيدلي مطلوب في وضع الصيدلية"); return; }
       if (!(form.strength ?? "").trim()) { setErr("التركيز مطلوب في وضع الصيدلية"); return; }
     }
+    // Brand links — additive/optional. Drop empty rows (no brand chosen), then
+    // validate: every kept row needs a brand, and no brand may repeat.
+    const cleanBrandLinks: ItemBrandLink[] = brandLinks
+      .filter((l) => l.brandId && l.brandId > 0)
+      .map((l) => ({
+        ...l,
+        barcode: (l.barcode ?? "").trim() || null,
+        partNumber: (l.partNumber ?? "").trim() || null,
+        purchaseCost: l.purchaseCost || null,
+        salePrice1: l.salePrice1 || null,
+        status: l.status ?? "active",
+      }));
+    const seenBrands = new Set<number>();
+    for (const l of cleanBrandLinks) {
+      if (seenBrands.has(l.brandId)) { setErr("لا يمكن تكرار نفس العلامة التجارية على نفس الصنف"); return; }
+      seenBrands.add(l.brandId);
+    }
     setSaving(true); setErr(null);
     try {
       let id: number;
@@ -1152,6 +1194,9 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           batchNo: form.batchNo || null,
         });
       }
+      // Persist brand links (whole-set replace) — LS overlay only, keyed by
+      // the resolved item id. Empty set clears the item's links.
+      setItemBrands(id, cleanBrandLinks);
       emitData("items");
       onSaved(initial ? "تم تحديث الصنف" : "تم إضافة الصنف");
     } catch (e: any) {
@@ -1298,6 +1343,58 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
               {uoms.map((u) => <option key={u.id} value={u.nameAr} />)}
             </datalist>
             <button type="button" onClick={addUnit} style={S.btnAddCond}>+ إضافة وحدة بيع</button>
+          </>
+        )}
+
+        {/* Brand links — additive/optional. Attach one or more brands to this
+            item, each with its own price / cost / barcode / part-number. The
+            picker only appears in back-office sales invoices at sale time. */}
+        <div style={{ marginTop: 16, marginBottom: 4, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#0d9488" }}>
+          🏷️ العلامات التجارية
+        </div>
+        <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
+          اربط الصنف بعلامة تجارية واحدة أو أكثر، لكل علامة سعرها وتكلفتها وباركودها ورقم القطعة. يظهر منتقي العلامة في فواتير المبيعات (الخلفية) فقط، واسم العلامة للطباعة فقط ولا يدخل في فاتورة زاتكا.
+        </div>
+        {allBrands.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 10, marginBottom: 8 }}>
+            لا توجد علامات تجارية معرّفة بعد. أضِف العلامات من شاشة «العلامات التجارية» أولاً.
+          </div>
+        ) : (
+          <>
+            {brandLinks.map((l) => (
+              <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.9fr 0.9fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
+                <Field label="العلامة التجارية">
+                  <SearchCombobox
+                    value={l.brandId || ""}
+                    onChange={(v) => updateBrandLink(l.id, { brandId: v === "" ? 0 : Number(v) })}
+                    style={S.input}
+                    options={[
+                      { value: "", label: "— اختر —" },
+                      ...allBrands.map((b) => ({
+                        value: b.id,
+                        label: `${b.nameAr}${b.code ? ` (${b.code})` : ""}`,
+                      })),
+                    ]}
+                  />
+                </Field>
+                <Field label="الباركود">
+                  <input value={l.barcode ?? ""} onChange={(e) => updateBrandLink(l.id, { barcode: e.target.value })} style={S.input} placeholder="EAN-13" />
+                </Field>
+                <Field label="رقم القطعة">
+                  <input value={l.partNumber ?? ""} onChange={(e) => updateBrandLink(l.id, { partNumber: e.target.value })} style={S.input} placeholder="Part #" />
+                </Field>
+                <Field label="التكلفة">
+                  <input type="number" step="0.01" min="0" value={blankIfZero(l.purchaseCost ?? 0, hideZeros)}
+                         onChange={(e) => updateBrandLink(l.id, { purchaseCost: Number(e.target.value) || 0 })} style={S.input} />
+                </Field>
+                <Field label="سعر البيع">
+                  <input type="number" step="0.01" min="0" value={blankIfZero(l.salePrice1 ?? 0, hideZeros)}
+                         onChange={(e) => updateBrandLink(l.id, { salePrice1: Number(e.target.value) || 0 })} style={S.input} />
+                </Field>
+                <button type="button" onClick={() => removeBrandLink(l.id)} style={{ ...S.btnDel, marginBottom: 12 }}>×</button>
+              </div>
+            ))}
+            <button type="button" onClick={addBrandLink} style={S.btnAddCond}>+ إضافة علامة تجارية</button>
           </>
         )}
 

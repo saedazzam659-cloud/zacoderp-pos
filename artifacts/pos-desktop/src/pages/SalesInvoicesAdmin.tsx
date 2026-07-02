@@ -8,6 +8,9 @@ import {
 import { listCustomers, type LocalCustomer } from "../lib/customers";
 import { emitData } from "../lib/dataBus";
 import { listItems, type LocalItem } from "../lib/items";
+import {
+  listItemBrands, itemHasBrands, saveInvoiceLineBrands, getInvoiceLineBrands, dropInvoiceLineBrands,
+} from "../lib/brands";
 import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
@@ -34,7 +37,7 @@ import { isZatcaCountry, bridgeSalesInvoiceToZatca } from "../lib/zatcaBridge";
 import { setSalesReturnPrefill } from "../lib/returnPrefill";
 import { type WindowsView } from "../lib/moduleRegistry";
 
-type FLine = SalesLine & DiscFields & { unitKey?: string };
+type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null };
 
 export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: WindowsView) => void }) {
   const [rows, setRows] = useState<SalesInvoice[]>([]);
@@ -89,6 +92,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
     setBusyId(id);
     try {
       await deleteSalesInvoice(id);
+      dropInvoiceLineBrands(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
     } catch (e: any) { setErr(e?.message ?? "تعذّر حذف الفاتورة"); }
@@ -402,7 +406,11 @@ function invoiceToPrintDoc(p: SalesInvoice): PrintDoc {
     vatTotal: p.vatTotal,
     grandTotal: p.grandTotal,
     notes: p.notes,
-    lines: p.lines,
+    // Merge the print-only brand snapshot by index (persisted-line order).
+    lines: (() => {
+      const bl = getInvoiceLineBrands(p.id);
+      return p.lines.map((l, i) => ({ ...l, brandName: bl[i]?.brandName ?? null }));
+    })(),
     qrBase64: p.zatcaQrBase64 ?? null,
   };
 }
@@ -448,11 +456,17 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   });
   // Stored line unitPrice is already NET (discount baked in at create) — the
   // pre-discount breakdown isn't round-tripped, so edit re-opens with disc=0.
-  const [lines, setLines] = useState<FLine[]>(() =>
-    initial && initial.lines.length
-      ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
-      : [blankLine()],
-  );
+  const [lines, setLines] = useState<FLine[]>(() => {
+    if (initial && initial.lines.length) {
+      // Re-hydrate the print-only brand snapshot (indexed in persisted-line order).
+      const bl = getInvoiceLineBrands(initial.id);
+      return initial.lines.map((l, i) => ({
+        ...l, disc: 0, discType: "percent" as DiscType,
+        brandId: bl[i]?.brandId ?? null, brandName: bl[i]?.brandName ?? null,
+      }));
+    }
+    return [blankLine()];
+  });
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -531,6 +545,23 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           const bu = it.uomId != null ? uoms.find((x) => x.id === it.uomId) : defUom;
           next.uomId = bu?.id ?? null; next.uomName = bu?.nameAr ?? null; next.conversionFactor = bu?.baseQty ?? 1;
         }
+        // A different item carries different brands — clear any prior pick.
+        next.brandId = null; next.brandName = null;
+      }
+      // Brand pick (PRINT-ONLY, back-office only). Loads the brand's own sale
+      // price into unitPrice and snapshots the brand name for the printed
+      // invoice. NEVER enters the ZATCA UBL/hash/signature/QR/ICV-PIH.
+      if (patch.brandId !== undefined) {
+        const bid = patch.brandId;
+        if (bid) {
+          const link = listItemBrands(Number(next.itemId)).find((b) => b.brandId === bid);
+          if (link) {
+            next.brandName = link.brandNameAr;
+            if ((link.salePrice1 ?? 0) > 0) next.unitPrice = link.salePrice1 as number;
+          }
+        } else {
+          next.brandName = null;
+        }
       }
       // Unit change via the per-item picker. Picking an ADDITIONAL unit auto-fills
       // its own price + conversion factor; the BASE unit restores the base price.
@@ -592,6 +623,8 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       ], lines.map((l) => ({ itemId: l.itemId, uomId: l.uomId ?? null, price: l.unitPrice, qty: l.qty })), "سعر البيع");
       if (problems.length) { setIssues(problems); setBusy(false); return; }
       const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
+      // Print-only per-line brand snapshot, aligned to the persisted (cleaned) order.
+      const brandSnapshot = cleaned.map((l) => ({ brandId: l.brandId ?? null, brandName: l.brandName ?? null }));
       if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error("أدخل سعر صرف صحيح للعملة الأجنبية");
       // Fold the discount into each unit price; Rust recomputes totals from
       // qty × unitPrice so VAT lands on the net base (ZATCA-correct).
@@ -638,6 +671,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       if (isEdit && initial) {
         await updateSalesInvoice(initial.id, payload);
         saveDocDiscount("sales_invoice", initial.id, discOverlay);
+        saveInvoiceLineBrands(initial.id, brandSnapshot);
         onDone();
         return;
       }
@@ -649,6 +683,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         id = await createSalesInvoice(payload);
         setSavedId(id);
         saveDocDiscount("sales_invoice", id, discOverlay);
+        saveInvoiceLineBrands(id, brandSnapshot);
         emitData("invoices", "journal", "stock", "customers", "cashboxes", "banks");
       }
       // ZATCA bridge (Saudi installs only): generate the TLV QR and enqueue the
@@ -837,6 +872,19 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
                     ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
                   ]}
                 />
+                {itemHasBrands(l.itemId) && (
+                  <div style={{ marginTop: 4 }}>
+                    <SearchCombobox
+                      value={l.brandId ?? ""}
+                      onChange={(v) => setLine(i, { brandId: v === "" ? null : Number(v) })}
+                      style={{ ...input, fontSize: 12 }}
+                      options={[
+                        { value: "", label: "🏷️ بدون علامة تجارية" },
+                        ...listItemBrands(l.itemId).map((b) => ({ value: b.brandId, label: b.brandNameAr })),
+                      ]}
+                    />
+                  </div>
+                )}
               </Td>
               <Td>
                 {(() => {

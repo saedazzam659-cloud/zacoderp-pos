@@ -25,7 +25,7 @@
 
 export type WindowsView =
   | "sales" | "returns" | "pending" | "parked" | "daily"
-  | "customers" | "items" | "item_groups" | "uom" | "dashboard" | "updates" | "users"
+  | "customers" | "items" | "item_groups" | "brands" | "uom" | "dashboard" | "updates" | "users"
   | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
   | "suppliers" | "supplier_groups" | "supplier_settlement"
   | "purchases" | "purchase_orders" | "goods_receipts" | "purchase_returns" | "letters_of_credit"
@@ -87,6 +87,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   customers:    { module: "customers", profile: "pos" },
   items:        { module: "inventory", profile: "pos" },
   item_groups:  { module: "inventory", profile: "pos" },
+  brands:       { module: "inventory", profile: "pos" },
   uom:          { module: "inventory", profile: "pos" },
   low_stock:    { module: "inventory", profile: "pos" },
   stock_import: { module: "inventory", profile: "pos" },

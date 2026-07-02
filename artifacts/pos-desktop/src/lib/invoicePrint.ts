@@ -25,7 +25,7 @@ export interface PrintDoc {
   vatTotal: number;
   grandTotal: number;
   notes: string | null;
-  lines: SalesLine[];
+  lines: (SalesLine & { brandName?: string | null })[];
   /** ZATCA TLV QR (base64). null/empty when not a ZATCA install / not bridged. */
   qrBase64?: string | null;
 }
@@ -98,7 +98,7 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
     const itemRow = `
         <tr class="item-row">
           <td>${i + 1}</td>
-          <td>${esc(l.itemName ?? "")}</td>
+          <td>${esc(l.itemName ?? "")}${l.brandName ? `<div style="font-size:11px;color:#64748b;">🏷️ ${esc(l.brandName)}</div>` : ""}</td>
           <td class="mono">${esc(l.qty)}</td>
           ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? esc(freeQ) : "—"}</td>` : ""}
           <td>${l.uomName ? esc(l.uomName) : "—"}</td>
@@ -244,7 +244,7 @@ function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, 
   const sym = currencySymbol();
   const rows = doc.lines.map((l) => `
       <div class="ln">
-        <div class="ln-name">${esc(l.itemName ?? "")}</div>
+        <div class="ln-name">${esc(l.itemName ?? "")}${l.brandName ? ` <span style="color:#666;">(${esc(l.brandName)})</span>` : ""}</div>
         <div class="ln-calc">
           <span>${esc(l.qty)}${l.uomName ? " " + esc(l.uomName) : ""} × ${fmt(l.unitPrice, dp)}</span>
           <span>${fmt(l.lineTotal, dp)}</span>

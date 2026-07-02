@@ -26,6 +26,7 @@ import DailyReportPage from "./DailyReport";
 import CustomersAdmin from "./CustomersAdmin";
 import ItemsAdmin from "./ItemsAdmin";
 import ItemGroupsAdmin from "./ItemGroupsAdmin";
+import BrandsAdmin from "./BrandsAdmin";
 import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
@@ -226,7 +227,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🏬",
     label: "المخازن",
     members: [
-      "items", "item_groups", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
+      "items", "item_groups", "brands", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
       "stock_import", "item_card", "stock_valuation", "warehouse_stock", "slow_moving", "free_quantities", "item_sales_valuation",
       "inventory_dashboard", "smart_alerts", "goods_deliveries",
@@ -607,6 +608,7 @@ export default function PosShell({
     { id: "supplier_groups",  icon: "🗂️", label: "مجموعات الموردين", perm: "supplier_groups" },
     { id: "items",            icon: "📦", label: "الأصناف", perm: "items" },
     { id: "item_groups",      icon: "🗂️", label: "مجموعات الأصناف", perm: "item_groups" },
+    { id: "brands",           icon: "🏷️", label: "العلامات التجارية", perm: "brands" },
     { id: "stock_import",     icon: "📥", label: "استيراد الأرصدة", perm: "stock_import" },
     { id: "low_stock",        icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined, perm: "low_stock" },
     { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
@@ -714,6 +716,7 @@ export default function PosShell({
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "item_groups", icon: "🗂️", label: "مجموعات الأصناف" },
+    { id: "brands",    icon: "🏷️", label: "العلامات التجارية" },
     { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
     { id: "invoice_import", icon: "📂", label: "استيراد الفواتير" },
     { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
@@ -755,6 +758,7 @@ export default function PosShell({
           {v === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {v === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {v === "item_groups" && <div style={S.pagePad}><ItemGroupsAdmin /></div>}
+          {v === "brands" && <div style={S.pagePad}><BrandsAdmin /></div>}
           {v === "stock_import" && <div style={S.pagePad}><StockImport onDone={() => void refreshLowStock()} /></div>}
           {v === "invoice_import" && <div style={S.pagePad}><InvoiceImport sellerName={effectiveCompanyName} /></div>}
           {v === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
@@ -1214,6 +1218,7 @@ function labelFor(v: View): string {
     customers: "العملاء",
     items: "الأصناف",
     item_groups: "مجموعات الأصناف",
+    brands: "العلامات التجارية",
     stock_import: "استيراد الأرصدة الافتتاحية",
     low_stock: "الأصناف تحت الحد الأدنى",
     uom: "وحدات القياس",

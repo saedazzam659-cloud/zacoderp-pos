@@ -17,6 +17,14 @@ export const LS_KEYS = {
   customerOpening: "pos_desktop_customer_opening_v1",
   uom: "pos_desktop_uom_v1",
   itemGroups: "pos_desktop_item_groups_v1",
+  /** Brand master list (العلامات التجارية). LOCAL-ONLY, no cloud sync. */
+  brands: "pos_desktop_brands_v1",
+  /** Per-item brand links keyed by item id — each brand carries its own
+   * price/cost/barcode/part-number. LOCAL-ONLY overlay, mirrors itemMeta. */
+  itemBrands: "pos_desktop_item_brands_v1",
+  /** Print-only per-line brand snapshot for back-office sales invoices, keyed
+   * by invoice id, indexed in persisted-line order. NEVER enters ZATCA. */
+  invoiceBrands: "pos_desktop_invoice_brands_v1",
   invoices: "pos_desktop_invoices_v1",
   pushQueue: "pos_desktop_push_queue_v1",
   lastPullAt: "pos_desktop_last_pull_at",

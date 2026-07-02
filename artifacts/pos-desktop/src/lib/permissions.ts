@@ -17,7 +17,7 @@ function hasTauri(): boolean {
 
 export type ScreenKey =
   | "sales" | "returns" | "parked" | "daily"
-  | "customers" | "items" | "item_groups" | "uom" | "scale" | "expiry"
+  | "customers" | "items" | "item_groups" | "brands" | "uom" | "scale" | "expiry"
   | "stock_import" | "low_stock"
   | "suppliers" | "supplier_groups" | "supplier_settlement" | "supplier_payment"
   | "purchases" | "purchase_orders" | "goods_receipts" | "purchase_returns" | "letters_of_credit"
@@ -52,6 +52,7 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "customers", label: "العملاء", icon: "👥", group: "الملفات" },
   { key: "items", label: "الأصناف", icon: "📦", group: "الملفات" },
   { key: "item_groups", label: "مجموعات الأصناف", icon: "🗂️", group: "الملفات" },
+  { key: "brands", label: "العلامات التجارية", icon: "🏷️", group: "الملفات" },
   { key: "uom", label: "وحدات القياس", icon: "📐", group: "الملفات" },
   { key: "stock_import", label: "استيراد الأرصدة", icon: "📥", group: "الملفات" },
   { key: "low_stock", label: "أصناف تحت الحد", icon: "⚠️", group: "الملفات" },

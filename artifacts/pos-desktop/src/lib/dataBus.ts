@@ -21,6 +21,7 @@ export type DataEntity =
   | "stock"
   | "warehouses"
   | "itemGroups"
+  | "brands"
   | "accounts"
   | "journal"
   | "invoices"
