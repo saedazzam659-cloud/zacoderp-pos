@@ -16,9 +16,18 @@ import {
   FileText, Printer, CalendarRange, Building2, AlertCircle,
   Hash, BadgePercent, ReceiptText, ArrowDownToLine, ArrowUpFromLine,
   Scale, BookOpen, Search, Sparkles, History, ExternalLink, Eye, Loader2,
+  FileSpreadsheet, FileDown,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { htmlToPdfBlob } from "@/lib/deliveryReceiptPrint";
+
+// Minimal HTML-escape for the print/PDF document builder below.
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -204,7 +213,11 @@ function TRow({
 // ── Drill-down modal ──────────────────────────────────────────────────
 interface DetailDoc {
   id: number; source: string; docNumber: string | null; date: string;
-  partyName: string | null; base: number; vat: number; total: number; link: string | null;
+  partyName: string | null;
+  supplierVatNumber?: string | null;
+  supplierInvoiceNumber?: string | null;
+  supplierInvoiceDate?: string | null;
+  base: number; vat: number; total: number; link: string | null;
 }
 interface DetailResp {
   bucket: string; period: { from: string; to: string };
@@ -252,9 +265,111 @@ function VatDrilldownDialog({
     return items.filter((d) =>
       (d.docNumber ?? "").toLowerCase().includes(q) ||
       (d.partyName ?? "").toLowerCase().includes(q) ||
+      (d.supplierVatNumber ?? "").toLowerCase().includes(q) ||
+      (d.supplierInvoiceNumber ?? "").toLowerCase().includes(q) ||
       d.date.includes(q),
     );
   }, [items, search]);
+
+  // ── Export helpers (Excel / Print / PDF) for the drill-down operations ──
+  function exportRows() {
+    return filtered.map((d) => {
+      const meta = SOURCE_LABELS[d.source] ?? { label: d.source };
+      return {
+        "النوع": meta.label,
+        "رقم المستند": d.docNumber ?? `#${d.id}`,
+        "التاريخ": d.date,
+        "العميل / المورد": d.partyName ?? "",
+        "الرقم الضريبي": d.supplierVatNumber ?? "",
+        "رقم فاتورة المورد": d.supplierInvoiceNumber ?? "",
+        "تاريخ الفاتورة": d.supplierInvoiceDate ?? "",
+        "الوعاء": Number(d.base.toFixed(2)),
+        "الضريبة": Number(d.vat.toFixed(2)),
+        "الإجمالي": Number(d.total.toFixed(2)),
+      };
+    });
+  }
+
+  function handleExcel() {
+    if (filtered.length === 0) return;
+    const ws = XLSX.utils.json_to_sheet(exportRows());
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "العمليات");
+    XLSX.writeFile(wb, `tax-declaration-${bucket ?? "details"}-${from}_${to}.xlsx`);
+  }
+
+  // Shared print/PDF markup: scoped under .tdx-print so the injected <style>
+  // never leaks onto the live page while the off-screen node is mounted.
+  function buildInnerHtml(): string {
+    const totalBase = filtered.reduce((s, d) => s + d.base, 0);
+    const totalVat  = filtered.reduce((s, d) => s + d.vat, 0);
+    const totalTot  = filtered.reduce((s, d) => s + d.total, 0);
+    const body = filtered.map((d) => {
+      const meta = SOURCE_LABELS[d.source] ?? { label: d.source };
+      return `<tr>
+        <td>${escapeHtml(meta.label)}</td>
+        <td>${escapeHtml(d.docNumber ?? `#${d.id}`)}</td>
+        <td>${escapeHtml(d.date)}</td>
+        <td>${escapeHtml(d.partyName ?? "—")}</td>
+        <td>${escapeHtml(d.supplierVatNumber ?? "—")}</td>
+        <td>${escapeHtml(d.supplierInvoiceNumber ?? "—")}</td>
+        <td>${escapeHtml(d.supplierInvoiceDate ?? "—")}</td>
+        <td class="num">${fmtNum(d.base)}</td>
+        <td class="num">${fmtNum(d.vat)}</td>
+        <td class="num">${fmtNum(d.total)}</td>
+      </tr>`;
+    }).join("");
+    return `<style>
+      .tdx-print{font-family:'Segoe UI',Tahoma,Arial,sans-serif;color:#0f172a;padding:24px;direction:rtl;}
+      .tdx-print h1{font-size:18px;margin:0 0 4px;}
+      .tdx-print .sub{font-size:12px;color:#64748b;margin-bottom:16px;}
+      .tdx-print table{width:100%;border-collapse:collapse;font-size:12px;}
+      .tdx-print th,.tdx-print td{border:1px solid #cbd5e1;padding:6px 8px;text-align:right;}
+      .tdx-print th{background:#1e293b;color:#fff;}
+      .tdx-print td.num,.tdx-print th.num{text-align:left;font-variant-numeric:tabular-nums;}
+      .tdx-print tfoot td{font-weight:bold;background:#f1f5f9;}
+    </style>
+    <div class="tdx-print">
+      <h1>العمليات الناتج عنها: ${escapeHtml(label)}</h1>
+      <div class="sub">من ${escapeHtml(from)} إلى ${escapeHtml(to)} · ${filtered.length} عملية</div>
+      <table>
+        <thead><tr>
+          <th>النوع</th><th>رقم المستند</th><th>التاريخ</th><th>العميل / المورد</th>
+          <th>الرقم الضريبي</th><th>رقم فاتورة المورد</th><th>تاريخ الفاتورة</th>
+          <th class="num">الوعاء</th><th class="num">الضريبة</th><th class="num">الإجمالي</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr>
+          <td colspan="7">الإجمالي</td>
+          <td class="num">${fmtNum(totalBase)}</td>
+          <td class="num">${fmtNum(totalVat)}</td>
+          <td class="num">${fmtNum(totalTot)}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+  }
+
+  function handlePrint() {
+    if (filtered.length === 0) return;
+    const w = window.open("", "_blank", "width=1100,height=760");
+    if (!w) return;
+    w.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(label)}</title></head><body>${buildInnerHtml()}</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { w.print(); }, 350);
+  }
+
+  async function handlePdf() {
+    if (filtered.length === 0) return;
+    const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(label)}</title></head><body>${buildInnerHtml()}</body></html>`;
+    const blob = await htmlToPdfBlob(html);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tax-declaration-${bucket ?? "details"}-${from}_${to}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -286,14 +401,27 @@ function VatDrilldownDialog({
           </div>
         )}
 
-        <div className="relative">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="ابحث برقم المستند، الاسم، أو التاريخ..."
-            className="pr-10"
-          />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ابحث برقم المستند، الاسم، الرقم الضريبي، أو التاريخ..."
+              className="pr-10"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handlePrint} disabled={filtered.length === 0}>
+              <Printer className="h-4 w-4" /> طباعة
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleExcel} disabled={filtered.length === 0}>
+              <FileSpreadsheet className="h-4 w-4" /> Excel
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handlePdf} disabled={filtered.length === 0}>
+              <FileDown className="h-4 w-4" /> PDF
+            </Button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto rounded-lg border">
@@ -320,6 +448,9 @@ function VatDrilldownDialog({
                   <th className="px-3 py-2 text-right font-semibold">رقم المستند</th>
                   <th className="px-3 py-2 text-right font-semibold">التاريخ</th>
                   <th className="px-3 py-2 text-right font-semibold">العميل / المورد</th>
+                  <th className="px-3 py-2 text-right font-semibold">الرقم الضريبي</th>
+                  <th className="px-3 py-2 text-right font-semibold">رقم فاتورة المورد</th>
+                  <th className="px-3 py-2 text-right font-semibold">تاريخ الفاتورة</th>
                   <th className="px-3 py-2 text-left font-semibold">الوعاء</th>
                   <th className="px-3 py-2 text-left font-semibold">الضريبة</th>
                   <th className="px-3 py-2 text-left font-semibold">الإجمالي</th>
@@ -337,6 +468,9 @@ function VatDrilldownDialog({
                       <td className="px-3 py-2.5 font-mono text-xs">{d.docNumber ?? `#${d.id}`}</td>
                       <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">{d.date}</td>
                       <td className="px-3 py-2.5 truncate max-w-[180px]">{d.partyName ?? <span className="text-muted-foreground">—</span>}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs tabular-nums">{d.supplierVatNumber ?? <span className="text-muted-foreground">—</span>}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs">{d.supplierInvoiceNumber ?? <span className="text-muted-foreground">—</span>}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">{d.supplierInvoiceDate ?? <span className="text-muted-foreground">—</span>}</td>
                       <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs">{fmtNum(d.base)}</td>
                       <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs">{fmtNum(d.vat)}</td>
                       <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs font-semibold">{fmtNum(d.total)}</td>

@@ -513,7 +513,14 @@ router.get("/vat-declaration/details", async (req, res) => {
 
   type DocRow = {
     id: number; source: string; docNumber: string | null; date: string;
-    partyName: string | null; base: number; vat: number; total: number; link: string | null;
+    partyName: string | null;
+    // Supplier tax metadata surfaced in the drill-down so the empty
+    // "العميل / المورد" cell for payment-voucher rows gets filled and the
+    // supplier VAT #, supplier invoice #, and invoice date are visible.
+    supplierVatNumber: string | null;
+    supplierInvoiceNumber: string | null;
+    supplierInvoiceDate: string | null;
+    base: number; vat: number; total: number; link: string | null;
   };
   const out: DocRow[] = [];
 
@@ -550,6 +557,7 @@ router.get("/vat-declaration/details", async (req, res) => {
         id: r.id, source: "sales_invoice",
         docNumber: r.docNumber, date: r.date,
         partyName: r.custAr ?? r.custEn ?? null,
+        supplierVatNumber: null, supplierInvoiceNumber: null, supplierInvoiceDate: null,
         base, vat, total: Number(r.total),
         link: `/sales/invoices/${r.id}`,
       });
@@ -569,6 +577,7 @@ router.get("/vat-declaration/details", async (req, res) => {
         id: r.id, source: "legacy_invoice",
         docNumber: r.invoiceNumber, date: String(r.issueDate),
         partyName: (r as any).customerName ?? null,
+        supplierVatNumber: null, supplierInvoiceNumber: null, supplierInvoiceDate: null,
         base, vat, total: base + vat,
         link: `/invoices/${r.id}`,
       });
@@ -586,6 +595,8 @@ router.get("/vat-declaration/details", async (req, res) => {
         total: purchaseInvoicesTable.totalAmount,
         supAr: suppliersTable.nameAr,
         supEn: suppliersTable.nameEn,
+        supVat: suppliersTable.vatNumber,
+        supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
       })
       .from(purchaseInvoicesTable)
       .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseInvoicesTable.supplierId))
@@ -603,6 +614,9 @@ router.get("/vat-declaration/details", async (req, res) => {
         id: r.id, source: "purchase_invoice",
         docNumber: r.docNumber, date: r.date,
         partyName: r.supAr ?? r.supEn ?? null,
+        supplierVatNumber: (r.supVat ?? "").trim() || null,
+        supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
+        supplierInvoiceDate: r.date,
         base, vat, total: Number(r.total),
         link: `/purchasing/invoices/${r.id}`,
       });
@@ -617,6 +631,10 @@ router.get("/vat-declaration/details", async (req, res) => {
           entityName: paymentVouchersTable.entityName,
           amount:     paymentVoucherLinesTable.amount,
           taxAmount:  paymentVoucherLinesTable.taxAmount,
+          supplierName:          paymentVoucherLinesTable.supplierName,
+          supplierVatNumber:     paymentVoucherLinesTable.supplierVatNumber,
+          supplierInvoiceNumber: paymentVoucherLinesTable.supplierInvoiceNumber,
+          supplierInvoiceDate:   paymentVoucherLinesTable.supplierInvoiceDate,
         })
         .from(paymentVoucherLinesTable)
         .innerJoin(
@@ -633,10 +651,17 @@ router.get("/vat-declaration/details", async (req, res) => {
         const vat = Number(r.taxAmount);
         if (Math.abs(vat) <= 0.005) continue;
         const base = Number(r.amount);
+        // The empty "العميل / المورد" cell (image: red box) is filled from
+        // the PV line's supplier-tax metadata (image: blue box), falling
+        // back to the voucher header entity name.
+        const pvSupName = (r.supplierName ?? "").trim() || (r.entityName ?? "").trim() || null;
         out.push({
           id: r.voucherId, source: "payment_voucher",
           docNumber: r.docNumber, date: r.date,
-          partyName: r.entityName ?? null,
+          partyName: pvSupName,
+          supplierVatNumber:     (r.supplierVatNumber ?? "").trim() || null,
+          supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
+          supplierInvoiceDate:   (r.supplierInvoiceDate ?? "").trim() || null,
           base, vat, total: base + vat,
           link: `/cash/payment-vouchers/${r.voucherId}`,
         });
@@ -667,6 +692,7 @@ router.get("/vat-declaration/details", async (req, res) => {
       out.push({
         id: r.id, source: "sales_return", docNumber: r.docNumber, date: r.date,
         partyName: r.custAr ?? r.custEn ?? null,
+        supplierVatNumber: null, supplierInvoiceNumber: null, supplierInvoiceDate: null,
         base, vat, total: Number(r.total), link: `/sales/returns`,
       });
     }
@@ -680,6 +706,7 @@ router.get("/vat-declaration/details", async (req, res) => {
         vat: purchaseReturnsTable.vatAmount,
         supAr: suppliersTable.nameAr,
         supEn: suppliersTable.nameEn,
+        supVat: suppliersTable.vatNumber,
       })
       .from(purchaseReturnsTable)
       .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseReturnsTable.supplierId))
@@ -695,6 +722,8 @@ router.get("/vat-declaration/details", async (req, res) => {
       out.push({
         id: r.id, source: "purchase_return", docNumber: r.docNumber, date: r.date,
         partyName: r.supAr ?? r.supEn ?? null,
+        supplierVatNumber: (r.supVat ?? "").trim() || null,
+        supplierInvoiceNumber: null, supplierInvoiceDate: null,
         base, vat, total: Number(r.total), link: `/purchasing/returns`,
       });
     }
