@@ -520,6 +520,13 @@ router.get("/vat-declaration/details", async (req, res) => {
     supplierVatNumber: string | null;
     supplierInvoiceNumber: string | null;
     supplierInvoiceDate: string | null;
+    // Payment-voucher-only extras: header البيان (description) + ملاحظات
+    // (notes), plus whether the voucher carries multiple allocation lines
+    // (عمليات متعددة) vs a single normal operation (عادي). The frontend shows
+    // البيان/ملاحظات only for the normal (single-operation) case.
+    voucherDescription?: string | null;
+    voucherNotes?: string | null;
+    isMultiVoucher?: boolean;
     base: number; vat: number; total: number; link: string | null;
   };
   const out: DocRow[] = [];
@@ -628,7 +635,14 @@ router.get("/vat-declaration/details", async (req, res) => {
           voucherId:  paymentVouchersTable.id,
           docNumber:  paymentVouchersTable.code,
           date:       paymentVouchersTable.date,
+          entityId:   paymentVouchersTable.entityId,
           entityName: paymentVouchersTable.entityName,
+          voucherDescription: paymentVouchersTable.description,
+          voucherNotes:       paymentVouchersTable.notes,
+          // Header supplier (resolved from entityId) so a voucher that stored
+          // no free-text entityName still shows the supplier's real name.
+          hdrSupAr:   suppliersTable.nameAr,
+          hdrSupEn:   suppliersTable.nameEn,
           amount:     paymentVoucherLinesTable.amount,
           taxAmount:  paymentVoucherLinesTable.taxAmount,
           supplierName:          paymentVoucherLinesTable.supplierName,
@@ -641,20 +655,35 @@ router.get("/vat-declaration/details", async (req, res) => {
           paymentVouchersTable,
           eq(paymentVoucherLinesTable.voucherId, paymentVouchersTable.id),
         )
+        .leftJoin(
+          suppliersTable,
+          and(
+            eq(suppliersTable.id, paymentVouchersTable.entityId),
+            eq(suppliersTable.companyId, companyId),
+          ),
+        )
         .where(and(
           eq(paymentVouchersTable.companyId, companyId),
           eq(paymentVouchersTable.status, "posted"),
           gte(paymentVouchersTable.date, from),
           lte(paymentVouchersTable.date, to),
         ));
+      // Count allocation lines per voucher: >1 line ⇒ multi-operation voucher
+      // (عمليات متعددة), exactly one ⇒ normal single-operation voucher (عادي).
+      const pvLineCount = new Map<number, number>();
+      for (const r of pvRows) pvLineCount.set(r.voucherId, (pvLineCount.get(r.voucherId) ?? 0) + 1);
       for (const r of pvRows) {
         const vat = Number(r.taxAmount);
         if (Math.abs(vat) <= 0.005) continue;
         const base = Number(r.amount);
-        // The empty "العميل / المورد" cell (image: red box) is filled from
-        // the PV line's supplier-tax metadata (image: blue box), falling
-        // back to the voucher header entity name.
-        const pvSupName = (r.supplierName ?? "").trim() || (r.entityName ?? "").trim() || null;
+        const isMulti = (pvLineCount.get(r.voucherId) ?? 1) > 1;
+        // Resolve the supplier name: per-line supplier (multi) → header
+        // free-text entity name → header supplier looked up via entityId.
+        const pvSupName = (r.supplierName ?? "").trim()
+          || (r.entityName ?? "").trim()
+          || (r.hdrSupAr ?? "").trim()
+          || (r.hdrSupEn ?? "").trim()
+          || null;
         out.push({
           id: r.voucherId, source: "payment_voucher",
           docNumber: r.docNumber, date: r.date,
@@ -662,6 +691,11 @@ router.get("/vat-declaration/details", async (req, res) => {
           supplierVatNumber:     (r.supplierVatNumber ?? "").trim() || null,
           supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
           supplierInvoiceDate:   (r.supplierInvoiceDate ?? "").trim() || null,
+          // Normal (single-operation) vouchers also surface البيان + ملاحظات
+          // in the consolidated cell; multi-operation vouchers do not.
+          voucherDescription: isMulti ? null : ((r.voucherDescription ?? "").trim() || null),
+          voucherNotes:       isMulti ? null : ((r.voucherNotes ?? "").trim() || null),
+          isMultiVoucher: isMulti,
           base, vat, total: base + vat,
           link: `/cash/payment-vouchers/${r.voucherId}`,
         });

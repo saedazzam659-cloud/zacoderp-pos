@@ -217,6 +217,9 @@ interface DetailDoc {
   supplierVatNumber?: string | null;
   supplierInvoiceNumber?: string | null;
   supplierInvoiceDate?: string | null;
+  voucherDescription?: string | null;
+  voucherNotes?: string | null;
+  isMultiVoucher?: boolean;
   base: number; vat: number; total: number; link: string | null;
 }
 interface DetailResp {
@@ -466,7 +469,7 @@ function VatDrilldownDialog({
                       <td className="px-3 py-2.5 font-mono text-xs">{d.docNumber ?? `#${d.id}`}</td>
                       <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">{d.date}</td>
                       <td className="px-3 py-2.5 align-top max-w-[260px]">
-                        {(d.partyName || d.supplierVatNumber || d.supplierInvoiceNumber || d.supplierInvoiceDate) ? (
+                        {(d.partyName || d.supplierVatNumber || d.supplierInvoiceNumber || d.supplierInvoiceDate || d.voucherDescription || d.voucherNotes) ? (
                           <div className="flex flex-col gap-0.5 leading-tight">
                             <span className="font-medium truncate">{d.partyName ?? "—"}</span>
                             {d.supplierVatNumber && (
@@ -478,6 +481,16 @@ function VatDrilldownDialog({
                               <span className="text-[11px] text-muted-foreground">
                                 فاتورة المورد: {d.supplierInvoiceNumber ?? "—"}
                                 {d.supplierInvoiceDate ? ` — ${d.supplierInvoiceDate}` : ""}
+                              </span>
+                            )}
+                            {d.voucherDescription && (
+                              <span className="text-[11px] text-muted-foreground">
+                                البيان: {d.voucherDescription}
+                              </span>
+                            )}
+                            {d.voucherNotes && (
+                              <span className="text-[11px] text-muted-foreground">
+                                ملاحظات: {d.voucherNotes}
                               </span>
                             )}
                           </div>
