@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   supplierGroupsTable, lettersOfCreditTable, lcExpensesTable,
@@ -1070,6 +1071,12 @@ router.post("/purchase-invoices", async (req, res) => {
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
+    // Item Usage Control (Phase ب): block a save containing restricted items.
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageV = await checkItemsUsable(cid, "purchase_invoices", usageIds, req.authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
     // Required-fields gate (per company policy): every purchase invoice
     // must carry an explicit supplier + branch. Tightened from the older
     // "credit-only" supplier requirement so cash/bank purchases also need
@@ -1252,6 +1259,13 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     const lines = await db.select().from(purchaseInvoiceLinesTable)
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
+
+    // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
+    {
+      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "purchase_invoices", usageIds, req.authUser, "post");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     // Load item metadata (type + per-item cost account). SERVICE items (خدمي)
     // are handled SAP-style: they NEVER touch inventory/stock and their cost
@@ -1852,6 +1866,12 @@ router.post("/purchase-orders", async (req, res) => {
             notes, lines, priceIncludesVat, taxId } = req.body;
     if (!orderDate)  { res.status(400).json({ error: "تاريخ الأمر مطلوب" }); return; }
     if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد" }); return; }
+    // Item Usage Control (Phase ب): block a save containing restricted items.
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageV = await checkItemsUsable(cid, "purchase_orders", usageIds, req.authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     // Sequence engine authoritative (see purchase_invoice note above): consume
     // it first and ignore the peeked client docNumber, else every order reuses
@@ -2185,6 +2205,12 @@ router.post("/purchase-returns", async (req, res) => {
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, taxId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    // Item Usage Control (Phase ب): block a save containing restricted items.
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageV = await checkItemsUsable(cid, "purchase_returns", usageIds, req.authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
     // Required-fields gate (per company policy): every purchase return
     // must carry an explicit supplier + branch. Tightened from the
     // older "credit-only" supplier requirement so cash/bank returns
@@ -2353,6 +2379,13 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     const lines = await db.select().from(purchaseReturnLinesTable)
       .where(eq(purchaseReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
+
+    // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
+    {
+      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "purchase_returns", usageIds, req.authUser, "post");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     const noWh = lines.filter(l => l.itemId && !l.warehouseId);
     if (noWh.length) {

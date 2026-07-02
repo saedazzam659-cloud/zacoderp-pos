@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -89,6 +90,19 @@ export default function ProductionOrders() {
   const fgItems = useMemo(
     () => items.filter((i) => !i.itemNature || i.itemNature === "finished" || i.itemNature === "semi"),
     [items],
+  );
+  // Item Usage Control (Phase ب): the finished-good product picker honours the
+  // per-item "finished_goods" routing rules (hidden/readonly/requires_*).
+  const fgUsageModes = useScreenItemModes("finished_goods");
+  const fgComboItems = useMemo(
+    () => annotateItemCombo(
+      [
+        { value: "", label: "—" },
+        ...fgItems.map((i) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? `#${i.id}` })),
+      ],
+      fgUsageModes,
+    ),
+    [fgItems, fgUsageModes],
   );
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -271,10 +285,7 @@ export default function ProductionOrders() {
                   }}
                   placeholder="—"
                   searchPlaceholder="ابحث بالاسم أو الكود…"
-                  items={[
-                    { value: "", label: "—" },
-                    ...fgItems.map((i) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? `#${i.id}` })),
-                  ]}
+                  items={fgComboItems}
                 />
               </div>
               <div>

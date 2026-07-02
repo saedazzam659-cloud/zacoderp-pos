@@ -7,6 +7,7 @@ import { syncLineDiscount, effectiveLineDiscount } from "@/lib/lineDiscountSync"
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
+import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1100,7 +1101,8 @@ export default function SalesReturns() {
         label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
       })),
   ];
-  const itemComboItems = [{ value: "", label: t("salesReturns.selectItem") }, ...inventoryItems.map((i: any) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? i.nameEn ?? `#${i.id}` }))];
+  const usageModes = useScreenItemModes("sales_returns");
+  const itemComboItems = annotateItemCombo([{ value: "", label: t("salesReturns.selectItem") }, ...inventoryItems.map((i: any) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? i.nameEn ?? `#${i.id}` }))], usageModes);
   const cusMap = Object.fromEntries(customers.map((c: any) => [c.id, c.nameAr ?? c.nameEn]));
   const invMap = useMemo(
     () => Object.fromEntries((invoices as any[]).map((i: any) => [i.id, i.docNumber ?? `SI-${i.id}`])),

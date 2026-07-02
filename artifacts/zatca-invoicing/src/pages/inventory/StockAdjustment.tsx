@@ -19,6 +19,7 @@ import {
   rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
@@ -59,6 +60,7 @@ export default function StockAdjustment() {
   const { fmt, fmtQty } = useFmt();
   const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const usageModes = useScreenItemModes("stock_adjust");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReasoning, setAiReasoning] = useState<string>("");
   const qc = useQueryClient();
@@ -512,7 +514,7 @@ export default function StockAdjustment() {
                           {/* Item */}
                           <td className="px-3 py-2 min-w-[180px]">
                             <SearchCombobox
-                              items={(items as any[]).filter((it: any) => it.itemType === "stock").map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))}
+                              items={annotateItemCombo((items as any[]).filter((it: any) => it.itemType === "stock").map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn })), usageModes)}
                               value={line.itemId}
                               onValueChange={v => handleItemSelect(i, v)}
                               placeholder={t("stockAdjustmentPage.selectItem")}

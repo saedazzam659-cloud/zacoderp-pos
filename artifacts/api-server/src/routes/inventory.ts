@@ -30,7 +30,7 @@ import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { pathRbac, writeAudit } from "../middleware/permissions.js";
-import { getItemUsageControls, normalizeUsageMode, isValidScreenKey, DEFAULT_USAGE_MODE } from "../lib/itemUsageControl.js";
+import { getItemUsageControls, normalizeUsageMode, isValidScreenKey, DEFAULT_USAGE_MODE, getScreenRules, isUsagePrivileged, checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -453,6 +453,22 @@ router.get("/items", async (req, res) => {
         .where(visibleFilter)
         .orderBy(asc(itemsTable.code));
   res.json(rows.map(r => ({ ...r.item, group: r.group, unit: r.unit })));
+});
+
+// ─── Batch usage-modes for ONE screen (Phase ب enforcement, frontend) ────────
+// Returns every NON-default rule for the given screen across the company's
+// catalogue plus whether the caller is usage-privileged, so a document form can
+// annotate its item picker (hidden→drop, readonly/requires_permission→disable,
+// requires_approval→badge) in a single query. Tenant-scoped; any logged-in user
+// may read (it only exposes routing rules, never item financials). MUST stay
+// ABOVE `/items/:id` — a one-segment literal route or Express treats
+// "usage-modes" as an :id (Number(...) → NaN → 400).
+router.get("/items/usage-modes", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const screenKey = String(req.query.screenKey ?? "").trim();
+  if (!isValidScreenKey(screenKey)) { res.status(400).json({ error: "مفتاح شاشة غير صالح" }); return; }
+  const rules = await getScreenRules(cid, screenKey);
+  res.json({ screenKey, modes: rules, privileged: isUsagePrivileged(req.authUser) });
 });
 
 router.get("/items/:id", async (req, res) => {
@@ -1001,6 +1017,12 @@ router.post("/stock-transfers", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { transferNumber, transferDate, fromWarehouseId, toWarehouseId, accountId, fromAccountId, toAccountId, notes, items } = req.body;
   if (!transferDate || !fromWarehouseId || !toWarehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
+  // Item Usage Control (Phase ب): block a save containing restricted items.
+  {
+    const usageIds = Array.from(new Set((items ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0))) as number[];
+    const usageV = await checkItemsUsable(cid, "stock_transfer", usageIds, (req as any).authUser, "save");
+    if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+  }
   try {
     await assertCompanyOwned(cid, {
       warehouses: [Number(fromWarehouseId), Number(toWarehouseId)],
@@ -1085,6 +1107,13 @@ router.post("/stock-transfers/:id/post", async (req, res) => {
   }
 
   try {
+    // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
+    {
+      const trLines = await db.select({ itemId: stockTransferItemsTable.itemId }).from(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
+      const usageIds = Array.from(new Set(trLines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "stock_transfer", usageIds, (req as any).authUser, "post");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
     const result = await db.transaction(async (tx) => {
       // Row-lock + re-check status under the lock. Pessimistic FOR UPDATE
       // is the right tool here: posting touches many rows, so the
@@ -1274,6 +1303,12 @@ router.post("/stock-adjustments", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { adjustmentNumber, adjustmentDate, warehouseId, accountId, inventoryAccountId, adjustmentAccountId, reason, notes, items } = req.body;
   if (!adjustmentDate || !warehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
+  // Item Usage Control (Phase ب): block a save containing restricted items.
+  {
+    const usageIds = Array.from(new Set((items ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0))) as number[];
+    const usageV = await checkItemsUsable(cid, "stock_adjust", usageIds, (req as any).authUser, "save");
+    if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+  }
   try {
     await assertCompanyOwned(cid, {
       warehouses: [Number(warehouseId)],
@@ -1348,6 +1383,12 @@ router.post("/stock-adjustments/:id/post", async (req, res) => {
   const adj = claim[0];
   const lines = await db.select().from(stockAdjustmentItemsTable).where(eq(stockAdjustmentItemsTable.adjustmentId, id));
   if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف" }); return; }
+  // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
+  {
+    const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const usageV = await checkItemsUsable(cid, "stock_adjust", usageIds, (req as any).authUser, "post");
+    if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+  }
   // 1) Apply stock movements
   for (const line of lines) {
     await upsertBalance(cid, line.itemId, adj.warehouseId, Number(line.qty), Number(line.costPrice));
@@ -1503,6 +1544,12 @@ router.post("/stock-counts/:id/post", async (req, res) => {
   const [cnt] = await db.select().from(stockCountsTable).where(and(eq(stockCountsTable.id, id), eq(stockCountsTable.companyId, cid)));
   if (!cnt || cnt.status !== "draft") { res.status(400).json({ error: "لا يمكن الترحيل" }); return; }
   const lines = await db.select().from(stockCountItemsTable).where(eq(stockCountItemsTable.countId, id));
+  // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
+  {
+    const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const usageV = await checkItemsUsable(cid, "stock_count", usageIds, (req as any).authUser, "post");
+    if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+  }
   for (const line of lines) {
     const diff = Number(line.actualQty) - Number(line.systemQty);
     if (diff !== 0) {

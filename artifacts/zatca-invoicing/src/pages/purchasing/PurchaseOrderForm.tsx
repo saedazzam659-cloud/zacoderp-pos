@@ -22,6 +22,7 @@ import { validateInvoiceLines } from "@/lib/lineValidation";
 import { useRoute, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
+import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
@@ -109,6 +110,7 @@ export default function PurchaseOrderForm() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const usageModes = useScreenItemModes("purchase_orders");
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -624,14 +626,14 @@ export default function PurchaseOrderForm() {
     { value: "", label: tr("noSupplierOpt") },
     ...suppliers.map((s: any) => ({ value: String(s.id), label: supName(s) })),
   ];
-  const itemComboItems = [
+  const itemComboItems = annotateItemCombo([
     { value: "", label: tr("itemSearchPh") },
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
       code: i.code ?? undefined,
       label: itemNameOf(i),
     })),
-  ];
+  ], usageModes);
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));
 
   // 11-column lines grid — same column widths as the invoice form, minus the

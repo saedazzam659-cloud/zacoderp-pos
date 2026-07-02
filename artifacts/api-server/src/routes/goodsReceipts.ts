@@ -19,6 +19,7 @@ import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { refreshItemCost } from "../lib/stockHelpers.js";
+import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -261,6 +262,12 @@ router.post("/", async (req, res) => {
       totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
     if (!receiptDate) { res.status(400).json({ error: "تاريخ الاستلام مطلوب" }); return; }
+    // Item Usage Control (Phase ب): block a save containing restricted items.
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0))) as number[];
+      const usageV = await checkItemsUsable(cid, "stock_in", usageIds, (req as any).authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     const tenantErr = await validateGrnTenantRefs(cid, {
       branchId:   branchId   ? Number(branchId)   : null,
@@ -443,6 +450,13 @@ router.patch("/:id/post", async (req, res) => {
     const lines = await db.select().from(goodsReceiptLinesTable)
       .where(eq(goodsReceiptLinesTable.receiptId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في إذن الاستلام" }); return; }
+
+    // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
+    {
+      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "stock_in", usageIds, (req as any).authUser, "post");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     // ── PHASE 1: Pre-validate everything BEFORE any mutation ───────────────
     // (Atomicity guard: don't move stock until we know JE will succeed.)

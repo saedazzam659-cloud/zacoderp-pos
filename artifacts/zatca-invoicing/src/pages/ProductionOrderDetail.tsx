@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useParams, Link } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -15,7 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { SearchCombobox } from "@/components/ui/search-combobox";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
 import { DateField } from "@/components/ui/date-field";
@@ -766,6 +767,19 @@ function WipSetupPanel({
   onSave: (patch: Record<string, unknown>) => void;
 }) {
   const locked = ["in_production", "quality_check", "completed"].includes(order.status);
+  // Item Usage Control (Phase ب): the finished-good product picker honours the
+  // per-item "finished_goods" routing rules (hidden/readonly/requires_*).
+  const fgUsageModes = useScreenItemModes("finished_goods");
+  const fgComboItems = useMemo(
+    () => annotateItemCombo(
+      [
+        { value: "", label: "—" },
+        ...itemRefs.map((i) => ({ value: String(i.id), label: `${i.code} — ${i.nameAr}` })),
+      ],
+      fgUsageModes,
+    ),
+    [itemRefs, fgUsageModes],
+  );
   const initial = () => ({
     rawWarehouseId: order.rawWarehouseId ?? "",
     finishedWarehouseId: order.finishedWarehouseId ?? "",
@@ -981,7 +995,8 @@ function WipSetupPanel({
         </Field>
         <Field label="صنف المنتج النهائي">
           <SelectId value={draft.productItemId} onChange={(v) => set("productItemId", v)}
-            options={itemRefs.map((i) => ({ value: i.id, label: `${i.code} — ${i.nameAr}` }))} testid="select-fg-item" />
+            options={itemRefs.map((i) => ({ value: i.id, label: `${i.code} — ${i.nameAr}` }))}
+            comboItems={fgComboItems} testid="select-fg-item" />
         </Field>
       </div>
 
@@ -1595,13 +1610,15 @@ function WasteRecordsTab({
 }
 
 function SelectId({
-  value, onChange, options, disabled, testid,
+  value, onChange, options, disabled, testid, comboItems,
 }: {
   value: number | string;
   onChange: (v: number | "") => void;
   options: { value: number; label: string }[];
   disabled?: boolean;
   testid?: string;
+  /** Pre-annotated combobox items (Item Usage Control). Overrides `options`. */
+  comboItems?: ComboboxItem[];
 }) {
   const v = value === "" || value == null ? "" : String(value);
   return (
@@ -1612,7 +1629,7 @@ function SelectId({
         disabled={disabled}
         placeholder="—"
         searchPlaceholder="ابحث…"
-        items={[
+        items={comboItems ?? [
           { value: "", label: "—" },
           ...options.map((o) => ({ value: String(o.value), label: o.label })),
         ]}

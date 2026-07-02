@@ -60,6 +60,7 @@ import { requireModulePermission, moduleAudit } from "../middleware/permissions.
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, readBatchRemaining } from "../lib/stockHelpers.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
+import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -743,6 +744,16 @@ router.post("/orders", async (req, res) => {
       }
     }
 
+    // Item Usage Control (Phase ب): block persisting a restricted finished-good
+    // (hidden/readonly/requires_permission) into a new order at save time.
+    if (b.productItemId) {
+      const fgId = Number(b.productItemId);
+      if (Number.isInteger(fgId) && fgId > 0) {
+        const usageV = await checkItemsUsable(cid, "finished_goods", [fgId], (req as any).authUser, "save");
+        if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+      }
+    }
+
     const explicitOrderNumber = typeof b.orderNumber === "string" && b.orderNumber.trim();
 
     // ─── PHASE A: Pull manufacturing settings defaults for this company ──
@@ -1051,6 +1062,15 @@ router.patch("/orders/:id", async (req, res) => {
         return;
       }
     }
+    // Item Usage Control (Phase ب): block changing the finished-good to a
+    // restricted item (hidden/readonly/requires_permission) at save time.
+    if (b.productItemId) {
+      const fgId = Number(b.productItemId);
+      if (Number.isInteger(fgId) && fgId > 0) {
+        const usageV = await checkItemsUsable(cid, "finished_goods", [fgId], (req as any).authUser, "save");
+        if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+      }
+    }
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (typeof b.title === "string") updates.title = b.title.trim();
     if (b.plannedQty !== undefined)
@@ -1306,6 +1326,13 @@ router.post("/orders/:id/status", async (req, res) => {
         return;
       }
 
+      // Item Usage Control (Phase ب): block raw-material issue for restricted items.
+      {
+        const usageIds = Array.from(new Set(issuableLines.map((l) => l.itemId!).filter((x): x is number => !!x)));
+        const usageV = await checkItemsUsable(cid, "raw_consumption", usageIds, (req as any).authUser, "post");
+        if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+      }
+
       // b) Validate stock availability up-front so we don't decrement
       //    half the lines then fail.
       for (const ln of issuableLines) {
@@ -1536,6 +1563,11 @@ router.post("/orders/:id/status", async (req, res) => {
           .status(400)
           .json({ error: "صنف المنتج النهائي غير موجود في هذه الشركة" });
         return;
+      }
+      // Item Usage Control (Phase ب): block finished-goods receipt for a restricted product.
+      {
+        const usageV = await checkItemsUsable(cid, "finished_goods", [order.productItemId], (req as any).authUser, "post");
+        if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
       }
       // Allow client to send produced/waste qty along with the transition;
       // otherwise fall back to whatever's already stored.
@@ -1818,6 +1850,11 @@ router.post("/orders/:id/items", async (req, res) => {
     if (!b.description || typeof b.description !== "string") {
       res.status(400).json({ error: "وصف العنصر مطلوب" });
       return;
+    }
+    // Item Usage Control (Phase ب): block adding a restricted item to an order.
+    if (b.itemId) {
+      const usageV = await checkItemsUsable(cid, "production_orders", [Number(b.itemId)], (req as any).authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
     const qty = num(b.quantity);
     const unitCost = num(b.unitCost);

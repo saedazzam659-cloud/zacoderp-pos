@@ -101,3 +101,161 @@ export async function getScreenModesForItems(
   for (const r of rows) map[r.itemId] = normalizeUsageMode(r.mode);
   return map;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase ب — ENFORCEMENT layer.
+//
+// A rule carries both the effective mode and the (optional) admin-authored
+// reason so screens and guards can show a meaningful message. `allowed`
+// screens are never materialised (absent = allowed).
+// ─────────────────────────────────────────────────────────────────────────
+export interface UsageRule {
+  mode: UsageMode;
+  reason: string | null;
+}
+
+// ALL non-default rules for a screen across the whole company catalogue,
+// keyed by itemId. This powers the frontend batch endpoint so a form can
+// annotate its item picker in ONE query (hidden = drop, readonly /
+// requires_permission = disable, requires_approval = badge).
+export async function getScreenRules(
+  companyId: number,
+  screenKey: string,
+): Promise<Record<number, UsageRule>> {
+  const rows = await db
+    .select()
+    .from(itemUsageControlsTable)
+    .where(
+      and(
+        eq(itemUsageControlsTable.companyId, companyId),
+        eq(itemUsageControlsTable.screenKey, screenKey),
+        ne(itemUsageControlsTable.mode, DEFAULT_USAGE_MODE),
+      ),
+    );
+  const map: Record<number, UsageRule> = {};
+  for (const r of rows) map[r.itemId] = { mode: normalizeUsageMode(r.mode), reason: r.reason ?? null };
+  return map;
+}
+
+// Same as getScreenRules but scoped to a candidate id list — used by the
+// server-side save/post guard which only ever knows the doc's own lines.
+export async function getScreenRulesForItems(
+  companyId: number,
+  screenKey: string,
+  itemIds: number[],
+): Promise<Record<number, UsageRule>> {
+  const map: Record<number, UsageRule> = {};
+  const ids = Array.from(new Set(itemIds.filter(n => Number.isInteger(n) && n > 0)));
+  if (ids.length === 0) return map;
+  const rows = await db
+    .select()
+    .from(itemUsageControlsTable)
+    .where(
+      and(
+        eq(itemUsageControlsTable.companyId, companyId),
+        eq(itemUsageControlsTable.screenKey, screenKey),
+        inArray(itemUsageControlsTable.itemId, ids),
+        ne(itemUsageControlsTable.mode, DEFAULT_USAGE_MODE),
+      ),
+    );
+  for (const r of rows) map[r.itemId] = { mode: normalizeUsageMode(r.mode), reason: r.reason ?? null };
+  return map;
+}
+
+// A user is "usage-privileged" (may bypass requires_permission at add-time and
+// requires_approval at post-time) when they are the platform operator, the
+// company admin, or hold the grantable `item_usage_override.post` permission.
+// Kept dependency-free (no import of the permissions middleware) on purpose so
+// the resolver stays a leaf module.
+export function isUsagePrivileged(authUser: any): boolean {
+  if (!authUser) return false;
+  if (authUser.role === "superadmin" || authUser.role === "admin") return true;
+  const p = (authUser.permissions ?? {}) as Record<string, any>;
+  return p.item_usage_override?.post === true;
+}
+
+export interface UsageViolation {
+  itemId: number;
+  mode: UsageMode;
+  reason: string | null;
+}
+
+// The ONE authoritative gate every document create/post route calls.
+//   phase "save" → creating/finalising a document line set (blocks hidden,
+//                  readonly, and requires_permission for unprivileged users).
+//   phase "post" → the "save" set PLUS requires_approval for unprivileged
+//                  users (approval == the existing draft→posted transition).
+// Returns the offending lines (empty ⇒ allowed). Routes turn a non-empty
+// result into a 403 with a human message. Idempotent + read-only.
+export async function checkItemsUsable(
+  companyId: number,
+  screenKey: string,
+  itemIds: number[],
+  authUser: any,
+  phase: "save" | "post",
+): Promise<UsageViolation[]> {
+  const rules = await getScreenRulesForItems(companyId, screenKey, itemIds);
+  const ids = Object.keys(rules);
+  if (ids.length === 0) return [];
+  const privileged = isUsagePrivileged(authUser);
+  const violations: UsageViolation[] = [];
+  for (const idStr of ids) {
+    const id = Number(idStr);
+    const { mode, reason } = rules[id]!;
+    let blocked = false;
+    switch (mode) {
+      case "hidden":
+      case "readonly":
+        blocked = true;
+        break;
+      case "requires_permission":
+        blocked = !privileged;
+        break;
+      case "requires_approval":
+        blocked = phase === "post" && !privileged;
+        break;
+      default:
+        blocked = false;
+    }
+    if (blocked) violations.push({ itemId: id, mode, reason });
+  }
+  return violations;
+}
+
+// Arabic label per mode — used to build the guard's rejection message so the
+// user sees WHY a line was blocked (mirrors the frontend labels).
+export const USAGE_MODE_LABEL_AR: Record<UsageMode, string> = {
+  allowed: "مسموح",
+  hidden: "مخفي",
+  readonly: "للقراءة فقط",
+  requires_approval: "يتطلب موافقة",
+  requires_permission: "يتطلب صلاحية",
+};
+
+// Extract the candidate itemIds from a document's line array (any shape that
+// carries `itemId`). De-duped, positive integers only. Central so every route
+// feeds the guard the same way.
+export function lineItemIds(lines: unknown): number[] {
+  if (!Array.isArray(lines)) return [];
+  const ids = lines
+    .map((l: any) => Number(l?.itemId))
+    .filter((n: number) => Number.isInteger(n) && n > 0);
+  return Array.from(new Set(ids));
+}
+
+// Human (Arabic) rejection message a route returns as a 403 when the usage
+// guard blocks a save/post. Lists the offending modes, item ids, and any
+// admin-authored reasons so the user understands WHY and what to request.
+export function usageViolationMessage(violations: UsageViolation[], phase: "save" | "post"): string {
+  if (violations.length === 0) return "";
+  const ids = violations.map(v => v.itemId).join("، ");
+  const modes = Array.from(new Set(violations.map(v => USAGE_MODE_LABEL_AR[v.mode])));
+  const reasons = Array.from(new Set(violations.map(v => v.reason).filter((r): r is string => !!r && r.trim().length > 0)));
+  const head = phase === "post"
+    ? "تعذّر ترحيل المستند بسبب قيود توجيه الأصناف"
+    : "تعذّر حفظ المستند بسبب قيود توجيه الأصناف";
+  let msg = `${head} (${modes.join("، ")}). أرقام الأصناف: ${ids}.`;
+  if (reasons.length) msg += ` السبب: ${reasons.join("؛ ")}.`;
+  msg += " يلزم صلاحية «تجاوز قيود توجيه الأصناف» للمتابعة.";
+  return msg;
+}

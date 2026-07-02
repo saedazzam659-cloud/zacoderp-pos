@@ -637,7 +637,7 @@ function ActingCompanyBanner() {
   if (!actingCompanyId) return null;
 
   return (
-    <div className="sticky top-0 z-40 bg-amber-100 border-b-2 border-amber-400 text-amber-900 px-4 py-2 flex items-center justify-between gap-3 shadow-sm">
+    <div className="bg-amber-100 border-b-2 border-amber-400 text-amber-900 px-4 py-2 flex items-center justify-between gap-3 shadow-sm">
       <div className="flex items-center gap-2 min-w-0">
         <Building2 className="h-4 w-4 shrink-0" />
         <span className="text-sm font-semibold truncate">
@@ -3339,7 +3339,7 @@ function TopBar({
   }, [crumbs, t]);
 
   return (
-    <header className="sticky top-0 z-10 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+    <header className="border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
       {/* Row 1: search + actions
           Mobile philosophy: with 9+ desktop icons + a search field there is
           no room left for the hamburger on a 390-px phone, so the menu
@@ -3961,20 +3961,27 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main content */}
       <div className={cn("flex flex-col min-h-screen", topNav ? "" : (isRtl ? "md:mr-64" : "md:ml-64"))}>
-        <TopBar
-          location={location}
-          user={user}
-          isSuperAdmin={isSuperAdmin}
-          onMobileMenu={() => setMobileOpen(true)}
-          onLogout={handleLogout}
-        />
-        {/* Horizontal top navigation — only when the company opted into the
-            top-nav layout. Mobile keeps the drawer (hidden md:flex inside). */}
-        {topNav && <TopNavBar {...sharedProps} />}
-        {/* Banner uses the RAW role so it stays visible while the SA is
-            inside a tenant — `isSuperAdmin` above is flipped to false
-            during impersonation to enable tenant routes. */}
-        {user?.role === "superadmin" && <ActingCompanyBanner />}
+        {/* Sticky top region: acting-company banner + header + horizontal nav
+            are pinned together as ONE block. Wrapping them (instead of making
+            each individually sticky) means the menu always sits directly under
+            the header no matter how tall the header gets (breadcrumb row can
+            wrap), so nothing overlaps at any scroll position. */}
+        <div className="sticky top-0 z-20">
+          {/* Banner uses the RAW role so it stays visible while the SA is
+              inside a tenant — `isSuperAdmin` above is flipped to false
+              during impersonation to enable tenant routes. */}
+          {user?.role === "superadmin" && <ActingCompanyBanner />}
+          <TopBar
+            location={location}
+            user={user}
+            isSuperAdmin={isSuperAdmin}
+            onMobileMenu={() => setMobileOpen(true)}
+            onLogout={handleLogout}
+          />
+          {/* Horizontal top navigation — only when the company opted into the
+              top-nav layout. Mobile keeps the drawer (hidden md:flex inside). */}
+          {topNav && <TopNavBar {...sharedProps} />}
+        </div>
         <main className="flex-1 p-4 sm:p-6 md:p-8 bg-muted/30">{children}</main>
       </div>
 

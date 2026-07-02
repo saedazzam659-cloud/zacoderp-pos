@@ -1171,28 +1171,8 @@ export default function PaymentVoucherForm() {
                           />
                         </div>
 
-                        {/* Row 3: amount + tax rate + tax amount — stacked vertically, enlarged */}
+                        {/* Row 3: amount (primary) + one-click 15% VAT (auto-routed) */}
                         <div className="space-y-3 rounded-lg bg-background/70 border border-red-100 p-3 md:p-4">
-                          <div className="space-y-1.5">
-                            <Label className="text-sm font-semibold">{t(`${NS}.colTaxRate`, "نسبة الضريبة %")}</Label>
-                            <Input
-                              type="number" step="0.01" placeholder="0" dir="ltr"
-                              value={l.taxRate}
-                              onChange={e => updateLine(l.key, { taxRate: e.target.value })}
-                              onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
-                              className="h-14 text-lg text-left font-mono"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-sm font-semibold">{t(`${NS}.colTaxAmount`, "مبلغ الضريبة")}</Label>
-                            <Input
-                              type="number" step="0.01" placeholder="0.00" dir="ltr"
-                              value={l.taxAmount}
-                              onChange={e => updateLine(l.key, { taxAmount: e.target.value })}
-                              onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
-                              className="h-14 text-lg text-left font-mono"
-                            />
-                          </div>
                           <div className="space-y-1.5">
                             <Label className="text-sm font-semibold">{t(`${NS}.colAmount`, "المبلغ")} <span className="text-destructive">*</span></Label>
                             <Input
@@ -1204,21 +1184,47 @@ export default function PaymentVoucherForm() {
                               data-testid={`pv-line-amount-${idx}`}
                             />
                           </div>
+                          {Number(l.taxAmount) > 0 ? (
+                            <div className="space-y-2 rounded-md bg-primary/5 border border-primary/20 p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <Label className="text-sm font-semibold text-primary">
+                                  {t(`${NS}.taxAdded`, "ضريبة القيمة المضافة")} ({l.taxRate || "15"}%)
+                                </Label>
+                                <Button
+                                  type="button" variant="ghost" size="sm"
+                                  className="h-8 gap-1 text-destructive hover:text-destructive"
+                                  onClick={() => updateLine(l.key, { taxRate: "0", taxAmount: "0.00", taxAccountId: "" })}
+                                  data-testid={`pv-line-tax-remove-${idx}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  {t(`${NS}.removeTax`, "إزالة الضريبة")}
+                                </Button>
+                              </div>
+                              <Input
+                                type="number" step="0.01" placeholder="0.00" dir="ltr"
+                                value={l.taxAmount}
+                                onChange={e => updateLine(l.key, { taxAmount: e.target.value })}
+                                onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
+                                className="h-12 text-base text-left font-mono"
+                                data-testid={`pv-line-tax-amount-${idx}`}
+                              />
+                            </div>
+                          ) : (
+                            <Button
+                              type="button" variant="outline"
+                              disabled={!(Number(l.amount) > 0)}
+                              onClick={() => updateLine(l.key, { taxRate: "15" })}
+                              className="w-full h-12 gap-2 border-primary/40 text-primary hover:bg-primary/5 hover:text-primary"
+                              data-testid={`pv-line-tax-add-${idx}`}
+                            >
+                              <Plus className="h-4 w-4" />
+                              {t(`${NS}.addTax`, "إضافة ضريبة")} 15%
+                            </Button>
+                          )}
                         </div>
 
-                        {/* Row 4: tax account + cost center + purchase-invoice link */}
+                        {/* Row 4: cost center + purchase-invoice link (VAT account auto-resolved) */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-sm font-semibold">{t(`${NS}.colTaxAccount`, "حساب الضريبة")}</Label>
-                            <AccountCascadePicker
-                              accounts={accounts as any[]}
-                              value={l.taxAccountId}
-                              isRtl={isRtl}
-                              mainLabel={t(`${NS}.taxMainLabel`, "حساب الضريبة الرئيسي")}
-                              subLabel={t(`${NS}.taxSubLabel`, "حساب الضريبة الفرعي")}
-                              onValueChange={(aid) => updateLine(l.key, { taxAccountId: aid })}
-                            />
-                          </div>
                           <div className="space-y-1.5">
                             <Label className="text-sm font-semibold">{t(`${NS}.colCostCenter`, "مركز التكلفة")}</Label>
                             <select
@@ -1234,7 +1240,7 @@ export default function PaymentVoucherForm() {
                                 ))}
                             </select>
                           </div>
-                          <div className="space-y-1.5 md:col-span-2">
+                          <div className="space-y-1.5">
                             <Label className="text-sm font-semibold inline-flex items-center gap-1"><Link2 className="h-4 w-4" />{t(`${NS}.colPurchaseInvoice`, "ربط فاتورة شراء")}</Label>
                             <SearchCombobox
                               items={invoiceItems}

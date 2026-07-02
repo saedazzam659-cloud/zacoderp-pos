@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -103,6 +104,7 @@ export default function GoodsReceipts() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const usageModes = useScreenItemModes("stock_in");
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -580,14 +582,14 @@ export default function GoodsReceipts() {
     { value: "", label: tr("noSupplierOpt") },
     ...suppliers.map((s: any) => ({ value: String(s.id), label: supName(s) })),
   ];
-  const itemComboItems = [
+  const itemComboItems = annotateItemCombo([
     { value: "", label: tr("selectItemOpt") },
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
       code: i.code ?? undefined,
       label: itemName(i),
     })),
-  ];
+  ], usageModes);
   const supMap = Object.fromEntries(suppliers.map((s: any) => [s.id, supName(s)]));
 
   const lineColHeaders = [

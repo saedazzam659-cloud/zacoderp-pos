@@ -84,6 +84,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "stock_adjustments",    label: "perms.modules.stock_adjustments",    group: G.inventory,  actions: ALL },
   { key: "stock_counts",         label: "perms.modules.stock_counts",         group: G.inventory,  actions: ALL },
   { key: "inventory_reports",    label: "perms.modules.inventory_reports",    group: G.inventory,  actions: ["view", "export"] },
+  { key: "item_usage_override",  label: "perms.modules.item_usage_override",  group: G.inventory,  actions: ["post"] },
 
   { key: "accounts",             label: "perms.modules.accounts",             group: G.accounting, actions: VC },
   { key: "journal_entries",      label: "perms.modules.journal_entries",      group: G.accounting, actions: ALL },

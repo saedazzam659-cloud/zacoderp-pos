@@ -18,6 +18,7 @@ import { fullAuditFor } from "../lib/journalAudit.js";
 import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -247,6 +248,12 @@ router.post("/", async (req, res) => {
       totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
     if (!deliveryDate) { res.status(400).json({ error: "تاريخ التسليم مطلوب" }); return; }
+    // Item Usage Control (Phase ب): block a save containing restricted items.
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0))) as number[];
+      const usageV = await checkItemsUsable(cid, "stock_out", usageIds, (req as any).authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     const tenantErr = await validateGdnTenantRefs(cid, {
       branchId:   branchId   ? Number(branchId)   : null,
@@ -424,6 +431,13 @@ router.patch("/:id/post", async (req, res) => {
     const lines = await db.select().from(goodsDeliveryLinesTable)
       .where(eq(goodsDeliveryLinesTable.deliveryId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في إذن التسليم" }); return; }
+
+    // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
+    {
+      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "stock_out", usageIds, (req as any).authUser, "post");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     // ── PHASE 1: Pre-validate everything BEFORE any mutation ───────────────
     const noWh = lines.filter(l => l.itemId && !l.warehouseId);

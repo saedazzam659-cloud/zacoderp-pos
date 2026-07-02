@@ -5,6 +5,7 @@ import { validateInvoiceLines } from "@/lib/lineValidation";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
+import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -104,6 +105,7 @@ export default function PurchaseReturns() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const usageModes = useScreenItemModes("purchase_returns");
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -779,14 +781,14 @@ export default function PurchaseReturns() {
     { value: "", label: tr("noInvoiceOpt") },
     ...invoices.map((i: any) => ({ value: String(i.id), label: i.docNumber ?? `PI-${i.id}` })),
   ];
-  const itemComboItems = [
+  const itemComboItems = annotateItemCombo([
     { value: "", label: tr("selectItemOpt") },
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
       code: i.code ?? undefined,
       label: itemName(i),
     })),
-  ];
+  ], usageModes);
   const supMap = Object.fromEntries(suppliers.map((s: any) => [s.id, supName(s)]));
 
   const lineColHeaders = [

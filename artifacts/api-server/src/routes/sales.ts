@@ -2,6 +2,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   salesInvoicesTable, salesInvoiceLinesTable,
@@ -716,6 +717,13 @@ router.post("/sales-invoices", async (req, res) => {
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
+    // Item Usage Control (Phase ب): block a save containing items routed
+    // hidden/readonly/requires_permission for this screen (unprivileged).
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageV = await checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
     // If the user picked an existing quotation as the source via the
     // "بناءً على عرض سعر" combobox on the new-invoice form, validate it
     // BEFORE we INSERT the invoice (rules mirror the /convert endpoint
@@ -1113,6 +1121,14 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     const lines = await db.select().from(salesInvoiceLinesTable)
       .where(eq(salesInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
+
+    // Item Usage Control (Phase ب): block posting a doc carrying items routed
+    // hidden/readonly/requires_permission/requires_approval (unprivileged).
+    {
+      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "post");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     // When this invoice was created from a Goods Delivery Note (GDN), the
     // stock movement (and inventory credit) already happened at GDN-post
@@ -1876,6 +1892,12 @@ router.post("/sales-returns", async (req, res) => {
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    // Item Usage Control (Phase ب): block a save containing restricted items.
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageV = await checkItemsUsable(cid, "sales_returns", usageIds, req.authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
     if (!(await validateSalesReturnPayload(res, req.body, { cid, excludeReturnId: null }))) return;
     // Required-fields gate: every sales return must carry an explicit
     // customer + branch — same policy as the parent sales-invoice flow,
@@ -2138,6 +2160,13 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     const lines = await db.select().from(salesReturnLinesTable)
       .where(eq(salesReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
+
+    // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
+    {
+      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "sales_returns", usageIds, req.authUser, "post");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
 
     // Per-item metadata (batch mode + TYPE). SERVICE items (خدمي) never touch
     // stock, so they are EXEMPT from the warehouse requirement below — a pure
@@ -2651,6 +2680,12 @@ router.post("/sales-quotations", async (req, res) => {
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId, branchId } = req.body;
     if (!quotationDate) { res.status(400).json({ error: "تاريخ العرض مطلوب" }); return; }
+    // Item Usage Control (Phase ب): block a save containing restricted items.
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageV = await checkItemsUsable(cid, "sales_quotations", usageIds, req.authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
     // Quotations are now branch-owned (like invoices) — a new quotation MUST
     // carry a branch so it can be scoped. Don't rely on the UI alone.
     if (!branchId) { res.status(400).json({ error: "يجب اختيار الفرع" }); return; }
@@ -2912,6 +2947,12 @@ router.post("/sales-orders", async (req, res) => {
             currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
             totalAmount, priceIncludesVat, notes, lines, taxId } = req.body;
     if (!orderDate) { res.status(400).json({ error: "تاريخ أمر البيع مطلوب" }); return; }
+    // Item Usage Control (Phase ب): block a save containing restricted items.
+    {
+      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageV = await checkItemsUsable(cid, "sales_orders", usageIds, req.authUser, "save");
+      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    }
     const pType = paymentType || "credit";
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
 

@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save } from "lucide-react";
 import { offersApi } from "@/lib/offersApi";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
+import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { DateField } from "@/components/ui/date-field";
 import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
 
@@ -165,6 +166,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const basePath    = isInvoice ? "/sales/invoices"   : isOrder ? "/sales/orders"   : "/sales/quotations";
   const apiPath     = isInvoice ? "sales-invoices"    : isOrder ? "sales-orders"    : "sales-quotations";
   const queryKey    = isInvoice ? "sales-invoice"     : isOrder ? "sales-order"     : "sales-quotation";
+  // Item Usage Control (Phase ب) — screen key for this doc mode. Must match the
+  // keys the item form's usage editor exposes (sales_invoices/sales_orders/
+  // sales_quotations) so admin-authored rules annotate the picker here.
+  const usageScreenKey = isInvoice ? "sales_invoices" : isOrder ? "sales_orders" : "sales_quotations";
 
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
@@ -174,6 +179,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const usageModes = useScreenItemModes(usageScreenKey);
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -1475,10 +1481,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
           })),
       ];
-  const itemComboItems = [
+  const itemComboItems = annotateItemCombo([
     { value: "", label: t("salesDocForm.selectItem") },
     ...inventoryItems.map((i: any) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? i.nameEn ?? `#${i.id}` })),
-  ];
+  ], usageModes);
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
 
   const Icon  = isInvoice ? ShoppingBag : isOrder ? ClipboardList : FileSignature;
