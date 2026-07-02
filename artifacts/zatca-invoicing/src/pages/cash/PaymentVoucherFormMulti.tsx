@@ -16,12 +16,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
-import { AccountCascadePicker } from "@/components/ui/account-cascade-picker";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ArrowUpCircle, ArrowRight, ChevronLeft, Search,
   Loader2, Save, Send, Lock, FileText, Banknote,
-  Wallet, Building2, Layers, Printer, Link2, Settings2,
+  Wallet, Building2, Layers, Printer, Settings2,
   Trash2, Plus,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
@@ -436,25 +435,23 @@ export default function PaymentVoucherForm() {
       description: b.accountNumber ?? b.iban ?? undefined,
     })), [bankAccounts, isRtl, form.branchId]);
 
-  // Purchase invoices the picked supplier still has open / payable. We
-  // include posted invoices (most common case — settle a credit invoice)
-  // and exclude cancelled ones; if the form is editing an existing
-  // voucher whose linked invoice was since cancelled, we still surface
-  // it so the user can see the (stale) link.
-  const invoiceItems: ComboboxItem[] = useMemo(() => {
-    // Purchase-invoice linking works even without a chosen supplier: when no
-    // supplier is selected we surface ALL non-cancelled invoices; once a
-    // supplier is picked we narrow to that supplier's invoices only.
-    const sid = form.entityId ? Number(form.entityId) : null;
-    return (purchaseInvoices as any[])
-      .filter((inv: any) => inv.status !== "cancelled" && (sid == null || Number(inv.supplierId) === sid))
-      .map((inv: any) => ({
-        value: String(inv.id),
-        label: inv.docNumber ?? `PI-${inv.id}`,
-        description: `${inv.invoiceDate} • ${Number(inv.totalAmount || 0).toFixed(2)} ${inv.currencyCode || "SAR"}`,
-        code: inv.status,
-      }));
-  }, [purchaseInvoices, form.entityId]);
+  // Postable (leaf) accounts only — flat & searchable. The multi voucher shows
+  // the sub-account directly, without the main-account cascade step.
+  const postableAccounts: ComboboxItem[] = useMemo(() => {
+    const parentIds = new Set<number>();
+    for (const a of (accounts as any[])) {
+      if (a.parentId != null) parentIds.add(Number(a.parentId));
+    }
+    return (accounts as any[])
+      .filter((a: any) => !parentIds.has(Number(a.id)) && a.isActive !== false)
+      .map((a: any) => ({
+        value: String(a.id),
+        label: (isRtl ? a.nameAr || a.nameEn : a.nameEn || a.nameAr) || "",
+        code: a.code ?? undefined,
+      }))
+      .sort((x: ComboboxItem, y: ComboboxItem) =>
+        String(x.code ?? "").localeCompare(String(y.code ?? "")));
+  }, [accounts, isRtl]);
 
   // ── Account-name lookup (for JE preview line labels) ───────────
   const accountName = (id: string) => {
@@ -1068,19 +1065,6 @@ export default function PaymentVoucherForm() {
                   />
                 </div>
 
-                {/* Toolbar */}
-                <div className="flex items-center justify-end gap-2">
-                  <Button
-                    type="button" variant="outline" size="sm"
-                    onClick={addLine}
-                    className="h-7 gap-1 text-xs"
-                    data-testid="pv-add-line"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {t(`${NS}.addLine`, "إضافة بند صرف")}
-                  </Button>
-                </div>
-
                 {/* Lines grid — compact rows, single amount column */}
                 <div className="border rounded-lg overflow-hidden">
                   {/* Column headers */}
@@ -1101,11 +1085,13 @@ export default function PaymentVoucherForm() {
                           {/* Main row */}
                           <div className="grid grid-cols-[28px_2fr_1fr_1.5fr_1.2fr_28px] gap-2 items-center">
                             <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
-                            <AccountCascadePicker
-                              accounts={accounts as any[]}
+                            <SearchCombobox
+                              items={postableAccounts}
                               value={l.accountId}
-                              isRtl={isRtl}
                               onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
+                              placeholder={t(`${NS}.selectAccountPh`, "— اختر الحساب —")}
+                              searchPlaceholder={t(`${NS}.searchAccountPh`, "ابحث بالاسم أو الكود...")}
+                              emptyText={t(`${NS}.noAccounts`, "لا توجد حسابات")}
                             />
                             <Input
                               type="number" step="0.01" placeholder="0.00" dir="ltr"
@@ -1203,32 +1189,8 @@ export default function PaymentVoucherForm() {
                                 </Button>
                               )}
 
-                              {/* Purchase-invoice link + running line total */}
+                              {/* running line total */}
                               <div className="flex flex-wrap items-center gap-2">
-                                <Label className="text-[11px] font-medium inline-flex items-center gap-1 shrink-0 text-muted-foreground">
-                                  <Link2 className="h-3.5 w-3.5" />{t(`${NS}.colPurchaseInvoice`, "ربط فاتورة شراء")}
-                                </Label>
-                                <div className="flex-1 min-w-[12rem] max-w-xs">
-                                  <SearchCombobox
-                                    items={invoiceItems}
-                                    value={l.purchaseInvoiceId}
-                                    onValueChange={v => {
-                                      updateLine(l.key, { purchaseInvoiceId: v });
-                                      // Linking an invoice while no supplier is chosen back-fills
-                                      // the supplier from the invoice so the JE party stays correct.
-                                      if (v && !form.entityId) {
-                                        const inv = (purchaseInvoices as any[]).find((x: any) => String(x.id) === String(v));
-                                        const sup = inv?.supplierId
-                                          ? (suppliers as any[]).find((x: any) => String(x.id) === String(inv.supplierId))
-                                          : null;
-                                        if (sup) setForm(p => ({ ...p, entityId: String(sup.id), entityName: (isRtl ? sup.nameAr : (sup.nameEn || sup.nameAr)) || "" }));
-                                      }
-                                    }}
-                                    placeholder={t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")}
-                                    searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
-                                    emptyText={t(`${NS}.noOpenInvoices`, "لا توجد فواتير")}
-                                  />
-                                </div>
                                 <span className="ml-auto text-xs text-muted-foreground">
                                   {t(`${NS}.colLineTotal`, "إجمالي البند")}:{" "}
                                   <span className="font-mono font-semibold tabular-nums text-red-700" data-testid={`pv-line-total-${idx}`}>{fmt(lineTotal)}</span>
@@ -1240,6 +1202,19 @@ export default function PaymentVoucherForm() {
                       );
                     })}
                   </div>
+                </div>
+
+                {/* Toolbar — add a new disbursement line (below the grid) */}
+                <div className="flex items-center justify-start gap-2">
+                  <Button
+                    type="button" variant="outline" size="sm"
+                    onClick={addLine}
+                    className="h-7 gap-1 text-xs"
+                    data-testid="pv-add-line"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {t(`${NS}.addLine`, "إضافة بند صرف")}
+                  </Button>
                 </div>
 
                 {/* Totals footer */}
