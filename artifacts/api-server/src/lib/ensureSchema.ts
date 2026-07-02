@@ -517,8 +517,14 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       )` },
     { label: "brands_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS brands_company_idx ON brands (company_id)` },
+    // Plain (company_id, code) — NOT a functional lower(code) expression index.
+    // The Replit publish migration generator mis-serializes an expression index
+    // (emits `lower(code) int4_ops`, which fails: "int4_ops does not accept text").
+    // Case-insensitive uniqueness is already enforced at the app layer
+    // (POST/PUT /brands compare code.toLowerCase()), so this plain index is a safe
+    // exact-match backstop and keeps the publish diff clean.
     { label: "brands_company_code_uniq",
-      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS brands_company_code_uniq ON brands (company_id, lower(code))` },
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS brands_company_code_uniq ON brands (company_id, code)` },
     { label: "create item_brands table",
       sql:   `CREATE TABLE IF NOT EXISTS item_brands (
         id                  SERIAL PRIMARY KEY,

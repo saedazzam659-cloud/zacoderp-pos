@@ -35,6 +35,26 @@ prod directly.
   copy-or-cancel, it's a platform validator false-positive → escalate to Replit support with the
   proof; do not force it through the destructive copy option.
 
+**ACTUAL confirmed trigger here — a functional/expression index the publish migration generator mis-serializes:**
+The real Publish failure was NOT the FK hypothesis. Replit's publish migration generator
+introspects the dev DB and re-emits each index; for an EXPRESSION index like
+`CREATE UNIQUE INDEX ... ON brands (company_id, lower(code))` it wrongly attaches the
+int4 operator class to the text expression, producing
+`USING btree (company_id int4_ops, lower(code) int4_ops)` → Postgres rejects it with
+`operator class "int4_ops" does not accept data type text`. This surfaces ONLY at publish
+(ensureSchema's raw `IF NOT EXISTS` DDL creates it fine in dev), and only for the FIRST
+publish after such an index is added.
+- Fix: replace the functional/expression index with a PLAIN column index
+  (`ON brands (company_id, code)`). If case-insensitive uniqueness is needed, enforce it at
+  the app layer (the create/update handlers already lower-cased for the dup check) — the plain
+  DB index is just an exact-match backstop. Update the ensureSchema DDL AND drop+recreate the
+  index in the DEV db so the live diff no longer contains the expression form.
+- Rule of thumb: avoid `lower(col)` / any expression in indexes on tables that will go through
+  Replit Publish; use a plain column index + app-layer normalization instead.
+- Diagnostic tell: the publish error names the exact failing statement
+  (`Failed to run database migration statement CREATE ... INDEX ...`). Read that statement —
+  the generic "conflict with existing production data" banner can mask a concrete SQL error.
+
 **New-table FK to a populated table is a likely hard-block trigger:** Replit's publish validator
 introspects the two LIVE databases (dev vs prod), so no schema-source edit changes the diff by
 itself. A brand-new additive table whose CREATE carries FOREIGN KEYs pointing at big existing
