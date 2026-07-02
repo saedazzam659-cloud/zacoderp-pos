@@ -546,6 +546,7 @@ const cashSubNav: NavDef[] = [
   { nameKey: "nav.banks",            href: "/cash/banks",            icon: Landmark,        permKey: "bank_accounts" },
   { nameKey: "nav.receiptVouchers",  href: "/cash/receipt-vouchers", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
   { nameKey: "nav.paymentVouchers",  href: "/cash/payment-vouchers", icon: ArrowUpCircle,   permKey: "payment_vouchers" },
+  { nameKey: "nav.paymentVouchersMulti", href: "/cash/payment-vouchers/multi/new", icon: ArrowUpCircle, permKey: "payment_vouchers" },
   // transfers: no dedicated module key; gate under cash_boxes.
   { nameKey: "nav.transfers",        href: "/cash/transfers",        icon: ArrowLeftRight,  permKey: "cash_boxes" },
   // Financial transactions (إيداع/سحب/تحويل) — full-page 3-tab UX, same backend.

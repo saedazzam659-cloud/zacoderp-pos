@@ -824,6 +824,7 @@
     "banks": "البنوك",
     "receiptVouchers": "سندات القبض",
     "paymentVouchers": "سندات الصرف",
+    "paymentVouchersMulti": "سند صرف (عمليات متعددة)",
     "transfers": "التحويلات",
     "financialTransactions": "المعاملات المالية",
     "cashReports": "تقارير النقد والبنوك",
@@ -3046,6 +3047,7 @@
   },
   "paymentVouchers": {
     "title": "سندات الصرف",
+    "multiSuffix": " (عمليات متعددة)",
     "subtitle": "تسجيل المبالغ الصادرة — نقداً أو بنكاً",
     "code": "كود السند",
     "autoCode": "تلقائي",

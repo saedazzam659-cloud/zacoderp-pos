@@ -822,6 +822,7 @@
     "banks": "Banks",
     "receiptVouchers": "Receipt Vouchers",
     "paymentVouchers": "Payment Vouchers",
+    "paymentVouchersMulti": "Payment Voucher (Multi-line)",
     "transfers": "Transfers",
     "financialTransactions": "Financial Transactions",
     "cashReports": "Cash & Banks Reports",
@@ -3043,6 +3044,7 @@
   },
   "paymentVouchers": {
     "title": "Payment Vouchers",
+    "multiSuffix": " (Multi-line)",
     "subtitle": "Record outgoing amounts — cash or bank",
     "code": "Voucher Code",
     "autoCode": "Auto",

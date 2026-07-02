@@ -390,7 +390,8 @@ import BankAccounts     from "@/pages/cash/BankAccounts";
 import ReceiptVouchers     from "@/pages/cash/ReceiptVouchers";
 import ReceiptVoucherForm  from "@/pages/cash/ReceiptVoucherForm";
 import PaymentVouchers  from "@/pages/cash/PaymentVouchers";
-import PaymentVoucherForm  from "@/pages/cash/PaymentVoucherForm";
+import PaymentVoucherFormSimple from "@/pages/cash/PaymentVoucherFormSimple";
+import PaymentVoucherFormMulti  from "@/pages/cash/PaymentVoucherFormMulti";
 import CashTransfers    from "@/pages/cash/CashTransfers";
 import FinancialTransactions    from "@/pages/cash/FinancialTransactions";
 import FinancialTransactionForm from "@/pages/cash/FinancialTransactionForm";
@@ -1082,8 +1083,10 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers/new" module="receipt_vouchers" action="create" component={ReceiptVoucherForm} />}
             {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers/:id" module="receipt_vouchers" component={ReceiptVoucherForm} />}
             {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers"     module="payment_vouchers"  component={PaymentVouchers}    />}
-            {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers/new" module="payment_vouchers" action="create" component={PaymentVoucherForm} />}
-            {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers/:id" module="payment_vouchers" component={PaymentVoucherForm} />}
+            {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers/new" module="payment_vouchers" action="create" component={PaymentVoucherFormSimple} />}
+            {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers/multi/new" module="payment_vouchers" action="create" component={PaymentVoucherFormMulti} />}
+            {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers/multi/:id" module="payment_vouchers" component={PaymentVoucherFormMulti} />}
+            {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers/:id" module="payment_vouchers" component={PaymentVoucherFormSimple} />}
             {!isSuperAdmin && <PermRoute path="/cash/transfers"        module="cash_boxes"        component={CashTransfers}   />}
             {!isSuperAdmin && <PermRoute path="/cash/financial-transactions"     module="cash_boxes" component={FinancialTransactions}    />}
             {!isSuperAdmin && <PermRoute path="/cash/financial-transactions/new" module="cash_boxes" action="create" component={FinancialTransactionForm} />}
