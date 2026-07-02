@@ -110,6 +110,10 @@ export const journalEntriesApi = {
   // auto-lock and period guards — a non-2xx surfaces a friendly Arabic error.
   post:   (id: number) => post<{ ok: true; alreadyPosted?: boolean }>(`/journal-entries/${id}/post`, {}),
   unpost: (id: number) => post<{ ok: true; alreadyUnposted?: boolean }>(`/journal-entries/${id}/unpost`, {}),
+  // Rescue an ORPHANED locked entry (source document gone): converts it to a
+  // general DRAFT while KEEPING its document number so the numbering sequence
+  // stays gap-free. Server refuses if the source still exists (409).
+  convertToGeneral: (id: number) => post<{ ok: true }>(`/journal-entries/${id}/convert-to-general`, {}),
   // Manager-only forensic audit — returns who/where/when created + posted the
   // entry. Server resolves country from IP via Geo-IP and returns null fields
   // for entries that pre-date the audit columns.

@@ -202,6 +202,10 @@ export default function JournalEntries() {
   };
 
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  // Convert-to-general dialog: rescues an ORPHANED locked entry (its source
+  // document was deleted) into a general draft, keeping the document number so
+  // the numbering sequence stays gap-free. Only shown for `isOrphanLocked` rows.
+  const [convertId, setConvertId] = useState<number | null>(null);
   // Manager-only forensic audit dialog. The eye button is rendered only for
   // admin/superadmin roles; the server enforces the same check on /audit so
   // even crafted requests can't leak IPs to non-managers.
@@ -300,6 +304,18 @@ export default function JournalEntries() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
       setDeleteId(null);
+    },
+  });
+
+  const convertMutation = useMutation({
+    mutationFn: (id: number) => journalEntriesApi.convertToGeneral(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
+      setConvertId(null);
+    },
+    onError: (e: any) => {
+      alert(e?.message || "تعذّر تحويل القيد");
+      setConvertId(null);
     },
   });
 
@@ -1710,6 +1726,17 @@ ${sections}
                                   <Eye className="h-3.5 w-3.5" />
                                 </Button>
                               )}
+                              {entry.isOrphanLocked && (
+                                <Button
+                                  variant="ghost" size="icon"
+                                  className="h-6 w-6 text-amber-600 hover:bg-amber-50 hover:text-amber-700"
+                                  onClick={(e) => { e.stopPropagation(); setConvertId(entry.id); }}
+                                  title="تحويل إلى قيد عام (مسودة) — قيد يتيم بلا مستند مصدر"
+                                  data-testid={`button-convert-general-${entry.id}`}
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost" size="icon"
                                 className="h-6 w-6 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
@@ -1879,6 +1906,30 @@ ${sections}
               onClick={() => deleteId && deleteMutation.mutate(deleteId)}
             >
               {t("journalEntries.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Convert orphaned locked entry → general draft */}
+      <AlertDialog open={convertId !== null} onOpenChange={() => setConvertId(null)}>
+        <AlertDialogContent dir={isRtl ? "rtl" : "ltr"}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>تحويل إلى قيد عام (مسودة)</AlertDialogTitle>
+            <AlertDialogDescription>
+              هذا القيد يتيم (أُنشئ تلقائياً من مستند مصدر لم يعد موجوداً). سيتم تحويله إلى قيد
+              عام بحالة «مسودة» مع الاحتفاظ برقم المستند كما هو — بحيث لا تنشأ فجوة في تسلسل
+              الأرقام، وبلا أي أثر على التقارير. بعدها يمكنك تعديله أو حذفه كأي قيد يدوي. متابعة؟
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <AlertDialogCancel>{t("journalEntries.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-amber-600 text-white hover:bg-amber-700"
+              disabled={convertMutation.isPending}
+              onClick={(e) => { e.preventDefault(); convertId && convertMutation.mutate(convertId); }}
+            >
+              {convertMutation.isPending ? "جارٍ التحويل…" : "تحويل"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

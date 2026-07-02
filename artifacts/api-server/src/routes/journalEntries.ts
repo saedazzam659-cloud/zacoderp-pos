@@ -102,6 +102,62 @@ const SOURCE_TABLES: Record<string, { table: any; col: any }> = {
   payroll_run:          { table: payrollRunsTable,          col: payrollRunsTable.code },
 };
 
+// Authoritative reverse link: source-document tables that persist the id of the
+// journal entry they produced in a `journal_entry_id` column. Matching on this
+// FK is far more reliable than the legacy doc_number/code match in
+// SOURCE_TABLES: some companies run a SEPARATE numbering sequence for journal
+// entries vs. the source voucher/document, so a JE "QYD/06/1366" never matches
+// a voucher whose code is "PYB-202600015" even though they are linked. Tables
+// WITHOUT this column (customer/supplier settlements, payroll runs) keep using
+// the doc_number fallback; employee_loan encodes its id as "LOAN-{id}".
+const REVERSE_SOURCE: Record<string, { table: any; jeCol: any }> = {
+  sales_invoice:    { table: salesInvoicesTable,    jeCol: salesInvoicesTable.journalEntryId },
+  sales_return:     { table: salesReturnsTable,     jeCol: salesReturnsTable.journalEntryId },
+  purchase_invoice: { table: purchaseInvoicesTable, jeCol: purchaseInvoicesTable.journalEntryId },
+  purchase_return:  { table: purchaseReturnsTable,  jeCol: purchaseReturnsTable.journalEntryId },
+  receipt:          { table: receiptVouchersTable,  jeCol: receiptVouchersTable.journalEntryId },
+  receipt_voucher:  { table: receiptVouchersTable,  jeCol: receiptVouchersTable.journalEntryId },
+  payment:          { table: paymentVouchersTable,  jeCol: paymentVouchersTable.journalEntryId },
+  payment_voucher:  { table: paymentVouchersTable,  jeCol: paymentVouchersTable.journalEntryId },
+  stock_transfer:   { table: stockTransfersTable,   jeCol: stockTransfersTable.journalEntryId },
+  stock_adjustment: { table: stockAdjustmentsTable, jeCol: stockAdjustmentsTable.journalEntryId },
+};
+
+// True when a source document that produced this JE still exists. Checks the
+// authoritative reverse FK first, then the LOAN-{id} encoding, then the legacy
+// doc_number/code match. ANY hit ⇒ genuinely source-backed (must be unwound
+// from the source). NOTHING matches ⇒ an ORPHAN whose source document was
+// deleted, leaving a locked JE stuck forever — the only case we allow to be
+// converted into a general draft.
+async function sourceDocExists(
+  entryType: string, docNumber: string | null, jeId: number, cid: number,
+): Promise<boolean> {
+  const rev = REVERSE_SOURCE[entryType];
+  if (rev) {
+    const [hit] = await db.select({ id: (rev.table as any).id }).from(rev.table)
+      .where(and(eq((rev.table as any).companyId, cid), eq(rev.jeCol, jeId)))
+      .limit(1);
+    if (hit) return true;
+  }
+  if (entryType === "employee_loan" && docNumber) {
+    const m = /^LOAN-(\d+)$/.exec(docNumber);
+    if (m) {
+      const [hit] = await db.select({ id: employeeLoansTable.id }).from(employeeLoansTable)
+        .where(and(eq(employeeLoansTable.companyId, cid), eq(employeeLoansTable.id, Number(m[1]))))
+        .limit(1);
+      if (hit) return true;
+    }
+  }
+  const src = SOURCE_TABLES[entryType];
+  if (src && docNumber) {
+    const [hit] = await db.select({ id: (src.table as any).id }).from(src.table)
+      .where(and(eq((src.table as any).companyId, cid), eq(src.col, docNumber)))
+      .limit(1);
+    if (hit) return true;
+  }
+  return false;
+}
+
 router.get("/", async (req, res) => {
   try {
     const cid = getCompanyId(req);
@@ -176,6 +232,34 @@ router.get("/", async (req, res) => {
       }
     }
 
+    // 2b) Authoritative reverse-FK pass — source tables that store
+    //     journal_entry_id link the JE even when its doc_number differs from
+    //     the source's code/docNumber (companies running separate numbering
+    //     sequences). This both fixes the "فتح المستند" deep-link for those
+    //     rows AND, crucially, lets us flag true orphans below: a locked-type
+    //     JE with NO source row anywhere. Overrides the doc_number result
+    //     because the FK is definitive.
+    const revByTypeCompany = new Map<string, number[]>();
+    for (const r of rows) {
+      const et = r.entryType ?? "";
+      if (!REVERSE_SOURCE[et]) continue;
+      const key = `${et}|${r.companyId}`;
+      if (!revByTypeCompany.has(key)) revByTypeCompany.set(key, []);
+      revByTypeCompany.get(key)!.push(r.id);
+    }
+    for (const [key, jeIdList] of revByTypeCompany) {
+      const sep = key.indexOf("|");
+      const et = key.slice(0, sep);
+      const groupCid = Number(key.slice(sep + 1));
+      const { table, jeCol } = REVERSE_SOURCE[et];
+      const jeIds = Array.from(new Set(jeIdList));
+      const found = await db.select({ id: (table as any).id, jeId: jeCol }).from(table)
+        .where(and(eq((table as any).companyId, groupCid), inArray(jeCol, jeIds)));
+      for (const f of found as any[]) {
+        if (f.jeId != null) sourceIdByEntry.set(f.jeId as number, f.id as number);
+      }
+    }
+
     // Resolve usernames for the createdBy / postedBy ids in one pass so the
     // grid can render "أنشأه" / "رحّله" columns without an extra round trip.
     const userIds = Array.from(new Set(
@@ -195,6 +279,10 @@ router.get("/", async (req, res) => {
         totalDebit:    s?.totalDebit  ?? "0",
         totalCredit:   s?.totalCredit ?? "0",
         sourceId:      sourceIdByEntry.get(r.id) ?? null,
+        // A locked-type JE whose source document no longer exists (checked via
+        // reverse FK above) is an ORPHAN — stuck locked with nothing to unwind.
+        // The frontend shows a "تحويل إلى قيد عام (مسودة)" action only for these.
+        isOrphanLocked: LOCKED_ENTRY_TYPES.includes(r.entryType ?? "") && !sourceIdByEntry.has(r.id),
         createdByName: r.createdBy != null ? (userMap.get(r.createdBy) ?? null) : null,
         postedByName:  r.postedBy  != null ? (userMap.get(r.postedBy)  ?? null) : null,
       };
@@ -608,6 +696,52 @@ router.post("/:id/unpost", async (req, res) => {
 
     await db.update(journalEntriesTable)
       .set({ status: "draft", updatedAt: new Date() })
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── POST /:id/convert-to-general — rescue an ORPHANED locked entry ─────────
+// A JE auto-generated by a source document (invoice/voucher/…) is locked from
+// manual edit/unpost/delete — the user must unwind it from the source. But
+// when that source document no longer exists (an orphan left by an earlier
+// bug) there is nothing to unwind and the entry is stuck forever. This
+// converts such an orphan into an ordinary GENERAL DRAFT entry: entry_type →
+// "general", status → "draft", KEEPING its document number so the numbering
+// sequence stays gap-free. A draft carries zero report impact everywhere, and
+// once general the user can edit/delete it like any manual entry. Refuses when
+// the source document still exists (must be unwound from the source) or the
+// entry is not a locked type. Does NOT loosen the edit/unpost/delete guards.
+router.post("/:id/convert-to-general", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id  = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+
+    const [existing] = await db.select().from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+
+    const et = existing.entryType ?? "";
+    if (!LOCKED_ENTRY_TYPES.includes(et)) {
+      res.status(400).json({ error: "هذا القيد ليس من نوع مقفول — لا حاجة للتحويل." });
+      return;
+    }
+
+    // Only ORPHANS qualify: a locked entry whose source document is gone.
+    const hasSource = await sourceDocExists(et, existing.docNumber, existing.id, cid);
+    if (hasSource) {
+      res.status(409).json({ error: "لا يمكن التحويل: المستند المصدر لا يزال موجوداً. قم بفك ترحيله من المستند الأصلي بدلاً من ذلك." });
+      return;
+    }
+
+    // Flipping posted → draft mutates the ledger's posted set, so honour the
+    // same closed-period guard the unpost path uses.
+    const periodGuard = await assertWritableForPeriodId(cid, existing.periodId);
+    if (!periodGuard.ok) { res.status(423).json({ error: periodGuard.reason }); return; }
+
+    await db.update(journalEntriesTable)
+      .set({ entryType: "general", status: "draft", updatedAt: new Date() })
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
