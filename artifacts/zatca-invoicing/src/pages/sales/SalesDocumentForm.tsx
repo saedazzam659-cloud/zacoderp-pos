@@ -1043,6 +1043,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         appliedOfferName: null,
         discount:  "0",
         vatRate:   (item.vatRate != null && item.vatRate !== "" ? String(item.vatRate) : "15"),
+        // Changing the item invalidates any brand chosen for the previous item
+        // (brands are per-item). Clear the stale snapshot so a leftover brand
+        // can't ride along on the new item's line.
+        brandId: null,
+        brandName: "",
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
@@ -1079,24 +1084,40 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   }
 
   // ── Brand (العلامة التجارية) picker — invoice-mode only ────────────────
-  // Selecting a brand snapshots its name for print and, when the item↔brand
-  // link carries a sale price, adopts it as the line's unit price. Clearing
-  // the brand only wipes the snapshot — it never rewrites the price back.
-  // brandId/brandName are PRINT-ONLY; they never enter the ZATCA UBL/hash/QR.
+  // Selecting a brand snapshots its name for print and loads the brand's
+  // per-brand values into the EXISTING line fields at data-entry time:
+  //   • sale price   → unitPrice (+ baseUnitPrice, resets the offer engine)
+  //   • barcode/part → itemCode (the line's code field; persisted + printed)
+  // Clearing the brand wipes the snapshot AND restores the item's own code so
+  // no brand-specific barcode lingers on a now-brandless line.
+  // brandId/brandName/itemCode are PRINT-ONLY metadata here — none of them
+  // enter the ZATCA UBL XML, invoice hash, QR, or ICV/PIH chain.
   function pickLineBrand(lineId: string, brandId: number | null, brandName: string, ib: any) {
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
       let updated: DocLine = { ...l, brandId, brandName };
-      const px = ib?.salePrice1;
-      if (brandId != null && px != null && Number(px) > 0) {
-        const np = trimTrailingZeros(String(px));
-        updated = {
-          ...updated,
-          unitPrice: np, baseUnitPrice: np,
-          engineUnitPrice: null, engineDiscount: null,
-          appliedOfferId: null, appliedOfferName: null,
-          discount: "0",
-        };
+      if (brandId != null && ib) {
+        const px = ib.salePrice1;
+        if (px != null && Number(px) > 0) {
+          const np = trimTrailingZeros(String(px));
+          updated = {
+            ...updated,
+            unitPrice: np, baseUnitPrice: np,
+            engineUnitPrice: null, engineDiscount: null,
+            appliedOfferId: null, appliedOfferName: null,
+            discount: "0",
+          };
+        }
+        // Brand-specific barcode (or part number as fallback) overrides the
+        // item's generic code on this line. Both come from the item↔brand row.
+        const brandCode = (ib.barcode && String(ib.barcode).trim())
+          || (ib.partNumber && String(ib.partNumber).trim())
+          || "";
+        if (brandCode) updated.itemCode = brandCode;
+      } else {
+        // Brand removed → drop the brand-specific code, restore the item's own.
+        const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
+        if (item) updated.itemCode = item.code ?? "";
       }
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };

@@ -11,13 +11,12 @@ appears in **sales invoices ONLY** and snapshots `brandId`/`brandName` onto the 
 
 ## Rule: brand is PRINT-ONLY, never in the ZATCA chain
 `brandName` must NEVER enter the UBL XML / invoiceHash / QR TLV / ICV-PIH. The guarantee
-is structural: the ZATCA builders (`zatca-sales-mapper.ts`, `zatca-xml.ts`,
-`zatca-build-signed.ts`, `zatca-tlv.ts`) read explicit fields and the string "brand"
-appears nowhere in them, so the XML is byte-identical whether `brandId` is null or set.
+is structural: the ZATCA builders read explicit fields only, so the string "brand" appears
+nowhere in them and the XML is byte-identical whether `brandId` is null or set.
 
 **Why:** any invoice-line addition on the ZATCA path risks changing the signed hash and
 breaking the reporting/clearance chain. Keeping brand columns unread by the builders is
-the safety proof — verify with `rg -i brand` across those files, not by eyeballing.
+the safety proof — prove it with `rg -i brand` across the `zatca-*` builders, not by eye.
 
 **How to apply:** when adding ANY new optional invoice-line column, confirm it is absent
 from the ZATCA builder files before shipping.
