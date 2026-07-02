@@ -9,6 +9,7 @@ import { useRoute, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters, currencySymbol } from "@/lib/format";
@@ -121,12 +122,15 @@ function ItemBrandPicker({
   value: number | null;
   onPick: (brandId: number | null, brandName: string, ib: any) => void;
 }) {
+  const canBrands = usePermission("brands");
   const { data: links = [] } = useQuery({
     queryKey: ["item-brands", itemId],
     queryFn: () => inventoryApi.getItemBrands(Number(itemId)),
-    enabled: !!itemId,
+    enabled: !!itemId && canBrands,
   });
-  if (!links.length) return null;
+  // Gate the whole picker behind the optional `brands` module — companies that
+  // don't enable it see nothing new on the invoice line.
+  if (!canBrands || !links.length) return null;
   return (
     <div className="mt-1 ms-1 flex items-center gap-1.5">
       <Tag className="h-3 w-3 text-muted-foreground" />

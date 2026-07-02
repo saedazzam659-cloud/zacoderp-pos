@@ -19,6 +19,7 @@ import {
   subscriptionsTable,
   itemsTable,
   itemBrandsTable,
+  brandsTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
@@ -670,18 +671,30 @@ async function validateBrandLinesBelongToCompany(cid: number, lines: any[]) {
   if (!branded.length) return;
   const brandIds = [...new Set(branded.map(l => Number(l.brandId)).filter(Number.isInteger))];
   if (!brandIds.length) return;
-  const rows = await db.select({ brandId: itemBrandsTable.brandId, itemId: itemBrandsTable.itemId })
+  const rows = await db.select({
+      brandId: itemBrandsTable.brandId,
+      itemId: itemBrandsTable.itemId,
+      brandNameAr: brandsTable.nameAr,
+    })
     .from(itemBrandsTable)
+    .innerJoin(brandsTable, eq(brandsTable.id, itemBrandsTable.brandId))
     .where(and(inArray(itemBrandsTable.brandId, brandIds), eq(itemBrandsTable.companyId, cid)));
-  const validPairs = new Set(rows.map(r => `${r.brandId}:${r.itemId}`));
+  // key `${brandId}:${itemId}` → canonical brand name (from the DB, not the client).
+  const validPairs = new Map<string, string>();
+  for (const r of rows) validPairs.set(`${r.brandId}:${r.itemId}`, r.brandNameAr ?? "");
   for (const l of branded) {
     const bid = Number(l.brandId);
     const iid = l.itemId ? Number(l.itemId) : null;
-    if (!Number.isInteger(bid) || iid == null || !validPairs.has(`${bid}:${iid}`)) {
+    const key = `${bid}:${iid}`;
+    if (!Number.isInteger(bid) || iid == null || !validPairs.has(key)) {
       // Non-canonical / foreign brand → drop it silently rather than 400 the
       // whole invoice (brand is an optional cosmetic annotation).
       l.brandId = null;
       l.brandName = null;
+    } else {
+      // Canonicalize the print-only snapshot from the DB — never trust the
+      // client-sent brandName (it is cosmetic and could be spoofed).
+      l.brandName = validPairs.get(key) || null;
     }
   }
 }

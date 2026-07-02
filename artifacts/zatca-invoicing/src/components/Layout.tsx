@@ -123,7 +123,7 @@ const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_ret
 const PURCHASING_REPORTS_PERMS  = ["suppliers","purchase_invoices","purchase_returns"];
 const CASH_GROUP_PERMS          = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
 const CASH_REPORTS_PERMS        = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
-const INVENTORY_GROUP_PERMS     = ["items","warehouses","stock_transfers","stock_adjustments","stock_counts"];
+const INVENTORY_GROUP_PERMS     = ["items","brands","warehouses","stock_transfers","stock_adjustments","stock_counts"];
 // Sister-companies module promoted to its own top-level sidebar group
 // ("معاملات الشركات الشقيقة"). Single permission key gates the whole
 // group (master, transfers, returns, settlements, statement report).

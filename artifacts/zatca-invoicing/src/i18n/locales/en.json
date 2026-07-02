@@ -2609,6 +2609,7 @@
       "fixed_assets": "Fixed Assets (asset register, depreciation, maintenance, transfers, disposal, vehicle insurance, reports, AI)",
       "multi_link": "Multi-Link Gateway (multi-tenant external invoice gateway, upload + dispatch to ZATCA, reports, CSID management)",
       "item_usage_override": "Override item usage restrictions (add/post restricted items that require permission or approval)",
+      "brands": "Brand Management (sell one item under multiple brands, each with its own price, cost, barcode, and part number)",
       "security_events": "Security & Surveillance (Events, Notification Rules)",
       "field_service_locations": "Field Service — Locations",
       "field_service_visits": "Field Service — Visits",

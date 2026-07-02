@@ -21,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 const EMPTY = {
   code: "", nameAr: "", nameEn: "",
   manufacturerName: "", supplierName: "", countryOfOrigin: "",
-  status: "active", notes: "",
+  logoUrl: "", status: "active", notes: "",
 };
 
 export default function BrandManagement() {
@@ -59,6 +59,7 @@ export default function BrandManagement() {
       manufacturerName: b.manufacturerName ?? "",
       supplierName:     b.supplierName     ?? "",
       countryOfOrigin:  b.countryOfOrigin  ?? "",
+      logoUrl:          b.logoUrl          ?? "",
       status:           b.status           ?? "active",
       notes:            b.notes            ?? "",
     });
@@ -139,6 +140,9 @@ export default function BrandManagement() {
                 </Field>
                 <Field label="بلد المنشأ">
                   <Input placeholder="بلد المنشأ" value={form.countryOfOrigin} onChange={e => setForm((p: any) => ({ ...p, countryOfOrigin: e.target.value }))} />
+                </Field>
+                <Field label="شعار العلامة (رابط)" className="md:col-span-2">
+                  <Input placeholder="https://…/logo.png" dir="ltr" className="text-left" value={form.logoUrl} onChange={e => setForm((p: any) => ({ ...p, logoUrl: e.target.value }))} />
                 </Field>
                 <Field label="ملاحظات" className="md:col-span-2">
                   <Input placeholder="ملاحظات" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />

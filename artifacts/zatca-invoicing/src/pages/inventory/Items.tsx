@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { usePermission } from "@/hooks/usePermission";
 import ExportButtons from "@/components/ExportButtons";
 import { TablePagination, usePagination } from "@/components/TablePagination";
 import { SearchCombobox } from "@/components/ui/search-combobox";
@@ -1177,6 +1178,9 @@ export default function Items() {
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "brands" | "bundle" | "variants" | "currencies" | "branches" | "reorder" | "bomSteps" | "batches">("balances");
+  // Optional `brands` module gate — hides the العلامات التجارية tab + panel
+  // entirely for companies that haven't enabled brand management.
+  const canBrands = usePermission("brands");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -1936,6 +1940,7 @@ export default function Items() {
                             >
                               <Truck className="h-3.5 w-3.5" />{t("pages.items.suppliers.tabLabel")}
                             </button>
+                            {canBrands && (
                             <button
                               onClick={() => setExpandedTab("brands")}
                               className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
@@ -1943,6 +1948,7 @@ export default function Items() {
                             >
                               <Bookmark className="h-3.5 w-3.5" />العلامات التجارية
                             </button>
+                            )}
                             <button
                               onClick={() => setExpandedTab("bundle")}
                               className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
@@ -2051,7 +2057,7 @@ export default function Items() {
                           {expandedTab === "suppliers" && (
                             <ItemSuppliersPanel itemId={it.id} />
                           )}
-                          {expandedTab === "brands" && (
+                          {canBrands && expandedTab === "brands" && (
                             <ItemBrandsPanel itemId={it.id} />
                           )}
 
@@ -2720,30 +2726,43 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
   const availableBrands = allBrands.filter((b: any) => !linkedBrandIds.has(b.id) && b.status !== "inactive");
 
   const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
   const emptyForm = {
-    brandId: "", barcode: "", partNumber: "", supplierCode: "",
-    purchaseCost: "", salePrice1: "", salePrice2: "", salePrice3: "",
-    minSalePrice: "", countryOfOrigin: "", notes: "",
+    brandId: "", barcode: "", partNumber: "", supplierCode: "", purchaseUnit: "",
+    purchaseCost: "", lastPurchaseCost: "", avgCost: "",
+    salePrice1: "", salePrice2: "", salePrice3: "",
+    minSalePrice: "", profitMargin: "", warrantyPeriod: "",
+    countryOfOrigin: "", status: "active", notes: "",
   };
   const [form, setForm] = useState({ ...emptyForm });
-  const resetForm = () => setForm({ ...emptyForm });
+  const resetForm = () => { setForm({ ...emptyForm }); setEditId(null); };
 
   const inv = () => qc.invalidateQueries({ queryKey: ["item-brands", itemId] });
 
+  // Shared body builder — POST (create) and PUT (edit) accept the same
+  // whitelisted field set on the server (pickItemBrandBody).
+  const buildBody = () => ({
+    brandId: Number(form.brandId),
+    barcode: form.barcode || null,
+    partNumber: form.partNumber || null,
+    supplierCode: form.supplierCode || null,
+    purchaseUnit: form.purchaseUnit || null,
+    purchaseCost: form.purchaseCost || null,
+    lastPurchaseCost: form.lastPurchaseCost || null,
+    avgCost: form.avgCost || null,
+    salePrice1: form.salePrice1 || null,
+    salePrice2: form.salePrice2 || null,
+    salePrice3: form.salePrice3 || null,
+    minSalePrice: form.minSalePrice || null,
+    profitMargin: form.profitMargin || null,
+    warrantyPeriod: form.warrantyPeriod || null,
+    countryOfOrigin: form.countryOfOrigin || null,
+    status: form.status || "active",
+    notes: form.notes || null,
+  });
+
   const addMut = useMutation({
-    mutationFn: () => inventoryApi.addItemBrand(itemId, {
-      brandId: Number(form.brandId),
-      barcode: form.barcode || null,
-      partNumber: form.partNumber || null,
-      supplierCode: form.supplierCode || null,
-      purchaseCost: form.purchaseCost || null,
-      salePrice1: form.salePrice1 || null,
-      salePrice2: form.salePrice2 || null,
-      salePrice3: form.salePrice3 || null,
-      minSalePrice: form.minSalePrice || null,
-      countryOfOrigin: form.countryOfOrigin || null,
-      notes: form.notes || null,
-    }),
+    mutationFn: () => inventoryApi.addItemBrand(itemId, buildBody()),
     onSuccess: () => {
       inv();
       resetForm();
@@ -2756,6 +2775,48 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
       variant: "destructive",
     }),
   });
+
+  const updateMut = useMutation({
+    mutationFn: () => inventoryApi.updateItemBrand(itemId, editId as number, buildBody()),
+    onSuccess: () => {
+      inv();
+      resetForm();
+      setShowForm(false);
+      toast({ title: "تم تحديث العلامة التجارية" });
+    },
+    onError: (e: any) => toast({
+      title: "تعذّر تحديث العلامة التجارية",
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  // Load an existing link into the form for editing. The brand itself is not
+  // re-selectable (a different brand = a different link); only its per-item
+  // price/cost/barcode/part-number/status fields are editable here.
+  const startEdit = (l: any) => {
+    setForm({
+      brandId:          String(l.brandId ?? ""),
+      barcode:          l.barcode ?? "",
+      partNumber:       l.partNumber ?? "",
+      supplierCode:     l.supplierCode ?? "",
+      purchaseUnit:     l.purchaseUnit ?? "",
+      purchaseCost:     l.purchaseCost      != null ? String(l.purchaseCost) : "",
+      lastPurchaseCost: l.lastPurchaseCost  != null ? String(l.lastPurchaseCost) : "",
+      avgCost:          l.avgCost           != null ? String(l.avgCost) : "",
+      salePrice1:       l.salePrice1        != null ? String(l.salePrice1) : "",
+      salePrice2:       l.salePrice2        != null ? String(l.salePrice2) : "",
+      salePrice3:       l.salePrice3        != null ? String(l.salePrice3) : "",
+      minSalePrice:     l.minSalePrice      != null ? String(l.minSalePrice) : "",
+      profitMargin:     l.profitMargin      != null ? String(l.profitMargin) : "",
+      warrantyPeriod:   l.warrantyPeriod ?? "",
+      countryOfOrigin:  l.countryOfOrigin ?? "",
+      status:           l.status ?? "active",
+      notes:            l.notes ?? "",
+    });
+    setEditId(l.id);
+    setShowForm(true);
+  };
 
   const deleteMut = useMutation({
     mutationFn: (linkId: number) => inventoryApi.deleteItemBrand(itemId, linkId),
@@ -2802,18 +2863,27 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium block mb-1">العلامة التجارية *</label>
-              <select
-                value={form.brandId}
-                onChange={(e) => setForm(f => ({ ...f, brandId: e.target.value }))}
-                className="w-full h-9 rounded-md border bg-background px-2 text-sm"
-              >
-                <option value="">— اختر العلامة التجارية —</option>
-                {availableBrands.map((b: any) => (
-                  <option key={b.id} value={b.id}>
-                    {(isAr ? b.nameAr : (b.nameEn || b.nameAr)) + (b.code ? ` (${b.code})` : "")}
-                  </option>
-                ))}
-              </select>
+              {editId != null ? (
+                <div className="w-full h-9 rounded-md border bg-muted/40 px-2 text-sm flex items-center text-muted-foreground">
+                  {(() => {
+                    const b = allBrands.find((x: any) => String(x.id) === form.brandId);
+                    return b ? (isAr ? b.nameAr : (b.nameEn || b.nameAr)) + (b.code ? ` (${b.code})` : "") : "—";
+                  })()}
+                </div>
+              ) : (
+                <select
+                  value={form.brandId}
+                  onChange={(e) => setForm(f => ({ ...f, brandId: e.target.value }))}
+                  className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+                >
+                  <option value="">— اختر العلامة التجارية —</option>
+                  {availableBrands.map((b: any) => (
+                    <option key={b.id} value={b.id}>
+                      {(isAr ? b.nameAr : (b.nameEn || b.nameAr)) + (b.code ? ` (${b.code})` : "")}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium block mb-1">الباركود</label>
@@ -2851,6 +2921,37 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
               <label className="text-xs font-medium block mb-1">بلد المنشأ</label>
               <Input value={form.countryOfOrigin} onChange={(e) => setForm(f => ({ ...f, countryOfOrigin: e.target.value }))} className="h-9" />
             </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">وحدة الشراء</label>
+              <Input value={form.purchaseUnit} onChange={(e) => setForm(f => ({ ...f, purchaseUnit: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">آخر تكلفة شراء</label>
+              <Input type="number" step="any" value={form.lastPurchaseCost} onChange={(e) => setForm(f => ({ ...f, lastPurchaseCost: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">متوسط التكلفة</label>
+              <Input type="number" step="any" value={form.avgCost} onChange={(e) => setForm(f => ({ ...f, avgCost: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">هامش الربح %</label>
+              <Input type="number" step="any" value={form.profitMargin} onChange={(e) => setForm(f => ({ ...f, profitMargin: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">مدة الضمان</label>
+              <Input value={form.warrantyPeriod} onChange={(e) => setForm(f => ({ ...f, warrantyPeriod: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">الحالة</label>
+              <select
+                value={form.status}
+                onChange={(e) => setForm(f => ({ ...f, status: e.target.value }))}
+                className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+              >
+                <option value="active">نشطة</option>
+                <option value="inactive">غير نشطة</option>
+              </select>
+            </div>
             <div className="sm:col-span-2 lg:col-span-3">
               <label className="text-xs font-medium block mb-1">ملاحظات</label>
               <Input value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} className="h-9" />
@@ -2858,9 +2959,13 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
           </div>
           <div className="flex items-center justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>إلغاء</Button>
-            <Button size="sm" disabled={!form.brandId || addMut.isPending} onClick={() => addMut.mutate()}>
-              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              حفظ
+            <Button
+              size="sm"
+              disabled={!form.brandId || addMut.isPending || updateMut.isPending}
+              onClick={() => (editId != null ? updateMut.mutate() : addMut.mutate())}
+            >
+              {(addMut.isPending || updateMut.isPending) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              {editId != null ? "تحديث" : "حفظ"}
             </Button>
           </div>
         </div>
@@ -2880,12 +2985,15 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
                 <th className="px-3 py-2 font-medium">رقم القطعة</th>
                 <th className="px-3 py-2 font-medium">تكلفة الشراء</th>
                 <th className="px-3 py-2 font-medium">سعر البيع 1</th>
+                <th className="px-3 py-2 font-medium">هامش الربح %</th>
+                <th className="px-3 py-2 font-medium">مدة الضمان</th>
+                <th className="px-3 py-2 font-medium">الحالة</th>
                 <th className="px-3 py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
               {links.map((l: any) => (
-                <tr key={l.id} className="border-t">
+                <tr key={l.id} className={cn("border-t", l.status === "inactive" && "opacity-60")}>
                   <td className="px-3 py-2">
                     {l.brandNameAr || "—"}{l.brandCode ? ` (${l.brandCode})` : ""}
                   </td>
@@ -2893,7 +3001,23 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
                   <td className="px-3 py-2">{l.partNumber || "—"}</td>
                   <td className="px-3 py-2">{l.purchaseCost ?? "—"}</td>
                   <td className="px-3 py-2">{l.salePrice1 ?? "—"}</td>
-                  <td className="px-3 py-2 text-left">
+                  <td className="px-3 py-2">{l.profitMargin ?? "—"}</td>
+                  <td className="px-3 py-2">{l.warrantyPeriod || "—"}</td>
+                  <td className="px-3 py-2">
+                    {l.status === "inactive"
+                      ? <span className="text-muted-foreground">غير نشطة</span>
+                      : <span className="text-emerald-600">نشطة</span>}
+                  </td>
+                  <td className="px-3 py-2 text-left whitespace-nowrap">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0"
+                      onClick={() => startEdit(l)}
+                      title="تعديل"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
