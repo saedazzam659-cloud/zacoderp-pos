@@ -496,6 +496,58 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "item_usage_controls_company_screen_mode_idx",
       sql:   `CREATE INDEX IF NOT EXISTS item_usage_controls_company_screen_mode_idx ON item_usage_controls (company_id, screen_key, mode)` },
 
+    // ─── Brands (العلامات التجارية) — OPTIONAL multi-brand support ─────────────
+    // Materialised here because ensureColumns only ALTERs EXISTING tables.
+    // Brand is a print-only concept on invoices; brandId/brandName columns on
+    // sales_invoice_lines are auto-added by ensureColumns from the drizzle schema.
+    { label: "create brands table",
+      sql:   `CREATE TABLE IF NOT EXISTS brands (
+        id                 SERIAL PRIMARY KEY,
+        company_id         INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        code               TEXT NOT NULL,
+        name_ar            TEXT NOT NULL,
+        name_en            TEXT,
+        manufacturer_name  TEXT,
+        supplier_name      TEXT,
+        country_of_origin  TEXT,
+        logo_url           TEXT,
+        status             TEXT NOT NULL DEFAULT 'active',
+        notes              TEXT,
+        created_at         TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "brands_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS brands_company_idx ON brands (company_id)` },
+    { label: "brands_company_code_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS brands_company_code_uniq ON brands (company_id, lower(code))` },
+    { label: "create item_brands table",
+      sql:   `CREATE TABLE IF NOT EXISTS item_brands (
+        id                  SERIAL PRIMARY KEY,
+        company_id          INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        item_id             INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        brand_id            INTEGER NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+        barcode             TEXT,
+        part_number         TEXT,
+        supplier_code       TEXT,
+        purchase_unit       TEXT,
+        purchase_cost       NUMERIC(15,4) DEFAULT 0,
+        last_purchase_cost  NUMERIC(15,4) DEFAULT 0,
+        avg_cost            NUMERIC(15,4) DEFAULT 0,
+        sale_price1         NUMERIC(15,4) DEFAULT 0,
+        sale_price2         NUMERIC(15,4) DEFAULT 0,
+        sale_price3         NUMERIC(15,4) DEFAULT 0,
+        min_sale_price      NUMERIC(15,4) DEFAULT 0,
+        profit_margin       NUMERIC(8,4)  DEFAULT 0,
+        country_of_origin   TEXT,
+        warranty_period     TEXT,
+        status              TEXT NOT NULL DEFAULT 'active',
+        notes               TEXT,
+        created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "item_brands_company_item_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS item_brands_company_item_idx ON item_brands (company_id, item_id)` },
+    { label: "item_brands_item_brand_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS item_brands_item_brand_uniq ON item_brands (company_id, item_id, brand_id)` },
+
     // ─── Goods Receipt / Delivery documents (مستندات الاستلام والتسليم) ────────
     // Pure electronic archive linked to purchase/sales invoices. No GL, no
     // stock impact. Attachments reuse document_archives. Materialised here

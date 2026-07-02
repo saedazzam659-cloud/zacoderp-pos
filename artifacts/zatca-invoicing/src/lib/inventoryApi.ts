@@ -127,6 +127,17 @@ export const inventoryApi = {
   createItemGroup: (data: any)    => post<any>("/item-groups", data),
   updateItemGroup: (id: number, data: any) => put<any>(`/item-groups/${id}`, data),
   deleteItemGroup: (id: number)   => del(`/item-groups/${id}`),
+  // Brands (العلامات التجارية) — master CRUD. List coerced to array to avoid a
+  // white-screen when a module-gated 403 returns an object instead of a list.
+  getBrands:   (cid?: number) => get<any[]>(`/brands${cid ? `?companyId=${cid}` : ""}`).then(arr => Array.isArray(arr) ? arr : []),
+  createBrand: (data: any)    => post<any>("/brands", data),
+  updateBrand: (id: number, data: any) => put<any>(`/brands/${id}`, data),
+  deleteBrand: (id: number)   => del(`/brands/${id}`),
+  // Item ↔ Brand links (per-brand price/barcode/part-number for ONE item)
+  getItemBrands:    (itemId: number)             => get<any[]>(`/items/${itemId}/brands`).then(arr => Array.isArray(arr) ? arr : []),
+  addItemBrand:     (itemId: number, data: any)  => post<any>(`/items/${itemId}/brands`, data),
+  updateItemBrand:  (itemId: number, linkId: number, data: any) => put<any>(`/items/${itemId}/brands/${linkId}`, data),
+  deleteItemBrand:  (itemId: number, linkId: number) => del(`/items/${itemId}/brands/${linkId}`),
   // Units
   getUnits:   (cid?: number) => get<any[]>(`/units${cid ? `?companyId=${cid}` : ""}`),
   createUnit: (data: any)    => post<any>("/units", data),

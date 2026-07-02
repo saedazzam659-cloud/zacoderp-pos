@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive } from "lucide-react";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import { offersApi } from "@/lib/offersApi";
+import { inventoryApi } from "@/lib/inventoryApi";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { DateField } from "@/components/ui/date-field";
@@ -86,6 +87,12 @@ interface DocLine {
   // the already-reduced price → cross-cycle double-discount.
   // Updated only when the user manually edits unitPrice or selects an item.
   baseUnitPrice: string;
+  // ─── Brand (العلامة التجارية) — OPTIONAL, invoice-mode only, PRINT-ONLY ─────
+  // brandId links to the chosen brand so we can reload its per-brand price on
+  // edit; brandName is the display snapshot printed on the invoice. NEITHER
+  // enters the ZATCA UBL XML, hash, QR, or ICV/PIH chain.
+  brandId: number | null;
+  brandName: string;
 }
 
 function newLine(): DocLine {
@@ -97,7 +104,55 @@ function newLine(): DocLine {
     appliedOfferId: null, appliedOfferName: null,
     engineUnitPrice: null, engineDiscount: null,
     baseUnitPrice: "0",
+    brandId: null, brandName: "",
   };
+}
+
+// ─── Per-line Brand picker (العلامة التجارية) ──────────────────────────────────
+// Renders ONLY when the chosen item has at least one linked brand. Fully
+// optional: the default is "بدون علامة تجارية". Picking a brand snapshots its
+// Arabic name + hands back the item↔brand row so the caller can adopt the
+// per-brand sale price. This control is PRINT-ONLY metadata and never touches
+// the ZATCA UBL XML, invoice hash, QR, or ICV/PIH chain.
+function ItemBrandPicker({
+  itemId, value, onPick,
+}: {
+  itemId: string;
+  value: number | null;
+  onPick: (brandId: number | null, brandName: string, ib: any) => void;
+}) {
+  const { data: links = [] } = useQuery({
+    queryKey: ["item-brands", itemId],
+    queryFn: () => inventoryApi.getItemBrands(Number(itemId)),
+    enabled: !!itemId,
+  });
+  if (!links.length) return null;
+  return (
+    <div className="mt-1 ms-1 flex items-center gap-1.5">
+      <Tag className="h-3 w-3 text-muted-foreground" />
+      <Select
+        value={value != null ? String(value) : "__none__"}
+        onValueChange={v => {
+          if (v === "__none__") { onPick(null, "", null); return; }
+          const ib = links.find((x: any) => String(x.brandId) === v);
+          onPick(Number(v), ib?.brandNameAr ?? "", ib);
+        }}
+      >
+        <SelectTrigger className="h-7 text-[11px] w-64">
+          <SelectValue placeholder="العلامة التجارية (اختياري)" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">بدون علامة تجارية</SelectItem>
+          {links.map((ib: any) => (
+            <SelectItem key={ib.id} value={String(ib.brandId)}>
+              {ib.brandNameAr ?? ib.brandCode}
+              {ib.salePrice1 != null && Number(ib.salePrice1) > 0 ? ` — ${trimTrailingZeros(String(ib.salePrice1))}` : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
 }
 
 // Tax calculation mode — comes from the company-wide setting
@@ -768,6 +823,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // line drops out cleanly; on still-qualify the engine writes the same
       // value and idempotency holds.
       baseUnitPrice:    String(l.unitPrice ?? "0"),
+      // Brand snapshot (invoice-mode only; null on quotations/orders).
+      brandId:          l.brandId != null ? Number(l.brandId) : null,
+      brandName:        l.brandName ?? "",
     })) : [newLine()]);
     if (isInvoice) {
       setDocumentOfferId(existing.documentOfferId ? Number(existing.documentOfferId) : null);
@@ -1011,6 +1069,31 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         appliedOfferName: null,
         discount:  "0",
       };
+      const { lineTotal } = calcLine(updated, priceIncludesVat);
+      return { ...updated, lineTotal: lineTotal.toFixed(2) };
+    }));
+  }
+
+  // ── Brand (العلامة التجارية) picker — invoice-mode only ────────────────
+  // Selecting a brand snapshots its name for print and, when the item↔brand
+  // link carries a sale price, adopts it as the line's unit price. Clearing
+  // the brand only wipes the snapshot — it never rewrites the price back.
+  // brandId/brandName are PRINT-ONLY; they never enter the ZATCA UBL/hash/QR.
+  function pickLineBrand(lineId: string, brandId: number | null, brandName: string, ib: any) {
+    setLines(prev => prev.map(l => {
+      if (l._id !== lineId) return l;
+      let updated: DocLine = { ...l, brandId, brandName };
+      const px = ib?.salePrice1;
+      if (brandId != null && px != null && Number(px) > 0) {
+        const np = trimTrailingZeros(String(px));
+        updated = {
+          ...updated,
+          unitPrice: np, baseUnitPrice: np,
+          engineUnitPrice: null, engineDiscount: null,
+          appliedOfferId: null, appliedOfferName: null,
+          discount: "0",
+        };
+      }
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
     }));
@@ -1662,6 +1745,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         </span>
                       </div>
                     )}
+                    {isInvoice && l.itemId && (
+                      <ItemBrandPicker
+                        itemId={l.itemId}
+                        value={l.brandId}
+                        onPick={(bid, bname, ib) => pickLineBrand(l._id, bid, bname, ib)}
+                      />
+                    )}
                   </div>
                 ))}
                 </div>
@@ -1861,6 +1951,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         itemId: String(item.id),
         itemName: item.nameAr ?? item.nameEn ?? "",
         itemCode: String(item.code ?? ""),
+        brandId: null,
+        brandName: "",
         unitId: item.unitId ? String(item.unitId) : "",
         unit: item.unit?.nameAr ?? item.unit?.code ?? "",
         conversionFactor: "1",

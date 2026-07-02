@@ -27,6 +27,7 @@ import {
   Gauge,
   Handshake,
   Copy,
+  Bookmark,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -564,6 +565,8 @@ const inventorySubNav: NavDef[] = [
   { nameKey: "nav.items",             href: "/inventory/items",            icon: Package,           permKey: "items" },
   // item_groups + units piggy-back on items (no dedicated module key).
   { nameKey: "nav.itemGroups",        href: "/inventory/item-groups",      icon: Tag,               permKey: "items" },
+  // العلامات التجارية — own per-user perm key, rolls up to inventory_reports.
+  { nameKey: "nav.brands",            href: "/inventory/brands",           icon: Bookmark,          permKey: "brands" },
   { nameKey: "nav.units",             href: "/inventory/units",            icon: Ruler,             permKey: "items" },
   { nameKey: "nav.warehouses",        href: "/inventory/warehouses",       icon: Warehouse,         permKey: "warehouses" },
   { nameKey: "nav.warehouseGroups",   href: "/inventory/warehouse-groups", icon: Layers,            permKey: "warehouses" },

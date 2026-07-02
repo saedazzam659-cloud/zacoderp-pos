@@ -23,6 +23,7 @@ import {
   ScanLine, FileText, Upload, ExternalLink,
   Truck, Check, Boxes, Layers,
   Building2, Cog, Bell, Store, FlaskConical,
+  Bookmark,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
@@ -1175,7 +1176,7 @@ export default function Items() {
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "bundle" | "variants" | "currencies" | "branches" | "reorder" | "bomSteps" | "batches">("balances");
+  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "brands" | "bundle" | "variants" | "currencies" | "branches" | "reorder" | "bomSteps" | "batches">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -1936,6 +1937,13 @@ export default function Items() {
                               <Truck className="h-3.5 w-3.5" />{t("pages.items.suppliers.tabLabel")}
                             </button>
                             <button
+                              onClick={() => setExpandedTab("brands")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "brands" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <Bookmark className="h-3.5 w-3.5" />العلامات التجارية
+                            </button>
+                            <button
                               onClick={() => setExpandedTab("bundle")}
                               className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
                                 expandedTab === "bundle" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
@@ -2042,6 +2050,9 @@ export default function Items() {
 
                           {expandedTab === "suppliers" && (
                             <ItemSuppliersPanel itemId={it.id} />
+                          )}
+                          {expandedTab === "brands" && (
+                            <ItemBrandsPanel itemId={it.id} />
                           )}
 
                           {expandedTab === "bundle" && (
@@ -2677,6 +2688,228 @@ function ItemSuppliersPanel({ itemId }: { itemId: number }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Item Brands Panel (العلامات التجارية) ───────────────────────────────────
+// One item can be sold under many brands, each carrying its own price / cost /
+// barcode / part-number. Fully additive & optional: rows here only surface in
+// the sales-invoice brand picker. brandName is PRINT-ONLY — it never enters the
+// ZATCA UBL XML / hash / QR / ICV-PIH chain.
+function ItemBrandsPanel({ itemId }: { itemId: number }) {
+  const { t, i18n } = useTranslation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const isAr = i18n.language?.startsWith("ar");
+
+  const { data: links = [], isLoading, isError } = useQuery({
+    queryKey: ["item-brands", itemId],
+    queryFn: () => inventoryApi.getItemBrands(itemId),
+  });
+
+  // Company brand directory — the "Add" form filters to brands not yet linked.
+  const { data: allBrands = [] } = useQuery({
+    queryKey: ["brands", cid],
+    queryFn: () => inventoryApi.getBrands(cid),
+  });
+
+  const linkedBrandIds = new Set(links.map((l: any) => l.brandId));
+  const availableBrands = allBrands.filter((b: any) => !linkedBrandIds.has(b.id) && b.status !== "inactive");
+
+  const [showForm, setShowForm] = useState(false);
+  const emptyForm = {
+    brandId: "", barcode: "", partNumber: "", supplierCode: "",
+    purchaseCost: "", salePrice1: "", salePrice2: "", salePrice3: "",
+    minSalePrice: "", countryOfOrigin: "", notes: "",
+  };
+  const [form, setForm] = useState({ ...emptyForm });
+  const resetForm = () => setForm({ ...emptyForm });
+
+  const inv = () => qc.invalidateQueries({ queryKey: ["item-brands", itemId] });
+
+  const addMut = useMutation({
+    mutationFn: () => inventoryApi.addItemBrand(itemId, {
+      brandId: Number(form.brandId),
+      barcode: form.barcode || null,
+      partNumber: form.partNumber || null,
+      supplierCode: form.supplierCode || null,
+      purchaseCost: form.purchaseCost || null,
+      salePrice1: form.salePrice1 || null,
+      salePrice2: form.salePrice2 || null,
+      salePrice3: form.salePrice3 || null,
+      minSalePrice: form.minSalePrice || null,
+      countryOfOrigin: form.countryOfOrigin || null,
+      notes: form.notes || null,
+    }),
+    onSuccess: () => {
+      inv();
+      resetForm();
+      setShowForm(false);
+      toast({ title: "تمت إضافة العلامة التجارية" });
+    },
+    onError: (e: any) => toast({
+      title: "تعذّر إضافة العلامة التجارية",
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (linkId: number) => inventoryApi.deleteItemBrand(itemId, linkId),
+    onSuccess: () => { inv(); toast({ title: "تم حذف العلامة التجارية" }); },
+    onError: (e: any) => toast({
+      title: "تعذّر حذف العلامة التجارية",
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (isError) {
+    return (
+      <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+        تعذّر تحميل العلامات التجارية لهذا الصنف
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {!showForm && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            بيع الصنف تحت أكثر من علامة تجارية، لكل علامة سعرها وتكلفتها وباركودها ورقم قطعتها. تظهر في منتقي العلامة داخل فواتير المبيعات فقط.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => setShowForm(true)}
+            disabled={availableBrands.length === 0}
+            title={availableBrands.length === 0 ? "لا توجد علامات تجارية متاحة للإضافة" : ""}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            إضافة علامة تجارية
+          </Button>
+        </div>
+      )}
+
+      {showForm && (
+        <div className="p-3 rounded-lg border bg-background/50 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-medium block mb-1">العلامة التجارية *</label>
+              <select
+                value={form.brandId}
+                onChange={(e) => setForm(f => ({ ...f, brandId: e.target.value }))}
+                className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+              >
+                <option value="">— اختر العلامة التجارية —</option>
+                {availableBrands.map((b: any) => (
+                  <option key={b.id} value={b.id}>
+                    {(isAr ? b.nameAr : (b.nameEn || b.nameAr)) + (b.code ? ` (${b.code})` : "")}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">الباركود</label>
+              <Input value={form.barcode} onChange={(e) => setForm(f => ({ ...f, barcode: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">رقم القطعة</label>
+              <Input value={form.partNumber} onChange={(e) => setForm(f => ({ ...f, partNumber: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">كود المورّد</label>
+              <Input value={form.supplierCode} onChange={(e) => setForm(f => ({ ...f, supplierCode: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">تكلفة الشراء</label>
+              <Input type="number" step="any" value={form.purchaseCost} onChange={(e) => setForm(f => ({ ...f, purchaseCost: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">سعر البيع 1</label>
+              <Input type="number" step="any" value={form.salePrice1} onChange={(e) => setForm(f => ({ ...f, salePrice1: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">سعر البيع 2</label>
+              <Input type="number" step="any" value={form.salePrice2} onChange={(e) => setForm(f => ({ ...f, salePrice2: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">سعر البيع 3</label>
+              <Input type="number" step="any" value={form.salePrice3} onChange={(e) => setForm(f => ({ ...f, salePrice3: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">أقل سعر بيع</label>
+              <Input type="number" step="any" value={form.minSalePrice} onChange={(e) => setForm(f => ({ ...f, minSalePrice: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">بلد المنشأ</label>
+              <Input value={form.countryOfOrigin} onChange={(e) => setForm(f => ({ ...f, countryOfOrigin: e.target.value }))} className="h-9" />
+            </div>
+            <div className="sm:col-span-2 lg:col-span-3">
+              <label className="text-xs font-medium block mb-1">ملاحظات</label>
+              <Input value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} className="h-9" />
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>إلغاء</Button>
+            <Button size="sm" disabled={!form.brandId || addMut.isPending} onClick={() => addMut.mutate()}>
+              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              حفظ
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {links.length === 0 && !showForm ? (
+        <div className="text-center text-xs text-muted-foreground py-6 border border-dashed rounded-lg">
+          لا توجد علامات تجارية مرتبطة بهذا الصنف بعد
+        </div>
+      ) : links.length > 0 ? (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr className="text-right">
+                <th className="px-3 py-2 font-medium">العلامة التجارية</th>
+                <th className="px-3 py-2 font-medium">الباركود</th>
+                <th className="px-3 py-2 font-medium">رقم القطعة</th>
+                <th className="px-3 py-2 font-medium">تكلفة الشراء</th>
+                <th className="px-3 py-2 font-medium">سعر البيع 1</th>
+                <th className="px-3 py-2 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {links.map((l: any) => (
+                <tr key={l.id} className="border-t">
+                  <td className="px-3 py-2">
+                    {l.brandNameAr || "—"}{l.brandCode ? ` (${l.brandCode})` : ""}
+                  </td>
+                  <td className="px-3 py-2">{l.barcode || "—"}</td>
+                  <td className="px-3 py-2">{l.partNumber || "—"}</td>
+                  <td className="px-3 py-2">{l.purchaseCost ?? "—"}</td>
+                  <td className="px-3 py-2">{l.salePrice1 ?? "—"}</td>
+                  <td className="px-3 py-2 text-left">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-destructive"
+                      onClick={() => deleteMut.mutate(l.id)}
+                      disabled={deleteMut.isPending}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </div>
   );
 }

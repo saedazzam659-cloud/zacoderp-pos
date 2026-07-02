@@ -69,6 +69,51 @@ export const itemGroupsTable = pgTable("item_groups", {
   createdAt:       timestamp("created_at").defaultNow().notNull(),
 });
 
+// ─── Brands (العلامات التجارية) ────────────────────────────────────────────────
+// OPTIONAL, additive multi-brand support: one item can carry several brands,
+// each with its own price / cost / barcode / part-number (see item_brands).
+// Brand is a PRINT-ONLY concept on invoices — it NEVER enters the ZATCA UBL
+// XML mandatory fields, hashing, QR, or ICV/PIH chain.
+export const brandsTable = pgTable("brands", {
+  id:               serial("id").primaryKey(),
+  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  code:             text("code").notNull(),
+  nameAr:           text("name_ar").notNull(),
+  nameEn:           text("name_en"),
+  manufacturerName: text("manufacturer_name"),   // الشركة المالكة/المصنعة
+  supplierName:     text("supplier_name"),
+  countryOfOrigin:  text("country_of_origin"),
+  logoUrl:          text("logo_url"),
+  status:           text("status").default("active").notNull(), // active | inactive
+  notes:            text("notes"),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── Item ↔ Brand links (سعر/باركود/رقم قطعة لكل علامة تجارية) ──────────────────
+export const itemBrandsTable = pgTable("item_brands", {
+  id:               serial("id").primaryKey(),
+  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:           integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  brandId:          integer("brand_id").notNull().references(() => brandsTable.id, { onDelete: "cascade" }),
+  barcode:          text("barcode"),
+  partNumber:       text("part_number"),
+  supplierCode:     text("supplier_code"),
+  purchaseUnit:     text("purchase_unit"),
+  purchaseCost:     numeric("purchase_cost",    { precision: 15, scale: 4 }).default("0"),
+  lastPurchaseCost: numeric("last_purchase_cost",{ precision: 15, scale: 4 }).default("0"),
+  avgCost:          numeric("avg_cost",         { precision: 15, scale: 4 }).default("0"),
+  salePrice1:       numeric("sale_price1",      { precision: 15, scale: 4 }).default("0"),
+  salePrice2:       numeric("sale_price2",      { precision: 15, scale: 4 }).default("0"),
+  salePrice3:       numeric("sale_price3",      { precision: 15, scale: 4 }).default("0"),
+  minSalePrice:     numeric("min_sale_price",   { precision: 15, scale: 4 }).default("0"),
+  profitMargin:     numeric("profit_margin",    { precision: 8,  scale: 4 }).default("0"),
+  countryOfOrigin:  text("country_of_origin"),
+  warrantyPeriod:   text("warranty_period"),
+  status:           text("status").default("active").notNull(),
+  notes:            text("notes"),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+});
+
 // ─── Units of Measure ─────────────────────────────────────────────────────────
 export const unitsTable = pgTable("units", {
   id:               serial("id").primaryKey(),

@@ -18,6 +18,7 @@ import {
   goodsDeliveriesTable,
   subscriptionsTable,
   itemsTable,
+  itemBrandsTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
@@ -622,6 +623,11 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number, fallbackRate = "
     // discount / unit-price (line_pricing or buy_x_get_y). NULL when the
     // discount was manual or no offer matched.
     appliedOfferId: l.appliedOfferId ? Number(l.appliedOfferId) : null,
+    // Brand (العلامة التجارية) — OPTIONAL, PRINT-ONLY. Snapshotted for display
+    // on the invoice; NEVER emitted into the ZATCA UBL XML, hash, QR, or
+    // ICV/PIH chain (the XML builder simply ignores these columns).
+    brandId:   l.brandId ? Number(l.brandId) : null,
+    brandName: l.brandName || null,
   };
 }
 
@@ -648,6 +654,34 @@ async function validateOffersBelongToCompany(cid: number, offerIds: number[]) {
   for (const oid of offerIds) {
     if (!foundSet.has(oid)) {
       throw new Error(`العرض رقم ${oid} غير موجود ضمن هذه الشركة`);
+    }
+  }
+}
+
+// Validates that every line's brandId (العلامة التجارية) belongs to this company
+// AND is actually linked to that line's itemId in item_brands. A crafted payload
+// could otherwise pin a foreign / non-canonical brand onto an invoice line and
+// have its name printed back via the invoice GET. Brand is PRINT-ONLY (never in
+// the ZATCA XML/QR/hash), so this is an integrity guard, not a ZATCA concern.
+// Any line whose brandId fails validation is normalized to null in-place.
+async function validateBrandLinesBelongToCompany(cid: number, lines: any[]) {
+  if (!Array.isArray(lines) || !lines.length) return;
+  const branded = lines.filter(l => l && l.brandId != null && l.brandId !== "");
+  if (!branded.length) return;
+  const brandIds = [...new Set(branded.map(l => Number(l.brandId)).filter(Number.isInteger))];
+  if (!brandIds.length) return;
+  const rows = await db.select({ brandId: itemBrandsTable.brandId, itemId: itemBrandsTable.itemId })
+    .from(itemBrandsTable)
+    .where(and(inArray(itemBrandsTable.brandId, brandIds), eq(itemBrandsTable.companyId, cid)));
+  const validPairs = new Set(rows.map(r => `${r.brandId}:${r.itemId}`));
+  for (const l of branded) {
+    const bid = Number(l.brandId);
+    const iid = l.itemId ? Number(l.itemId) : null;
+    if (!Number.isInteger(bid) || iid == null || !validPairs.has(`${bid}:${iid}`)) {
+      // Non-canonical / foreign brand → drop it silently rather than 400 the
+      // whole invoice (brand is an optional cosmetic annotation).
+      l.brandId = null;
+      l.brandName = null;
     }
   }
 }
@@ -832,6 +866,7 @@ router.post("/sales-invoices", async (req, res) => {
     // document-level) doesn't belong to this tenant. Prevents cross-tenant
     // FK pollution and the resulting offer-name leak via the GET join.
     await validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines));
+    await validateBrandLinesBelongToCompany(cid, lines);
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // Snapshot the rep's commission % at save time so historical invoices keep
     // their commission even if the rep's % changes later.
@@ -1029,6 +1064,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // Same tenant guard as POST — incoming payload can't reference a foreign
     // company's offer.
     await validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines));
+    await validateBrandLinesBelongToCompany(cid, lines);
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }

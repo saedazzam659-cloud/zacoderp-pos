@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   warehouseGroupsTable, warehousesTable, itemGroupsTable, unitsTable,
+  brandsTable, itemBrandsTable,
   itemsTable, itemUnitPricesTable, stockBalanceTable, stockLedgerTable,
   stockTransfersTable, stockTransferItemsTable,
   stockAdjustmentsTable, stockAdjustmentItemsTable,
@@ -43,6 +44,9 @@ router.use(pathRbac([
   ["/warehouses",               "warehouses"],
   ["/item-groups",              "items"],
   ["/units",                    "items"],
+  // Brands master — own module key rolling up to the inventory company gate.
+  // Item↔brand links live under /items/:id/brands and stay gated by "items".
+  ["/brands",                   "brands"],
   ["/items",                    "items"],
   ["/stock-transfers",          "stock_transfers"],
   ["/stock-adjustments",        "stock_adjustments"],
@@ -371,6 +375,203 @@ router.put("/item-groups/:id", async (req, res) => {
 router.delete("/item-groups/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   await db.delete(itemGroupsTable).where(and(eq(itemGroupsTable.id, Number(req.params.id)), eq(itemGroupsTable.companyId, cid)));
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// BRANDS (العلامات التجارية) — master CRUD.
+// OPTIONAL/additive. Brand is PRINT-ONLY on invoices; it never enters the
+// ZATCA UBL XML, invoice hash, QR, or ICV/PIH chain.
+// ═══════════════════════════════════════════════════════════════════
+const BRAND_TEXT_FIELDS = [
+  "code", "nameAr", "nameEn", "manufacturerName", "supplierName",
+  "countryOfOrigin", "logoUrl", "notes",
+] as const;
+function pickBrandBody(body: any) {
+  const out: Record<string, unknown> = {};
+  for (const f of BRAND_TEXT_FIELDS) {
+    if (body?.[f] !== undefined) out[f] = body[f] === "" ? null : body[f];
+  }
+  if (body?.status !== undefined) {
+    out.status = body.status === "inactive" ? "inactive" : "active";
+  }
+  return out;
+}
+
+router.get("/brands", async (req, res) => {
+  const cid = getCompanyId(req);
+  const rows = cid
+    ? await db.select().from(brandsTable).where(eq(brandsTable.companyId, cid)).orderBy(asc(brandsTable.code))
+    : await db.select().from(brandsTable).orderBy(asc(brandsTable.code));
+  res.json(rows);
+});
+
+router.post("/brands", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const { code, nameAr } = req.body ?? {};
+  if (!code || !nameAr) { res.status(400).json({ error: "كود واسم العلامة التجارية مطلوبان" }); return; }
+  const existing = await db.select().from(brandsTable).where(eq(brandsTable.companyId, cid));
+  if (existing.some(b => b.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لعلامة تجارية أخرى` }); return;
+  }
+  if (existing.some(b => b.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لعلامة تجارية أخرى` }); return;
+  }
+  try {
+    const [row] = await db.insert(brandsTable).values({ companyId: cid, code, nameAr, ...pickBrandBody(req.body) }).returning();
+    res.status(201).json(row);
+  } catch (err: any) {
+    if (err?.code === "23505") { res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل` }); return; }
+    throw err;
+  }
+});
+
+router.put("/brands/:id", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const { code, nameAr } = req.body ?? {};
+  const others = await db.select().from(brandsTable).where(eq(brandsTable.companyId, cid));
+  if (code && others.some(b => b.id !== id && b.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لعلامة تجارية أخرى` }); return;
+  }
+  if (nameAr && others.some(b => b.id !== id && b.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لعلامة تجارية أخرى` }); return;
+  }
+  const [row] = await db.update(brandsTable).set(pickBrandBody(req.body))
+    .where(and(eq(brandsTable.id, id), eq(brandsTable.companyId, cid))).returning();
+  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  res.json(row);
+});
+
+router.delete("/brands/:id", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  // item_brands rows cascade-delete via FK. sales_invoice_lines.brand_id has no
+  // FK (print-only snapshot), so historical invoices keep their brandName.
+  await db.delete(brandsTable).where(and(eq(brandsTable.id, id), eq(brandsTable.companyId, cid)));
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// ITEM ↔ BRAND links (سعر/باركود/رقم قطعة لكل علامة تجارية لصنف واحد)
+// Gated by the "items" module (same as the item form that hosts them).
+// ═══════════════════════════════════════════════════════════════════
+const ITEM_BRAND_TEXT_FIELDS = [
+  "barcode", "partNumber", "supplierCode", "purchaseUnit",
+  "countryOfOrigin", "warrantyPeriod", "notes",
+] as const;
+const ITEM_BRAND_NUM_FIELDS = [
+  "purchaseCost", "lastPurchaseCost", "avgCost",
+  "salePrice1", "salePrice2", "salePrice3", "minSalePrice", "profitMargin",
+] as const;
+function pickItemBrandBody(body: any) {
+  const out: Record<string, unknown> = {};
+  for (const f of ITEM_BRAND_TEXT_FIELDS) {
+    if (body?.[f] !== undefined) out[f] = body[f] === "" ? null : String(body[f]).slice(0, 1000);
+  }
+  for (const f of ITEM_BRAND_NUM_FIELDS) {
+    if (body?.[f] !== undefined) out[f] = (body[f] == null || body[f] === "") ? "0" : String(body[f]);
+  }
+  if (body?.status !== undefined) out.status = body.status === "inactive" ? "inactive" : "active";
+  return out;
+}
+
+router.get("/items/:id/brands", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const [own] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!own) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  const rows = await db.select({
+    id:              itemBrandsTable.id,
+    companyId:       itemBrandsTable.companyId,
+    itemId:          itemBrandsTable.itemId,
+    brandId:         itemBrandsTable.brandId,
+    barcode:         itemBrandsTable.barcode,
+    partNumber:      itemBrandsTable.partNumber,
+    supplierCode:    itemBrandsTable.supplierCode,
+    purchaseUnit:    itemBrandsTable.purchaseUnit,
+    purchaseCost:    itemBrandsTable.purchaseCost,
+    lastPurchaseCost:itemBrandsTable.lastPurchaseCost,
+    avgCost:         itemBrandsTable.avgCost,
+    salePrice1:      itemBrandsTable.salePrice1,
+    salePrice2:      itemBrandsTable.salePrice2,
+    salePrice3:      itemBrandsTable.salePrice3,
+    minSalePrice:    itemBrandsTable.minSalePrice,
+    profitMargin:    itemBrandsTable.profitMargin,
+    countryOfOrigin: itemBrandsTable.countryOfOrigin,
+    warrantyPeriod:  itemBrandsTable.warrantyPeriod,
+    status:          itemBrandsTable.status,
+    notes:           itemBrandsTable.notes,
+    createdAt:       itemBrandsTable.createdAt,
+    brandCode:       brandsTable.code,
+    brandNameAr:     brandsTable.nameAr,
+    brandNameEn:     brandsTable.nameEn,
+  })
+    .from(itemBrandsTable)
+    .leftJoin(brandsTable, eq(brandsTable.id, itemBrandsTable.brandId))
+    .where(and(eq(itemBrandsTable.itemId, id), eq(itemBrandsTable.companyId, cid)))
+    .orderBy(desc(itemBrandsTable.createdAt));
+  res.json(rows);
+});
+
+router.post("/items/:id/brands", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const bid = Number(req.body?.brandId);
+  if (!Number.isInteger(bid) || bid <= 0) { res.status(400).json({ error: "العلامة التجارية مطلوبة" }); return; }
+  const [[ownItem], [ownBrand]] = await Promise.all([
+    db.select({ id: itemsTable.id }).from(itemsTable).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))),
+    db.select({ id: brandsTable.id }).from(brandsTable).where(and(eq(brandsTable.id, bid), eq(brandsTable.companyId, cid))),
+  ]);
+  if (!ownItem)  { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  if (!ownBrand) { res.status(404).json({ error: "العلامة التجارية غير موجودة" }); return; }
+  const [dup] = await db.select({ id: itemBrandsTable.id }).from(itemBrandsTable)
+    .where(and(eq(itemBrandsTable.itemId, id), eq(itemBrandsTable.brandId, bid), eq(itemBrandsTable.companyId, cid)));
+  if (dup) { res.status(409).json({ error: "هذه العلامة التجارية مرتبطة بالفعل بالصنف" }); return; }
+  try {
+    const [row] = await db.insert(itemBrandsTable)
+      .values({ companyId: cid, itemId: id, brandId: bid, ...pickItemBrandBody(req.body) }).returning();
+    auditSubEntity(req, "item_brands", row.id, "create", null, row);
+    res.status(201).json(row);
+  } catch (err: any) {
+    if (err?.code === "23505") { res.status(409).json({ error: "هذه العلامة التجارية مرتبطة بالفعل بالصنف" }); return; }
+    throw err;
+  }
+});
+
+router.put("/items/:id/brands/:linkId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const linkId = Number(req.params.linkId);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(linkId) || linkId <= 0) {
+    res.status(400).json({ error: "معرّف غير صالح" }); return;
+  }
+  const [existing] = await db.select().from(itemBrandsTable)
+    .where(and(eq(itemBrandsTable.id, linkId), eq(itemBrandsTable.itemId, id), eq(itemBrandsTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "الارتباط غير موجود" }); return; }
+  const [row] = await db.update(itemBrandsTable).set(pickItemBrandBody(req.body))
+    .where(and(eq(itemBrandsTable.id, linkId), eq(itemBrandsTable.companyId, cid))).returning();
+  auditSubEntity(req, "item_brands", linkId, "update", existing, row);
+  res.json(row);
+});
+
+router.delete("/items/:id/brands/:linkId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const linkId = Number(req.params.linkId);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(linkId) || linkId <= 0) {
+    res.status(400).json({ error: "معرّف غير صالح" }); return;
+  }
+  const [existing] = await db.select().from(itemBrandsTable)
+    .where(and(eq(itemBrandsTable.id, linkId), eq(itemBrandsTable.itemId, id), eq(itemBrandsTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "الارتباط غير موجود" }); return; }
+  await db.delete(itemBrandsTable).where(and(eq(itemBrandsTable.id, linkId), eq(itemBrandsTable.companyId, cid)));
+  auditSubEntity(req, "item_brands", linkId, "delete", existing, null);
   res.json({ ok: true });
 });
 

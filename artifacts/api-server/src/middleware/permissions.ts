@@ -60,6 +60,10 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   pos: "pos",
   // Inventory
   items: "inventory_reports",
+  // Brands (العلامات التجارية) — own per-user permission key, rolls up to the
+  // existing inventory company toggle (no new company-level gate). Keep in
+  // sync with the frontend COMPANY_MODULE_GATE in companyModuleGate.ts.
+  brands: "inventory_reports",
   warehouses: "inventory_reports",
   stock_transfers: "inventory_reports",
   stock_adjustments: "inventory_reports",

@@ -256,6 +256,7 @@ import InventoryDashboard from "@/pages/inventory/InventoryDashboard";
 import WarehouseGroups from "@/pages/inventory/WarehouseGroups";
 import Warehouses from "@/pages/inventory/Warehouses";
 import ItemGroups from "@/pages/inventory/ItemGroups";
+import BrandManagement from "@/pages/inventory/BrandManagement";
 import Units from "@/pages/inventory/Units";
 import Items from "@/pages/inventory/Items";
 import Offers from "@/pages/inventory/Offers";
@@ -893,6 +894,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/warehouse-groups" module="warehouses"        component={WarehouseGroups} />}
             {!isSuperAdmin && <PermRoute path="/inventory/warehouses"       module="warehouses"        component={Warehouses} />}
             {!isSuperAdmin && <PermRoute path="/inventory/item-groups"      module="items"             component={ItemGroups} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/brands"           module="brands"            component={BrandManagement} />}
             {!isSuperAdmin && <PermRoute path="/inventory/units"            module="items"             component={Units} />}
             {!isSuperAdmin && <PermRoute path="/inventory/items"            module="items"             component={Items} />}
             {!isSuperAdmin && <PermRoute path="/inventory/items/new"        module="items" action="create" component={Items} />}

@@ -459,7 +459,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
-        <td>${l.itemName ?? l.itemCode ?? "—"}</td>
+        <td>${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? ` — ${l.brandName}` : ""}</td>
         <td class="mono">${Math.round(Number(l.qty) || 0)}</td>
         ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
@@ -892,7 +892,7 @@ function template6(d: PrintData): string {
     const tot = sub + vat;
     return `
       <tr>
-        <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}</td>
+        <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? ` — ${l.brandName}` : ""}</td>
       </tr>
       <tr>
         <td class="mono" style="padding-bottom:4px;border-bottom:1px dashed #999;">
@@ -1020,7 +1020,7 @@ function template7(d: PrintData): string {
     return `
       <div class="line ${i % 2 === 0 ? "alt" : ""}">
         <div class="line-top">
-          <span class="line-name">${l.itemName ?? l.itemCode ?? "—"}</span>
+          <span class="line-name">${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? ` — ${l.brandName}` : ""}</span>
           <span class="mono line-tot">${fmt(tot)}</span>
         </div>
         <div class="line-sub mono">
@@ -1856,10 +1856,11 @@ function template14(d: PrintData): string {
   // Item display name — English lookup by Arabic name when printing in EN.
   const itemDisplayName = (l: any): string => {
     const arName = (l.itemName ?? l.itemCode ?? "").toString();
-    if (!isEn) return arName || L.none;
+    const brand = l.brandName ? ` — ${l.brandName}` : "";
+    if (!isEn) return (arName || L.none) + brand;
     const key = arName.trim().toLowerCase();
     const en = key ? enNames.get(key) : undefined;
-    return en || arName || L.none;
+    return (en || arName || L.none) + brand;
   };
   // Unit-of-measure display — translated to English when printing in EN. The
   // line's `unit` is the Arabic name (or sometimes the UN/CEFACT code); fall

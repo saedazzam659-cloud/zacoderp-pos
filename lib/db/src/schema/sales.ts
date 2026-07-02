@@ -119,6 +119,13 @@ export const salesInvoiceLinesTable = pgTable("sales_invoice_lines", {
   // Per-line promotion that influenced this line's price/discount
   // (line_pricing or buy_x_get_y). NULL when no offer applied to this line.
   appliedOfferId: integer("applied_offer_id").references(() => offersTable.id, { onDelete: "set null" }),
+  // ─── Brand (العلامة التجارية) — OPTIONAL, PRINT-ONLY ───────────────────────
+  // The selected brand for this line. `brandId` links to brands.id purely so
+  // the UI can re-load the correct per-brand price/barcode at edit time.
+  // `brandName` is a display-only snapshot shown on the printed invoice.
+  // NEITHER field enters the ZATCA UBL XML, invoice hash, QR, or ICV/PIH chain.
+  brandId:     integer("brand_id"),
+  brandName:   text("brand_name"),
 });
 
 // ─── Sales Returns ───────────────────────────────────────────────────────────
