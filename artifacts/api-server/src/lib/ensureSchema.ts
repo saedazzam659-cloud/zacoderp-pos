@@ -503,7 +503,7 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "create brands table",
       sql:   `CREATE TABLE IF NOT EXISTS brands (
         id                 SERIAL PRIMARY KEY,
-        company_id         INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        company_id         INTEGER NOT NULL,
         code               TEXT NOT NULL,
         name_ar            TEXT NOT NULL,
         name_en            TEXT,
@@ -522,9 +522,9 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "create item_brands table",
       sql:   `CREATE TABLE IF NOT EXISTS item_brands (
         id                  SERIAL PRIMARY KEY,
-        company_id          INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-        item_id             INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-        brand_id            INTEGER NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+        company_id          INTEGER NOT NULL,
+        item_id             INTEGER NOT NULL,
+        brand_id            INTEGER NOT NULL,
         barcode             TEXT,
         part_number         TEXT,
         supplier_code       TEXT,

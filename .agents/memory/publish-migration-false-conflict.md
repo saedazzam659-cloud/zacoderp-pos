@@ -34,3 +34,21 @@ prod directly.
 - When the diff is provably additive/cosmetic but Replit still hard-pauses offering only
   copy-or-cancel, it's a platform validator false-positive → escalate to Replit support with the
   proof; do not force it through the destructive copy option.
+
+**New-table FK to a populated table is a likely hard-block trigger:** Replit's publish validator
+introspects the two LIVE databases (dev vs prod), so no schema-source edit changes the diff by
+itself. A brand-new additive table whose CREATE carries FOREIGN KEYs pointing at big existing
+tables (e.g. `item_brands.item_id → items`, `company_id → companies`) can be flagged as
+"conflict with existing production data" even though the new table is empty and cannot lose data.
+The block appears the FIRST publish after such a table is merged (matches "only started after
+feature X").
+- Code-side workaround (worked here): drop the DB-level FK constraints from the NEW tables —
+  keep the plain `integer` columns, keep app-layer integrity (e.g. validateBrandLinesBelongToCompany),
+  and keep unique/normal indexes. Remove `.references()` in the Drizzle schema AND the `REFERENCES`
+  clause in the ensureSchema CREATE-TABLE DDL so the two stay in lockstep, THEN
+  `ALTER TABLE ... DROP CONSTRAINT IF EXISTS <t>_<col>_fkey` on the DEV db (dev only, never prod)
+  so the live dev↔prod diff becomes purely "create empty table + add nullable columns".
+- Tradeoff: you lose DB-level cascade delete / referential enforcement on those tables; only do
+  this for optional/additive features where app-layer validation already guards integrity.
+- Nullable columns added to an existing populated table (e.g. `sales_invoice_lines.brand_id`) are
+  backwards-compatible and normally NOT the trigger; leave them.

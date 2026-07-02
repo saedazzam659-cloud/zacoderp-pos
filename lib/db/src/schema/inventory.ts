@@ -76,7 +76,11 @@ export const itemGroupsTable = pgTable("item_groups", {
 // XML mandatory fields, hashing, QR, or ICV/PIH chain.
 export const brandsTable = pgTable("brands", {
   id:               serial("id").primaryKey(),
-  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  // NOTE: DB-level FK to companies intentionally omitted. Referential integrity
+  // is enforced at the app layer (validateBrandLinesBelongToCompany). This keeps
+  // the Replit publish diff purely additive (new empty table, no constraint that
+  // points at existing production data) and avoids a false migration "conflict".
+  companyId:        integer("company_id").notNull(),
   code:             text("code").notNull(),
   nameAr:           text("name_ar").notNull(),
   nameEn:           text("name_en"),
@@ -92,9 +96,12 @@ export const brandsTable = pgTable("brands", {
 // ─── Item ↔ Brand links (سعر/باركود/رقم قطعة لكل علامة تجارية) ──────────────────
 export const itemBrandsTable = pgTable("item_brands", {
   id:               serial("id").primaryKey(),
-  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
-  itemId:           integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
-  brandId:          integer("brand_id").notNull().references(() => brandsTable.id, { onDelete: "cascade" }),
+  // NOTE: DB-level FKs to companies/items/brands intentionally omitted (app-layer
+  // integrity via validateBrandLinesBelongToCompany) to keep the publish diff
+  // additive-only and avoid a false migration "conflict". ensureSchema DDL matches.
+  companyId:        integer("company_id").notNull(),
+  itemId:           integer("item_id").notNull(),
+  brandId:          integer("brand_id").notNull(),
   barcode:          text("barcode"),
   partNumber:       text("part_number"),
   supplierCode:     text("supplier_code"),

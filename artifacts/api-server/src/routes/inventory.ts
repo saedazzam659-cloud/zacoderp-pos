@@ -448,8 +448,10 @@ router.delete("/brands/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
-  // item_brands rows cascade-delete via FK. sales_invoice_lines.brand_id has no
-  // FK (print-only snapshot), so historical invoices keep their brandName.
+  // item_brands has NO DB-level FK to brands (removed to keep the publish diff
+  // additive), so its rows must be cleaned up explicitly here. sales_invoice_lines
+  // .brand_id is a print-only snapshot (no FK) → historical invoices keep brandName.
+  await db.delete(itemBrandsTable).where(and(eq(itemBrandsTable.brandId, id), eq(itemBrandsTable.companyId, cid)));
   await db.delete(brandsTable).where(and(eq(brandsTable.id, id), eq(brandsTable.companyId, cid)));
   res.json({ ok: true });
 });
@@ -1035,6 +1037,9 @@ router.delete("/items/:id", async (req, res) => {
   const [existing] = await db.select().from(itemsTable)
     .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  // item_brands has NO DB-level FK to items (removed to keep the publish diff
+  // additive), so its links must be cleaned up explicitly before the item goes.
+  await db.delete(itemBrandsTable).where(and(eq(itemBrandsTable.itemId, id), eq(itemBrandsTable.companyId, cid)));
   await db.delete(itemsTable).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
   void writeAudit({
     userId:     (req as any).authUser?.id ?? null,
