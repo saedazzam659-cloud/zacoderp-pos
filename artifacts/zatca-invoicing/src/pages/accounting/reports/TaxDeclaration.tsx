@@ -16,8 +16,11 @@ import {
   FileText, Printer, CalendarRange, Building2, AlertCircle,
   Hash, BadgePercent, ReceiptText, ArrowDownToLine, ArrowUpFromLine,
   Scale, BookOpen, Search, Sparkles, History, ExternalLink, Eye, Loader2,
-  FileSpreadsheet, FileDown,
+  FileSpreadsheet, FileDown, MoreVertical,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
+} from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
@@ -30,6 +33,26 @@ function escapeHtml(s: string): string {
 }
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+// One labeled key/value line inside the read-only supplier-tax ⋮ popover
+// shown on each manual VAT-adjustment row of the tax-declaration report.
+function SupRow({ label, value, mono }: { label: string; value: string | null; mono?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-muted-foreground shrink-0">{label}</span>
+      <span
+        dir={mono ? "ltr" : undefined}
+        className={cn(
+          "text-right font-medium break-all",
+          mono && "font-mono",
+          !value && "text-muted-foreground font-normal",
+        )}
+      >
+        {value || "—"}
+      </span>
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Number / date helpers — kept local so the page is self-contained and
@@ -120,6 +143,13 @@ interface VATData {
       id: number; docNumber: string | null; entryDate: string;
       description: string | null; entryType: string;
       outputVat: number; inputVat: number;
+      // Supplier tax metadata entered via the ⋮ menu on the JE's VAT line(s).
+      supplierTax?: Array<{
+        supplierName: string | null;
+        supplierVatNumber: string | null;
+        supplierInvoiceNumber: string | null;
+        supplierInvoiceDate: string | null;
+      }>;
     }>;
   };
   // Per-line supplier tax metadata entered via the ⋮ supplier-details menu on
@@ -614,6 +644,13 @@ export default function TaxDeclaration() {
   function handleReportExcel() {
     if (!data) return;
     const r2 = (n: number) => Number((n ?? 0).toFixed(2));
+    const supSummary = (blocks?: Array<{ supplierName: string | null; supplierVatNumber: string | null; supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null }>) =>
+      (blocks ?? []).map(s => [
+        s.supplierName,
+        s.supplierVatNumber && `${t("supplierTaxDialog.vatNumber", "الرقم الضريبي للمورد")}: ${s.supplierVatNumber}`,
+        s.supplierInvoiceNumber && `${t("supplierTaxDialog.invoiceNumber", "رقم الفاتورة")}: ${s.supplierInvoiceNumber}`,
+        s.supplierInvoiceDate && `${t("supplierTaxDialog.invoiceDate", "تاريخ الفاتورة")}: ${s.supplierInvoiceDate}`,
+      ].filter(Boolean).join(" — ")).filter(Boolean).join(" | ");
     const aoa: (string | number)[][] = [];
     aoa.push([t("taxDeclaration.title")]);
     aoa.push([companyName]);
@@ -639,11 +676,11 @@ export default function TaxDeclaration() {
     if (data.journalAdjustments && data.journalAdjustments.entryCount > 0) {
       aoa.push([]);
       aoa.push([t("taxDeclaration.journalAdjustments")]);
-      aoa.push([t("taxDeclaration.jeDate"), t("taxDeclaration.jeDoc"), t("taxDeclaration.description"), t("taxDeclaration.outputVat"), t("taxDeclaration.inputVat")]);
+      aoa.push([t("taxDeclaration.jeDate"), t("taxDeclaration.jeDoc"), t("taxDeclaration.description"), t("taxDeclaration.outputVat"), t("taxDeclaration.inputVat"), t("taxDeclaration.supplierTaxColumn", "بيانات المورد الضريبية")]);
       for (const e of data.journalAdjustments.entries) {
-        aoa.push([e.entryDate, e.docNumber ?? `#${e.id}`, e.description ?? "", r2(e.outputVat), r2(e.inputVat)]);
+        aoa.push([e.entryDate, e.docNumber ?? `#${e.id}`, e.description ?? "", r2(e.outputVat), r2(e.inputVat), supSummary(e.supplierTax)]);
       }
-      aoa.push([t("taxDeclaration.totalAdjustments"), "", "", r2(data.journalAdjustments.outputVat), r2(data.journalAdjustments.inputVat)]);
+      aoa.push([t("taxDeclaration.totalAdjustments"), "", "", r2(data.journalAdjustments.outputVat), r2(data.journalAdjustments.inputVat), ""]);
     }
     aoa.push([]);
     // Net VAT
@@ -653,7 +690,7 @@ export default function TaxDeclaration() {
     aoa.push([netPositive ? t("taxDeclaration.netDue") : t("taxDeclaration.refundDue"), r2(Math.abs(netVat))]);
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = [{ wch: 42 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 }];
+    ws["!cols"] = [{ wch: 42 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 40 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "الإقرار الضريبي");
     XLSX.writeFile(wb, `tax-declaration-${data.period.from}_${data.period.to}.xlsx`);
@@ -668,6 +705,13 @@ export default function TaxDeclaration() {
         <td class="num">${vat !== null ? fmtNum(vat) : "—"}</td>
       </tr>`;
     const adj = data.journalAdjustments;
+    const supSummary = (blocks?: Array<{ supplierName: string | null; supplierVatNumber: string | null; supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null }>) =>
+      (blocks ?? []).map(s => [
+        s.supplierName,
+        s.supplierVatNumber && `${t("supplierTaxDialog.vatNumber", "الرقم الضريبي للمورد")}: ${s.supplierVatNumber}`,
+        s.supplierInvoiceNumber && `${t("supplierTaxDialog.invoiceNumber", "رقم الفاتورة")}: ${s.supplierInvoiceNumber}`,
+        s.supplierInvoiceDate && `${t("supplierTaxDialog.invoiceDate", "تاريخ الفاتورة")}: ${s.supplierInvoiceDate}`,
+      ].filter(Boolean).join(" — ")).filter(Boolean).join(" | ");
     const adjSection = adj && adj.entryCount > 0 ? `
       <h2>${escapeHtml(t("taxDeclaration.journalAdjustments"))}</h2>
       <table>
@@ -677,6 +721,7 @@ export default function TaxDeclaration() {
           <th>${escapeHtml(t("taxDeclaration.description"))}</th>
           <th class="num">${escapeHtml(t("taxDeclaration.outputVat"))}</th>
           <th class="num">${escapeHtml(t("taxDeclaration.inputVat"))}</th>
+          <th>${escapeHtml(t("taxDeclaration.supplierTaxColumn", "بيانات المورد الضريبية"))}</th>
         </tr></thead>
         <tbody>
           ${adj.entries.map(e => `<tr>
@@ -685,11 +730,13 @@ export default function TaxDeclaration() {
             <td>${escapeHtml(e.description ?? "—")}</td>
             <td class="num">${Math.abs(e.outputVat) > 0.005 ? fmtNum(e.outputVat) : "—"}</td>
             <td class="num">${Math.abs(e.inputVat) > 0.005 ? fmtNum(e.inputVat) : "—"}</td>
+            <td>${escapeHtml(supSummary(e.supplierTax) || "—")}</td>
           </tr>`).join("")}
           <tr class="tot">
             <td colspan="3">${escapeHtml(t("taxDeclaration.totalAdjustments"))}</td>
             <td class="num">${fmtNum(adj.outputVat)}</td>
             <td class="num">${fmtNum(adj.inputVat)}</td>
+            <td></td>
           </tr>
         </tbody>
       </table>` : "";
@@ -1069,7 +1116,7 @@ export default function TaxDeclaration() {
                       <th className="px-5 py-2.5 text-right">{t("taxDeclaration.description")}</th>
                       <th className="px-5 py-2.5 text-left w-40 border-r border-border/50">{t("taxDeclaration.outputVat")}</th>
                       <th className="px-5 py-2.5 text-left w-40">{t("taxDeclaration.inputVat")}</th>
-                      <th className="w-12 px-2 py-2.5 no-print"></th>
+                      <th className="w-20 px-2 py-2.5 no-print"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1092,14 +1139,46 @@ export default function TaxDeclaration() {
                         <td className="px-5 py-3 text-left tabular-nums font-mono">
                           {Math.abs(e.inputVat) > 0.005 ? fmtNum(e.inputVat) : <span className="text-muted-foreground">—</span>}
                         </td>
-                        <td className="px-2 py-3 text-center no-print">
-                          <Link
-                            href={`/accounting/journals/${e.id}`}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded text-primary/60 hover:text-primary hover:bg-primary/10 transition-colors cursor-pointer"
-                            title="فتح القيد المحاسبي"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </Link>
+                        <td className="px-2 py-3 no-print">
+                          <div className="flex items-center justify-center gap-0.5">
+                            {e.supplierTax && e.supplierTax.length > 0 && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+                                    title={t("taxDeclaration.supplierTaxTitle", "بيانات المورد الضريبية")}
+                                    data-testid={`adj-supplier-${e.id}`}
+                                  >
+                                    <MoreVertical className="h-4 w-4" />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-72 p-0">
+                                  <div className="px-3 py-2 border-b bg-muted/40 text-xs font-semibold flex items-center gap-1.5">
+                                    <FileText className="h-3.5 w-3.5 text-primary" />
+                                    {t("taxDeclaration.supplierTaxTitle", "بيانات المورد الضريبية")}
+                                  </div>
+                                  <div className="max-h-72 overflow-y-auto divide-y divide-border/60">
+                                    {e.supplierTax.map((s, i) => (
+                                      <div key={i} className="px-3 py-2.5 space-y-1.5 text-xs">
+                                        <SupRow label={t("supplierTaxDialog.supplierName", "اسم المورد")} value={s.supplierName} />
+                                        <SupRow label={t("supplierTaxDialog.vatNumber", "الرقم الضريبي للمورد")} value={s.supplierVatNumber} mono />
+                                        <SupRow label={t("supplierTaxDialog.invoiceNumber", "رقم الفاتورة")} value={s.supplierInvoiceNumber} mono />
+                                        <SupRow label={t("supplierTaxDialog.invoiceDate", "تاريخ الفاتورة")} value={s.supplierInvoiceDate ? fmtDate(s.supplierInvoiceDate) : null} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                            <Link
+                              href={`/accounting/journals/${e.id}`}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded text-primary/60 hover:text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+                              title="فتح القيد المحاسبي"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     ))}

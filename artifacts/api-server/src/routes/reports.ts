@@ -333,6 +333,12 @@ router.get("/vat-declaration", async (req, res) => {
   // (recoverable), a credit reduces it.
   const { outputId: vatOutAcctId, inputId: vatInAcctId } = await resolveVatAccountIds(companyId);
 
+  type AdjustmentSupplierTax = {
+    supplierName: string | null;
+    supplierVatNumber: string | null;
+    supplierInvoiceNumber: string | null;
+    supplierInvoiceDate: string | null;
+  };
   type AdjustmentEntry = {
     id: number;
     docNumber: string | null;
@@ -341,6 +347,10 @@ router.get("/vat-declaration", async (req, res) => {
     entryType: string;
     outputVat: number;
     inputVat:  number;
+    // Supplier tax metadata entered via the ⋮ menu on the JE's VAT line(s).
+    // Surfaced so the accountant sees the supplier behind each manual VAT
+    // adjustment straight from the report's red "تسويات يدوية" section.
+    supplierTax: AdjustmentSupplierTax[];
   };
   const journalAdjustments: {
     outputVat: number;
@@ -387,7 +397,7 @@ router.get("/vat-declaration", async (req, res) => {
         agg = {
           id: r.id, docNumber: r.docNumber, entryDate: r.entryDate,
           description: r.description, entryType: r.entryType,
-          outputVat: 0, inputVat: 0,
+          outputVat: 0, inputVat: 0, supplierTax: [],
         };
         byEntry.set(r.id, agg);
       }
@@ -403,14 +413,24 @@ router.get("/vat-declaration", async (req, res) => {
       }
       // Surface manual-JE supplier tax metadata on the VAT lines only.
       if ((isVatOut || isVatIn) && hasSup(r)) {
-        supplierTaxLines.push({
-          source: isVatOut ? "journal_output" : "journal_input",
-          docNumber: r.docNumber ?? null,
-          date: r.entryDate,
+        const block: AdjustmentSupplierTax = {
           supplierName:          (r.supplierName ?? "").trim() || null,
           supplierVatNumber:     (r.supplierVatNumber ?? "").trim() || null,
           supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
           supplierInvoiceDate:   (r.supplierInvoiceDate ?? "").trim() || null,
+        };
+        // Attach to the aggregated entry (dedup — a JE may repeat the same
+        // supplier across its output & input VAT lines).
+        const blockKey = `${block.supplierName}|${block.supplierVatNumber}|${block.supplierInvoiceNumber}|${block.supplierInvoiceDate}`;
+        if (!agg.supplierTax.some(s =>
+          `${s.supplierName}|${s.supplierVatNumber}|${s.supplierInvoiceNumber}|${s.supplierInvoiceDate}` === blockKey)) {
+          agg.supplierTax.push(block);
+        }
+        supplierTaxLines.push({
+          source: isVatOut ? "journal_output" : "journal_input",
+          docNumber: r.docNumber ?? null,
+          date: r.entryDate,
+          ...block,
           base: 0,
           vat:  isVatOut ? (credit - debit) : (debit - credit),
         });

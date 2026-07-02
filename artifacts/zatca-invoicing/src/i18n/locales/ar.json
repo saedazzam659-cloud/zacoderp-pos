@@ -3381,6 +3381,8 @@
     "netVatSection": "صافي الضريبة",
     "journalAdjustments": "تسويات يدوية على ضريبة القيمة المضافة (قيود)",
     "totalAdjustments": "إجمالي التسويات",
+    "supplierTaxColumn": "بيانات المورد الضريبية",
+    "supplierTaxTitle": "بيانات المورد الضريبية",
     "description": "البيان",
     "taxableBase": "الأساس الخاضع للضريبة",
     "vatAmount": "مبلغ الضريبة",

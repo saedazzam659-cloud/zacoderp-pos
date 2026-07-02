@@ -3378,6 +3378,8 @@
     "netVatSection": "Net VAT",
     "journalAdjustments": "Manual VAT Adjustments (Journal Entries)",
     "totalAdjustments": "Total Adjustments",
+    "supplierTaxColumn": "Supplier Tax Details",
+    "supplierTaxTitle": "Supplier Tax Details",
     "description": "Description",
     "taxableBase": "Taxable Base",
     "vatAmount": "VAT Amount",
