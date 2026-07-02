@@ -472,6 +472,30 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "company_domains add is_main",
       sql:   `ALTER TABLE company_domains ADD COLUMN IF NOT EXISTS is_main BOOLEAN NOT NULL DEFAULT FALSE` },
 
+    // ─── Item Usage Control (التحكم في توجيه الصنف) ───────────────────────────
+    // Per-item × per-screen routing rules. Absence of a row = "allowed" (the
+    // default). Only NON-default rows are persisted to stay lean at scale.
+    // Created here because ensureColumns only ALTERs existing tables.
+    { label: "create item_usage_controls table",
+      sql:   `CREATE TABLE IF NOT EXISTS item_usage_controls (
+        id                 SERIAL PRIMARY KEY,
+        company_id         INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        item_id            INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        screen_key         TEXT NOT NULL,
+        mode               TEXT NOT NULL DEFAULT 'allowed',
+        reason             TEXT,
+        created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "item_usage_controls_item_screen_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS item_usage_controls_item_screen_uniq ON item_usage_controls (company_id, item_id, screen_key)` },
+    { label: "item_usage_controls_company_item_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS item_usage_controls_company_item_idx ON item_usage_controls (company_id, item_id)` },
+    { label: "item_usage_controls_company_screen_mode_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS item_usage_controls_company_screen_mode_idx ON item_usage_controls (company_id, screen_key, mode)` },
+
     { label: "create store_products table",
       sql:   `CREATE TABLE IF NOT EXISTS store_products (
         id              SERIAL PRIMARY KEY,

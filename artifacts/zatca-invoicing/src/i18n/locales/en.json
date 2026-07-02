@@ -1983,6 +1983,18 @@
       "inventoryAndWarehouses": "Inventory & Warehouses",
       "additionalData": "Additional Data",
       "usageControlTab": "Item Usage Control",
+      "usage": {
+        "title": "Item Usage Control",
+        "subtitle": "Choose where this item appears and can be used across the system screens. Default: allowed everywhere.",
+        "restrictedCount": "{{count}} restricted screen(s)",
+        "allowAll": "Allow all",
+        "blockAll": "Block all",
+        "resetDefault": "Reset to default",
+        "applyTemplate": "Apply template…",
+        "mode": "Mode",
+        "reasonPlaceholder": "Restriction reason (optional)",
+        "defaultNote": "Screens not listed stay \"allowed\" by default. Only non-default rules are saved."
+      },
       "notesTab": "Notes",
       "mainImage": "Main Image",
       "quickInfo": "Quick Info",

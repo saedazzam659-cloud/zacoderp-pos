@@ -14,6 +14,7 @@ import {
   itemDocumentsTable,
   itemSuppliersTable,
   itemBundleComponentsTable,
+  itemUsageControlsTable,
   suppliersTable,
   // Batch 8 — final 5 PRO Extensions
   itemCurrencyPricesTable,
@@ -29,6 +30,7 @@ import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { pathRbac, writeAudit } from "../middleware/permissions.js";
+import { getItemUsageControls, normalizeUsageMode, isValidScreenKey, DEFAULT_USAGE_MODE } from "../lib/itemUsageControl.js";
 import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -3701,6 +3703,78 @@ router.get("/reports/item-sales-valuation", async (req, res) => {
   }).sort((a, b) => b.netValue - a.netValue);
 
   res.json(out);
+});
+
+// ─── Item Usage Control (التحكم في توجيه الصنف) ──────────────────────────────
+// Per-item × per-screen routing rules, gated by the `/items` pathRbac entry
+// (GET → view, PUT → edit). Absence of a row = allowed; only NON-default rows
+// are persisted. PUT is a full-set replace with a before/after audit trail.
+router.get("/items/:id/usage-controls", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف صنف غير صالح" }); return; }
+  const [item] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).limit(1);
+  if (!item) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  const map = await getItemUsageControls(cid, id);
+  res.json(Object.values(map));
+});
+
+router.put("/items/:id/usage-controls", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف صنف غير صالح" }); return; }
+  const [item] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).limit(1);
+  if (!item) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  const raw = Array.isArray(req.body?.controls) ? req.body.controls
+            : Array.isArray(req.body) ? req.body : null;
+  if (!raw) { res.status(400).json({ error: "قائمة الإعدادات مطلوبة" }); return; }
+  // Normalize: dedupe by screenKey, drop invalid keys, keep only NON-default rows.
+  const seen = new Set<string>();
+  const rows: { screenKey: string; mode: string; reason: string | null }[] = [];
+  for (const c of raw) {
+    const screenKey = String(c?.screenKey ?? "").trim();
+    if (!isValidScreenKey(screenKey) || seen.has(screenKey)) continue;
+    const mode = normalizeUsageMode(c?.mode);
+    // Persist ONLY non-default rows. A default ("allowed") row carries no rule,
+    // so it is never stored — even if a reason was supplied (reason on a default
+    // row is meaningless and would diverge from getScreenModesForItems's filter).
+    if (mode === DEFAULT_USAGE_MODE) continue;
+    const reason = c?.reason != null && String(c.reason).trim()
+      ? String(c.reason).trim().slice(0, 300) : null;
+    seen.add(screenKey);
+    rows.push({ screenKey, mode, reason });
+  }
+  const before = await getItemUsageControls(cid, id);
+  await db.transaction(async (tx) => {
+    await tx.delete(itemUsageControlsTable)
+      .where(and(eq(itemUsageControlsTable.companyId, cid), eq(itemUsageControlsTable.itemId, id)));
+    if (rows.length) {
+      await tx.insert(itemUsageControlsTable).values(rows.map(r => ({
+        companyId: cid, itemId: id, screenKey: r.screenKey, mode: r.mode, reason: r.reason,
+        createdByUserId: req.authUser?.id ?? null, updatedByUserId: req.authUser?.id ?? null,
+      })));
+    }
+  });
+  const after = await getItemUsageControls(cid, id);
+  void writeAudit({
+    userId:     req.authUser?.id ?? null,
+    username:   req.authUser?.username ?? null,
+    role:       req.authUser?.role ?? null,
+    companyId:  cid,
+    module:     "items",
+    action:     "usage_control_update",
+    method:     req.method,
+    path:       req.originalUrl ?? req.path,
+    entityType: "items",
+    entityId:   String(id),
+    statusCode: 200,
+    ip:         ipFromReq(req),
+    userAgent:  req.get("user-agent")?.slice(0, 256) ?? null,
+    metadata:   { before: Object.values(before), after: Object.values(after) },
+  });
+  res.json(Object.values(after));
 });
 
 export default router;

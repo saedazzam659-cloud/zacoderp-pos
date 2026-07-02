@@ -105,6 +105,203 @@ function tagsToArray(v: unknown): string[] {
 }
 
 // ─── Inline chip-style tags input ────────────────────────────────────────────
+// ─── Item Usage Control (التحكم في توجيه الصنف) — Phase أ ────────────────────
+// The screen registry is data-driven: a NEW screen is a single array entry, no
+// redesign (matches the spec's extensibility goal). Labels are bilingual inline
+// to avoid bloating the i18n bundle with ~40 screen keys. The DEFAULT for every
+// screen is "allowed"; only non-default rules are kept in state and persisted.
+type UsageMode = "allowed" | "hidden" | "readonly" | "requires_approval" | "requires_permission";
+interface UsageCtl { mode: UsageMode; reason: string }
+type UsageMap = Record<string, UsageCtl>;
+
+const USAGE_MODE_OPTS: { value: UsageMode; ar: string; en: string }[] = [
+  { value: "allowed",             ar: "مسموح",            en: "Allowed" },
+  { value: "hidden",              ar: "مخفي",             en: "Hidden" },
+  { value: "readonly",            ar: "للقراءة فقط",       en: "Read-only" },
+  { value: "requires_approval",   ar: "يتطلب موافقة",     en: "Requires approval" },
+  { value: "requires_permission", ar: "يتطلب صلاحية خاصة", en: "Requires permission" },
+];
+
+const USAGE_SCREEN_GROUPS: { key: string; ar: string; en: string; screens: { key: string; ar: string; en: string }[] }[] = [
+  { key: "purchases", ar: "المشتريات", en: "Purchases", screens: [
+    { key: "purchase_invoices", ar: "فواتير المشتريات",   en: "Purchase Invoices" },
+    { key: "purchase_returns",  ar: "مرتجعات المشتريات",  en: "Purchase Returns" },
+    { key: "purchase_orders",   ar: "أوامر الشراء",       en: "Purchase Orders" },
+    { key: "purchase_requests", ar: "طلبات الشراء",       en: "Purchase Requests" },
+    { key: "supplier_quotes",   ar: "عروض أسعار الموردين", en: "Supplier Quotations" },
+  ]},
+  { key: "sales", ar: "المبيعات", en: "Sales", screens: [
+    { key: "sales_quotations", ar: "عروض الأسعار",      en: "Quotations" },
+    { key: "sales_orders",     ar: "أوامر البيع",       en: "Sales Orders" },
+    { key: "sales_invoices",   ar: "فواتير المبيعات",   en: "Sales Invoices" },
+    { key: "sales_returns",    ar: "مرتجعات المبيعات",  en: "Sales Returns" },
+    { key: "pos",              ar: "نقاط البيع",        en: "POS" },
+    { key: "customer_requests", ar: "طلبات العملاء",    en: "Customer Requests" },
+  ]},
+  { key: "warehouses", ar: "المخازن", en: "Warehouses", screens: [
+    { key: "stock_in",       ar: "إذن إضافة",     en: "Goods Receipt" },
+    { key: "stock_out",      ar: "إذن صرف",       en: "Goods Issue" },
+    { key: "stock_transfer", ar: "تحويل المخازن", en: "Stock Transfer" },
+    { key: "stock_count",    ar: "الجرد",         en: "Stock Count" },
+    { key: "stock_adjust",   ar: "التسويات",      en: "Adjustments" },
+    { key: "assembly",       ar: "التجميع",       en: "Assembly" },
+    { key: "disassembly",    ar: "التفكيك",       en: "Disassembly" },
+  ]},
+  { key: "manufacturing", ar: "التصنيع", en: "Manufacturing", screens: [
+    { key: "production_orders", ar: "أوامر الإنتاج",       en: "Production Orders" },
+    { key: "raw_consumption",   ar: "استهلاك المواد الخام", en: "Raw Consumption" },
+    { key: "finished_goods",    ar: "المنتجات النهائية",   en: "Finished Goods" },
+  ]},
+  { key: "maintenance", ar: "الصيانة", en: "Maintenance", screens: [
+    { key: "maintenance_orders", ar: "أوامر الصيانة", en: "Maintenance Orders" },
+    { key: "spare_parts",        ar: "قطع الغيار",    en: "Spare Parts" },
+  ]},
+  { key: "rental", ar: "التأجير", en: "Rental", screens: [
+    { key: "rental_contracts", ar: "عقود التأجير",   en: "Rental Contracts" },
+    { key: "rental_delivery",  ar: "تسليم الأصناف",  en: "Item Delivery" },
+    { key: "rental_return",    ar: "استرجاع الأصناف", en: "Item Return" },
+  ]},
+  { key: "projects", ar: "المشاريع", en: "Projects", screens: [
+    { key: "project_issue",  ar: "صرف مواد المشروع", en: "Project Issue" },
+    { key: "project_return", ar: "مرتجع المشروع",    en: "Project Return" },
+  ]},
+  { key: "ecommerce", ar: "التجارة الإلكترونية", en: "E-commerce", screens: [
+    { key: "online_store", ar: "المتجر الإلكتروني", en: "Online Store" },
+    { key: "mobile_app",   ar: "تطبيق الهاتف",     en: "Mobile App" },
+    { key: "online_sales", ar: "البيع عبر الإنترنت", en: "Online Sales" },
+  ]},
+  { key: "customer_service", ar: "خدمة العملاء", en: "Customer Service", screens: [
+    { key: "warranty",    ar: "الضمان",            en: "Warranty" },
+    { key: "after_sales", ar: "خدمات ما بعد البيع", en: "After-sales Services" },
+  ]},
+];
+
+const ALL_USAGE_SCREEN_KEYS = USAGE_SCREEN_GROUPS.flatMap(g => g.screens.map(s => s.key));
+
+const USAGE_REASON_PRESETS = [
+  { ar: "شراء فقط",        en: "Purchase only" },
+  { ar: "بيع فقط",         en: "Sale only" },
+  { ar: "مادة خام",        en: "Raw material" },
+  { ar: "منتج نهائي",      en: "Finished product" },
+  { ar: "موقوف مؤقتًا",    en: "Temporarily suspended" },
+  { ar: "خاص بالمشروعات",  en: "Projects only" },
+  { ar: "خاص بالصيانة",    en: "Maintenance only" },
+];
+
+// Templates list the GROUP keys to HIDE; every other screen stays default-allowed.
+const USAGE_TEMPLATES: { key: string; ar: string; en: string; hideGroups: string[]; reasonAr: string; reasonEn: string }[] = [
+  { key: "purchase_only",    ar: "شراء فقط",   en: "Purchase only",    hideGroups: ["sales", "ecommerce"],                                          reasonAr: "شراء فقط",    reasonEn: "Purchase only" },
+  { key: "sale_only",        ar: "بيع فقط",    en: "Sale only",        hideGroups: ["purchases", "manufacturing"],                                  reasonAr: "بيع فقط",     reasonEn: "Sale only" },
+  { key: "raw_material",     ar: "مادة خام",   en: "Raw material",     hideGroups: ["sales", "ecommerce"],                                          reasonAr: "مادة خام",    reasonEn: "Raw material" },
+  { key: "finished_product", ar: "منتج نهائي", en: "Finished product", hideGroups: ["purchases", "manufacturing"],                                  reasonAr: "منتج نهائي",  reasonEn: "Finished product" },
+  { key: "maintenance",      ar: "صيانة",      en: "Maintenance",      hideGroups: ["sales", "purchases", "ecommerce", "manufacturing", "projects", "rental"], reasonAr: "خاص بالصيانة", reasonEn: "Maintenance only" },
+  { key: "service",          ar: "خدمي",       en: "Service",          hideGroups: ["warehouses", "manufacturing"],                                 reasonAr: "صنف خدمي",    reasonEn: "Service item" },
+];
+
+function buildTemplateMap(tpl: typeof USAGE_TEMPLATES[number], lang: string): UsageMap {
+  const m: UsageMap = {};
+  const reason = lang === "ar" ? tpl.reasonAr : tpl.reasonEn;
+  for (const g of USAGE_SCREEN_GROUPS) {
+    if (!tpl.hideGroups.includes(g.key)) continue;
+    for (const s of g.screens) m[s.key] = { mode: "hidden", reason };
+  }
+  return m;
+}
+
+function ItemUsageControlPanel({ value, onChange, disabled }: { value: UsageMap; onChange: (v: UsageMap) => void; disabled?: boolean }) {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language?.startsWith("ar") ? "ar" : "en";
+  const label = (o: { ar: string; en: string }) => (lang === "ar" ? o.ar : o.en);
+  const modeOf = (k: string): UsageMode => value[k]?.mode ?? "allowed";
+  const reasonOf = (k: string): string => value[k]?.reason ?? "";
+
+  const setScreen = (k: string, patch: Partial<UsageCtl>) => {
+    const cur: UsageCtl = value[k] ?? { mode: "allowed", reason: "" };
+    const next: UsageCtl = { ...cur, ...patch };
+    const copy = { ...value };
+    if (next.mode === "allowed" && !next.reason.trim()) delete copy[k];
+    else copy[k] = next;
+    onChange(copy);
+  };
+  const setAll = (mode: UsageMode) => {
+    if (mode === "allowed") { onChange({}); return; }
+    const m: UsageMap = {};
+    for (const k of ALL_USAGE_SCREEN_KEYS) m[k] = { mode, reason: reasonOf(k) };
+    onChange(m);
+  };
+  const applyTemplate = (tplKey: string) => {
+    const tpl = USAGE_TEMPLATES.find(x => x.key === tplKey);
+    if (tpl) onChange(buildTemplateMap(tpl, lang));
+  };
+  const restricted = Object.values(value).filter(v => v.mode !== "allowed").length;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+        <div className="flex items-start gap-2">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Cog className="h-4 w-4" /></div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold">{t("pages.items.usage.title")}</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">{t("pages.items.usage.subtitle")}</p>
+          </div>
+          {restricted > 0 && <Badge variant="secondary" className="ms-auto shrink-0">{t("pages.items.usage.restrictedCount", { count: restricted })}</Badge>}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => setAll("allowed")}>{t("pages.items.usage.allowAll")}</Button>
+          <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => setAll("hidden")}>{t("pages.items.usage.blockAll")}</Button>
+          <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => onChange({})}>{t("pages.items.usage.resetDefault")}</Button>
+          <div className="ms-auto w-48">
+            <SearchCombobox
+              items={USAGE_TEMPLATES.map(tp => ({ value: tp.key, label: label(tp) }))}
+              value=""
+              onValueChange={(v) => { if (v) applyTemplate(v); }}
+              placeholder={t("pages.items.usage.applyTemplate")}
+              disabled={disabled}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {USAGE_SCREEN_GROUPS.map(g => (
+          <div key={g.key} className="rounded-lg border overflow-hidden">
+            <div className="bg-muted/50 px-3 py-2 text-xs font-semibold">{label(g)}</div>
+            <div className="divide-y">
+              {g.screens.map(s => {
+                const mode = modeOf(s.key);
+                return (
+                  <div key={s.key} className="grid grid-cols-1 sm:grid-cols-[1fr_180px_1fr] items-center gap-2 px-3 py-2">
+                    <span className="text-xs">{label(s)}</span>
+                    <SearchCombobox
+                      items={USAGE_MODE_OPTS.map(o => ({ value: o.value, label: label(o) }))}
+                      value={mode}
+                      onValueChange={(v) => setScreen(s.key, { mode: (v || "allowed") as UsageMode })}
+                      placeholder={t("pages.items.usage.mode")}
+                      disabled={disabled}
+                    />
+                    <Input
+                      value={reasonOf(s.key)}
+                      onChange={(e) => setScreen(s.key, { reason: e.target.value })}
+                      placeholder={t("pages.items.usage.reasonPlaceholder")}
+                      disabled={disabled || mode === "allowed"}
+                      list="usage-reason-presets"
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <datalist id="usage-reason-presets">
+        {USAGE_REASON_PRESETS.map((r, i) => <option key={i} value={lang === "ar" ? r.ar : r.en} />)}
+      </datalist>
+      <p className="text-[11px] text-muted-foreground">{t("pages.items.usage.defaultNote")}</p>
+    </div>
+  );
+}
+
 function TagsInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
   const tags = tagsToArray(value);
   const [draft, setDraft] = useState("");
@@ -1006,10 +1203,39 @@ export default function Items() {
     enabled: expandedId !== null,
   });
 
+  // Item Usage Control (التحكم في توجيه الصنف) — Phase أ. State holds only the
+  // NON-default rules; loaded on edit, persisted after the item itself saves.
+  const [usageControls, setUsageControls] = useState<UsageMap>({});
+  const { data: usageData } = useQuery({
+    queryKey: ["item-usage-controls", editId],
+    queryFn: () => inventoryApi.getUsageControls(editId!),
+    enabled: editId !== null && showForm,
+  });
+  useEffect(() => {
+    if (!usageData) return;
+    const m: UsageMap = {};
+    for (const r of usageData as any[]) m[r.screenKey] = { mode: r.mode, reason: r.reason ?? "" };
+    setUsageControls(m);
+  }, [usageData]);
+  const persistUsageControls = async (itemId: number) => {
+    const list = Object.entries(usageControls)
+      .filter(([, v]) => v.mode !== "allowed" || (v.reason || "").trim())
+      .map(([screenKey, v]) => ({ screenKey, mode: v.mode, reason: (v.reason || "").trim() || null }));
+    await inventoryApi.saveUsageControls(itemId, list);
+  };
+
   const invalidate = () => qc.invalidateQueries({ queryKey: ["items"] });
   const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
-  const createMut = useMutation({ mutationFn: inventoryApi.createItem, onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemSaved") }); }, onError: errToast(t("inventoryMaster.items.saveItemFailed")) });
-  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateItem(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemUpdated") }); }, onError: errToast(t("inventoryMaster.items.updateItemFailed")) });
+  const createMut = useMutation({
+    mutationFn: inventoryApi.createItem,
+    onSuccess: async (row: any) => { try { if (row?.id) await persistUsageControls(row.id); } catch { /* usage controls are best-effort */ } invalidate(); reset(); toast({ title: t("pages.items.itemSaved") }); },
+    onError: errToast(t("inventoryMaster.items.saveItemFailed")),
+  });
+  const updateMut = useMutation({
+    mutationFn: ({ id, data }: any) => inventoryApi.updateItem(id, data),
+    onSuccess: async (_r: any, vars: any) => { try { await persistUsageControls(vars.id); } catch { /* usage controls are best-effort */ } invalidate(); reset(); toast({ title: t("pages.items.itemUpdated") }); },
+    onError: errToast(t("inventoryMaster.items.updateItemFailed")),
+  });
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItem, onSuccess: () => { invalidate(); toast({ title: t("pages.items.deleted") }); }, onError: errToast(t("inventoryMaster.items.deleteItemFailed")) });
   // PRO Extension #15 — manual low-stock scan that creates broadcast
   // notifications. Server is idempotent per-item per-day so re-clicking
@@ -1029,7 +1255,7 @@ export default function Items() {
     onError: errToast(t("pages.items.notifyLowStock.failed")),
   });
 
-  function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveItemTab("basic"); }
+  function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveItemTab("basic"); setUsageControls({}); }
   function handleEdit(item: any) {
     setForm({
       ...item,
@@ -1416,11 +1642,7 @@ export default function Items() {
               </FormGrid>
             </TabsContent>
             <TabsContent value="usage" className="mt-0">
-              <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-6 text-center space-y-3">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"><Cog className="h-6 w-6" /></div>
-                <h3 className="text-sm font-semibold">{t("pages.items.usageControlTab")}</h3>
-                <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">{t("pages.items.usageControlComingSoon")}</p>
-              </div>
+              <ItemUsageControlPanel value={usageControls} onChange={setUsageControls} />
             </TabsContent>
             <TabsContent value="notes" className="mt-0">
               <Field label={t("pages.items.notesDescription")}>

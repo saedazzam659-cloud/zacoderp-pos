@@ -142,6 +142,9 @@ export const inventoryApi = {
   updateItem: (id: number, data: any) => put<any>(`/items/${id}`, data),
   deleteItem: (id: number)   => del(`/items/${id}`),
   getItemAudit: (id: number) => get<any[]>(`/items/${id}/audit`),
+  // Item Usage Control (التحكم في توجيه الصنف) — per-item × per-screen rules.
+  getUsageControls:  (itemId: number) => get<any[]>(`/items/${itemId}/usage-controls`),
+  saveUsageControls: (itemId: number, controls: any[]) => put<any[]>(`/items/${itemId}/usage-controls`, { controls }),
   // Item Unit Prices
   getItemUnits:    (itemId: number)                  => get<any[]>(`/items/${itemId}/units`),
   getItemUnitPrice: (itemId: number, unitId: number) => get<any>(`/items/${itemId}/units/${unitId}`),

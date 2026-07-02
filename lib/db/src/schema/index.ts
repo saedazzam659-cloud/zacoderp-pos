@@ -7,6 +7,7 @@ export * from "./approvalLog";
 export * from "./suppliers";
 export * from "./plans";
 export * from "./inventory";
+export * from "./itemUsageControls";
 export * from "./accounts";
 export * from "./branches";
 export * from "./journalEntries";
