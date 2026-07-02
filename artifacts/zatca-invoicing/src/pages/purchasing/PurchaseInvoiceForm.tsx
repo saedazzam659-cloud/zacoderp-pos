@@ -27,7 +27,8 @@ import { currencySymbol } from "@/lib/format";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, ClipboardList, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, ClipboardList, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock, Archive } from "lucide-react";
+import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import { DateField } from "@/components/ui/date-field";
 import PurchaseInvoiceDetails from "./PurchaseInvoiceDetails";
 
@@ -929,6 +930,11 @@ export default function PurchaseInvoiceForm() {
                   <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
+                  {editId && (
+                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Archive className="h-3.5 w-3.5" />أرشفة
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ClipboardList className="h-3.5 w-3.5" />التفاصيل
                   </TabsTrigger>
@@ -1529,11 +1535,36 @@ export default function PurchaseInvoiceForm() {
           </TabsContent>
 
           {useTabbedLayout && (
+            <>
+            {editId && (
+              <TabsContent value="archive" className="mt-0">
+                <CardContent className="pt-5 pb-5">
+                  <InvoiceArchiveTab
+                    invoiceId={editId}
+                    invoiceType="purchase"
+                    invoiceNumber={docNumber}
+                    seed={{
+                      branchId: branchId ? Number(branchId) : null,
+                      warehouseId: headerWarehouseId ? Number(headerWarehouseId) : null,
+                      warehouseName: warehouseName((warehouses as any[]).find((w: any) => String(w.id) === headerWarehouseId)) || null,
+                      partyId: supplierId ? Number(supplierId) : null,
+                      partyType: "supplier",
+                      partyName: supName((suppliers as any[]).find((s: any) => String(s.id) === String(supplierId))) || null,
+                      lines: lines.filter(l => l.itemName).map(l => ({
+                        itemName: l.itemName, unit: l.unit,
+                        orderedQty: Number(l.qty) || 0, actualQty: Number(l.qty) || 0,
+                      })),
+                    }}
+                  />
+                </CardContent>
+              </TabsContent>
+            )}
             <TabsContent value="details" className="mt-0">
               <CardContent className="pt-5 pb-5">
                 {detailsSection}
               </CardContent>
             </TabsContent>
+            </>
           )}
         </Card>
       </Tabs>

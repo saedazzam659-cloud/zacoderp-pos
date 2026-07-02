@@ -99,6 +99,11 @@ export const MENU_ITEMS: MenuItem[] = [
   // (`office`) drives the company toggle, per-user RBAC, the collapsible
   // sidebar group and every route.
   { key: "office",             label: "أوفيس زاكود",                section: "أوفيس زاكود" },
+
+  // Goods Receipt / Delivery archive (سندات الاستلام والتسليم) — pure archive
+  // linked to invoices. Default ON; single key gates the sidebar group + every
+  // /api/delivery-receipt-documents/* call.
+  { key: "delivery_receipt_docs", label: "سندات الاستلام والتسليم", section: "سندات الاستلام والتسليم" },
 ];
 
 export const SECTIONS: string[] = Array.from(new Set(MENU_ITEMS.map(m => m.section)));
@@ -168,6 +173,9 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   // Office suite is LOCKED BY DEFAULT — the permission key itself is the
   // on/off switch (no separate billable parent module).
   office:             null,
+  // Goods Receipt / Delivery archive — permission key is the on/off switch,
+  // no separate billable parent module.
+  delivery_receipt_docs: null,
 };
 
 // Resolve the unique set of high-level module keys implied by a list of
@@ -345,6 +353,13 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/office", label: "أوفيس زاكود" },
       { path: "/office/word", label: "محرر المستندات (Word)" },
       { path: "/office/excel", label: "محرر الجداول (Excel)" },
+    ],
+  },
+  {
+    key: "delivery_receipt_docs", label: "سندات الاستلام والتسليم", emoji: "📦", moduleKeys: ["delivery_receipt_docs"],
+    screens: [
+      { path: "/goods-receipts", label: "سندات الاستلام" },
+      { path: "/goods-deliveries", label: "سندات التسليم" },
     ],
   },
   {

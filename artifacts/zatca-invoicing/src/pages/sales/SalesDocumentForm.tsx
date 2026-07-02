@@ -34,7 +34,8 @@ import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive } from "lucide-react";
+import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import { offersApi } from "@/lib/offersApi";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
@@ -2501,6 +2502,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
+                  {isInvoice && editId && (
+                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Archive className="h-3.5 w-3.5" />أرشفة
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ClipboardList className="h-3.5 w-3.5" />التفاصيل
                   </TabsTrigger>
@@ -2799,6 +2805,30 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </fieldset>
                 </CardContent>
               </TabsContent>
+              {isInvoice && editId && (
+                <TabsContent value="archive" className="mt-0">
+                  <CardContent className="pt-5 pb-5">
+                    <InvoiceArchiveTab
+                      invoiceId={editId}
+                      invoiceType="sales"
+                      invoiceNumber={docNumber}
+                      seed={{
+                        branchId: branchId ? Number(branchId) : null,
+                        warehouseId: headerWarehouseId ? Number(headerWarehouseId) : null,
+                        warehouseName: (warehouses as any[]).find((w: any) => String(w.id) === headerWarehouseId)?.nameAr ?? null,
+                        partyId: customerId ? Number(customerId) : null,
+                        partyType: "customer",
+                        partyName: (customers as any[]).find((c: any) => String(c.id) === String(customerId))?.nameAr ?? null,
+                        lines: lines.filter(l => l.itemName).map(l => ({
+                          itemId: l.itemId ? Number(l.itemId) : null,
+                          itemName: l.itemName, unit: l.unit,
+                          orderedQty: Number(l.qty) || 0, actualQty: Number(l.qty) || 0,
+                        })),
+                      }}
+                    />
+                  </CardContent>
+                </TabsContent>
+              )}
               <TabsContent value="details" className="mt-0">
                 <CardContent className="pt-5 pb-5">
                   {detailsSection}

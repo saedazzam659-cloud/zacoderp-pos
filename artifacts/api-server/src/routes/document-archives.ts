@@ -6,6 +6,7 @@ import { db } from "@workspace/db";
 import { documentArchivesTable, companiesTable } from "@workspace/db";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage.js";
+import { sendEmail } from "../lib/email.js";
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
@@ -194,6 +195,54 @@ router.get("/:id/download", async (req: Request, res: Response) => {
     req.log?.error({ err: error }, "document-archive download failed");
     res.status(500).json({ error: "تعذّر تنزيل الملف" });
   }
+});
+
+// POST /api/document-archives/:id/email — email an archived file as an
+// attachment. Same tenant/permission/mode ACL as download; the server pulls the
+// bytes from object storage so the client never handles the raw file.
+const ArchiveEmailBody = z.object({
+  to: z.string().email(),
+  subject: z.string().max(256).optional(),
+  message: z.string().max(4000).optional(),
+});
+router.post("/:id/email", async (req: Request, res: Response) => {
+  const cid = guard(req, res); if (cid == null) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const parsed = ArchiveEmailBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "بيانات البريد غير صحيحة" }); return; }
+  const [row] = await db
+    .select()
+    .from(documentArchivesTable)
+    .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)));
+  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  const settings = await loadSettings(cid);
+  if (!userAllowed(req, settings)) { res.status(403).json({ error: "ليست لديك صلاحية الوصول للأرشفة" }); return; }
+  if (modeFor(settings, row.screenKey) === "off") { res.status(403).json({ error: "الأرشفة معطّلة لهذه الشاشة" }); return; }
+
+  let buf: Buffer;
+  try {
+    const objectFile = await objectStorageService.getObjectEntityFile(row.objectPath);
+    const response = await objectStorageService.downloadObject(objectFile);
+    const ab = await response.arrayBuffer();
+    buf = Buffer.from(ab);
+  } catch (error) {
+    if (error instanceof ObjectNotFoundError) { res.status(404).json({ error: "الملف غير موجود في التخزين" }); return; }
+    req.log?.error({ err: error }, "document-archive email fetch failed");
+    res.status(500).json({ error: "تعذّر جلب الملف" });
+    return;
+  }
+  const subject = parsed.data.subject || `مرفق: ${row.filename}`;
+  const text = parsed.data.message || `مرفق الملف: ${row.filename}`;
+  const r = await sendEmail({
+    to: parsed.data.to,
+    subject,
+    html: `<div dir="rtl">${text.replace(/\n/g, "<br/>")}</div>`,
+    text,
+    attachments: [{ filename: row.filename, content: buf, contentType: row.contentType ?? "application/octet-stream" }],
+  });
+  if (!r.ok) { res.status(502).json({ error: "تعذّر إرسال البريد", reason: r.reason }); return; }
+  res.json({ ok: true });
 });
 
 // DELETE /api/document-archives/:id — remove the index row (tenant-scoped).

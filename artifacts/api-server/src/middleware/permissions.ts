@@ -136,6 +136,11 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // Default OFF; mirror in frontend companyModuleGate.ts. Single key gates
   // every office route + the sidebar group.
   office: "office",
+  // Goods Receipt / Delivery documents (مستندات الاستلام والتسليم) — pure
+  // archive module linked to invoices. Single company toggle gates the sidebar
+  // group + every /api/delivery-receipt-documents/* call. Mirror in frontend
+  // companyModuleGate.ts + Layout.tsx.
+  delivery_receipt_docs: "delivery_receipt_docs",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be

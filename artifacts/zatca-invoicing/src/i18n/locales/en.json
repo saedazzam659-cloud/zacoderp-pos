@@ -846,6 +846,8 @@
     "officeHub": "Zacode Office",
     "officeWord": "Document Editor (Word)",
     "officeExcel": "Spreadsheet Editor (Excel)",
+    "deliveryDocsModule": "Goods Receipt & Delivery Notes",
+    "deliveryDocsGroup": "Goods Receipt & Delivery Notes",
     "stockAdjustments": "Stock Adjustments",
     "stockCounts": "Stock Counts",
     "offers": "Offers",
@@ -2523,7 +2525,8 @@
       "companyMaintenance": "Data Import & Export Center",
       "fieldService": "Field Service",
       "multiLink": "Multi-Link Gateway",
-      "office": "Zacode Office"
+      "office": "Zacode Office",
+      "deliveryDocs": "Goods Receipt / Delivery"
     },
     "actions": {
       "view": "View",
@@ -2554,6 +2557,7 @@
       "sequences": "Document Numbering (Sequences)",
       "extensions": "Extensions",
       "office": "Zacode Office (Word + Excel)",
+      "delivery_receipt_docs": "Goods Receipt / Delivery Notes",
       "customers": "Customers",
       "sales_quotations": "Sales Quotations",
       "sales_invoices": "Sales Invoices",

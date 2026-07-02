@@ -111,6 +111,11 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   // Default OFF; a company sees/uses the office suite ONLY after SuperAdmin
   // grants the `office` toggle. Single key gates every office route.
   office: "office",
+  // Goods Receipt / Delivery documents (مستندات الاستلام والتسليم) — pure
+  // archive module linked to invoices. Single key gates the sidebar group +
+  // every /api/delivery-receipt-documents/* call. Mirror of the backend
+  // COMPANY_MODULE_GATE.
+  delivery_receipt_docs: "delivery_receipt_docs",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse

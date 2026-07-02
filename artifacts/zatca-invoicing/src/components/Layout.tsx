@@ -132,6 +132,9 @@ const SISTER_GROUP_PERMS        = ["sister_companies"];
 // group (hub, Word editor, Excel editor); locked-by-default until the
 // SuperAdmin enables it on the tenant.
 const OFFICE_GROUP_PERMS        = ["office"];
+// سندات الاستلام والتسليم (goods receipt / delivery archive) — its own
+// top-level sidebar group, single permission key `delivery_receipt_docs`.
+const DELIVERY_DOCS_GROUP_PERMS = ["delivery_receipt_docs"];
 // All inventory report routes are gated as module="items" in App.tsx, so the
 // group should mirror that exactly — a user with only `warehouses.view` has
 // nothing accessible inside this group.
@@ -593,6 +596,14 @@ const officeSubNav: NavDef[] = [
   { nameKey: "nav.officeExcel", href: "/office/excel", icon: FileSpreadsheet,  permKey: "office" },
 ];
 
+// ── سندات الاستلام والتسليم ─────────────────────────────────────────────────
+// Goods receipt / delivery archive. Single permKey (`delivery_receipt_docs`)
+// gates every entry.
+const deliveryDocsSubNav: NavDef[] = [
+  { nameKey: "nav.goodsReceipts",   href: "/goods-receipts",   icon: PackagePlus,   permKey: "delivery_receipt_docs" },
+  { nameKey: "nav.goodsDeliveries", href: "/goods-deliveries", icon: Truck,         permKey: "delivery_receipt_docs" },
+];
+
 const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
 const inventoryReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.stockBalance", href: "/inventory/reports/stock-balance", icon: BarChart2,         permKey: "items" },
@@ -859,6 +870,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   inventory:   ["inventory", "inventory_mobile", "inventory_reports"],
   sister:      ["sister_companies"],
   office:      ["office"],
+  deliveryDocs:["delivery_receipt_docs"],
   sales:       ["sales", "sales_module", "sales_reports", "customers"],
   purchasing:  ["purchasing", "purchases_module", "purchases_reports", "suppliers"],
   cash:        ["cash", "cash_module", "cash_reports"],
@@ -1373,6 +1385,44 @@ function OfficeNavGroup({
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {officeSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── DeliveryDocsNavGroup (top-level sidebar group) ───────────────────────────
+// "سندات الاستلام والتسليم" — goods receipt/delivery archive. Gated on the
+// `delivery_receipt_docs` permission key.
+function DeliveryDocsNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, DELIVERY_DOCS_GROUP_PERMS)) return null;
+  const isOn = location.startsWith("/goods-receipts") || location.startsWith("/goods-deliveries");
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/goods-receipts"
+        icon={ClipboardList}
+        label={t("nav.deliveryDocsModule", { defaultValue: "سندات الاستلام والتسليم" })}
+        isOn={isOn}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {deliveryDocsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -2361,6 +2411,11 @@ function TopNavBar(props: any) {
       node: close => <OfficeNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
+      key: "deliveryDocs",
+      label: t("nav.deliveryDocsGroup", { defaultValue: "سندات الاستلام والتسليم" }),
+      node: close => <DeliveryDocsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
       key: "sales",
       label: t("nav.salesGroup", { defaultValue: "المبيعات" }),
       node: close => (
@@ -2530,6 +2585,8 @@ function SidebarInner({
   onSisterToggle,
   officeOpen,
   onOfficeToggle,
+  deliveryDocsOpen,
+  onDeliveryDocsToggle,
   reportsOpen,
   onReportsToggle,
   purchasingOpen,
@@ -2606,6 +2663,8 @@ function SidebarInner({
   onSisterToggle: () => void;
   officeOpen: boolean;
   onOfficeToggle: () => void;
+  deliveryDocsOpen: boolean;
+  onDeliveryDocsToggle: () => void;
   reportsOpen: boolean;
   onReportsToggle: () => void;
   purchasingOpen: boolean;
@@ -2821,6 +2880,17 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={officeOpen}
                   onToggle={onOfficeToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "deliveryDocs", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <DeliveryDocsNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={deliveryDocsOpen}
+                  onToggle={onDeliveryDocsToggle}
                 />
               </div>
             )}
@@ -3542,6 +3612,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [sisterOpen,    setSisterOpen]        = useState(() => location.startsWith("/inventory/sister-"));
   // Zacode Office group — auto-expand when on any /office route.
   const [officeOpen,    setOfficeOpen]        = useState(() => location.startsWith("/office"));
+  const [deliveryDocsOpen, setDeliveryDocsOpen] = useState(() => location.startsWith("/goods-receipts") || location.startsWith("/goods-deliveries"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   // Reports are nested INSIDE the purchasing group, so any /purchasing/* route
   // (including /purchasing/reports/*) auto-expands the parent.
@@ -3614,13 +3685,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "sister" | "accounting"
     | "purchasing" | "sales" | "cash" | "hr" | "production" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
-    | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring" | "extensions" | "office";
+    | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring" | "extensions" | "office" | "deliveryDocs";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
     if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
     if (keep !== "inventory")  setInventoryOpen(false);
     if (keep !== "sister")     setSisterOpen(false);
     if (keep !== "office")     setOfficeOpen(false);
+    if (keep !== "deliveryDocs") setDeliveryDocsOpen(false);
     if (keep !== "accounting") setAccountingOpen(false);
     if (keep !== "purchasing") setPurchasingOpen(false);
     if (keep !== "sales")      setSalesOpen(false);
@@ -3667,6 +3739,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleInventoryToggle  = makeAccordionToggle("inventory",  inventoryOpen,  setInventoryOpen);
   const handleSisterToggle     = makeAccordionToggle("sister",     sisterOpen,     setSisterOpen);
   const handleOfficeToggle     = makeAccordionToggle("office",     officeOpen,     setOfficeOpen);
+  const handleDeliveryDocsToggle = makeAccordionToggle("deliveryDocs", deliveryDocsOpen, setDeliveryDocsOpen);
   const handleAccountingToggle = makeAccordionToggle("accounting", accountingOpen, setAccountingOpen);
   const handlePurchasingToggle = makeAccordionToggle("purchasing", purchasingOpen, setPurchasingOpen);
   const handleSalesToggle      = makeAccordionToggle("sales",      salesOpen,      setSalesOpen);
@@ -3781,6 +3854,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         inventory:  setInventoryOpen,
         sister:     setSisterOpen,
         office:     setOfficeOpen,
+        deliveryDocs: setDeliveryDocsOpen,
         accounting: setAccountingOpen,
         purchasing: setPurchasingOpen,
         sales:      setSalesOpen,
@@ -3828,6 +3902,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onSisterToggle: handleSisterToggle,
     officeOpen,
     onOfficeToggle: handleOfficeToggle,
+    deliveryDocsOpen,
+    onDeliveryDocsToggle: handleDeliveryDocsToggle,
     reportsOpen,
     onReportsToggle: handleReportsToggle,
     purchasingOpen,

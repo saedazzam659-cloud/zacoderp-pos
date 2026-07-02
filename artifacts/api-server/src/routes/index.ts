@@ -115,6 +115,7 @@ import realtimeRouter from "./realtime";
 import userTrackingRouter from "./userTracking";
 import sisterCompaniesRouter from "./sister-companies";
 import accountNotesRouter from "./account-notes";
+import deliveryReceiptDocumentsRouter from "./delivery-receipt-documents";
 import deviceLicensesRouter from "./device-licenses";
 import posDesktopSyncRouter from "./pos-desktop-sync";
 import adminPosDevicesRouter from "./admin-pos-devices";
@@ -300,5 +301,6 @@ router.use("/cobrowse", cobrowseRouter);
 router.use("/print-designer", printDesignerRouter);
 router.use("/sister-companies", sisterCompaniesRouter);
 router.use("/account-notes", accountNotesRouter);
+router.use("/delivery-receipt-documents", deliveryReceiptDocumentsRouter);
 
 export default router;

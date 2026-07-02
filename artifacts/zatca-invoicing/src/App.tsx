@@ -270,6 +270,7 @@ import SisterSettlements from "@/pages/inventory/sister-companies/SisterSettleme
 import SisterSettlementForm from "@/pages/inventory/sister-companies/SisterSettlementForm";
 import SisterCompanyStatement from "@/pages/inventory/sister-companies/SisterCompanyStatement";
 import SisterStatementsHub from "@/pages/inventory/sister-companies/SisterStatementsHub";
+import DeliveryReceiptDocuments from "@/pages/DeliveryReceiptDocuments";
 import OfficeHub from "@/pages/office/OfficeHub";
 import WordEditor from "@/pages/office/WordEditor";
 import ExcelEditor from "@/pages/office/ExcelEditor";
@@ -913,6 +914,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements/:id"         module="sister_companies" action="edit" component={SisterSettlementForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-statements"              module="sister_companies" component={SisterStatementsHub} />}
             {/* ── أوفيس زاكود (Zacode Office) — locked-by-default module ── */}
+            {!isSuperAdmin && <PermRoute path="/goods-receipts"   module="delivery_receipt_docs" component={() => <DeliveryReceiptDocuments kind="receipt" />} />}
+            {!isSuperAdmin && <PermRoute path="/goods-deliveries" module="delivery_receipt_docs" component={() => <DeliveryReceiptDocuments kind="delivery" />} />}
             {!isSuperAdmin && <PermRoute path="/office"       module="office" component={OfficeHub} />}
             {!isSuperAdmin && <PermRoute path="/office/word"  module="office" component={WordEditor} />}
             {!isSuperAdmin && <PermRoute path="/office/excel" module="office" component={ExcelEditor} />}

@@ -848,6 +848,8 @@
     "officeHub": "أوفيس زاكود",
     "officeWord": "محرر المستندات (Word)",
     "officeExcel": "محرر الجداول (Excel)",
+    "deliveryDocsModule": "سندات الاستلام والتسليم",
+    "deliveryDocsGroup": "سندات الاستلام والتسليم",
     "stockAdjustments": "التسوية المخزنية",
     "stockCounts": "الجرد المخزني",
     "offers": "العروض",
@@ -2526,7 +2528,8 @@
       "companyMaintenance": "مركز استيراد وتصدير البيانات",
       "fieldService": "الخدمة الميدانية",
       "multiLink": "ربط متعدد",
-      "office": "أوفيس زاكود"
+      "office": "أوفيس زاكود",
+      "deliveryDocs": "سندات الاستلام والتسليم"
     },
     "actions": {
       "view": "عرض",
@@ -2557,6 +2560,7 @@
       "sequences": "مسلسل الحركات",
       "extensions": "الإضافات",
       "office": "أوفيس زاكود (Word + Excel)",
+      "delivery_receipt_docs": "سندات الاستلام والتسليم",
       "customers": "العملاء",
       "sales_quotations": "عروض الأسعار",
       "sales_invoices": "فواتير المبيعات",

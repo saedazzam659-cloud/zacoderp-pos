@@ -43,6 +43,7 @@ const G = {
   fieldService: "perms.groups.fieldService",
   multiLink:    "perms.groups.multiLink",
   office:       "perms.groups.office",
+  deliveryDocs: "perms.groups.deliveryDocs",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -62,6 +63,11 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "extensions",           label: "perms.modules.extensions",           group: G.dashboard,  actions: VO },
 
   { key: "office",               label: "perms.modules.office",               group: G.office,     actions: VO },
+
+  // Goods Receipt / Delivery archive (سندات الاستلام والتسليم) — pure archive
+  // linked to invoices; single company gate `delivery_receipt_docs`. `post`
+  // is required by the backend for the /:id/approve (lock) endpoint.
+  { key: "delivery_receipt_docs", label: "perms.modules.delivery_receipt_docs", group: G.deliveryDocs, actions: ["view", "create", "edit", "delete", "post"] },
 
   { key: "customers",            label: "perms.modules.customers",            group: G.sales,      actions: VC },
   { key: "sales_quotations",     label: "perms.modules.sales_quotations",     group: G.sales,      actions: ALL },
