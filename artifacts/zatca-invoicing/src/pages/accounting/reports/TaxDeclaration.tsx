@@ -230,6 +230,7 @@ const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
   sales_return:     { label: "مرتجع بيع",       color: "bg-amber-100 text-amber-700" },
   purchase_invoice: { label: "فاتورة شراء",     color: "bg-blue-100 text-blue-700" },
   purchase_return:  { label: "مرتجع شراء",      color: "bg-amber-100 text-amber-700" },
+  payment_voucher:  { label: "سند صرف",         color: "bg-indigo-100 text-indigo-700" },
 };
 
 function VatDrilldownDialog({
@@ -448,9 +449,6 @@ function VatDrilldownDialog({
                   <th className="px-3 py-2 text-right font-semibold">رقم المستند</th>
                   <th className="px-3 py-2 text-right font-semibold">التاريخ</th>
                   <th className="px-3 py-2 text-right font-semibold">العميل / المورد</th>
-                  <th className="px-3 py-2 text-right font-semibold">الرقم الضريبي</th>
-                  <th className="px-3 py-2 text-right font-semibold">رقم فاتورة المورد</th>
-                  <th className="px-3 py-2 text-right font-semibold">تاريخ الفاتورة</th>
                   <th className="px-3 py-2 text-left font-semibold">الوعاء</th>
                   <th className="px-3 py-2 text-left font-semibold">الضريبة</th>
                   <th className="px-3 py-2 text-left font-semibold">الإجمالي</th>
@@ -467,10 +465,26 @@ function VatDrilldownDialog({
                       </td>
                       <td className="px-3 py-2.5 font-mono text-xs">{d.docNumber ?? `#${d.id}`}</td>
                       <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">{d.date}</td>
-                      <td className="px-3 py-2.5 truncate max-w-[180px]">{d.partyName ?? <span className="text-muted-foreground">—</span>}</td>
-                      <td className="px-3 py-2.5 font-mono text-xs tabular-nums">{d.supplierVatNumber ?? <span className="text-muted-foreground">—</span>}</td>
-                      <td className="px-3 py-2.5 font-mono text-xs">{d.supplierInvoiceNumber ?? <span className="text-muted-foreground">—</span>}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">{d.supplierInvoiceDate ?? <span className="text-muted-foreground">—</span>}</td>
+                      <td className="px-3 py-2.5 align-top max-w-[260px]">
+                        {(d.partyName || d.supplierVatNumber || d.supplierInvoiceNumber || d.supplierInvoiceDate) ? (
+                          <div className="flex flex-col gap-0.5 leading-tight">
+                            <span className="font-medium truncate">{d.partyName ?? "—"}</span>
+                            {d.supplierVatNumber && (
+                              <span className="text-[11px] text-muted-foreground font-mono">
+                                الرقم الضريبي: {d.supplierVatNumber}
+                              </span>
+                            )}
+                            {(d.supplierInvoiceNumber || d.supplierInvoiceDate) && (
+                              <span className="text-[11px] text-muted-foreground">
+                                فاتورة المورد: {d.supplierInvoiceNumber ?? "—"}
+                                {d.supplierInvoiceDate ? ` — ${d.supplierInvoiceDate}` : ""}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs">{fmtNum(d.base)}</td>
                       <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs">{fmtNum(d.vat)}</td>
                       <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs font-semibold">{fmtNum(d.total)}</td>
@@ -580,6 +594,151 @@ export default function TaxDeclaration() {
   }
   function fmtSAR(n: number) { return `${fmtNum(n)} ${t("taxDeclaration.sar")}`; }
 
+  // ── Full-report exports (Excel / PDF) ─────────────────────────────────
+  // Unlike the browser Print button these produce downloadable files AND —
+  // per user request — always include the "تسويات يدوية على ضريبة القيمة
+  // المضافة (قيود)" (manual VAT adjustment JEs) section.
+  function handleReportExcel() {
+    if (!data) return;
+    const r2 = (n: number) => Number((n ?? 0).toFixed(2));
+    const aoa: (string | number)[][] = [];
+    aoa.push([t("taxDeclaration.title")]);
+    aoa.push([companyName]);
+    if (data.company?.vatNumber) aoa.push([`${t("taxDeclaration.vatNumber")}: ${data.company.vatNumber}`]);
+    aoa.push([`${t("taxDeclaration.fromDate")}: ${data.period.from}    ${t("taxDeclaration.toDate")}: ${data.period.to}`]);
+    aoa.push([]);
+    // Output tax
+    aoa.push([t("taxDeclaration.outputTaxSection")]);
+    aoa.push([t("taxDeclaration.description"), t("taxDeclaration.taxableBase"), t("taxDeclaration.vatAmount")]);
+    aoa.push([t("taxDeclaration.salesStandard"), r2(data.outputTax.standardRated.base), r2(data.outputTax.standardRated.vat)]);
+    aoa.push([t("taxDeclaration.salesZero"),     r2(data.outputTax.zeroRated.base),     r2(data.outputTax.zeroRated.vat)]);
+    aoa.push([t("taxDeclaration.salesExempt"),   r2(data.outputTax.exempt.base),        0]);
+    aoa.push([t("taxDeclaration.totalSales"),    r2(data.outputTax.total.base),         r2(data.outputTax.total.vat)]);
+    aoa.push([]);
+    // Input tax
+    aoa.push([t("taxDeclaration.inputTaxSection")]);
+    aoa.push([t("taxDeclaration.description"), t("taxDeclaration.taxableBase"), t("taxDeclaration.vatAmount")]);
+    aoa.push([t("taxDeclaration.purchaseStandard"), r2(data.inputTax.standardRated.base), r2(data.inputTax.standardRated.vat)]);
+    aoa.push([t("taxDeclaration.purchaseZero"),     r2(data.inputTax.zeroRated.base),     r2(data.inputTax.zeroRated.vat)]);
+    aoa.push([t("taxDeclaration.purchaseExempt"),   r2(data.inputTax.exempt.base),        0]);
+    aoa.push([t("taxDeclaration.totalPurchases"),   r2(data.inputTax.total.base),         r2(data.inputTax.total.vat)]);
+    // Manual VAT adjustments
+    if (data.journalAdjustments && data.journalAdjustments.entryCount > 0) {
+      aoa.push([]);
+      aoa.push([t("taxDeclaration.journalAdjustments")]);
+      aoa.push([t("taxDeclaration.jeDate"), t("taxDeclaration.jeDoc"), t("taxDeclaration.description"), t("taxDeclaration.outputVat"), t("taxDeclaration.inputVat")]);
+      for (const e of data.journalAdjustments.entries) {
+        aoa.push([e.entryDate, e.docNumber ?? `#${e.id}`, e.description ?? "", r2(e.outputVat), r2(e.inputVat)]);
+      }
+      aoa.push([t("taxDeclaration.totalAdjustments"), "", "", r2(data.journalAdjustments.outputVat), r2(data.journalAdjustments.inputVat)]);
+    }
+    aoa.push([]);
+    // Net VAT
+    aoa.push([t("taxDeclaration.netVatSection")]);
+    aoa.push([t("taxDeclaration.outputVat"), r2(data.outputTax.total.vat)]);
+    aoa.push([t("taxDeclaration.inputVat"),  r2(data.inputTax.total.vat)]);
+    aoa.push([netPositive ? t("taxDeclaration.netDue") : t("taxDeclaration.refundDue"), r2(Math.abs(netVat))]);
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{ wch: 42 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "الإقرار الضريبي");
+    XLSX.writeFile(wb, `tax-declaration-${data.period.from}_${data.period.to}.xlsx`);
+  }
+
+  function buildReportHtml(): string {
+    if (!data) return "";
+    const secRow = (label: string, base: number | null, vat: number | null, bold = false) =>
+      `<tr${bold ? ' class="tot"' : ""}>
+        <td>${escapeHtml(label)}</td>
+        <td class="num">${base !== null ? fmtNum(base) : "—"}</td>
+        <td class="num">${vat !== null ? fmtNum(vat) : "—"}</td>
+      </tr>`;
+    const adj = data.journalAdjustments;
+    const adjSection = adj && adj.entryCount > 0 ? `
+      <h2>${escapeHtml(t("taxDeclaration.journalAdjustments"))}</h2>
+      <table>
+        <thead><tr>
+          <th>${escapeHtml(t("taxDeclaration.jeDate"))}</th>
+          <th>${escapeHtml(t("taxDeclaration.jeDoc"))}</th>
+          <th>${escapeHtml(t("taxDeclaration.description"))}</th>
+          <th class="num">${escapeHtml(t("taxDeclaration.outputVat"))}</th>
+          <th class="num">${escapeHtml(t("taxDeclaration.inputVat"))}</th>
+        </tr></thead>
+        <tbody>
+          ${adj.entries.map(e => `<tr>
+            <td>${escapeHtml(e.entryDate)}</td>
+            <td>${escapeHtml(e.docNumber ?? `#${e.id}`)}</td>
+            <td>${escapeHtml(e.description ?? "—")}</td>
+            <td class="num">${Math.abs(e.outputVat) > 0.005 ? fmtNum(e.outputVat) : "—"}</td>
+            <td class="num">${Math.abs(e.inputVat) > 0.005 ? fmtNum(e.inputVat) : "—"}</td>
+          </tr>`).join("")}
+          <tr class="tot">
+            <td colspan="3">${escapeHtml(t("taxDeclaration.totalAdjustments"))}</td>
+            <td class="num">${fmtNum(adj.outputVat)}</td>
+            <td class="num">${fmtNum(adj.inputVat)}</td>
+          </tr>
+        </tbody>
+      </table>` : "";
+    return `<style>
+      .tdx-print{font-family:'Segoe UI',Tahoma,Arial,sans-serif;color:#0f172a;padding:24px;direction:rtl;}
+      .tdx-print h1{font-size:18px;margin:0 0 2px;}
+      .tdx-print h2{font-size:14px;margin:18px 0 6px;background:#1e293b;color:#fff;padding:6px 10px;border-radius:4px;}
+      .tdx-print .sub{font-size:12px;color:#64748b;margin-bottom:6px;}
+      .tdx-print table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:4px;}
+      .tdx-print th,.tdx-print td{border:1px solid #cbd5e1;padding:6px 8px;text-align:right;}
+      .tdx-print th{background:#334155;color:#fff;}
+      .tdx-print td.num,.tdx-print th.num{text-align:left;font-variant-numeric:tabular-nums;}
+      .tdx-print tr.tot td{font-weight:bold;background:#f1f5f9;}
+    </style>
+    <div class="tdx-print">
+      <h1>${escapeHtml(t("taxDeclaration.title"))}</h1>
+      <div class="sub">${escapeHtml(companyName)}${data.company?.vatNumber ? ` · ${escapeHtml(t("taxDeclaration.vatNumber"))}: ${escapeHtml(data.company.vatNumber)}` : ""}</div>
+      <div class="sub">${escapeHtml(t("taxDeclaration.fromDate"))}: ${escapeHtml(data.period.from)} — ${escapeHtml(t("taxDeclaration.toDate"))}: ${escapeHtml(data.period.to)}</div>
+      <h2>${escapeHtml(t("taxDeclaration.outputTaxSection"))}</h2>
+      <table>
+        <thead><tr><th>${escapeHtml(t("taxDeclaration.description"))}</th><th class="num">${escapeHtml(t("taxDeclaration.taxableBase"))}</th><th class="num">${escapeHtml(t("taxDeclaration.vatAmount"))}</th></tr></thead>
+        <tbody>
+          ${secRow(t("taxDeclaration.salesStandard"), data.outputTax.standardRated.base, data.outputTax.standardRated.vat)}
+          ${secRow(t("taxDeclaration.salesZero"),     data.outputTax.zeroRated.base,     data.outputTax.zeroRated.vat)}
+          ${secRow(t("taxDeclaration.salesExempt"),   data.outputTax.exempt.base,        null)}
+          ${secRow(t("taxDeclaration.totalSales"),    data.outputTax.total.base,         data.outputTax.total.vat, true)}
+        </tbody>
+      </table>
+      <h2>${escapeHtml(t("taxDeclaration.inputTaxSection"))}</h2>
+      <table>
+        <thead><tr><th>${escapeHtml(t("taxDeclaration.description"))}</th><th class="num">${escapeHtml(t("taxDeclaration.taxableBase"))}</th><th class="num">${escapeHtml(t("taxDeclaration.vatAmount"))}</th></tr></thead>
+        <tbody>
+          ${secRow(t("taxDeclaration.purchaseStandard"), data.inputTax.standardRated.base, data.inputTax.standardRated.vat)}
+          ${secRow(t("taxDeclaration.purchaseZero"),     data.inputTax.zeroRated.base,     data.inputTax.zeroRated.vat)}
+          ${secRow(t("taxDeclaration.purchaseExempt"),   data.inputTax.exempt.base,        null)}
+          ${secRow(t("taxDeclaration.totalPurchases"),   data.inputTax.total.base,         data.inputTax.total.vat, true)}
+        </tbody>
+      </table>
+      ${adjSection}
+      <h2>${escapeHtml(t("taxDeclaration.netVatSection"))}</h2>
+      <table>
+        <tbody>
+          <tr><td>${escapeHtml(t("taxDeclaration.outputVat"))}</td><td class="num">${fmtNum(data.outputTax.total.vat)}</td></tr>
+          <tr><td>${escapeHtml(t("taxDeclaration.inputVat"))}</td><td class="num">${fmtNum(data.inputTax.total.vat)}</td></tr>
+          <tr class="tot"><td>${escapeHtml(netPositive ? t("taxDeclaration.netDue") : t("taxDeclaration.refundDue"))}</td><td class="num">${fmtNum(Math.abs(netVat))}</td></tr>
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  async function handleReportPdf() {
+    if (!data) return;
+    const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(t("taxDeclaration.title"))}</title></head><body>${buildReportHtml()}</body></html>`;
+    const blob = await htmlToPdfBlob(html);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tax-declaration-${data.period.from}_${data.period.to}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
   const netVat = data?.netVat ?? 0;
   const netPositive = netVat >= 0;
   const companyName = (isAr ? data?.company?.nameAr : (data?.company?.nameEn ?? data?.company?.nameAr))
@@ -599,10 +758,18 @@ export default function TaxDeclaration() {
           <p className="text-sm text-muted-foreground mt-1">{t("taxDeclaration.subtitle")}</p>
         </div>
         {data && searched && (
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => window.print()}>
-            <Printer className="h-4 w-4" />
-            {t("taxDeclaration.print")}
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => window.print()}>
+              <Printer className="h-4 w-4" />
+              {t("taxDeclaration.print")}
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2" onClick={handleReportExcel}>
+              <FileSpreadsheet className="h-4 w-4" /> Excel
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2" onClick={handleReportPdf}>
+              <FileDown className="h-4 w-4" /> PDF
+            </Button>
+          </div>
         )}
       </div>
 
@@ -939,49 +1106,9 @@ export default function TaxDeclaration() {
             </>
           )}
 
-          {/* Supplier tax breakdown (بيانات الموردين الضريبية) — from the ⋮
-              supplier-details menu on payment-voucher / journal-entry lines. */}
-          {data.supplierTaxLines && data.supplierTaxLines.length > 0 && (
-            <>
-              <div className="border-t border-border">
-                <SectionHeader color="blue" icon={ReceiptText} title="بيانات الموردين الضريبية" />
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-xs font-semibold text-muted-foreground bg-muted/50 border-b">
-                      <th className="px-4 py-2.5 text-right">التاريخ</th>
-                      <th className="px-4 py-2.5 text-right">المستند</th>
-                      <th className="px-4 py-2.5 text-right">اسم المورد</th>
-                      <th className="px-4 py-2.5 text-right">الرقم الضريبي</th>
-                      <th className="px-4 py-2.5 text-right">رقم الفاتورة</th>
-                      <th className="px-4 py-2.5 text-right">تاريخ الفاتورة</th>
-                      <th className="px-4 py-2.5 text-left w-32">الضريبة</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.supplierTaxLines.map((s, i) => (
-                      <tr key={i} className="border-b border-border/40 hover:bg-muted/30">
-                        <td className="px-4 py-3 tabular-nums">{s.date ? fmtDate(s.date) : "—"}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{s.docNumber ?? "—"}</td>
-                        <td className="px-4 py-3">{s.supplierName ?? "—"}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{s.supplierVatNumber ?? "—"}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{s.supplierInvoiceNumber ?? "—"}</td>
-                        <td className="px-4 py-3 tabular-nums">{s.supplierInvoiceDate ? fmtDate(s.supplierInvoiceDate) : "—"}</td>
-                        <td className="px-4 py-3 text-left tabular-nums font-mono">{fmtNum(s.vat)}</td>
-                      </tr>
-                    ))}
-                    <tr className="bg-blue-50 dark:bg-blue-950/30 font-bold border-t-2 text-sm">
-                      <td className="px-4 py-3" colSpan={6}>إجمالي ضريبة الموردين</td>
-                      <td className="px-4 py-3 text-left tabular-nums font-mono">
-                        {fmtNum(data.supplierTaxLines.reduce((sum, s) => sum + s.vat, 0))}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+          {/* Supplier tax metadata is now shown inline inside the drill-down
+              modal's "العميل / المورد" column (payment-voucher & purchase rows),
+              so the standalone supplier-tax table was removed. */}
 
           {/* Net VAT summary */}
           <div className="border-t border-border">
