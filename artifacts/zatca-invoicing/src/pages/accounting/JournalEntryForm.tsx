@@ -1220,7 +1220,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
       ref={formRef}
       onKeyDownCapture={handleFormKeyDownCapture}
       onKeyDown={handleFormKeyDown}
-      className="p-6 space-y-5 max-w-5xl mx-auto"
+      className="p-6 space-y-5 w-full"
       dir="rtl"
     >
 

@@ -3130,6 +3130,8 @@
     "viewJournal": "View journal entry lines",
     "savedFailedPost": "Saved but posting failed: {{err}}",
     "section_header": "Voucher Details",
+    "tab_paymentMethod": "Payment Method",
+    "generalDescription": "General Description",
     "section_supplier": "Supplier & Amount",
     "section_refs": "References & Description",
     "linkInvoiceTitle": "Settle against a purchase invoice (optional)",

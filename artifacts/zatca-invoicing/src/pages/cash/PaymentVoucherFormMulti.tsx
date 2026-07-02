@@ -21,7 +21,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ArrowUpCircle, ArrowRight, ChevronLeft, Search,
   Loader2, Save, Send, Lock, FileText, Banknote,
-  Wallet, Building2, Truck, Layers, Printer, Link2, X, Settings2,
+  Wallet, Building2, Layers, Printer, Link2, Settings2,
   Trash2, Plus,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
@@ -435,14 +435,6 @@ export default function PaymentVoucherForm() {
       label: isRtl ? b.nameAr : (b.nameEn || b.nameAr),
       description: b.accountNumber ?? b.iban ?? undefined,
     })), [bankAccounts, isRtl, form.branchId]);
-
-  const supplierItems: ComboboxItem[] = useMemo(() =>
-    (suppliers as any[]).map(s => ({
-      value: String(s.id),
-      label: isRtl ? s.nameAr : (s.nameEn || s.nameAr),
-      code: s.code ?? undefined,
-      description: s.phone ?? s.email ?? undefined,
-    })), [suppliers, isRtl]);
 
   // Purchase invoices the picked supplier still has open / payable. We
   // include posted invoices (most common case — settle a credit invoice)
@@ -869,11 +861,10 @@ export default function PaymentVoucherForm() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
           {/* ── Left column: TABBED form ──────────────────── */}
           <Tabs defaultValue="voucher" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
-            <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full h-auto gap-1 p-1">
+            <TabsList className="grid grid-cols-3 w-full h-auto gap-1 p-1">
               <TabsTrigger value="voucher" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_header`, "بيانات السند")}</TabsTrigger>
-              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{t(`${NS}.tab_party`, "المورد والمبلغ")}</TabsTrigger>
+              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{t(`${NS}.tab_paymentMethod`, "وسيلة الدفع")}</TabsTrigger>
               <TabsTrigger value="lines" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_lines`, "بنود الصرف")}</TabsTrigger>
-              <TabsTrigger value="refs" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_refs`, "المراجع والبيان")}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="voucher" className="mt-0">
@@ -971,7 +962,7 @@ export default function PaymentVoucherForm() {
               <CardHeader className="py-3 px-4 border-b bg-red-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-900">
                   <Wallet className="h-4 w-4" />
-                  {t(`${NS}.tab_party`, "المورد والمبلغ")}
+                  {t(`${NS}.tab_paymentMethod`, "وسيلة الدفع")}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
@@ -1040,60 +1031,10 @@ export default function PaymentVoucherForm() {
               </CardContent>
             </Card>
 
-            {/* Section: Supplier (optional header context) */}
-            <Card className="border-2 border-red-100">
-              <CardHeader className="py-3 px-4 border-b bg-red-50/40">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-900">
-                  <Truck className="h-4 w-4" />
-                  {t(`${NS}.section_supplier`, "المورد")}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4 pb-4 space-y-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">
-                    {t(`${NS}.supplier`)} <span className="text-muted-foreground font-normal">({t(`${NS}.optional`, "اختياري")})</span>
-                  </Label>
-                  <div className="flex gap-2 items-stretch">
-                    <div className="flex-1">
-                      <SearchCombobox
-                        items={supplierItems}
-                        value={form.entityId}
-                        onValueChange={v => {
-                          const found = (suppliers as any[]).find((x: any) => String(x.id) === v);
-                          setForm(p => ({
-                            ...p,
-                            entityId: v,
-                            entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
-                            // Switching supplier invalidates every per-line invoice link.
-                            lines: p.lines.map(l => ({ ...l, purchaseInvoiceId: "" })),
-                          }));
-                        }}
-                        placeholder={t(`${NS}.selectSupplier`, "— اختر المورد —")}
-                        searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
-                        emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
-                      />
-                    </div>
-                    {form.entityId && (
-                      <Button
-                        type="button" variant="ghost" size="icon"
-                        className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                        onClick={() => setForm(p => ({ ...p, entityId: "", entityName: "", lines: p.lines.map(l => ({ ...l, purchaseInvoiceId: "" })) }))}
-                        title={t(`${NS}.clearSupplier`, "إزالة المورد")}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    {t(`${NS}.supplierHint`, "المورد اختياري — يُستخدم لتصفية ربط فواتير الشراء في البنود.")}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
             </TabsContent>
 
             <TabsContent value="lines" className="mt-0">
-            {/* Section: Allocation lines grid */}
+            {/* Section: Allocation lines — journal-style green box */}
             <Card className="border-2 border-red-100">
               <CardHeader className="py-3 px-4 border-b bg-red-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-900">
@@ -1101,136 +1042,89 @@ export default function PaymentVoucherForm() {
                   {t(`${NS}.section_lines`, "بنود الصرف")}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="pt-4 pb-4 space-y-3">
-                <div className="space-y-4">
-                  {form.lines.map((l, idx) => {
-                    const lineTotal = (Number(l.amount) || 0) + (Number(l.taxAmount) || 0);
-                    return (
-                      <div
-                        key={l.key}
-                        className="rounded-xl border-2 border-red-100 bg-red-50/20 p-4 md:p-5 space-y-4"
-                        data-testid={`pv-line-${idx}`}
-                      >
-                        {/* Row 1: line number + main account + remove */}
-                        <div className="flex items-start gap-3">
-                          <span className="mt-7 shrink-0 h-8 w-8 rounded-full bg-red-100 text-red-800 text-sm font-bold flex items-center justify-center tabular-nums">{idx + 1}</span>
-                          <div className="flex-1 space-y-1.5 min-w-0">
-                            <Label className="text-sm font-semibold">{t(`${NS}.colAccount`, "الحساب")} <span className="text-destructive">*</span></Label>
+              <CardContent className="pt-4 pb-4 space-y-4">
+                {/* البيان العام — mirrors into each line whose description is
+                    empty or still equals the previous general description, so
+                    the user has a single source of truth (same as the قيد). */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">{t(`${NS}.generalDescription`, "البيان العام")}</Label>
+                  <Textarea
+                    value={form.description}
+                    onChange={e => {
+                      const next = e.target.value;
+                      setForm(p => {
+                        const prev = p.description;
+                        return {
+                          ...p,
+                          description: next,
+                          lines: p.lines.map(l =>
+                            (!l.description || l.description === prev) ? { ...l, description: next } : l),
+                        };
+                      });
+                    }}
+                    placeholder={t(`${NS}.descriptionPh`, "وصف السند...")}
+                    className="text-sm resize-none"
+                    rows={2}
+                  />
+                </div>
+
+                {/* Toolbar */}
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    type="button" variant="outline" size="sm"
+                    onClick={addLine}
+                    className="h-7 gap-1 text-xs"
+                    data-testid="pv-add-line"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {t(`${NS}.addLine`, "إضافة بند صرف")}
+                  </Button>
+                </div>
+
+                {/* Lines grid — compact rows, single amount column */}
+                <div className="border rounded-lg overflow-hidden">
+                  {/* Column headers */}
+                  <div className="grid grid-cols-[28px_2fr_1fr_1.5fr_1.2fr_28px] gap-2 px-3 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
+                    <span />
+                    <span>{t(`${NS}.colAccount`, "الحساب")}</span>
+                    <span>{t(`${NS}.colAmount`, "المبلغ")}</span>
+                    <span>{t(`${NS}.colDescription`, "البيان")}</span>
+                    <span>{t(`${NS}.colCostCenter`, "مركز التكلفة")}</span>
+                    <span />
+                  </div>
+
+                  <div className="divide-y">
+                    {form.lines.map((l, idx) => {
+                      const lineTotal = (Number(l.amount) || 0) + (Number(l.taxAmount) || 0);
+                      return (
+                        <div key={l.key} data-testid={`pv-line-${idx}`} className="px-3 py-2.5 space-y-2 hover:bg-muted/5">
+                          {/* Main row */}
+                          <div className="grid grid-cols-[28px_2fr_1fr_1.5fr_1.2fr_28px] gap-2 items-center">
+                            <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
                             <AccountCascadePicker
                               accounts={accounts as any[]}
                               value={l.accountId}
                               isRtl={isRtl}
                               onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
                             />
-                          </div>
-                          <div className="mt-6 shrink-0 flex items-center">
-                            <SupplierTaxDetailsMenu
-                              testId={`pv-line-${idx}`}
-                              value={{
-                                supplierName: l.supplierName,
-                                supplierVatNumber: l.supplierVatNumber,
-                                supplierInvoiceNumber: l.supplierInvoiceNumber,
-                                supplierInvoiceDate: l.supplierInvoiceDate,
-                              }}
-                              onChange={(v: SupplierTaxDetails) => updateLine(l.key, v)}
-                            />
-                          </div>
-                          <Button
-                            type="button" variant="ghost" size="icon"
-                            className="mt-6 h-10 w-10 text-muted-foreground hover:text-destructive shrink-0"
-                            onClick={() => removeLine(l.key)}
-                            title={t(`${NS}.removeLine`, "حذف البند")}
-                            data-testid={`pv-line-remove-${idx}`}
-                          >
-                            <Trash2 className="h-5 w-5" />
-                          </Button>
-                        </div>
-                        {hasSupplierTaxDetails(l) && (
-                          <div className="flex flex-wrap items-center gap-2 -mt-1 text-xs">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5 font-medium">
-                              <FileText className="h-3 w-3" />
-                              {l.supplierName || t(`${NS}.supplierUnnamed`, "مورد")}
-                            </span>
-                            {l.supplierVatNumber && (
-                              <span className="text-muted-foreground font-mono" dir="ltr">{l.supplierVatNumber}</span>
-                            )}
-                            {l.supplierInvoiceNumber && (
-                              <span className="text-muted-foreground">#{l.supplierInvoiceNumber}</span>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Row 2: description */}
-                        <div className="space-y-1.5">
-                          <Label className="text-sm font-semibold">{t(`${NS}.colDescription`, "البيان")}</Label>
-                          <Input
-                            value={l.description}
-                            onChange={e => updateLine(l.key, { description: e.target.value })}
-                            placeholder={t(`${NS}.colDescription`, "البيان")}
-                            className="h-12 text-base"
-                          />
-                        </div>
-
-                        {/* Row 3: amount (primary) + one-click 15% VAT (auto-routed) */}
-                        <div className="space-y-3 rounded-lg bg-background/70 border border-red-100 p-3 md:p-4">
-                          <div className="space-y-1.5">
-                            <Label className="text-sm font-semibold">{t(`${NS}.colAmount`, "المبلغ")} <span className="text-destructive">*</span></Label>
                             <Input
                               type="number" step="0.01" placeholder="0.00" dir="ltr"
                               value={l.amount}
                               onChange={e => updateLine(l.key, { amount: e.target.value })}
                               onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
-                              className="h-14 text-lg text-left font-mono font-semibold"
+                              className="h-8 text-sm text-left font-mono"
                               data-testid={`pv-line-amount-${idx}`}
                             />
-                          </div>
-                          {Number(l.taxAmount) > 0 ? (
-                            <div className="space-y-2 rounded-md bg-primary/5 border border-primary/20 p-3">
-                              <div className="flex items-center justify-between gap-2">
-                                <Label className="text-sm font-semibold text-primary">
-                                  {t(`${NS}.taxAdded`, "ضريبة القيمة المضافة")} ({l.taxRate || "15"}%)
-                                </Label>
-                                <Button
-                                  type="button" variant="ghost" size="sm"
-                                  className="h-8 gap-1 text-destructive hover:text-destructive"
-                                  onClick={() => updateLine(l.key, { taxRate: "0", taxAmount: "0.00", taxAccountId: "" })}
-                                  data-testid={`pv-line-tax-remove-${idx}`}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                  {t(`${NS}.removeTax`, "إزالة الضريبة")}
-                                </Button>
-                              </div>
-                              <Input
-                                type="number" step="0.01" placeholder="0.00" dir="ltr"
-                                value={l.taxAmount}
-                                onChange={e => updateLine(l.key, { taxAmount: e.target.value })}
-                                onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
-                                className="h-12 text-base text-left font-mono"
-                                data-testid={`pv-line-tax-amount-${idx}`}
-                              />
-                            </div>
-                          ) : (
-                            <Button
-                              type="button" variant="outline"
-                              disabled={!(Number(l.amount) > 0)}
-                              onClick={() => updateLine(l.key, { taxRate: "15" })}
-                              className="w-full h-12 gap-2 border-primary/40 text-primary hover:bg-primary/5 hover:text-primary"
-                              data-testid={`pv-line-tax-add-${idx}`}
-                            >
-                              <Plus className="h-4 w-4" />
-                              {t(`${NS}.addTax`, "إضافة ضريبة")} 15%
-                            </Button>
-                          )}
-                        </div>
-
-                        {/* Row 4: cost center + purchase-invoice link (VAT account auto-resolved) */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-sm font-semibold">{t(`${NS}.colCostCenter`, "مركز التكلفة")}</Label>
+                            <Input
+                              value={l.description}
+                              onChange={e => updateLine(l.key, { description: e.target.value })}
+                              placeholder={t(`${NS}.colDescription`, "البيان")}
+                              className="h-8 text-sm"
+                            />
                             <select
                               value={l.costCenter}
                               onChange={e => updateLine(l.key, { costCenter: e.target.value })}
-                              className="w-full h-12 border border-input rounded-md px-3 text-base bg-background"
+                              className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
                             >
                               <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
                               {(costCentersList as any[])
@@ -1239,50 +1133,114 @@ export default function PaymentVoucherForm() {
                                   <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>
                                 ))}
                             </select>
+                            <Button
+                              type="button" variant="ghost" size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeLine(l.key)}
+                              title={t(`${NS}.removeLine`, "حذف البند")}
+                              data-testid={`pv-line-remove-${idx}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-sm font-semibold inline-flex items-center gap-1"><Link2 className="h-4 w-4" />{t(`${NS}.colPurchaseInvoice`, "ربط فاتورة شراء")}</Label>
-                            <SearchCombobox
-                              items={invoiceItems}
-                              value={l.purchaseInvoiceId}
-                              onValueChange={v => {
-                                updateLine(l.key, { purchaseInvoiceId: v });
-                                // Linking an invoice while no supplier is chosen back-fills
-                                // the supplier from the invoice so the JE party stays correct.
-                                if (v && !form.entityId) {
-                                  const inv = (purchaseInvoices as any[]).find((x: any) => String(x.id) === String(v));
-                                  const sup = inv?.supplierId
-                                    ? (suppliers as any[]).find((x: any) => String(x.id) === String(inv.supplierId))
-                                    : null;
-                                  if (sup) setForm(p => ({ ...p, entityId: String(sup.id), entityName: (isRtl ? sup.nameAr : (sup.nameEn || sup.nameAr)) || "" }));
-                                }
-                              }}
-                              placeholder={t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")}
-                              searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
-                              emptyText={t(`${NS}.noOpenInvoices`, "لا توجد فواتير")}
-                            />
-                          </div>
-                        </div>
 
-                        {/* Line total — prominent, always visible */}
-                        <div className="flex items-center justify-between border-t border-red-200/60 pt-3">
-                          <span className="text-sm font-semibold text-muted-foreground">{t(`${NS}.colLineTotal`, "إجمالي البند")}</span>
-                          <span className="font-mono font-bold text-xl tabular-nums text-red-700" data-testid={`pv-line-total-${idx}`}>{fmt(lineTotal)}</span>
+                          {/* Secondary row: tax (with ⋮ supplier menu on the tax line) + PI link + line total */}
+                          <div className="grid grid-cols-[28px_1fr] gap-2 items-start">
+                            <span />
+                            <div className="space-y-2">
+                              {Number(l.taxAmount) > 0 ? (
+                                <div className="flex flex-wrap items-center gap-2 rounded-md bg-primary/5 border border-primary/20 px-2 py-1.5">
+                                  <span className="text-xs font-semibold text-primary shrink-0">
+                                    {t(`${NS}.taxAdded`, "ضريبة القيمة المضافة")} ({l.taxRate || "15"}%)
+                                  </span>
+                                  <Input
+                                    type="number" step="0.01" placeholder="0.00" dir="ltr"
+                                    value={l.taxAmount}
+                                    onChange={e => updateLine(l.key, { taxAmount: e.target.value })}
+                                    onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
+                                    className="h-7 w-28 text-xs text-left font-mono"
+                                    data-testid={`pv-line-tax-amount-${idx}`}
+                                  />
+                                  {/* ⋮ supplier tax details — lives on the tax line, mirroring the قيد */}
+                                  <SupplierTaxDetailsMenu
+                                    testId={`pv-line-${idx}`}
+                                    value={{
+                                      supplierName: l.supplierName,
+                                      supplierVatNumber: l.supplierVatNumber,
+                                      supplierInvoiceNumber: l.supplierInvoiceNumber,
+                                      supplierInvoiceDate: l.supplierInvoiceDate,
+                                    }}
+                                    onChange={(v: SupplierTaxDetails) => updateLine(l.key, v)}
+                                  />
+                                  <Button
+                                    type="button" variant="ghost" size="sm"
+                                    className="h-7 gap-1 text-destructive hover:text-destructive ml-auto"
+                                    onClick={() => updateLine(l.key, { taxRate: "0", taxAmount: "0.00", taxAccountId: "" })}
+                                    data-testid={`pv-line-tax-remove-${idx}`}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    {t(`${NS}.removeTax`, "إزالة الضريبة")}
+                                  </Button>
+                                  {hasSupplierTaxDetails(l) && (
+                                    <span className="inline-flex flex-wrap items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[11px] font-medium w-full">
+                                      <FileText className="h-3 w-3" />
+                                      {l.supplierName || t(`${NS}.supplierUnnamed`, "مورد")}
+                                      {l.supplierVatNumber && <span className="font-mono" dir="ltr">{l.supplierVatNumber}</span>}
+                                      {l.supplierInvoiceNumber && <span>#{l.supplierInvoiceNumber}</span>}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <Button
+                                  type="button" variant="outline" size="sm"
+                                  disabled={!(Number(l.amount) > 0)}
+                                  onClick={() => updateLine(l.key, { taxRate: "15" })}
+                                  className="h-7 gap-1 text-xs border-primary/40 text-primary hover:bg-primary/5 hover:text-primary"
+                                  data-testid={`pv-line-tax-add-${idx}`}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                  {t(`${NS}.addTax`, "إضافة ضريبة")} 15%
+                                </Button>
+                              )}
+
+                              {/* Purchase-invoice link + running line total */}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Label className="text-[11px] font-medium inline-flex items-center gap-1 shrink-0 text-muted-foreground">
+                                  <Link2 className="h-3.5 w-3.5" />{t(`${NS}.colPurchaseInvoice`, "ربط فاتورة شراء")}
+                                </Label>
+                                <div className="flex-1 min-w-[12rem] max-w-xs">
+                                  <SearchCombobox
+                                    items={invoiceItems}
+                                    value={l.purchaseInvoiceId}
+                                    onValueChange={v => {
+                                      updateLine(l.key, { purchaseInvoiceId: v });
+                                      // Linking an invoice while no supplier is chosen back-fills
+                                      // the supplier from the invoice so the JE party stays correct.
+                                      if (v && !form.entityId) {
+                                        const inv = (purchaseInvoices as any[]).find((x: any) => String(x.id) === String(v));
+                                        const sup = inv?.supplierId
+                                          ? (suppliers as any[]).find((x: any) => String(x.id) === String(inv.supplierId))
+                                          : null;
+                                        if (sup) setForm(p => ({ ...p, entityId: String(sup.id), entityName: (isRtl ? sup.nameAr : (sup.nameEn || sup.nameAr)) || "" }));
+                                      }
+                                    }}
+                                    placeholder={t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")}
+                                    searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
+                                    emptyText={t(`${NS}.noOpenInvoices`, "لا توجد فواتير")}
+                                  />
+                                </div>
+                                <span className="ml-auto text-xs text-muted-foreground">
+                                  {t(`${NS}.colLineTotal`, "إجمالي البند")}:{" "}
+                                  <span className="font-mono font-semibold tabular-nums text-red-700" data-testid={`pv-line-total-${idx}`}>{fmt(lineTotal)}</span>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-
-                <Button
-                  type="button" variant="outline" size="sm"
-                  onClick={addLine}
-                  className="gap-1.5"
-                  data-testid="pv-add-line"
-                >
-                  <Plus className="h-4 w-4" />
-                  {t(`${NS}.addLine`, "إضافة بند")}
-                </Button>
 
                 {/* Totals footer */}
                 <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3 mt-1 text-sm">
@@ -1299,59 +1257,6 @@ export default function PaymentVoucherForm() {
                     <span className="text-muted-foreground text-xs">{t(`${NS}.grandTotal`, "الإجمالي")}</span>
                     <span className="font-mono font-bold text-base tabular-nums text-red-700" data-testid="pv-grand-total">{fmt(totals.grand)}</span>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-            </TabsContent>
-
-            <TabsContent value="refs" className="mt-0">
-            {/* Section: References & Notes */}
-            <Card className="border-2 border-slate-100">
-              <CardHeader className="py-3 px-4 border-b bg-slate-50/40">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-slate-700" />
-                  {t(`${NS}.section_refs`, "المراجع والبيان")}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4 pb-4 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">{t(`${NS}.refType`)}</Label>
-                    <Input value={form.refType} onChange={e => setForm(p => ({ ...p, refType: e.target.value }))} placeholder={t(`${NS}.refTypePh`)} className="h-9 text-sm" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">{t(`${NS}.refNumber`)}</Label>
-                    <Input value={form.refNumber} onChange={e => setForm(p => ({ ...p, refNumber: e.target.value }))} placeholder="INV-0001" dir="ltr" className="h-9 text-sm text-left font-mono" />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.description`)}</Label>
-                  <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder={t(`${NS}.descriptionPh`)} className="h-9 text-sm" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">مركز التكلفة</Label>
-                  <select
-                    value={form.costCenter}
-                    onChange={e => setForm(p => ({ ...p, costCenter: e.target.value }))}
-                    data-testid="pv-cost-center"
-                    className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
-                  >
-                    <option value="">— بدون مركز تكلفة —</option>
-                    {(costCentersList as any[])
-                      .filter((c: any) => c.isActive !== false)
-                      .map((c: any) => (
-                        <option key={c.id} value={c.code}>
-                          {c.code} — {c.nameAr}
-                        </option>
-                      ))}
-                  </select>
-                  <p className="text-[11px] text-muted-foreground">
-                    سيُسند هذا المركز إلى كل سطور القيد عند الترحيل ليظهر في تقارير مراكز التكلفة.
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t("cashCommon.notes")}</Label>
-                  <Textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder={t("cashCommon.notesPlaceholder")} className="text-sm resize-none" rows={2} />
                 </div>
               </CardContent>
             </Card>

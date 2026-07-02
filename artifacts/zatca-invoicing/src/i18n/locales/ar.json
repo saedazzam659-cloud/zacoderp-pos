@@ -3133,6 +3133,8 @@
     "viewJournal": "عرض سطور القيد المحاسبي",
     "savedFailedPost": "تم الحفظ ولكن فشل الترحيل: {{err}}",
     "section_header": "بيانات السند",
+    "tab_paymentMethod": "وسيلة الدفع",
+    "generalDescription": "البيان العام",
     "section_supplier": "المورد والمبلغ",
     "section_refs": "المراجع والبيان",
     "linkInvoiceTitle": "سداد مقابل فاتورة شراء (اختياري)",
