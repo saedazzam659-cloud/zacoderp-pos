@@ -585,8 +585,10 @@ router.get("/account-statement", async (req, res) => {
         // cash statement shows for receipt/payment voucher rows.
         receiptVoucherDesc:       receiptVouchersTable.description,
         receiptVoucherEntity:     receiptVouchersTable.entityName,
+        receiptVoucherNotes:      receiptVouchersTable.notes,
         paymentVoucherDesc:       paymentVouchersTable.description,
         paymentVoucherEntity:     paymentVouchersTable.entityName,
+        paymentVoucherNotes:      paymentVouchersTable.notes,
         goodsReceiptId:           goodsReceiptsTable.id,
         goodsDeliveryId:          goodsDeliveriesTable.id,
         contractingProgressBillId:contractingProgressBillsTable.id,
@@ -782,6 +784,17 @@ router.get("/account-statement", async (req, res) => {
       return parts.length ? parts.join(" — ") : null;
     };
 
+    // Join non-empty text pieces with " — ", skipping blanks and duplicates.
+    // Used to merge البيان العام (header) + بيان البند (per-line) + الملاحظات.
+    const mergeDesc = (...parts: (string | null | undefined)[]) => {
+      const out: string[] = [];
+      for (const p of parts) {
+        const t = (p ?? "").trim();
+        if (t && !out.includes(t)) out.push(t);
+      }
+      return out.join(" — ");
+    };
+
     // Running balance starts from the historical previous balance
     // (SAP-style brought-forward) so the in-period movements continue
     // from the correct opening position rather than from zero.
@@ -790,15 +803,31 @@ router.get("/account-statement", async (req, res) => {
       const d = Number(r.debit  || 0);
       const c = Number(r.credit || 0);
       runningBalance += d - c;
-      // Receipt/payment voucher rows: mirror the Cash & Banks bank/cash
-      // statement — prefer the voucher's own typed الشرح, else fall back to
-      // "سند قبض/صرف — <الطرف الثاني>" so the GL account-statement shows the
-      // second-party name next to every voucher movement.
-      const voucherDesc = r.receiptVoucherId
-        ? ((r.receiptVoucherDesc ?? "").trim() || `سند قبض${(r.receiptVoucherEntity ?? "").trim() ? ` — ${(r.receiptVoucherEntity ?? "").trim()}` : ""}`)
-        : r.paymentVoucherId
-        ? ((r.paymentVoucherDesc ?? "").trim() || `سند صرف${(r.paymentVoucherEntity ?? "").trim() ? ` — ${(r.paymentVoucherEntity ?? "").trim()}` : ""}`)
-        : null;
+      // Voucher rows: merge البيان العام (header desc) FIRST, then the per-account
+      // بيان البند (this JE line's own typed text — skipped when it is a system
+      // label: the auto "سند صرف/قبض …" fallback, the treasury "بنك/صندوق …"
+      // label, or a duplicate of the header), then the الملاحظات. Falls back to
+      // "سند قبض/صرف — <الطرف الثاني>" when the voucher carries no header desc.
+      const voucherKind = r.receiptVoucherId ? "receipt" : r.paymentVoucherId ? "payment" : null;
+      let voucherDesc: string | null = null;
+      if (voucherKind) {
+        const vHeader = ((voucherKind === "receipt" ? r.receiptVoucherDesc : r.paymentVoucherDesc) ?? "").trim();
+        const vEntity = ((voucherKind === "receipt" ? r.receiptVoucherEntity : r.paymentVoucherEntity) ?? "").trim();
+        const vNotes  = ((voucherKind === "receipt" ? r.receiptVoucherNotes : r.paymentVoucherNotes) ?? "").trim();
+        const vLabel  = voucherKind === "receipt" ? "سند قبض" : "سند صرف";
+        let vPerLine = (r.description ?? "").trim();
+        if (
+          !vPerLine ||
+          vPerLine === vHeader ||
+          vPerLine.startsWith("سند صرف") ||
+          vPerLine.startsWith("سند قبض") ||
+          vPerLine.startsWith("بنك ") ||
+          vPerLine.startsWith("صندوق ")
+        ) {
+          vPerLine = "";
+        }
+        voucherDesc = mergeDesc(vHeader, vPerLine, vNotes) || `${vLabel}${vEntity ? ` — ${vEntity}` : ""}`;
+      }
       const srcDesc = r.purchaseInvoiceId
         ? invoiceDescription(pInvInfo.get(r.purchaseInvoiceId))
         : r.salesInvoiceId

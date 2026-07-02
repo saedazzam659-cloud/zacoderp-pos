@@ -484,6 +484,7 @@ router.get("/supplier-statement", async (req, res) => {
       journalEntryId: paymentVouchersTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       amount: paymentVouchersTable.amount,
+      description: paymentVouchersTable.description,
       notes: paymentVouchersTable.notes,
     }).from(paymentVouchersTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId))
@@ -505,6 +506,20 @@ router.get("/supplier-statement", async (req, res) => {
     const withNote = (_base: string, n?: string | null) =>
       n && String(n).trim() ? String(n).trim() : "—";
 
+    // Voucher rows merge البيان العام (header desc) + الملاحظات so the supplier
+    // statement الشرح carries everything typed on the payment voucher; falls
+    // back to em-dash when both are empty.
+    const mergeDesc = (...parts: (string | null | undefined)[]) => {
+      const out: string[] = [];
+      for (const p of parts) {
+        const t = (p ?? "").trim();
+        if (t && !out.includes(t)) out.push(t);
+      }
+      return out.join(" — ");
+    };
+    const voucherDesc = (desc?: string | null, notes?: string | null) =>
+      mergeDesc(desc, notes) || "—";
+
     // For supplier statements, invoices increase the payable (credit column),
     // returns and payments decrease it (debit column). Direct JE lines carry
     // their own debit/credit as posted.
@@ -514,7 +529,7 @@ router.get("/supplier-statement", async (req, res) => {
       // header note when present, otherwise the item name(s) on the invoice.
       ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: (i.supplierInvoiceNumber && String(i.supplierInvoiceNumber).trim()) ? String(i.supplierInvoiceNumber).trim() : i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—") })),
       ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
-      ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: withNote("سند صرف", p.notes) })),
+      ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: voucherDesc(p.description, p.notes) })),
       // Manual / direct JE rows: show the actual journal-line text the user
       // wrote (resolved in fetchSupplierDirectJeLines), falling back to a
       // type-specific label only when the entry carries no description.

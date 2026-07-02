@@ -331,6 +331,7 @@ async function buildAccountStatement(opts: {
     id: receiptVouchersTable.id, date: receiptVouchersTable.date,
     code: receiptVouchersTable.code, amount: receiptVouchersTable.amount,
     entityName: receiptVouchersTable.entityName, description: receiptVouchersTable.description,
+    notes: receiptVouchersTable.notes,
   }).from(receiptVouchersTable).where(and(...recConds));
 
   // Payments (credit)
@@ -347,6 +348,7 @@ async function buildAccountStatement(opts: {
     id: paymentVouchersTable.id, date: paymentVouchersTable.date,
     code: paymentVouchersTable.code, amount: paymentVouchersTable.amount,
     entityName: paymentVouchersTable.entityName, description: paymentVouchersTable.description,
+    notes: paymentVouchersTable.notes,
   }).from(paymentVouchersTable).where(and(...payConds));
 
   // Transfers in (debit) and out (credit) — no branch filter (see note above).
@@ -376,15 +378,26 @@ async function buildAccountStatement(opts: {
     transferType: cashTransfersTable.transferType, description: cashTransfersTable.description,
   }).from(cashTransfersTable).where(and(...trOutConds));
 
+  // Join non-empty text pieces with " — ", skipping blanks and duplicates.
+  // Merges the voucher's البيان العام (header desc) with its الملاحظات so the
+  // treasury/bank statement الشرح reflects everything the user wrote.
+  const mergeDesc = (...parts: (string | null | undefined)[]) => {
+    const out: string[] = [];
+    for (const p of parts) {
+      const t = (p ?? "").trim();
+      if (t && !out.includes(t)) out.push(t);
+    }
+    return out.join(" — ");
+  };
   const lines: StatementLine[] = [
     ...receipts.map(r => ({
       id: r.id, date: r.date, type: "receipt" as const, docNumber: r.code,
-      description: r.description ?? `سند قبض${r.entityName ? ` — ${r.entityName}` : ""}`,
+      description: mergeDesc(r.description, r.notes) || `سند قبض${r.entityName ? ` — ${r.entityName}` : ""}`,
       debit: Number(r.amount), credit: 0,
     })),
     ...payments.map(p => ({
       id: p.id, date: p.date, type: "payment" as const, docNumber: p.code,
-      description: p.description ?? `سند صرف${p.entityName ? ` — ${p.entityName}` : ""}`,
+      description: mergeDesc(p.description, p.notes) || `سند صرف${p.entityName ? ` — ${p.entityName}` : ""}`,
       debit: 0, credit: Number(p.amount),
     })),
     ...transfersIn.map(t => ({

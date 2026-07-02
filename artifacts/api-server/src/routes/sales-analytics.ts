@@ -441,6 +441,7 @@ router.get("/customer-statement", async (req, res) => {
       journalEntryId: receiptVouchersTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       amount: receiptVouchersTable.amount,
+      description: receiptVouchersTable.description,
       notes: receiptVouchersTable.notes,
     }).from(receiptVouchersTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, receiptVouchersTable.journalEntryId))
@@ -454,13 +455,27 @@ router.get("/customer-statement", async (req, res) => {
     const withNote = (_base: string, n?: string | null) =>
       n && String(n).trim() ? String(n).trim() : "—";
 
+    // Voucher rows merge البيان العام (header desc) + الملاحظات so the customer
+    // statement الشرح carries everything typed on the receipt voucher; falls
+    // back to em-dash when both are empty.
+    const mergeDesc = (...parts: (string | null | undefined)[]) => {
+      const out: string[] = [];
+      for (const p of parts) {
+        const t = (p ?? "").trim();
+        if (t && !out.includes(t)) out.push(t);
+      }
+      return out.join(" — ");
+    };
+    const voucherDesc = (desc?: string | null, notes?: string | null) =>
+      mergeDesc(desc, notes) || "—";
+
     type Line = { id: number; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
       // Invoice "الشرح" loads from the sales invoice: the user-typed header
       // note when present, otherwise the item name(s) on the invoice.
       ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—") })),
       ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes) })),
-      ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: withNote("سند قبض", r.notes) })),
+      ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: voucherDesc(r.description, r.notes) })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
     res.json({ opening, lines });
