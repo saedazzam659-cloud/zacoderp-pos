@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
@@ -18,9 +19,7 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
   };
   const csv = [headers.join(","), ...rows.map(r => r.map(esc).join(","))].join("\n");
   const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
+  void saveBlob(blob, filename);
 }
 
 export default function LoansReport() {

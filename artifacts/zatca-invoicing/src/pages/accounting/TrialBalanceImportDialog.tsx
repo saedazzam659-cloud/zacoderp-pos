@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Upload, FileSpreadsheet, Download, AlertTriangle, CheckCircle2 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import { trialBalancesApi, type ImportLine } from "@/lib/trialBalancesApi";
 
 // Header aliases — case-insensitive, whitespace/RTL-mark/NBSP-normalized
@@ -248,7 +249,7 @@ function downloadTemplate(t: (k: string) => string) {
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Trial Balance");
-  XLSX.writeFile(wb, `قالب-ميزان-المراجعة-${new Date().toISOString().slice(0,10)}.xlsx`);
+  void saveWorkbook(wb, `قالب-ميزان-المراجعة-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 interface Props {

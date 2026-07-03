@@ -23,6 +23,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, FileDown, X, Loader2, Send, AlertCircle, AlertTriangle, Info, ListChecks, Sparkles, RefreshCw, StickyNote } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import {
   downloadCsv, useAuditGridLayout, useColumnResize,
 } from "@/lib/auditGridLayout";
@@ -1629,7 +1630,7 @@ ${sections}
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 16 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, t("salesReturns.title"));
-    XLSX.writeFile(wb, `sales-returns-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    void saveWorkbook(wb, `sales-returns-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   // Bulk-print: fetch every selected return's full lines, then open the

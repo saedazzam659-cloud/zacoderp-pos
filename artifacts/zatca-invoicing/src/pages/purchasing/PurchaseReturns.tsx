@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import ReturnDocumentDetails from "@/components/documents/ReturnDocumentDetails";
@@ -1093,7 +1094,7 @@ ${sections}
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 16 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "مردودات الشراء");
-    XLSX.writeFile(wb, `purchase-returns-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    void saveWorkbook(wb, `purchase-returns-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   async function bulkRun(

@@ -79,6 +79,32 @@ async fn save_text_file(
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
+// Binary "Save As" export (xlsx/pdf/etc.) — JS serialises the file to bytes,
+// Rust shows the native save dialog and writes them. Mirrors save_text_file.
+#[tauri::command]
+async fn save_export_file(
+    app: tauri::AppHandle,
+    bytes: Vec<u8>,
+    suggested_name: String,
+    filter_name: String,
+    filter_ext: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter(&filter_name, &[filter_ext.as_str()])
+        .set_file_name(&suggested_name)
+        .save_file(move |fp| {
+            let _ = tx.send(fp);
+        });
+    let chosen = rx.await.map_err(|e| e.to_string())?;
+    let Some(fp) = chosen else { return Ok(None); };
+    let path: std::path::PathBuf = fp.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 #[tauri::command]
 fn get_hardware_fingerprint() -> Result<String, String> {
     license::hardware_fingerprint().map_err(|e| e.to_string())
@@ -376,6 +402,7 @@ fn main() {
             backup::data_dir_set,
             sync_now,
             save_text_file,
+            save_export_file,
             get_hardware_fingerprint,
             get_device_name,
             get_os_info,

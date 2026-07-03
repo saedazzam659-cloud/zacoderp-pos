@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -273,7 +274,7 @@ export default function OpeningBalances() {
     const fname = includeAmounts
       ? `opening-balances-${entryDate || new Date().toISOString().slice(0, 10)}.xlsx`
       : `opening-balances-template.xlsx`;
-    XLSX.writeFile(wb, fname);
+    void saveWorkbook(wb, fname);
   }
 
   // ── IMPORT ────────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -463,10 +464,7 @@ function ClientDetailDialog({ clientId, onClose, onChanged }: { clientId: number
                     if (acting) headers["x-acting-company-id"] = acting;
                     fetch(`${API}/api/admin/gateway-clients/${clientId}/template.csv`, { headers })
                       .then(r => r.blob()).then(blob => {
-                        const a = document.createElement("a");
-                        a.href = URL.createObjectURL(blob);
-                        a.download = `gateway-template-${clientId}.csv`;
-                        a.click(); URL.revokeObjectURL(a.href);
+                        void saveBlob(blob, `gateway-template-${clientId}.csv`);
                       });
                   }}>
                     <Download className="h-4 w-4 ml-1" />

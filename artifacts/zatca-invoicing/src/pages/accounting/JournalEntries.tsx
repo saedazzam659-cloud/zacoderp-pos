@@ -26,6 +26,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import { cn } from "@/lib/utils";
 import {
   downloadCsv, useAuditGridLayout, useColumnResize,
@@ -524,7 +525,7 @@ export default function JournalEntries() {
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 32 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, t("journalEntries.title"));
-    XLSX.writeFile(wb, `journal-entries-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    void saveWorkbook(wb, `journal-entries-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   const escapeHtml = (s: any) =>
@@ -1111,7 +1112,7 @@ ${sections}
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 32 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, t("journalEntries.title"));
-    XLSX.writeFile(wb, `journal-entries-selected-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    void saveWorkbook(wb, `journal-entries-selected-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   /* ── Quick CSV export (uses visible columns + filtered set) ── */

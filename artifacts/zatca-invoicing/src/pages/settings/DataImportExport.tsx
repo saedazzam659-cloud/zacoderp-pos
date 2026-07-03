@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -750,7 +751,7 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
       [t("dataIO.excelMessage")]: i.message,
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(issueRows), t("dataIO.issuesSheet"));
-    XLSX.writeFile(wb, `import-report-${entityKey}-${Date.now()}.xlsx`);
+    void saveWorkbook(wb, `import-report-${entityKey}-${Date.now()}.xlsx`);
   }
 
   const StepBadge = ({ n, label, active, done }: { n: number; label: string; active: boolean; done: boolean }) => (
@@ -1105,7 +1106,7 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
       totalsRow,
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "statement");
-    XLSX.writeFile(wb, `account-statement-${searchActive ? "search" : (allMode ? "all" : selected)}-${Date.now()}.xlsx`);
+    void saveWorkbook(wb, `account-statement-${searchActive ? "search" : (allMode ? "all" : selected)}-${Date.now()}.xlsx`);
   }
 
   // ── Print helpers (standalone window, same look as the system JE print) ──

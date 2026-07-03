@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 import { useEffect, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useRoute } from "wouter";
@@ -1018,14 +1019,7 @@ function AITab({ projectId }: { projectId: number }) {
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `contracting-training-${new Date().toISOString().slice(0,10)}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      await saveBlob(blob, `contracting-training-${new Date().toISOString().slice(0,10)}.csv`);
       toast({ title: t("contracting.ai.csvDownloaded", "تم تنزيل ملف بيانات التدريب") });
     } catch (e: any) {
       toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });

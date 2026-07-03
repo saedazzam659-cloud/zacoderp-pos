@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -99,12 +100,7 @@ export default function UserMovementReport() {
     }
     const csv = "\uFEFF" + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `movement_${mode === "day" ? day : `${from}_${to}`}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    void saveBlob(blob, `movement_${mode === "day" ? day : `${from}_${to}`}.csv`);
   };
 
   return (

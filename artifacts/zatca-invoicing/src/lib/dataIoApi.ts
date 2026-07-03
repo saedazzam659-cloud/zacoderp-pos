@@ -2,6 +2,8 @@
  * Typed client for /api/data-io/*
  * Used by the Settings → Data Import/Export wizard.
  */
+import { saveBlob } from "./saveFile";
+
 const API = import.meta.env.VITE_API_URL ?? "";
 
 function authHeaders(token: string | null): HeadersInit {
@@ -167,9 +169,5 @@ export async function commitHistorical(token: string | null, body: { companyId?:
 }
 
 export function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  void saveBlob(blob, filename);
 }

@@ -26,6 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet, detectUsbPrinter, isWebUsbSupported } from "@/lib/preferredPrinter";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -365,7 +366,7 @@ export default function GeneralSettings() {
     ws["!cols"] = headers.map(() => ({ wch: 16 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Items");
-    XLSX.writeFile(wb, "items_template.xlsx");
+    void saveWorkbook(wb, "items_template.xlsx");
   }
 
   function downloadBalancesTemplate() {
@@ -379,7 +380,7 @@ export default function GeneralSettings() {
     ws["!cols"] = headers.map(() => ({ wch: 18 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "OpeningBalances");
-    XLSX.writeFile(wb, "opening_balances_template.xlsx");
+    void saveWorkbook(wb, "opening_balances_template.xlsx");
   }
 
   async function parseExcelToObjects(file: File): Promise<any[]> {
@@ -461,7 +462,7 @@ export default function GeneralSettings() {
     ws["!cols"] = headers.map(() => ({ wch: 16 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Customers");
-    XLSX.writeFile(wb, "customers_data_template.xlsx");
+    void saveWorkbook(wb, "customers_data_template.xlsx");
   }
 
   function downloadSuppliersDataTemplate() {
@@ -474,7 +475,7 @@ export default function GeneralSettings() {
     ws["!cols"] = headers.map(() => ({ wch: 16 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Suppliers");
-    XLSX.writeFile(wb, "suppliers_data_template.xlsx");
+    void saveWorkbook(wb, "suppliers_data_template.xlsx");
   }
 
   async function handlePartyDataUpload(party: "customer" | "supplier", file: File) {
@@ -531,7 +532,7 @@ export default function GeneralSettings() {
       ws["!cols"] = [{ wch: 8 }, { wch: 32 }, { wch: 14 }, { wch: 10 }];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, party === "customer" ? "Customers" : "Suppliers");
-      XLSX.writeFile(wb, party === "customer" ? "customers_opening_balances.xlsx" : "suppliers_opening_balances.xlsx");
+      void saveWorkbook(wb, party === "customer" ? "customers_opening_balances.xlsx" : "suppliers_opening_balances.xlsx");
     } catch (e: any) {
       toast({ title: e?.message || t("pages.generalSettings.importFailed"), variant: "destructive" });
     }

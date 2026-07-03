@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -79,12 +80,7 @@ export default function UserAttendanceReport() {
     }
     const csv = "\uFEFF" + rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `attendance_${from}_${to}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    void saveBlob(blob, `attendance_${from}_${to}.csv`);
   };
 
   return (

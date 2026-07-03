@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 /**
  * Phase 2 — Gateway client reports dashboard.
  * Standalone page (separate from the GatewayClients modal so SuperAdmins
@@ -85,10 +86,7 @@ export default function GatewayClientReports() {
     if (token) headers.Authorization = `Bearer ${token}`;
     if (acting) headers["x-acting-company-id"] = acting;
     fetch(url, { headers }).then(r => r.blob()).then(blob => {
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `gateway-${id}-${new Date().toISOString().slice(0,10)}.csv`;
-      a.click(); URL.revokeObjectURL(a.href);
+      void saveBlob(blob, `gateway-${id}-${new Date().toISOString().slice(0,10)}.csv`);
     });
   };
 

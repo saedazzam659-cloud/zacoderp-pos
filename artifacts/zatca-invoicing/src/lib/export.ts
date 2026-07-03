@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { saveBlob, saveWorkbook } from "./saveFile";
 
 export interface ExportColumn {
   header: string;
@@ -72,7 +73,7 @@ export function exportToExcel(
   // it's clearly a separate row by content.
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  XLSX.writeFile(wb, `${filename}.xlsx`);
+  void saveWorkbook(wb, `${filename}.xlsx`);
 }
 
 // ─── Company branding shared across PDF + branded Excel ───────────────────────
@@ -289,14 +290,7 @@ export async function exportToExcelBranded(
     const blob = new Blob([buffer], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${filename}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await saveBlob(blob, `${filename}.xlsx`);
   } catch {
     // ExcelJS unavailable / failed — degrade to the plain SheetJS export so
     // the user still gets their data.
@@ -1042,7 +1036,7 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
       pdf.text(`${i} / ${total}`, pageW / 2, pageH - 5, { align: "center" });
     }
 
-    pdf.save(`${filename}.pdf`);
+    await saveBlob(pdf.output("blob"), `${filename}.pdf`);
   } finally {
     iframe.remove();
   }

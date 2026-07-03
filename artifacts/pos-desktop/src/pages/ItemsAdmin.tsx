@@ -1,3 +1,4 @@
+import { saveText } from "../lib/saveFile";
 // Items admin — list + add + edit + delete.
 // Uses lib/items.ts + lib/uom.ts.
 
@@ -133,12 +134,7 @@ function itemsToCsv(list: LocalItem[], s: StockMap): string {
 }
 
 function downloadCsv(content: string, filename: string): void {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  void saveText(content, filename);
 }
 
 export default function ItemsAdmin() {

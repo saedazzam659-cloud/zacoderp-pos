@@ -14,6 +14,7 @@
  * size, format change) ripple to every audit-style screen at once.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { saveBlob } from "./saveFile";
 
 /* ────────────────────────────── Header palette ─────────────────────────── */
 export type HeaderColor =
@@ -130,11 +131,7 @@ export function downloadCsv(filename: string, header: string[], rows: (string | 
     .map(r => r.map(safeCsvCell).join(","))
     .join("\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  void saveBlob(blob, filename);
 }
 
 /* ─────────────────────────── Layout hook ───────────────────────────────── */

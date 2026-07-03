@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import {
   GitCompareArrows, Upload, Search, Filter, CheckCircle2, Link2, Link2Off, Trash2, AlertTriangle, Sparkles, Brain, FileSpreadsheet,
 } from "lucide-react";
@@ -165,7 +166,7 @@ export default function BankReconciliation() {
     }
 
     const safe = baseName.replace(/\.[^.]+$/, "").replace(/[^\w\u0600-\u06FF\-]+/g, "_").slice(0, 60) || "bank_statement";
-    XLSX.writeFile(wb, `${safe}.cleaned.xlsx`);
+    void saveWorkbook(wb, `${safe}.cleaned.xlsx`);
   }
 
   /** "استخراج كملف نظيف" button handler: exports the bank statements that the

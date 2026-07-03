@@ -1,3 +1,4 @@
+import { saveText } from "../lib/saveFile";
 // Bulk invoice import (Task #228) — upload many invoices from an Excel/CSV
 // file instead of keying each one into the POS register.
 //
@@ -152,34 +153,9 @@ export default function InvoiceImport({
   }
 
   async function downloadTemplate() {
-    const withBom = "\uFEFF" + SAMPLE_INVOICE_CSV;
-    const isTauri =
-      typeof window !== "undefined" &&
-      ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
-    if (isTauri) {
-      try {
-        const { invoke } = await import("../lib/tauri-shim");
-        const saved = await invoke<string | null>("save_text_file", {
-          content: withBom,
-          suggestedName: "invoice_import_template.csv",
-          filterName: "CSV",
-          filterExt: "csv",
-        });
-        if (saved) setToast({ kind: "ok", text: `✅ تم حفظ النموذج: ${saved}` });
-        return;
-      } catch {
-        /* fall through to anchor */
-      }
-    }
-    const blob = new Blob([withBom], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "invoice_import_template.csv";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+    // saveText routes through the native Save-As dialog (Tauri) or the browser
+    // save picker, falling back to a classic download only when unsupported.
+    await saveText("\uFEFF" + SAMPLE_INVOICE_CSV, "invoice_import_template.csv");
   }
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {

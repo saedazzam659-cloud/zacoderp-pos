@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -698,15 +699,7 @@ export default function AuditLog() {
       const filename = m?.[1] ? decodeURIComponent(m[1]) : `audit-log-selection-${Date.now()}.csv`;
       const rowCount = Number(r.headers.get("X-Csv-Row-Count") ?? ids.length) || ids.length;
       if (typeof document !== "undefined") {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        // Free the blob URL after the click has had a chance to start.
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        await saveBlob(blob, filename);
       }
       toast({
         title: tr("downloadSuccessTitle"),

@@ -5,6 +5,7 @@
 //                     keeps Arabic shaping correct, unlike canvas/jsPDF.
 // Both run fully client-side, so they work with no internet (standalone app).
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "./saveFile";
 
 export interface ExportColumn<T> {
   header: string;
@@ -31,7 +32,7 @@ export function exportToExcel<T>(filenameBase: string, columns: ExportColumn<T>[
   // Right-to-left sheet so Arabic columns read naturally in Excel.
   wb.Workbook = { Views: [{ RTL: true }] };
   XLSX.utils.book_append_sheet(wb, ws, "البيانات");
-  XLSX.writeFile(wb, `${filenameBase}-${stamp()}.xlsx`);
+  saveWorkbook(wb, `${filenameBase}-${stamp()}.xlsx`);
 }
 
 function escHtml(x: unknown): string {

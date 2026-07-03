@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import {
   X, FileSpreadsheet, ShieldCheck, AlertTriangle, CheckCircle2,
   Wand2, Download, Send, Search, Filter, Pencil, RefreshCw,
@@ -291,7 +292,7 @@ export function exportZatcaExcel(rows: ZatcaRow[], filename: string) {
   ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: data.length - 1, c: headers.length - 1 } }) };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "ZATCA Invoices");
-  XLSX.writeFile(wb, filename);
+  void saveWorkbook(wb, filename);
 }
 
 export function downloadZatcaTemplate() {

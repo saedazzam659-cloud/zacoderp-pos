@@ -20,6 +20,7 @@ import {
   RotateCcw, FileSpreadsheet, ScrollText, Wrench, GitCompareArrows, FileText, ChevronRight,
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import TrialBalanceImportDialog from "./TrialBalanceImportDialog";
 import { DateField } from "@/components/ui/date-field";
 
@@ -163,7 +164,7 @@ export default function TrialBalanceDetailPage() {
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Trial Balance");
-    XLSX.writeFile(wb, `ميزان-مراجعة-${tb.fiscalYear}-${tb.periodEnd}.xlsx`);
+    void saveWorkbook(wb, `ميزان-مراجعة-${tb.fiscalYear}-${tb.periodEnd}.xlsx`);
   };
 
   if (isLoading) return <div className="p-6">{t("common.loading")}</div>;

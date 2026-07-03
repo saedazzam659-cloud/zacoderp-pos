@@ -43,6 +43,7 @@ import {
   hasSupplierTaxDetails,
 } from "@/components/SupplierTaxDetailsDialog";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 
 const ENTRY_TYPES = [
   { value: "general",      label: "قيد عام" },
@@ -1032,7 +1033,7 @@ export default function JournalEntryForm() {
     ws["!cols"] = [{ wch: 6 }, { wch: 12 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 28 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `قيد ${docLabel}`);
-    XLSX.writeFile(wb, `journal-entry-${docLabel}.xlsx`);
+    void saveWorkbook(wb, `journal-entry-${docLabel}.xlsx`);
   };
 
   // Build a compact 80 mm thermal-receipt HTML for the current entry.

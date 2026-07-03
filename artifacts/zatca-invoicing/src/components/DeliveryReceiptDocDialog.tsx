@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 // Shared create / edit / view dialog for goods-receipt (سند استلام) and
 // delivery (سند تسليم) documents. PURE archive — no GL, no stock, no ZATCA.
 // Used both from the invoice "أرشفة" tab (seeded from an invoice) and from the
@@ -335,11 +336,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   async function doDownload() {
     try {
       const blob = await makePdfBlob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `${label}-${docNumber || "مسودة"}.pdf`;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      await saveBlob(blob, `${label}-${docNumber || "مسودة"}.pdf`);
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message ?? "تعذّر إنشاء PDF", variant: "destructive" });
     }

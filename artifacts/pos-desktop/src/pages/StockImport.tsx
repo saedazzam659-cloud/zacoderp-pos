@@ -1,3 +1,4 @@
+import { saveText } from "../lib/saveFile";
 // Stock import — bulk upload opening balances + reorder points from CSV.
 //
 // Two modes:
@@ -259,51 +260,10 @@ export default function StockImport({ onDone }: { onDone?: () => void }) {
   }
 
   async function downloadSample() {
-    // UTF-8 BOM so Excel opens the Arabic columns correctly.
-    const withBom = "\uFEFF" + SAMPLE_CSV;
-    const isTauri =
-      typeof window !== "undefined" &&
-      ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
-
-    // Inside Tauri: open the native Windows "Save As" dialog so the
-    // cashier can pick where to save (and actually sees something happen).
-    // WebView2 silently drops anchor-based downloads, so this path is the
-    // only reliable one on the desktop build.
-    if (isTauri) {
-      try {
-        const { invoke } = await import("../lib/tauri-shim");
-        const saved = await invoke<string | null>("save_text_file", {
-          content: withBom,
-          suggestedName: "stock_template.csv",
-          filterName: "CSV",
-          filterExt: "csv",
-        });
-        if (saved) {
-          setToast({ kind: "ok", text: `✅ تم حفظ النموذج: ${saved}` });
-        }
-        // null = user cancelled — silent, no toast.
-        return;
-      } catch (e: any) {
-        // Fall through to browser path on any IPC error.
-        // eslint-disable-next-line no-console
-        console.warn("save_text_file failed, falling back to anchor", e);
-      }
-    }
-
-    // Browser/Vite preview fallback — anchor must be DOM-attached to fire
-    // in any Chromium-based WebView too.
-    const blob = new Blob([withBom], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "stock_template.csv";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 0);
+    // UTF-8 BOM so Excel opens the Arabic columns correctly. saveText routes
+    // through the native Save-As dialog (Tauri) or the browser save picker,
+    // falling back to a classic download only when neither is available.
+    await saveText("\uFEFF" + SAMPLE_CSV, "stock_template.csv");
   }
 
   return (

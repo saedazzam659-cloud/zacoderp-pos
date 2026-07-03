@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -89,7 +90,7 @@ function downloadTemplate(kind: keyof typeof COA_TEMPLATES) {
   ]);
   help["!cols"] = [{ wch: 60 }];
   XLSX.utils.book_append_sheet(wb, help, "تعليمات");
-  XLSX.writeFile(wb, `قالب-دليل-الحسابات-${kind}-${new Date().toISOString().slice(0,10)}.xlsx`);
+  void saveWorkbook(wb, `قالب-دليل-الحسابات-${kind}-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 const HEADER_MAP: Record<string, string> = {

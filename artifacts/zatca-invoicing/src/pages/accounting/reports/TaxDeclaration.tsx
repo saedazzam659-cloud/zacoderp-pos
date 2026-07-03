@@ -22,6 +22,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
 } from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
+import { saveWorkbook, saveBlob } from "@/lib/saveFile";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
 import { htmlToPdfBlob } from "@/lib/deliveryReceiptPrint";
@@ -329,7 +330,7 @@ function VatDrilldownDialog({
     const ws = XLSX.utils.json_to_sheet(exportRows());
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "العمليات");
-    XLSX.writeFile(wb, `tax-declaration-${bucket ?? "details"}-${from}_${to}.xlsx`);
+    void saveWorkbook(wb, `tax-declaration-${bucket ?? "details"}-${from}_${to}.xlsx`);
   }
 
   // Shared print/PDF markup: scoped under .tdx-print so the injected <style>
@@ -397,12 +398,7 @@ function VatDrilldownDialog({
     if (filtered.length === 0) return;
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(label)}</title></head><body>${buildInnerHtml()}</body></html>`;
     const blob = await htmlToPdfBlob(html);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `tax-declaration-${bucket ?? "details"}-${from}_${to}.pdf`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    await saveBlob(blob, `tax-declaration-${bucket ?? "details"}-${from}_${to}.pdf`);
   }
 
   return (
@@ -693,7 +689,7 @@ export default function TaxDeclaration() {
     ws["!cols"] = [{ wch: 42 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 40 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "الإقرار الضريبي");
-    XLSX.writeFile(wb, `tax-declaration-${data.period.from}_${data.period.to}.xlsx`);
+    void saveWorkbook(wb, `tax-declaration-${data.period.from}_${data.period.to}.xlsx`);
   }
 
   function buildReportHtml(): string {
@@ -791,12 +787,7 @@ export default function TaxDeclaration() {
     if (!data) return;
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(t("taxDeclaration.title"))}</title></head><body>${buildReportHtml()}</body></html>`;
     const blob = await htmlToPdfBlob(html);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `tax-declaration-${data.period.from}_${data.period.to}.pdf`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    await saveBlob(blob, `tax-declaration-${data.period.from}_${data.period.to}.pdf`);
   }
 
   const netVat = data?.netVat ?? 0;

@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -202,12 +203,7 @@ export default function ZatcaReport() {
     });
     const csv = "\uFEFF" + headers.join(",") + "\n" + lines.join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${tr("exportFilenamePrefix")}-${dateFrom}_to_${dateTo}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    void saveBlob(blob, `${tr("exportFilenamePrefix")}-${dateFrom}_to_${dateTo}.csv`);
   };
 
   return (

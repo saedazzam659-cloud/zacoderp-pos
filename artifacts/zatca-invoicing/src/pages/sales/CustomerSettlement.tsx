@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import {
   Plus, Trash2, ArrowDownCircle, CheckCircle, Printer, FileSpreadsheet, FileDown, X,
   Loader2, Send,
@@ -505,7 +506,7 @@ ${sections}
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 22 }, { wch: 12 }, { wch: 8 }, { wch: 10 }, { wch: 24 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "تحصيل العملاء");
-    XLSX.writeFile(wb, `customer-settlements-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    void saveWorkbook(wb, `customer-settlements-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   // Bulk-print: settlements have no child lines, but we still re-fetch each

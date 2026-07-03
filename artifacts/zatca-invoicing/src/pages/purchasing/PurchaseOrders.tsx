@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { BulkPrintMenu } from "@/lib/bulkPrint";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import { cn } from "@/lib/utils";
 import {
   downloadCsv, useAuditGridLayout, useColumnResize,
@@ -421,7 +422,7 @@ ${sections}
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 16 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "أوامر الشراء");
-    XLSX.writeFile(wb, `purchase-orders-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    void saveWorkbook(wb, `purchase-orders-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
 

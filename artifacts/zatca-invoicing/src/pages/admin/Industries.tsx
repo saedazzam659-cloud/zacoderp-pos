@@ -23,6 +23,7 @@ import {
   MENU_ITEMS, SECTIONS, MENU_ITEM_BY_KEY, SECTION_THEME,
 } from "@/lib/menuItems";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -827,7 +828,7 @@ function downloadCoaXlsx(rows: ParsedCoaRow[], industryCode: string) {
   ws["!cols"] = [{ wch: 12 }, { wch: 38 }, { wch: 32 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 22 }, { wch: 24 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Chart of Accounts");
-  XLSX.writeFile(wb, `industry-${industryCode}-coa-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  void saveWorkbook(wb, `industry-${industryCode}-coa-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 function downloadMappingsXlsx(rows: ParsedMappingRow[], industryCode: string) {
@@ -840,7 +841,7 @@ function downloadMappingsXlsx(rows: ParsedMappingRow[], industryCode: string) {
   ws["!cols"] = [{ wch: 22 }, { wch: 22 }, { wch: 16 }, { wch: 8 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Accounting Mappings");
-  XLSX.writeFile(wb, `industry-${industryCode}-mappings-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  void saveWorkbook(wb, `industry-${industryCode}-mappings-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 function IndustryTemplatesDialog({

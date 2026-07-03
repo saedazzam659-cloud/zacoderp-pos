@@ -1,3 +1,4 @@
+import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -143,9 +144,7 @@ export default function Payroll() {
     ]);
     const csv = "\uFEFF" + [head, ...rows].map(r => r.map((c: any) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `${r.code}.csv`; a.click();
-    URL.revokeObjectURL(url);
+    void saveBlob(blob, `${r.code}.csv`);
   }
 
   return (

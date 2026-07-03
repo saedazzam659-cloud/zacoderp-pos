@@ -25,6 +25,7 @@ import {
   ArrowRightCircle, ExternalLink, User,
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DocNavigator } from "@/components/DocNavigator";
@@ -911,7 +912,7 @@ ${sections}
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, tg("excelSheetName"));
-    XLSX.writeFile(wb, `goods-receipts-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    void saveWorkbook(wb, `goods-receipts-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   async function bulkRun(
