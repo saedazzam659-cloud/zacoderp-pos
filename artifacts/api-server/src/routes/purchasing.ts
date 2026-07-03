@@ -1066,7 +1066,7 @@ router.get("/purchase-invoices/:id", async (req, res) => {
 router.post("/purchase-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { docNumber, supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
@@ -1110,7 +1110,8 @@ router.post("/purchase-invoices", async (req, res) => {
 
     const [inv] = await db.insert(purchaseInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
-      docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,
+      docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null,
+      supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
@@ -1177,7 +1178,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       return;
     }
     // docNumber is intentionally not destructured — immutable on edit.
-    const { supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
@@ -1191,7 +1192,8 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [inv] = await db.update(purchaseInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
-      supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,
+      supplierInvoiceNumber: supplierInvoiceNumber || null,
+      supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,

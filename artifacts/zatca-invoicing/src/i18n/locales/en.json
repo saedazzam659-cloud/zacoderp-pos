@@ -1299,6 +1299,7 @@
     "inventorySubtitle": "All warehouse screens in one place"
   },
   "navExtra": {
+    "purchasesVatRegister": "Local Purchases VAT Register",
     "inventoryModule": "Inventory Module",
     "inventoryRoot": "Inventory",
     "accountingRoot": "General Accounts",
@@ -4491,6 +4492,7 @@
         "supplierPh": "Select supplier...",
         "supplierInvoiceNumber": "Supplier Invoice No.",
         "supplierInvoiceNumberPh": "Supplier's invoice number",
+        "supplierInvoiceDate": "Supplier Invoice Date",
         "branch": "Branch",
         "branchPh": "Select branch...",
         "mainBranchTag": " (Main)",
@@ -5012,6 +5014,45 @@
     }
   },
   "purchasingReports": {
+    "vatRegister": {
+      "title": "Local Purchases VAT Register",
+      "subtitle": "Register of local VAT-taxable purchases for the accounting period",
+      "reportTitle": "Local Purchases Register at {{rate}}% VAT for the Accounting Period",
+      "periodLabel": "For the period from {{from}} to {{to}}",
+      "show": "Show Report",
+      "print": "Print",
+      "sendToZatca": "Send to ZATCA",
+      "pickPeriod": "Select a period, then click Show Report",
+      "noData": "No posted purchase invoices in this period",
+      "total": "Total",
+      "invoiceCount": "Invoice Count",
+      "popupBlocked": "Popup blocked, please allow popups",
+      "col": {
+        "serial": "No.",
+        "entryDate": "Entry Date",
+        "entryNumber": "Entry No.",
+        "invoiceDate": "Invoice Date",
+        "invoiceNumber": "Invoice No.",
+        "supplier": "Supplier Name",
+        "supplierVat": "Supplier VAT No.",
+        "statement": "Description",
+        "taxRate": "Tax Rate",
+        "base": "Amount Before Tax",
+        "vat": "Tax",
+        "gross": "Amount After Tax",
+        "notes": "Notes"
+      },
+      "emailTitle": "Send Report by Email",
+      "emailTo": "Recipient Email",
+      "emailToPh": "example@domain.com",
+      "emailHint": "The report is attached as a PDF. You can enter multiple emails separated by commas.",
+      "emailRequired": "Please enter a recipient email",
+      "emailSent": "Report sent successfully",
+      "emailFailed": "Failed to send email",
+      "send": "Send",
+      "sending": "Sending...",
+      "cancel": "Cancel"
+    },
     "hub": {
       "title": "Suppliers & Purchasing Reports",
       "subtitle": "Comprehensive supplier and purchasing reports with Excel, PDF, and print export",

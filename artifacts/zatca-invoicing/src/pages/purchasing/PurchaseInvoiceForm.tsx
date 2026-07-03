@@ -130,6 +130,7 @@ export default function PurchaseInvoiceForm() {
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
+  const [supplierInvoiceDate, setSupplierInvoiceDate] = useState("");
   const [invoiceDate,  setInvoiceDate]  = useState(today());
   const [supplierId,   setSupplierId]   = useState("");
   const [branchId,     setBranchId]     = useState("");
@@ -396,6 +397,7 @@ export default function PurchaseInvoiceForm() {
     if (!existing) return;
     setDocNumber(existing.docNumber ?? "");
     setSupplierInvoiceNumber(existing.supplierInvoiceNumber ?? "");
+    setSupplierInvoiceDate(existing.supplierInvoiceDate ?? "");
     setInvoiceDate(existing.invoiceDate ?? today());
     setSupplierId(existing.supplierId ? String(existing.supplierId) : "");
     setBranchId(existing.branchId ? String(existing.branchId) : "");
@@ -453,6 +455,7 @@ export default function PurchaseInvoiceForm() {
         const src = await r.json();
         setDocNumber("");
         setSupplierInvoiceNumber("");
+        setSupplierInvoiceDate("");
         setInvoiceDate(today());
         setSupplierId(src.supplierId ? String(src.supplierId) : "");
         setBranchId(src.branchId ? String(src.branchId) : "");
@@ -746,7 +749,7 @@ export default function PurchaseInvoiceForm() {
     }
     saveMut.mutate({
       companyId: cid, branchId: branchId || null,
-      docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,
+      docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId || null, paymentType,
       cashBoxId: paymentType === "cash" ? (cashBoxId || null) : null,
       bankAccountId: paymentType === "bank" ? (bankAccountId || null) : null,
@@ -984,6 +987,10 @@ export default function PurchaseInvoiceForm() {
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.supplierInvoiceNumber")}</Label>
                   <Input className="h-9 text-sm" placeholder={tr("fields.supplierInvoiceNumberPh")} value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.supplierInvoiceDate")}</Label>
+                  <DateField className="h-9 text-sm" value={supplierInvoiceDate} onChange={e => setSupplierInvoiceDate(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.branch")}</Label>

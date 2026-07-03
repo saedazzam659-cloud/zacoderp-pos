@@ -76,6 +76,10 @@ export const purchaseInvoicesTable = pgTable("purchase_invoices", {
   branchId:             integer("branch_id"),
   docNumber:            text("doc_number"),
   supplierInvoiceNumber: text("supplier_invoice_number"),
+  // Supplier's own invoice date (تاريخ فاتورة المورد) as printed on the paper
+  // invoice — distinct from `invoiceDate` (our internal posting/document date).
+  // Surfaces in the purchases VAT register / tax declaration supplier lines.
+  supplierInvoiceDate:  text("supplier_invoice_date"),
   invoiceDate:          text("invoice_date").notNull(),
   supplierId:           integer("supplier_id").references(() => suppliersTable.id),
   paymentType:          text("payment_type").notNull().default("credit"),

@@ -359,6 +359,7 @@ import SupplierAgingReport     from "@/pages/purchasing/reports/SupplierAgingRep
 import PurchasesBySupplier     from "@/pages/purchasing/reports/PurchasesBySupplier";
 import PurchasesByItem         from "@/pages/purchasing/reports/PurchasesByItem";
 import PurchasesByPeriod       from "@/pages/purchasing/reports/PurchasesByPeriod";
+import PurchasesVatRegister    from "@/pages/purchasing/reports/PurchasesVatRegister";
 import TopSuppliers            from "@/pages/purchasing/reports/TopSuppliers";
 import PurchaseReturnsReport   from "@/pages/purchasing/reports/PurchaseReturnsReport";
 import LcStatement             from "@/pages/purchasing/reports/LcStatement";
@@ -1061,6 +1062,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-period"  module="purchase_invoices"  component={PurchasesByPeriod} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/top-suppliers"        module="suppliers"          component={TopSuppliers} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/returns"              module="purchase_returns"   component={PurchaseReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-vat-register" module="purchase_invoices"  component={PurchasesVatRegister} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/lc-statement"          module="purchase_invoices"  component={LcStatement} />}
             {!isSuperAdmin && <PermRoute path="/suppliers/reports/lc-statement"           module="purchase_invoices"  component={LcStatement} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports"                      module="purchase_invoices"  component={PurchaseReportsHub} />}

@@ -16,8 +16,10 @@ import {
 } from "@workspace/db";
 import { eq, and, gte, lte, inArray, notInArray, sql as dsql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/permissions.js";
 import { customersTable } from "@workspace/db";
 import { suppliersTable } from "@workspace/db";
+import { sendEmail } from "../lib/email.js";
 
 // Entry types created automatically by source documents (sales/purchase
 // invoices, vouchers, payroll, stock moves). Their VAT impact is ALREADY
@@ -624,6 +626,7 @@ router.get("/vat-declaration/details", async (req, res) => {
         supEn: suppliersTable.nameEn,
         supVat: suppliersTable.vatNumber,
         supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
+        supplierInvoiceDate:   purchaseInvoicesTable.supplierInvoiceDate,
       })
       .from(purchaseInvoicesTable)
       .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseInvoicesTable.supplierId))
@@ -643,7 +646,7 @@ router.get("/vat-declaration/details", async (req, res) => {
         partyName: r.supAr ?? r.supEn ?? null,
         supplierVatNumber: (r.supVat ?? "").trim() || null,
         supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
-        supplierInvoiceDate: r.date,
+        supplierInvoiceDate: (r.supplierInvoiceDate ?? "").trim() || r.date,
         base, vat, total: Number(r.total),
         link: `/purchasing/invoices/${r.id}`,
       });
@@ -794,6 +797,145 @@ router.get("/vat-declaration/details", async (req, res) => {
   // dsql import retained for future filters; suppress lint if unused.
   void dsql;
   res.json({ bucket: want, period: { from, to }, items: out, totals });
+});
+
+// ─── GET /api/reports/purchases-vat-register?from=YYYY-MM-DD&to=YYYY-MM-DD ────
+// سجل المشتريات المحلية بضريبة القيمة المضافة (ZATCA local-purchases VAT
+// register). One row per POSTED purchase invoice in the period, enriched with
+// the linked journal entry (رقم/تاريخ القيد) and the supplier's own invoice
+// date/number + VAT number. Every value is company-scoped.
+router.get("/purchases-vat-register", async (req, res) => {
+  const from = String(req.query.from ?? "");
+  const to   = String(req.query.to ?? "");
+  if (!from || !to) { res.status(400).json({ error: "يجب تحديد الفترة (from, to)" }); return; }
+
+  const companyId = resolveCompanyId(req, undefined);
+  if (!companyId) {
+    res.status(400).json({
+      error: "الشركة غير محددة. يرجى تمرير companyId في الاستعلام (?companyId=<id>) لاختيار الشركة المطلوبة.",
+    });
+    return;
+  }
+
+  const rows = await db
+    .select({
+      id:                   purchaseInvoicesTable.id,
+      docNumber:            purchaseInvoicesTable.docNumber,
+      supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
+      supplierInvoiceDate:  purchaseInvoicesTable.supplierInvoiceDate,
+      invoiceDate:          purchaseInvoicesTable.invoiceDate,
+      subtotal:             purchaseInvoicesTable.subtotal,
+      discountAmount:       purchaseInvoicesTable.discountAmount,
+      vatAmount:            purchaseInvoicesTable.vatAmount,
+      notes:                purchaseInvoicesTable.notes,
+      journalEntryId:       purchaseInvoicesTable.journalEntryId,
+      supplierNameAr:       suppliersTable.nameAr,
+      supplierNameEn:       suppliersTable.nameEn,
+      supplierVatNumber:    suppliersTable.vatNumber,
+      entryNumber:          journalEntriesTable.docNumber,
+      entryDate:            journalEntriesTable.entryDate,
+    })
+    .from(purchaseInvoicesTable)
+    .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseInvoicesTable.supplierId))
+    .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, purchaseInvoicesTable.journalEntryId))
+    .where(and(
+      eq(purchaseInvoicesTable.companyId, companyId),
+      eq(purchaseInvoicesTable.status, "posted"),
+      gte(purchaseInvoicesTable.invoiceDate, from),
+      lte(purchaseInvoicesTable.invoiceDate, to),
+    ))
+    .orderBy(purchaseInvoicesTable.invoiceDate, purchaseInvoicesTable.id);
+
+  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const items = rows.map((r, i) => {
+    const base  = round2(Number(r.subtotal ?? 0) - Number(r.discountAmount ?? 0));
+    const vat   = round2(Number(r.vatAmount ?? 0));
+    const gross = round2(base + vat);
+    const rate  = base > 0 ? round2((vat / base) * 100) : 0;
+    return {
+      serial:            i + 1,
+      entryDate:         (r.entryDate ?? "").trim() || r.invoiceDate,
+      entryNumber:       (r.entryNumber ?? "").trim() || "",
+      invoiceDate:       (r.supplierInvoiceDate ?? "").trim() || r.invoiceDate,
+      invoiceNumber:     (r.supplierInvoiceNumber ?? "").trim() || (r.docNumber ?? "").trim() || "",
+      supplierName:      (r.supplierNameAr ?? "").trim() || (r.supplierNameEn ?? "").trim() || "",
+      supplierVatNumber: (r.supplierVatNumber ?? "").trim() || "",
+      statement:         "مشتريات محلية",
+      taxRate:           rate,
+      base,
+      vat,
+      gross,
+      notes:             (r.notes ?? "").trim() || "",
+      id:                r.id,
+    };
+  });
+
+  const totals = items.reduce(
+    (s, r) => ({ base: round2(s.base + r.base), vat: round2(s.vat + r.vat), gross: round2(s.gross + r.gross), count: s.count + 1 }),
+    { base: 0, vat: 0, gross: 0, count: 0 },
+  );
+  // Dominant tax rate (for the title "… بضريبة قيمة مضافة قيمتها X%").
+  const rateCounts = new Map<number, number>();
+  for (const r of items) rateCounts.set(r.taxRate, (rateCounts.get(r.taxRate) ?? 0) + 1);
+  let dominantRate = 15;
+  let best = -1;
+  for (const [rate, cnt] of rateCounts) { if (rate > 0 && cnt > best) { best = cnt; dominantRate = rate; } }
+
+  res.json({ period: { from, to }, items, totals, dominantRate });
+});
+
+// ─── POST /api/reports/email — email a generated report file (PDF/Excel) ─────
+// The frontend builds the file client-side and posts it as RAW base64 (NEVER a
+// `data:<mime>;base64,` URI — the production edge WAF 403s those). We rebuild a
+// Buffer server-side and hand it to sendEmail as an attachment. Used by the
+// purchases VAT register "إرسال لزاتكا" (send via email) action, but generic.
+// Gated behind the purchasing-invoices EXPORT permission — the only caller is
+// the purchases VAT register "إرسال لزاتكا" export. Without this any authed
+// user could trigger outbound SMTP to arbitrary recipients.
+router.post("/email", requirePermission("purchase_invoices", "export"), async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, undefined);
+    if (!companyId) { res.status(400).json({ error: "الشركة غير محددة" }); return; }
+
+    const { to, subject, body, attachmentBase64, attachmentName, attachmentMime } = req.body ?? {};
+
+    // Reject oversized attachments before allocating the Buffer (base64 is ~4/3
+    // the decoded size). Cap the decoded attachment at 15 MB.
+    const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+    if (attachmentBase64 != null) {
+      if (typeof attachmentBase64 !== "string" || !/^[A-Za-z0-9+/=\r\n]*$/.test(attachmentBase64)) {
+        res.status(400).json({ error: "مرفق غير صالح" }); return;
+      }
+      const approxBytes = Math.floor((attachmentBase64.replace(/[\r\n]/g, "").length * 3) / 4);
+      if (approxBytes > MAX_ATTACHMENT_BYTES) {
+        res.status(413).json({ error: "حجم المرفق يتجاوز الحد المسموح (15 ميجابايت)" }); return;
+      }
+    }
+    const recipients = Array.isArray(to)
+      ? to.map((x: any) => String(x).trim()).filter(Boolean)
+      : String(to ?? "").split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+    if (recipients.length === 0) { res.status(400).json({ error: "يجب تحديد بريد المستلم" }); return; }
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const bad = recipients.filter(r => !emailRe.test(r));
+    if (bad.length) { res.status(400).json({ error: `بريد غير صالح: ${bad.join(", ")}` }); return; }
+
+    const subj = String(subject ?? "").trim() || "تقرير";
+    const html = `<div dir="rtl" style="font-family:Arial,sans-serif;font-size:14px">${String(body ?? "").trim() || subj}</div>`;
+
+    const attachments = attachmentBase64
+      ? [{
+          filename: String(attachmentName ?? "report").trim() || "report",
+          content: Buffer.from(String(attachmentBase64), "base64"),
+          contentType: String(attachmentMime ?? "application/octet-stream"),
+        }]
+      : undefined;
+
+    const result = await sendEmail({ to: recipients, subject: subj, html, attachments });
+    if (!result.ok) { res.status(502).json({ error: `تعذر إرسال البريد: ${result.reason ?? "unknown"}` }); return; }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e?.message ?? "فشل إرسال البريد" });
+  }
 });
 
 export default router;
