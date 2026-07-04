@@ -323,36 +323,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setLines(p => [...p, l]);
     setFocusLineId(l._id);
   };
+  // ── "إضافة صنف" quick-entry bar state (tabbed items tab) ──────────────
+  // The user enters the item + qty + price ABOVE the grid and commits a
+  // fully-formed line, so the grid below reads like a clean ledger. Pure
+  // presentation — no schema/ZATCA impact; commit reuses selectItem +
+  // updateLine so all pricing/offer/tax logic stays single-sourced.
+  const [qaItemId, setQaItemId]         = useState("");
+  const [qaWarehouseId, setQaWarehouseId] = useState("");
+  const [qaQty, setQaQty]               = useState("1");
+  const [qaFreeQty, setQaFreeQty]       = useState("0");
+  const [qaPrice, setQaPrice]           = useState("");
+  const [qaDiscount, setQaDiscount]     = useState("0");
+  // Ref to the quick-add bar so we can loop focus back to its first field
+  // (the item picker) after committing a line — Enter-driven rapid entry.
+  const quickAddRef = useRef<HTMLDivElement>(null);
+  const focusQuickAddStart = () => {
+    quickAddRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+  };
   useEnterNavContainer({ onAppend: () => addLine() });
   const { containerRef: enterNavRef, onKeyDown: enterNavKey } = useEnterNavigation(() => handleSave());
   const docNumberRef = useRef<HTMLInputElement>(null);
-
-  // ── Fixed-viewport shell ────────────────────────────────────────────
-  // The new single-screen layout pins the header + totals and lets ONLY
-  // the items grid scroll. To do that the root must own a bounded height
-  // equal to the remaining viewport below the sticky app header. We
-  // measure the root's top offset (stable because the page itself never
-  // scrolls once overflow is contained) and derive the height from it.
-  const [shellHeight, setShellHeight] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    const el = enterNavRef.current;
-    if (!el) return;
-    const recompute = () => {
-      const top = el.getBoundingClientRect().top;
-      setShellHeight(`calc(100dvh - ${Math.max(0, Math.round(top))}px - 12px)`);
-    };
-    recompute();
-    window.addEventListener("resize", recompute);
-    return () => window.removeEventListener("resize", recompute);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // Presentation flag: render the new single-screen station layout. The
-  // old tabbed/classic tree stays intact below as a safe fallback.
-  const useStationLayout = true;
-  // Which pane the station layout's lower area shows. The header cards +
-  // totals stay pinned; only this inner region swaps between the scrolling
-  // item grid, the archive tab, and the read-only details tab.
-  const [stationTab, setStationTab] = useState<"items" | "archive" | "details">(viewMode ? "details" : "items");
 
   // Accounts used to build journal entry on posting (invoices only)
   const [cogsAccountId,      setCogsAccountId]      = useState("");
@@ -1081,6 +1071,31 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }));
   }
 
+  // Commit the "إضافة صنف" bar into a new grid line. Appends an empty line,
+  // runs the SAME selectItem auto-fill (catalog/currency price, base unit,
+  // VAT, offer reset), then applies the bar's overrides through updateLine
+  // (which recomputes the line total per field). Zero duplicated pricing
+  // logic; the grid below stays a read-only ledger.
+  async function handleQuickAdd() {
+    if (!qaItemId) return;
+    const l = newLine();
+    const r = percentRateOf(headerTaxId);
+    if (r !== null) l.vatRate = String(r);
+    // Seed the warehouse BEFORE selectItem (it preserves warehouseId for
+    // non-service items, and blanks it for service items automatically).
+    if (qaWarehouseId) l.warehouseId = qaWarehouseId;
+    else if (headerWarehouseId) l.warehouseId = headerWarehouseId;
+    setLines(p => [...p, l]);
+    await selectItem(l._id, qaItemId);
+    updateLine(l._id, "qty", qaQty || "1");
+    if (qaFreeQty && qaFreeQty !== "0") updateLine(l._id, "freeQty", qaFreeQty);
+    if (qaPrice.trim() !== "" && qaPrice !== "0") updateLine(l._id, "unitPrice", qaPrice);
+    if (qaDiscount && qaDiscount !== "0") updateLine(l._id, "discount", qaDiscount);
+    setFocusLineId(l._id);
+    // Reset the bar for the next entry.
+    setQaItemId(""); setQaQty("1"); setQaFreeQty("0"); setQaPrice(""); setQaDiscount("0");
+  }
+
   function changeLineUnit(lineId: string, newUnitId: string) {
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
@@ -1641,7 +1656,218 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       ? t("salesDocForm.subtitleOrder")
       : t("salesDocForm.subtitleQuotation");
 
-  const linesGrid = (() => {
+  // Totals + ‹price incl. VAT› toggle — extracted so BOTH the classic
+  // layout and the tabbed items tab render the same single-sourced footer.
+  const linesFooterBlock = (
+              <div className="mt-5 flex flex-wrap justify-between gap-4">
+                {/* Toggle ‹السعر شامل الضريبة› — يخضع الآن لسياسة الحقول
+                    (Field Policy / الحوكمة): إذا أخفاه المسؤول للمستخدم
+                    تختفي البطاقة وتسقط من الصفّ بالكامل، وإذا جعله للقراءة
+                    فقط لا يستطيع المستخدم تبديله. مفتاح القاموس: priceIncludesVat */}
+                {fp.isVisible("priceIncludesVat") ? (
+                <label
+                  data-testid="price-includes-vat-toggle"
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-xl border-2 p-3 select-none transition-colors max-w-sm",
+                    fp.isReadOnly("priceIncludesVat") ? "cursor-not-allowed opacity-70" : "cursor-pointer",
+                    priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                  )}
+                  title={fp.isReadOnly("priceIncludesVat") ? "للقراءة فقط حسب سياسة الحقول" : undefined}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
+                    checked={priceIncludesVat}
+                    disabled={fp.isReadOnly("priceIncludesVat")}
+                    onChange={e => {
+                      if (fp.isReadOnly("priceIncludesVat")) return;
+                      setPriceIncludesVat(e.target.checked);
+                      stickyPriceIncl.persist(e.target.checked);
+                    }}
+                  />
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-semibold">{t("salesDocForm.priceInclusiveTitle")}</p>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                      {priceIncludesVat
+                        ? t("salesDocForm.priceInclusiveYes")
+                        : t("salesDocForm.priceInclusiveNo")}
+                    </p>
+                  </div>
+                </label>
+                ) : <span /> /* keeps justify-between layout when hidden */}
+
+                <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
+                    <span>{t("salesDocForm.calcMethod")}</span>
+                    <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+                      {priceIncludesVat ? t("salesDocForm.calcInclusive") : t("salesDocForm.calcExclusive")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t("salesDocForm.subtotalLabel")}</span><span className="font-mono">{fmt(subtotal)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t("salesDocForm.vatLabel")}</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  {lineDiscountTotal > 0 && (
+                    <div className="flex justify-between text-rose-700" data-testid="line-discount-total">
+                      <span className="text-muted-foreground">{t("salesDocForm.lineDiscountTotal")}</span>
+                      <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
+                    </div>
+                  )}
+                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} currencySymbol={currencySymbol(currencyCode || defaultCurrency?.code, currencies)} />
+                  {documentOfferId && documentOfferName && (
+                    <div
+                      className="flex items-start gap-1.5 -mt-1 px-2 py-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800"
+                      data-testid="applied-document-offer"
+                    >
+                      <Tag className="h-3 w-3 mt-0.5 shrink-0" />
+                      <div className="flex-1 text-[10px] leading-relaxed">
+                        <p className="font-semibold">{t("salesDocForm.appliedOffer")}: {documentOfferName}</p>
+                        <p>{t("salesDocForm.appliedOfferDocumentHint", { name: documentOfferName })}</p>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex justify-between font-bold border-t pt-2 text-base">
+                    <span>{priceIncludesVat ? t("salesDocForm.totalLabelInclusive") : t("salesDocForm.totalLabel")}</span>
+                    <span className="font-mono text-primary">{fmt(totalAmount)}</span>
+                  </div>
+                  {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
+                    <p className="text-[10px] text-muted-foreground border-t pt-1">
+                      {t("salesDocForm.equivalentIn", { currency: defaultCurrency?.code ?? "SAR", value: fmt(totalAmount * Number(exchangeRate)) })}
+                    </p>
+                  )}
+                </div>
+              </div>
+  );
+
+  // ── "إضافة صنف" quick-entry bar (tabbed items tab) ────────────────────
+  // Organized top-of-grid entry: pick item → qty/price/discount → commit.
+  // The item picker auto-fills the accurate price/unit/VAT on commit
+  // (handleQuickAdd → selectItem), so leaving السعر blank is the norm.
+  const quickAddBar = (
+    <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-3">
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-primary">
+        <Plus className="h-4 w-4" />
+        <span>إضافة صنف</span>
+      </div>
+      <div
+        ref={quickAddRef}
+        data-enter-scope
+        className="grid gap-2 items-end"
+        style={{ gridTemplateColumns: "minmax(220px,2.2fr) 150px 84px 84px 120px 84px auto" }}
+      >
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">الصنف</label>
+          <SearchCombobox
+            items={itemComboItems}
+            value={qaItemId}
+            onValueChange={setQaItemId}
+            placeholder={t("salesDocForm.itemPlaceholder")}
+            searchPlaceholder="ابحث بالكود أو الاسم..."
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colWarehouse")}</label>
+          <SearchCombobox
+            items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn }))}
+            value={qaWarehouseId}
+            onValueChange={setQaWarehouseId}
+            placeholder={t("salesDocForm.warehousePlaceholder")}
+            searchPlaceholder="ابحث بالكود أو الاسم..."
+            className="h-9 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colQty")}</label>
+          <Input className="h-9 text-xs" type="text" inputMode="numeric" dir="ltr" value={qaQty}
+            onChange={e => setQaQty(e.target.value.replace(/[^0-9]/g, ""))} />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colFreeQty")}</label>
+          <Input className="h-9 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono" type="text" inputMode="numeric" dir="ltr" value={qaFreeQty}
+            onChange={e => setQaFreeQty(e.target.value.replace(/[^0-9]/g, ""))} />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colPrice")}</label>
+          <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" placeholder="تلقائي" value={qaPrice}
+            onChange={e => setQaPrice(e.target.value.replace(/[^0-9.]/g, ""))} />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colDiscPct")}</label>
+          <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" value={qaDiscount}
+            onChange={e => setQaDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+            onKeyDown={e => {
+              // Last field in the bar: Enter commits the line (if an item is
+              // chosen) and loops focus back to the item picker so the user
+              // can keep entering without touching the mouse.
+              if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (qaItemId) void handleQuickAdd().finally(focusQuickAddStart);
+                else focusQuickAddStart();
+              }
+            }} />
+        </div>
+        <Button type="button" size="sm" className="h-9 gap-1.5 whitespace-nowrap" onClick={() => void handleQuickAdd()} disabled={!qaItemId} data-testid="button-quick-add-item">
+          <Plus className="h-4 w-4" />
+          إضافة إلى الجريدة
+        </Button>
+      </div>
+    </div>
+  );
+
+  // ── Read-only ledger grid for the tabbed items tab ────────────────────
+  // Rows are display-only (entry happens via quickAddBar above); the only
+  // per-row action is delete. Scrolls INTERNALLY (bounded height) so the
+  // browser page itself does not grow a scrollbar.
+  const displayLinesGrid = (() => {
+    const gridCols = "48px 96px minmax(200px,1.6fr) 150px 100px 84px 84px 116px 78px 130px 40px";
+    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colTotal"), ""];
+    const whName = (id: string) => (warehouses as any[]).find((w: any) => String(w.id) === String(id))?.nameAr ?? "—";
+    const filled = lines.filter(l => l.itemId || l.itemName);
+    const removeLine = (id: string) => setLines(p => { const n = p.filter(x => x._id !== id); return n.length ? n : [newLine()]; });
+    return (
+      <div className="rounded-xl border bg-card overflow-hidden">
+        <div className="overflow-auto max-h-[calc(100vh-360px)] min-h-[200px]">
+          <div className="min-w-max">
+            <div className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10" style={{ gridTemplateColumns: gridCols }}>
+              {headers.map((h, i) => (
+                <p key={i} className={cn("text-[11px] font-medium truncate", h === t("salesDocForm.colTotal") ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
+              ))}
+            </div>
+            <div className="divide-y">
+              {filled.length === 0 ? (
+                <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                  لا توجد أصناف بعد — أضف صنفًا من الشريط بالأعلى.
+                </div>
+              ) : filled.map((l, idx) => (
+                <div key={l._id} className="grid gap-2 items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors" style={{ gridTemplateColumns: gridCols }}>
+                  <span className="text-muted-foreground tabular-nums">{idx + 1}</span>
+                  <span className="font-mono truncate" title={l.itemCode}>{l.itemCode || "—"}</span>
+                  <span className="truncate" title={l.itemName}>
+                    {l.itemName || "—"}
+                    {l.brandName ? <span className="ms-1 text-[10px] text-muted-foreground">({l.brandName})</span> : null}
+                    {l.appliedOfferName ? <span className="ms-1 text-[10px] text-emerald-700">• {l.appliedOfferName}</span> : null}
+                  </span>
+                  <span className="truncate text-muted-foreground" title={isServiceLine(l) ? "" : whName(l.warehouseId)}>{isServiceLine(l) ? t("salesDocForm.serviceNoWarehouse") : whName(l.warehouseId)}</span>
+                  <span className="truncate">{l.unit || "—"}</span>
+                  <span className="font-mono tabular-nums" dir="ltr">{l.qty}</span>
+                  <span className="font-mono tabular-nums text-amber-700" dir="ltr">{l.freeQty}</span>
+                  <span className="font-mono tabular-nums" dir="ltr">{fmt(Number(l.unitPrice) || 0)}</span>
+                  <span className="font-mono tabular-nums" dir="ltr">{trimTrailingZeros(l.discount || "0")}%</span>
+                  <span className="font-mono tabular-nums font-semibold text-primary" dir="ltr">{fmt(Number(l.lineTotal) || 0)}</span>
+                  <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeLine(l._id)} data-testid={`button-remove-line-${l._id}`}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
+  const linesSection = (
+    <div className="pt-2 space-y-3">
+              {(() => {
                 // Warehouse column is now rendered for all 3 doc modes
                 // (invoice, order, quotation) — the order matches the sales
                 // invoice layout per the user's request: code · name ·
@@ -1808,96 +2034,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 </div>
               </div>
                 );
-              })();
+              })()}
 
-  const addLineButton = (
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
                 <Plus className="h-4 w-4" />{t("salesDocForm.addLine")}
               </Button>
-  );
 
-  {/* Toggle ‹السعر شامل الضريبة› — يخضع لسياسة الحقول (Field Policy). */}
-  const priceToggle = fp.isVisible("priceIncludesVat") ? (
-                <label
-                  data-testid="price-includes-vat-toggle"
-                  className={cn(
-                    "flex items-start gap-2.5 rounded-xl border-2 p-3 select-none transition-colors max-w-sm",
-                    fp.isReadOnly("priceIncludesVat") ? "cursor-not-allowed opacity-70" : "cursor-pointer",
-                    priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
-                  )}
-                  title={fp.isReadOnly("priceIncludesVat") ? "للقراءة فقط حسب سياسة الحقول" : undefined}
-                >
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-4 w-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
-                    checked={priceIncludesVat}
-                    disabled={fp.isReadOnly("priceIncludesVat")}
-                    onChange={e => {
-                      if (fp.isReadOnly("priceIncludesVat")) return;
-                      setPriceIncludesVat(e.target.checked);
-                      stickyPriceIncl.persist(e.target.checked);
-                    }}
-                  />
-                  <div className="space-y-0.5">
-                    <p className="text-xs font-semibold">{t("salesDocForm.priceInclusiveTitle")}</p>
-                    <p className="text-[10px] text-muted-foreground leading-relaxed">
-                      {priceIncludesVat
-                        ? t("salesDocForm.priceInclusiveYes")
-                        : t("salesDocForm.priceInclusiveNo")}
-                    </p>
-                  </div>
-                </label>
-              ) : <span />;
-
-  const docSummaryBox = (
-                <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
-                    <span>{t("salesDocForm.calcMethod")}</span>
-                    <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
-                      {priceIncludesVat ? t("salesDocForm.calcInclusive") : t("salesDocForm.calcExclusive")}
-                    </span>
-                  </div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">{t("salesDocForm.subtotalLabel")}</span><span className="font-mono">{fmt(subtotal)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">{t("salesDocForm.vatLabel")}</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
-                  {lineDiscountTotal > 0 && (
-                    <div className="flex justify-between text-rose-700" data-testid="line-discount-total">
-                      <span className="text-muted-foreground">{t("salesDocForm.lineDiscountTotal")}</span>
-                      <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
-                    </div>
-                  )}
-                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} currencySymbol={currencySymbol(currencyCode || defaultCurrency?.code, currencies)} />
-                  {documentOfferId && documentOfferName && (
-                    <div
-                      className="flex items-start gap-1.5 -mt-1 px-2 py-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800"
-                      data-testid="applied-document-offer"
-                    >
-                      <Tag className="h-3 w-3 mt-0.5 shrink-0" />
-                      <div className="flex-1 text-[10px] leading-relaxed">
-                        <p className="font-semibold">{t("salesDocForm.appliedOffer")}: {documentOfferName}</p>
-                        <p>{t("salesDocForm.appliedOfferDocumentHint", { name: documentOfferName })}</p>
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex justify-between font-bold border-t pt-2 text-base">
-                    <span>{priceIncludesVat ? t("salesDocForm.totalLabelInclusive") : t("salesDocForm.totalLabel")}</span>
-                    <span className="font-mono text-primary">{fmt(totalAmount)}</span>
-                  </div>
-                  {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
-                    <p className="text-[10px] text-muted-foreground border-t pt-1">
-                      {t("salesDocForm.equivalentIn", { currency: defaultCurrency?.code ?? "SAR", value: fmt(totalAmount * Number(exchangeRate)) })}
-                    </p>
-                  )}
-                </div>
-  );
-
-  const linesSection = (
-    <div className="pt-2 space-y-3">
-      {linesGrid}
-      {addLineButton}
-      <div className="mt-5 flex flex-wrap justify-between gap-4">
-        {priceToggle}
-        {docSummaryBox}
-      </div>
+              {linesFooterBlock}
     </div>
   );
 
@@ -2459,8 +2602,222 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     );
   }
 
-  const invoiceFields = (
-    <>
+  return (
+    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">
+      <div className="flex items-center gap-3 flex-wrap">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
+          <BackIcon className="h-4 w-4" />
+        </Button>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+            <Icon className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold">{title}</h1>
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+        {isInvoice && (
+          <JournalScanArchive
+            jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
+            screenKey="sales_invoices"
+            companyName={user?.company?.nameAr ?? null}
+          />
+        )}
+        {/* Status pill — visible whenever editing an existing doc (any mode).
+            Status enum varies per mode; <DocStatusBadge> handles them all. */}
+        {editId && (existing as any) && (
+          <DocStatusBadge status={(existing as any).status} />
+        )}
+        {/* Smart prev/next + search navigator — shown for every mode.
+            Visible on /new as well so the user can jump to any existing
+            doc; prev/next arrows just disable when there's no current
+            anchor. */}
+        <DocNavigator
+          items={docNavItems}
+          currentId={editId}
+          basePath={basePath}
+          fallbackPrefix={navFallbackPrefix}
+          className="ms-auto"
+        />
+      </div>
+
+      {isInvoice && !isNew && (existing as any)?.status === "posted" && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm flex items-center gap-2">
+          <Lock className="h-4 w-4" />
+          <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
+        </div>
+      )}
+
+      {/* ── نوع الفاتورة (ZATCA) ──────────────────────────────────────────
+          مفتاح اختيار جذاب بين «فاتورة ضريبية» (B2B / Standard) و«فاتورة
+          ضريبية مبسطة» (B2C / Simplified). يظهر فقط في وضع الفاتورة
+          (لا للعروض/الطلبات). يحدِّد قواعد التحقق قبل الحفظ:
+          - الضريبية: يلزم رقم ضريبي صحيح + سجل تجاري + عنوان وطني كامل
+          - المبسطة: يكفي اختيار اسم العميل
+          القاعدة الذهبية من زاتكا: تستخدم الفاتورة الضريبية عند البيع
+          لشركات (B2B) ⩾ 1000 ريال، والمبسّطة لمبيعات التجزئة (B2C). */}
+      {isInvoice && (() => {
+        const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
+        const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
+        const crOk = cust ? !!String(cust.crNumber ?? "").trim() : false;
+        const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
+        // رقم السجل التجاري اختياري — لا يدخل في جاهزية الإرسال إلى زاتكا.
+        const standardReady = vatOk && addrMissing.length === 0;
+        const isStd = invoiceType === "standard";
+        const isSimp = invoiceType === "simplified";
+        return (
+          <div className="rounded-2xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background p-3 shadow-sm">
+            <div className="flex items-center gap-2 mb-2.5 px-1">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                <Receipt className="h-4 w-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs font-bold text-foreground">نوع الفاتورة</p>
+                <p className="text-[10px] text-muted-foreground">اختر نوع الفاتورة وفق متطلّبات هيئة الزكاة والضريبة (ZATCA)</p>
+              </div>
+              {standardReady && isStd && (
+                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] gap-1">
+                  <ShieldCheck className="h-3 w-3" />جاهز للإرسال إلى زاتكا
+                </Badge>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* ── فاتورة ضريبية (Standard / B2B) ── */}
+              <button
+                type="button"
+                data-testid="invoice-type-standard"
+                onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
+                className={cn(
+                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
+                  isStd
+                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
+                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className={cn(
+                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    isStd ? "border-primary bg-primary" : "border-muted-foreground/30"
+                  )}>
+                    {isStd && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية</span>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-primary/30 text-primary">B2B · Standard</Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                      للبيع لشركات/منشآت مسجَّلة بضريبة القيمة المضافة. تتطلّب اعتماد زاتكا (Clearance).
+                    </p>
+                    {isStd && cust && (
+                      <div className="mt-2 space-y-0.5 text-[10px]">
+                        <div className={cn("flex items-center gap-1", vatOk ? "text-emerald-700" : "text-rose-700")}>
+                          <span>{vatOk ? "✓" : "✗"}</span><span>رقم ضريبي سعودي صحيح (15 رقم)</span>
+                        </div>
+                        <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-muted-foreground")}>
+                          <span>{crOk ? "✓" : "•"}</span><span>رقم السجل التجاري (اختياري)</span>
+                        </div>
+                        <div className={cn("flex items-center gap-1", addrMissing.length === 0 ? "text-emerald-700" : "text-rose-700")}>
+                          <span>{addrMissing.length === 0 ? "✓" : "✗"}</span>
+                          <span>العنوان الوطني{addrMissing.length > 0 ? ` (ينقص: ${addrMissing.join("، ")})` : ""}</span>
+                        </div>
+                      </div>
+                    )}
+                    {isStd && !cust && (
+                      <p className="mt-2 text-[10px] text-amber-700 flex items-center gap-1">
+                        <span>⚠</span><span>اختر العميل أولاً للتحقق من اكتمال البيانات</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+
+              {/* ── فاتورة ضريبية مبسّطة (Simplified / B2C) ── */}
+              <button
+                type="button"
+                data-testid="invoice-type-simplified"
+                onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
+                className={cn(
+                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
+                  isSimp
+                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
+                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className={cn(
+                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    isSimp ? "border-primary bg-primary" : "border-muted-foreground/30"
+                  )}>
+                    {isSimp && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية مبسّطة</span>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-sky-300 text-sky-700">B2C · Simplified</Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                      لمبيعات التجزئة والأفراد. يكفي اسم العميل فقط، ويتم الإبلاغ عنها لزاتكا (Reporting).
+                    </p>
+                    {isSimp && (
+                      <p className="mt-2 text-[10px] text-emerald-700 flex items-center gap-1">
+                        <span>✓</span><span>{customerId ? "تم اختيار العميل — جاهزة للحفظ" : "اختر اسم العميل لإكمال الحفظ"}</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      <div className="contents">
+      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
+        <Card className="border-2">
+          <CardHeader className="p-0">
+            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
+              <p className="text-[11px] text-muted-foreground">
+                {!useTabbedLayout
+                  ? t("salesDocForm.headerHint")
+                  : activeTab === "items"
+                    ? t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })
+                    : activeTab === "details"
+                      ? "تفاصيل العمليات الناتجة عن هذا المستند"
+                      : t("salesDocForm.headerHint")}
+              </p>
+              {useTabbedLayout ? (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
+                  </TabsTrigger>
+                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  {isInvoice && editId && (
+                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Archive className="h-3.5 w-3.5" />أرشفة
+                    </TabsTrigger>
+                  )}
+                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                  </TabsTrigger>
+                </TabsList>
+              ) : (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
+                  </TabsTrigger>
+                </TabsList>
+              )}
+            </div>
+          </CardHeader>
+
+          <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0">
+            <CardContent className="pt-5 pb-5 space-y-4">
+            <fieldset disabled={editLock} className="contents">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {fp.isVisible("docNumber") && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : isOrder ? t("salesDocForm.orderNumber") : t("salesDocForm.quotationNumber")}{fp.isRequired("docNumber") && <span className="text-destructive"> *</span>}</Label>
@@ -2505,6 +2862,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <DateField className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} readOnly={fp.isReadOnly("validUntil")} />
                   </div>
                 )}
+                {fp.isVisible("customer") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
+                  <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? "للقراءة فقط حسب السياسة" : undefined}>
+                    <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
+                  </div>
+                </div>
+                )}
+                <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} hidden={!fp.isVisible("addCustomerTool")} readOnly={fp.isReadOnly("addCustomerTool")} />
                 {isInvoice && isNew && (
                   <div className="space-y-1.5">
                     <Label className="text-xs flex items-center gap-1.5">
@@ -2635,6 +3001,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
                 )}
+                {usesOps && fp.isVisible("salesperson") && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1">
+                      <span>{t("salesDocForm.salesRep")}{fp.isRequired("salesperson") && <span className="text-destructive"> *</span>}</span>
+                      {repLocked && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                          مُعيَّن تلقائياً (هويتك كمندوب)
+                        </span>
+                      )}
+                    </Label>
+                    <div className={(repLocked || fp.isReadOnly("salesperson")) ? "opacity-90 pointer-events-none" : ""} title={repLocked ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : (fp.isReadOnly("salesperson") ? "للقراءة فقط حسب السياسة" : undefined)}>
+                      <SearchCombobox
+                        items={salesRepComboItems}
+                        value={salesRepId}
+                        onValueChange={setSalesRepId}
+                        placeholder={t("salesDocForm.salesRepPlaceholder")}
+                      />
+                    </div>
+                  </div>
+                )}
                 {fp.isVisible("notes") && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">{t("salesDocForm.notes")}{fp.isRequired("notes") && <span className="text-destructive"> *</span>}</Label>
@@ -2688,440 +3074,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
                   </div>
                 )}
-    </>
-  );
-
-  const customerFields = (
-    <>
-                {fp.isVisible("customer") && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
-                  <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? "للقراءة فقط حسب السياسة" : undefined}>
-                    <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
-                  </div>
-                </div>
-                )}
-                <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} hidden={!fp.isVisible("addCustomerTool")} readOnly={fp.isReadOnly("addCustomerTool")} />
-    </>
-  );
-
-  const repField = (
-    <>
-                {usesOps && fp.isVisible("salesperson") && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs flex items-center gap-1">
-                      <span>{t("salesDocForm.salesRep")}{fp.isRequired("salesperson") && <span className="text-destructive"> *</span>}</span>
-                      {repLocked && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                          مُعيَّن تلقائياً (هويتك كمندوب)
-                        </span>
-                      )}
-                    </Label>
-                    <div className={(repLocked || fp.isReadOnly("salesperson")) ? "opacity-90 pointer-events-none" : ""} title={repLocked ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : (fp.isReadOnly("salesperson") ? "للقراءة فقط حسب السياسة" : undefined)}>
-                      <SearchCombobox
-                        items={salesRepComboItems}
-                        value={salesRepId}
-                        onValueChange={setSalesRepId}
-                        placeholder={t("salesDocForm.salesRepPlaceholder")}
-                      />
-                    </div>
-                  </div>
-                )}
-    </>
-  );
-
-  const invoiceTypePicker = isInvoice ? (() => {
-        const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
-        const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
-        const crOk = cust ? !!String(cust.crNumber ?? "").trim() : false;
-        const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
-        // رقم السجل التجاري اختياري — لا يدخل في جاهزية الإرسال إلى زاتكا.
-        const standardReady = vatOk && addrMissing.length === 0;
-        const isStd = invoiceType === "standard";
-        const isSimp = invoiceType === "simplified";
-        return (
-          <div className="rounded-2xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background p-3 shadow-sm">
-            <div className="flex items-center gap-2 mb-2.5 px-1">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
-                <Receipt className="h-4 w-4 text-primary" />
-              </div>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-foreground">نوع الفاتورة</p>
-                <p className="text-[10px] text-muted-foreground">اختر نوع الفاتورة وفق متطلّبات هيئة الزكاة والضريبة (ZATCA)</p>
-              </div>
-              {standardReady && isStd && (
-                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] gap-1">
-                  <ShieldCheck className="h-3 w-3" />جاهز للإرسال إلى زاتكا
-                </Badge>
-              )}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {/* ── فاتورة ضريبية (Standard / B2B) ── */}
-              <button
-                type="button"
-                data-testid="invoice-type-standard"
-                onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
-                className={cn(
-                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
-                  isStd
-                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
-                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className={cn(
-                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
-                    isStd ? "border-primary bg-primary" : "border-muted-foreground/30"
-                  )}>
-                    {isStd && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية</span>
-                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-primary/30 text-primary">B2B · Standard</Badge>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                      للبيع لشركات/منشآت مسجَّلة بضريبة القيمة المضافة. تتطلّب اعتماد زاتكا (Clearance).
-                    </p>
-                    {isStd && cust && (
-                      <div className="mt-2 space-y-0.5 text-[10px]">
-                        <div className={cn("flex items-center gap-1", vatOk ? "text-emerald-700" : "text-rose-700")}>
-                          <span>{vatOk ? "✓" : "✗"}</span><span>رقم ضريبي سعودي صحيح (15 رقم)</span>
-                        </div>
-                        <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-muted-foreground")}>
-                          <span>{crOk ? "✓" : "•"}</span><span>رقم السجل التجاري (اختياري)</span>
-                        </div>
-                        <div className={cn("flex items-center gap-1", addrMissing.length === 0 ? "text-emerald-700" : "text-rose-700")}>
-                          <span>{addrMissing.length === 0 ? "✓" : "✗"}</span>
-                          <span>العنوان الوطني{addrMissing.length > 0 ? ` (ينقص: ${addrMissing.join("، ")})` : ""}</span>
-                        </div>
-                      </div>
-                    )}
-                    {isStd && !cust && (
-                      <p className="mt-2 text-[10px] text-amber-700 flex items-center gap-1">
-                        <span>⚠</span><span>اختر العميل أولاً للتحقق من اكتمال البيانات</span>
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </button>
-
-              {/* ── فاتورة ضريبية مبسّطة (Simplified / B2C) ── */}
-              <button
-                type="button"
-                data-testid="invoice-type-simplified"
-                onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
-                className={cn(
-                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
-                  isSimp
-                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
-                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className={cn(
-                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
-                    isSimp ? "border-primary bg-primary" : "border-muted-foreground/30"
-                  )}>
-                    {isSimp && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية مبسّطة</span>
-                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-sky-300 text-sky-700">B2C · Simplified</Badge>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                      لمبيعات التجزئة والأفراد. يكفي اسم العميل فقط، ويتم الإبلاغ عنها لزاتكا (Reporting).
-                    </p>
-                    {isSimp && (
-                      <p className="mt-2 text-[10px] text-emerald-700 flex items-center gap-1">
-                        <span>✓</span><span>{customerId ? "تم اختيار العميل — جاهزة للحفظ" : "اختر اسم العميل لإكمال الحفظ"}</span>
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-        );
-  })() : null;
-
-  if (useStationLayout) return (
-    <div
-      ref={enterNavRef}
-      onKeyDown={enterNavKey}
-      className="mx-auto flex w-full max-w-[1600px] flex-col px-1"
-      style={{ minHeight: shellHeight }}
-    >
-      {/* ── رأس مضغوط: رجوع · العنوان · الحالة · المتصفّح ── */}
-      <div className="shrink-0 flex items-center gap-3 flex-wrap pb-2">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
-          <BackIcon className="h-4 w-4" />
-        </Button>
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-            <Icon className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold">{title}</h1>
-            <p className="text-xs text-muted-foreground">{subtitle}</p>
-          </div>
-        </div>
-        {isInvoice && (
-          <JournalScanArchive
-            jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
-            screenKey="sales_invoices"
-            companyName={user?.company?.nameAr ?? null}
-          />
-        )}
-        {editId && (existing as any) && (
-          <DocStatusBadge status={(existing as any).status} />
-        )}
-        <DocNavigator
-          items={docNavItems}
-          currentId={editId}
-          basePath={basePath}
-          fallbackPrefix={navFallbackPrefix}
-          className="ms-auto"
-        />
-      </div>
-
-      {isInvoice && !isNew && (existing as any)?.status === "posted" && (
-        <div className="shrink-0 mb-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-amber-900 text-sm flex items-center gap-2">
-          <Lock className="h-4 w-4" />
-          <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
-        </div>
-      )}
-
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
-        {/* ── بطاقات الرأس الثلاث — ثابتة لا تتمرّر (fieldset يلفّ الحقول فقط ليبقى التنقل بين التبويبات فعّالاً في وضع العرض) ── */}
-        <fieldset disabled={editLock} className="contents">
-        <div className="shrink-0 grid grid-cols-1 gap-2 lg:grid-cols-12">
-          <Card className="border-2 lg:col-span-4">
-            <CardHeader className="flex flex-row items-center gap-2 space-y-0 border-b bg-muted/20 px-3 py-2">
-              <FileSignature className="h-4 w-4 text-primary" />
-              <p className="text-xs font-bold">بيانات العميل</p>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3 p-3">
-              {customerFields}
-              {repField}
-            </CardContent>
-          </Card>
-          <Card className="border-2 lg:col-span-5">
-            <CardHeader className="flex flex-row items-center gap-2 space-y-0 border-b bg-muted/20 px-3 py-2">
-              <FileText className="h-4 w-4 text-primary" />
-              <p className="text-xs font-bold">بيانات الفاتورة</p>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3 p-3 lg:grid-cols-3">
-              {invoiceFields}
-            </CardContent>
-          </Card>
-          <Card className="border-2 lg:col-span-3">
-            <CardHeader className="flex flex-row items-center gap-2 space-y-0 border-b bg-muted/20 px-3 py-2">
-              <Calculator className="h-4 w-4 text-primary" />
-              <p className="text-xs font-bold">ملخص الفاتورة</p>
-            </CardHeader>
-            <CardContent className="space-y-3 p-3">
-              {docSummaryBox}
-              {priceToggle}
-            </CardContent>
-          </Card>
-        </div>
-        </fieldset>
-
-        {/* منتقي نوع الفاتورة (ZATCA) — للفواتير فقط */}
-        {invoiceTypePicker && <div className="shrink-0">{invoiceTypePicker}</div>}
-
-        {/* ── منطقة الأصناف/التفاصيل/الأرشفة — تتمرّر وحدها (بحدّ أدنى للارتفاع كي لا تختفي أبداً) ── */}
-        <Card className="flex min-h-[320px] flex-1 flex-col border-2">
-          <Tabs value={stationTab} onValueChange={(v) => setStationTab(v as any)} dir={isRtl ? "rtl" : "ltr"} className="flex min-h-0 flex-1 flex-col">
-            <CardHeader className="shrink-0 border-b bg-muted/20 p-0">
-              <div className="flex items-center justify-between gap-2 px-3 py-2">
-                <TabsList className="h-8 gap-1 border bg-background">
-                  <TabsTrigger value="items" className="h-7 gap-1.5 px-3 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
-                  </TabsTrigger>
-                  {isInvoice && editId && (
-                    <TabsTrigger value="archive" className="h-7 gap-1.5 px-3 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      <Archive className="h-3.5 w-3.5" />أرشفة
-                    </TabsTrigger>
-                  )}
-                  <TabsTrigger value="details" className="h-7 gap-1.5 px-3 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
-                  </TabsTrigger>
-                </TabsList>
-                <p className="text-[11px] text-muted-foreground hidden sm:block">
-                  {t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
-                </p>
-              </div>
-            </CardHeader>
-            <CardContent className="min-h-0 flex-1 overflow-y-auto p-3">
-              <TabsContent value="items" className="mt-0 space-y-3">
-                <fieldset disabled={editLock} className="contents">
-                  {linesHeaderBlock}
-                  {linesGrid}
-                  {addLineButton}
-                </fieldset>
-              </TabsContent>
-              {isInvoice && editId && (
-                <TabsContent value="archive" className="mt-0">
-                  <InvoiceArchiveTab
-                    invoiceId={editId}
-                    invoiceType="sales"
-                    invoiceNumber={docNumber}
-                    seed={{
-                      branchId: branchId ? Number(branchId) : null,
-                      warehouseId: headerWarehouseId ? Number(headerWarehouseId) : null,
-                      warehouseName: (warehouses as any[]).find((w: any) => String(w.id) === headerWarehouseId)?.nameAr ?? null,
-                      partyId: customerId ? Number(customerId) : null,
-                      partyType: "customer",
-                      partyName: (customers as any[]).find((c: any) => String(c.id) === String(customerId))?.nameAr ?? null,
-                      lines: lines.filter(l => l.itemName).map(l => ({
-                        itemId: l.itemId ? Number(l.itemId) : null,
-                        itemName: l.itemName, unit: l.unit,
-                        orderedQty: Number(l.qty) || 0, actualQty: Number(l.qty) || 0,
-                      })),
-                    }}
-                  />
-                </TabsContent>
-              )}
-              <TabsContent value="details" className="mt-0">
-                {detailsSection}
-              </TabsContent>
-            </CardContent>
-          </Tabs>
-        </Card>
-      </div>
-
-      {/* ── شريط سفلي ثابت: الإجمالي + إلغاء/طباعة/حفظ ── */}
-      <div className="shrink-0 sticky bottom-0 z-10 mt-2 flex items-center justify-between gap-3 border-t bg-background pt-2 pb-1">
-        <div className="flex items-baseline gap-2">
-          <span className="text-xs text-muted-foreground">{t("salesDocForm.colTotal")}</span>
-          <span className="font-mono text-xl font-bold text-primary">{fmt(totalAmount)}</span>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => navigate(basePath)}>
-            {isInvoice && !isNew && (existing as any)?.status === "posted" ? t("common.back", "رجوع") : t("common.cancel")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={handlePrintOnly} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-print">
-            <Printer className="h-4 w-4" />طباعة
-          </Button>
-          {!editLock && (
-            <Button size="sm" onClick={handleSave} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-save-station">
-              <Save className="h-4 w-4" />
-              {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
-          <BackIcon className="h-4 w-4" />
-        </Button>
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-            <Icon className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold">{title}</h1>
-            <p className="text-xs text-muted-foreground">{subtitle}</p>
-          </div>
-        </div>
-        {isInvoice && (
-          <JournalScanArchive
-            jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
-            screenKey="sales_invoices"
-            companyName={user?.company?.nameAr ?? null}
-          />
-        )}
-        {/* Status pill — visible whenever editing an existing doc (any mode).
-            Status enum varies per mode; <DocStatusBadge> handles them all. */}
-        {editId && (existing as any) && (
-          <DocStatusBadge status={(existing as any).status} />
-        )}
-        {/* Smart prev/next + search navigator — shown for every mode.
-            Visible on /new as well so the user can jump to any existing
-            doc; prev/next arrows just disable when there's no current
-            anchor. */}
-        <DocNavigator
-          items={docNavItems}
-          currentId={editId}
-          basePath={basePath}
-          fallbackPrefix={navFallbackPrefix}
-          className="ms-auto"
-        />
-      </div>
-
-      {isInvoice && !isNew && (existing as any)?.status === "posted" && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm flex items-center gap-2">
-          <Lock className="h-4 w-4" />
-          <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
-        </div>
-      )}
-
-      {/* ── نوع الفاتورة (ZATCA) ──────────────────────────────────────────
-          مفتاح اختيار جذاب بين «فاتورة ضريبية» (B2B / Standard) و«فاتورة
-          ضريبية مبسطة» (B2C / Simplified). يظهر فقط في وضع الفاتورة
-          (لا للعروض/الطلبات). يحدِّد قواعد التحقق قبل الحفظ:
-          - الضريبية: يلزم رقم ضريبي صحيح + سجل تجاري + عنوان وطني كامل
-          - المبسطة: يكفي اختيار اسم العميل
-          القاعدة الذهبية من زاتكا: تستخدم الفاتورة الضريبية عند البيع
-          لشركات (B2B) ⩾ 1000 ريال، والمبسّطة لمبيعات التجزئة (B2C). */}
-      {invoiceTypePicker}
-
-      <div className="contents">
-      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
-        <Card className="border-2">
-          <CardHeader className="p-0">
-            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
-              <p className="text-[11px] text-muted-foreground">
-                {!useTabbedLayout
-                  ? t("salesDocForm.headerHint")
-                  : activeTab === "items"
-                    ? t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })
-                    : activeTab === "details"
-                      ? "تفاصيل العمليات الناتجة عن هذا المستند"
-                      : t("salesDocForm.headerHint")}
-              </p>
-              {useTabbedLayout ? (
-                <TabsList className="h-8 bg-background border gap-1">
-                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
-                  </TabsTrigger>
-                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
-                  </TabsTrigger>
-                  {isInvoice && editId && (
-                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      <Archive className="h-3.5 w-3.5" />أرشفة
-                    </TabsTrigger>
-                  )}
-                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
-                  </TabsTrigger>
-                </TabsList>
-              ) : (
-                <TabsList className="h-8 bg-background border gap-1">
-                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
-                  </TabsTrigger>
-                </TabsList>
-              )}
-            </div>
-          </CardHeader>
-
-          <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0">
-            <CardContent className="pt-5 pb-5 space-y-4">
-            <fieldset disabled={editLock} className="contents">
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                {invoiceFields}
-                {customerFields}
-                {repField}
               </div>
 
               {!useTabbedLayout && (
@@ -3142,7 +3094,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   {topActionBar}
                   <fieldset disabled={editLock} className="contents">
                     {linesHeaderBlock}
-                    {linesSection}
+                    {quickAddBar}
+                    {displayLinesGrid}
+                    {linesFooterBlock}
                   </fieldset>
                 </CardContent>
               </TabsContent>
