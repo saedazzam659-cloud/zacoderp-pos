@@ -327,6 +327,33 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const { containerRef: enterNavRef, onKeyDown: enterNavKey } = useEnterNavigation(() => handleSave());
   const docNumberRef = useRef<HTMLInputElement>(null);
 
+  // ── Fixed-viewport shell ────────────────────────────────────────────
+  // The new single-screen layout pins the header + totals and lets ONLY
+  // the items grid scroll. To do that the root must own a bounded height
+  // equal to the remaining viewport below the sticky app header. We
+  // measure the root's top offset (stable because the page itself never
+  // scrolls once overflow is contained) and derive the height from it.
+  const [shellHeight, setShellHeight] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    const el = enterNavRef.current;
+    if (!el) return;
+    const recompute = () => {
+      const top = el.getBoundingClientRect().top;
+      setShellHeight(`calc(100dvh - ${Math.max(0, Math.round(top))}px - 12px)`);
+    };
+    recompute();
+    window.addEventListener("resize", recompute);
+    return () => window.removeEventListener("resize", recompute);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Presentation flag: render the new single-screen station layout. The
+  // old tabbed/classic tree stays intact below as a safe fallback.
+  const useStationLayout = true;
+  // Which pane the station layout's lower area shows. The header cards +
+  // totals stay pinned; only this inner region swaps between the scrolling
+  // item grid, the archive tab, and the read-only details tab.
+  const [stationTab, setStationTab] = useState<"items" | "archive" | "details">(viewMode ? "details" : "items");
+
   // Accounts used to build journal entry on posting (invoices only)
   const [cogsAccountId,      setCogsAccountId]      = useState("");
   const [inventoryAccountId, setInventoryAccountId] = useState("");
@@ -1614,9 +1641,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       ? t("salesDocForm.subtitleOrder")
       : t("salesDocForm.subtitleQuotation");
 
-  const linesSection = (
-    <div className="pt-2 space-y-3">
-              {(() => {
+  const linesGrid = (() => {
                 // Warehouse column is now rendered for all 3 doc modes
                 // (invoice, order, quotation) — the order matches the sales
                 // invoice layout per the user's request: code · name ·
@@ -1783,18 +1808,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 </div>
               </div>
                 );
-              })()}
+              })();
 
+  const addLineButton = (
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
                 <Plus className="h-4 w-4" />{t("salesDocForm.addLine")}
               </Button>
+  );
 
-              <div className="mt-5 flex flex-wrap justify-between gap-4">
-                {/* Toggle ‹السعر شامل الضريبة› — يخضع الآن لسياسة الحقول
-                    (Field Policy / الحوكمة): إذا أخفاه المسؤول للمستخدم
-                    تختفي البطاقة وتسقط من الصفّ بالكامل، وإذا جعله للقراءة
-                    فقط لا يستطيع المستخدم تبديله. مفتاح القاموس: priceIncludesVat */}
-                {fp.isVisible("priceIncludesVat") ? (
+  {/* Toggle ‹السعر شامل الضريبة› — يخضع لسياسة الحقول (Field Policy). */}
+  const priceToggle = fp.isVisible("priceIncludesVat") ? (
                 <label
                   data-testid="price-includes-vat-toggle"
                   className={cn(
@@ -1824,8 +1847,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </p>
                   </div>
                 </label>
-                ) : <span /> /* keeps justify-between layout when hidden */}
+              ) : <span />;
 
+  const docSummaryBox = (
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
                     <span>{t("salesDocForm.calcMethod")}</span>
@@ -1864,7 +1888,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </p>
                   )}
                 </div>
-              </div>
+  );
+
+  const linesSection = (
+    <div className="pt-2 space-y-3">
+      {linesGrid}
+      {addLineButton}
+      <div className="mt-5 flex flex-wrap justify-between gap-4">
+        {priceToggle}
+        {docSummaryBox}
+      </div>
     </div>
   );
 
@@ -2426,222 +2459,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     );
   }
 
-  return (
-    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
-          <BackIcon className="h-4 w-4" />
-        </Button>
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-            <Icon className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold">{title}</h1>
-            <p className="text-xs text-muted-foreground">{subtitle}</p>
-          </div>
-        </div>
-        {isInvoice && (
-          <JournalScanArchive
-            jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
-            screenKey="sales_invoices"
-            companyName={user?.company?.nameAr ?? null}
-          />
-        )}
-        {/* Status pill — visible whenever editing an existing doc (any mode).
-            Status enum varies per mode; <DocStatusBadge> handles them all. */}
-        {editId && (existing as any) && (
-          <DocStatusBadge status={(existing as any).status} />
-        )}
-        {/* Smart prev/next + search navigator — shown for every mode.
-            Visible on /new as well so the user can jump to any existing
-            doc; prev/next arrows just disable when there's no current
-            anchor. */}
-        <DocNavigator
-          items={docNavItems}
-          currentId={editId}
-          basePath={basePath}
-          fallbackPrefix={navFallbackPrefix}
-          className="ms-auto"
-        />
-      </div>
-
-      {isInvoice && !isNew && (existing as any)?.status === "posted" && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm flex items-center gap-2">
-          <Lock className="h-4 w-4" />
-          <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
-        </div>
-      )}
-
-      {/* ── نوع الفاتورة (ZATCA) ──────────────────────────────────────────
-          مفتاح اختيار جذاب بين «فاتورة ضريبية» (B2B / Standard) و«فاتورة
-          ضريبية مبسطة» (B2C / Simplified). يظهر فقط في وضع الفاتورة
-          (لا للعروض/الطلبات). يحدِّد قواعد التحقق قبل الحفظ:
-          - الضريبية: يلزم رقم ضريبي صحيح + سجل تجاري + عنوان وطني كامل
-          - المبسطة: يكفي اختيار اسم العميل
-          القاعدة الذهبية من زاتكا: تستخدم الفاتورة الضريبية عند البيع
-          لشركات (B2B) ⩾ 1000 ريال، والمبسّطة لمبيعات التجزئة (B2C). */}
-      {isInvoice && (() => {
-        const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
-        const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
-        const crOk = cust ? !!String(cust.crNumber ?? "").trim() : false;
-        const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
-        // رقم السجل التجاري اختياري — لا يدخل في جاهزية الإرسال إلى زاتكا.
-        const standardReady = vatOk && addrMissing.length === 0;
-        const isStd = invoiceType === "standard";
-        const isSimp = invoiceType === "simplified";
-        return (
-          <div className="rounded-2xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background p-3 shadow-sm">
-            <div className="flex items-center gap-2 mb-2.5 px-1">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
-                <Receipt className="h-4 w-4 text-primary" />
-              </div>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-foreground">نوع الفاتورة</p>
-                <p className="text-[10px] text-muted-foreground">اختر نوع الفاتورة وفق متطلّبات هيئة الزكاة والضريبة (ZATCA)</p>
-              </div>
-              {standardReady && isStd && (
-                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] gap-1">
-                  <ShieldCheck className="h-3 w-3" />جاهز للإرسال إلى زاتكا
-                </Badge>
-              )}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {/* ── فاتورة ضريبية (Standard / B2B) ── */}
-              <button
-                type="button"
-                data-testid="invoice-type-standard"
-                onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
-                className={cn(
-                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
-                  isStd
-                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
-                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className={cn(
-                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
-                    isStd ? "border-primary bg-primary" : "border-muted-foreground/30"
-                  )}>
-                    {isStd && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية</span>
-                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-primary/30 text-primary">B2B · Standard</Badge>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                      للبيع لشركات/منشآت مسجَّلة بضريبة القيمة المضافة. تتطلّب اعتماد زاتكا (Clearance).
-                    </p>
-                    {isStd && cust && (
-                      <div className="mt-2 space-y-0.5 text-[10px]">
-                        <div className={cn("flex items-center gap-1", vatOk ? "text-emerald-700" : "text-rose-700")}>
-                          <span>{vatOk ? "✓" : "✗"}</span><span>رقم ضريبي سعودي صحيح (15 رقم)</span>
-                        </div>
-                        <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-muted-foreground")}>
-                          <span>{crOk ? "✓" : "•"}</span><span>رقم السجل التجاري (اختياري)</span>
-                        </div>
-                        <div className={cn("flex items-center gap-1", addrMissing.length === 0 ? "text-emerald-700" : "text-rose-700")}>
-                          <span>{addrMissing.length === 0 ? "✓" : "✗"}</span>
-                          <span>العنوان الوطني{addrMissing.length > 0 ? ` (ينقص: ${addrMissing.join("، ")})` : ""}</span>
-                        </div>
-                      </div>
-                    )}
-                    {isStd && !cust && (
-                      <p className="mt-2 text-[10px] text-amber-700 flex items-center gap-1">
-                        <span>⚠</span><span>اختر العميل أولاً للتحقق من اكتمال البيانات</span>
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </button>
-
-              {/* ── فاتورة ضريبية مبسّطة (Simplified / B2C) ── */}
-              <button
-                type="button"
-                data-testid="invoice-type-simplified"
-                onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
-                className={cn(
-                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
-                  isSimp
-                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
-                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className={cn(
-                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
-                    isSimp ? "border-primary bg-primary" : "border-muted-foreground/30"
-                  )}>
-                    {isSimp && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية مبسّطة</span>
-                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-sky-300 text-sky-700">B2C · Simplified</Badge>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                      لمبيعات التجزئة والأفراد. يكفي اسم العميل فقط، ويتم الإبلاغ عنها لزاتكا (Reporting).
-                    </p>
-                    {isSimp && (
-                      <p className="mt-2 text-[10px] text-emerald-700 flex items-center gap-1">
-                        <span>✓</span><span>{customerId ? "تم اختيار العميل — جاهزة للحفظ" : "اختر اسم العميل لإكمال الحفظ"}</span>
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-        );
-      })()}
-
-      <div className="contents">
-      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
-        <Card className="border-2">
-          <CardHeader className="p-0">
-            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
-              <p className="text-[11px] text-muted-foreground">
-                {!useTabbedLayout
-                  ? t("salesDocForm.headerHint")
-                  : activeTab === "items"
-                    ? t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })
-                    : activeTab === "details"
-                      ? "تفاصيل العمليات الناتجة عن هذا المستند"
-                      : t("salesDocForm.headerHint")}
-              </p>
-              {useTabbedLayout ? (
-                <TabsList className="h-8 bg-background border gap-1">
-                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
-                  </TabsTrigger>
-                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
-                  </TabsTrigger>
-                  {isInvoice && editId && (
-                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      <Archive className="h-3.5 w-3.5" />أرشفة
-                    </TabsTrigger>
-                  )}
-                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
-                  </TabsTrigger>
-                </TabsList>
-              ) : (
-                <TabsList className="h-8 bg-background border gap-1">
-                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
-                  </TabsTrigger>
-                </TabsList>
-              )}
-            </div>
-          </CardHeader>
-
-          <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0">
-            <CardContent className="pt-5 pb-5 space-y-4">
-            <fieldset disabled={editLock} className="contents">
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+  const invoiceFields = (
+    <>
                 {fp.isVisible("docNumber") && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : isOrder ? t("salesDocForm.orderNumber") : t("salesDocForm.quotationNumber")}{fp.isRequired("docNumber") && <span className="text-destructive"> *</span>}</Label>
@@ -2686,15 +2505,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <DateField className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} readOnly={fp.isReadOnly("validUntil")} />
                   </div>
                 )}
-                {fp.isVisible("customer") && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
-                  <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? "للقراءة فقط حسب السياسة" : undefined}>
-                    <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
-                  </div>
-                </div>
-                )}
-                <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} hidden={!fp.isVisible("addCustomerTool")} readOnly={fp.isReadOnly("addCustomerTool")} />
                 {isInvoice && isNew && (
                   <div className="space-y-1.5">
                     <Label className="text-xs flex items-center gap-1.5">
@@ -2825,26 +2635,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
                 )}
-                {usesOps && fp.isVisible("salesperson") && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs flex items-center gap-1">
-                      <span>{t("salesDocForm.salesRep")}{fp.isRequired("salesperson") && <span className="text-destructive"> *</span>}</span>
-                      {repLocked && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                          مُعيَّن تلقائياً (هويتك كمندوب)
-                        </span>
-                      )}
-                    </Label>
-                    <div className={(repLocked || fp.isReadOnly("salesperson")) ? "opacity-90 pointer-events-none" : ""} title={repLocked ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : (fp.isReadOnly("salesperson") ? "للقراءة فقط حسب السياسة" : undefined)}>
-                      <SearchCombobox
-                        items={salesRepComboItems}
-                        value={salesRepId}
-                        onValueChange={setSalesRepId}
-                        placeholder={t("salesDocForm.salesRepPlaceholder")}
-                      />
-                    </div>
-                  </div>
-                )}
                 {fp.isVisible("notes") && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">{t("salesDocForm.notes")}{fp.isRequired("notes") && <span className="text-destructive"> *</span>}</Label>
@@ -2898,6 +2688,440 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
                   </div>
                 )}
+    </>
+  );
+
+  const customerFields = (
+    <>
+                {fp.isVisible("customer") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
+                  <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? "للقراءة فقط حسب السياسة" : undefined}>
+                    <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
+                  </div>
+                </div>
+                )}
+                <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} hidden={!fp.isVisible("addCustomerTool")} readOnly={fp.isReadOnly("addCustomerTool")} />
+    </>
+  );
+
+  const repField = (
+    <>
+                {usesOps && fp.isVisible("salesperson") && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1">
+                      <span>{t("salesDocForm.salesRep")}{fp.isRequired("salesperson") && <span className="text-destructive"> *</span>}</span>
+                      {repLocked && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                          مُعيَّن تلقائياً (هويتك كمندوب)
+                        </span>
+                      )}
+                    </Label>
+                    <div className={(repLocked || fp.isReadOnly("salesperson")) ? "opacity-90 pointer-events-none" : ""} title={repLocked ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : (fp.isReadOnly("salesperson") ? "للقراءة فقط حسب السياسة" : undefined)}>
+                      <SearchCombobox
+                        items={salesRepComboItems}
+                        value={salesRepId}
+                        onValueChange={setSalesRepId}
+                        placeholder={t("salesDocForm.salesRepPlaceholder")}
+                      />
+                    </div>
+                  </div>
+                )}
+    </>
+  );
+
+  const invoiceTypePicker = isInvoice ? (() => {
+        const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
+        const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
+        const crOk = cust ? !!String(cust.crNumber ?? "").trim() : false;
+        const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
+        // رقم السجل التجاري اختياري — لا يدخل في جاهزية الإرسال إلى زاتكا.
+        const standardReady = vatOk && addrMissing.length === 0;
+        const isStd = invoiceType === "standard";
+        const isSimp = invoiceType === "simplified";
+        return (
+          <div className="rounded-2xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background p-3 shadow-sm">
+            <div className="flex items-center gap-2 mb-2.5 px-1">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                <Receipt className="h-4 w-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs font-bold text-foreground">نوع الفاتورة</p>
+                <p className="text-[10px] text-muted-foreground">اختر نوع الفاتورة وفق متطلّبات هيئة الزكاة والضريبة (ZATCA)</p>
+              </div>
+              {standardReady && isStd && (
+                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] gap-1">
+                  <ShieldCheck className="h-3 w-3" />جاهز للإرسال إلى زاتكا
+                </Badge>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* ── فاتورة ضريبية (Standard / B2B) ── */}
+              <button
+                type="button"
+                data-testid="invoice-type-standard"
+                onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
+                className={cn(
+                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
+                  isStd
+                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
+                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className={cn(
+                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    isStd ? "border-primary bg-primary" : "border-muted-foreground/30"
+                  )}>
+                    {isStd && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية</span>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-primary/30 text-primary">B2B · Standard</Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                      للبيع لشركات/منشآت مسجَّلة بضريبة القيمة المضافة. تتطلّب اعتماد زاتكا (Clearance).
+                    </p>
+                    {isStd && cust && (
+                      <div className="mt-2 space-y-0.5 text-[10px]">
+                        <div className={cn("flex items-center gap-1", vatOk ? "text-emerald-700" : "text-rose-700")}>
+                          <span>{vatOk ? "✓" : "✗"}</span><span>رقم ضريبي سعودي صحيح (15 رقم)</span>
+                        </div>
+                        <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-muted-foreground")}>
+                          <span>{crOk ? "✓" : "•"}</span><span>رقم السجل التجاري (اختياري)</span>
+                        </div>
+                        <div className={cn("flex items-center gap-1", addrMissing.length === 0 ? "text-emerald-700" : "text-rose-700")}>
+                          <span>{addrMissing.length === 0 ? "✓" : "✗"}</span>
+                          <span>العنوان الوطني{addrMissing.length > 0 ? ` (ينقص: ${addrMissing.join("، ")})` : ""}</span>
+                        </div>
+                      </div>
+                    )}
+                    {isStd && !cust && (
+                      <p className="mt-2 text-[10px] text-amber-700 flex items-center gap-1">
+                        <span>⚠</span><span>اختر العميل أولاً للتحقق من اكتمال البيانات</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+
+              {/* ── فاتورة ضريبية مبسّطة (Simplified / B2C) ── */}
+              <button
+                type="button"
+                data-testid="invoice-type-simplified"
+                onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
+                className={cn(
+                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
+                  isSimp
+                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
+                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className={cn(
+                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    isSimp ? "border-primary bg-primary" : "border-muted-foreground/30"
+                  )}>
+                    {isSimp && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية مبسّطة</span>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-sky-300 text-sky-700">B2C · Simplified</Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                      لمبيعات التجزئة والأفراد. يكفي اسم العميل فقط، ويتم الإبلاغ عنها لزاتكا (Reporting).
+                    </p>
+                    {isSimp && (
+                      <p className="mt-2 text-[10px] text-emerald-700 flex items-center gap-1">
+                        <span>✓</span><span>{customerId ? "تم اختيار العميل — جاهزة للحفظ" : "اختر اسم العميل لإكمال الحفظ"}</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        );
+  })() : null;
+
+  if (useStationLayout) return (
+    <div
+      ref={enterNavRef}
+      onKeyDown={enterNavKey}
+      className="mx-auto flex w-full max-w-[1600px] flex-col overflow-hidden px-1"
+      style={{ height: shellHeight }}
+    >
+      {/* ── رأس مضغوط: رجوع · العنوان · الحالة · المتصفّح ── */}
+      <div className="shrink-0 flex items-center gap-3 flex-wrap pb-2">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
+          <BackIcon className="h-4 w-4" />
+        </Button>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+            <Icon className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold">{title}</h1>
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+        {isInvoice && (
+          <JournalScanArchive
+            jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
+            screenKey="sales_invoices"
+            companyName={user?.company?.nameAr ?? null}
+          />
+        )}
+        {editId && (existing as any) && (
+          <DocStatusBadge status={(existing as any).status} />
+        )}
+        <DocNavigator
+          items={docNavItems}
+          currentId={editId}
+          basePath={basePath}
+          fallbackPrefix={navFallbackPrefix}
+          className="ms-auto"
+        />
+      </div>
+
+      {isInvoice && !isNew && (existing as any)?.status === "posted" && (
+        <div className="shrink-0 mb-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-amber-900 text-sm flex items-center gap-2">
+          <Lock className="h-4 w-4" />
+          <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
+        {/* ── بطاقات الرأس الثلاث — ثابتة لا تتمرّر (fieldset يلفّ الحقول فقط ليبقى التنقل بين التبويبات فعّالاً في وضع العرض) ── */}
+        <fieldset disabled={editLock} className="contents">
+        <div className="shrink-0 grid grid-cols-1 gap-2 lg:grid-cols-12">
+          <Card className="border-2 lg:col-span-4">
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0 border-b bg-muted/20 px-3 py-2">
+              <FileSignature className="h-4 w-4 text-primary" />
+              <p className="text-xs font-bold">بيانات العميل</p>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3 p-3">
+              {customerFields}
+              {repField}
+            </CardContent>
+          </Card>
+          <Card className="border-2 lg:col-span-5">
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0 border-b bg-muted/20 px-3 py-2">
+              <FileText className="h-4 w-4 text-primary" />
+              <p className="text-xs font-bold">بيانات الفاتورة</p>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3 p-3 lg:grid-cols-3">
+              {invoiceFields}
+            </CardContent>
+          </Card>
+          <Card className="border-2 lg:col-span-3">
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0 border-b bg-muted/20 px-3 py-2">
+              <Calculator className="h-4 w-4 text-primary" />
+              <p className="text-xs font-bold">ملخص الفاتورة</p>
+            </CardHeader>
+            <CardContent className="space-y-3 p-3">
+              {docSummaryBox}
+              {priceToggle}
+            </CardContent>
+          </Card>
+        </div>
+        </fieldset>
+
+        {/* منتقي نوع الفاتورة (ZATCA) — للفواتير فقط */}
+        {invoiceTypePicker && <div className="shrink-0">{invoiceTypePicker}</div>}
+
+        {/* ── منطقة الأصناف/التفاصيل/الأرشفة — تتمرّر وحدها ── */}
+        <Card className="flex min-h-0 flex-1 flex-col border-2">
+          <Tabs value={stationTab} onValueChange={(v) => setStationTab(v as any)} dir={isRtl ? "rtl" : "ltr"} className="flex min-h-0 flex-1 flex-col">
+            <CardHeader className="shrink-0 border-b bg-muted/20 p-0">
+              <div className="flex items-center justify-between gap-2 px-3 py-2">
+                <TabsList className="h-8 gap-1 border bg-background">
+                  <TabsTrigger value="items" className="h-7 gap-1.5 px-3 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  {isInvoice && editId && (
+                    <TabsTrigger value="archive" className="h-7 gap-1.5 px-3 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Archive className="h-3.5 w-3.5" />أرشفة
+                    </TabsTrigger>
+                  )}
+                  <TabsTrigger value="details" className="h-7 gap-1.5 px-3 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                  </TabsTrigger>
+                </TabsList>
+                <p className="text-[11px] text-muted-foreground hidden sm:block">
+                  {t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
+                </p>
+              </div>
+            </CardHeader>
+            <CardContent className="min-h-0 flex-1 overflow-y-auto p-3">
+              <TabsContent value="items" className="mt-0 space-y-3">
+                <fieldset disabled={editLock} className="contents">
+                  {linesHeaderBlock}
+                  {linesGrid}
+                  {addLineButton}
+                </fieldset>
+              </TabsContent>
+              {isInvoice && editId && (
+                <TabsContent value="archive" className="mt-0">
+                  <InvoiceArchiveTab
+                    invoiceId={editId}
+                    invoiceType="sales"
+                    invoiceNumber={docNumber}
+                    seed={{
+                      branchId: branchId ? Number(branchId) : null,
+                      warehouseId: headerWarehouseId ? Number(headerWarehouseId) : null,
+                      warehouseName: (warehouses as any[]).find((w: any) => String(w.id) === headerWarehouseId)?.nameAr ?? null,
+                      partyId: customerId ? Number(customerId) : null,
+                      partyType: "customer",
+                      partyName: (customers as any[]).find((c: any) => String(c.id) === String(customerId))?.nameAr ?? null,
+                      lines: lines.filter(l => l.itemName).map(l => ({
+                        itemId: l.itemId ? Number(l.itemId) : null,
+                        itemName: l.itemName, unit: l.unit,
+                        orderedQty: Number(l.qty) || 0, actualQty: Number(l.qty) || 0,
+                      })),
+                    }}
+                  />
+                </TabsContent>
+              )}
+              <TabsContent value="details" className="mt-0">
+                {detailsSection}
+              </TabsContent>
+            </CardContent>
+          </Tabs>
+        </Card>
+      </div>
+
+      {/* ── شريط سفلي ثابت: الإجمالي + إلغاء/طباعة/حفظ ── */}
+      <div className="shrink-0 mt-2 flex items-center justify-between gap-3 border-t pt-2">
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs text-muted-foreground">{t("salesDocForm.colTotal")}</span>
+          <span className="font-mono text-xl font-bold text-primary">{fmt(totalAmount)}</span>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigate(basePath)}>
+            {isInvoice && !isNew && (existing as any)?.status === "posted" ? t("common.back", "رجوع") : t("common.cancel")}
+          </Button>
+          <Button variant="outline" size="sm" onClick={handlePrintOnly} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-print">
+            <Printer className="h-4 w-4" />طباعة
+          </Button>
+          {!editLock && (
+            <Button size="sm" onClick={handleSave} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-save-station">
+              <Save className="h-4 w-4" />
+              {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">
+      <div className="flex items-center gap-3 flex-wrap">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
+          <BackIcon className="h-4 w-4" />
+        </Button>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+            <Icon className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold">{title}</h1>
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+        {isInvoice && (
+          <JournalScanArchive
+            jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
+            screenKey="sales_invoices"
+            companyName={user?.company?.nameAr ?? null}
+          />
+        )}
+        {/* Status pill — visible whenever editing an existing doc (any mode).
+            Status enum varies per mode; <DocStatusBadge> handles them all. */}
+        {editId && (existing as any) && (
+          <DocStatusBadge status={(existing as any).status} />
+        )}
+        {/* Smart prev/next + search navigator — shown for every mode.
+            Visible on /new as well so the user can jump to any existing
+            doc; prev/next arrows just disable when there's no current
+            anchor. */}
+        <DocNavigator
+          items={docNavItems}
+          currentId={editId}
+          basePath={basePath}
+          fallbackPrefix={navFallbackPrefix}
+          className="ms-auto"
+        />
+      </div>
+
+      {isInvoice && !isNew && (existing as any)?.status === "posted" && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm flex items-center gap-2">
+          <Lock className="h-4 w-4" />
+          <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
+        </div>
+      )}
+
+      {/* ── نوع الفاتورة (ZATCA) ──────────────────────────────────────────
+          مفتاح اختيار جذاب بين «فاتورة ضريبية» (B2B / Standard) و«فاتورة
+          ضريبية مبسطة» (B2C / Simplified). يظهر فقط في وضع الفاتورة
+          (لا للعروض/الطلبات). يحدِّد قواعد التحقق قبل الحفظ:
+          - الضريبية: يلزم رقم ضريبي صحيح + سجل تجاري + عنوان وطني كامل
+          - المبسطة: يكفي اختيار اسم العميل
+          القاعدة الذهبية من زاتكا: تستخدم الفاتورة الضريبية عند البيع
+          لشركات (B2B) ⩾ 1000 ريال، والمبسّطة لمبيعات التجزئة (B2C). */}
+      {invoiceTypePicker}
+
+      <div className="contents">
+      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
+        <Card className="border-2">
+          <CardHeader className="p-0">
+            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
+              <p className="text-[11px] text-muted-foreground">
+                {!useTabbedLayout
+                  ? t("salesDocForm.headerHint")
+                  : activeTab === "items"
+                    ? t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })
+                    : activeTab === "details"
+                      ? "تفاصيل العمليات الناتجة عن هذا المستند"
+                      : t("salesDocForm.headerHint")}
+              </p>
+              {useTabbedLayout ? (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
+                  </TabsTrigger>
+                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  {isInvoice && editId && (
+                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Archive className="h-3.5 w-3.5" />أرشفة
+                    </TabsTrigger>
+                  )}
+                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                  </TabsTrigger>
+                </TabsList>
+              ) : (
+                <TabsList className="h-8 bg-background border gap-1">
+                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
+                  </TabsTrigger>
+                </TabsList>
+              )}
+            </div>
+          </CardHeader>
+
+          <TabsContent value={useTabbedLayout ? "basic" : "header"} className="mt-0">
+            <CardContent className="pt-5 pb-5 space-y-4">
+            <fieldset disabled={editLock} className="contents">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {invoiceFields}
+                {customerFields}
+                {repField}
               </div>
 
               {!useTabbedLayout && (
