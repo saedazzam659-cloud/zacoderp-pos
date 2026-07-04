@@ -334,6 +334,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [qaFreeQty, setQaFreeQty]       = useState("0");
   const [qaPrice, setQaPrice]           = useState("");
   const [qaDiscount, setQaDiscount]     = useState("0");
+  // Quick-add discount can be entered as a percentage OR a fixed amount.
+  const [qaDiscMode, setQaDiscMode]     = useState<"pct" | "amt">("pct");
+  // Per-line discount display mode for the editable grid (percent vs amount).
+  const [lineDiscMode, setLineDiscMode] = useState<Record<string, "pct" | "amt">>({});
+  // Selected unit for the quick-add bar (multi-unit items); defaults to the
+  // item's base unit whenever an item is chosen (see the effect below).
+  const [qaUnitId, setQaUnitId]         = useState("");
   // Ref to the quick-add bar so we can loop focus back to its first field
   // (the item picker) after committing a line — Enter-driven rapid entry.
   const quickAddRef = useRef<HTMLDivElement>(null);
@@ -999,6 +1006,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     return rows;
   }
 
+  // Pre-fetch units for the quick-add bar's chosen item so its unit picker is
+  // populated BEFORE commit, and default the picker to the item's base unit.
+  useEffect(() => {
+    if (!qaItemId) { setQaUnitId(""); return; }
+    let cancelled = false;
+    (async () => {
+      const us = await fetchItemUnits(qaItemId);
+      if (cancelled) return;
+      const base = us.find((u: any) => u.isBase) ?? us[0];
+      setQaUnitId(base?.unitId != null ? String(base.unitId) : "");
+    })();
+    return () => { cancelled = true; };
+  }, [qaItemId]);
+
   // Cache item-specific per-currency prices: itemId → [{ currencyCode, salePrice, costPrice, ... }]
   // The header currency drives line pricing — when a non-default currency is
   // selected and the item has a row for it, that price wins over the catalog
@@ -1087,12 +1108,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     else if (headerWarehouseId) l.warehouseId = headerWarehouseId;
     setLines(p => [...p, l]);
     await selectItem(l._id, qaItemId);
+    // Honor an explicit unit choice from the bar (multi-unit items). Runs
+    // BEFORE price/discount below so a manually typed price still wins.
+    if (qaUnitId) changeLineUnit(l._id, qaUnitId);
     updateLine(l._id, "qty", qaQty || "1");
     if (qaFreeQty && qaFreeQty !== "0") updateLine(l._id, "freeQty", qaFreeQty);
     if (qaPrice.trim() !== "" && qaPrice !== "0") updateLine(l._id, "unitPrice", qaPrice);
-    if (qaDiscount && qaDiscount !== "0") updateLine(l._id, "discount", qaDiscount);
+    if (qaDiscount && qaDiscount !== "0") {
+      if (qaDiscMode === "amt") updateLine(l._id, "discountAmount", qaDiscount);
+      else updateLine(l._id, "discount", qaDiscount);
+    }
     setFocusLineId(l._id);
-    // Reset the bar for the next entry.
+    // Reset the bar for the next entry (discount mode stays sticky).
     setQaItemId(""); setQaQty("1"); setQaFreeQty("0"); setQaPrice(""); setQaDiscount("0");
   }
 
@@ -1737,21 +1764,58 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               </div>
   );
 
+  // Compact ‹السعر شامل الضريبة› toggle — moved UP to the top of the tabbed
+  // items tab (out of the totals footer) per the redesign. Still governed by
+  // Field Policy: hidden users don't see it, read-only users can't flip it.
+  const priceInclToggle = fp.isVisible("priceIncludesVat") ? (
+    <label
+      data-testid="price-includes-vat-toggle"
+      className={cn(
+        "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs select-none transition-colors",
+        fp.isReadOnly("priceIncludesVat") ? "cursor-not-allowed opacity-70" : "cursor-pointer",
+        priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+      )}
+      title={fp.isReadOnly("priceIncludesVat")
+        ? "للقراءة فقط حسب سياسة الحقول"
+        : ((priceIncludesVat ? t("salesDocForm.priceInclusiveYes") : t("salesDocForm.priceInclusiveNo")) as string)}
+    >
+      <input
+        type="checkbox"
+        className="h-4 w-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
+        checked={priceIncludesVat}
+        disabled={fp.isReadOnly("priceIncludesVat")}
+        onChange={e => {
+          if (fp.isReadOnly("priceIncludesVat")) return;
+          setPriceIncludesVat(e.target.checked);
+          stickyPriceIncl.persist(e.target.checked);
+        }}
+      />
+      <span className="font-semibold whitespace-nowrap">{t("salesDocForm.priceInclusiveTitle")}</span>
+      <span className={cn("px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+        {priceIncludesVat ? t("salesDocForm.calcInclusive") : t("salesDocForm.calcExclusive")}
+      </span>
+    </label>
+  ) : null;
+
   // ── "إضافة صنف" quick-entry bar (tabbed items tab) ────────────────────
-  // Organized top-of-grid entry: pick item → qty/price/discount → commit.
-  // The item picker auto-fills the accurate price/unit/VAT on commit
-  // (handleQuickAdd → selectItem), so leaving السعر blank is the norm.
+  // Organized top-of-grid entry: pick item → unit → qty/price/discount →
+  // commit. The item picker auto-fills the accurate price/unit/VAT on commit
+  // (handleQuickAdd → selectItem), so leaving السعر blank is the norm. The
+  // discount field accepts a percentage OR a fixed amount (toggle beside it).
   const quickAddBar = (
     <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-3">
-      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-primary">
-        <Plus className="h-4 w-4" />
-        <span>إضافة صنف</span>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+          <Plus className="h-4 w-4" />
+          <span>إضافة صنف</span>
+        </div>
+        {priceInclToggle}
       </div>
       <div
         ref={quickAddRef}
         data-enter-scope
         className="grid gap-2 items-end"
-        style={{ gridTemplateColumns: "minmax(220px,2.2fr) 150px 84px 84px 120px 84px auto" }}
+        style={{ gridTemplateColumns: "minmax(200px,2fr) 140px 120px 76px 76px 110px 128px auto" }}
       >
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">الصنف</label>
@@ -1775,6 +1839,24 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           />
         </div>
         <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colUnit")}</label>
+          {(() => {
+            const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
+            const opts = iu.map((u: any) => ({
+              value: String(u.unitId),
+              label: `${u.unit?.nameAr ?? ""}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
+            }));
+            return (
+              <Select value={qaUnitId || undefined} onValueChange={setQaUnitId} disabled={opts.length === 0}>
+                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
+                <SelectContent>
+                  {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            );
+          })()}
+        </div>
+        <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colQty")}</label>
           <Input className="h-9 text-xs" type="text" inputMode="numeric" dir="ltr" value={qaQty}
             onChange={e => setQaQty(e.target.value.replace(/[^0-9]/g, ""))} />
@@ -1790,7 +1872,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             onChange={e => setQaPrice(e.target.value.replace(/[^0-9.]/g, ""))} />
         </div>
         <div className="space-y-1">
-          <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colDiscPct")}</label>
+          <div className="flex items-center justify-between gap-1">
+            <label className="text-[11px] text-muted-foreground">{qaDiscMode === "amt" ? "خصم (مبلغ)" : "خصم %"}</label>
+            <button type="button" tabIndex={-1}
+              onClick={() => setQaDiscMode(m => m === "amt" ? "pct" : "amt")}
+              className="text-[10px] px-1 py-0.5 rounded border bg-background hover:bg-muted text-muted-foreground leading-none"
+              title="تبديل بين نسبة % ومبلغ">
+              {qaDiscMode === "amt" ? "→ %" : "→ مبلغ"}
+            </button>
+          </div>
           <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" value={qaDiscount}
             onChange={e => setQaDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
             onKeyDown={e => {
@@ -1813,21 +1903,32 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     </div>
   );
 
-  // ── Read-only ledger grid for the tabbed items tab ────────────────────
-  // Rows are display-only (entry happens via quickAddBar above); the only
-  // per-row action is delete. Scrolls INTERNALLY (bounded height) so the
+  // ── Editable ledger grid for the tabbed items tab ─────────────────────
+  // Cells are inline-editable (qty / free / price / discount / VAT / unit),
+  // with a per-line discount %⇄amount toggle and a full-width notes sub-row.
+  // Entry still happens fast via quickAddBar above; this grid lets the user
+  // fine-tune committed rows. Scrolls INTERNALLY (bounded height) so the
   // browser page itself does not grow a scrollbar.
   const displayLinesGrid = (() => {
-    const gridCols = "48px 96px minmax(200px,1.6fr) 150px 100px 84px 84px 116px 78px 130px 40px";
-    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colTotal"), ""];
+    const gridCols = "38px 80px minmax(160px,1.3fr) 118px 110px 64px 64px 98px 122px 74px 108px 34px";
+    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), "الضريبة %", t("salesDocForm.colTotal"), ""];
     const whName = (id: string) => (warehouses as any[]).find((w: any) => String(w.id) === String(id))?.nameAr ?? "—";
-    const filled = lines.filter(l => l.itemId || l.itemName);
+    const filled = lines;
     const removeLine = (id: string) => setLines(p => { const n = p.filter(x => x._id !== id); return n.length ? n : [newLine()]; });
+    // Append a blank editable row so the user can add items INSIDE the grid
+    // (not only via the top quick-add bar). Seeds the default tax + warehouse.
+    const addGridLine = () => {
+      const nl = newLine();
+      const r = percentRateOf(headerTaxId);
+      if (r !== null) nl.vatRate = String(r);
+      if (headerWarehouseId) nl.warehouseId = headerWarehouseId;
+      setLines(p => [...p, nl]);
+    };
     return (
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="overflow-auto max-h-[calc(100vh-360px)] min-h-[200px]">
           <div className="min-w-max">
-            <div className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10" style={{ gridTemplateColumns: gridCols }}>
+            <div className="grid gap-1.5 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10" style={{ gridTemplateColumns: gridCols }}>
               {headers.map((h, i) => (
                 <p key={i} className={cn("text-[11px] font-medium truncate", h === t("salesDocForm.colTotal") ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
               ))}
@@ -1837,33 +1938,151 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 <div className="px-3 py-10 text-center text-sm text-muted-foreground">
                   لا توجد أصناف بعد — أضف صنفًا من الشريط بالأعلى.
                 </div>
-              ) : filled.map((l, idx) => (
-                <div key={l._id} className="grid gap-2 items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors" style={{ gridTemplateColumns: gridCols }}>
-                  <span className="text-muted-foreground tabular-nums">{idx + 1}</span>
-                  <span className="font-mono truncate" title={l.itemCode}>{l.itemCode || "—"}</span>
-                  <span className="truncate" title={l.itemName}>
-                    {l.itemName || "—"}
-                    {l.brandName ? <span className="ms-1 text-[10px] text-muted-foreground">({l.brandName})</span> : null}
-                    {l.appliedOfferName ? <span className="ms-1 text-[10px] text-emerald-700">• {l.appliedOfferName}</span> : null}
-                  </span>
-                  <span className="truncate text-muted-foreground" title={isServiceLine(l) ? "" : whName(l.warehouseId)}>{isServiceLine(l) ? t("salesDocForm.serviceNoWarehouse") : whName(l.warehouseId)}</span>
-                  <span className="truncate">{l.unit || "—"}</span>
-                  <span className="font-mono tabular-nums" dir="ltr">{l.qty}</span>
-                  <span className="font-mono tabular-nums text-amber-700" dir="ltr">{l.freeQty}</span>
-                  <span className="font-mono tabular-nums" dir="ltr">{fmt(Number(l.unitPrice) || 0)}</span>
-                  <span className="font-mono tabular-nums" dir="ltr">{trimTrailingZeros(l.discount || "0")}%</span>
-                  <span className="font-mono tabular-nums font-semibold text-primary" dir="ltr">{fmt(Number(l.lineTotal) || 0)}</span>
-                  <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeLine(l._id)} data-testid={`button-remove-line-${l._id}`}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+              ) : filled.map((l, idx) => {
+                const dMode = lineDiscMode[l._id] ?? "pct";
+                const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
+                const unitOpts = itemUnits.length > 0
+                  ? itemUnits.map((iu: any) => ({
+                      value: String(iu.unitId),
+                      label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                    }))
+                  : unitItems;
+                return (
+                <div key={l._id} className="px-3 py-2 text-xs hover:bg-muted/30 transition-colors">
+                  <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: gridCols }}>
+                    <span className="text-muted-foreground tabular-nums">{idx + 1}</span>
+                    <span className="font-mono truncate" title={l.itemCode}>{l.itemCode || "—"}</span>
+                    <div className="space-y-0.5 min-w-0">
+                      <SearchCombobox
+                        items={itemComboItems}
+                        value={l.itemId}
+                        onValueChange={v => void selectItem(l._id, v)}
+                        placeholder={t("salesDocForm.itemPlaceholder")}
+                        searchPlaceholder="ابحث بالكود أو الاسم..."
+                        className="h-8 text-xs"
+                      />
+                      {(l.brandName || l.appliedOfferName) && (
+                        <div className="flex flex-wrap gap-x-2 px-1 leading-tight">
+                          {l.brandName ? <span className="text-[10px] text-muted-foreground truncate">({l.brandName})</span> : null}
+                          {l.appliedOfferName ? <span className="text-[10px] text-emerald-700 truncate">• {l.appliedOfferName}</span> : null}
+                        </div>
+                      )}
+                    </div>
+                    <span className="truncate text-muted-foreground" title={isServiceLine(l) ? "" : whName(l.warehouseId)}>{isServiceLine(l) ? t("salesDocForm.serviceNoWarehouse") : whName(l.warehouseId)}</span>
+                    {units.length > 0 ? (
+                      <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
+                        <SelectContent>
+                          {unitOpts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input className="h-8 text-xs" placeholder={t("salesDocForm.colUnit")} value={l.unit}
+                        onChange={e => updateLine(l._id, "unit", e.target.value)} />
+                    )}
+                    <Input className="h-8 text-xs font-mono" type="text" inputMode="numeric" dir="ltr" value={l.qty}
+                      onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
+                    <Input
+                      className={cn("h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono", fp.isReadOnly("freeQty") && "bg-muted/40 cursor-not-allowed")}
+                      type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
+                      readOnly={fp.isReadOnly("freeQty")}
+                      title={fp.isReadOnly("freeQty") ? "للقراءة فقط حسب السياسة" : (t("salesDocForm.colFreeQtyHint") as string)}
+                      onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
+                    <Input
+                      className={cn("h-8 text-xs font-mono", l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800", fp.isReadOnly("unitPrice") && "bg-muted/40 cursor-not-allowed")}
+                      type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
+                      readOnly={fp.isReadOnly("unitPrice")}
+                      title={fp.isReadOnly("unitPrice") ? "للقراءة فقط حسب السياسة" : undefined}
+                      onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    <div className="flex items-center gap-0.5">
+                      <Input className="h-8 text-xs font-mono flex-1 min-w-0" type="text" inputMode="decimal" dir="ltr"
+                        value={dMode === "amt" ? (l.discountAmount || "0") : (l.discount || "0")}
+                        title={dMode === "amt" ? "خصم بمبلغ ثابت" : "خصم بنسبة %"}
+                        onChange={e => updateLine(l._id, dMode === "amt" ? "discountAmount" : "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <button type="button" tabIndex={-1}
+                        onClick={() => setLineDiscMode(m => ({ ...m, [l._id]: dMode === "amt" ? "pct" : "amt" }))}
+                        className="shrink-0 text-[10px] w-6 h-8 rounded border bg-background hover:bg-muted text-muted-foreground leading-none"
+                        title="تبديل بين نسبة % ومبلغ">
+                        {dMode === "amt" ? "﷼" : "%"}
+                      </button>
+                    </div>
+                    <Input className="h-8 text-xs font-mono" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
+                      title="نسبة ضريبة القيمة المضافة %"
+                      onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    <span className="font-mono tabular-nums font-semibold text-primary text-end" dir="ltr">{fmt(Number(l.lineTotal) || 0)}</span>
+                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeLine(l._id)} data-testid={`button-remove-line-${l._id}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <label className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">{t("salesDocForm.colNotes")}</label>
+                    <Input className="h-7 text-[11px]" placeholder={t("salesDocForm.notesPlaceholder") as string} value={l.notes}
+                      onChange={e => updateLine(l._id, "notes", e.target.value)}
+                      data-testid={`input-line-notes-${l._id}`} />
+                  </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
+        </div>
+        <div className="border-t bg-muted/20 px-3 py-2">
+          <Button type="button" variant="outline" size="sm" className="gap-2 h-8" onClick={addGridLine} data-testid="button-add-grid-line">
+            <Plus className="h-4 w-4" />{t("salesDocForm.addLine")}
+          </Button>
         </div>
       </div>
     );
   })();
+
+  // Compact single-strip totals for the tabbed items tab. The ‹price incl.
+  // VAT› toggle lives at the TOP of the tab now (priceInclToggle), so it is
+  // intentionally absent here. The classic layout keeps the original
+  // `linesFooterBlock` (with the full toggle card) untouched.
+  const compactFooterBlock = (
+    <div className="mt-3 rounded-xl border bg-muted/30 px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+        <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+          {priceIncludesVat ? t("salesDocForm.calcInclusive") : t("salesDocForm.calcExclusive")}
+        </span>
+        <div className="flex items-center gap-1.5 ms-auto">
+          <span className="text-muted-foreground text-xs">{t("salesDocForm.subtotalLabel")}</span>
+          <span className="font-mono">{fmt(subtotal)}</span>
+        </div>
+        {lineDiscountTotal > 0 && (
+          <div className="flex items-center gap-1.5" data-testid="line-discount-total">
+            <span className="text-muted-foreground text-xs">{t("salesDocForm.lineDiscountTotal")}</span>
+            <span className="font-mono text-rose-700">−{fmt(lineDiscountTotal)}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground text-xs">{t("salesDocForm.vatLabel")}</span>
+          <span className="font-mono text-amber-700">{fmt(vatAmount)}</span>
+        </div>
+        <div className="min-w-[210px]">
+          <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} currencySymbol={currencySymbol(currencyCode || defaultCurrency?.code, currencies)} />
+        </div>
+        <div className="flex items-center gap-1.5 border-s ps-4">
+          <span className="font-semibold text-xs">{priceIncludesVat ? t("salesDocForm.totalLabelInclusive") : t("salesDocForm.totalLabel")}</span>
+          <span className="font-mono text-base font-bold text-primary">{fmt(totalAmount)}</span>
+        </div>
+      </div>
+      {documentOfferId && documentOfferName && (
+        <div className="mt-2 flex items-start gap-1.5 px-2 py-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800" data-testid="applied-document-offer">
+          <Tag className="h-3 w-3 mt-0.5 shrink-0" />
+          <div className="flex-1 text-[10px] leading-relaxed">
+            <p className="font-semibold">{t("salesDocForm.appliedOffer")}: {documentOfferName}</p>
+            <p>{t("salesDocForm.appliedOfferDocumentHint", { name: documentOfferName })}</p>
+          </div>
+        </div>
+      )}
+      {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
+        <p className="mt-1 text-[10px] text-muted-foreground text-end">
+          {t("salesDocForm.equivalentIn", { currency: defaultCurrency?.code ?? "SAR", value: fmt(totalAmount * Number(exchangeRate)) })}
+        </p>
+      )}
+    </div>
+  );
 
   const linesSection = (
     <div className="pt-2 space-y-3">
@@ -3096,7 +3315,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     {linesHeaderBlock}
                     {quickAddBar}
                     {displayLinesGrid}
-                    {linesFooterBlock}
+                    {compactFooterBlock}
                   </fieldset>
                 </CardContent>
               </TabsContent>
