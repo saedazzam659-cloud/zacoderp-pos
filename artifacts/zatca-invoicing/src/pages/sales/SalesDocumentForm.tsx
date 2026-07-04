@@ -2850,8 +2850,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     <div
       ref={enterNavRef}
       onKeyDown={enterNavKey}
-      className="mx-auto flex w-full max-w-[1600px] flex-col overflow-hidden px-1"
-      style={{ height: shellHeight }}
+      className="mx-auto flex w-full max-w-[1600px] flex-col px-1"
+      style={{ minHeight: shellHeight }}
     >
       {/* ── رأس مضغوط: رجوع · العنوان · الحالة · المتصفّح ── */}
       <div className="shrink-0 flex items-center gap-3 flex-wrap pb-2">
@@ -2932,8 +2932,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         {/* منتقي نوع الفاتورة (ZATCA) — للفواتير فقط */}
         {invoiceTypePicker && <div className="shrink-0">{invoiceTypePicker}</div>}
 
-        {/* ── منطقة الأصناف/التفاصيل/الأرشفة — تتمرّر وحدها ── */}
-        <Card className="flex min-h-0 flex-1 flex-col border-2">
+        {/* ── منطقة الأصناف/التفاصيل/الأرشفة — تتمرّر وحدها (بحدّ أدنى للارتفاع كي لا تختفي أبداً) ── */}
+        <Card className="flex min-h-[320px] flex-1 flex-col border-2">
           <Tabs value={stationTab} onValueChange={(v) => setStationTab(v as any)} dir={isRtl ? "rtl" : "ltr"} className="flex min-h-0 flex-1 flex-col">
             <CardHeader className="shrink-0 border-b bg-muted/20 p-0">
               <div className="flex items-center justify-between gap-2 px-3 py-2">
@@ -2994,7 +2994,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       </div>
 
       {/* ── شريط سفلي ثابت: الإجمالي + إلغاء/طباعة/حفظ ── */}
-      <div className="shrink-0 mt-2 flex items-center justify-between gap-3 border-t pt-2">
+      <div className="shrink-0 sticky bottom-0 z-10 mt-2 flex items-center justify-between gap-3 border-t bg-background pt-2 pb-1">
         <div className="flex items-baseline gap-2">
           <span className="text-xs text-muted-foreground">{t("salesDocForm.colTotal")}</span>
           <span className="font-mono text-xl font-bold text-primary">{fmt(totalAmount)}</span>
