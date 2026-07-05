@@ -34,6 +34,7 @@ interface RegisterRow {
   vat: number;
   gross: number;
   notes: string;
+  source?: string;
   id: number;
 }
 interface RegisterData {
@@ -320,7 +321,7 @@ export default function PurchasesVatRegister() {
                 : !hasData
                 ? <tr><td colSpan={cols.length} className="py-12 text-center text-muted-foreground">{tr("noData")}</td></tr>
                 : items.map(r => (
-                    <tr key={r.id} className="hover:bg-muted/20">
+                    <tr key={r.serial} className="hover:bg-muted/20">
                       {cols.map(c => (
                         <td key={c.key} className={`px-2 py-2 whitespace-nowrap ${c.num ? "text-center tabular-nums" : isRtl ? "text-right" : "text-left"}`}>{cell(r, c.key)}</td>
                       ))}

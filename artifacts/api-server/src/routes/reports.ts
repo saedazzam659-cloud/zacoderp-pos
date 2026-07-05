@@ -817,7 +817,33 @@ router.get("/purchases-vat-register", async (req, res) => {
     return;
   }
 
-  const rows = await db
+  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+  // One unified register row shape merged from THREE posted sources:
+  //   1) purchase invoices        (statement: "مشتريات محلية")
+  //   2) payment vouchers w/ VAT   (statement: "سند صرف")
+  //   3) manual journal entries    (statement: "قيد يومية") hitting the input
+  //      (purchase) VAT account only — auto-generated JEs from the two sources
+  //      above are excluded (AUTO_GENERATED_ENTRY_TYPES) so nothing double-counts.
+  type RawRow = {
+    sortDate: string;
+    entryDate: string;
+    entryNumber: string;
+    invoiceDate: string;
+    invoiceNumber: string;
+    supplierName: string;
+    supplierVatNumber: string;
+    statement: string;
+    base: number;
+    vat: number;
+    notes: string;
+    source: string;
+    id: number;
+  };
+  const raw: RawRow[] = [];
+
+  // ─── 1) Purchase invoices (posted, in period) ───────────────────────────
+  const invRows = await db
     .select({
       id:                   purchaseInvoicesTable.id,
       docNumber:            purchaseInvoicesTable.docNumber,
@@ -843,17 +869,13 @@ router.get("/purchases-vat-register", async (req, res) => {
       eq(purchaseInvoicesTable.status, "posted"),
       gte(purchaseInvoicesTable.invoiceDate, from),
       lte(purchaseInvoicesTable.invoiceDate, to),
-    ))
-    .orderBy(purchaseInvoicesTable.invoiceDate, purchaseInvoicesTable.id);
+    ));
 
-  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-  const items = rows.map((r, i) => {
-    const base  = round2(Number(r.subtotal ?? 0) - Number(r.discountAmount ?? 0));
-    const vat   = round2(Number(r.vatAmount ?? 0));
-    const gross = round2(base + vat);
-    const rate  = base > 0 ? round2((vat / base) * 100) : 0;
-    return {
-      serial:            i + 1,
+  for (const r of invRows) {
+    const base = round2(Number(r.subtotal ?? 0) - Number(r.discountAmount ?? 0));
+    const vat  = round2(Number(r.vatAmount ?? 0));
+    raw.push({
+      sortDate:          r.invoiceDate,
       entryDate:         (r.entryDate ?? "").trim() || r.invoiceDate,
       entryNumber:       (r.entryNumber ?? "").trim() || "",
       invoiceDate:       (r.supplierInvoiceDate ?? "").trim() || r.invoiceDate,
@@ -861,11 +883,191 @@ router.get("/purchases-vat-register", async (req, res) => {
       supplierName:      (r.supplierNameAr ?? "").trim() || (r.supplierNameEn ?? "").trim() || "",
       supplierVatNumber: (r.supplierVatNumber ?? "").trim() || "",
       statement:         "مشتريات محلية",
+      base,
+      vat,
+      notes:             (r.notes ?? "").trim() || "",
+      source:            "invoice",
+      id:                r.id,
+    });
+  }
+
+  // ─── 2) Payment-voucher lines carrying input VAT (سند صرف) ──────────────
+  // Each posted PV line with a non-zero taxAmount is a local purchase settled
+  // directly through a voucher: `amount` is the taxable base, `taxAmount` the
+  // recoverable VAT. Supplier data comes off the line's ⋮ metadata. The قيد
+  // number/date come from the voucher's own journal entry when linked.
+  const pvRows = await db
+    .select({
+      voucherId:  paymentVouchersTable.id,
+      docNumber:  paymentVouchersTable.code,
+      date:       paymentVouchersTable.date,
+      amount:     paymentVoucherLinesTable.amount,
+      taxAmount:  paymentVoucherLinesTable.taxAmount,
+      supplierName:          paymentVoucherLinesTable.supplierName,
+      supplierVatNumber:     paymentVoucherLinesTable.supplierVatNumber,
+      supplierInvoiceNumber: paymentVoucherLinesTable.supplierInvoiceNumber,
+      supplierInvoiceDate:   paymentVoucherLinesTable.supplierInvoiceDate,
+      entryNumber: journalEntriesTable.docNumber,
+      entryDate:   journalEntriesTable.entryDate,
+    })
+    .from(paymentVoucherLinesTable)
+    .innerJoin(paymentVouchersTable, eq(paymentVoucherLinesTable.voucherId, paymentVouchersTable.id))
+    .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId))
+    .where(and(
+      eq(paymentVouchersTable.companyId, companyId),
+      eq(paymentVouchersTable.status, "posted"),
+      gte(paymentVouchersTable.date, from),
+      lte(paymentVouchersTable.date, to),
+    ));
+
+  for (const l of pvRows) {
+    const vat = round2(Number(l.taxAmount ?? 0));
+    if (vat <= 0.005) continue;
+    const base = round2(Number(l.amount ?? 0));
+    raw.push({
+      sortDate:          l.date,
+      entryDate:         (l.entryDate ?? "").trim() || l.date,
+      entryNumber:       (l.entryNumber ?? "").trim() || (l.docNumber ?? "").trim() || "",
+      invoiceDate:       (l.supplierInvoiceDate ?? "").trim() || l.date,
+      invoiceNumber:     (l.supplierInvoiceNumber ?? "").trim() || (l.docNumber ?? "").trim() || "",
+      supplierName:      (l.supplierName ?? "").trim() || "",
+      supplierVatNumber: (l.supplierVatNumber ?? "").trim() || "",
+      statement:         "سند صرف",
+      base,
+      vat,
+      notes:             "",
+      source:            "payment_voucher",
+      id:                l.voucherId,
+    });
+  }
+
+  // ─── 3) Manual journal entries hitting the input (purchase) VAT account ──
+  // The VAT line only stores the tax amount, so the taxable base is derived
+  // the accounting-accurate way: total DEBITS of the entry minus the VAT
+  // line's own debit (a purchase JE is DR expense[base] / DR input-VAT[vat] /
+  // CR payable[gross], so base = totalDebit − vatDebit). Only entries with a
+  // net positive input-VAT impact are treated as local purchases.
+  const { inputId: vatInAcctId } = await resolveVatAccountIds(companyId);
+  if (vatInAcctId != null) {
+    const hasSup = (l: { supplierName: string | null; supplierVatNumber: string | null; supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null }) =>
+      !!((l.supplierName ?? "").trim() || (l.supplierVatNumber ?? "").trim() ||
+         (l.supplierInvoiceNumber ?? "").trim() || (l.supplierInvoiceDate ?? "").trim());
+
+    const vatLineRows = await db
+      .select({
+        entryId:     journalEntryLinesTable.entryId,
+        debit:       journalEntryLinesTable.debit,
+        credit:      journalEntryLinesTable.credit,
+        docNumber:   journalEntriesTable.docNumber,
+        entryDate:   journalEntriesTable.entryDate,
+        description: journalEntriesTable.description,
+        supplierName:          journalEntryLinesTable.supplierName,
+        supplierVatNumber:     journalEntryLinesTable.supplierVatNumber,
+        supplierInvoiceNumber: journalEntryLinesTable.supplierInvoiceNumber,
+        supplierInvoiceDate:   journalEntryLinesTable.supplierInvoiceDate,
+      })
+      .from(journalEntryLinesTable)
+      .innerJoin(journalEntriesTable, eq(journalEntriesTable.id, journalEntryLinesTable.entryId))
+      .where(and(
+        eq(journalEntriesTable.companyId, companyId),
+        eq(journalEntriesTable.status, "posted"),
+        gte(journalEntriesTable.entryDate, from),
+        lte(journalEntriesTable.entryDate, to),
+        notInArray(journalEntriesTable.entryType, AUTO_GENERATED_ENTRY_TYPES),
+        eq(journalEntryLinesTable.accountId, vatInAcctId),
+      ));
+
+    type JeAgg = {
+      id: number;
+      docNumber: string | null;
+      entryDate: string;
+      description: string | null;
+      inputVat: number;
+      vatDebit: number;
+      supplierName: string;
+      supplierVatNumber: string;
+      supplierInvoiceNumber: string;
+      supplierInvoiceDate: string;
+    };
+    const byEntry = new Map<number, JeAgg>();
+    for (const r of vatLineRows) {
+      let agg = byEntry.get(r.entryId);
+      if (!agg) {
+        agg = {
+          id: r.entryId, docNumber: r.docNumber, entryDate: r.entryDate, description: r.description,
+          inputVat: 0, vatDebit: 0,
+          supplierName: "", supplierVatNumber: "", supplierInvoiceNumber: "", supplierInvoiceDate: "",
+        };
+        byEntry.set(r.entryId, agg);
+      }
+      const debit  = Number(r.debit);
+      const credit = Number(r.credit);
+      agg.inputVat += debit - credit;
+      agg.vatDebit += debit;
+      if (hasSup(r) && !agg.supplierName && !agg.supplierVatNumber) {
+        agg.supplierName          = (r.supplierName ?? "").trim();
+        agg.supplierVatNumber     = (r.supplierVatNumber ?? "").trim();
+        agg.supplierInvoiceNumber = (r.supplierInvoiceNumber ?? "").trim();
+        agg.supplierInvoiceDate   = (r.supplierInvoiceDate ?? "").trim();
+      }
+    }
+
+    const entryIds = Array.from(byEntry.keys());
+    const totalDebitByEntry = new Map<number, number>();
+    if (entryIds.length > 0) {
+      const allLines = await db
+        .select({ entryId: journalEntryLinesTable.entryId, debit: journalEntryLinesTable.debit })
+        .from(journalEntryLinesTable)
+        .where(inArray(journalEntryLinesTable.entryId, entryIds));
+      for (const l of allLines) {
+        totalDebitByEntry.set(l.entryId, (totalDebitByEntry.get(l.entryId) ?? 0) + Number(l.debit));
+      }
+    }
+
+    for (const agg of byEntry.values()) {
+      const vat = round2(agg.inputVat);
+      if (vat <= 0.005) continue; // ignore contra / refund-only entries
+      const base = round2((totalDebitByEntry.get(agg.id) ?? agg.vatDebit) - agg.vatDebit);
+      raw.push({
+        sortDate:          agg.entryDate,
+        entryDate:         agg.entryDate,
+        entryNumber:       (agg.docNumber ?? "").trim() || "",
+        invoiceDate:       agg.supplierInvoiceDate || agg.entryDate,
+        invoiceNumber:     agg.supplierInvoiceNumber || (agg.docNumber ?? "").trim() || "",
+        supplierName:      agg.supplierName,
+        supplierVatNumber: agg.supplierVatNumber,
+        statement:         "قيد يومية",
+        base,
+        vat,
+        notes:             (agg.description ?? "").trim() || "",
+        source:            "journal_entry",
+        id:                agg.id,
+      });
+    }
+  }
+
+  // Merge + order chronologically, then assign the running serial.
+  raw.sort((a, b) => a.sortDate.localeCompare(b.sortDate) || a.id - b.id);
+  const items = raw.map((r, i) => {
+    const base  = round2(r.base);
+    const vat   = round2(r.vat);
+    const gross = round2(base + vat);
+    const rate  = base > 0 ? round2((vat / base) * 100) : 0;
+    return {
+      serial:            i + 1,
+      entryDate:         r.entryDate,
+      entryNumber:       r.entryNumber,
+      invoiceDate:       r.invoiceDate,
+      invoiceNumber:     r.invoiceNumber,
+      supplierName:      r.supplierName,
+      supplierVatNumber: r.supplierVatNumber,
+      statement:         r.statement,
       taxRate:           rate,
       base,
       vat,
       gross,
-      notes:             (r.notes ?? "").trim() || "",
+      notes:             r.notes,
+      source:            r.source,
       id:                r.id,
     };
   });
