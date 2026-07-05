@@ -117,6 +117,7 @@ import { isModuleEnabled, loadWindowsModuleFlags } from "../lib/windowsModules";
 import { getAppProfile } from "../lib/standalone";
 import ExpiryReport from "./ExpiryReport";
 import StockImport from "./StockImport";
+import ItemImport from "./ItemImport";
 import InvoiceImport from "./InvoiceImport";
 import LowStockReport, { countLowStockTracked } from "./LowStockReport";
 import { listItems, bulkImportLocalItems, type CreateItemInput } from "../lib/items";
@@ -229,7 +230,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     members: [
       "items", "item_groups", "brands", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
-      "stock_import", "item_card", "stock_valuation", "warehouse_stock", "slow_moving", "free_quantities", "item_sales_valuation",
+      "stock_import", "item_import", "item_card", "stock_valuation", "warehouse_stock", "slow_moving", "free_quantities", "item_sales_valuation",
       "inventory_dashboard", "smart_alerts", "goods_deliveries",
     ],
   },
@@ -610,6 +611,7 @@ export default function PosShell({
     { id: "item_groups",      icon: "🗂️", label: "مجموعات الأصناف", perm: "item_groups" },
     { id: "brands",           icon: "🏷️", label: "العلامات التجارية", perm: "brands" },
     { id: "stock_import",     icon: "📥", label: "استيراد الأرصدة", perm: "stock_import" },
+    { id: "item_import",      icon: "📤", label: "استيراد الأصناف من ملف", perm: "item_import" },
     { id: "low_stock",        icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined, perm: "low_stock" },
     { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
     { id: "purchase_orders",  icon: "📋", label: "أوامر الشراء", perm: "purchase_orders" },
@@ -718,6 +720,7 @@ export default function PosShell({
     { id: "item_groups", icon: "🗂️", label: "مجموعات الأصناف" },
     { id: "brands",    icon: "🏷️", label: "العلامات التجارية" },
     { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
+    { id: "item_import", icon: "📤", label: "استيراد الأصناف من ملف" },
     { id: "invoice_import", icon: "📂", label: "استيراد الفواتير" },
     { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
@@ -760,6 +763,7 @@ export default function PosShell({
           {v === "item_groups" && <div style={S.pagePad}><ItemGroupsAdmin /></div>}
           {v === "brands" && <div style={S.pagePad}><BrandsAdmin /></div>}
           {v === "stock_import" && <div style={S.pagePad}><StockImport onDone={() => void refreshLowStock()} /></div>}
+          {v === "item_import" && <div style={S.pagePad}><ItemImport /></div>}
           {v === "invoice_import" && <div style={S.pagePad}><InvoiceImport sellerName={effectiveCompanyName} /></div>}
           {v === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
           {v === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
@@ -1220,6 +1224,7 @@ function labelFor(v: View): string {
     item_groups: "مجموعات الأصناف",
     brands: "العلامات التجارية",
     stock_import: "استيراد الأرصدة الافتتاحية",
+    item_import: "استيراد الأصناف من ملف",
     low_stock: "الأصناف تحت الحد الأدنى",
     uom: "وحدات القياس",
     expiry: "تقرير الصلاحية",
