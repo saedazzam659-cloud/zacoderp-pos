@@ -73,10 +73,18 @@ export function SupplierTaxDetailsMenu({ value, onChange, disabled, extraItems, 
   const [open, setOpen] = React.useState(false);
   const [draft, setDraft] = React.useState<SupplierTaxDetails>(value);
 
-  // Re-seed the draft from the incoming value each time the dialog opens so we
-  // never edit a stale snapshot after the parent line changed underneath us.
+  // Re-seed the draft from the incoming value ONLY on the closed→open
+  // transition, never on subsequent `value` changes while the dialog stays
+  // open. The parent forms (payment-voucher / journal-entry) pass `value` as a
+  // fresh object literal every render and run many background queries; if we
+  // depended on `value` here, any mid-edit re-render (a React Query refetch, an
+  // SSE tick) would fire this effect and wipe whatever the user has typed so
+  // far — most visibly the supplier name (the top field, entered first) — while
+  // fields typed afterwards survived. Seeding only on open fixes that race.
+  const prevOpen = React.useRef(false);
   React.useEffect(() => {
-    if (open) setDraft(value);
+    if (open && !prevOpen.current) setDraft(value);
+    prevOpen.current = open;
   }, [open, value]);
 
   const filled = hasSupplierTaxDetails(value);
