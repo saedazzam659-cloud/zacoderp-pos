@@ -21,6 +21,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
+  docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
@@ -219,7 +220,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
           </div>
         </Card>
       )}
-      {rows.length > 0 && !formOpen && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير المبيعات…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="فواتير-المبيعات" title="فواتير المبيعات" />} />}
+      {!formOpen && rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير المبيعات…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="فواتير-المبيعات" title="فواتير المبيعات" />} />}
       {rows.length > 0 && !formOpen && (
         <ActionBar selectedLabel={sel.selected ? sel.selected.invoiceNo : null}>
           <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected}
@@ -247,7 +248,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
           })()}
         </ActionBar>
       )}
-      <Card>
+      {!formOpen && <Card>
         {rows.length === 0 && !formOpen ? <Empty text="لا توجد فواتير مبيعات" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>
             <thead>
@@ -300,7 +301,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
           <Pagination total={grid.view.length} page={page} pageSize={pageSize}
             onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
-      </Card>
+      </Card>}
     </Page>
   );
 }
@@ -712,7 +713,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   }
 
   return (
-    <div ref={formRef}>
+    <div ref={formRef} style={docFormShell}>
       <style>{`
         .zfield{transition:border-color .12s ease, box-shadow .12s ease;}
         .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
@@ -726,7 +727,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         { key: "payments", label: "المدفوعات" },
       ]} />
 
-      <div style={tabPanel(activeTab, "basic")}>
+      <div style={contentPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="العميل *">
           <SearchCombobox
@@ -808,9 +809,9 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </div>
       </div>
 
-      <div style={tabPanel(activeTab, "lines")}>
-      <div style={{ marginTop: 4, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>بنود الفاتورة</div>
-      <div className="zlines-wrap" style={{ overflow: "auto", maxHeight: "calc(100vh - 430px)", marginTop: 8, border: "1px solid #e2e8f0", borderRadius: 10 }}>
+      <div style={linesPanel(activeTab)}>
+      <div style={{ marginTop: 4, fontSize: 15, fontWeight: 700, color: "#0f172a", flexShrink: 0 }}>بنود الفاتورة</div>
+      <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8 }}>
       <Table style={{ minWidth: 1290 }}>
         <thead><tr>
           <Th style={{ width: 44, textAlign: "center" }}>#</Th>
@@ -890,11 +891,13 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         </tbody>
       </Table>
       </div>
-      <button onClick={addLine} type="button" style={{ width: "100%", marginTop: 8, padding: "10px 16px", background: "#f8fafc", color: "#2563eb", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600 }}>+ إضافة سطر</button>
+      <button onClick={addLine} type="button" style={{ width: "100%", marginTop: 8, padding: "10px 16px", background: "#f8fafc", color: "#2563eb", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600, flexShrink: 0 }}>+ إضافة سطر</button>
+      <div style={docFormPinned}>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </div>
+      </div>
 
-      <div style={tabPanel(activeTab, "payments")}>
+      <div style={contentPanel(activeTab, "payments")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="طريقة الدفع">
           <SearchCombobox
@@ -945,12 +948,14 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </Field>
       </div>
 
+      <div style={docFormPinned}>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
         <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? "حفظ التعديل" : "حفظ وترحيل")}</button>
       </Actions>
+      </div>
     </div>
   );
 }

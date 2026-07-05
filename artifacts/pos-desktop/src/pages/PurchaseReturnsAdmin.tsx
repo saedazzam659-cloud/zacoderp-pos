@@ -11,6 +11,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
+  docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
@@ -92,7 +93,7 @@ export default function PurchaseReturnsAdmin() {
             onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
         </ActionBar>
       )}
-      <Card>
+      {!creating && <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد مرتجعات" /> : (
           <Table>
             <thead><tr>
@@ -128,7 +129,7 @@ export default function PurchaseReturnsAdmin() {
           <Pagination total={rows.length} page={page} pageSize={pageSize}
             onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
-      </Card>
+      </Card>}
     </Page>
   );
 }
@@ -292,8 +293,8 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
   }
 
   return (
-    <div>
-      <h3 style={{ marginTop: 0 }}>مرتجع شراء جديد</h3>
+    <div style={docFormShell}>
+      <h3 style={{ marginTop: 0, flexShrink: 0 }}>مرتجع شراء جديد</h3>
       <style>{`.zlines-wrap thead th{position:sticky;top:0;z-index:2;}`}</style>
       <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
         { key: "basic", label: "البيانات الأساسية" },
@@ -301,7 +302,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
         { key: "payments", label: "المدفوعات" },
       ]} />
 
-      <div style={tabPanel(activeTab, "basic")}>
+      <div style={contentPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="المورد *">
           <SearchCombobox
@@ -339,8 +340,8 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
       </div>
       </div>
 
-      <div style={tabPanel(activeTab, "lines")}>
-      <div className="zlines-wrap" style={{ overflow: "auto", maxHeight: "calc(100vh - 430px)", border: "1px solid #e2e8f0", borderRadius: 10, marginTop: 10 }}>
+      <div style={linesPanel(activeTab)}>
+      <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 180 }}>الكمية</Th><Th style={{ width: 240 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
@@ -379,11 +380,13 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
         </tbody>
       </Table>
       </div>
-      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
+      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8, flexShrink: 0 }}>+ سطر</button>
+      <div style={docFormPinned}>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </div>
+      </div>
 
-      <div style={tabPanel(activeTab, "payments")}>
+      <div style={contentPanel(activeTab, "payments")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="سبب الإرجاع">
           <SearchCombobox
@@ -400,12 +403,14 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
       <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
       </div>
 
+      <div style={docFormPinned}>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
         <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
       </Actions>
+      </div>
     </div>
   );
 }

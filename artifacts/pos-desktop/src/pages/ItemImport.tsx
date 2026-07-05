@@ -42,7 +42,10 @@ async function excelToGrid(buf: ArrayBuffer): Promise<string[][]> {
  * surface a clear "لا يوجد نص" error (no OCR by design).
  */
 async function pdfToGrid(buf: ArrayBuffer): Promise<string[][]> {
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+  // pdf.js TRANSFERS (detaches) the ArrayBuffer we hand it to its worker. Pass a
+  // private COPY (.slice()) so the caller's `buf` survives for the image
+  // fallback — otherwise the fallback throws "detached ArrayBuffer".
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf).slice() }).promise;
   interface Run { x: number; y: number; str: string; page: number; }
   const runs: Run[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
@@ -120,7 +123,8 @@ async function blobToBase64(blob: Blob): Promise<string> {
 // Render a scanned / image-only PDF to page PNG blobs so it can go through the
 // same hybrid OCR path as a plain image. Capped to a few pages for price lists.
 async function renderPdfToImages(buf: ArrayBuffer, maxPages = 5): Promise<Blob[]> {
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+  // Copy the bytes (pdf.js detaches whatever buffer it receives).
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf).slice() }).promise;
   const out: Blob[] = [];
   try {
     const n = Math.min(doc.numPages, maxPages);

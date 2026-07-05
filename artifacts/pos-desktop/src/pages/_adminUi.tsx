@@ -107,6 +107,39 @@ export function FormTabs<K extends string>({ tabs, active, onChange }: {
 export function tabPanel(active: string, key: string): CSSProperties {
   return active === key ? {} : { display: "none" };
 }
+
+// ── Fixed-height document-form shell ───────────────────────────────────────
+// The back-office document forms are bounded to the viewport so ONLY the lines
+// grid scrolls internally (≈10 rows before a scrollbar) while the header tabs
+// stay on top and the totals + save bar stay pinned at the bottom — the page
+// itself never grows an outer scrollbar. The 200px reserve covers the app top
+// nav + page title + card padding above the form.
+export const docFormShell: CSSProperties = {
+  display: "flex", flexDirection: "column",
+  height: "calc(100vh - 200px)", minHeight: 320, overflow: "hidden",
+};
+// Spread onto the «بنود الأصناف» tab panel: when active it flex-fills the shell
+// (so its grid can scroll); when inactive it is hidden (state preserved).
+export function linesPanel(active: string): CSSProperties {
+  return active === "lines"
+    ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }
+    : { display: "none" };
+}
+// Spread onto the non-lines tab panels (basic/payments): when active it
+// flex-fills the shell and scrolls its own content, so tall field grids never
+// spill out of the fixed-height shell and grow an external page scrollbar.
+export function contentPanel(active: string, key: string): CSSProperties {
+  return active === key
+    ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "auto" }
+    : { display: "none" };
+}
+// The scrollable lines-grid wrapper — flex-fills the lines panel and scrolls.
+export const linesScroll: CSSProperties = {
+  flex: 1, minHeight: 0, overflow: "auto",
+  border: "1px solid #e2e8f0", borderRadius: 10,
+};
+// Keeps the add-line button / totals block / save bar from being squeezed.
+export const docFormPinned: CSSProperties = { flexShrink: 0 };
 export function ErrorMsg({ text }: { text: string | null }) {
   if (!text) return null;
   return <div style={{ padding: 8, background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, fontSize: 13, marginTop: 8 }}>⚠️ {text}</div>;
