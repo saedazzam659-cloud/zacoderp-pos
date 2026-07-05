@@ -1,8 +1,9 @@
-// استيراد الأصناف من Excel / PDF نصّي / لصق يدوي — أوفلاين بالكامل، بدون ذكاء
-// اصطناعي وبدون قراءة صور (OCR). يطابق كل سطر مع الأصناف الموجودة (كود ←
-// باركود ← اسم)، يحدّث الأسعار تلقائيًا للأصناف الموجودة، يضيف الجديد مرّة
-// واحدة بدون تكرار، ويربط القائمة كلها بعلامة تجارية واحدة (كل علامة بسعرها /
-// باركودها الخاص على نفس الصنف، فالصنف الواحد يحمل عدة علامات).
+// استيراد الأصناف من Excel / PDF / صورة (OCR) / لصق يدوي. القراءة الضوئية للصور
+// هجينة: عند الاتصال تُقرأ عبر السحابة (Gemini vision، دقّة أعلى) وبدون إنترنت
+// تُقرأ محليًا بالكامل عبر tesseract.js (ملفات مضمّنة داخل التطبيق، بدون شبكة).
+// يطابق كل سطر مع الأصناف الموجودة (كود ← باركود ← اسم)، يحدّث الأسعار تلقائيًا
+// للأصناف الموجودة، يضيف الجديد مرّة واحدة بدون تكرار، ويربط القائمة كلها بعلامة
+// تجارية واحدة (كل علامة بسعرها / باركودها الخاص على نفس الصنف).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
@@ -16,6 +17,10 @@ import {
   type ColMapping, type ImportField, type ParsedRow, type RowPlan, type PlanSummary, type ApplyResult,
 } from "../lib/importItems";
 import { currencySymbol } from "../lib/currency";
+import { imageToGridOffline } from "../lib/imageOcr";
+import { createApi } from "../lib/api";
+import { loadDeviceToken } from "../lib/tauri-shim";
+import { IS_TAURI } from "../lib/localStore";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -100,10 +105,47 @@ function pasteToGrid(text: string): string[][] {
   });
 }
 
+// Encode a blob as RAW base64 (no data: URI — the prod edge WAF 403s data:
+// base64 URIs; we send base64 + mime as separate fields to /api/ocr/extract).
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CH));
+  }
+  return btoa(bin);
+}
+
+// Render a scanned / image-only PDF to page PNG blobs so it can go through the
+// same hybrid OCR path as a plain image. Capped to a few pages for price lists.
+async function renderPdfToImages(buf: ArrayBuffer, maxPages = 5): Promise<Blob[]> {
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+  const out: Blob[] = [];
+  try {
+    const n = Math.min(doc.numPages, maxPages);
+    for (let p = 1; p <= n; p++) {
+      const page = await doc.getPage(p);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) continue;
+      await page.render({ canvas, canvasContext: ctx, viewport } as any).promise;
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob((b) => res(b), "image/png"));
+      if (blob) out.push(blob);
+    }
+  } finally {
+    await doc.destroy();
+  }
+  return out;
+}
+
 // ─── component ──────────────────────────────────────────────────────────
 
 type Step = "source" | "map" | "preview" | "done";
-type SourceKind = "excel" | "pdf" | "paste";
+type SourceKind = "excel" | "pdf" | "image" | "paste";
 
 export default function ItemImport() {
   const [step, setStep] = useState<Step>("source");
@@ -126,6 +168,7 @@ export default function ItemImport() {
   const [sourceKind, setSourceKind] = useState<SourceKind>("excel");
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [ocrNote, setOcrNote] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function reloadRefs() {
@@ -146,18 +189,66 @@ export default function ItemImport() {
     setStep("map");
   }
 
+  // Hybrid OCR: prefer the cloud (Gemini vision, higher accuracy) when online
+  // with a device token; otherwise fall back to fully-offline tesseract.js.
+  // Standalone mode has no device token → always offline. See imageOcr.ts.
+  async function ocrBlobHybrid(blob: Blob): Promise<string[][]> {
+    const dt = IS_TAURI ? await loadDeviceToken() : null;
+    const canCloud = typeof navigator !== "undefined" && navigator.onLine && !!dt;
+    if (canCloud) {
+      try {
+        const base64 = await blobToBase64(blob);
+        const baseUrl = localStorage.getItem("pos_desktop_server_url") ?? "https://zacoderp.com";
+        const api = createApi({ baseUrl, deviceToken: dt, timeoutMs: 60_000 });
+        const res = await api.ocrExtract(base64, blob.type || "image/png");
+        if (res.ok && res.rows && res.rows.length) {
+          setOcrNote("تمت القراءة عبر السحابة (دقّة عالية).");
+          return res.rows;
+        }
+        throw new Error(res.error || "cloud ocr empty");
+      } catch {
+        const g = await imageToGridOffline(blob, (pct) => setProgress({ done: pct, total: 100 }));
+        setOcrNote("تعذّرت القراءة السحابية — تمت القراءة دون اتصال.");
+        return g;
+      }
+    }
+    const g = await imageToGridOffline(blob, (pct) => setProgress({ done: pct, total: 100 }));
+    setOcrNote("تمت القراءة دون اتصال (وضع محلي).");
+    return g;
+  }
+
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setBusy(true); setErr(null);
+    setBusy(true); setErr(null); setOcrNote(null);
     try {
-      const buf = await file.arrayBuffer();
-      const g = sourceKind === "pdf" ? await pdfToGrid(buf) : await excelToGrid(buf);
-      afterParse(g);
+      if (sourceKind === "image") {
+        afterParse(await ocrBlobHybrid(file));
+      } else {
+        const buf = await file.arrayBuffer();
+        if (sourceKind === "pdf") {
+          let g: string[][];
+          try {
+            g = await pdfToGrid(buf);
+          } catch (pdfErr) {
+            // Scanned / image-only PDF → render pages to images and OCR them.
+            const imgs = await renderPdfToImages(buf);
+            if (!imgs.length) throw pdfErr;
+            const merged: string[][] = [];
+            for (const img of imgs) merged.push(...(await ocrBlobHybrid(img)));
+            if (!merged.length) throw pdfErr;
+            g = merged;
+          }
+          afterParse(g);
+        } else {
+          afterParse(await excelToGrid(buf));
+        }
+      }
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : "تعذّرت قراءة الملف.");
     } finally {
       setBusy(false);
+      setProgress(null);
       if (fileRef.current) fileRef.current.value = "";
     }
   }
@@ -234,12 +325,13 @@ export default function ItemImport() {
       </div>
 
       {err && <div style={S.err}>{err}</div>}
+      {ocrNote && !err && <div style={S.hint}>{ocrNote}</div>}
 
       {step === "source" && (
         <div style={S.card}>
           <div style={S.tabs}>
-            {(["excel", "pdf", "paste"] as SourceKind[]).map((k) => (
-              <button key={k} style={{ ...S.tab, ...(sourceKind === k ? S.tabActive : {}) }} onClick={() => { setSourceKind(k); setErr(null); }}>
+            {(["excel", "pdf", "image", "paste"] as SourceKind[]).map((k) => (
+              <button key={k} style={{ ...S.tab, ...(sourceKind === k ? S.tabActive : {}) }} onClick={() => { setSourceKind(k); setErr(null); setOcrNote(null); }}>
                 {SOURCE_LABELS[k]}
               </button>
             ))}
@@ -250,17 +342,23 @@ export default function ItemImport() {
               <p style={S.hint}>
                 {sourceKind === "excel"
                   ? "اختر ملف Excel (‎.xlsx / .xls / .csv). أول صف يُفترض أنه العناوين."
-                  : "اختر ملف PDF يحتوي على نص (وليس صورة ممسوحة). سيحاول البرنامج استخراج الجدول تلقائيًا."}
+                  : sourceKind === "pdf"
+                  ? "اختر ملف PDF. لو كان نصّيًا يُستخرج الجدول مباشرة؛ ولو كان صورة ممسوحة يُقرأ بالتعرّف الضوئي (OCR) تلقائيًا."
+                  : "اختر صورة لقائمة الأسعار (JPG / PNG / WebP). تُقرأ عبر السحابة عند الاتصال (دقّة أعلى) أو محليًا بدون إنترنت."}
               </p>
               <input
                 ref={fileRef}
                 type="file"
-                accept={sourceKind === "excel" ? ".xlsx,.xls,.csv" : ".pdf"}
+                accept={sourceKind === "excel" ? ".xlsx,.xls,.csv" : sourceKind === "pdf" ? ".pdf" : "image/png,image/jpeg,image/webp,image/*"}
                 onChange={onFile}
                 disabled={busy}
                 style={S.file}
               />
-              {busy && <div style={S.hint}>جارٍ القراءة…</div>}
+              {busy && (
+                <div style={S.hint}>
+                  {progress ? `جارٍ قراءة الصورة… ${progress.done}%` : "جارٍ القراءة…"}
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ padding: "12px 4px" }}>
@@ -478,7 +576,7 @@ function PlanRow({ p, sym }: { p: RowPlan; sym: string }) {
 }
 
 const STEP_LABELS: Record<Step, string> = { source: "المصدر", map: "ربط الأعمدة", preview: "المعاينة", done: "تم" };
-const SOURCE_LABELS: Record<SourceKind, string> = { excel: "📊 ملف Excel", pdf: "📄 ملف PDF نصّي", paste: "📋 لصق يدوي" };
+const SOURCE_LABELS: Record<SourceKind, string> = { excel: "📊 ملف Excel", pdf: "📄 ملف PDF", image: "📷 صورة (OCR)", paste: "📋 لصق يدوي" };
 const MATCH_LABEL: Record<"code" | "barcode" | "name", string> = { code: "بالكود", barcode: "بالباركود", name: "بالاسم" };
 const KIND_BADGE: Record<RowPlan["kind"], { label: string; style: React.CSSProperties }> = {
   new: { label: "جديد", style: { background: "#dcfce7", color: "#166534" } },

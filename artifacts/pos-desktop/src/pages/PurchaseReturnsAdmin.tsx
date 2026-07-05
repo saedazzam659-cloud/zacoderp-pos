@@ -10,7 +10,7 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
@@ -167,6 +167,7 @@ function ReturnDetail({ r }: { r: PurchaseReturn }) {
 }
 
 function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Supplier[]; items: LocalItem[]; warehouses: Warehouse[] }; initial?: PurchaseReturnPrefill | null; onCancel: () => void; onDone: () => void }) {
+  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [supplierId, setSupplierId] = useState<number>(initial?.supplierId ?? deps.suppliers[0]?.id ?? 0);
   const [date, setDate] = useState(todayStr());
   const [warehouseId, setWarehouseId] = useState<number>(
@@ -293,6 +294,14 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>مرتجع شراء جديد</h3>
+      <style>{`.zlines-wrap thead th{position:sticky;top:0;z-index:2;}`}</style>
+      <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
+        { key: "basic", label: "البيانات الأساسية" },
+        { key: "lines", label: `بنود الأصناف${lines.length ? ` (${lines.length})` : ""}` },
+        { key: "payments", label: "المدفوعات" },
+      ]} />
+
+      <div style={tabPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="المورد *">
           <SearchCombobox
@@ -326,20 +335,12 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
         <Field label="مركز التكلفة">
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
-        <Field label="سبب الإرجاع">
-          <SearchCombobox
-            value={reason}
-            onChange={(v) => setReason(String(v))}
-            style={input}
-            options={[
-              { value: "", label: "— بدون —" },
-              ...RETURN_REASONS.map((rr) => ({ value: rr, label: rr })),
-            ]}
-          />
-        </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
       </div>
-      <div style={{ overflowX: "auto", marginTop: 10 }}>
+      </div>
+
+      <div style={tabPanel(activeTab, "lines")}>
+      <div className="zlines-wrap" style={{ overflow: "auto", maxHeight: "calc(100vh - 430px)", border: "1px solid #e2e8f0", borderRadius: 10, marginTop: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 180 }}>الكمية</Th><Th style={{ width: 240 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
@@ -380,7 +381,25 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
       </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      </div>
+
+      <div style={tabPanel(activeTab, "payments")}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label="سبب الإرجاع">
+          <SearchCombobox
+            value={reason}
+            onChange={(v) => setReason(String(v))}
+            style={input}
+            options={[
+              { value: "", label: "— بدون —" },
+              ...RETURN_REASONS.map((rr) => ({ value: rr, label: rr })),
+            ]}
+          />
+        </Field>
+      </div>
       <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      </div>
+
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>

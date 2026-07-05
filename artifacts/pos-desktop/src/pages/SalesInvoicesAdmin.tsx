@@ -20,7 +20,7 @@ import { getCompanyProfile, useHideZeros, blankIfZero } from "../lib/appSettings
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
@@ -422,6 +422,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
 }) {
   const isEdit = !!initial;
   const hideZeros = useHideZeros();
+  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
@@ -716,8 +717,16 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         .zfield{transition:border-color .12s ease, box-shadow .12s ease;}
         .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
         .zrow:hover td{background:#eff6ff !important;}
+        .zlines-wrap thead th{position:sticky;top:0;z-index:2;}
       `}</style>
       <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل الفاتورة ${initial?.invoiceNo ?? ""}` : "فاتورة مبيعات جديدة"}</h3>
+      <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
+        { key: "basic", label: "البيانات الأساسية" },
+        { key: "lines", label: `بنود الأصناف${lines.length ? ` (${lines.length})` : ""}` },
+        { key: "payments", label: "المدفوعات" },
+      ]} />
+
+      <div style={tabPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="العميل *">
           <SearchCombobox
@@ -732,19 +741,6 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           />
         </Field>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...navInput} /></Field>
-        <Field label="طريقة الدفع">
-          <SearchCombobox
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
-            {...navCombo}
-            style={input}
-            options={[
-              { value: "cash", label: "نقدي" },
-              { value: "bank", label: "بنك" },
-              { value: "credit", label: "آجل (على الحساب)" },
-            ]}
-          />
-        </Field>
         <Field label="المستودع">
           <SearchCombobox
             value={warehouseId}
@@ -793,28 +789,6 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         </Field>
         )}
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
-        {paymentMethod === "cash" && (
-          <Field label="الخزينة">
-            <SearchCombobox
-              value={cashBoxId ?? ""}
-              onChange={(v) => setCashBoxId(Number(v) || null)}
-              {...navCombo}
-              style={input}
-              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
-            />
-          </Field>
-        )}
-        {paymentMethod === "bank" && (
-          <Field label="البنك">
-            <SearchCombobox
-              value={bankId ?? ""}
-              onChange={(v) => setBankId(Number(v) || null)}
-              {...navCombo}
-              style={input}
-              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
-            />
-          </Field>
-        )}
         {invoiceType === "standard" && (
           <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري (للفاتورة الضريبية)</div>
@@ -831,18 +805,12 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
             </div>
           </div>
         )}
-        {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
-          <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
-            الرصيد الحالي: <b>{fmt(selectedCustomer.balance ?? 0)}</b>
-            {(selectedCustomer.creditLimit ?? 0) > 0 && <> · حد الائتمان: <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
-            {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · مدة الاستحقاق: <b>{selectedCustomer.paymentTermsDays} يوم</b></>}
-            {selectedCustomer.enforceCreditLimit && <> · <b>المنع مُفعّل</b></>}
-          </div>
-        )}
+      </div>
       </div>
 
-      <div style={{ marginTop: 16, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>بنود الفاتورة</div>
-      <div style={{ overflowX: "auto", marginTop: 8, border: "1px solid #e2e8f0", borderRadius: 10 }}>
+      <div style={tabPanel(activeTab, "lines")}>
+      <div style={{ marginTop: 4, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>بنود الفاتورة</div>
+      <div className="zlines-wrap" style={{ overflow: "auto", maxHeight: "calc(100vh - 430px)", marginTop: 8, border: "1px solid #e2e8f0", borderRadius: 10 }}>
       <Table style={{ minWidth: 1290 }}>
         <thead><tr>
           <Th style={{ width: 44, textAlign: "center" }}>#</Th>
@@ -924,10 +892,59 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </div>
       <button onClick={addLine} type="button" style={{ width: "100%", marginTop: 8, padding: "10px 16px", background: "#f8fafc", color: "#2563eb", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600 }}>+ إضافة سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      </div>
 
+      <div style={tabPanel(activeTab, "payments")}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label="طريقة الدفع">
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            {...navCombo}
+            style={input}
+            options={[
+              { value: "cash", label: "نقدي" },
+              { value: "bank", label: "بنك" },
+              { value: "credit", label: "آجل (على الحساب)" },
+            ]}
+          />
+        </Field>
+        {paymentMethod === "cash" && (
+          <Field label="الخزينة">
+            <SearchCombobox
+              value={cashBoxId ?? ""}
+              onChange={(v) => setCashBoxId(Number(v) || null)}
+              {...navCombo}
+              style={input}
+              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Field>
+        )}
+        {paymentMethod === "bank" && (
+          <Field label="البنك">
+            <SearchCombobox
+              value={bankId ?? ""}
+              onChange={(v) => setBankId(Number(v) || null)}
+              {...navCombo}
+              style={input}
+              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </Field>
+        )}
+      </div>
+      {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
+        <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
+          الرصيد الحالي: <b>{fmt(selectedCustomer.balance ?? 0)}</b>
+          {(selectedCustomer.creditLimit ?? 0) > 0 && <> · حد الائتمان: <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
+          {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · مدة الاستحقاق: <b>{selectedCustomer.paymentTermsDays} يوم</b></>}
+          {selectedCustomer.enforceCreditLimit && <> · <b>المنع مُفعّل</b></>}
+        </div>
+      )}
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
+      </div>
+
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>

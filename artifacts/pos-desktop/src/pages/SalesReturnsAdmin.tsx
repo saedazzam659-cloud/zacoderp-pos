@@ -12,7 +12,7 @@ import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
@@ -190,6 +190,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   initial?: SalesReturnPrefill | null;
   onCancel: () => void; onDone: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
@@ -328,6 +329,14 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>مرتجع مبيعات جديد</h3>
+      <style>{`.zlines-wrap thead th{position:sticky;top:0;z-index:2;}`}</style>
+      <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
+        { key: "basic", label: "البيانات الأساسية" },
+        { key: "lines", label: `بنود الأصناف${lines.length ? ` (${lines.length})` : ""}` },
+        { key: "payments", label: "المدفوعات" },
+      ]} />
+
+      <div style={tabPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="العميل *">
           <SearchCombobox
@@ -341,18 +350,6 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           />
         </Field>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label="طريقة الاسترداد">
-          <SearchCombobox
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
-            style={input}
-            options={[
-              { value: "cash", label: "نقدي" },
-              { value: "bank", label: "بنك" },
-              { value: "credit", label: "آجل (تخفيض الذمة)" },
-            ]}
-          />
-        </Field>
         <Field label="المستودع">
           <SearchCombobox
             value={warehouseId}
@@ -374,29 +371,11 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
-        {paymentMethod === "cash" && (
-          <Field label="الخزينة">
-            <SearchCombobox
-              value={cashBoxId ?? ""}
-              onChange={(v) => setCashBoxId(Number(v) || null)}
-              style={input}
-              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
-            />
-          </Field>
-        )}
-        {paymentMethod === "bank" && (
-          <Field label="البنك">
-            <SearchCombobox
-              value={bankId ?? ""}
-              onChange={(v) => setBankId(Number(v) || null)}
-              style={input}
-              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
-            />
-          </Field>
-        )}
+      </div>
       </div>
 
-      <div style={{ overflowX: "auto" }}>
+      <div style={tabPanel(activeTab, "lines")}>
+      <div className="zlines-wrap" style={{ overflow: "auto", maxHeight: "calc(100vh - 430px)", border: "1px solid #e2e8f0", borderRadius: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 180 }}>الكمية</Th><Th style={{ width: 240 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
@@ -437,7 +416,46 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      </div>
+
+      <div style={tabPanel(activeTab, "payments")}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label="طريقة الاسترداد">
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            style={input}
+            options={[
+              { value: "cash", label: "نقدي" },
+              { value: "bank", label: "بنك" },
+              { value: "credit", label: "آجل (تخفيض الذمة)" },
+            ]}
+          />
+        </Field>
+        {paymentMethod === "cash" && (
+          <Field label="الخزينة">
+            <SearchCombobox
+              value={cashBoxId ?? ""}
+              onChange={(v) => setCashBoxId(Number(v) || null)}
+              style={input}
+              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Field>
+        )}
+        {paymentMethod === "bank" && (
+          <Field label="البنك">
+            <SearchCombobox
+              value={bankId ?? ""}
+              onChange={(v) => setBankId(Number(v) || null)}
+              style={input}
+              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </Field>
+        )}
+      </div>
       <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      </div>
+
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>

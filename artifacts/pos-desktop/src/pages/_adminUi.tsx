@@ -68,6 +68,45 @@ export function Field({ label, children, style }: { label: string; children: Rea
 export function Row({ children }: { children: ReactNode }) {
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{children}</div>;
 }
+
+// ── Document form tabs (SAP-style) ─────────────────────────────────────────
+// A lightweight controlled tab bar used by the back-office document forms
+// (sales/purchase invoices + returns) so the header split matches the web app:
+// «البيانات الأساسية / بنود الأصناف / المدفوعات». Panels are rendered by the
+// caller — the caller keeps its own `activeTab` state and hides inactive panels
+// with `tabPanel(active, key)` (display:none, NOT unmount) so input focus and
+// per-line state survive tab switches.
+export function FormTabs<K extends string>({ tabs, active, onChange }: {
+  tabs: { key: K; label: string; badge?: ReactNode }[];
+  active: K;
+  onChange: (k: K) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 2, borderBottom: "2px solid #e2e8f0", margin: "4px 0 14px" }}>
+      {tabs.map((t) => {
+        const on = t.key === active;
+        return (
+          <button key={t.key} type="button" onClick={() => onChange(t.key)}
+            style={{
+              padding: "9px 20px", border: "none", background: "none", cursor: "pointer",
+              fontFamily: "inherit", fontSize: 14, fontWeight: on ? 700 : 500,
+              color: on ? "#2563eb" : "#64748b",
+              borderBottom: on ? "3px solid #2563eb" : "3px solid transparent",
+              marginBottom: -2, display: "inline-flex", alignItems: "center", gap: 6,
+            }}>
+            {t.label}
+            {t.badge}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+// Hide an inactive tab panel without unmounting it (preserves controlled-input
+// focus + per-line state). Spread onto the panel wrapper's style.
+export function tabPanel(active: string, key: string): CSSProperties {
+  return active === key ? {} : { display: "none" };
+}
 export function ErrorMsg({ text }: { text: string | null }) {
   if (!text) return null;
   return <div style={{ padding: 8, background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, fontSize: 13, marginTop: 8 }}>⚠️ {text}</div>;

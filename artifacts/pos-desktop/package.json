@@ -1,7 +1,7 @@
 {
   "name": "@workspace/pos-desktop",
   "private": true,
-  "version": "0.8.71",
+  "version": "0.8.72",
   "type": "module",
   "description": "Windows POS desktop app (Tauri + React + SQLite). Browser preview enabled via Vite; native MSI built on Windows via GitHub Actions.",
   "scripts": {
@@ -30,6 +30,7 @@
     "@vitejs/plugin-react": "catalog:",
     "pdfjs-dist": "^4.10.38",
     "qrcode": "^1.5.4",
+    "tesseract.js": "^7.0.0",
     "typescript": "^5.6.0",
     "vite": "catalog:",
     "xlsx": "^0.18.5"

@@ -14,7 +14,7 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
@@ -416,6 +416,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
   onCancel: () => void; onDone: () => void;
 }) {
   const isEdit = seed.editId != null;
+  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [supplierId, setSupplierId] = useState<number>(seed.supplierId || deps.suppliers[0]?.id || 0);
   const [date, setDate] = useState(seed.invoiceDate || todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(seed.paymentMethod);
@@ -563,6 +564,14 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل فاتورة الشراء` : "فاتورة شراء جديدة"}</h3>
+      <style>{`.zlines-wrap thead th{position:sticky;top:0;z-index:2;}`}</style>
+      <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
+        { key: "basic", label: "البيانات الأساسية" },
+        { key: "lines", label: `بنود الأصناف${lines.length ? ` (${lines.length})` : ""}` },
+        { key: "payments", label: "المدفوعات" },
+      ]} />
+
+      <div style={tabPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="المورد *">
           <SearchCombobox
@@ -578,18 +587,6 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="رقم فاتورة المورد">
           <input value={supplierInvoiceNo} onChange={(e) => setSupplierInvoiceNo(e.target.value)} style={input} placeholder="مرجع المورد" />
-        </Field>
-        <Field label="طريقة الدفع">
-          <SearchCombobox
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
-            style={input}
-            options={[
-              { value: "credit", label: "آجل (على الحساب)" },
-              { value: "cash", label: "نقدي" },
-              { value: "bank", label: "بنك" },
-            ]}
-          />
         </Field>
         <Field label="المستودع">
           <SearchCombobox
@@ -625,29 +622,11 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
           />
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
-        {paymentMethod === "cash" && (
-          <Field label="الخزينة">
-            <SearchCombobox
-              value={cashBoxId ?? ""}
-              onChange={(v) => setCashBoxId(Number(v) || null)}
-              style={input}
-              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
-            />
-          </Field>
-        )}
-        {paymentMethod === "bank" && (
-          <Field label="البنك">
-            <SearchCombobox
-              value={bankId ?? ""}
-              onChange={(v) => setBankId(Number(v) || null)}
-              style={input}
-              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
-            />
-          </Field>
-        )}
+      </div>
       </div>
 
-      <div style={{ overflowX: "auto", marginTop: 10 }}>
+      <div style={tabPanel(activeTab, "lines")}>
+      <div className="zlines-wrap" style={{ overflow: "auto", maxHeight: "calc(100vh - 430px)", border: "1px solid #e2e8f0", borderRadius: 10, marginTop: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
@@ -694,10 +673,48 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
       </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      </div>
 
+      <div style={tabPanel(activeTab, "payments")}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label="طريقة الدفع">
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            style={input}
+            options={[
+              { value: "credit", label: "آجل (على الحساب)" },
+              { value: "cash", label: "نقدي" },
+              { value: "bank", label: "بنك" },
+            ]}
+          />
+        </Field>
+        {paymentMethod === "cash" && (
+          <Field label="الخزينة">
+            <SearchCombobox
+              value={cashBoxId ?? ""}
+              onChange={(v) => setCashBoxId(Number(v) || null)}
+              style={input}
+              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Field>
+        )}
+        {paymentMethod === "bank" && (
+          <Field label="البنك">
+            <SearchCombobox
+              value={bankId ?? ""}
+              onChange={(v) => setBankId(Number(v) || null)}
+              style={input}
+              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </Field>
+        )}
+      </div>
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
+      </div>
+
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>
