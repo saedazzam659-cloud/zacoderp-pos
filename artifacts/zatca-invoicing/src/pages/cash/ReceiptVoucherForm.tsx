@@ -136,6 +136,27 @@ export default function ReceiptVoucherForm() {
   }, [isNew]);
   const sourceId = editId ?? fromId;
 
+  // Query-param prefill (additive): `/cash/receipt-vouchers/new?salesInvoiceId=..`
+  // seeds a fresh voucher linked to a sales invoice. Used by the sales-invoice
+  // «المدفوعات» tab so the user collects a payment against the invoice without
+  // re-keying party/amount. Only active in NEW mode with a valid invoice id;
+  // with no params the form behaves exactly as before.
+  const prefill = useMemo(() => {
+    if (!isNew) return null;
+    const q = new URLSearchParams(window.location.search);
+    const si = q.get("salesInvoiceId");
+    if (!si || !/^\d+$/.test(si)) return null;
+    return {
+      salesInvoiceId: si,
+      entityId:      q.get("entityId") || "",
+      entityName:    q.get("entityName") || "",
+      amount:        q.get("amount") || "",
+      paymentType:   (q.get("paymentType") === "bank" ? "bank" : "cash") as "cash" | "bank",
+      cashBoxId:     q.get("cashBoxId") || "",
+      bankAccountId: q.get("bankAccountId") || "",
+    };
+  }, [isNew]);
+
   const NS = "receiptVouchers";
   const cid = user?.companyId;
   const h = { Authorization: `Bearer ${token}` };
@@ -309,6 +330,36 @@ export default function ReceiptVoucherForm() {
       lines,
     });
   }, [existing]);
+
+  // Apply the sales-invoice prefill exactly once, after customers resolve so
+  // we can look up the party's receivable (AR) account for the allocation
+  // line. No-op when there is no `?salesInvoiceId=` param.
+  const prefillDone = useRef(false);
+  useEffect(() => {
+    if (!prefill || prefillDone.current) return;
+    // If a party was supplied, wait for the customer list so we can resolve
+    // its AR account; otherwise proceed immediately.
+    if (prefill.entityId && (customers as any[]).length === 0) return;
+    const cust = prefill.entityId
+      ? (customers as any[]).find((c: any) => String(c.id) === prefill.entityId)
+      : null;
+    prefillDone.current = true;
+    setForm(p => ({
+      ...p,
+      paymentType:   prefill.paymentType,
+      cashBoxId:     prefill.paymentType === "cash" ? prefill.cashBoxId : "",
+      bankAccountId: prefill.paymentType === "bank" ? prefill.bankAccountId : "",
+      entityId:      prefill.entityId,
+      entityName:    prefill.entityName || cust?.nameAr || cust?.nameEn || p.entityName,
+      refType:       "sales_invoice",
+      lines: [newRvLine({
+        accountId:      cust?.accountId != null ? String(cust.accountId) : "",
+        amount:         prefill.amount || "",
+        salesInvoiceId: prefill.salesInvoiceId,
+        description:    "تحصيل من فاتورة مبيعات",
+      })],
+    }));
+  }, [prefill, customers]);
 
   // ── Allocation-line helpers ────────────────────────────────────
   function addLine() {

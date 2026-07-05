@@ -35,8 +35,9 @@ import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive, Wallet } from "lucide-react";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
+import InvoicePaymentsTab from "@/pages/sales/InvoicePaymentsTab";
 import { offersApi } from "@/lib/offersApi";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
@@ -3014,6 +3015,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
+                  {isInvoice && (
+                    <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Wallet className="h-3.5 w-3.5" />المدفوعات
+                    </TabsTrigger>
+                  )}
                   {isInvoice && editId && (
                     <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                       <Archive className="h-3.5 w-3.5" />أرشفة
@@ -3319,6 +3325,27 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </fieldset>
                 </CardContent>
               </TabsContent>
+              {isInvoice && (
+                <TabsContent value="payments" className="mt-0">
+                  <CardContent className="pt-5 pb-5">
+                    <InvoicePaymentsTab
+                      invoiceId={editId}
+                      docNumber={docNumber}
+                      companyId={user?.company?.id}
+                      token={token}
+                      customerId={customerId}
+                      customerName={(customers as any[]).find((c: any) => String(c.id) === customerId)?.nameAr
+                        ?? (customers as any[]).find((c: any) => String(c.id) === customerId)?.nameEn
+                        ?? ""}
+                      invoiceTotal={totalAmount}
+                      invoiceExchangeRate={Number(exchangeRate) || 1}
+                      paymentType={paymentType}
+                      cashBoxId={cashBoxId}
+                      bankAccountId={bankAccountId}
+                    />
+                  </CardContent>
+                </TabsContent>
+              )}
               {isInvoice && editId && (
                 <TabsContent value="archive" className="mt-0">
                   <CardContent className="pt-5 pb-5">
