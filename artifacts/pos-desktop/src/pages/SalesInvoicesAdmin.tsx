@@ -467,7 +467,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         brandId: bl[i]?.brandId ?? null, brandName: bl[i]?.brandName ?? null,
       }));
     }
-    return [blankLine()];
+    return Array.from({ length: 10 }, () => blankLine());
   });
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");

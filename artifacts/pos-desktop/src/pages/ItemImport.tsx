@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import * as pdfjsLib from "pdfjs-dist";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
 import { listItems, type LocalItem } from "../lib/items";
 import { listBrands, createBrand, type Brand } from "../lib/brands";
 import { emitData, useDataRefresh } from "../lib/dataBus";
@@ -22,7 +22,12 @@ import { createApi } from "../lib/api";
 import { loadDeviceToken } from "../lib/tauri-shim";
 import { IS_TAURI } from "../lib/localStore";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+// Instantiate the pdf.js worker via Vite's `?worker` bundling (a real Worker
+// assigned to workerPort) instead of a `?url` string handed to workerSrc. The
+// URL form fails to load inside the Tauri webview (module-worker fetch under the
+// custom app protocol), which surfaced as a generic "تعذّرت قراءة الملف" — a
+// bundled Worker instance loads reliably in both the browser preview and Tauri.
+pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker();
 
 // ─── source parsers ─────────────────────────────────────────────────────
 
@@ -249,7 +254,11 @@ export default function ItemImport() {
         }
       }
     } catch (ex) {
-      setErr(ex instanceof Error ? ex.message : "تعذّرت قراءة الملف.");
+      // Surface the REAL cause instead of swallowing non-Error throws behind a
+      // generic message (see memory: make errors visible before guess-fixing).
+      const detail = ex instanceof Error ? ex.message : typeof ex === "string" ? ex : "";
+      setErr(detail ? `تعذّرت قراءة الملف: ${detail}` : "تعذّرت قراءة الملف.");
+      console.error("[ItemImport] file read failed:", ex);
     } finally {
       setBusy(false);
       setProgress(null);

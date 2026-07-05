@@ -214,7 +214,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [lines, setLines] = useState<FLine[]>(() =>
     initial?.lines?.length
       ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
-      : [blankLine()],
+      : Array.from({ length: 10 }, () => blankLine()),
   );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");

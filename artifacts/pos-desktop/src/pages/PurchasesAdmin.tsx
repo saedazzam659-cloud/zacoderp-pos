@@ -445,7 +445,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
     itemId: 0, qty: 1, unitCost: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => seed.lines.length ? seed.lines : [blankLine()]);
+  const [lines, setLines] = useState<FLine[]>(() => seed.lines.length ? seed.lines : Array.from({ length: 10 }, () => blankLine()));
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());

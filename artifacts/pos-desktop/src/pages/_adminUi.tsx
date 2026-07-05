@@ -108,37 +108,32 @@ export function tabPanel(active: string, key: string): CSSProperties {
   return active === key ? {} : { display: "none" };
 }
 
-// ── Fixed-height document-form shell ───────────────────────────────────────
-// The back-office document forms are bounded to the viewport so ONLY the lines
-// grid scrolls internally (≈10 rows before a scrollbar) while the header tabs
-// stay on top and the totals + save bar stay pinned at the bottom — the page
-// itself never grows an outer scrollbar. The 200px reserve covers the app top
-// nav + page title + card padding above the form.
-export const docFormShell: CSSProperties = {
-  display: "flex", flexDirection: "column",
-  height: "calc(100vh - 200px)", minHeight: 320, overflow: "hidden",
-};
-// Spread onto the «بنود الأصناف» tab panel: when active it flex-fills the shell
-// (so its grid can scroll); when inactive it is hidden (state preserved).
+// ── Document-form layout (natural page flow, web parity) ───────────────────
+// The back-office document forms flow naturally inside the page wrapper
+// (PosShell `pagePad`, which already owns the vertical scroll). They are NOT
+// bounded to a fixed viewport height: the lines grid shows all of its rows (the
+// document opens with ~10 empty rows ready) and the whole page scrolls as one,
+// exactly like the web app. A prior fixed-height shell (calc(100vh-200px) +
+// internal scroll) collapsed the grid to a tiny header-only box on smaller
+// windows, so it was removed.
+export const docFormShell: CSSProperties = { display: "block" };
+// Spread onto the «بنود الأصناف» tab panel: a normal block when active, hidden
+// (state preserved) when not.
 export function linesPanel(active: string): CSSProperties {
-  return active === "lines"
-    ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }
-    : { display: "none" };
+  return active === "lines" ? { display: "block" } : { display: "none" };
 }
-// Spread onto the non-lines tab panels (basic/payments): when active it
-// flex-fills the shell and scrolls its own content, so tall field grids never
-// spill out of the fixed-height shell and grow an external page scrollbar.
+// Spread onto the non-lines tab panels (basic/payments): a normal block when
+// active, hidden (state preserved) when not.
 export function contentPanel(active: string, key: string): CSSProperties {
-  return active === key
-    ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "auto" }
-    : { display: "none" };
+  return active === key ? { display: "block" } : { display: "none" };
 }
-// The scrollable lines-grid wrapper — flex-fills the lines panel and scrolls.
+// The lines-grid wrapper — grows with its rows; only scrolls HORIZONTALLY for
+// the wide multi-column table. Vertical scrolling is owned by the page wrapper.
 export const linesScroll: CSSProperties = {
-  flex: 1, minHeight: 0, overflow: "auto",
+  overflowX: "auto",
   border: "1px solid #e2e8f0", borderRadius: 10,
 };
-// Keeps the add-line button / totals block / save bar from being squeezed.
+// Kept for API compatibility; harmless in normal block flow.
 export const docFormPinned: CSSProperties = { flexShrink: 0 };
 export function ErrorMsg({ text }: { text: string | null }) {
   if (!text) return null;
