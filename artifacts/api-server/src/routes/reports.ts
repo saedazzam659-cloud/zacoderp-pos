@@ -942,11 +942,14 @@ router.get("/purchases-vat-register", async (req, res) => {
   }
 
   // ─── 3) Manual journal entries hitting the input (purchase) VAT account ──
-  // The VAT line only stores the tax amount, so the taxable base is derived
-  // the accounting-accurate way: total DEBITS of the entry minus the VAT
-  // line's own debit (a purchase JE is DR expense[base] / DR input-VAT[vat] /
-  // CR payable[gross], so base = totalDebit − vatDebit). Only entries with a
-  // net positive input-VAT impact are treated as local purchases.
+  // The VAT line stores ONLY the tax amount (the debit on the input-VAT
+  // account) — there is no per-line taxable base or rate. We therefore surface
+  // ONLY the tax value of the entry, and derive the taxable base FROM that VAT
+  // (base = VAT / standard rate). We deliberately do NOT sum the entry's total
+  // debits: a manual JE frequently mixes the taxable purchase with non-taxable
+  // amounts (e.g. a money-transfer principal), which would wildly overstate the
+  // base. Only entries with a net positive input-VAT impact are included.
+  const STANDARD_INPUT_VAT_RATE = 0.15; // KSA standard rate (JE VAT lines carry no rate)
   const { inputId: vatInAcctId } = await resolveVatAccountIds(companyId);
   if (vatInAcctId != null) {
     const hasSup = (l: { supplierName: string | null; supplierVatNumber: string | null; supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null }) =>
@@ -1012,22 +1015,11 @@ router.get("/purchases-vat-register", async (req, res) => {
       }
     }
 
-    const entryIds = Array.from(byEntry.keys());
-    const totalDebitByEntry = new Map<number, number>();
-    if (entryIds.length > 0) {
-      const allLines = await db
-        .select({ entryId: journalEntryLinesTable.entryId, debit: journalEntryLinesTable.debit })
-        .from(journalEntryLinesTable)
-        .where(inArray(journalEntryLinesTable.entryId, entryIds));
-      for (const l of allLines) {
-        totalDebitByEntry.set(l.entryId, (totalDebitByEntry.get(l.entryId) ?? 0) + Number(l.debit));
-      }
-    }
-
     for (const agg of byEntry.values()) {
       const vat = round2(agg.inputVat);
       if (vat <= 0.005) continue; // ignore contra / refund-only entries
-      const base = round2((totalDebitByEntry.get(agg.id) ?? agg.vatDebit) - agg.vatDebit);
+      // Base is derived from the VAT amount only, never from the entry total.
+      const base = round2(vat / STANDARD_INPUT_VAT_RATE);
       raw.push({
         sortDate:          agg.entryDate,
         entryDate:         agg.entryDate,
