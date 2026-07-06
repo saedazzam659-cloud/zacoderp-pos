@@ -40,7 +40,6 @@ import {
 import {
   SupplierTaxDetailsMenu,
   type SupplierTaxDetails,
-  hasSupplierTaxDetails,
 } from "@/components/SupplierTaxDetailsDialog";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
@@ -467,15 +466,11 @@ export default function JournalEntryForm() {
     // with all the others — the user explicitly asked the البيان العام to
     // appear on every row, even when adding more rows after the fact.
     const l = { ...newLine(), description: description || "" };
-    // Inherit supplier tax metadata from the last line so a multi-tax entry for
-    // the same supplier never re-types the details.
-    const prev = lines[lines.length - 1];
-    if (prev && hasSupplierTaxDetails(prev)) {
-      l.supplierName          = prev.supplierName;
-      l.supplierVatNumber     = prev.supplierVatNumber;
-      l.supplierInvoiceNumber = prev.supplierInvoiceNumber;
-      l.supplierInvoiceDate   = prev.supplierInvoiceDate;
-    }
+    // Each new line starts with EMPTY supplier tax metadata. A single entry can
+    // record several purchases from DIFFERENT suppliers (one supplier per VAT
+    // line), so inheriting the previous line's supplier would silently
+    // mis-attribute the tax. The accountant fills the ⋮ supplier details fresh
+    // on every line to avoid mistakes.
     // Smart "model" mode: pre-fill the OPPOSITE side with the remaining
     // imbalance so the entry stays balanced after each added line. The
     // user can still overwrite the suggested amount freely.

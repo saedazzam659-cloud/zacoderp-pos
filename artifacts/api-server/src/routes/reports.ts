@@ -952,10 +952,6 @@ router.get("/purchases-vat-register", async (req, res) => {
   const STANDARD_INPUT_VAT_RATE = 0.15; // KSA standard rate (JE VAT lines carry no rate)
   const { inputId: vatInAcctId } = await resolveVatAccountIds(companyId);
   if (vatInAcctId != null) {
-    const hasSup = (l: { supplierName: string | null; supplierVatNumber: string | null; supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null }) =>
-      !!((l.supplierName ?? "").trim() || (l.supplierVatNumber ?? "").trim() ||
-         (l.supplierInvoiceNumber ?? "").trim() || (l.supplierInvoiceDate ?? "").trim());
-
     const vatLineRows = await db
       .select({
         entryId:     journalEntryLinesTable.entryId,
@@ -978,62 +974,37 @@ router.get("/purchases-vat-register", async (req, res) => {
         lte(journalEntriesTable.entryDate, to),
         notInArray(journalEntriesTable.entryType, AUTO_GENERATED_ENTRY_TYPES),
         eq(journalEntryLinesTable.accountId, vatInAcctId),
-      ));
+      ))
+      .orderBy(journalEntryLinesTable.sortOrder, journalEntryLinesTable.id);
 
-    type JeAgg = {
-      id: number;
-      docNumber: string | null;
-      entryDate: string;
-      description: string | null;
-      inputVat: number;
-      vatDebit: number;
-      supplierName: string;
-      supplierVatNumber: string;
-      supplierInvoiceNumber: string;
-      supplierInvoiceDate: string;
-    };
-    const byEntry = new Map<number, JeAgg>();
+    // Emit ONE register row PER VAT-input LINE (NOT per entry). A single manual
+    // JE can record several distinct purchases — each on its own input-VAT line
+    // with its own supplier ⋮ metadata (e.g. 50 / 60 / 90 for three different
+    // suppliers). The accountant needs each purchase on its own row with its own
+    // supplier details, so we deliberately do NOT aggregate the entry's VAT lines
+    // together. Base is derived from THAT line's VAT only (base = VAT / standard
+    // rate); non-positive lines (contra / refund corrections) are skipped.
     for (const r of vatLineRows) {
-      let agg = byEntry.get(r.entryId);
-      if (!agg) {
-        agg = {
-          id: r.entryId, docNumber: r.docNumber, entryDate: r.entryDate, description: r.description,
-          inputVat: 0, vatDebit: 0,
-          supplierName: "", supplierVatNumber: "", supplierInvoiceNumber: "", supplierInvoiceDate: "",
-        };
-        byEntry.set(r.entryId, agg);
-      }
-      const debit  = Number(r.debit);
-      const credit = Number(r.credit);
-      agg.inputVat += debit - credit;
-      agg.vatDebit += debit;
-      if (hasSup(r) && !agg.supplierName && !agg.supplierVatNumber) {
-        agg.supplierName          = (r.supplierName ?? "").trim();
-        agg.supplierVatNumber     = (r.supplierVatNumber ?? "").trim();
-        agg.supplierInvoiceNumber = (r.supplierInvoiceNumber ?? "").trim();
-        agg.supplierInvoiceDate   = (r.supplierInvoiceDate ?? "").trim();
-      }
-    }
-
-    for (const agg of byEntry.values()) {
-      const vat = round2(agg.inputVat);
-      if (vat <= 0.005) continue; // ignore contra / refund-only entries
-      // Base is derived from the VAT amount only, never from the entry total.
+      const vat = round2(Number(r.debit) - Number(r.credit));
+      if (vat <= 0.005) continue;
       const base = round2(vat / STANDARD_INPUT_VAT_RATE);
+      const supInvNo   = (r.supplierInvoiceNumber ?? "").trim();
+      const supInvDate = (r.supplierInvoiceDate ?? "").trim();
+      const docNumber  = (r.docNumber ?? "").trim();
       raw.push({
-        sortDate:          agg.entryDate,
-        entryDate:         agg.entryDate,
-        entryNumber:       (agg.docNumber ?? "").trim() || "",
-        invoiceDate:       agg.supplierInvoiceDate || agg.entryDate,
-        invoiceNumber:     agg.supplierInvoiceNumber || (agg.docNumber ?? "").trim() || "",
-        supplierName:      agg.supplierName,
-        supplierVatNumber: agg.supplierVatNumber,
+        sortDate:          r.entryDate,
+        entryDate:         r.entryDate,
+        entryNumber:       docNumber,
+        invoiceDate:       supInvDate || r.entryDate,
+        invoiceNumber:     supInvNo || docNumber || "",
+        supplierName:      (r.supplierName ?? "").trim(),
+        supplierVatNumber: (r.supplierVatNumber ?? "").trim(),
         statement:         "قيد يومية",
         base,
         vat,
-        notes:             (agg.description ?? "").trim() || "",
+        notes:             (r.description ?? "").trim() || "",
         source:            "journal_entry",
-        id:                agg.id,
+        id:                r.entryId,
       });
     }
   }
