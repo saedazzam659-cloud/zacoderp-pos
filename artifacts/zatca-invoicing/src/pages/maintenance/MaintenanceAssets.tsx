@@ -420,7 +420,7 @@ export default function MaintenanceAssets() {
                             <td className="p-2">{t.title}</td>
                             <td className="p-2"><Badge variant="outline">{t.priority}</Badge></td>
                             <td className="p-2">{t.status}</td>
-                            <td className="p-2">{new Date(t.openedAt).toLocaleDateString("ar-SA")}</td>
+                            <td className="p-2">{new Date(t.openedAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -445,8 +445,8 @@ export default function MaintenanceAssets() {
                           <tr key={v.id} className="border-t">
                             <td className="p-2">{v.employeeName ?? "—"}</td>
                             <td className="p-2">{v.locationName ?? "—"}</td>
-                            <td className="p-2">{new Date(v.arrivedAt).toLocaleString("ar-SA")}</td>
-                            <td className="p-2">{v.leftAt ? new Date(v.leftAt).toLocaleString("ar-SA") : "—"}</td>
+                            <td className="p-2">{new Date(v.arrivedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                            <td className="p-2">{v.leftAt ? new Date(v.leftAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
                             <td className="p-2">{v.durationMin ? `${v.durationMin} د` : "—"}</td>
                             <td className="p-2">{v.outcome ?? "—"}</td>
                           </tr>

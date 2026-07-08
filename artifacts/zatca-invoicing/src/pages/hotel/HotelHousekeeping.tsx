@@ -276,7 +276,7 @@ export default function HotelHousekeeping() {
                       {pr && <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${pr[2]}`}>{pr[1]}</span>}
                     </td>
                     <td className="px-3 py-2">{t.assignedTo || "—"}</td>
-                    <td className="px-3 py-2 font-mono text-[11px]">{t.scheduledAt ? new Date(t.scheduledAt).toLocaleString("ar-SA") : "—"}</td>
+                    <td className="px-3 py-2 font-mono text-[11px]">{t.scheduledAt ? new Date(t.scheduledAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
                     <td className="px-3 py-2">
                       {st && <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${st[2]}`}>{st[1]}</span>}
                     </td>

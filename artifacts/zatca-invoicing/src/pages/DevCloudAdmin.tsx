@@ -458,7 +458,7 @@ function WorkspaceDetail({ id, headers, onClose, onDelete, meta }: {
                           <span className="text-slate-600">{d.environment === "production" ? "الإنتاج" : "الاختبار"}</span>
                           {d.ref && <span className="text-xs text-slate-400">{d.ref}</span>}
                         </div>
-                        <span className="text-[11px] text-slate-400">{new Date(d.createdAt).toLocaleString("ar")}</span>
+                        <span className="text-[11px] text-slate-400">{new Date(d.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                       </div>
                     );
                   })}

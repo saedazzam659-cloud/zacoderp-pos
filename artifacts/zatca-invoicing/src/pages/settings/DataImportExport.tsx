@@ -968,7 +968,7 @@ const STMT_ALL = "__all__";
 function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean }) {
   const { t, i18n } = useTranslation();
   const { user, token } = useAuth() as any;
-  const dateLocale = i18n.language?.startsWith("ar") ? "ar-EG" : "en-GB";
+  const dateLocale = i18n.language?.startsWith("ar") ? "ar-EG-u-ca-gregory-nu-latn" : "en-GB";
   const [open, setOpen] = useState(false);
   const [account, setAccount] = useState<string>("");
   const [search, setSearch] = useState<string>("");
@@ -1542,7 +1542,7 @@ function StatCard({ label, value, icon, tone = "default", onClick, active }: {
 function ResultPanel({ result, onDownload, onReset }: { result: CommitResult; onDownload: () => void; onReset: () => void }) {
   const { t, i18n } = useTranslation();
   const isAr = i18n.language?.startsWith("ar");
-  const dateLocale = isAr ? "ar-SA" : "en-US";
+  const dateLocale = isAr ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const s = result.summary;
   return (
     <div className="space-y-4">

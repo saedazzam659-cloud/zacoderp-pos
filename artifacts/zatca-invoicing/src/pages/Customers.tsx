@@ -573,7 +573,7 @@ export default function Customers() {
                     : bal < 0 ? "credit"
                     : customer.vatNumber ? "active" : "inactive";
                   const overTooltip = overLimit
-                    ? `تجاوز حد الائتمان (${bal.toLocaleString()} > ${limit.toLocaleString()})`
+                    ? `تجاوز حد الائتمان (${bal.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} > ${limit.toLocaleString("ar-SA-u-ca-gregory-nu-latn")})`
                     : "";
                   const sel = isSelected(customer.id);
                   return (

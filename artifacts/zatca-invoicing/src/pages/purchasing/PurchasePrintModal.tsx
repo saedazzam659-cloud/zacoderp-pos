@@ -15,14 +15,14 @@ import QRCode from "qrcode";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// Number formatter — Arabic-Indic digits with the invisible BiDi control
-// characters stripped after formatting (U+061C / U+200E / U+200F / …). On some
+// Number formatter — Latin (Western) digits (`-u-nu-latn`) with the invisible
+// BiDi control characters stripped after formatting (U+061C / U+200E / U+200F / …). On some
 // Windows fonts those zero-width marks fall back to a `.notdef` box drawn as a
 // stray vertical "1" next to every total; stripping them keeps the printed
 // numeric span to visible glyphs only. The `.mono` span in baseStyles is also
 // forced to `direction:ltr; unicode-bidi:isolate` so the browser never injects
 // new marks at render time.
-const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-arab", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
 // Latin-digit formatter for English print mode.
@@ -577,7 +577,7 @@ function template2(d: PrintData): string {
   ${doc.notes ? `<div class="card" style="margin-top:12px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
   <div class="footer-line">
     <span>نظام الفاتورة الإلكترونية — ZATCA Compliant</span>
-    <span>طُبع: ${new Date().toLocaleDateString("ar-SA")}</span>
+    <span>طُبع: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
   </div>
   </body></html>`;
 }
@@ -649,7 +649,7 @@ function template3(d: PrintData): string {
   </div>
   <div class="footer">
     <span>${company?.nameAr ?? ""} — ${company?.city ?? ""}</span>
-    <span>ZATCA e-Invoicing System | طُبع: ${new Date().toLocaleDateString("ar-SA")}</span>
+    <span>ZATCA e-Invoicing System | طُبع: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
   </div>
   </body></html>`;
 }
@@ -723,7 +723,7 @@ function template4(d: PrintData): string {
     </div>
     <div style="text-align:left;">
       <div>نظام الفاتورة الإلكترونية المتوافق مع ZATCA</div>
-      <div style="margin-top:2px;">تاريخ الطباعة: ${new Date().toLocaleDateString("ar-SA")}</div>
+      <div style="margin-top:2px;">تاريخ الطباعة: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</div>
     </div>
   </div>
   </body></html>`;
@@ -815,7 +815,7 @@ function template5(d: PrintData): string {
 
   <div class="footer-z">
     <span>ر.ض: ${company?.vatNumber ?? "—"} | س.ت: ${company?.crNumber ?? "—"} | ${company?.city ?? ""}</span>
-    <span>ZATCA e-Invoicing System — طُبع: ${new Date().toLocaleDateString("ar-SA")}</span>
+    <span>ZATCA e-Invoicing System — طُبع: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
   </div>
   </body></html>`;
 }
@@ -949,7 +949,7 @@ function template6(d: PrintData): string {
     <div class="sep-solid"></div>
     <div class="footer">
       ${thanks ? `<div>${thanks}</div>` : ""}
-      ${showTimestamp ? `<div style="margin-top:3px;">طُبع: ${new Date().toLocaleString("ar-SA")}</div>` : ""}
+      ${showTimestamp ? `<div style="margin-top:3px;">طُبع: ${new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>` : ""}
       ${showZatcaBrand ? `<div style="margin-top:3px;opacity:.7;">ZATCA e-Invoicing</div>` : ""}
     </div>
   </body></html>`;
@@ -1067,7 +1067,7 @@ function template7(d: PrintData): string {
 
     <div class="footer">
       ${thanks ? `<div class="thanks">${thanks}</div>` : ""}
-      ${showTimestamp ? `<div>طُبع: ${new Date().toLocaleString("ar-SA")}</div>` : ""}
+      ${showTimestamp ? `<div>طُبع: ${new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>` : ""}
       ${showZatcaBrand ? `<div style="opacity:.85;margin-top:2px;">ZATCA e-Invoicing</div>` : ""}
     </div>
   </body></html>`;
@@ -1144,7 +1144,7 @@ function template8(d: PrintData): string {
   ${doc.notes ? `<div style="margin-top:18px;padding:12px 14px;background:#f8fafc;border-right:3px solid #d4af37;font-size:11px;"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
   <div class="footer">
     <span>${company?.vatNumber ? `VAT ${company.vatNumber}` : ""}</span>
-    <span>طُبع ${new Date().toLocaleDateString("ar-SA")}</span>
+    <span>طُبع ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
   </div>
   </body></html>`;
 }
@@ -1303,7 +1303,7 @@ function template10(d: PrintData): string {
     ${doc.notes ? `<div class="card" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
     <div class="footer">
       <span>${company?.nameAr ?? ""}</span>
-      <span>ZATCA e-Invoicing • ${new Date().toLocaleDateString("ar-SA")}</span>
+      <span>ZATCA e-Invoicing • ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
     </div>
   </div>
   </body></html>`;
@@ -1382,7 +1382,7 @@ function template11(d: PrintData): string {
   </div>
   <div class="footer">
     <span>${company?.nameAr ?? ""}</span>
-    <span>ZATCA Compliant • ${new Date().toLocaleDateString("ar-SA")}</span>
+    <span>ZATCA Compliant • ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
   </div>
   </body></html>`;
 }
@@ -1478,7 +1478,7 @@ function template12(d: PrintData): string {
       </div>
       ${doc.notes ? `<div class="notes-box"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
       <div class="footer">
-        نظام الفاتورة الإلكترونية المتوافق مع ZATCA — طُبع ${new Date().toLocaleDateString("ar-SA")}
+        نظام الفاتورة الإلكترونية المتوافق مع ZATCA — طُبع ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}
       </div>
     </main>
   </div>
@@ -1598,7 +1598,7 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
           <div className="flex gap-6">
             <span className="text-muted-foreground">الإجمالي:</span>
             <span className="font-bold text-primary">
-              {Number(data.doc.totalAmount || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {data.doc.currencyCode ?? "SAR"}
+              {Number(data.doc.totalAmount || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {data.doc.currencyCode ?? "SAR"}
             </span>
             <span className="text-muted-foreground">الأصناف:</span>
             <span>{data.lines.length} صنف</span>

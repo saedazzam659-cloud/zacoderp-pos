@@ -60,14 +60,14 @@ export default function FaReports() {
       {s && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {card("إجمالي الأصول", s.totalAssets, Package, "emerald")}
-          {card("قيمة الشراء", `${s.totalPurchase.toLocaleString("ar-EG")} ر.س`, Package, "blue")}
-          {card("القيمة الدفترية", `${s.totalBookValue.toLocaleString("ar-EG")} ر.س`, Package, "violet")}
-          {card("الإهلاك المتراكم", `${s.totalAccumulatedDepreciation.toLocaleString("ar-EG")} ر.س`, Package, "amber")}
+          {card("قيمة الشراء", `${s.totalPurchase.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س`, Package, "blue")}
+          {card("القيمة الدفترية", `${s.totalBookValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س`, Package, "violet")}
+          {card("الإهلاك المتراكم", `${s.totalAccumulatedDepreciation.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س`, Package, "amber")}
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {card("سجلات الصيانة", s.maintenanceCount, Wrench, "orange")}
-          {card("تكلفة الصيانة", `${s.totalMaintenanceCost.toLocaleString("ar-EG")} ر.س`, Wrench, "orange")}
+          {card("تكلفة الصيانة", `${s.totalMaintenanceCost.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س`, Wrench, "orange")}
           {card("عمليات النقل", s.transfersCount, ArrowRightLeft, "indigo")}
           {card("عمليات التخلص", s.disposalsCount, Trash2, "rose")}
         </div>

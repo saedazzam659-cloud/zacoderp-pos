@@ -21,12 +21,12 @@ import { DateField } from "@/components/ui/date-field";
 
 function fmtTime(s: string | null): string {
   if (!s) return "—";
-  try { return new Date(s).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }); }
+  try { return new Date(s).toLocaleTimeString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit" }); }
   catch { return "—"; }
 }
 function fmtDateTime(s: string | null): string {
   if (!s) return "—";
-  try { return new Date(s).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" }); }
+  try { return new Date(s).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "short", timeStyle: "short" }); }
   catch { return "—"; }
 }
 function fmtMin(min: number | null): string {

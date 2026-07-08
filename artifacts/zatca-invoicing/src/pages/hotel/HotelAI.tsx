@@ -196,7 +196,7 @@ export default function HotelAI() {
                       <p className="text-[11px] text-muted-foreground mt-1">{r.features || "بدون مميزات إضافية"}</p>
                     </div>
                     <div className="text-end">
-                      <p className="font-mono font-bold">{r.basePrice.toLocaleString("ar-SA")} ر.س</p>
+                      <p className="font-mono font-bold">{r.basePrice.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</p>
                       <p className="text-[10px] text-emerald-700">نقاط: {r.score}</p>
                     </div>
                   </div>

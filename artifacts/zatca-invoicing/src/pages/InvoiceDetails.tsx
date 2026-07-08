@@ -55,7 +55,7 @@ export default function InvoiceDetails() {
   const { dp } = useFmt();
 
   const formatCurrency = (amount: number | string) =>
-    new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR", minimumFractionDigits: dp, maximumFractionDigits: dp }).format(Number(amount));
+    new Intl.NumberFormat("ar-SA-u-nu-latn", { style: "currency", currency: "SAR", minimumFractionDigits: dp, maximumFractionDigits: dp }).format(Number(amount));
 
   const handleIssue = () => {
     if (!confirm("هل أنت متأكد من إصدار هذه الفاتورة؟ سيتم توليد XML وQR Code ولا يمكن تعديلها بعد ذلك.")) return;

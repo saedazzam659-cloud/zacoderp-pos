@@ -185,7 +185,7 @@ function NotificationItem({
                   <span>•</span>
                   <span>{sev.label}</span>
                   <span>•</span>
-                  <span>{new Date(n.createdAt).toLocaleString("ar-SA")}</span>
+                  <span>{new Date(n.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                 </div>
               </div>
             </div>

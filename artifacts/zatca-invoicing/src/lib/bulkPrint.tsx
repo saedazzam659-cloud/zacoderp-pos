@@ -140,7 +140,7 @@ export function buildProfessionalDocsHtml<T>(
   adapter: DocAdapter<T>,
   company: CompanyInfo | null | undefined,
 ): string {
-  const today = new Date().toLocaleDateString("ar-SA");
+  const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
   const safeLogo = safeLogoSrc(company?.logo) ?? "";
   const companyName = company?.nameAr ?? company?.nameEn ?? "";
   const vat = company?.vatNumber ?? "";
@@ -256,7 +256,7 @@ export function buildCompactDocsHtml<T>(
   adapter: DocAdapter<T>,
   company: CompanyInfo | null | undefined,
 ): string {
-  const today = new Date().toLocaleDateString("ar-SA");
+  const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
   const safeLogo = safeLogoSrc(company?.logo) ?? "";
   const companyName = company?.nameAr ?? company?.nameEn ?? "";
   const grand = docs.reduce((acc, d) => {

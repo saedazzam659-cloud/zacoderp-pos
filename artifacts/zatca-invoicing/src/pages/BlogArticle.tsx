@@ -184,7 +184,7 @@ export default function BlogArticle() {
   }
 
   // ── Loaded article ──
-  const updated = new Date(data.updatedAt).toLocaleDateString("ar-SA", {
+  const updated = new Date(data.updatedAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", {
     year: "numeric", month: "long", day: "numeric",
   });
 

@@ -168,7 +168,7 @@ function Row({ o, onActivate, onExpire, onEdit, onDelete }: {
   const isRtl = i18n.language === "ar";
   // Format dates with the system locale rather than hard-coding ar-SA so the
   // English UI gets a Latin date and the Arabic UI gets Arabic-Indic digits.
-  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString() : "—";
+  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "—";
   const isActive = o.status === "active";
   const isExpired = o.status === "expired";
 

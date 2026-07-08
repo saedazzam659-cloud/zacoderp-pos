@@ -65,7 +65,7 @@ const STATUS_LABELS: Record<RunRow["status"], { ar: string; tone: string }> = {
 
 const fmtDateTime = (iso: string | null) => {
   if (!iso) return "—";
-  try { return new Date(iso).toLocaleString("ar-SA"); }
+  try { return new Date(iso).toLocaleString("ar-SA-u-ca-gregory-nu-latn"); }
   catch { return iso; }
 };
 

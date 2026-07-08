@@ -275,8 +275,8 @@ export default function ContractingProjects() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                <div className="bg-amber-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة العقد</div><div className="font-mono font-bold text-amber-800">{Number(p.contractValue).toLocaleString()}</div></div>
-                <div className="bg-rose-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">التكلفة الفعلية</div><div className="font-mono font-bold text-rose-800">{Number(p.actualCost).toLocaleString()}</div></div>
+                <div className="bg-amber-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة العقد</div><div className="font-mono font-bold text-amber-800">{Number(p.contractValue).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>
+                <div className="bg-rose-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">التكلفة الفعلية</div><div className="font-mono font-bold text-rose-800">{Number(p.actualCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>
               </div>
               <div>
                 <div className="flex justify-between items-center mb-1 text-[11px] text-muted-foreground">
@@ -339,8 +339,8 @@ export default function ContractingProjects() {
                 </TableCell>
                 <TableCell>{p.clientName || "—"}</TableCell>
                 <TableCell><Badge variant={STATUS_TONE[p.status] ?? "default"}>{STATUS_LABEL[p.status] ?? p.status}</Badge></TableCell>
-                <TableCell className="tabular-nums">{Number(p.contractValue).toLocaleString()}</TableCell>
-                <TableCell className="tabular-nums">{Number(p.actualCost).toLocaleString()}</TableCell>
+                <TableCell className="tabular-nums">{Number(p.contractValue).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
+                <TableCell className="tabular-nums">{Number(p.actualCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <div className="h-2 w-20 bg-slate-200 dark:bg-slate-700 rounded">

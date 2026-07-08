@@ -194,7 +194,7 @@ export default function MarketplaceAdmin() {
                     <TableCell>
                       {l.pricingModel === "free"
                         ? t("marketplace.free", "مجاني")
-                        : `${Number(l.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${l.currency}${l.pricingModel === "monthly" ? " /شهر" : ""}`}
+                        : `${Number(l.price).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${l.currency}${l.pricingModel === "monthly" ? " /شهر" : ""}`}
                     </TableCell>
                     <TableCell>{l.commissionRate == null ? "—" : `${l.commissionRate}%`}</TableCell>
                     <TableCell>{statusBadge(l.status)}</TableCell>

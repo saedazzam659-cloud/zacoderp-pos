@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function fmt(n: number | string | null | undefined) {
-  return Number(n ?? 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return Number(n ?? 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 const ROW_TONE: Record<string, string> = {
@@ -242,7 +242,7 @@ export default function InstallmentContractDetails() {
               <tbody>
                 {data.payments.map((p: any) => (
                   <tr key={p.id} className="border-t">
-                    <td className="p-2">{new Date(p.paidAt).toLocaleString("ar-SA")}</td>
+                    <td className="p-2">{new Date(p.paidAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                     <td className="p-2 text-end font-medium text-emerald-700">{fmt(p.amount)}</td>
                     <td className="p-2">
                       {{cash: "نقد", transfer: "تحويل", card: "بطاقة", wallet: "محفظة"}[p.paymentMethod as string]}

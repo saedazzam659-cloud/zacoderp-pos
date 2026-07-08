@@ -311,7 +311,7 @@ export default function VoiceAssistantSettings() {
                   {log.map(row => (
                     <tr key={row.id} className="align-top">
                       <td className="py-2 pe-2 whitespace-nowrap text-xs text-muted-foreground">
-                        {new Date(row.createdAt).toLocaleString(isRtl ? "ar-SA" : "en-US")}
+                        {new Date(row.createdAt).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US")}
                       </td>
                       <td className="py-2 pe-2">{row.transcript}</td>
                       <td className="py-2 pe-2 text-xs">

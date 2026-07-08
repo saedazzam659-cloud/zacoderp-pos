@@ -334,7 +334,7 @@ export default function RegistrationRequests() {
                         { icon: Package,    label: "الباقة والفاتورة", value: sub ? `${PLAN_LABELS[sub.plan] ?? sub.plan} — ${sub.price} ر.س/${sub.billingCycle === "annual" ? "سنة" : "شهر"}` : "—" },
                         { icon: User,       label: "اسم المستخدم",    value: user?.username,  mono: true },
                         { icon: Wifi,       label: "عنوان IP التسجيل", value: co.registrationIp || "غير متاح", mono: true },
-                        { icon: Clock,      label: "تاريخ الطلب",      value: new Date(co.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" }) },
+                        { icon: Clock,      label: "تاريخ الطلب",      value: new Date(co.createdAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { year: "numeric", month: "long", day: "numeric" }) },
                         sub?.startDate && { icon: Clock, label: "بداية الاشتراك", value: sub.startDate },
                         sub?.endDate   && { icon: Clock, label: "نهاية الاشتراك", value: sub.endDate },
                       ].filter(Boolean).map((item: any) => (
@@ -499,7 +499,7 @@ export default function RegistrationRequests() {
                   </div>
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="text-muted-foreground">تاريخ الطلب</span>
-                    <span>{new Date(co.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" })}</span>
+                    <span>{new Date(co.createdAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { year: "numeric", month: "long", day: "numeric" })}</span>
                   </div>
                   <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span>عنوان IP</span>
@@ -528,7 +528,7 @@ export default function RegistrationRequests() {
                         { icon: Package,    label: "الباقة والفاتورة", value: sub ? `${PLAN_LABELS[sub.plan] ?? sub.plan} — ${sub.price} ر.س/${sub.billingCycle === "annual" ? "سنة" : "شهر"}` : "—" },
                         { icon: User,       label: "اسم المستخدم",    value: user?.username,  mono: true },
                         { icon: Wifi,       label: "عنوان IP التسجيل", value: co.registrationIp || "غير متاح", mono: true },
-                        { icon: Clock,      label: "تاريخ الطلب",      value: new Date(co.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" }) },
+                        { icon: Clock,      label: "تاريخ الطلب",      value: new Date(co.createdAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { year: "numeric", month: "long", day: "numeric" }) },
                         sub?.startDate && { icon: Clock, label: "بداية الاشتراك", value: sub.startDate },
                         sub?.endDate   && { icon: Clock, label: "نهاية الاشتراك", value: sub.endDate },
                       ].filter(Boolean).map((item: any) => (

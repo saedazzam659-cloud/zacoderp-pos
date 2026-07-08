@@ -191,19 +191,19 @@ export default function FaDepreciation() {
         <div className="border rounded-lg p-4 bg-emerald-50">
           <div className="text-xs text-emerald-700">إجمالي الإهلاك الشهري</div>
           <div className="text-xl font-bold mt-1 text-emerald-800 font-mono">
-            {totalMonthly.toLocaleString("ar-EG", { maximumFractionDigits: 2 })} ر.س
+            {totalMonthly.toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })} ر.س
           </div>
         </div>
         <div className="border rounded-lg p-4 bg-amber-50">
           <div className="text-xs text-amber-700">إجمالي الإهلاك المتراكم</div>
           <div className="text-xl font-bold mt-1 text-amber-800 font-mono">
-            {totalAccum.toLocaleString("ar-EG", { maximumFractionDigits: 2 })} ر.س
+            {totalAccum.toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })} ر.س
           </div>
         </div>
         <div className="border rounded-lg p-4 bg-violet-50">
           <div className="text-xs text-violet-700">إجمالي القيمة الدفترية</div>
           <div className="text-xl font-bold mt-1 text-violet-800 font-mono">
-            {totalBook.toLocaleString("ar-EG", { maximumFractionDigits: 2 })} ر.س
+            {totalBook.toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })} ر.س
           </div>
         </div>
       </div>
@@ -233,12 +233,12 @@ export default function FaDepreciation() {
                 <tr key={p.id} className="hover:bg-violet-50/40">
                   <td className="px-3 py-2 font-mono">{p.code}</td>
                   <td className="px-3 py-2 font-semibold">{p.nameAr}</td>
-                  <td className="px-3 py-2 font-mono">{p.purchaseValue.toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono">{p.scrapValue.toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono text-amber-700">{p.accumulatedDepreciation.toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono text-emerald-700">{p.bookValue.toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono">{p.monthlyDepreciation.toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono text-violet-700 font-bold">{p.applicable.toLocaleString("ar-EG")}</td>
+                  <td className="px-3 py-2 font-mono">{p.purchaseValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono">{p.scrapValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono text-amber-700">{p.accumulatedDepreciation.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono text-emerald-700">{p.bookValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono">{p.monthlyDepreciation.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono text-violet-700 font-bold">{p.applicable.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
                 </tr>
               ))}
             </tbody>
@@ -271,9 +271,9 @@ export default function FaDepreciation() {
                   <td className="px-3 py-1.5 font-mono">{r.id}</td>
                   <td className="px-3 py-1.5 font-mono">{r.assetId}</td>
                   <td className="px-3 py-1.5 font-mono">{r.periodMonth}/{r.periodYear}</td>
-                  <td className="px-3 py-1.5 font-mono text-violet-700">{Number(r.depreciationAmount).toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-1.5 font-mono">{Number(r.bookValueBefore).toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-1.5 font-mono">{Number(r.bookValueAfter).toLocaleString("ar-EG")}</td>
+                  <td className="px-3 py-1.5 font-mono text-violet-700">{Number(r.depreciationAmount).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-1.5 font-mono">{Number(r.bookValueBefore).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-1.5 font-mono">{Number(r.bookValueAfter).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
                   <td className="px-3 py-1.5">{r.postedBy || "—"}</td>
                   <td className="px-3 py-1.5 font-mono">{r.postedAt?.slice(0,10)}</td>
                 </tr>

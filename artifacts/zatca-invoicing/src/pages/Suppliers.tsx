@@ -654,7 +654,7 @@ export default function Suppliers() {
                     : bal < 0 ? "credit"
                     : supplier.vatNumber ? "active" : "inactive";
                   const overTooltip = overLimit
-                    ? `تجاوز حد الائتمان (${owed.toLocaleString()} > ${limit.toLocaleString()})`
+                    ? `تجاوز حد الائتمان (${owed.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} > ${limit.toLocaleString("ar-SA-u-ca-gregory-nu-latn")})`
                     : "";
                   const sel = isSelected(supplier.id);
                   return (

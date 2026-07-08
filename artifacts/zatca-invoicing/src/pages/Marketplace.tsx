@@ -23,7 +23,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────
 function priceLabel(item: StorefrontItem, t: TFunction): string {
   if (!item.paid) return t("marketplace.free", "مجاني");
-  const amount = Number(item.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const amount = Number(item.price).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const per = item.pricingModel === "monthly" ? ` / ${t("marketplace.month", "شهريًا")}` : "";
   return `${amount} ${item.currency}${per}`;
 }

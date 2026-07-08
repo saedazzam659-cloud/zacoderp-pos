@@ -157,7 +157,7 @@ export default function Inbox() {
                         {it.hasAttachment && <Paperclip className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
                       </div>
                       <div className="text-xs text-muted-foreground mt-1">
-                        {new Date(it.createdAt).toLocaleString(isRtl ? "ar-SA" : "en-US")}
+                        {new Date(it.createdAt).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US")}
                       </div>
                     </div>
                   </button>
@@ -183,7 +183,7 @@ export default function Inbox() {
                   <div className="min-w-0">
                     <h2 className="text-lg md:text-xl font-semibold leading-tight">{message.subject}</h2>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {new Date(message.createdAt).toLocaleString(isRtl ? "ar-SA" : "en-US")}
+                      {new Date(message.createdAt).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US")}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">

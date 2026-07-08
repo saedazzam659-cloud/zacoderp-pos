@@ -129,7 +129,7 @@ export default function SupportMessageCard() {
                       </div>
                     )}
                     <p className="text-[10px] text-muted-foreground mt-1.5">
-                      {new Date(m.createdAt).toLocaleString("ar-SA")}
+                      {new Date(m.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                     </p>
                   </div>
                 );

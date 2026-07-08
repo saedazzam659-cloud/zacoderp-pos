@@ -160,7 +160,7 @@ export default function Domains() {
       (d.companyCode ?? "").toLowerCase().includes(q));
   }, [listQ.data, search]);
 
-  const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString("ar-SA") : "—");
+  const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "—");
 
   function sslBadge(d: Domain) {
     const ssl = d.lastCheckResult?.ssl;

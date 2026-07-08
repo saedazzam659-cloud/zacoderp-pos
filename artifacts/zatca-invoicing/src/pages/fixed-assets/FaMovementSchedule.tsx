@@ -38,7 +38,7 @@ type ScheduleResp = {
 };
 
 const fmt = (n: number | null | undefined) =>
-  Number(n || 0).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  Number(n || 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDate = (d: string | null) => (d ? d : "—");
 
 const STATUS_LABELS: Record<string, string> = {

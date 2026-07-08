@@ -36,10 +36,10 @@ type ReasonRow = {
 };
 
 function fmtMoney(n: number) {
-  return n.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function fmtQty(n: number) {
-  return n.toLocaleString("ar-SA", { maximumFractionDigits: 4 });
+  return n.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { maximumFractionDigits: 4 });
 }
 
 export default function WasteReport() {
@@ -198,7 +198,7 @@ export default function WasteReport() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-xs text-muted-foreground">عدد السجلات</div>
-            <div className="text-2xl font-bold">{totalCount.toLocaleString("ar-SA")}</div>
+            <div className="text-2xl font-bold">{totalCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
           </CardContent>
         </Card>
       </div>
@@ -224,7 +224,7 @@ export default function WasteReport() {
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary">{WASTE_TYPE_LABELS_AR[row.wasteType] ?? row.wasteType}</Badge>
                         <span className="text-xs text-muted-foreground">
-                          {Number(row.count).toLocaleString("ar-SA")} سجل · {fmtQty(Number(row.totalQty))}
+                          {Number(row.count).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} سجل · {fmtQty(Number(row.totalQty))}
                         </span>
                       </div>
                       <div className="font-mono">
@@ -273,7 +273,7 @@ export default function WasteReport() {
                   {reasons.map((r, i) => (
                     <tr key={i} className="border-t">
                       <td className="p-2">{r.reason}</td>
-                      <td className="p-2 font-mono">{Number(r.count).toLocaleString("ar-SA")}</td>
+                      <td className="p-2 font-mono">{Number(r.count).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                       <td className="p-2 font-mono">{fmtQty(Number(r.totalQty))}</td>
                       <td className="p-2 font-mono text-red-700">{fmtMoney(Number(r.totalCost))}</td>
                     </tr>

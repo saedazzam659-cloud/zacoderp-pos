@@ -134,7 +134,7 @@ export function NotificationBell() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1 text-xs text-muted-foreground mb-0.5">
                     {n.category === "ai_diagnostic" && <Sparkles className="h-3 w-3 text-violet-500" />}
-                    <span>{new Date(n.createdAt).toLocaleString("ar-SA")}</span>
+                    <span>{new Date(n.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                   </div>
                   <p className={`text-sm leading-snug truncate ${!n.isRead ? "font-semibold" : ""}`}>{n.title}</p>
                 </div>

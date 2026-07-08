@@ -703,7 +703,7 @@ export default function SeoAiStudio() {
                             </td>
                             <td className="py-3">{statusBadge(a.status)}</td>
                             <td className="py-3 hidden md:table-cell text-muted-foreground text-xs">
-                              {new Date(a.createdAt).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" })}
+                              {new Date(a.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "short", timeStyle: "short" })}
                             </td>
                             <td className="py-3 pe-2">
                               <div className="flex justify-end gap-1">
@@ -912,7 +912,7 @@ export default function SeoAiStudio() {
                 </div>
 
                 <div className="text-xs text-muted-foreground">
-                  وُلِّد بواسطة {openArticle.aiModel} · {new Date(openArticle.createdAt).toLocaleString("ar-SA")}
+                  وُلِّد بواسطة {openArticle.aiModel} · {new Date(openArticle.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                 </div>
               </div>
               <DialogFooter className="gap-2">

@@ -536,7 +536,7 @@ export default function JournalEntries() {
     const totalDebitOfRows  = source.reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0);
     const totalCreditOfRows = source.reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0);
     const cols = Object.keys(rows[0] ?? { [COL_DOC_L]: "", [COL_DATE_L]: "", [COL_TYPE_L]: "", [COL_DESC_L]: "", [COL_DEBIT_L]: "", [COL_CREDIT_L]: "", [COL_STATUS_L]: "" });
-    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const lang = isRtl ? "ar" : "en";
     const align = isRtl ? "right" : "left";
@@ -612,7 +612,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 
   const buildBulkPrintHtml = (entriesWithLines: any[], opts?: { oneEntryPerPage?: boolean }) => {
     const oneEntryPerPage = !!opts?.oneEntryPerPage;
-    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const lang = isRtl ? "ar" : "en";
     const align = isRtl ? "right" : "left";
@@ -794,7 +794,7 @@ ${entrySections}
     const totalDebit  = source.reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0);
     const totalCredit = source.reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0);
     const cols = Object.keys(rows[0] ?? { [COL_DOC_L]: "", [COL_DATE_L]: "", [COL_TYPE_L]: "", [COL_DESC_L]: "", [COL_DEBIT_L]: "", [COL_CREDIT_L]: "", [COL_STATUS_L]: "" });
-    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const align = isRtl ? "right" : "left";
     const safeLogo = safeLogoSrc((user?.company as any)?.logo);
@@ -836,7 +836,7 @@ tfoot td { padding:4px 5px; border:1px solid #cbd5e1; background:#1e3a8a; color:
   // a tight monospace-friendly layout so it renders cleanly on POS thermal
   // printers (and still looks fine on a regular printer).
   const buildThermalPrintHtml = (entriesWithLines: any[]) => {
-    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const safeLogo = safeLogoSrc((user?.company as any)?.logo);
     const companyName = (user?.company as any)?.nameAr ?? "";
@@ -905,7 +905,7 @@ ${sections}
   // table, and a signature block per entry (preparer / reviewer / approver).
   const buildProfessionalPrintHtml = (entriesWithLines: any[], opts?: { oneEntryPerPage?: boolean }) => {
     const oneEntryPerPage = !!opts?.oneEntryPerPage;
-    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const align = isRtl ? "right" : "left";
     const safeLogo = safeLogoSrc((user?.company as any)?.logo);
@@ -1857,7 +1857,7 @@ ${sections}
                 }
                 const fmtAt = (s: string | null) => {
                   if (!s) return "—";
-                  try { return new Date(s).toLocaleString(isRtl ? "ar-SA" : undefined); }
+                  try { return new Date(s).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US"); }
                   catch { return s; }
                 };
                 const Row = ({ icon: Ico, label, value }: { icon: any; label: string; value: string | null }) => (

@@ -254,7 +254,7 @@ export default function HotelRooms() {
                     <td className="px-3 py-2">{r.hotelName ?? "—"}</td>
                     <td className="px-3 py-2">{tp}</td>
                     <td className="px-3 py-2">{r.capacity}</td>
-                    <td className="px-3 py-2 font-mono">{Number(r.basePrice).toLocaleString("ar-SA")} ر.س</td>
+                    <td className="px-3 py-2 font-mono">{Number(r.basePrice).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</td>
                     <td className="px-3 py-2">{r.floor || "—"}</td>
                     <td className="px-3 py-2">
                       {st && <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${st[2]}`}>{st[1]}</span>}

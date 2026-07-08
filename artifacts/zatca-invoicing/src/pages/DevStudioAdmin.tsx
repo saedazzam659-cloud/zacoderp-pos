@@ -604,7 +604,7 @@ function AuditTab() {
           {rows.map((r) => (
             <div key={r.id} className="flex items-center justify-between px-3 py-1.5">
               <span className="font-mono" dir="ltr">{r.action}{r.path ? ` · ${r.path}` : ""}</span>
-              <span className="text-muted-foreground">{new Date(r.createdAt).toLocaleString("ar")}</span>
+              <span className="text-muted-foreground">{new Date(r.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
             </div>
           ))}
           {rows.length === 0 && <div className="px-3 py-4 text-muted-foreground text-center">لا يوجد نشاط بعد.</div>}

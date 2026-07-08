@@ -729,7 +729,7 @@ export default function SalesReps() {
                 const fullName = selectedUser.nameAr || selectedUser.nameEn || selectedUser.username;
                 const initials = (fullName || "?").trim().slice(0, 2);
                 const lastLogin = selectedUser.lastLoginAt
-                  ? new Date(selectedUser.lastLoginAt).toLocaleString("ar-SA", {
+                  ? new Date(selectedUser.lastLoginAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn", {
                       dateStyle: "medium", timeStyle: "short",
                     })
                   : "لم يسجّل دخول بعد";
@@ -1011,7 +1011,7 @@ export default function SalesReps() {
                             <td key={col.key} className="px-2 py-1 tabular-nums text-end border-e border-slate-200/60">
                               <span className="inline-flex items-center gap-1">
                                 <Target className="h-3 w-3 text-muted-foreground" />
-                                {Number(r.monthlyTarget).toLocaleString("ar-SA", { maximumFractionDigits: 2 })} ر.س
+                                {Number(r.monthlyTarget).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })} ر.س
                               </span>
                             </td>
                           );
@@ -1126,7 +1126,7 @@ export default function SalesReps() {
               .sort((a, b) => b[1] - a[1])
               .slice(0, 6);
             const fmt = (n: number) =>
-              n.toLocaleString("ar-SA", { maximumFractionDigits: 2 });
+              n.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 });
 
             const kpis = [
               {

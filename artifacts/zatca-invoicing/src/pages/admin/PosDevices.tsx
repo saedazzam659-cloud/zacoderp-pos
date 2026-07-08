@@ -111,7 +111,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
     <Card><CardContent className="p-4">
       <div className="text-xs text-muted-foreground mb-1">{label}</div>
       <div className={`inline-flex items-center justify-center min-w-[40px] h-7 px-2 rounded-md font-bold ${color}`}>
-        {value.toLocaleString("ar-EG")}
+        {value.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}
       </div>
     </CardContent></Card>
   );
@@ -318,7 +318,7 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
               </div>
               <div className="flex items-center justify-between gap-2 text-xs">
                 <span className="text-muted-foreground">انتهاء</span>
-                <span>{l.expiresAt ? new Date(l.expiresAt).toLocaleDateString("ar-SA") : "—"}</span>
+                <span>{l.expiresAt ? new Date(l.expiresAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "—"}</span>
               </div>
               <div className="flex flex-wrap gap-2 pt-2">
                 {!l.companyId && l.status === "unassigned" && (
@@ -396,7 +396,7 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
                 </td>
                 <td className="p-2 text-xs">{l.plan}</td>
                 <td className="p-2">{statusBadge(l.status)}</td>
-                <td className="p-2 text-xs">{l.expiresAt ? new Date(l.expiresAt).toLocaleDateString("ar-SA") : "—"}</td>
+                <td className="p-2 text-xs">{l.expiresAt ? new Date(l.expiresAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
                 <td className="p-2 space-x-1 space-x-reverse">
                   {!l.companyId && l.status === "unassigned" && (
                     <Button size="sm" variant="outline" onClick={() => setAssignFor(l)}>تخصيص</Button>
@@ -603,8 +603,8 @@ function DevicesTab({ headers }: { headers: Record<string, string> }) {
                 <td className="p-2 font-medium">{d.deviceName}</td>
                 <td className="p-2">{d.companyName ?? `#${d.companyId}`}</td>
                 <td className="p-2 text-xs">{d.appVersion ?? "—"}</td>
-                <td className="p-2 text-xs">{d.lastHeartbeatAt ? new Date(d.lastHeartbeatAt).toLocaleString("ar-SA") : "—"}</td>
-                <td className="p-2 text-xs">{d.lastSyncAt ? new Date(d.lastSyncAt).toLocaleString("ar-SA") : "—"}</td>
+                <td className="p-2 text-xs">{d.lastHeartbeatAt ? new Date(d.lastHeartbeatAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
+                <td className="p-2 text-xs">{d.lastSyncAt ? new Date(d.lastSyncAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
                 <td className="p-2"><Badge variant={d.status === "active" ? "default" : "secondary"}>{d.status}</Badge></td>
                 <td className="p-2">
                   <div className="flex gap-1 justify-end">
@@ -791,7 +791,7 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
                 <td className="p-2 font-mono text-xs">{r.version}</td>
                 <td className="p-2 text-xs truncate max-w-[300px]"><a href={r.downloadUrl} className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">{r.downloadUrl}</a></td>
                 <td className="p-2">{r.isActive ? <Badge className="bg-green-100 text-green-700">نعم</Badge> : <Badge variant="secondary">لا</Badge>}</td>
-                <td className="p-2 text-xs">{new Date(r.publishedAt).toLocaleDateString("ar-SA")}</td>
+                <td className="p-2 text-xs">{new Date(r.publishedAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</td>
                 <td className="p-2">
                   <div className="flex gap-1 justify-end">
                     <Button size="sm" variant="outline" onClick={() => openEdit(r)}><Pencil className="h-3.5 w-3.5" /></Button>
@@ -866,7 +866,7 @@ function LogsTab({ headers }: { headers: Record<string, string> }) {
             {(logsQ.data ?? []).map((l: any) => (
               <tr key={l.id} className="border-t">
                 <td className="p-2">{l.id}</td>
-                <td className="p-2 text-xs">{new Date(l.createdAt).toLocaleString("ar-SA")}</td>
+                <td className="p-2 text-xs">{new Date(l.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                 <td className="p-2">{l.deviceId ?? "—"}</td>
                 <td className="p-2"><Badge variant="outline">{l.direction}</Badge></td>
                 <td className="p-2 text-xs">{l.entityType ?? "—"}</td>
@@ -983,9 +983,9 @@ function SessionsTab({ headers }: { headers: Record<string, string> }) {
                       ? (CLOSE_REASON_LABEL_AR[s.closeReason] ?? s.closeReason)
                       : (s.status === "open" ? "—" : "غير محدد")}
                   </td>
-                  <td className="p-2 text-xs">{new Date(s.openedAt).toLocaleString("ar-SA")}</td>
-                  <td className="p-2 text-xs">{s.lastHeartbeatAt ? new Date(s.lastHeartbeatAt).toLocaleString("ar-SA") : "—"}</td>
-                  <td className="p-2 text-xs">{s.closedAt ? new Date(s.closedAt).toLocaleString("ar-SA") : "—"}</td>
+                  <td className="p-2 text-xs">{new Date(s.openedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                  <td className="p-2 text-xs">{s.lastHeartbeatAt ? new Date(s.lastHeartbeatAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
+                  <td className="p-2 text-xs">{s.closedAt ? new Date(s.closedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
                   <td className="p-2 text-xs">{s.difference ?? "—"}</td>
                 </tr>
               );

@@ -41,7 +41,7 @@ export default function SmartAlerts() {
   const effectiveIdleDays = data?.idleDays ?? debouncedIdle;
 
   const formatDate = (iso: string) => {
-    try { return new Date(iso).toLocaleDateString(i18n.language === "ar" ? "ar-EG" : "en-US"); }
+    try { return new Date(iso).toLocaleDateString(i18n.language === "ar" ? "ar-EG-u-ca-gregory-nu-latn" : "en-US"); }
     catch { return iso; }
   };
 

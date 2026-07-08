@@ -3197,7 +3197,7 @@ function SidebarInner({
         {!isSuperAdmin && user?.subscription && (
           <div className="mb-2 flex items-center gap-2 px-2 py-1.5 rounded-md bg-sidebar-accent/30 text-xs text-sidebar-foreground/60">
             <Package className="h-3 w-3 shrink-0" />
-            <span>{t("topbar.expires")}: {user.subscription.endDate ? new Date(user.subscription.endDate).toLocaleDateString() : "—"}</span>
+            <span>{t("topbar.expires")}: {user.subscription.endDate ? new Date(user.subscription.endDate).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "—"}</span>
           </div>
         )}
         <DropdownMenu>

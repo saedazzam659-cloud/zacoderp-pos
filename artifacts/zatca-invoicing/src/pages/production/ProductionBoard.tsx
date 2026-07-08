@@ -212,7 +212,7 @@ function OrderRow({
           </div>
           <div className="text-xs text-slate-500 mt-0.5">
             {order.productNameAr || order.productNameEn || "—"} ·
-            مخطط <strong>{Number(order.plannedQty).toLocaleString()}</strong>
+            مخطط <strong>{Number(order.plannedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</strong>
           </div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
@@ -222,11 +222,11 @@ function OrderRow({
           </div>
           <div className="text-center">
             <div className="text-[10px] text-slate-400">المخرجات</div>
-            <div className="text-sm font-bold text-emerald-600">{currentOutput.toLocaleString()}</div>
+            <div className="text-sm font-bold text-emerald-600">{currentOutput.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
           </div>
           <div className="text-center">
             <div className="text-[10px] text-slate-400">الهالك</div>
-            <div className="text-sm font-bold text-rose-600">{totalWaste.toLocaleString()}</div>
+            <div className="text-sm font-bold text-rose-600">{totalWaste.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
           </div>
           <div className="text-center">
             <div className="text-[10px] text-slate-400">العائد</div>
@@ -291,15 +291,15 @@ function StageNode({ stage, onClick }: { stage: Stage; onClick: () => void }) {
       <div className="mt-1 grid grid-cols-3 gap-1 text-[10px]">
         <div>
           <div className="text-slate-400">دخل</div>
-          <div className="font-semibold">{Number(stage.inputQty).toLocaleString()}</div>
+          <div className="font-semibold">{Number(stage.inputQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
         </div>
         <div>
           <div className="text-slate-400">خرج</div>
-          <div className="font-semibold text-emerald-600">{Number(stage.outputQty).toLocaleString()}</div>
+          <div className="font-semibold text-emerald-600">{Number(stage.outputQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
         </div>
         <div>
           <div className="text-slate-400">هالك</div>
-          <div className="font-semibold text-rose-600">{Number(stage.wasteQty).toLocaleString()}</div>
+          <div className="font-semibold text-rose-600">{Number(stage.wasteQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
         </div>
       </div>
     </button>
@@ -494,21 +494,21 @@ function StageActionModal({
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-lg bg-slate-50 p-2">
                   <div className="text-xs text-slate-500">دخل</div>
-                  <div className="font-bold">{Number(stage.inputQty).toLocaleString()}</div>
+                  <div className="font-bold">{Number(stage.inputQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
                 </div>
                 <div className="rounded-lg bg-emerald-50 p-2">
                   <div className="text-xs text-emerald-600">خرج</div>
-                  <div className="font-bold text-emerald-700">{Number(stage.outputQty).toLocaleString()}</div>
+                  <div className="font-bold text-emerald-700">{Number(stage.outputQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
                 </div>
                 <div className="rounded-lg bg-rose-50 p-2">
                   <div className="text-xs text-rose-600">هالك</div>
-                  <div className="font-bold text-rose-700">{Number(stage.wasteQty).toLocaleString()}</div>
+                  <div className="font-bold text-rose-700">{Number(stage.wasteQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
                 </div>
               </div>
               {stage.startedAt && (
                 <div className="text-xs text-slate-500">
-                  من <strong>{new Date(stage.startedAt).toLocaleString("ar-SA")}</strong>
-                  {stage.completedAt && <> إلى <strong>{new Date(stage.completedAt).toLocaleString("ar-SA")}</strong></>}
+                  من <strong>{new Date(stage.startedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</strong>
+                  {stage.completedAt && <> إلى <strong>{new Date(stage.completedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</strong></>}
                 </div>
               )}
               <div className="flex gap-2 justify-end">

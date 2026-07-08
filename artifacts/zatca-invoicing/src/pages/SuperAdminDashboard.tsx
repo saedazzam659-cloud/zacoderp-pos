@@ -57,7 +57,7 @@ interface DashboardData {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 function formatSAR(n: number): string {
-  return `${n.toLocaleString("ar-SA", { maximumFractionDigits: 0 })} ر.س`;
+  return `${n.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { maximumFractionDigits: 0 })} ر.س`;
 }
 
 const PLAN_LABEL_AR: Record<string, string> = {
@@ -153,7 +153,7 @@ export default function SuperAdminDashboard() {
   const s = data?.subscriptions;
   const b = data?.backups;
   const a = data?.audit;
-  const fmt = (n?: number) => (n === undefined ? "—" : n.toLocaleString("ar-SA"));
+  const fmt = (n?: number) => (n === undefined ? "—" : n.toLocaleString("ar-SA-u-ca-gregory-nu-latn"));
 
   // Plan distribution data for the donut chart
   const planChartData = (s?.byPlan ?? []).map(p => ({
@@ -222,7 +222,7 @@ export default function SuperAdminDashboard() {
           </div>
           {data?.generatedAt && (
             <p className="relative mt-3 text-[10px] text-white/70">
-              آخر تحديث: {new Date(data.generatedAt).toLocaleString("ar-SA")}
+              آخر تحديث: {new Date(data.generatedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
             </p>
           )}
         </div>
@@ -238,7 +238,7 @@ export default function SuperAdminDashboard() {
         </div>
         {data?.generatedAt && (
           <p className="text-[11px] text-muted-foreground">
-            آخر تحديث: {new Date(data.generatedAt).toLocaleString("ar-SA")}
+            آخر تحديث: {new Date(data.generatedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
           </p>
         )}
       </div>
@@ -536,7 +536,7 @@ export default function SuperAdminDashboard() {
                   </div>
                   <span className="text-xs text-muted-foreground shrink-0">
                     {m.lastBackup
-                      ? `آخر نسخة: ${new Date(m.lastBackup).toLocaleDateString("ar-SA")}`
+                      ? `آخر نسخة: ${new Date(m.lastBackup).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}`
                       : "لم يتم نسخها مطلقاً"}
                   </span>
                 </div>

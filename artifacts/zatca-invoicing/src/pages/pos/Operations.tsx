@@ -66,7 +66,7 @@ export default function PosOperations() {
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const locale = isRtl ? "ar-SA" : "en-US";
+  const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const tr = (k: string, opts?: any) => t(`posOps.${k}`, opts) as string;
   const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | null | undefined) =>
     !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));

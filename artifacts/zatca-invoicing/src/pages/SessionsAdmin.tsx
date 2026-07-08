@@ -285,7 +285,7 @@ export default function SessionsAdmin() {
                     </TableCell>
                     <TableCell>{r.userCount}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {new Date(r.createdAt).toLocaleDateString()}
+                      {new Date(r.createdAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}
                     </TableCell>
                     <TableCell className="text-end">
                       <div className="flex items-center justify-end gap-1">

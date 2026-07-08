@@ -295,7 +295,7 @@ export default function CompanyDataDoctor() {
               </div>
               {scan && (
                 <div className="text-sm text-slate-600 flex items-center gap-3 flex-wrap">
-                  <span>آخر فحص: {new Date(scan.generatedAt).toLocaleString("ar-SA")}</span>
+                  <span>آخر فحص: {new Date(scan.generatedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                   <Badge variant={scan.totalIssues > 0 ? "destructive" : "default"} data-testid="badge-total-issues">
                     إجمالي المشاكل: {scan.totalIssues}
                   </Badge>
@@ -784,7 +784,7 @@ function RecycleBinTab({
                       />
                     )}
                   </td>
-                  <td className="p-2 whitespace-nowrap">{new Date(r.deletedAt).toLocaleString("ar-SA")}</td>
+                  <td className="p-2 whitespace-nowrap">{new Date(r.deletedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                   <td className="p-2">{r.deletedByUsername ?? "—"}</td>
                   <td className="p-2"><Badge variant="outline">{r.tableLabel}</Badge></td>
                   <td className="p-2">{r.summary}</td>

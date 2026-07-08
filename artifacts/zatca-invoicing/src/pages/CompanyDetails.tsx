@@ -269,7 +269,7 @@ export default function CompanyDetails() {
                 : company.invoiceType === "standard" ? "ضريبية فقط" : "مبسطة فقط"
               } />
               <InfoRow label="تاريخ التسجيل" value={company.createdAt
-                ? new Date(company.createdAt).toLocaleDateString("ar-SA")
+                ? new Date(company.createdAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")
                 : "—"} />
             </div>
           </div>
@@ -386,7 +386,7 @@ export default function CompanyDetails() {
                       <div className="min-w-0">
                         <p className="font-semibold text-sm truncate">{u.username}</p>
                         <p className="text-[11px] text-muted-foreground">
-                          آخر دخول: {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString("ar-SA") : "لم يدخل بعد"}
+                          آخر دخول: {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "لم يدخل بعد"}
                         </p>
                       </div>
                     </div>

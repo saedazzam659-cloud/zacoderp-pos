@@ -200,11 +200,11 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 function fmt(n: number | string, dp = 2) {
-  return Number(n).toLocaleString("ar-SA", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  return Number(n).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 
 function fmtDate(d: string) {
-  try { return new Date(d).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" }); }
+  try { return new Date(d).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { year: "numeric", month: "long", day: "numeric" }); }
   catch { return d; }
 }
 
@@ -292,7 +292,7 @@ function buildClassicHtml(inv: PrintInvoice, qrDataUrl: string): string {
   ${inv.notes ? `<div style="margin-top:16px;border:1px solid #ccc;padding:8px;font-size:11px"><strong>ملاحظات:</strong> ${inv.notes}</div>` : ""}
 
   <div class="footer">
-    <div><p>توليد من نظام الفاتورة الإلكترونية — ZATCA Compliant</p><p>تاريخ الطباعة: ${new Date().toLocaleDateString("ar-SA")}</p></div>
+    <div><p>توليد من نظام الفاتورة الإلكترونية — ZATCA Compliant</p><p>تاريخ الطباعة: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</p></div>
     ${qrDataUrl ? `<div class="qr-box"><img src="${qrDataUrl}" width="100" height="100" /><p>رمز QR للتحقق</p></div>` : ""}
   </div>
 </div></body></html>`;
@@ -375,7 +375,7 @@ function buildModernHtml(inv: PrintInvoice, qrDataUrl: string): string {
   ${inv.notes ? `<div style="margin-top:20px;background:#f8f8f8;border-radius:8px;padding:12px;font-size:11px;color:#555"><strong>ملاحظات:</strong> ${inv.notes}</div>` : ""}
 
   <div class="footer">
-    <div><p>نظام الفاتورة الإلكترونية | ZATCA Compliant</p><p>طُبعت: ${new Date().toLocaleDateString("ar-SA")}</p></div>
+    <div><p>نظام الفاتورة الإلكترونية | ZATCA Compliant</p><p>طُبعت: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</p></div>
     ${qrDataUrl ? `<div style="text-align:center"><img src="${qrDataUrl}" width="90" height="90" /><p style="font-size:9px;color:#bbb;margin-top:4px">رمز QR</p></div>` : ""}
   </div>
 </div></body></html>`;
@@ -465,7 +465,7 @@ function buildProfessionalHtml(inv: PrintInvoice, qrDataUrl: string): string {
   </div>
 
   <div class="footer-bar">
-    <p>نظام الفاتورة الإلكترونية | ZATCA Compliant | طُبعت: ${new Date().toLocaleDateString("ar-SA")}</p>
+    <p>نظام الفاتورة الإلكترونية | ZATCA Compliant | طُبعت: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</p>
     ${qrDataUrl ? `<div style="text-align:center"><img src="${qrDataUrl}" width="85" height="85" /><p style="font-size:9px;color:#aaa;margin-top:3px">رمز QR</p></div>` : ""}
   </div>
 </div></body></html>`;
@@ -555,7 +555,7 @@ function buildColorfulHtml(inv: PrintInvoice, qrDataUrl: string): string {
   </div>
 
   <div class="footer" style="padding: 16px 32px;">
-    <p>نظام الفاتورة الإلكترونية | ZATCA Compliant | ${new Date().toLocaleDateString("ar-SA")}</p>
+    <p>نظام الفاتورة الإلكترونية | ZATCA Compliant | ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</p>
     ${qrDataUrl ? `<div style="text-align:center"><img src="${qrDataUrl}" width="88" height="88" /><p style="font-size:9px;color:#aaa;margin-top:3px">رمز QR ZATCA</p></div>` : ""}
   </div>
 </div></body></html>`;
@@ -649,11 +649,11 @@ function buildCompactHtml(inv: PrintInvoice, qrDataUrl: string): string {
       <div class="inv-badge">
         <div style="font-size:9px;opacity:0.9">${inv.invoiceType === "standard" ? "فاتورة ضريبية" : "فاتورة مبسطة"}</div>
         <div class="n">${inv.invoiceNumber}</div>
-        <div class="d">${new Date(inv.issueDate).toLocaleDateString("ar-SA")}</div>
+        <div class="d">${new Date(inv.issueDate).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</div>
       </div>
       ${qrDataUrl ? `<div style="text-align:center"><img src="${qrDataUrl}" width="120" height="120" style="border:1px solid #ede9fe;border-radius:6px;padding:4px" /><div class="qr-label" style="margin-top:6px">رمز QR للتحقق</div></div>` : ""}
       <div class="info-pill"><div class="t">ZATCA</div><div>فاتورة إلكترونية معتمدة</div></div>
-      <div class="info-pill"><div class="t">طُبعت</div><div>${new Date().toLocaleDateString("ar-SA")}</div></div>
+      <div class="info-pill"><div class="t">طُبعت</div><div>${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</div></div>
     </div>
   </div>
 </div></body></html>`;

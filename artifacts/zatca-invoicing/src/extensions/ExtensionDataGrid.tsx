@@ -359,7 +359,7 @@ export default function ExtensionDataGrid({
                       </TableCell>
                     ))}
                     <TableCell className="whitespace-nowrap align-top text-xs text-muted-foreground">
-                      {ts ? new Date(ts).toLocaleString() : ""}
+                      {ts ? new Date(ts).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : ""}
                     </TableCell>
                     <TableCell className="align-top">
                       <div className="flex justify-end gap-1">

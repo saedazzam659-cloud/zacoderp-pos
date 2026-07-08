@@ -431,7 +431,7 @@ export default function AICompanyFix() {
             <div key={d.table} className="text-[11px] border rounded px-2 py-1 bg-muted/30 flex items-center justify-between gap-1">
               <code className="font-mono truncate">{d.table}</code>
               <span className="text-muted-foreground tabular-nums shrink-0">
-                {d.rowCountApprox == null ? "—" : Intl.NumberFormat("ar").format(d.rowCountApprox)}
+                {d.rowCountApprox == null ? "—" : Intl.NumberFormat("ar-SA-u-nu-latn").format(d.rowCountApprox)}
               </span>
             </div>
           ))}
@@ -550,7 +550,7 @@ export default function AICompanyFix() {
 
                 <p className="text-[11px] text-muted-foreground italic">
                   مصدر البيانات: انعكاس على Express router stack + جداول pg_class + مسح ملفات pages/ + استخراج عناصر SuperAdmin*.tsx — لا تسجيل يدوي.
-                  آخر اكتشاف: {new Date(tree.generatedAt).toLocaleString("ar")}.
+                  آخر اكتشاف: {new Date(tree.generatedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}.
                 </p>
               </>
             )}
@@ -1746,7 +1746,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
               </div>
               {s.lastRunAt && (
                 <p className="text-[11px] text-muted-foreground mt-2">
-                  آخر تشغيل: {new Date(s.lastRunAt).toLocaleString("ar-SA")} — {s.lastRunCompanies} شركة •{" "}
+                  آخر تشغيل: {new Date(s.lastRunAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} — {s.lastRunCompanies} شركة •{" "}
                   <span className={s.lastRunCriticalCount > 0 ? "text-red-700 font-medium" : "text-emerald-700"}>
                     {s.lastRunCriticalCount} نتيجة حرجة
                   </span>
@@ -1764,7 +1764,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                 <span className="text-[11px] font-medium text-violet-900">تنبيهات البريد للسوبر أدمن</span>
                 {s.lastEmailAt ? (
                   <span className="text-[11px] text-muted-foreground">
-                    آخر إرسال: {new Date(s.lastEmailAt).toLocaleString("ar-SA")} •{" "}
+                    آخر إرسال: {new Date(s.lastEmailAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} •{" "}
                     <span className={
                       s.lastEmailStatus === "ok" ? "text-emerald-700 font-medium" :
                       s.lastEmailStatus === "no_critical" ? "text-emerald-700" :
@@ -2004,7 +2004,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                       return (
                         <tr key={row.id}>
                           <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
-                            {new Date(row.ranAt).toLocaleString("ar-SA")}
+                            {new Date(row.ranAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                           </td>
                           <td className="px-2 py-1">{triggerLabel}</td>
                           <td className={`px-2 py-1 ${statusClass}`}>{emailStatusLabelAr(row.status)}</td>
@@ -2100,7 +2100,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                   title="يُحدَّث تلقائياً كل 30 ثانية أثناء فتح التبويب"
                   data-testid="critical-summary-last-updated"
                 >
-                  آخر تحديث: {new Date(criticalSummaryQ.dataUpdatedAt).toLocaleTimeString("ar-SA")}
+                  آخر تحديث: {new Date(criticalSummaryQ.dataUpdatedAt).toLocaleTimeString("ar-SA-u-nu-latn")}
                 </span>
               )}
               <span className="text-[11px] text-muted-foreground mr-auto">
@@ -2146,7 +2146,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                       </td>
                       <td className="px-2 py-1 font-mono text-red-700 tabular-nums">{row.count}</td>
                       <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
-                        {new Date(row.runAt).toLocaleString("ar-SA")}
+                        {new Date(row.runAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                       </td>
                     </tr>
                   ))}
@@ -2179,7 +2179,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                   title="يُحدَّث تلقائياً كل 30 ثانية أثناء فتح التبويب"
                   data-testid="error-summary-last-updated"
                 >
-                  آخر تحديث: {new Date(errorSummaryQ.dataUpdatedAt).toLocaleTimeString("ar-SA")}
+                  آخر تحديث: {new Date(errorSummaryQ.dataUpdatedAt).toLocaleTimeString("ar-SA-u-nu-latn")}
                 </span>
               )}
               <span className="text-[11px] text-muted-foreground mr-auto">
@@ -2246,7 +2246,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                           : "—"}
                       </td>
                       <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
-                        {new Date(row.runAt).toLocaleString("ar-SA")}
+                        {new Date(row.runAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                       </td>
                     </tr>
                   ))}
@@ -2280,7 +2280,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                   title="يُحدَّث تلقائياً كل 30 ثانية أثناء فتح التبويب"
                   data-testid="recovery-summary-last-updated"
                 >
-                  آخر تحديث: {new Date(recoverySummaryQ.dataUpdatedAt).toLocaleTimeString("ar-SA")}
+                  آخر تحديث: {new Date(recoverySummaryQ.dataUpdatedAt).toLocaleTimeString("ar-SA-u-nu-latn")}
                 </span>
               )}
               <span className="text-[11px] text-muted-foreground mr-auto">
@@ -2341,10 +2341,10 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                         </button>
                       </td>
                       <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
-                        {new Date(row.previousErrorAt).toLocaleString("ar-SA")}
+                        {new Date(row.previousErrorAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                       </td>
                       <td className="px-2 py-1 text-emerald-900 whitespace-nowrap">
-                        {new Date(row.recoveredAt).toLocaleString("ar-SA")}
+                        {new Date(row.recoveredAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                       </td>
                     </tr>
                   ))}
@@ -2368,7 +2368,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                   title="يُحدَّث تلقائياً كل 30 ثانية أثناء فتح التبويب"
                   data-testid="fleet-summary-last-updated"
                 >
-                  آخر تحديث: {new Date(fleetQ.dataUpdatedAt).toLocaleTimeString("ar-SA")}
+                  آخر تحديث: {new Date(fleetQ.dataUpdatedAt).toLocaleTimeString("ar-SA-u-nu-latn")}
                 </span>
               )}
               <span className="text-[11px] text-muted-foreground mr-auto">
@@ -2405,7 +2405,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                       <td className="px-2 py-1 font-mono">{c.criticalRuns}</td>
                       <td className="px-2 py-1 font-mono">{c.toolCount}</td>
                       <td className="px-2 py-1 text-muted-foreground">
-                        {c.lastRunAt ? new Date(c.lastRunAt).toLocaleString("ar-SA") : "—"}
+                        {c.lastRunAt ? new Date(c.lastRunAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}
                       </td>
                     </tr>
                   ))}
@@ -2702,7 +2702,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                           <td className="px-2 py-1">{u.nameAr || "—"}</td>
                           <td className="px-2 py-1 text-muted-foreground">{u.role}</td>
                           <td className="px-2 py-1">
-                            {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString("ar") : <span className="text-amber-700">لم يدخل أبداً</span>}
+                            {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : <span className="text-amber-700">لم يدخل أبداً</span>}
                           </td>
                         </tr>
                       ))}
@@ -3329,7 +3329,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                             : null;
                         return (
                           <tr key={row.id}>
-                            <td className="px-2 py-1 whitespace-nowrap">{new Date(row.createdAt).toLocaleString("ar")}</td>
+                            <td className="px-2 py-1 whitespace-nowrap">{new Date(row.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                             <td className="px-2 py-1 font-mono">{row.username || "—"}</td>
                             <td className="px-2 py-1">{row.entityType ? historyEntityTypeLabelAr(row.entityType) : "—"}</td>
                             <td className="px-2 py-1">
@@ -3340,7 +3340,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                                     data-testid="maint-history-truncated-pill"
                                     title={
                                       rowCapNum != null && totalAvailableNum != null
-                                        ? `تم اقتطاع التصدير عند ${rowCapNum.toLocaleString("ar-SA")} من ${totalAvailableNum.toLocaleString("ar-SA")} صف`
+                                        ? `تم اقتطاع التصدير عند ${rowCapNum.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} من ${totalAvailableNum.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} صف`
                                         : "تم اقتطاع التصدير"
                                     }
                                     className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
@@ -3349,7 +3349,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                                     <span>تم الاقتطاع</span>
                                     {rowCapNum != null && totalAvailableNum != null && (
                                       <span className="font-mono text-[9px] opacity-80">
-                                        {rowCapNum.toLocaleString("ar-SA")} / {totalAvailableNum.toLocaleString("ar-SA")}
+                                        {rowCapNum.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} / {totalAvailableNum.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                                       </span>
                                     )}
                                   </span>
@@ -3527,7 +3527,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                             <td className="px-2 py-1 font-mono">{row.count}</td>
                             <td className="px-2 py-1 font-mono">{row.durationMs}</td>
                             <td className="px-2 py-1 whitespace-nowrap text-muted-foreground">
-                              {new Date(row.runAt).toLocaleString("ar-SA")}
+                              {new Date(row.runAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                             </td>
                             <td
                               className="px-2 py-1 text-amber-900 font-mono text-[10px] max-w-[260px] truncate"
@@ -3567,7 +3567,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
               <DialogDescription>
                 {exportInspectorRow && (
                   <span className="font-mono text-xs">
-                    {new Date(exportInspectorRow.createdAt).toLocaleString("ar", { hour12: false })}
+                    {new Date(exportInspectorRow.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { hour12: false })}
                     {" · "}
                     {historyActionLabelAr(exportInspectorRow.action)}
                     {exportInspectorRow.entityType

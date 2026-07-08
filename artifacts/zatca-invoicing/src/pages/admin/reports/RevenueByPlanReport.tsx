@@ -17,7 +17,7 @@ interface PlanRow {
 interface ReportPeriod { from: string; to: string; days: number; prevFrom: string; prevTo: string }
 interface Resp { period: ReportPeriod; rows: PlanRow[]; total: number }
 
-const fmt = new Intl.NumberFormat("ar-SA", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+const fmt = new Intl.NumberFormat("ar-SA-u-nu-latn", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtSAR = (n: number) => `${fmt.format(n)} ر.س`;
 
 const COLORS = ["#0ea5e9", "#10b981", "#f59e0b", "#a855f7", "#ec4899", "#6366f1", "#14b8a6", "#ef4444"];

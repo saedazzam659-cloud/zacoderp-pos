@@ -95,7 +95,7 @@ function formatAge(hours: number | null): string {
 }
 function formatDate(iso?: string | null): string {
   if (!iso) return "—";
-  try { return new Date(iso).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" }); }
+  try { return new Date(iso).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "short", timeStyle: "short" }); }
   catch { return iso; }
 }
 

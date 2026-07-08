@@ -20,12 +20,12 @@ function fmtMin(min: number): string {
 }
 function fmtTime(s: string | null): string {
   if (!s) return "—";
-  try { return new Date(s).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }); }
+  try { return new Date(s).toLocaleTimeString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit" }); }
   catch { return "—"; }
 }
 function fmtDay(iso: string): string {
   const d = new Date(iso + "T00:00:00");
-  const day = d.toLocaleDateString("ar-SA", { day: "2-digit", month: "2-digit" });
+  const day = d.toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { day: "2-digit", month: "2-digit" });
   const weekday = ["أحد", "اثن", "ثلا", "أرب", "خمي", "جمع", "سبت"][d.getDay()];
   return `${day}\n${weekday}`;
 }
@@ -70,8 +70,8 @@ export default function UserAttendanceReport() {
           u.userName,
           d.day,
           d.status === "absent" ? "غائب" : d.status === "active" ? "نشط" : "حاضر",
-          d.firstIn ? new Date(d.firstIn).toLocaleString("ar-SA") : "—",
-          d.lastOut ? new Date(d.lastOut).toLocaleString("ar-SA") : (d.status === "active" ? "ما زال نشطاً" : "—"),
+          d.firstIn ? new Date(d.firstIn).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—",
+          d.lastOut ? new Date(d.lastOut).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : (d.status === "active" ? "ما زال نشطاً" : "—"),
           String(d.totalMinutes),
           String(d.visitCount),
           d.hasAlert ? "نعم" : "",

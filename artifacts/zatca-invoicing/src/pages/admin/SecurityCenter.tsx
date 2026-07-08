@@ -277,21 +277,21 @@ function fmtDateTime(s: string | null): string {
   if (!s) return "—";
   const d = new Date(s);
   if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("ar-SA", { hour12: false });
+  return d.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { hour12: false });
 }
 // Format a session duration in seconds → human-readable Arabic string.
 // Examples: 45 → "٤٥ ث", 130 → "٢ د ١٠ ث", 3700 → "١ س ١ د", 90061 → "١ ي ١ س ١ د".
 function formatSessionDuration(sec: number): string {
-  if (sec < 60) return `${sec.toLocaleString("ar-SA")} ث`;
+  if (sec < 60) return `${sec.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ث`;
   const days = Math.floor(sec / 86400);
   const hours = Math.floor((sec % 86400) / 3600);
   const mins = Math.floor((sec % 3600) / 60);
   const secs = sec % 60;
   const parts: string[] = [];
-  if (days > 0) parts.push(`${days.toLocaleString("ar-SA")} ي`);
-  if (hours > 0) parts.push(`${hours.toLocaleString("ar-SA")} س`);
-  if (mins > 0 && days === 0) parts.push(`${mins.toLocaleString("ar-SA")} د`);
-  if (days === 0 && hours === 0 && secs > 0) parts.push(`${secs.toLocaleString("ar-SA")} ث`);
+  if (days > 0) parts.push(`${days.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ي`);
+  if (hours > 0) parts.push(`${hours.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} س`);
+  if (mins > 0 && days === 0) parts.push(`${mins.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} د`);
+  if (days === 0 && hours === 0 && secs > 0) parts.push(`${secs.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ث`);
   return parts.join(" ");
 }
 function shortUA(ua: string | null): string {
@@ -411,7 +411,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
         <div className="text-sm text-muted-foreground">
           إجمالي الجلسات النشطة:{" "}
           <span className="font-mono font-semibold text-foreground" data-testid="sessions-total">
-            {rows.length.toLocaleString("ar-SA")}
+            {rows.length.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -421,7 +421,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
             data-testid="bulk-end-button"
           >
             <LogOut className="h-3.5 w-3.5 ml-1" />
-            إنهاء المحدد ({selected.size.toLocaleString("ar-SA")})
+            إنهاء المحدد ({selected.size.toLocaleString("ar-SA-u-ca-gregory-nu-latn")})
           </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw className={`h-3.5 w-3.5 ml-1 ${isFetching ? "animate-spin" : ""}`} />
@@ -476,10 +476,10 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                           <Badge
                             variant="outline"
                             className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-mono px-1.5 py-0 h-4"
-                            title={`إجمالي تسجيلات الدخول لهذه الشركة: ${r.companyLoginCount.toLocaleString("ar-SA")}`}
+                            title={`إجمالي تسجيلات الدخول لهذه الشركة: ${r.companyLoginCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}`}
                             data-testid={`session-company-logins-${r.userId}-m`}
                           >
-                            {r.companyLoginCount.toLocaleString("ar-SA")}
+                            {r.companyLoginCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                           </Badge>
                         )}
                         {r.zatcaStatus && (() => {
@@ -604,10 +604,10 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                             <Badge
                               variant="outline"
                               className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-mono px-1.5 py-0 h-4"
-                              title={`إجمالي تسجيلات الدخول لهذه الشركة: ${r.companyLoginCount.toLocaleString("ar-SA")}`}
+                              title={`إجمالي تسجيلات الدخول لهذه الشركة: ${r.companyLoginCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}`}
                               data-testid={`session-company-logins-${r.userId}`}
                             >
-                              {r.companyLoginCount.toLocaleString("ar-SA")}
+                              {r.companyLoginCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                             </Badge>
                           )}
                           {r.zatcaStatus && (() => {
@@ -684,7 +684,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
             <AlertDialogDescription>
               {confirmEnd?.kind === "single"
                 ? <>سيتم تسجيل خروج المستخدم <strong>{confirmEnd.username}</strong> فوراً وإبطال جلسته.</>
-                : <>سيتم إنهاء جلسات <strong>{selected.size.toLocaleString("ar-SA")}</strong> مستخدم.</>}
+                : <>سيتم إنهاء جلسات <strong>{selected.size.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</strong> مستخدم.</>}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -828,7 +828,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
           </div>
           <div className="flex items-center justify-between">
             <div className="text-xs text-muted-foreground">
-              السجلات: <span className="font-mono font-semibold text-foreground">{(data?.total ?? 0).toLocaleString("ar-SA")}</span>
+              السجلات: <span className="font-mono font-semibold text-foreground">{(data?.total ?? 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
             </div>
             <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={`h-3.5 w-3.5 ml-1 ${isFetching ? "animate-spin" : ""}`} />
@@ -920,7 +920,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                                       ? "bg-gradient-to-l from-cyan-50 to-teal-50 border-cyan-200 text-cyan-700"
                                       : "bg-gradient-to-l from-amber-50 to-yellow-50 border-amber-200 text-amber-700"
                               }`}
-                              title={`${r.sessionDurationSec.toLocaleString("ar-SA")} ثانية`}
+                              title={`${r.sessionDurationSec.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ثانية`}
                             >
                               <Timer className="h-3 w-3" />
                               {formatSessionDuration(r.sessionDurationSec)}
@@ -988,9 +988,9 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                                     ? "bg-amber-50 text-amber-700 border-amber-300 font-mono text-[11px]"
                                     : "bg-slate-50 text-slate-700 border-slate-200 font-mono text-[11px]"
                               }
-                              title={`${r.attemptCount.toLocaleString("ar-SA")} محاولة دخول لهذا المستخدم`}
+                              title={`${r.attemptCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} محاولة دخول لهذا المستخدم`}
                             >
-                              {r.attemptCount.toLocaleString("ar-SA")}
+                              {r.attemptCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                             </Badge>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
@@ -1058,11 +1058,11 @@ function PaginationFooter({
         <div className="flex items-center gap-3 text-xs">
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 shadow-sm">
             <span className="text-muted-foreground">عرض</span>
-            <span className="font-mono font-semibold text-slate-800">{fromIdx.toLocaleString("ar-SA")}</span>
+            <span className="font-mono font-semibold text-slate-800">{fromIdx.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
             <span className="text-muted-foreground">–</span>
-            <span className="font-mono font-semibold text-slate-800">{toIdx.toLocaleString("ar-SA")}</span>
+            <span className="font-mono font-semibold text-slate-800">{toIdx.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
             <span className="text-muted-foreground">من</span>
-            <span className="font-mono font-bold text-indigo-700">{total.toLocaleString("ar-SA")}</span>
+            <span className="font-mono font-bold text-indigo-700">{total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
           </div>
           <div className="hidden sm:flex items-center gap-1.5">
             <span className="text-muted-foreground">لكل صفحة:</span>
@@ -1120,7 +1120,7 @@ function PaginationFooter({
                 }`}
                 data-testid={`pagination-page-${p}`}
               >
-                {p.toLocaleString("ar-SA")}
+                {p.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
               </button>
             )
           )}
@@ -1191,7 +1191,7 @@ function PermissionsTab({ token }: { token: string | null }) {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-primary" />
-            مستخدمو الإدارة والمالكون ({users.length.toLocaleString("ar-SA")})
+            مستخدمو الإدارة والمالكون ({users.length.toLocaleString("ar-SA-u-ca-gregory-nu-latn")})
           </CardTitle>
           <CardDescription className="text-xs">
             انقر على أي مستخدم لتعديل صلاحياته في صفحة المستخدمين.
@@ -1348,7 +1348,7 @@ function AnomaliesBanner({ token }: { token: string | null }) {
     <div className="rounded border border-amber-300 bg-amber-50 p-3 space-y-2" data-testid="anomalies-banner">
       <div className="text-sm font-semibold text-amber-900 flex items-center gap-2">
         <ShieldAlert className="h-4 w-4" />
-        تنبيهات أمنية ({total.toLocaleString("ar-SA")})
+        تنبيهات أمنية ({total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")})
       </div>
       {data.deniedSpikes.length > 0 && (
         <div className="text-xs text-amber-900">

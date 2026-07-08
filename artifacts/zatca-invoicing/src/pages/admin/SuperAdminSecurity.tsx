@@ -202,7 +202,7 @@ export default function SuperAdminSecurity() {
   function downloadCodes() {
     if (!newCodes) return;
     const blob = new Blob([
-      `رموز استرجاع SuperAdmin\nالحساب: ${user?.username}\nأُنشئت: ${new Date().toLocaleString("ar-SA")}\n\n` +
+      `رموز استرجاع SuperAdmin\nالحساب: ${user?.username}\nأُنشئت: ${new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn")}\n\n` +
       newCodes.join("\n") +
       `\n\nاحتفظ بهذه الرموز في مكان آمن. كل رمز يُستخدم مرة واحدة فقط.\n`,
     ], { type: "text/plain;charset=utf-8" });
@@ -262,7 +262,7 @@ export default function SuperAdminSecurity() {
                 <div className="text-xs">
                   <div className="font-mono">IP: {p.requestingIp}</div>
                   <div className="text-muted-foreground truncate max-w-xs">{p.requestingUa}</div>
-                  <div className="text-muted-foreground">طُلب: {new Date(p.createdAt).toLocaleString("ar-SA")}</div>
+                  <div className="text-muted-foreground">طُلب: {new Date(p.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <Button size="sm" variant="default" onClick={() => decideApproval(p.approvalToken, "approve")} disabled={busy}>
@@ -328,7 +328,7 @@ export default function SuperAdminSecurity() {
                 </div>
                 <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                   <span className="font-mono" dir="ltr">IP: {s.ip}</span>
-                  <span>آخر نشاط: {new Date(s.lastSeenAt).toLocaleString("ar-SA")}</span>
+                  <span>آخر نشاط: {new Date(s.lastSeenAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                 </div>
               </div>
             ))}
@@ -348,7 +348,7 @@ export default function SuperAdminSecurity() {
                       {s.current && <span className="mr-2 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">الحالية</span>}
                     </td>
                     <td className="p-2 font-mono text-xs">{s.ip}</td>
-                    <td className="p-2 text-xs text-muted-foreground">{new Date(s.lastSeenAt).toLocaleString("ar-SA")}</td>
+                    <td className="p-2 text-xs text-muted-foreground">{new Date(s.lastSeenAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                     <td className="p-2">
                       {!s.current && (
                         <Button size="sm" variant="ghost" onClick={() => revokeSession(s.id)} disabled={busy}>
@@ -378,7 +378,7 @@ export default function SuperAdminSecurity() {
                 </div>
                 <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                   <span className="font-mono" dir="ltr">IP: {d.ip}</span>
-                  <span>آخر استخدام: {d.lastUsedAt ? new Date(d.lastUsedAt).toLocaleString("ar-SA") : "—"}</span>
+                  <span>آخر استخدام: {d.lastUsedAt ? new Date(d.lastUsedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</span>
                 </div>
               </div>
             ))}
@@ -396,7 +396,7 @@ export default function SuperAdminSecurity() {
                     <td className="p-2">{d.deviceName || "—"}</td>
                     <td className="p-2 font-mono text-xs">{d.ip}</td>
                     <td className="p-2 text-xs text-muted-foreground">
-                      {d.lastUsedAt ? new Date(d.lastUsedAt).toLocaleString("ar-SA") : "—"}
+                      {d.lastUsedAt ? new Date(d.lastUsedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}
                     </td>
                     <td className="p-2">
                       <Button size="sm" variant="ghost" onClick={() => revokeDevice(d.id)} disabled={busy}>
@@ -463,7 +463,7 @@ export default function SuperAdminSecurity() {
                 </div>
                 <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                   <span className="font-mono" dir="ltr">IP: {a.ip}</span>
-                  <span>{new Date(a.createdAt).toLocaleString("ar-SA")}</span>
+                  <span>{new Date(a.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                 </div>
                 {a.outcome && <div className="text-xs text-muted-foreground">السبب: {a.outcome}</div>}
               </div>
@@ -485,7 +485,7 @@ export default function SuperAdminSecurity() {
                 {history.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">لا يوجد سجل.</td></tr>}
                 {history.map(a => (
                   <tr key={a.id} className="border-t">
-                    <td className="p-2 text-xs whitespace-nowrap">{new Date(a.createdAt).toLocaleString("ar-SA")}</td>
+                    <td className="p-2 text-xs whitespace-nowrap">{new Date(a.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                     <td className="p-2 text-xs">{a.username || "—"}</td>
                     <td className="p-2 font-mono text-xs">{a.ip}</td>
                     <td className="p-2">
@@ -559,8 +559,8 @@ export default function SuperAdminSecurity() {
                             <span className="text-xs text-muted-foreground bg-muted rounded px-2 py-0.5">معطّل</span>
                           )}
                         </td>
-                        <td className="p-2 text-xs text-muted-foreground">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString("ar-SA") : "—"}</td>
-                        <td className="p-2 text-xs text-muted-foreground">{new Date(u.createdAt).toLocaleString("ar-SA")}</td>
+                        <td className="p-2 text-xs text-muted-foreground">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
+                        <td className="p-2 text-xs text-muted-foreground">{new Date(u.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                       </tr>
                     ))}
                   </tbody>

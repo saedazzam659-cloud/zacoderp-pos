@@ -337,7 +337,7 @@ function RunsPanel({ runs }: { runs: SyncRun[] }) {
                     {r.status === "running"  && <Badge variant="secondary">قيد التنفيذ</Badge>}
                   </td>
                   <td className="p-3">{r.trigger === "manual" ? "يدوي" : r.trigger === "scheduled" ? "مجدول" : "Push"}</td>
-                  <td className="p-3 text-xs text-slate-500" dir="ltr">{new Date(r.startedAt).toLocaleString()}</td>
+                  <td className="p-3 text-xs text-slate-500" dir="ltr">{new Date(r.startedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                   <td className="p-3 text-xs text-slate-500" dir="ltr">{dur !== null ? `${dur}s` : "—"}</td>
                   <td className="p-3 font-mono">{r.invoicesIngested}</td>
                   <td className="p-3">{r.errors.length > 0 && <span className="text-rose-600 text-xs">{r.errors[0].reason}</span>}</td>

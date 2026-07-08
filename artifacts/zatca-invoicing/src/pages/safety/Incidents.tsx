@@ -466,7 +466,7 @@ export default function Incidents() {
                     <Badge className={SEVERITY_COLORS[r.severityClass]}>{SEVERITY_LABELS[r.severityClass]}</Badge>
                   </td>
                   <td className="p-2 text-xs whitespace-nowrap">
-                    {new Date(r.occurredAt).toLocaleString("ar", { dateStyle: "short", timeStyle: "short" })}
+                    {new Date(r.occurredAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "short", timeStyle: "short" })}
                   </td>
                   <td className="p-2 text-center">
                     {r.isRecordable ? <Badge className="bg-red-100 text-red-700">نعم</Badge>

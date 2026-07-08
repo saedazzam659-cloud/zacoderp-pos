@@ -503,7 +503,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
     }
     const remaining = selectedClient.monthlyQuota - selectedClient.invoicesThisMonth;
     if (remaining < rows.length) {
-      toast({ title: "الحصة الشهرية غير كافية", description: `المتبقي للشركة ${remaining.toLocaleString("ar-EG")} فاتورة، والدفعة ${rows.length.toLocaleString("ar-EG")}.`, variant: "destructive" });
+      toast({ title: "الحصة الشهرية غير كافية", description: `المتبقي للشركة ${remaining.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} فاتورة، والدفعة ${rows.length.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}.`, variant: "destructive" });
       return;
     }
 
@@ -525,7 +525,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
       const isSandbox = result.env === "sandbox";
       toast({
         title: isSandbox ? "تم الإرسال (وضع التجربة)" : "تم تجهيز الدفعة للإنتاج",
-        description: `${result.submitted.toLocaleString("ar-EG")} ناجحة، ${result.rejected.toLocaleString("ar-EG")} مرفوضة. ICV: ${result.chain.lastIcv}`,
+        description: `${result.submitted.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ناجحة، ${result.rejected.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} مرفوضة. ICV: ${result.chain.lastIcv}`,
       });
       onConfirm(rows, result);
     } catch (e) {
@@ -798,7 +798,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
                   </select>
                   {selectedClient && (
                     <div className="text-[11px] text-slate-700 flex items-center gap-3 font-mono">
-                      <span>المتبقي: <b className="text-emerald-700">{(selectedClient.monthlyQuota - selectedClient.invoicesThisMonth).toLocaleString("ar-EG")}</b></span>
+                      <span>المتبقي: <b className="text-emerald-700">{(selectedClient.monthlyQuota - selectedClient.invoicesThisMonth).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</b></span>
                       <span>•</span>
                       <span>ICV الحالي: <b>{selectedClient.lastIcv}</b></span>
                     </div>

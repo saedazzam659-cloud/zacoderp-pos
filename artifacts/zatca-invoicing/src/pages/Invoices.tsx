@@ -90,7 +90,7 @@ export default function Invoices() {
   );
 
   const formatCurrency = (amount: number | string) =>
-    new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR", minimumFractionDigits: dp, maximumFractionDigits: dp }).format(Number(amount));
+    new Intl.NumberFormat("ar-SA-u-nu-latn", { style: "currency", currency: "SAR", minimumFractionDigits: dp, maximumFractionDigits: dp }).format(Number(amount));
 
   const filtered = invoices?.filter(inv =>
     inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||

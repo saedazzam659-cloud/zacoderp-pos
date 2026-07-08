@@ -2900,7 +2900,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const invoiceLen = invoiceFooter.length;
   const returnLen  = returnFooter.length;
   const overLimit  = invoiceLen > 200 || returnLen > 200;
-  const previewLocale = isAr ? "ar-SA" : "en-US";
+  const previewLocale = isAr ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
 
   return (
     <>

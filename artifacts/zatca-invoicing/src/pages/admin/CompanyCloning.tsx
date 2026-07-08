@@ -276,7 +276,7 @@ export default function CompanyCloning() {
                         : (run.error ?? "—")}
                     </td>
                     <td className="p-2 text-xs whitespace-nowrap">
-                      {new Date(run.createdAt).toLocaleString("ar-SA")}
+                      {new Date(run.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                     </td>
                   </tr>
                 ))}

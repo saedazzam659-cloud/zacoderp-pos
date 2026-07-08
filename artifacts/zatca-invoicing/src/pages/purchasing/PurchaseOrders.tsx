@@ -246,7 +246,7 @@ export default function PurchaseOrders() {
   };
 
   const buildListHtml = (source: any[] = filteredOrders) => {
-    const today = new Date().toLocaleDateString("ar-SA");
+    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const sumSub = source.reduce((a, r: any) => a + Number(r.subtotal ?? 0), 0);
     const sumVat = source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0);
     const sumTot = source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0);
@@ -309,7 +309,7 @@ ${source.map((r: any, i: number) => `<tr>
   };
 
   const buildBulkHtml = (docs: any[]) => {
-    const today = new Date().toLocaleDateString("ar-SA");
+    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const grandSub = docs.reduce((a, d: any) => a + Number(d.subtotal ?? 0), 0);
     const grandVat = docs.reduce((a, d: any) => a + Number(d.vatAmount ?? 0), 0);
     const grandTot = docs.reduce((a, d: any) => a + Number(d.totalAmount ?? 0), 0);

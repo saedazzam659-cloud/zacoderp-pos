@@ -570,7 +570,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
                       <div className="truncate font-mono text-xs">{f.filename}</div>
                       <div className="text-[10px] text-muted-foreground">
                         {f.bytes != null && formatBytes(f.bytes)}{f.pages ? ` · ${f.pages} صفحة` : ""}
-                        {" · "}{new Date(f.createdAt).toLocaleString("ar-SA")}
+                        {" · "}{new Date(f.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                         {f.uploadedByName ? ` · ${f.uploadedByName}` : ""}
                       </div>
                     </div>
@@ -611,7 +611,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
                       <div className="truncate font-mono text-xs">{f.filename}</div>
                       <div className="text-[10px] text-muted-foreground">
                         {formatBytes(f.bytes)}{f.pages ? ` · ${f.pages} صفحة` : ""}
-                        {" · "}{new Date(f.savedAt).toLocaleString("ar-SA")}
+                        {" · "}{new Date(f.savedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                         {f.viaDownload && " · مجلّد التنزيلات"}
                       </div>
                     </div>

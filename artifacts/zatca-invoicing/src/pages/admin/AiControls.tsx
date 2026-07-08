@@ -699,7 +699,7 @@ export default function AiControls() {
                         {e.company_name_ar || `#${e.company_id ?? "—"}`}
                       </span>
                       <span className="text-muted-foreground text-[10px]">
-                        {new Date(e.created_at).toLocaleString("ar-SA", {
+                        {new Date(e.created_at).toLocaleString("ar-SA-u-ca-gregory-nu-latn", {
                           hour: "2-digit", minute: "2-digit", day: "numeric", month: "short",
                         })}
                       </span>

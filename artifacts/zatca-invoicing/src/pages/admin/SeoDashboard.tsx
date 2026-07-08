@@ -53,7 +53,7 @@ interface SeoDashboardData {
 }
 
 // ─── Small helpers ─────────────────────────────────────────────────────
-const fmt = (n?: number) => (n === undefined || n === null ? "—" : n.toLocaleString("ar-SA"));
+const fmt = (n?: number) => (n === undefined || n === null ? "—" : n.toLocaleString("ar-SA-u-ca-gregory-nu-latn"));
 const fmtPct = (n: number) => `${n > 0 ? "+" : ""}${n.toFixed(1)}%`;
 
 const SOURCE_LABEL_AR: Record<SourceSlice["source"], string> = {
@@ -212,7 +212,7 @@ export default function SeoDashboard() {
         <div className="flex items-center gap-2">
           {data?.generatedAt && (
             <p className="text-[11px] text-muted-foreground">
-              آخر تحديث: {new Date(data.generatedAt).toLocaleString("ar-SA")}
+              آخر تحديث: {new Date(data.generatedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
             </p>
           )}
           <Button

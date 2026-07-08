@@ -577,7 +577,7 @@ export default function FixedAssets() {
                       <Calculator className="h-3.5 w-3.5" /> قيمة الضريبة (محسوبة)
                     </Label>
                     <div className="mt-1 h-10 px-3 flex items-center justify-end rounded-md border-2 border-amber-200 bg-amber-50 font-mono text-base font-bold text-amber-800">
-                      {vatAmt.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {vatAmt.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </div>
 
@@ -598,19 +598,19 @@ export default function FixedAssets() {
                     <div>
                       <div className="text-slate-500">الصافي</div>
                       <div className="font-mono font-bold text-slate-800 text-sm mt-0.5">
-                        {net.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {net.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
                     <div className="border-x border-teal-200">
                       <div className="text-amber-600">+ ضريبة {rate}%</div>
                       <div className="font-mono font-bold text-amber-700 text-sm mt-0.5">
-                        {vatAmt.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {vatAmt.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
                     <div>
                       <div className="text-emerald-600">= الإجمالي</div>
                       <div className="font-mono font-bold text-emerald-800 text-sm mt-0.5">
-                        {gross.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {gross.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
                   </div>
@@ -708,8 +708,8 @@ export default function FixedAssets() {
               </div>
               {a.plateNumber && <div className="text-xs bg-slate-50 rounded p-1.5 px-2 font-mono"><span className="text-muted-foreground">اللوحة: </span>{a.plateNumber}</div>}
               <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة الشراء</div><div className="font-mono font-bold text-slate-800">{Number(a.purchaseValue).toLocaleString("ar-EG")}</div></div>
-                <div className="bg-teal-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">القيمة الدفترية</div><div className="font-mono font-bold text-teal-800">{Number(a.bookValue).toLocaleString("ar-EG")}</div></div>
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة الشراء</div><div className="font-mono font-bold text-slate-800">{Number(a.purchaseValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div></div>
+                <div className="bg-teal-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">القيمة الدفترية</div><div className="font-mono font-bold text-teal-800">{Number(a.bookValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div></div>
               </div>
             </div>
             <div className="grid grid-cols-3 border-t divide-x divide-slate-100 [direction:ltr]">
@@ -754,8 +754,8 @@ export default function FixedAssets() {
                   <td className="px-3 py-2 font-semibold">{a.nameAr}</td>
                   <td className="px-3 py-2">{[a.brand, a.model].filter(Boolean).join(" — ")}</td>
                   <td className="px-3 py-2 font-mono">{a.plateNumber || "—"}</td>
-                  <td className="px-3 py-2 font-mono">{Number(a.purchaseValue).toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono">{Number(a.bookValue).toLocaleString("ar-EG")}</td>
+                  <td className="px-3 py-2 font-mono">{Number(a.purchaseValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono">{Number(a.bookValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
                   <td className="px-3 py-2">
                     <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusBadge(a.status)}`}>
                       {statusLabel(a.status)}

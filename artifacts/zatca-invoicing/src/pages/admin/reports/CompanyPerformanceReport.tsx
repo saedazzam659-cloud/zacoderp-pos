@@ -19,8 +19,8 @@ interface PerfResp {
   rows: PerfRow[];
 }
 
-const fmt = new Intl.NumberFormat("ar-SA", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
-const fmtInt = new Intl.NumberFormat("ar-SA");
+const fmt = new Intl.NumberFormat("ar-SA-u-nu-latn", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+const fmtInt = new Intl.NumberFormat("ar-SA-u-nu-latn");
 
 type SortKey = "revenue" | "invoiceCount" | "avgInvoice" | "growthPct";
 

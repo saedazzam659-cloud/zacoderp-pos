@@ -336,7 +336,7 @@ export default function AuditLog() {
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`adminPages.auditLog.${k}`, opts) as string;
   const trAction = (a: string) => t(`adminPages.auditLog.actions.${a}`, { defaultValue: a }) as string;
-  const locale = isRtl ? "ar-SA" : "en-US";
+  const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const headers = { Authorization: `Bearer ${token}` };
 
   const [module, setModule] = useState<string>("__all");

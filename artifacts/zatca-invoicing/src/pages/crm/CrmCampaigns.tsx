@@ -192,9 +192,9 @@ export default function CrmCampaigns() {
                   <td className="px-3 py-2 font-mono">{c.code}</td>
                   <td className="px-3 py-2 font-semibold">{c.name}</td>
                   <td className="px-3 py-2">{channelLabel(c.channel)}</td>
-                  <td className="px-3 py-2 font-mono">{Number(c.budget).toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono">{Number(c.expectedRevenue).toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono">{Number(c.actualRevenue).toLocaleString("ar-EG")}</td>
+                  <td className="px-3 py-2 font-mono">{Number(c.budget).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono">{Number(c.expectedRevenue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono">{Number(c.actualRevenue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
                   <td className="px-3 py-2">
                     <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${c.isActive ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
                       {c.isActive ? "نشطة" : "متوقفة"}

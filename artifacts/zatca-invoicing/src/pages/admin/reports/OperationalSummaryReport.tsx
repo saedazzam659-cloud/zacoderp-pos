@@ -26,7 +26,7 @@ interface OpsResp {
   rows: OpsRow[];
 }
 
-const fmtInt = new Intl.NumberFormat("ar-SA");
+const fmtInt = new Intl.NumberFormat("ar-SA-u-nu-latn");
 
 export default function OperationalSummaryReport() {
   const { token } = useAuth();

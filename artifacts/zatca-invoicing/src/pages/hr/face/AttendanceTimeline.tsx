@@ -211,7 +211,7 @@ function DayBlock({ day }: { day: { date: string; attendance: any; activity: any
   if (a?.checkOut) events.push({ time: a.checkOut, kind: "out", label: "تسجيل انصراف" });
   events.sort((x, y) => x.time.localeCompare(y.time));
 
-  const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString("ar-EG", {
+  const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString("ar-EG-u-ca-gregory-nu-latn", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
 

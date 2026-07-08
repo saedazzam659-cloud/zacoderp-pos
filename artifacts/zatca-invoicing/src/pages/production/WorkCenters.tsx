@@ -374,9 +374,9 @@ export default function WorkCenters() {
                 <tr key={w.id} className="border-t hover:bg-slate-50">
                   <td className="p-2 font-mono text-xs">{w.code}</td>
                   <td className="p-2 font-medium">{w.nameAr}{w.nameEn ? ` — ${w.nameEn}` : ""}</td>
-                  <td className="p-2 text-end">{Number(w.laborRatePerHour).toLocaleString()}</td>
-                  <td className="p-2 text-end">{Number(w.overheadRatePerHour).toLocaleString()}</td>
-                  <td className="p-2 text-end">{Number(w.capacityHoursPerDay).toLocaleString()}</td>
+                  <td className="p-2 text-end">{Number(w.laborRatePerHour).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                  <td className="p-2 text-end">{Number(w.overheadRatePerHour).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                  <td className="p-2 text-end">{Number(w.capacityHoursPerDay).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                   <td className="p-2 text-xs">{w.costCenterCode || "—"}</td>
                   <td className="p-2 text-center">
                     {w.isActive

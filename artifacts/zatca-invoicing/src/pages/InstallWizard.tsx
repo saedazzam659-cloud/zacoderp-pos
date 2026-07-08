@@ -262,7 +262,7 @@ export default function InstallWizard() {
                         <Badge className="bg-blue-100 text-blue-700">إصدار {release.version}</Badge>
                         <Badge variant="outline">Windows 64-bit</Badge>
                         {release.fallback && <Badge className="bg-amber-100 text-amber-700">إصدار دولي</Badge>}
-                        <span className="text-xs text-muted-foreground">نُشر {new Date(release.publishedAt).toLocaleDateString("ar-SA")}</span>
+                        <span className="text-xs text-muted-foreground">نُشر {new Date(release.publishedAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
                       </div>
                       <div className="rounded-lg border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-4 space-y-3">
                         <div className="flex items-center gap-2 text-blue-700 font-bold">

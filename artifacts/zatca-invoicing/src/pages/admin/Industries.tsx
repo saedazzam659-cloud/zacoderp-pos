@@ -690,7 +690,7 @@ function formatUploadedAt(iso?: string | null): string {
   if (!iso) return "لم يُرفع بعد";
   try {
     const d = new Date(iso);
-    return d.toLocaleString("ar-SA", {
+    return d.toLocaleString("ar-SA-u-ca-gregory-nu-latn", {
       year: "numeric", month: "short", day: "numeric",
       hour: "2-digit", minute: "2-digit",
     });

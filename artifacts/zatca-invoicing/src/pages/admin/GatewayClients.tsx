@@ -223,7 +223,7 @@ function StatPill({ icon: Icon, label, value, sub }: { icon: typeof Building2; l
         <Icon className="h-4 w-4" />
         <span>{label}</span>
       </div>
-      <div className="mt-1 text-2xl font-bold">{value.toLocaleString("ar-EG")}</div>
+      <div className="mt-1 text-2xl font-bold">{value.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div>
       {sub && <div className="text-xs text-white/70">{sub}</div>}
     </div>
   );
@@ -270,14 +270,14 @@ function ClientCard({ client, onOpen }: { client: Client; onOpen: () => void }) 
         <div className="mt-4 space-y-1">
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-600">استخدام هذا الشهر</span>
-            <span className="font-mono text-slate-700">{client.invoicesThisMonth.toLocaleString("ar-EG")} / {client.monthlyQuota.toLocaleString("ar-EG")}</span>
+            <span className="font-mono text-slate-700">{client.invoicesThisMonth.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} / {client.monthlyQuota.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span>
           </div>
           <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
             <div className={`h-full ${usageColor} transition-all`} style={{ width: `${usagePct}%` }} />
           </div>
           <div className="flex items-center justify-between text-xs text-slate-500 mt-1">
-            <span>إجمالي: {client.totalInvoices.toLocaleString("ar-EG")} فاتورة</span>
-            {client.lastInvoiceAt && <span>آخر فاتورة: {new Date(client.lastInvoiceAt).toLocaleDateString("ar-SA")}</span>}
+            <span>إجمالي: {client.totalInvoices.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} فاتورة</span>
+            {client.lastInvoiceAt && <span>آخر فاتورة: {new Date(client.lastInvoiceAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>}
           </div>
         </div>
       </CardContent>
@@ -1009,7 +1009,7 @@ function WebhooksTab({ clientId }: { clientId: number }) {
                     {h.lastStatus === "success" ? <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">آخر تسليم: نجح</Badge>
                       : h.lastStatus === "failed" ? <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200">آخر تسليم: فشل ({h.failureCount})</Badge>
                       : <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">لم يُجرّب بعد</Badge>}
-                    {h.lastDeliveryAt && <span>{new Date(h.lastDeliveryAt).toLocaleString("ar-EG")}</span>}
+                    {h.lastDeliveryAt && <span>{new Date(h.lastDeliveryAt).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span>}
                   </div>
                   {openHookId === h.id && <DeliveriesPanel clientId={clientId} hookId={h.id} />}
                 </CardContent>
@@ -1051,7 +1051,7 @@ function DeliveriesPanel({ clientId, hookId }: { clientId: number; hookId: numbe
                     </td>
                     <td className="p-1.5 font-mono">{d.httpStatus ?? "—"}</td>
                     <td className="p-1.5 text-center">{d.attempts}</td>
-                    <td className="p-1.5 text-[10px] text-muted-foreground">{new Date(d.createdAt).toLocaleString("ar-EG")}</td>
+                    <td className="p-1.5 text-[10px] text-muted-foreground">{new Date(d.createdAt).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1132,8 +1132,8 @@ function ApiKeysTab({ clientId }: { clientId: number }) {
                   </div>
                   <div className="text-xs text-slate-500 font-mono truncate" dir="ltr">{k.keyPrefix}••••••••••••</div>
                   <div className="text-xs text-slate-400 mt-0.5">
-                    أُنشئ: {new Date(k.createdAt).toLocaleDateString("ar-SA")}
-                    {k.lastUsedAt && ` • آخر استخدام: ${new Date(k.lastUsedAt).toLocaleDateString("ar-SA")}`}
+                    أُنشئ: {new Date(k.createdAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}
+                    {k.lastUsedAt && ` • آخر استخدام: ${new Date(k.lastUsedAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}`}
                   </div>
                 </div>
               </div>
@@ -1253,14 +1253,14 @@ function InvoicesTab({ clientId }: { clientId: number }) {
                     {inv.invoiceFlow && <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">{inv.invoiceFlow === "standard" ? "B2B" : "B2C"}</span>}
                   </div>
                   <div className="text-xs text-slate-500">
-                    {new Date(inv.receivedAt).toLocaleString("ar-SA")}
+                    {new Date(inv.receivedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                     {inv.zatcaUuid && <span className="ml-2 font-mono text-[10px]" dir="ltr">{inv.zatcaUuid.slice(0, 8)}...</span>}
                   </div>
                   {inv.errorMessage && <div className="text-xs text-rose-600 mt-0.5">{inv.errorMessage}</div>}
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {inv.totalAmount && <span className="font-mono text-sm text-slate-700 hidden sm:inline">{Number(inv.totalAmount).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
+                {inv.totalAmount && <span className="font-mono text-sm text-slate-700 hidden sm:inline">{Number(inv.totalAmount).toLocaleString("ar-EG-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
                 <Badge variant="outline" className={STATUS_CLR[inv.status] ?? "bg-slate-50"}>{STATUS_AR[inv.status] ?? inv.status}</Badge>
                 <Button
                   variant="ghost" size="icon"
@@ -1285,7 +1285,7 @@ function InvoicesTab({ clientId }: { clientId: number }) {
 function MiniStat({ label, value, cls }: { label: string; value: number; cls: string }) {
   return (
     <div className={`rounded-lg p-2 text-center ${cls}`}>
-      <div className="font-mono text-lg font-bold leading-none">{value.toLocaleString("ar-EG")}</div>
+      <div className="font-mono text-lg font-bold leading-none">{value.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div>
       <div className="text-[10px] mt-1 opacity-80">{label}</div>
     </div>
   );
@@ -1654,7 +1654,7 @@ function UploadInvoicesModal({ client, onUploaded }: { client: ClientDetail; onU
               <MiniStat label="B2C" value={preview.aggregate.b2c} cls="bg-sky-100 text-sky-800" />
               <div className="rounded-lg p-2 text-center bg-emerald-100 text-emerald-800">
                 <div className="font-mono text-sm font-bold leading-none">
-                  {preview.aggregate.totalAmount.toLocaleString("ar-EG", { maximumFractionDigits: 2 })}
+                  {preview.aggregate.totalAmount.toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })}
                 </div>
                 <div className="text-[10px] mt-1 opacity-80">إجمالي (ر.س)</div>
               </div>
@@ -1692,8 +1692,8 @@ function UploadInvoicesModal({ client, onUploaded }: { client: ClientDetail; onU
                       <td className="p-2 font-mono" dir="ltr">{String(s.invoiceNumber ?? "—")}</td>
                       <td className="p-2 font-mono" dir="ltr">{String(s.invoiceDate ?? "—")}</td>
                       <td className="p-2 truncate max-w-[120px]">{String(s.buyerName ?? (s.flow === "simplified" ? "تجزئة" : "—"))}</td>
-                      <td className="p-2 font-mono">{Number(s.total ?? 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td>
-                      <td className="p-2 font-mono">{Number(s.vat ?? 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td>
+                      <td className="p-2 font-mono">{Number(s.total ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })}</td>
+                      <td className="p-2 font-mono">{Number(s.vat ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })}</td>
                       <td className="p-2"><Badge variant="outline" className="text-[10px]">{s.flow === "standard" ? "B2B" : "B2C"}</Badge></td>
                     </tr>
                   ))}

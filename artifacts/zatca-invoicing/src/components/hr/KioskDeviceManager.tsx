@@ -83,7 +83,7 @@ export function KioskDeviceManager({ open, onOpenChange }: Props) {
   const fmtDate = (s: string | null) => {
     if (!s) return "—";
     const d = new Date(s);
-    return `${d.toLocaleDateString("ar-SA")} ${d.toTimeString().slice(0, 5)}`;
+    return `${d.toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")} ${d.toTimeString().slice(0, 5)}`;
   };
 
   const active = tokens.filter((t) => !t.revokedAt);

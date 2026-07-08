@@ -411,13 +411,13 @@ export default function ProductionOrderDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
           <div className="rounded-lg border bg-white dark:bg-slate-900 p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <Stat label={t("production.plannedQty")} value={`${Number(order.plannedQty).toLocaleString()} ${order.unitCode}`} />
-            <Stat label={t("production.producedQty")} value={Number(order.producedQty).toLocaleString()} />
-            <Stat label={t("production.wasteQty")} value={Number(order.wasteQty).toLocaleString()} />
-            <Stat label={t("production.actualCost")} value={Number(order.actualCost).toLocaleString()} />
-            <Stat label="تكلفة الخامات" value={Number(order.rawMaterialsCost).toLocaleString()} />
-            <Stat label="أجور الإنتاج" value={Number(order.laborCost).toLocaleString()} />
-            <Stat label="تكاليف غير مباشرة" value={Number(order.overheadCost).toLocaleString()} />
+            <Stat label={t("production.plannedQty")} value={`${Number(order.plannedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ${order.unitCode}`} />
+            <Stat label={t("production.producedQty")} value={Number(order.producedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} />
+            <Stat label={t("production.wasteQty")} value={Number(order.wasteQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} />
+            <Stat label={t("production.actualCost")} value={Number(order.actualCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} />
+            <Stat label="تكلفة الخامات" value={Number(order.rawMaterialsCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} />
+            <Stat label="أجور الإنتاج" value={Number(order.laborCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} />
+            <Stat label="تكاليف غير مباشرة" value={Number(order.overheadCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} />
             <Stat
               label="القيود المحاسبية"
               value={
@@ -504,7 +504,7 @@ export default function ProductionOrderDetail() {
                 </div>
               </div>
               <p className="text-xs text-slate-500 mt-2">
-                عند الضغط على «إكمال»، توزَّع تكلفة WIP الإجمالية ({Number(order.actualCost).toLocaleString()})
+                عند الضغط على «إكمال»، توزَّع تكلفة WIP الإجمالية ({Number(order.actualCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")})
                 على الكمية المنتَجة والهالك تناسبيًا.
               </p>
             </div>
@@ -662,9 +662,9 @@ export default function ProductionOrderDetail() {
                           </span>
                         </td>
                         <td className="p-2">{it.description}</td>
-                        <td className="p-2 text-end">{Number(it.quantity).toLocaleString()} {it.unitCode}</td>
-                        <td className="p-2 text-end">{Number(it.unitCost).toLocaleString()}</td>
-                        <td className="p-2 text-end">{Number(it.totalCost).toLocaleString()}</td>
+                        <td className="p-2 text-end">{Number(it.quantity).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {it.unitCode}</td>
+                        <td className="p-2 text-end">{Number(it.unitCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                        <td className="p-2 text-end">{Number(it.totalCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                         <td className="p-2 text-end">
                           <Button
                             size="sm" variant="ghost"
@@ -693,7 +693,7 @@ export default function ProductionOrderDetail() {
                     <div className="flex-1">
                       <div className="text-sm font-medium">{ev.eventType}</div>
                       <div className="text-xs text-slate-500">
-                        {new Date(ev.createdAt).toLocaleString()} {ev.byAi && <span>· {t("production.byAi")}</span>}
+                        {new Date(ev.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {ev.byAi && <span>· {t("production.byAi")}</span>}
                       </div>
                     </div>
                   </div>
@@ -1014,9 +1014,9 @@ function WipSetupPanel({
           />
           {selectedWc && (
             <p className="mt-1 text-xs text-violet-700 dark:text-violet-300">
-              معدل الأجور: {Number(selectedWc.laborRatePerHour).toLocaleString()} / ساعة
+              معدل الأجور: {Number(selectedWc.laborRatePerHour).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} / ساعة
               {" · "}
-              OH: {Number(selectedWc.overheadRatePerHour).toLocaleString()} / ساعة
+              OH: {Number(selectedWc.overheadRatePerHour).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} / ساعة
             </p>
           )}
         </Field>
@@ -1183,9 +1183,9 @@ function IssuePreviewPanel({
                   </span>
                 </div>
                 <div className="text-slate-600 dark:text-slate-400">
-                  مطلوب {Number(ln.requestedQty).toLocaleString()} — متاح {Number(ln.available).toLocaleString()}
+                  مطلوب {Number(ln.requestedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} — متاح {Number(ln.available).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                   {Number(ln.shortfall) > 0 && (
-                    <span className="text-red-600 ms-2">نقص {Number(ln.shortfall).toLocaleString()}</span>
+                    <span className="text-red-600 ms-2">نقص {Number(ln.shortfall).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                   )}
                 </div>
               </div>
@@ -1204,7 +1204,7 @@ function IssuePreviewPanel({
                       <tr key={`${ln.lineId}-${i}`} className="border-t">
                         <td className="py-1 font-mono">{p.batchNumber ?? <span className="text-slate-400">— غير مرمَّز —</span>}</td>
                         <td className="py-1">{p.expiryDate ?? <span className="text-slate-400">—</span>}</td>
-                        <td className="py-1 text-end">{Number(p.takeQty).toLocaleString()}</td>
+                        <td className="py-1 text-end">{Number(p.takeQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                         <td className="py-1 text-end">{p.costPrice != null ? Number(p.costPrice).toFixed(4) : "—"}</td>
                       </tr>
                     ))}
@@ -1457,17 +1457,17 @@ function WasteRecordsTab({
                 {t.labelAr}
               </div>
               <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100">
-                {summary[t.value].qty.toLocaleString()}
+                {summary[t.value].qty.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
               </div>
               <div className="text-[11px] text-slate-500">
-                {summary[t.value].count} سجل · {summary[t.value].cost.toLocaleString()} ر.س
+                {summary[t.value].count} سجل · {summary[t.value].cost.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س
               </div>
             </div>
           ))}
           <div className="rounded-lg border border-slate-300 bg-slate-50 dark:bg-slate-800/50 p-2.5">
             <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">الإجمالي</div>
-            <div className="mt-1 text-sm font-bold">{totalQty.toLocaleString()}</div>
-            <div className="text-[11px] text-slate-500">{totalCost.toLocaleString()} ر.س</div>
+            <div className="mt-1 text-sm font-bold">{totalQty.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
+            <div className="text-[11px] text-slate-500">{totalCost.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</div>
           </div>
         </div>
       )}
@@ -1581,11 +1581,11 @@ function WasteRecordsTab({
                         {t?.labelAr ?? r.wasteType}
                       </span>
                     </td>
-                    <td className="px-3 py-2 font-medium">{Number(r.qty).toLocaleString()} {r.unitCode}</td>
-                    <td className="px-3 py-2">{Number(r.costImpact).toLocaleString()}</td>
+                    <td className="px-3 py-2 font-medium">{Number(r.qty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {r.unitCode}</td>
+                    <td className="px-3 py-2">{Number(r.costImpact).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                     <td className="px-3 py-2 text-xs text-slate-600">{r.reason ?? "—"}</td>
                     <td className="px-3 py-2 text-xs text-slate-500">
-                      {new Date(r.createdAt).toLocaleString("ar-SA")}
+                      {new Date(r.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                     </td>
                     <td className="px-3 py-2">
                       {!disabled && (

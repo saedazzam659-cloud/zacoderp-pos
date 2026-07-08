@@ -1300,7 +1300,7 @@ export default function SalesReturns() {
 
   // Build the page-level summary print HTML (one row per return)
   const buildReturnsListHtml = (source: any[] = filteredReturns) => {
-    const today = new Date().toLocaleDateString("ar-SA");
+    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const sumSubtotal = source.reduce((a, r: any) => a + (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)), 0);
     const sumVat      = source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0);
     const sumTotal    = source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0);
@@ -1502,7 +1502,7 @@ ${source.map((r: any, i: number) => {
   // Build the bulk-print HTML — one full A4 portrait sheet per selected return
   // showing every line (item / qty / price / vat / total) of that return.
   const buildBulkReturnsHtml = (docs: any[]) => {
-    const today = new Date().toLocaleDateString("ar-SA");
+    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const grandSub = docs.reduce((a, d: any) => a + (Number(d.totalAmount ?? 0) - Number(d.vatAmount ?? 0)), 0);
     const grandVat = docs.reduce((a, d: any) => a + Number(d.vatAmount ?? 0), 0);
     const grandTot = docs.reduce((a, d: any) => a + Number(d.totalAmount ?? 0), 0);

@@ -508,7 +508,7 @@ function ItemHistoryDialog({ open, onOpenChange, item }: { open: boolean; onOpen
   }
   function fmtDate(s: string): string {
     try {
-      return new Date(s).toLocaleString(isRtl ? "ar-SA" : "en-GB", {
+      return new Date(s).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB", {
         year: "numeric", month: "short", day: "2-digit",
         hour: "2-digit", minute: "2-digit",
       });
@@ -752,7 +752,7 @@ function ItemAnalyticsPanel({ itemId, unitCode }: { itemId: number; unitCode: st
   }
 
   const formatDate = (iso: string) => {
-    try { return new Date(iso).toLocaleDateString(i18n.language === "ar" ? "ar-EG" : "en-US"); }
+    try { return new Date(iso).toLocaleDateString(i18n.language === "ar" ? "ar-EG-u-ca-gregory-nu-latn" : "en-US"); }
     catch { return iso; }
   };
 

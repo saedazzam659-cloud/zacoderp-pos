@@ -120,7 +120,7 @@ export default function SequenceMonitor() {
   const fmtDate = (iso: string) => {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString(isAr ? "ar-EG" : "en-US", {
+    return d.toLocaleString(isAr ? "ar-EG-u-ca-gregory-nu-latn" : "en-US", {
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit",
     });
@@ -165,7 +165,7 @@ export default function SequenceMonitor() {
           <CardContent className="flex items-center gap-3 p-4">
             <div className="rounded-lg bg-indigo-50 p-2 text-indigo-600"><Hash className="w-5 h-5" /></div>
             <div>
-              <div className="text-2xl font-bold tabular-nums" data-testid="stat-total">{total.toLocaleString()}</div>
+              <div className="text-2xl font-bold tabular-nums" data-testid="stat-total">{total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
               <div className="text-xs text-muted-foreground">إجمالي الحركات (بالفلاتر الحالية)</div>
             </div>
           </CardContent>
@@ -406,7 +406,7 @@ export default function SequenceMonitor() {
               {isFetching && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {total > 0 ? (
                 <span>
-                  عرض {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} من {total.toLocaleString()}
+                  عرض {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} من {total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                 </span>
               ) : (
                 <span>لا نتائج</span>

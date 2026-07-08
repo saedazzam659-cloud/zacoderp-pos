@@ -88,7 +88,7 @@ const STATUS_TONE: Record<Contract["status"], string> = {
 
 function fmt(n: number | string | null | undefined) {
   const v = Number(n ?? 0);
-  return v.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return v.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export default function InstallmentContracts() {

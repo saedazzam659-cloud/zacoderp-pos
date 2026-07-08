@@ -541,7 +541,7 @@ type LookupMaps = {
 // table and totals block — the actual INVOICE CONTENTS, not the grid view.
 function buildBulkPrintHtml(invoices: any[], maps: LookupMaps): string {
   const { cusMap, branchMap, repMap } = maps;
-  const today = new Date().toLocaleString("ar-SA");
+  const today = new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn");
   const sections = invoices.map((inv: any, idx: number) => {
     const cus = cusMap[inv.customerId] ?? {};
     const branch = branchMap[inv.branchId] ?? "";

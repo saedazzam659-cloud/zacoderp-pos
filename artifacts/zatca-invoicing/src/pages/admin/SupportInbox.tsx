@@ -133,7 +133,7 @@ export default function SupportInbox() {
                           <Badge className={PRIORITY[m.priority] || PRIORITY.normal} variant="outline">{m.priority}</Badge>
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {m.senderName} • {m.companyName} • {new Date(m.createdAt).toLocaleString("ar-SA")}
+                          {m.senderName} • {m.companyName} • {new Date(m.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                         </p>
                       </div>
                       <span className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-medium border px-2 py-0.5 rounded-full ${S.cls}`}>

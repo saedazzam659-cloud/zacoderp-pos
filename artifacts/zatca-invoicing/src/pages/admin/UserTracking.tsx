@@ -40,7 +40,7 @@ function fmtMin(min: number | null | undefined): string {
 }
 function fmtDt(s: string | null | undefined): string {
   if (!s) return "—";
-  try { return new Date(s).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" }); }
+  try { return new Date(s).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "short", timeStyle: "short" }); }
   catch { return s; }
 }
 

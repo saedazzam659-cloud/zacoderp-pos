@@ -78,7 +78,7 @@ export default function RecoverSuperAdmin() {
   function downloadCodes() {
     if (!newCodes) return;
     const blob = new Blob([
-      `رموز استرجاع SuperAdmin (إنشاء بعد الاسترجاع)\nأُنشئت: ${new Date().toLocaleString("ar-SA")}\n\n` +
+      `رموز استرجاع SuperAdmin (إنشاء بعد الاسترجاع)\nأُنشئت: ${new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn")}\n\n` +
       newCodes.join("\n"),
     ], { type: "text/plain;charset=utf-8" });
     const a = document.createElement("a");

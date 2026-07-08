@@ -65,17 +65,17 @@ export default function CrmAI() {
           <div className="text-[11px] text-indigo-700 font-semibold flex items-center gap-1">
             <TrendingUp className="h-3.5 w-3.5" /> قيمة خط الأنابيب
           </div>
-          <div className="text-xl font-bold mt-1 font-mono">{Number(forecast?.pipelineValue ?? 0).toLocaleString("ar-EG")}</div>
+          <div className="text-xl font-bold mt-1 font-mono">{Number(forecast?.pipelineValue ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div>
           <div className="text-[10px] text-muted-foreground">ر.س</div>
         </div>
         <div className="border rounded-lg p-3 bg-gradient-to-br from-emerald-50 to-white">
           <div className="text-[11px] text-emerald-700 font-semibold">القيمة المرجّحة</div>
-          <div className="text-xl font-bold mt-1 font-mono">{Number(forecast?.weightedValue ?? 0).toLocaleString("ar-EG")}</div>
+          <div className="text-xl font-bold mt-1 font-mono">{Number(forecast?.weightedValue ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div>
           <div className="text-[10px] text-muted-foreground">ر.س (مرجّحة باحتمالية النجاح)</div>
         </div>
         <div className="border rounded-lg p-3 bg-gradient-to-br from-amber-50 to-white">
           <div className="text-[11px] text-amber-700 font-semibold">توقع 30 يوماً</div>
-          <div className="text-xl font-bold mt-1 font-mono">{Number(forecast?.forecastNext30Days ?? 0).toLocaleString("ar-EG")}</div>
+          <div className="text-xl font-bold mt-1 font-mono">{Number(forecast?.forecastNext30Days ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div>
           <div className="text-[10px] text-muted-foreground">ر.س متوقع الإغلاق</div>
         </div>
         <div className="border rounded-lg p-3 bg-gradient-to-br from-rose-50 to-white">
@@ -148,7 +148,7 @@ export default function CrmAI() {
                   <td className="px-2 py-1.5 font-mono">{r.opportunities}</td>
                   <td className="px-2 py-1.5 font-mono text-emerald-700">{r.won}</td>
                   <td className="px-2 py-1.5 font-mono">{r.conversionRate}%</td>
-                  <td className="px-2 py-1.5 font-mono">{r.totalValue.toLocaleString("ar-EG")}</td>
+                  <td className="px-2 py-1.5 font-mono">{r.totalValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
                 </tr>
               ))}
             </tbody>
@@ -164,7 +164,7 @@ export default function CrmAI() {
             <div key={k} className="border rounded p-2 text-center">
               <div className="text-[10px] text-muted-foreground">{STAGE_LABEL[k] ?? k}</div>
               <div className="text-lg font-bold">{v.count}</div>
-              <div className="text-[10px] font-mono text-amber-700">{v.value.toLocaleString("ar-EG")}</div>
+              <div className="text-[10px] font-mono text-amber-700">{v.value.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div>
             </div>
           ))}
           {Object.keys(forecast?.byStage ?? {}).length === 0 && (

@@ -283,7 +283,7 @@ export default function HotelBookings() {
                 <option value="">— اختر الغرفة —</option>
                 {rooms.map((r: any) => (
                   <option key={r.id} value={r.id}>
-                    {r.roomNumber} ({r.roomType}) — {Number(r.basePrice).toLocaleString()} ر.س
+                    {r.roomNumber} ({r.roomType}) — {Number(r.basePrice).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س
                   </option>
                 ))}
               </select>
@@ -318,7 +318,7 @@ export default function HotelBookings() {
                 }} />
               {aiSuggestion && (
                 <div className="mt-2 p-2 rounded bg-violet-50 border border-violet-200 text-[12px] text-violet-900">
-                  <strong>اقتراح الذكاء الاصطناعي:</strong> {aiSuggestion.price.toLocaleString()} ر.س / ليلة
+                  <strong>اقتراح الذكاء الاصطناعي:</strong> {aiSuggestion.price.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س / ليلة
                   {aiSuggestion.explanation && <p className="mt-1 text-violet-800">{aiSuggestion.explanation}</p>}
                 </div>
               )}
@@ -385,8 +385,8 @@ export default function HotelBookings() {
                   <div><div className="text-[10px] text-muted-foreground">ليالي</div><div className="text-base font-bold text-emerald-700">{b.nightsCount}</div></div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                  <div className="bg-emerald-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">الإجمالي</div><div className="font-mono font-bold text-emerald-800">{Number(b.totalPrice).toLocaleString("ar-SA")}</div></div>
-                  <div className="bg-blue-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">المدفوع</div><div className="font-mono font-bold text-blue-800">{Number(b.paidAmount).toLocaleString("ar-SA")}</div></div>
+                  <div className="bg-emerald-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">الإجمالي</div><div className="font-mono font-bold text-emerald-800">{Number(b.totalPrice).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>
+                  <div className="bg-blue-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">المدفوع</div><div className="font-mono font-bold text-blue-800">{Number(b.paidAmount).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>
                 </div>
               </div>
               <div className="grid grid-cols-3 border-t divide-x divide-slate-100 [direction:ltr]">
@@ -449,8 +449,8 @@ export default function HotelBookings() {
                     <td className="px-3 py-2 font-mono text-[11px]">{b.checkIn}</td>
                     <td className="px-3 py-2 font-mono text-[11px]">{b.checkOut}</td>
                     <td className="px-3 py-2 text-center">{b.nightsCount}</td>
-                    <td className="px-3 py-2 font-mono">{Number(b.totalPrice).toLocaleString("ar-SA")}</td>
-                    <td className="px-3 py-2 font-mono">{Number(b.paidAmount).toLocaleString("ar-SA")}</td>
+                    <td className="px-3 py-2 font-mono">{Number(b.totalPrice).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                    <td className="px-3 py-2 font-mono">{Number(b.paidAmount).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                     <td className="px-3 py-2">
                       {st && <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${st[2]}`}>{st[1]}</span>}
                     </td>

@@ -43,7 +43,7 @@ export default function FieldTracking() {
                   </div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
                     <Clock className="h-3 w-3" />
-                    {new Date(r.arrived_at).toLocaleTimeString("ar-SA")}
+                    {new Date(r.arrived_at).toLocaleTimeString("ar-SA-u-nu-latn")}
                     {r.duration_min ? ` • ${r.duration_min} د` : ""}
                   </div>
                 </div>

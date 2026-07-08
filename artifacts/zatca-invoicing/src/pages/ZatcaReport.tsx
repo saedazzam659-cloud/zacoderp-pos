@@ -49,7 +49,7 @@ export default function ZatcaReport() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`zatcaPages.report.${k}`, opts) as string;
-  const locale = isRtl ? "ar-SA" : "en-US";
+  const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const pickName = (ar?: string | null, en?: string | null) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
 
   const [, navigate] = useLocation();

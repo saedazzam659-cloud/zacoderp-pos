@@ -361,9 +361,9 @@ export default function FieldServiceTickets() {
                 <div><div className="text-muted-foreground">العميل</div><div className="font-medium">{detail.customerName ?? "—"}</div></div>
                 <div><div className="text-muted-foreground">SLA استجابة</div><div className="tabular-nums">{detail.slaResponseMin} د</div></div>
                 <div><div className="text-muted-foreground">SLA حل</div><div className="tabular-nums">{detail.slaResolutionMin} د</div></div>
-                <div><div className="text-muted-foreground">فُتحت</div><div>{new Date(detail.openedAt).toLocaleString("ar-SA")}</div></div>
-                {detail.respondedAt && <div><div className="text-muted-foreground">رُد عليها</div><div>{new Date(detail.respondedAt).toLocaleString("ar-SA")}</div></div>}
-                {detail.resolvedAt && <div><div className="text-muted-foreground">حُلّت</div><div>{new Date(detail.resolvedAt).toLocaleString("ar-SA")}</div></div>}
+                <div><div className="text-muted-foreground">فُتحت</div><div>{new Date(detail.openedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>
+                {detail.respondedAt && <div><div className="text-muted-foreground">رُد عليها</div><div>{new Date(detail.respondedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>}
+                {detail.resolvedAt && <div><div className="text-muted-foreground">حُلّت</div><div>{new Date(detail.resolvedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>}
               </div>
 
               {/* Assign */}
@@ -387,7 +387,7 @@ export default function FieldServiceTickets() {
                     {detail.visits.map((v) => (
                       <div key={v.id} className="flex items-center gap-2 text-xs border-b py-1">
                         <Badge variant="outline">{v.status}</Badge>
-                        <span className="flex-1">{new Date(v.arrivedAt).toLocaleString("ar-SA")}</span>
+                        <span className="flex-1">{new Date(v.arrivedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                         {v.durationMin && <span className="text-muted-foreground">{v.durationMin} د</span>}
                       </div>
                     ))}

@@ -93,7 +93,7 @@ const EMPTY = {
 export default function PurchaseReturns() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const tr = (k: string, opts?: any): string => t(`purchasingPages.purchaseReturns.${k}`, opts) as string;
   const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
   const itemName = (i: any) => isRtl ? (i?.nameAr ?? i?.nameEn ?? "") : (i?.nameEn ?? i?.nameAr ?? "");
@@ -924,7 +924,7 @@ export default function PurchaseReturns() {
   };
 
   const buildListHtml = (source: any[] = filteredReturns) => {
-    const reportDate = new Date().toLocaleDateString("ar-SA");
+    const reportDate = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const sumSub = source.reduce((a, r: any) => a + (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)), 0);
     const sumVat = source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0);
     const sumTot = source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0);
@@ -986,7 +986,7 @@ ${source.map((r: any, i: number) => `<tr>
   };
 
   const buildBulkHtml = (docs: any[]) => {
-    const reportDate = new Date().toLocaleDateString("ar-SA");
+    const reportDate = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const grandSub = docs.reduce((a, d: any) => a + (Number(d.totalAmount ?? 0) - Number(d.vatAmount ?? 0)), 0);
     const grandVat = docs.reduce((a, d: any) => a + Number(d.vatAmount ?? 0), 0);
     const grandTot = docs.reduce((a, d: any) => a + Number(d.totalAmount ?? 0), 0);

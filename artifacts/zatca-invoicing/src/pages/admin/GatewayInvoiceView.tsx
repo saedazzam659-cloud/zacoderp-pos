@@ -61,7 +61,7 @@ interface RenderResp {
 }
 
 const fmt = (n: number | string | null | undefined) =>
-  Number(n ?? 0).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  Number(n ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function GatewayInvoiceView() {
   const params = useParams<{ id: string; invId: string }>();
@@ -165,7 +165,7 @@ export default function GatewayInvoiceView() {
   const dateHijri = issueDateObj
     ? (() => {
         try {
-          return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura", {
+          return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura-nu-latn", {
             year: "numeric", month: "long", day: "numeric",
           }).format(issueDateObj);
         } catch { return ""; }

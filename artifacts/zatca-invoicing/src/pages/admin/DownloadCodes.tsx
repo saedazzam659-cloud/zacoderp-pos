@@ -122,7 +122,7 @@ export default function DownloadCodes() {
     toast({ title: "تم نسخ الكود", description: code });
   }
 
-  const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString("ar-SA") : "—");
+  const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "—");
 
   return (
     <div dir="rtl" className="p-4 md:p-6 space-y-6">

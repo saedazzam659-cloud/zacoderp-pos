@@ -91,7 +91,7 @@ export default function GoodsReceipts() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
-  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const tr = (k: string, opts?: any): string => t(`purchasingPages.goodsReceipts.${k}`, opts) as string;
   const tg = (k: string, opts?: any): string => t(`goodsReceiptsPage.${k}`, opts) as string;
   const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
@@ -738,7 +738,7 @@ export default function GoodsReceipts() {
   };
 
   const buildListHtml = (source: any[] = filteredReceipts) => {
-    const reportDate = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-US");
+    const reportDate = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US");
     const sumSub = source.reduce((a, r: any) => a + (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)), 0);
     const sumVat = source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0);
     const sumTot = source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0);
@@ -801,7 +801,7 @@ ${source.map((r: any, i: number) => `<tr>
   };
 
   const buildBulkHtml = (docs: any[]) => {
-    const reportDate = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-US");
+    const reportDate = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US");
     const grandSub = docs.reduce((a, d: any) => a + (Number(d.totalAmount ?? 0) - Number(d.vatAmount ?? 0)), 0);
     const grandVat = docs.reduce((a, d: any) => a + Number(d.vatAmount ?? 0), 0);
     const grandTot = docs.reduce((a, d: any) => a + Number(d.totalAmount ?? 0), 0);

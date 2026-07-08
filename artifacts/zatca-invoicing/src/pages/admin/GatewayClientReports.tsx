@@ -145,10 +145,10 @@ export default function GatewayClientReports() {
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <KPI label="عدد الفواتير" value={overall.count.toLocaleString("ar-EG")} cls="bg-sky-50 text-sky-800 border-sky-200" />
-        <KPI label="إجمالي المبالغ (ر.س)" value={overall.total.toLocaleString("ar-EG", { maximumFractionDigits: 0 })} cls="bg-indigo-50 text-indigo-800 border-indigo-200" />
-        <KPI label="إجمالي الضريبة (ر.س)" value={overall.vat.toLocaleString("ar-EG", { maximumFractionDigits: 0 })} cls="bg-amber-50 text-amber-800 border-amber-200" />
-        <KPI label="ناجحة" value={overall.cleared.toLocaleString("ar-EG")} icon={<ShieldCheck className="h-4 w-4" />} cls="bg-emerald-50 text-emerald-800 border-emerald-200" />
+        <KPI label="عدد الفواتير" value={overall.count.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} cls="bg-sky-50 text-sky-800 border-sky-200" />
+        <KPI label="إجمالي المبالغ (ر.س)" value={overall.total.toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 0 })} cls="bg-indigo-50 text-indigo-800 border-indigo-200" />
+        <KPI label="إجمالي الضريبة (ر.س)" value={overall.vat.toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 0 })} cls="bg-amber-50 text-amber-800 border-amber-200" />
+        <KPI label="ناجحة" value={overall.cleared.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} icon={<ShieldCheck className="h-4 w-4" />} cls="bg-emerald-50 text-emerald-800 border-emerald-200" />
         <KPI label={`نسبة النجاح ${successRate}%`} value={`${successRate}%`} icon={<AlertTriangle className="h-4 w-4" />} cls={successRate >= 90 ? "bg-emerald-50 text-emerald-800 border-emerald-200" : successRate >= 70 ? "bg-amber-50 text-amber-800 border-amber-200" : "bg-rose-50 text-rose-800 border-rose-200"} />
       </div>
 
@@ -211,7 +211,7 @@ export default function GatewayClientReports() {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs text-slate-500">{c.count} فاتورة</span>
-                      <span className="font-mono text-emerald-700 font-semibold">{c.total.toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</span>
+                      <span className="font-mono text-emerald-700 font-semibold">{c.total.toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })}</span>
                     </div>
                   </div>
                 ))}

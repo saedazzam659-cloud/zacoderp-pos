@@ -143,7 +143,7 @@ export default function WorkSessions() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const isRtl = i18n.language === "ar";
-  const locale = isRtl ? "ar-SA" : "en-US";
+  const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const tr = (k: string, opts?: any) => t(`workSessions.${k}`, opts) as string;
   const headers = { Authorization: `Bearer ${token}` };
 

@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function fmt(n: number | string | null | undefined) {
-  return Number(n ?? 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return Number(n ?? 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 type RiskRow = {

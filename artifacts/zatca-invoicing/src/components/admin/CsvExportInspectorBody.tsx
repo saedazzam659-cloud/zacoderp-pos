@@ -188,7 +188,8 @@ export function CsvExportInspectorBody({
   const parsed = parseExportInspectorMetadata(metadata);
   const { truncated, count, totalAvailable, rowCap, format, filters, extras, hasExtras } = parsed;
 
-  const fmtLocale = numberLocale ?? language;
+  const rawFmtLocale = numberLocale ?? language;
+  const fmtLocale = rawFmtLocale.startsWith("ar") ? "ar-SA-u-nu-latn" : rawFmtLocale;
   const fmt = (n: number) => n.toLocaleString(fmtLocale);
 
   const resolveAction = (v: string) => maintenanceHistoryActionLabel(v, language);

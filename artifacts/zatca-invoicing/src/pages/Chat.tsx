@@ -40,9 +40,9 @@ function formatTime(iso: string): string {
   const d = new Date(iso);
   const today = new Date();
   if (d.toDateString() === today.toDateString()) {
-    return d.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleTimeString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit" });
   }
-  return d.toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" });
+  return d.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "short", timeStyle: "short" });
 }
 function lastMessagePreview(m: { kind: string | null; body: string | null }): string {
   if (!m || !m.kind) return "";

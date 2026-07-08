@@ -56,11 +56,11 @@ export default function GatewayOverview() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <Kpi icon={Globe2} label="عدد العملاء" value={clients.length.toLocaleString("ar-EG")} accent="bg-indigo-50 text-indigo-700" />
-        <Kpi icon={Activity} label="فواتير 30 يوم" value={totals.invoices.toLocaleString("ar-EG")} accent="bg-blue-50 text-blue-700" />
+        <Kpi icon={Globe2} label="عدد العملاء" value={clients.length.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} accent="bg-indigo-50 text-indigo-700" />
+        <Kpi icon={Activity} label="فواتير 30 يوم" value={totals.invoices.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} accent="bg-blue-50 text-blue-700" />
         <Kpi icon={CheckCircle2} label="نجاح الإرسال" value={`${successRate.toFixed(1)}%`} accent="bg-emerald-50 text-emerald-700" />
-        <Kpi icon={TrendingUp} label="إجمالي SAR" value={totals.sar.toLocaleString("ar-EG", { maximumFractionDigits: 0 })} accent="bg-amber-50 text-amber-700" mono />
-        <Kpi icon={AlertTriangle} label="عملاء قارَبوا الحصة" value={totals.atRisk.toLocaleString("ar-EG")} accent="bg-rose-50 text-rose-700" />
+        <Kpi icon={TrendingUp} label="إجمالي SAR" value={totals.sar.toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 0 })} accent="bg-amber-50 text-amber-700" mono />
+        <Kpi icon={AlertTriangle} label="عملاء قارَبوا الحصة" value={totals.atRisk.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} accent="bg-rose-50 text-rose-700" />
       </div>
 
       <Card>
@@ -108,18 +108,18 @@ export default function GatewayOverview() {
                         <td className="p-3 min-w-[180px]">
                           <div className="flex items-center gap-2">
                             <Progress value={Math.min(100, quotaPct)} className="h-2 flex-1" />
-                            <span className="text-xs whitespace-nowrap font-mono">{c.invoicesThisMonth.toLocaleString("ar-EG")} / {c.monthlyQuota.toLocaleString("ar-EG")}</span>
+                            <span className="text-xs whitespace-nowrap font-mono">{c.invoicesThisMonth.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} / {c.monthlyQuota.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span>
                           </div>
                         </td>
-                        <td className="p-3 font-mono">{c.last30.toLocaleString("ar-EG")}</td>
+                        <td className="p-3 font-mono">{c.last30.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
                         <td className="p-3">
                           <span className={rate >= 90 ? "text-emerald-700 font-semibold" : rate >= 60 ? "text-amber-700" : c.last30 > 0 ? "text-rose-700 font-semibold" : "text-muted-foreground"}>
                             {c.last30 > 0 ? `${rate.toFixed(1)}%` : "—"}
                           </span>
                           {c.rejected30 > 0 && <div className="text-xs text-rose-600">{c.rejected30} مرفوضة</div>}
                         </td>
-                        <td className="p-3 font-mono">{Number(c.totalSar30 || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td>
-                        <td className="p-3 text-xs text-muted-foreground">{c.lastInvoiceAt ? new Date(c.lastInvoiceAt).toLocaleString("ar-EG") : "—"}</td>
+                        <td className="p-3 font-mono">{Number(c.totalSar30 || 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn", { maximumFractionDigits: 2 })}</td>
+                        <td className="p-3 text-xs text-muted-foreground">{c.lastInvoiceAt ? new Date(c.lastInvoiceAt).toLocaleString("ar-EG-u-ca-gregory-nu-latn") : "—"}</td>
                         <td className="p-3">
                           <Button variant="ghost" size="sm" onClick={() => window.open(`/admin/gateway-clients/${c.id}/reports`, "_blank")}>
                             تقارير

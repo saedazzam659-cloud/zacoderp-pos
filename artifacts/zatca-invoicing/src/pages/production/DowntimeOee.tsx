@@ -442,8 +442,8 @@ export default function DowntimeOee() {
                               <span className="text-slate-400 text-xs">—</span>
                             )}
                           </td>
-                          <td className="p-3 font-mono text-xs">{new Date(e.startAt).toLocaleString("ar-SA")}</td>
-                          <td className="p-3 font-mono text-xs">{new Date(e.endAt).toLocaleString("ar-SA")}</td>
+                          <td className="p-3 font-mono text-xs">{new Date(e.startAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                          <td className="p-3 font-mono text-xs">{new Date(e.endAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                           <td className="p-3 text-end font-mono">{fmtMin(e.durationMinutes)}</td>
                           <td className="p-3 text-xs text-slate-600">{e.notes || "—"}</td>
                           <td className="p-3 text-center">

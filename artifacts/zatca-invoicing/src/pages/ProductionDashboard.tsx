@@ -115,7 +115,7 @@ export default function ProductionDashboard() {
             <Kpi
               icon={<Wallet className="h-5 w-5" />}
               label={t("production.totalCost")}
-              value={(data?.totalCost ?? 0).toLocaleString()}
+              value={(data?.totalCost ?? 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
               tone="indigo"
               loading={loading && !data}
             />

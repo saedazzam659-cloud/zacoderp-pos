@@ -72,7 +72,7 @@ export default function PosMonitoring() {
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const locale = isRtl ? "ar-SA" : "en-US";
+  const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const tr = (k: string, opts?: any) => t(`posPages.monitoring.${k}`, opts) as string;
   const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined | null) =>
     !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));
@@ -450,7 +450,7 @@ export default function PosMonitoring() {
 function SessionDetailBody({ d, onForceClose }: { d: PosSessionDetail; onForceClose: () => void }) {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const locale = isRtl ? "ar-SA" : "en-US";
+  const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const tr = (k: string, opts?: any) => t(`posPages.monitoring.${k}`, opts) as string;
   const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined | null) =>
     !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));

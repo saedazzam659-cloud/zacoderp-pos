@@ -504,7 +504,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: "gr
     : "border-slate-200 bg-slate-50 text-slate-800";
   return (
     <div className={`rounded border p-3 ${cls}`}>
-      <div className="text-2xl font-bold">{value.toLocaleString("ar-SA")}</div>
+      <div className="text-2xl font-bold">{value.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
       <div className="text-xs mt-1">{label}</div>
     </div>
   );

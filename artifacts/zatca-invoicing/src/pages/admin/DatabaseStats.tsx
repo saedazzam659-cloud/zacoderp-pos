@@ -62,7 +62,7 @@ const ENTITY_LABELS: Record<string, string> = {
 
 function formatNumber(n: number | null | undefined): string {
   if (n == null) return "—";
-  return new Intl.NumberFormat("ar-SA").format(n);
+  return new Intl.NumberFormat("ar-SA-u-nu-latn").format(n);
 }
 
 function formatBytes(n: number): string {
@@ -180,7 +180,7 @@ export default function DatabaseStats() {
               </div>
               <div className="text-end">
                 <p className="text-xs text-muted-foreground">آخر تحديث</p>
-                <p className="text-sm font-medium mt-1">{new Date(data.capturedAt).toLocaleString("ar-SA")}</p>
+                <p className="text-sm font-medium mt-1">{new Date(data.capturedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</p>
               </div>
             </div>
           </div>

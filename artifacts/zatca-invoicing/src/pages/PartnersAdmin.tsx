@@ -910,7 +910,7 @@ function PublishCenter({ headers }: { headers: Record<string, string> }) {
                     <td className="px-3 py-2"><span className={cn("inline-flex rounded-full border px-2 py-0.5 text-xs font-medium", (RUN_STATUS[r.status] ?? RUN_STATUS.failed).cls)}>{(RUN_STATUS[r.status] ?? RUN_STATUS.failed).label}</span></td>
                     <td className="px-3 py-2 text-xs text-slate-500">{STAGE_META[r.currentStage]?.label ?? r.currentStage ?? "—"}</td>
                     <td className="px-3 py-2 text-xs text-slate-500">{r.createdByUsername ?? "—"}</td>
-                    <td className="px-3 py-2 text-xs text-slate-400">{r.createdAt ? new Date(r.createdAt).toLocaleString("ar") : "—"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-400">{r.createdAt ? new Date(r.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn") : "—"}</td>
                   </tr>
                 ))}
               </tbody>

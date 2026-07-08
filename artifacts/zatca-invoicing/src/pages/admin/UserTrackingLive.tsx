@@ -32,7 +32,7 @@ function fmtMin(min: number | null | undefined): string {
 }
 function fmtTime(s: string | null | undefined): string {
   if (!s) return "—";
-  try { return new Date(s).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }); }
+  try { return new Date(s).toLocaleTimeString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit" }); }
   catch { return s; }
 }
 

@@ -66,7 +66,7 @@ const escapeHtml = (s: any): string =>
   );
 
 const fmtMoney = (n: any): string =>
-  Number(n || 0).toLocaleString("ar-SA", {
+  Number(n || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -151,7 +151,7 @@ function buildA4(args: BuildVoucherArgs): string {
   const currency = doc.currencyCode || "SAR";
   const currencySym = currencySymbol(currency);
   const amountInWords = numberToArabicWords(amountNumber);
-  const today = new Date().toLocaleDateString("ar-SA");
+  const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
   const accountLabel = account
     ? `${escapeHtml(account.code ?? "")} — ${escapeHtml(account.nameAr || account.nameEn || "")}`
     : "—";
@@ -237,7 +237,7 @@ function buildThermal(args: BuildVoucherArgs): string {
   const amountNumber = Number(doc.amount || 0);
   const currency = doc.currencyCode || "SAR";
   const currencySym = currencySymbol(currency);
-  const today = new Date().toLocaleDateString("ar-SA");
+  const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
   const accountLabel = account
     ? `${escapeHtml(account.code ?? "")} — ${escapeHtml(account.nameAr || account.nameEn || "")}`
     : "—";

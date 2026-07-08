@@ -383,7 +383,7 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
                                                "خطأ";
           return (
             <p className={`text-[11px] flex items-center gap-1 ${tone}`}
-               title={new Date(latestScan.runAt).toLocaleString("ar-SA")}>
+               title={new Date(latestScan.runAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}>
               <Clock className="h-3 w-3" />
               <span>آخر فحص {latestScan.trigger === "manual" ? "يدوي" : "تلقائي"}: {label} — {when}</span>
             </p>
@@ -740,7 +740,7 @@ function DayRunsPanel(props: {
               {items.map((row) => {
                 const time = (() => {
                   try {
-                    return new Date(row.runAt).toLocaleTimeString("ar-SA", {
+                    return new Date(row.runAt).toLocaleTimeString("ar-SA-u-nu-latn", {
                       hour: "2-digit", minute: "2-digit", second: "2-digit",
                       timeZone: "Asia/Riyadh",
                     });

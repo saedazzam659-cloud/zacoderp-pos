@@ -13,7 +13,7 @@ import { securityReportsApi } from "@/lib/securityAiApi";
 
 function fmtDate(s: string | null) {
   if (!s) return "—";
-  return new Date(s).toLocaleString("ar-SA");
+  return new Date(s).toLocaleString("ar-SA-u-ca-gregory-nu-latn");
 }
 
 export default function SecurityReports() {

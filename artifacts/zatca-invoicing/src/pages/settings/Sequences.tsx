@@ -939,7 +939,7 @@ export default function Sequences() {
                   <tbody>
                     {logs.map(l => (
                       <tr key={l.id} className="border-b">
-                        <td className="px-2 py-1 text-xs whitespace-nowrap">{new Date(l.createdAt).toLocaleString()}</td>
+                        <td className="px-2 py-1 text-xs whitespace-nowrap">{new Date(l.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                         <td className="px-2 py-1">{txLabel(t, l.transactionType)}</td>
                         <td className="px-2 py-1 font-mono">{l.generatedNumber}</td>
                         <td className="px-2 py-1 text-xs text-muted-foreground">

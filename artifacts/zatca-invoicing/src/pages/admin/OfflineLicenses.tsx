@@ -398,11 +398,11 @@ export default function OfflineLicenses() {
                   <div className="text-sm font-medium">{lic.customerName}</div>
                   <div className="text-xs text-muted-foreground flex gap-3 mt-1 flex-wrap">
                     <span>👥 {lic.maxUsers} مستخدم</span>
-                    <span>📅 صدر: {new Date(lic.issuedAt).toLocaleDateString("ar-SA")}</span>
-                    {lic.expiresAt && <span>⏰ ينتهي: {new Date(lic.expiresAt).toLocaleDateString("ar-SA")}</span>}
+                    <span>📅 صدر: {new Date(lic.issuedAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
+                    {lic.expiresAt && <span>⏰ ينتهي: {new Date(lic.expiresAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>}
                     {lic.fingerprintHash && <span title={lic.fingerprintHash}>🔒 مربوط بجهاز</span>}
                     <span>🕒 مهلة عدم الاتصال: {lic.graceDays ?? 7} يوم</span>
-                    {lic.lastSeenAt && <span>📡 آخر اتصال: {new Date(lic.lastSeenAt).toLocaleString("ar-SA")}</span>}
+                    {lic.lastSeenAt && <span>📡 آخر اتصال: {new Date(lic.lastSeenAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>}
                     {lic.appVersion && <span>📦 الإصدار: {lic.appVersion}</span>}
                   </div>
                   {(lic.companyTaxNumber || lic.companyCrNumber || lic.companyPhone || lic.companyEmail || lic.companyAddress) && (

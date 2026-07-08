@@ -92,7 +92,7 @@ export function YearMonthInput({ label = "العمر الافتراضي", value,
         {totalMonths > 0 && (
           <div className="mt-1.5 flex items-center justify-center gap-1 text-[11px] text-slate-500">
             <span>الإجمالي:</span>
-            <span className="font-bold text-violet-700">{totalMonths.toLocaleString("ar-SA")}</span>
+            <span className="font-bold text-violet-700">{totalMonths.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
             <span>شهر</span>
             <span className="text-slate-400">
               ({Math.floor(totalMonths / 12)} سنة و {totalMonths % 12} شهر)

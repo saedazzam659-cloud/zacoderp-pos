@@ -18,7 +18,7 @@ interface SummaryResp {
 }
 
 const fmtSAR = (n: number) =>
-  new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR", maximumFractionDigits: 0 }).format(n);
+  new Intl.NumberFormat("ar-SA-u-nu-latn", { style: "currency", currency: "SAR", maximumFractionDigits: 0 }).format(n);
 
 const REPORTS = [
   {

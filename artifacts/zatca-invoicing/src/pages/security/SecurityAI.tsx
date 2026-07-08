@@ -164,7 +164,7 @@ export default function SecurityAI() {
             <tbody>
               {(actionsQ.data ?? []).slice(0, 30).map(a => (
                 <tr key={a.id} className="border-t">
-                  <td className="p-2 text-xs">{new Date(a.createdAt).toLocaleString("ar-SA")}</td>
+                  <td className="p-2 text-xs">{new Date(a.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                   <td className="p-2"><Badge variant="outline">{String(t(`security.ai.kind.${a.kind}`, { defaultValue: a.kind }))}</Badge></td>
                   <td className="p-2"><Badge className={MODULE_TONE[a.targetModule] ?? ""} variant="outline">{t(`security.module.${a.targetModule}`)}</Badge></td>
                   <td className="p-2">{a.title}</td>
@@ -268,7 +268,7 @@ function EventRow({ event }: { event: any }) {
         <div className="min-w-0">
           <div className="font-medium truncate">{event.title}</div>
           <div className="text-xs text-muted-foreground">
-            {String(t(`security.type.${event.eventType}`, { defaultValue: event.eventType }))} · {new Date(event.eventDateTime).toLocaleString("ar-SA")}
+            {String(t(`security.type.${event.eventType}`, { defaultValue: event.eventType }))} · {new Date(event.eventDateTime).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
           </div>
         </div>
         <div className="flex items-center gap-2">

@@ -55,7 +55,7 @@ export default function ContractingDashboard() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const fmt = (n: number) => Number(n || 0).toLocaleString("ar-SA", { maximumFractionDigits: 0 });
+  const fmt = (n: number) => Number(n || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { maximumFractionDigits: 0 });
   const fmtPct = (n: number) => `${Number(n || 0).toFixed(1)}%`;
 
   return (
@@ -158,7 +158,7 @@ export default function ContractingDashboard() {
                   <div className="flex-1">
                     <div className="font-medium">{e.title}</div>
                     {e.description && <div className="text-[11px] text-slate-500">{e.description}</div>}
-                    <div className="text-[10px] text-slate-400 mt-0.5">{new Date(e.createdAt).toLocaleString("ar-SA")}</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">{new Date(e.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
                   </div>
                 </div>
               ))}

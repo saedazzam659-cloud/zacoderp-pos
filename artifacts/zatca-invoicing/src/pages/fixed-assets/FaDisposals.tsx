@@ -154,12 +154,12 @@ export default function FaDisposals() {
             {selectedAsset && (
               <div className="md:col-span-2 grid grid-cols-3 gap-3 p-3 rounded-lg bg-slate-50 border">
                 <div><div className="text-xs text-slate-500">القيمة الدفترية</div>
-                  <div className="font-mono font-bold text-slate-800">{bookVal.toLocaleString("ar-EG")}</div></div>
+                  <div className="font-mono font-bold text-slate-800">{bookVal.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div></div>
                 <div><div className="text-xs text-slate-500">المتحصل</div>
-                  <div className="font-mono font-bold text-slate-800">{proceeds.toLocaleString("ar-EG")}</div></div>
+                  <div className="font-mono font-bold text-slate-800">{proceeds.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div></div>
                 <div><div className="text-xs text-slate-500">الربح / الخسارة</div>
                   <div className={`font-mono font-bold ${projectedGainLoss >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                    {projectedGainLoss >= 0 ? "+" : ""}{projectedGainLoss.toLocaleString("ar-EG")}
+                    {projectedGainLoss >= 0 ? "+" : ""}{projectedGainLoss.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}
                   </div></div>
               </div>
             )}
@@ -193,10 +193,10 @@ export default function FaDisposals() {
                   <td className="px-3 py-2 font-semibold">{assetName(d.assetId)}</td>
                   <td className="px-3 py-2">{typeLabel(d.type)}</td>
                   <td className="px-3 py-2 font-mono">{d.disposalDate}</td>
-                  <td className="px-3 py-2 font-mono">{Number(d.bookValueAtDisposal).toLocaleString("ar-EG")}</td>
-                  <td className="px-3 py-2 font-mono">{proc.toLocaleString("ar-EG")}</td>
+                  <td className="px-3 py-2 font-mono">{Number(d.bookValueAtDisposal).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono">{proc.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
                   <td className={`px-3 py-2 font-mono font-bold ${gl >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                    {gl >= 0 ? "+" : ""}{gl.toLocaleString("ar-EG")}
+                    {gl >= 0 ? "+" : ""}{gl.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}
                   </td>
                   <td className="px-3 py-2 text-center">
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-rose-600 hover:bg-rose-50" onClick={()=>setDel(d)}>

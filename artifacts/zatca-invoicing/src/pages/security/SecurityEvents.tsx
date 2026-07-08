@@ -45,7 +45,7 @@ function fmtDate(s: string | null): string {
   if (!s) return "—";
   const d = new Date(s);
   if (!Number.isFinite(d.getTime())) return "—";
-  return d.toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" });
+  return d.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "short", timeStyle: "short" });
 }
 
 export default function SecurityEvents() {

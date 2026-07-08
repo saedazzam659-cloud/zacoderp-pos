@@ -258,7 +258,7 @@ export default function Employees() {
                   <div className="rounded-lg border bg-muted/30 p-3">
                     <div className="text-xs text-muted-foreground mb-1">{tr("monthlyTotalLabel")}</div>
                     <div className="text-lg font-bold text-emerald-700">
-                      {(Number(editing.basicSalary || 0) + Number(editing.housingAllow || 0) + Number(editing.transportAllow || 0) + Number(editing.otherAllow || 0)).toLocaleString()} {tr("currencySAR")}
+                      {(Number(editing.basicSalary || 0) + Number(editing.housingAllow || 0) + Number(editing.transportAllow || 0) + Number(editing.otherAllow || 0)).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {tr("currencySAR")}
                     </div>
                   </div>
                 </TabsContent>
@@ -326,7 +326,7 @@ export default function Employees() {
                           </td>
                           <td className="px-3 py-2.5 font-mono text-xs">{e.idNumber || "—"}</td>
                           <td className="px-3 py-2.5"><ExpiryBadge date={e.iqamaExpiry} tr={tr} /></td>
-                          <td className="px-3 py-2.5 text-xs">{total > 0 ? `${total.toLocaleString()} ${tr("currencySAR")}` : "—"}</td>
+                          <td className="px-3 py-2.5 text-xs">{total > 0 ? `${total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ${tr("currencySAR")}` : "—"}</td>
                           <td className="px-3 py-2.5"><Badge className={cn("border", st.cls)}>{st.label}</Badge></td>
                           <td className="px-3 py-2.5">
                             <div className="flex items-center justify-end gap-1">

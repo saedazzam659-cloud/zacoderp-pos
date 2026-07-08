@@ -286,7 +286,7 @@ export default function EmployeeContracts() {
               <div className="mt-4 rounded-lg border bg-muted/30 p-3">
                 <div className="text-xs text-muted-foreground mb-1">{tr("monthlyTotal")}</div>
                 <div className="text-lg font-bold text-emerald-700">
-                  {(Number(editingC.basicSalary || 0) + Number(editingC.housingAllow || 0) + Number(editingC.transportAllow || 0) + Number(editingC.otherAllow || 0)).toLocaleString()} {tr("currencySAR")}
+                  {(Number(editingC.basicSalary || 0) + Number(editingC.housingAllow || 0) + Number(editingC.transportAllow || 0) + Number(editingC.otherAllow || 0)).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {tr("currencySAR")}
                 </div>
               </div>
             </FormPanel>
@@ -323,7 +323,7 @@ export default function EmployeeContracts() {
                         <td className="px-3 py-2.5 text-xs">{c.contractType === "fixed" ? tr("ctFixedShort") : tr("ctUnlimitedShort")}</td>
                         <td className="px-3 py-2.5 text-xs">{c.startDate}</td>
                         <td className="px-3 py-2.5 text-xs">{c.endDate || "—"}</td>
-                        <td className="px-3 py-2.5 text-xs font-semibold">{total.toLocaleString()} {tr("currencySAR")}</td>
+                        <td className="px-3 py-2.5 text-xs font-semibold">{total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {tr("currencySAR")}</td>
                         <td className="px-3 py-2.5"><Badge className={cn("border", st.cls)}>{st.label}</Badge></td>
                         <td className="px-3 py-2.5">
                           <div className="flex items-center justify-end gap-1">

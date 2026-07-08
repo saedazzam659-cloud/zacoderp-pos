@@ -49,7 +49,7 @@ export function DocNavigator({
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) =>
-    Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    Number(n || 0).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const [, navigate] = useLocation();
 
   const sorted = [...items].sort((a, b) => Number(b.id) - Number(a.id));
@@ -60,7 +60,7 @@ export function DocNavigator({
   // Position counter: "5 / 23" when on a known doc, else just the total "23"
   // (locale-aware digits — Arabic-Indic in RTL, ASCII in English).
   const totalCount = sorted.length;
-  const posLocale = isRtl ? "ar-SA" : "en-US";
+  const posLocale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const positionLabel = navIndex >= 0
     ? t("docNavigator.position", {
         current: (navIndex + 1).toLocaleString(posLocale),

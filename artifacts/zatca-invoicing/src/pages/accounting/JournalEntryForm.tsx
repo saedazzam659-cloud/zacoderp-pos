@@ -1146,7 +1146,7 @@ export default function JournalEntryForm() {
   // favour of a stacked per-line list so totals stay legible on the
   // narrower paper. Same `safeLogoSrc` defang for the company logo.
   const buildEntryThermalHtml = () => {
-    const today = new Date().toLocaleDateString("ar-SA");
+    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const safeLogo = safeLogoSrc((user?.company as any)?.logo);
     const logoHtml = safeLogo
       ? `<div style="text-align:center;margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:160px;object-fit:contain;display:inline-block;" /></div>`
@@ -1211,7 +1211,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
   };
 
   const buildEntryPrintHtml = () => {
-    const today = new Date().toLocaleDateString("ar-SA");
+    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     // Forward the configured company logo and Arabic name into the print
     // header so single-entry printouts carry the same branding as the
     // rest of the system's reports.  `safeLogoSrc` defangs any crafted

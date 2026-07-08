@@ -21,7 +21,7 @@ const RISK_LABELS: Record<string, string> = {
 
 function fmt(n: number | null, digits = 2): string {
   if (n == null) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+  return n.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { maximumFractionDigits: digits });
 }
 
 export default function SafetyDashboard() {

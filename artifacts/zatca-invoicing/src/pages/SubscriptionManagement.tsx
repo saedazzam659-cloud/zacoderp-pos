@@ -560,7 +560,7 @@ export default function SubscriptionManagement() {
                   <div className="flex items-center gap-1 text-sm text-muted-foreground">
                     <FileText className="h-3.5 w-3.5 shrink-0" />
                     <span className={cn("text-xs", u?.overFields?.includes("invoices") && "text-amber-700 font-semibold")}>
-                      {u ? `${u.actual.invoices}/` : ""}{sub?.maxInvoices === 999999 ? "∞" : sub?.maxInvoices?.toLocaleString()}
+                      {u ? `${u.actual.invoices}/` : ""}{sub?.maxInvoices === 999999 ? "∞" : sub?.maxInvoices?.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                     </span>
                   </div>
 
@@ -589,7 +589,7 @@ export default function SubscriptionManagement() {
                             <div key={k} className={cn("rounded-lg border p-2.5 bg-background/60", over && "border-amber-300 bg-amber-50")}>
                               <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide font-semibold">{labels[k]}</p>
                               <p className={cn("text-sm font-semibold mt-0.5 tabular-nums", over && "text-amber-800")}>
-                                {u.actual[k]?.toLocaleString()} / {u.allowed[k] >= 999 ? "∞" : u.allowed[k]?.toLocaleString()}
+                                {u.actual[k]?.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} / {u.allowed[k] >= 999 ? "∞" : u.allowed[k]?.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                               </p>
                             </div>
                           );
@@ -763,7 +763,7 @@ export default function SubscriptionManagement() {
                 <div className="flex items-center justify-between gap-2 text-xs">
                   <span className="text-muted-foreground">الفواتير</span>
                   <span className={cn("flex items-center gap-1", u?.overFields?.includes("invoices") && "text-amber-700 font-semibold")}>
-                    <FileText className="h-3.5 w-3.5" />{u ? `${u.actual.invoices}/` : ""}{sub?.maxInvoices === 999999 ? "∞" : sub?.maxInvoices?.toLocaleString()}
+                    <FileText className="h-3.5 w-3.5" />{u ? `${u.actual.invoices}/` : ""}{sub?.maxInvoices === 999999 ? "∞" : sub?.maxInvoices?.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                   </span>
                 </div>
 
@@ -794,7 +794,7 @@ export default function SubscriptionManagement() {
                             <div key={k} className={cn("rounded-lg border p-2.5 bg-background/60", over && "border-amber-300 bg-amber-50")}>
                               <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide font-semibold">{labels[k]}</p>
                               <p className={cn("text-sm font-semibold mt-0.5 tabular-nums", over && "text-amber-800")}>
-                                {u.actual[k]?.toLocaleString()} / {u.allowed[k] >= 999 ? "∞" : u.allowed[k]?.toLocaleString()}
+                                {u.actual[k]?.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} / {u.allowed[k] >= 999 ? "∞" : u.allowed[k]?.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                               </p>
                             </div>
                           );

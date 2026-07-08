@@ -257,7 +257,7 @@ export default function InvoiceFieldPoliciesPage() {
     const rows   = visibleProfiles.map((p) => [
       p.id, p.name, p.isDefault ? "نعم" : "لا",
       p.assignedCount, p.color ?? pickColor(p.id),
-      new Date(p.updatedAt).toLocaleString("ar-SA"),
+      new Date(p.updatedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn"),
     ]);
     return [header, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n");
   };
@@ -292,7 +292,7 @@ export default function InvoiceFieldPoliciesPage() {
             <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color ?? pickColor(p.id)};margin-inline-end:6px;"></span>${escapeHtml(p.name)}</td>
             <td>${p.isDefault ? "نعم" : "لا"}</td>
             <td>${p.assignedCount}</td>
-            <td>${new Date(p.updatedAt).toLocaleString("ar-SA")}</td>
+            <td>${new Date(p.updatedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
           </tr>`).join("")
       : visibleUsers.map((u) => {
           const prof = profiles.find((p) => p.id === u.profileId);
@@ -321,7 +321,7 @@ export default function InvoiceFieldPoliciesPage() {
         tr:nth-child(even) td { background:#fafafa; }
       </style></head><body>
       <h1>${tab === "profiles" ? "قوالب الحوكمة" : "تعيين القوالب للمستخدمين"}</h1>
-      <div class="sub">طُبع في ${new Date().toLocaleString("ar-SA")}</div>
+      <div class="sub">طُبع في ${new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
       <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
         <tbody>${rows || `<tr><td colspan="${headers.length}" style="text-align:center;color:#94a3b8;padding:18px;">لا توجد سجلات</td></tr>`}</tbody>
       </table>

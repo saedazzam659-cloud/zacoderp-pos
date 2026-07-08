@@ -23,7 +23,7 @@ interface UsageResp {
   rows: UsageRow[];
 }
 
-const fmtInt = new Intl.NumberFormat("ar-SA");
+const fmtInt = new Intl.NumberFormat("ar-SA-u-nu-latn");
 
 export default function PlanUsageReport() {
   const { token } = useAuth();

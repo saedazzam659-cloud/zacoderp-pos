@@ -200,7 +200,7 @@ export default function FieldCheckIn() {
             <span className="text-sm">{openVisit.locationName ?? "—"}</span>
           </div>
           <div className="text-xs text-muted-foreground mb-3">
-            بدأت في: {new Date(openVisit.arrivedAt).toLocaleTimeString("ar-SA")}
+            بدأت في: {new Date(openVisit.arrivedAt).toLocaleTimeString("ar-SA-u-nu-latn")}
           </div>
           <div className="space-y-2">
             <div><Label>نتيجة الزيارة</Label>
@@ -275,7 +275,7 @@ export default function FieldCheckIn() {
                 </Badge>
                 <span className="flex-1">{v.locationName ?? "—"}</span>
                 <span className="text-xs text-muted-foreground">
-                  {new Date(v.arrivedAt).toLocaleTimeString("ar-SA")}
+                  {new Date(v.arrivedAt).toLocaleTimeString("ar-SA-u-nu-latn")}
                   {v.durationMin ? ` • ${v.durationMin} د` : ""}
                 </span>
               </div>

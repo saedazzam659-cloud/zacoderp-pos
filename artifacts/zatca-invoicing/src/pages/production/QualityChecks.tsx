@@ -577,7 +577,7 @@ export default function QualityChecks() {
                         {r.sampleSize != null ? `${r.sampleSize} / ` : ""}
                         <span className={r.defectsFound > 0 ? "text-rose-600 font-bold" : ""}>{r.defectsFound}</span>
                       </td>
-                      <td className="p-3 text-xs text-slate-500">{new Date(r.checkedAt).toLocaleString()}</td>
+                      <td className="p-3 text-xs text-slate-500">{new Date(r.checkedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
                       <td className="p-3 text-end">
                         <div className="flex justify-end gap-1">
                           {r.result === "fail" && r.stageId != null && (

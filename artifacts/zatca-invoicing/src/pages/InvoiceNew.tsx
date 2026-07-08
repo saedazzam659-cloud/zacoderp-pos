@@ -209,7 +209,7 @@ export default function InvoiceNew() {
     { gross: 0, discountTotal: 0, subtotal: 0, vatTotal: 0, grandTotal: 0 }
   );
 
-  const fmt = (n: number) => new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR" }).format(n);
+  const fmt = (n: number) => new Intl.NumberFormat("ar-SA-u-nu-latn", { style: "currency", currency: "SAR" }).format(n);
 
   const companyItems: ComboboxItem[] = (companies ?? []).map(c => ({
     value: c.id.toString(), label: c.nameAr, labelEn: c.nameEn ?? undefined,

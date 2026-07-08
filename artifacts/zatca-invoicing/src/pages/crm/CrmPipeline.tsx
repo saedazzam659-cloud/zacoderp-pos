@@ -118,13 +118,13 @@ export default function CrmPipeline() {
                 {g.label} <span className="text-muted-foreground">({g.opps.length})</span>
               </div>
               <div className="text-[10px] text-muted-foreground mb-2 font-mono">
-                {total.toLocaleString("ar-EG")} ر.س
+                {total.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س
               </div>
               <div className="space-y-1 max-h-72 overflow-y-auto">
                 {g.opps.map(o => (
                   <div key={o.id} className="text-[11px] bg-indigo-50 rounded p-1.5 border border-indigo-100">
                     <div className="font-semibold truncate">{o.title}</div>
-                    <div className="font-mono text-[10px] text-muted-foreground">{Number(o.dealValue||0).toLocaleString("ar-EG")}</div>
+                    <div className="font-mono text-[10px] text-muted-foreground">{Number(o.dealValue||0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div>
                   </div>
                 ))}
                 {g.opps.length === 0 && (

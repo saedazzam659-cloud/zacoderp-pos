@@ -36,7 +36,7 @@ import {
 import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
 
 const EMPTY = { docNumber: "", settlementDate: today(), customerId: "", paymentMethod: "bank", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1", notes: "" };
@@ -362,7 +362,7 @@ export default function CustomerSettlement() {
 
   // Page-level summary print: one row per settlement.
   const buildSettlementsListHtml = (source: any[] = filtered) => {
-    const today = new Date().toLocaleDateString("ar-SA");
+    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const sumAmount = source.reduce((a, s: any) => a + Number(s.amount ?? 0), 0);
     const logoHtml = safeLogo
       ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
@@ -424,7 +424,7 @@ ${source.map((s: any, i: number) => {
   // Bulk-print: one full A4 portrait card per selected settlement showing
   // customer / account / amount / payment method / status / notes.
   const buildBulkSettlementsHtml = (docs: any[]) => {
-    const today = new Date().toLocaleDateString("ar-SA");
+    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
     const grand = docs.reduce((a, d: any) => a + Number(d.amount ?? 0), 0);
     const logoHtml = safeLogo
       ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto;" /></div>`

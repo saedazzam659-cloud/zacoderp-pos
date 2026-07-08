@@ -185,7 +185,7 @@ export default function HospitalAppointments() {
   const fmtDt = (s: string) => {
     if (!s) return "—";
     const d = new Date(s);
-    return d.toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" });
+    return d.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "short", timeStyle: "short" });
   };
 
   return (

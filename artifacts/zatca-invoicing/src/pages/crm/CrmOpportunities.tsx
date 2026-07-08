@@ -238,7 +238,7 @@ export default function CrmOpportunities() {
                       {stageLabel(o.stage)}
                     </span>
                   </td>
-                  <td className="px-3 py-2 font-mono">{Number(o.dealValue).toLocaleString("ar-EG")} ر.س</td>
+                  <td className="px-3 py-2 font-mono">{Number(o.dealValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س</td>
                   <td className="px-3 py-2 font-mono">{o.successProbability}%</td>
                   <td className="px-3 py-2 font-mono text-[11px]">{o.expectedCloseDate || "—"}</td>
                   <td className="px-3 py-2">
