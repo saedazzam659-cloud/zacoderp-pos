@@ -1090,6 +1090,11 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
   <div class="row"><span>إجمالي الدائن</span><span>${totalCredit.toFixed(2)}</span></div>
 </div>
 <div class="balance" style="color:${isBalanced ? "#15803d" : "#b91c1c"};">${isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}</div>
+<div style="margin-top:10px;border-top:1px dashed #000;padding-top:8px;">
+  <div class="row" style="margin-bottom:14px;"><span class="bold">إعداد</span><span>....................</span></div>
+  <div class="row" style="margin-bottom:14px;"><span class="bold">مراجعة</span><span>....................</span></div>
+  <div class="row" style="margin-bottom:6px;"><span class="bold">اعتماد</span><span>....................</span></div>
+</div>
 <div class="center" style="font-size:9px;color:#555;margin-top:8px;">طُبع في ${today}</div>
 <script>setTimeout(()=>window.print(),300);</script>
 </body></html>`;
@@ -1152,6 +1157,11 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 tfoot td { background:#eef2ff; font-weight:700; padding:8px; border:1px solid #1e3a8a; }
 .balanced { color:#15803d; }
 .unbalanced { color:#b91c1c; }
+.signatures { display:flex; justify-content:space-between; gap:24px; margin-top:40px; page-break-inside:avoid; }
+.signatures .sig { flex:1; text-align:center; }
+.signatures .sig-space { height:44px; }
+.signatures .sig-line { border-top:1px solid #64748b; margin:0 6px 6px; }
+.signatures .sig-role { font-size:12px; font-weight:700; color:#334155; }
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
 @media print { .print-btn { display:none; } }
 </style></head><body>
@@ -1184,6 +1194,11 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
     <td class="${isBalanced ? "balanced" : "unbalanced"}">${isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}</td>
   </tr></tfoot>
 </table>
+<div class="signatures">
+  <div class="sig"><div class="sig-space"></div><div class="sig-line"></div><div class="sig-role">إعداد</div></div>
+  <div class="sig"><div class="sig-space"></div><div class="sig-line"></div><div class="sig-role">مراجعة</div></div>
+  <div class="sig"><div class="sig-space"></div><div class="sig-line"></div><div class="sig-role">اعتماد</div></div>
+</div>
 <script>setTimeout(()=>window.print(),300);</script>
 </body></html>`;
   };

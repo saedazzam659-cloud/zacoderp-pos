@@ -492,7 +492,7 @@ export async function exportToPDF(
       ? `<img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;" />`
       : "";
   const logoHtml = logoImgTag
-    ? `<div style="background:#fff;border-radius:8px;padding:5px 8px;display:inline-block;margin-bottom:8px;">
+    ? `<div style="display:inline-block;margin-bottom:3px;">
          ${logoImgTag}
        </div>`
     : "";
@@ -561,23 +561,29 @@ export async function exportToPDF(
       color: #1a1a1a;
       background: #fff;
     }
+    /* Compact, print-friendly header: white background + dark text with a
+       thin green brand accent, instead of the old full-bleed green block
+       that ate ~¼ of the page. Everything is scaled way down so the header
+       occupies a small strip at the very top. */
     .header {
-      background: #166534;
-      color: #fff;
-      padding: 18px 24px 14px;
+      background: #ffffff;
+      color: #111827;
+      padding: 6px 20px 5px;
       text-align: center;
       margin-bottom: 0;
+      border-bottom: 2px solid #166534;
     }
-    .header h1 { font-size: 17pt; font-weight: 700; margin-bottom: 4px; }
-    .header p  { font-size: 10pt; opacity: .85; }
-    .header .company-name    { font-size: 15pt; font-weight: 800; margin-bottom: 2px; }
-    .header .company-name-en { font-size: 10pt; font-weight: 500; opacity: .9; margin-bottom: 4px; }
-    .header .company-meta    { font-size: 8.5pt; opacity: .92; margin-bottom: 2px; }
+    .header img { max-height: 30px !important; width: auto !important; height: auto !important; }
+    .header h1 { font-size: 12pt; font-weight: 700; margin-bottom: 1px; color: #14532d; }
+    .header p  { font-size: 8pt; color: #6b7280; }
+    .header .company-name    { font-size: 11pt; font-weight: 800; margin-bottom: 1px; color: #111827; }
+    .header .company-name-en { font-size: 8pt; font-weight: 500; color: #6b7280; margin-bottom: 2px; }
+    .header .company-meta    { font-size: 7.5pt; color: #6b7280; margin-bottom: 1px; }
     .header .title-sep {
       height: 1px;
-      background: rgba(255,255,255,.35);
-      margin: 9px auto 8px;
-      width: 70%;
+      background: #e5e7eb;
+      margin: 4px auto 3px;
+      width: 60%;
     }
     .meta {
       background: #f0fdf4;
@@ -939,7 +945,38 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
     const contentW    = pageW - marginX * 2;
     const contentH    = pageH - marginTop - marginBot;
     const pxPerMm     = canvas.width / contentW;
-    const pageHeightPx = contentH * pxPerMm;
+
+    // Capture the table's column-header row (<thead> — the "البيان" strip)
+    // as a standalone image so it can be RE-STAMPED at the top of every page
+    // after the first. In this raster (.pdf download) path the whole body is
+    // flattened into ONE canvas, so a native <thead> only appears on page 1
+    // (the browser's `display:table-header-group` repeat only applies to real
+    // print, not to this canvas slicer). Re-drawing the captured strip keeps
+    // multi-page statements readable — matching the on-screen/print behaviour.
+    let theadSliceData: string | null = null;
+    let theadBandMm = 0;
+    {
+      const theadEl = doc.querySelector("thead") as HTMLElement | null;
+      if (theadEl) {
+        const r = theadEl.getBoundingClientRect();
+        const top = Math.max(0, Math.floor((r.top - bodyRect.top) * SCALE));
+        const bot = Math.min(canvas.height, Math.ceil((r.bottom - bodyRect.top) * SCALE));
+        const h = bot - top;
+        if (h > 0) {
+          const tc = document.createElement("canvas");
+          tc.width  = canvas.width;
+          tc.height = h;
+          const tctx = tc.getContext("2d");
+          if (tctx) {
+            tctx.fillStyle = "#ffffff";
+            tctx.fillRect(0, 0, tc.width, tc.height);
+            tctx.drawImage(canvas, 0, top, canvas.width, h, 0, 0, canvas.width, h);
+            theadSliceData = tc.toDataURL("image/jpeg", 0.95);
+            theadBandMm = h / pxPerMm;
+          }
+        }
+      }
+    }
 
     // Walk the canvas top → bottom one page at a time. For every page
     // we ALWAYS cut on a safe (row-boundary) line — never inside a row:
@@ -966,6 +1003,11 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
         console.error("downloadHtmlAsPdf: page-walk did not terminate", { cursor, canvasHeight: canvas.height });
         break;
       }
+      // Pages after the first reserve vertical room for the repeated
+      // column-header strip, so their usable content height shrinks.
+      const headerReserveMm = pageIdx > 0 ? theadBandMm : 0;
+      const availH = Math.max(1, contentH - headerReserveMm);
+      const pageHeightPx = availH * pxPerMm;
       if (!Number.isFinite(pageHeightPx) || pageHeightPx <= 0) {
         throw new Error("downloadHtmlAsPdf: invalid pageHeightPx");
       }
@@ -1008,17 +1050,23 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
 
       if (pageIdx > 0) pdf.addPage();
 
-      // Natural mm height of this slice; cap at contentH (this is where
-      // the "shrink to fit" happens for overflow pages — width stays at
-      // contentW because every page comes from the same source width).
+      // Natural mm height of this slice; cap at the page's usable height
+      // (availH already subtracts the repeated-header band on pages 2+).
+      // This is where the "shrink to fit" happens for overflow pages —
+      // width stays at contentW because every page shares the source width.
       const naturalHeightMm = sliceHeightPx / pxPerMm;
-      const renderHeightMm  = Math.min(naturalHeightMm, contentH);
-      const renderWidthMm   = naturalHeightMm > contentH
-        ? contentW * (contentH / naturalHeightMm)  // scale width proportionally
+      const renderHeightMm  = Math.min(naturalHeightMm, availH);
+      const renderWidthMm   = naturalHeightMm > availH
+        ? contentW * (availH / naturalHeightMm)  // scale width proportionally
         : contentW;
       // Keep the (possibly scaled-down) image centered horizontally.
       const xOffset = marginX + (contentW - renderWidthMm) / 2;
-      pdf.addImage(imgData, "JPEG", xOffset, marginTop, renderWidthMm, renderHeightMm, undefined, "FAST");
+      // Re-stamp the column-header strip at the top of every page after the
+      // first so the "البيان" bar repeats across the whole statement.
+      if (pageIdx > 0 && theadSliceData) {
+        pdf.addImage(theadSliceData, "JPEG", marginX, marginTop, contentW, theadBandMm, undefined, "FAST");
+      }
+      pdf.addImage(imgData, "JPEG", xOffset, marginTop + headerReserveMm, renderWidthMm, renderHeightMm, undefined, "FAST");
 
       cursor = nextCut;
       pageIdx++;
