@@ -1,12 +1,13 @@
 import { useTranslation } from "react-i18next";
 import {
-  Boxes, Tag, Wrench, ArrowRightLeft, TrendingUp, Trash2, Sparkles, Package, Settings2, CalendarRange,
+  Boxes, Tag, Wrench, ArrowRightLeft, TrendingUp, Trash2, Sparkles, Package, Settings2, CalendarRange, FolderTree,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 
 const tiles: HubTile[] = [
   { nameKey: "nav.faAssets",       href: "/fixed-assets/assets",       icon: Package,         tone: "emerald", permKey: "fixed_assets" },
   { nameKey: "nav.faCategories",   href: "/fixed-assets/categories",   icon: Tag,             tone: "amber",   permKey: "fixed_assets" },
+  { nameKey: "nav.faGroups",       href: "/fixed-assets/groups",       icon: FolderTree,      tone: "cyan",    permKey: "fixed_assets" },
   { nameKey: "nav.faMaintenance",  href: "/fixed-assets/maintenance",  icon: Wrench,          tone: "orange",  permKey: "fixed_assets" },
   { nameKey: "nav.faTransfers",    href: "/fixed-assets/transfers",    icon: ArrowRightLeft,  tone: "indigo",  permKey: "fixed_assets" },
   { nameKey: "nav.faDepreciation", href: "/fixed-assets/depreciation", icon: TrendingUp,      tone: "violet",  permKey: "fixed_assets" },

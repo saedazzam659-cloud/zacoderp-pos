@@ -50,6 +50,26 @@ export const faCategoriesTable = pgTable("fa_categories", {
 export type FaCategory       = typeof faCategoriesTable.$inferSelect;
 export type InsertFaCategory = typeof faCategoriesTable.$inferInsert;
 
+// 1b) Asset Groups (مجموعات الأصول) — international-standard (IAS 16 / SAP-style
+// "asset class") HIERARCHICAL classification tree. `parentId` self-references
+// this same table = the "مجموعة رئيسية" (main group). This is a purely
+// organizational / reporting dimension and is INDEPENDENT of `fa_categories`
+// which owns the accounting defaults + per-category JE account overrides.
+// parentId is kept as a plain integer (no FK) to allow a lazy self-reference;
+// same-company ownership + cycle prevention are enforced in the route layer.
+export const faAssetGroupsTable = pgTable("fa_asset_groups", {
+  id:        serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  code:      text("code").notNull(),
+  nameAr:    text("name_ar").notNull(),
+  nameEn:    text("name_en"),
+  parentId:  integer("parent_id"),
+  isActive:  boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type FaAssetGroup       = typeof faAssetGroupsTable.$inferSelect;
+export type InsertFaAssetGroup = typeof faAssetGroupsTable.$inferInsert;
+
 // 2) Fixed Assets (الأصل الرئيسي)
 export const fixedAssetsTable = pgTable("fixed_assets", {
   id:                  serial("id").primaryKey(),
@@ -57,6 +77,7 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   branchId:            integer("branch_id").references(() => branchesTable.id, { onDelete: "set null" }),
   costCenterId:        integer("cost_center_id").references(() => costCentersTable.id, { onDelete: "set null" }),
   categoryId:          integer("category_id").references(() => faCategoriesTable.id, { onDelete: "set null" }),
+  groupId:             integer("group_id").references(() => faAssetGroupsTable.id, { onDelete: "set null" }),
 
   code:                text("code").notNull(),
   nameAr:              text("name_ar").notNull(),

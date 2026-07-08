@@ -6,7 +6,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import {
-  fixedAssetsTable, faCategoriesTable, faMaintenanceTable, faTransfersTable,
+  fixedAssetsTable, faCategoriesTable, faAssetGroupsTable, faMaintenanceTable, faTransfersTable,
   faDepreciationRunsTable, faDisposalsTable,
   journalEntriesTable, journalEntryLinesTable,
   companiesTable, accountsTable,
@@ -144,6 +144,110 @@ router.delete("/categories/:id", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════
+// ASSET GROUPS (مجموعات الأصول) — hierarchical classification tree.
+// parentId (مجموعة رئيسية) self-references fa_asset_groups. Company-scoped,
+// with same-company parent validation + cycle prevention.
+// ════════════════════════════════════════════════════════════════════════
+// Walk parentId up to the root; return every ancestor id (used to reject a
+// parent choice that would create a cycle). Bounded to avoid runaway loops
+// on a corrupted chain.
+async function groupAncestorIds(cid: number, startParentId: number): Promise<Set<number>> {
+  const seen = new Set<number>();
+  let cursor: number | null = startParentId;
+  let hops = 0;
+  while (cursor && !seen.has(cursor) && hops < 100) {
+    seen.add(cursor);
+    const [row] = await db.select({ parentId: faAssetGroupsTable.parentId })
+      .from(faAssetGroupsTable)
+      .where(and(eq(faAssetGroupsTable.id, cursor), eq(faAssetGroupsTable.companyId, cid)));
+    cursor = row?.parentId ?? null;
+    hops++;
+  }
+  return seen;
+}
+// Resolve + validate a requested parentId for a group. Returns { ok, value, error }.
+// selfId is the id being edited (null on create) so a group can't parent itself.
+async function resolveGroupParent(cid: number, rawParent: any, selfId: number | null):
+  Promise<{ ok: boolean; value: number | null; error?: string }> {
+  if (rawParent === undefined || rawParent === null || rawParent === "" ) return { ok: true, value: null };
+  const pid = Number(rawParent);
+  if (!Number.isInteger(pid) || pid <= 0) return { ok: true, value: null };
+  if (selfId && pid === selfId) return { ok: false, value: null, error: "لا يمكن جعل المجموعة أباً لنفسها" };
+  if (!await ownsRow(faAssetGroupsTable, pid, cid)) return { ok: false, value: null, error: "المجموعة الرئيسية غير موجودة" };
+  // Cycle guard: the chosen parent must not be a descendant of selfId.
+  if (selfId) {
+    const ancestors = await groupAncestorIds(cid, pid);
+    if (ancestors.has(selfId)) return { ok: false, value: null, error: "اختيار هذه المجموعة الرئيسية يسبب حلقة دائرية" };
+  }
+  return { ok: true, value: pid };
+}
+
+router.get("/groups", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const rows = await db.select().from(faAssetGroupsTable)
+      .where(eq(faAssetGroupsTable.companyId, cid)).orderBy(desc(faAssetGroupsTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/groups", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const b = req.body ?? {};
+    const nameAr = String(b.nameAr ?? "").trim();
+    if (!nameAr) { res.status(400).json({ error: "اسم المجموعة مطلوب" }); return; }
+    const parent = await resolveGroupParent(cid, b.parentId, null);
+    if (!parent.ok) { res.status(400).json({ error: parent.error }); return; }
+    const code = String(b.code ?? "").trim() || await nextCode(cid, faAssetGroupsTable, "FAG");
+    const [row] = await db.insert(faAssetGroupsTable).values({
+      companyId: cid, code, nameAr,
+      nameEn: b.nameEn || null,
+      parentId: parent.value,
+      isActive: b.isActive !== false,
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.put("/groups/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!await assertOwn(res, faAssetGroupsTable, id, cid, "المجموعة")) return;
+    const b = req.body ?? {};
+    const patch: any = {};
+    for (const k of ["code","nameAr","nameEn"]) if (b[k] !== undefined) patch[k] = b[k] || null;
+    if (b.isActive !== undefined) patch.isActive = !!b.isActive;
+    if (b.parentId !== undefined) {
+      const parent = await resolveGroupParent(cid, b.parentId, id);
+      if (!parent.ok) { res.status(400).json({ error: parent.error }); return; }
+      patch.parentId = parent.value;
+    }
+    const [row] = await db.update(faAssetGroupsTable).set(patch)
+      .where(and(eq(faAssetGroupsTable.id, id), eq(faAssetGroupsTable.companyId, cid))).returning();
+    res.json(row);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete("/groups/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!await assertOwn(res, faAssetGroupsTable, id, cid, "المجموعة")) return;
+    // Block delete when still referenced by a sub-group or an asset.
+    const [child] = await db.select({ id: faAssetGroupsTable.id }).from(faAssetGroupsTable)
+      .where(and(eq(faAssetGroupsTable.parentId, id), eq(faAssetGroupsTable.companyId, cid)));
+    if (child) { res.status(409).json({ error: "لا يمكن الحذف: توجد مجموعات فرعية مرتبطة بها" }); return; }
+    const [asset] = await db.select({ id: fixedAssetsTable.id }).from(fixedAssetsTable)
+      .where(and(eq(fixedAssetsTable.groupId, id), eq(fixedAssetsTable.companyId, cid)));
+    if (asset) { res.status(409).json({ error: "لا يمكن الحذف: توجد أصول مرتبطة بهذه المجموعة" }); return; }
+    await db.delete(faAssetGroupsTable).where(and(eq(faAssetGroupsTable.id, id), eq(faAssetGroupsTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ════════════════════════════════════════════════════════════════════════
 // ASSETS
 // ════════════════════════════════════════════════════════════════════════
 router.get("/assets", async (req, res) => {
@@ -179,11 +283,17 @@ router.post("/assets", async (req, res) => {
     const accumulated   = String(b.accumulatedDepreciation ?? "0");
     const bookValue     = String(b.bookValue ?? (Number(purchaseValue) - Number(accumulated)));
     const qrPayload     = JSON.stringify({ kind: "fixed_asset", code, name: nameAr, companyId: cid });
+    // Tenant isolation: reject a groupId that does not belong to this company
+    // (FK is on id only, so the same-company scope must be enforced here).
+    if (b.groupId && !await ownsRow(faAssetGroupsTable, Number(b.groupId), cid)) {
+      res.status(400).json({ error: "المجموعة غير موجودة" }); return;
+    }
     const [row] = await db.insert(fixedAssetsTable).values({
       companyId: cid,
       branchId: b.branchId ? Number(b.branchId) : null,
       costCenterId: b.costCenterId ? Number(b.costCenterId) : null,
       categoryId: b.categoryId ? Number(b.categoryId) : null,
+      groupId: b.groupId ? Number(b.groupId) : null,
       code, nameAr,
       nameEn: b.nameEn || null,
       status: status as any,
@@ -257,13 +367,17 @@ router.put("/assets/:id", async (req, res) => {
     for (const k of numStrFields) if (b[k] !== undefined) patch[k] = String(b[k] || "0");
     const dateFields = ["purchaseDate","depreciationStart","insuranceStart","insuranceEnd"];
     for (const k of dateFields) if (b[k] !== undefined) patch[k] = b[k] || null;
-    const intFields = ["branchId","costCenterId","categoryId","custodianEmployeeId","initialKm","currentKm","supplierId","cashBoxId","bankAccountId"];
+    const intFields = ["branchId","costCenterId","categoryId","groupId","custodianEmployeeId","initialKm","currentKm","supplierId","cashBoxId","bankAccountId"];
     for (const k of intFields) if (b[k] !== undefined) patch[k] = b[k] ? Number(b[k]) : null;
     if (b.lifeYears !== undefined) patch.lifeYears = String(b.lifeYears || 5);
     if (b.vatRate !== undefined) patch.vatRate = String(b.vatRate || "15");
     if (b.priceIncludesVat !== undefined) patch.priceIncludesVat = coerceBool(b.priceIncludesVat);
     if ((STATUSES as readonly string[]).includes(b.status)) patch.status = b.status;
     if ((DEP_METHODS as readonly string[]).includes(b.depreciationMethod)) patch.depreciationMethod = b.depreciationMethod;
+    // Tenant isolation: a groupId in the patch must belong to this company.
+    if (patch.groupId && !await ownsRow(faAssetGroupsTable, Number(patch.groupId), cid)) {
+      res.status(400).json({ error: "المجموعة غير موجودة" }); return;
+    }
     const [row] = await db.update(fixedAssetsTable).set(patch)
       .where(and(eq(fixedAssetsTable.id, id), eq(fixedAssetsTable.companyId, cid))).returning();
     res.json(row);

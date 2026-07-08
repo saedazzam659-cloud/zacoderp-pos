@@ -916,6 +916,7 @@
     "faHub": "Fixed Assets Dashboard",
     "faAssets": "Asset Register",
     "faCategories": "Asset Categories",
+    "faGroups": "Asset Groups",
     "faMaintenance": "Asset Maintenance",
     "faTransfers": "Asset Transfers",
     "faDepreciation": "Depreciation",

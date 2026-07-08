@@ -204,6 +204,7 @@ import CrmAI from "@/pages/crm/CrmAI";
 import FixedAssetsHub from "@/pages/fixed-assets/FixedAssetsHub";
 import FixedAssets from "@/pages/fixed-assets/FixedAssets";
 import FaCategories from "@/pages/fixed-assets/FaCategories";
+import FaGroups from "@/pages/fixed-assets/FaGroups";
 import FaMaintenance from "@/pages/fixed-assets/FaMaintenance";
 import FaTransfers from "@/pages/fixed-assets/FaTransfers";
 import FaDepreciation from "@/pages/fixed-assets/FaDepreciation";
@@ -871,6 +872,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/fixed-assets"                   module="fixed_assets"   component={FixedAssetsHub} />}
             {!isSuperAdmin && <PermRoute path="/fixed-assets/assets"            module="fixed_assets"   component={FixedAssets} />}
             {!isSuperAdmin && <PermRoute path="/fixed-assets/categories"        module="fixed_assets"   component={FaCategories} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/groups"            module="fixed_assets"   component={FaGroups} />}
             {!isSuperAdmin && <PermRoute path="/fixed-assets/maintenance"       module="fixed_assets"   component={FaMaintenance} />}
             {!isSuperAdmin && <PermRoute path="/fixed-assets/transfers"         module="fixed_assets"   component={FaTransfers} />}
             {!isSuperAdmin && <PermRoute path="/fixed-assets/depreciation"      module="fixed_assets"   component={FaDepreciation} />}

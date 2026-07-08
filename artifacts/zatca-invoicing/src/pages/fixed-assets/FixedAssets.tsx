@@ -20,7 +20,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type Asset = {
   id: number; code: string; nameAr: string; nameEn: string | null;
-  status: string; categoryId: number | null; branchId: number | null;
+  status: string; categoryId: number | null; groupId: number | null; branchId: number | null;
   costCenterId: number | null;
   purchaseDate: string | null; purchaseValue: string;
   supplierName: string | null; supplierId: number | null;
@@ -56,7 +56,7 @@ const METHODS = [
 
 const EMPTY = {
   code:"", nameAr:"", nameEn:"", status:"active",
-  categoryId:"", branchId:"", costCenterId:"",
+  categoryId:"", groupId:"", branchId:"", costCenterId:"",
   purchaseDate:"", purchaseValue:"0", supplierName:"", supplierId:"",
   invoiceNo:"", paymentMethod:"cash", cashBoxId:"", bankAccountId:"",
   model:"", brand:"", serialNo:"", serialNumber:"", skipAcquisitionJe:false,
@@ -100,6 +100,14 @@ export default function FixedAssets() {
     queryFn: async () => (await fetch(`${API}/api/fixed-assets/categories?companyId=${cid}`, { headers })).json(),
     enabled: !!cid,
   });
+  const { data: groups = [] } = useQuery<{ id:number; nameAr:string; parentId:number|null; isActive?:boolean }[]>({
+    queryKey:["fa/groups", cid],
+    queryFn: async () => {
+      const j = await (await fetch(`${API}/api/fixed-assets/groups?companyId=${cid}`, { headers })).json();
+      return Array.isArray(j) ? j : [];
+    },
+    enabled: !!cid,
+  });
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey:["suppliers", cid],
     queryFn: async () => (await fetch(`${API}/api/suppliers?companyId=${cid}`, { headers })).json(),
@@ -132,7 +140,7 @@ export default function FixedAssets() {
     setEditing(a);
     setForm({
       code:a.code??"", nameAr:a.nameAr??"", nameEn:a.nameEn??"", status:a.status??"active",
-      categoryId:a.categoryId?String(a.categoryId):"", branchId:a.branchId?String(a.branchId):"",
+      categoryId:a.categoryId?String(a.categoryId):"", groupId:a.groupId?String(a.groupId):"", branchId:a.branchId?String(a.branchId):"",
       costCenterId:a.costCenterId?String(a.costCenterId):"",
       purchaseDate:a.purchaseDate??"", purchaseValue:String(a.purchaseValue??"0"),
       supplierName:a.supplierName??"", supplierId:a.supplierId?String(a.supplierId):"",
@@ -212,6 +220,7 @@ export default function FixedAssets() {
       const sup = suppliers.find((s: any) => String(s.id) === String(form.supplierId));
       const body: any = { ...form, companyId: cid,
         categoryId: form.categoryId ? Number(form.categoryId) : null,
+        groupId:    form.groupId    ? Number(form.groupId)    : null,
         branchId:   form.branchId   ? Number(form.branchId)   : null,
         costCenterId: form.costCenterId ? Number(form.costCenterId) : null,
         custodianEmployeeId: form.custodianEmployeeId ? Number(form.custodianEmployeeId) : null,
@@ -349,6 +358,13 @@ export default function FixedAssets() {
                     {cats.map(c => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
                   </select>
                   <p className="text-[11px] text-muted-foreground mt-1">اختيار الفئة يملأ بيانات الإهلاك (العمر / الطريقة / الخردة) تلقائياً في تبويب «الإهلاك».</p></div>
+                <div><Label>المجموعة</Label>
+                  <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    value={form.groupId} onChange={(e)=>setForm({...form,groupId:e.target.value})}>
+                    <option value="">— بدون —</option>
+                    {groups.filter(g=>g.isActive!==false).map(g => <option key={g.id} value={g.id}>{g.nameAr}</option>)}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1">تصنيف تنظيمي هرمي للأصل (يُدار من شاشة «مجموعات الأصول»).</p></div>
                 <div><Label>الحالة</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.status} onChange={(e)=>setForm({...form,status:e.target.value})}>
