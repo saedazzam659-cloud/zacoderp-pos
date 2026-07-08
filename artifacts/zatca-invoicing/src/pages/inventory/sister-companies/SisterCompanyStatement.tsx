@@ -27,6 +27,31 @@ export default function SisterCompanyStatement() {
     enabled: !!sid,
   });
   const { data: branches = [] } = useQuery({ queryKey: ["branches"], queryFn: () => branchesApi.getBranches() });
+
+  // Chart-of-accounts lookup so the statement can show the sister company's
+  // linked GL account رمز الحساب (code) + مستوى الحساب (level) — the sister row
+  // only carries `accountId`, not the code/level.
+  const actingCompanyId = typeof window !== "undefined" ? localStorage.getItem("zatca_acting_company_id") : null;
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ["accounts-for-sister-statement", actingCompanyId],
+    queryFn: async () => {
+      const token = localStorage.getItem("zatca_token");
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      if (actingCompanyId) headers["x-acting-company-id"] = actingCompanyId;
+      const r = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/accounts?limit=2000`, { headers });
+      if (!r.ok) return [];
+      const j = await r.json();
+      return Array.isArray(j) ? j : (Array.isArray(j?.rows) ? j.rows : []);
+    },
+    enabled: !!user && sister?.accountId != null,
+  });
+  const linkedAccount = sister?.accountId != null
+    ? (accounts as any[]).find((a) => a.id === sister.accountId) ?? null
+    : null;
+  const accountCode: string | null = linkedAccount?.code ?? null;
+  const accountLevel: string | number | null = linkedAccount?.level ?? null;
+
   const { data: stmt, isLoading } = useQuery({
     queryKey: ["sister-statement", sid, from, to, branchId],
     queryFn: () => sisterCompaniesApi.statement(sid, from || undefined, to || undefined, branchId ? Number(branchId) : undefined),
@@ -51,6 +76,7 @@ export default function SisterCompanyStatement() {
               { header: "الرصيد", key: "balance", width: 14 },
             ];
             const data = stmt ? [
+              { date: "رمز الحساب", docNumber: accountCode ?? "—", type: "مستوى الحساب", description: accountLevel != null ? String(accountLevel) : "—", debit: "", credit: "", balance: "" },
               { date: "", docNumber: "", type: "", description: "الرصيد الافتتاحي", debit: "", credit: "", balance: Number(stmt.opening).toFixed(2) },
               ...stmt.rows.map((r: any) => ({
                 date: r.date, docNumber: r.docNumber, type: r.type,
@@ -65,7 +91,9 @@ export default function SisterCompanyStatement() {
               balance: Number(stmt.closing).toFixed(2),
             } : null;
             const title = `كشف حساب — ${sister?.nameAr ?? ""}`;
-            const subtitle = (from || to) ? `الفترة: ${from || "—"} إلى ${to || "—"}` : undefined;
+            const acctInfo = `رمز الحساب: ${accountCode ?? "—"} · مستوى الحساب: ${accountLevel != null ? String(accountLevel) : "—"}`;
+            const periodInfo = (from || to) ? `الفترة: ${from || "—"} إلى ${to || "—"}` : "";
+            const subtitle = [acctInfo, periodInfo].filter(Boolean).join("  •  ");
             const disabled = !stmt || data.length === 0;
             return (
               <>
@@ -87,6 +115,8 @@ export default function SisterCompanyStatement() {
                           nameEn: sister?.nameEn ?? null,
                           partyNameAr: sister?.nameAr ?? null,
                           partyNameEn: sister?.nameEn ?? null,
+                          code: accountCode,
+                          level: accountLevel,
                         },
                         from: from || "",
                         to: to || "",
@@ -146,6 +176,16 @@ export default function SisterCompanyStatement() {
         <Button variant="outline" onClick={() => { setFrom(""); setTo(""); setBranchId(""); }}>إعادة تعيين</Button>
       </CardContent></Card>
 
+      {/* Linked GL account identity — رمز الحساب + مستوى الحساب من شجرة الحسابات */}
+      <Card className="print:hidden"><CardContent className="flex flex-wrap gap-x-8 gap-y-2 pt-6 text-sm">
+        <div><span className="text-muted-foreground">الحساب: </span>
+          <span className="font-semibold">{sister?.nameAr ?? "—"}</span></div>
+        <div><span className="text-muted-foreground">رمز الحساب: </span>
+          <span className="font-mono font-medium" data-testid="text-account-code">{accountCode ?? "—"}</span></div>
+        <div><span className="text-muted-foreground">مستوى الحساب: </span>
+          <span className="font-medium" data-testid="text-account-level">{accountLevel != null ? String(accountLevel) : "—"}</span></div>
+      </CardContent></Card>
+
       <Card className="print:hidden"><CardContent className="p-0 overflow-x-auto">
         {isLoading || !stmt ? <div className="p-4"><Skeleton className="h-32" /></div> : (
           <table className="w-full text-sm" data-testid="table-statement">
@@ -198,6 +238,8 @@ export default function SisterCompanyStatement() {
             account={{
               nameAr: sister?.nameAr ?? null,
               nameEn: sister?.nameEn ?? null,
+              code: accountCode,
+              level: accountLevel,
             }}
             from={from}
             to={to}
