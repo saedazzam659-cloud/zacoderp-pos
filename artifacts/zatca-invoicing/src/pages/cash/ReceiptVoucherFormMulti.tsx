@@ -110,7 +110,7 @@ function bankMatchesBranch(b: any, bid: string): boolean {
   return ids.map(String).includes(String(bid));
 }
 
-export default function ReceiptVoucherForm() {
+export default function ReceiptVoucherFormMulti() {
   const { user, token } = useAuth();
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -118,8 +118,8 @@ export default function ReceiptVoucherForm() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
 
-  const [matchNew] = useRoute("/cash/receipt-vouchers/new");
-  const [matchEdit, params] = useRoute("/cash/receipt-vouchers/:id");
+  const [matchNew] = useRoute("/cash/receipt-vouchers/multi/new");
+  const [matchEdit, params] = useRoute("/cash/receipt-vouchers/multi/:id");
   const isNew  = !!matchNew;
   // Wouter matches "/new" against ":id" too — guard against opening the
   // create-mode URL in edit mode.
@@ -401,7 +401,7 @@ export default function ReceiptVoucherForm() {
       return;
     }
     setNavSearch("");
-    navigate(`/cash/receipt-vouchers/${hit.id}`);
+    navigate(`/cash/receipt-vouchers/multi/${hit.id}`);
   }
 
   // ── Build searchable combobox items ────────────────────────────
@@ -751,7 +751,7 @@ export default function ReceiptVoucherForm() {
               <ArrowDownCircle className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-bold">{isNew ? t(`${NS}.newLong`) : t(`${NS}.editVoucher`)}</h1>
+              <h1 className="text-lg font-bold">{isNew ? t(`${NS}.newLong`) : t(`${NS}.editVoucher`)}{t(`${NS}.multiSuffix`, " (عمليات متعددة)")}</h1>
               <p className="text-xs text-muted-foreground">
                 {isNew
                   ? t(`${NS}.subtitle`)
@@ -771,7 +771,7 @@ export default function ReceiptVoucherForm() {
             <div className="flex items-center gap-1 rounded-md border bg-background px-1 py-0.5 print:hidden">
               <Button type="button" variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs"
                 disabled={!prevVoucher}
-                onClick={() => prevVoucher && navigate(`/cash/receipt-vouchers/${prevVoucher.id}`)}
+                onClick={() => prevVoucher && navigate(`/cash/receipt-vouchers/multi/${prevVoucher.id}`)}
                 title={prevVoucher ? `${prevVoucher.code}` : ""}>
                 <ChevronLeft className={cn("h-3.5 w-3.5", isRtl && "rotate-180")} />
                 {t(`${NS}.prev`, "السابق")}
@@ -781,7 +781,7 @@ export default function ReceiptVoucherForm() {
               </span>
               <Button type="button" variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs"
                 disabled={!nextVoucher}
-                onClick={() => nextVoucher && navigate(`/cash/receipt-vouchers/${nextVoucher.id}`)}
+                onClick={() => nextVoucher && navigate(`/cash/receipt-vouchers/multi/${nextVoucher.id}`)}
                 title={nextVoucher ? `${nextVoucher.code}` : ""}>
                 {t(`${NS}.next`, "التالي")}
                 <ChevronLeft className={cn("h-3.5 w-3.5", !isRtl && "rotate-180")} />

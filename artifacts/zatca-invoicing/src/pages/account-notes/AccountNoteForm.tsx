@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useToast } from "@/hooks/use-toast";
 import { accountNotesApi, type AccountNote, type AccountNotePartyType, type AccountNoteType } from "@/lib/accountNotesApi";
 import { printAccountNote } from "@/lib/accountNotePrint";
@@ -93,6 +94,17 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
   const { data: projects = [] } = useQuery<any[]>({
     queryKey: ["/api/contracting/projects"],
     queryFn: () => fetchJson("/api/contracting/projects"),
+  });
+  // Invoices of the SELECTED party — powers the invoice-number picker so the
+  // user references an ACTUAL linked invoice instead of typing it by hand.
+  const invoicesPath = partyType === "customer"
+    ? "/api/sales/sales-invoices"
+    : "/api/purchasing/purchase-invoices";
+  const { data: partyInvoices = [] } = useQuery<any[]>({
+    queryKey: [invoicesPath],
+    enabled: !!form.partyId,
+    queryFn: () => fetchJson(invoicesPath),
+    staleTime: 30_000,
   });
 
   // Load existing for edit mode.
@@ -233,6 +245,63 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
     return ["expense"];
   }, [partyType, noteType]);
 
+  // ── Searchable-dropdown item lists (system-wide SearchCombobox pattern) ──
+  const partyItems: ComboboxItem[] = useMemo(
+    () => (parties as any[])
+      .filter((p: any) => p.isActive !== false)
+      .map((p: any) => ({
+        value: String(p.id),
+        label: p.nameAr ?? p.nameEn ?? `#${p.id}`,
+        code: p.code ?? undefined,
+      })),
+    [parties],
+  );
+  // Optional fields carry an explicit empty row so a value can be cleared back
+  // to blank in edit mode (SearchCombobox has no built-in clear affordance).
+  const costCenterItems: ComboboxItem[] = useMemo(
+    () => [
+      { value: "", label: "— بدون —" },
+      ...(costCenters as any[]).map((c: any) => ({
+        value: c.code, label: `${c.code} — ${c.nameAr}`, code: c.code,
+      })),
+    ],
+    [costCenters],
+  );
+  const projectItems: ComboboxItem[] = useMemo(
+    () => [
+      { value: "", label: "— بدون —" },
+      ...(projects as any[])
+        .filter((p: any) => p.isActive !== false)
+        .map((p: any) => ({ value: String(p.id), label: p.nameAr ?? p.name ?? `#${p.id}` })),
+    ],
+    [projects],
+  );
+  // Invoice picker items — only the chosen party's real, non-cancelled invoices.
+  const invoicePartyKey = partyType === "customer" ? "customerId" : "supplierId";
+  const invoiceItems: ComboboxItem[] = useMemo(() => {
+    const pid = String(form.partyId);
+    const list: ComboboxItem[] = pid
+      ? [
+          { value: "", label: "— بدون —" },
+          ...(partyInvoices as any[])
+            .filter((inv: any) => String(inv[invoicePartyKey]) === pid && inv.status !== "cancelled")
+            .map((inv: any) => ({
+              value: inv.docNumber ?? String(inv.id),
+              label: inv.docNumber ?? `#${inv.id}`,
+              description: `${String(inv.invoiceDate ?? "").slice(0, 10)} — ${Number(inv.totalAmount ?? 0).toFixed(2)}`,
+            })),
+        ]
+      : [];
+    // EDIT mode only: keep a manually-stored legacy reference visible even when
+    // it isn't among the party's current invoices. Create mode always holds a
+    // freshly-picked real invoice, and changing the party clears the reference,
+    // so no stale cross-party value can survive here.
+    if (editingId && form.referenceNumber && !list.some((i) => i.value === form.referenceNumber)) {
+      list.push({ value: form.referenceNumber, label: form.referenceNumber });
+    }
+    return list;
+  }, [partyInvoices, form.partyId, form.referenceNumber, invoicePartyKey, editingId]);
+
   // ── Print the persisted note (sales-invoice-style A4, no item lines) ──
   function printNote() {
     if (!existing) return;
@@ -268,13 +337,15 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
         </label>
 
         <label className="flex flex-col gap-1"><span className="text-sm font-medium">{partyLabel} *</span>
-          <select className="w-full border rounded h-9 px-2 bg-background" value={form.partyId}
-            onChange={e => setForm({ ...form, partyId: e.target.value, partyAccountId: "" })}
-            data-testid="select-party">
-            <option value="">اختر…</option>
-            {(parties as any[]).filter((p: any) => p.isActive !== false).map((p: any) =>
-              <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-          </select>
+          <div data-testid="select-party">
+            <SearchCombobox
+              items={partyItems}
+              value={form.partyId || undefined}
+              onValueChange={(v) => setForm({ ...form, partyId: v, partyAccountId: "", referenceNumber: "", referenceDate: "" })}
+              placeholder={`اختر ${partyLabel}…`}
+              searchPlaceholder="ابحث بالاسم أو الكود…"
+            />
+          </div>
         </label>
 
         <label className="flex flex-col gap-1"><span className="text-sm font-medium">الرقم الضريبي للطرف</span>
@@ -318,9 +389,24 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
         </label>
 
         <label className="flex flex-col gap-1"><span className="text-sm font-medium">{partyType === "customer" ? "رقم فاتورة المبيعات" : "رقم فاتورة المشتريات"}</span>
-          <Input value={form.referenceNumber}
-            onChange={e => setForm({ ...form, referenceNumber: e.target.value })}
-            data-testid="input-reference-number" />
+          <div data-testid="input-reference-number">
+            <SearchCombobox
+              items={invoiceItems}
+              value={form.referenceNumber || undefined}
+              onValueChange={(v) => {
+                const inv = (partyInvoices as any[]).find((x: any) => (x.docNumber ?? String(x.id)) === v);
+                setForm((f: any) => ({
+                  ...f,
+                  referenceNumber: v,
+                  referenceDate: inv?.invoiceDate ? String(inv.invoiceDate).slice(0, 10) : f.referenceDate,
+                }));
+              }}
+              disabled={!form.partyId}
+              placeholder={form.partyId ? "اختر الفاتورة…" : "اختر الطرف أولاً"}
+              searchPlaceholder="ابحث برقم الفاتورة…"
+              emptyText="لا توجد فواتير لهذا الطرف"
+            />
+          </div>
         </label>
 
         <label className="flex flex-col gap-1"><span className="text-sm font-medium">تاريخ المرجع</span>
@@ -330,25 +416,27 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
         </label>
 
         <label className="flex flex-col gap-1"><span className="text-sm font-medium">مركز التكلفة</span>
-          <select className="w-full border rounded h-9 px-2 bg-background"
-            value={form.costCenter}
-            onChange={e => setForm({ ...form, costCenter: e.target.value })}
-            data-testid="select-cost-center">
-            <option value="">— الرجاء الاختيار —</option>
-            {(costCenters as any[]).map((c: any) =>
-              <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>)}
-          </select>
+          <div data-testid="select-cost-center">
+            <SearchCombobox
+              items={costCenterItems}
+              value={form.costCenter || undefined}
+              onValueChange={(v) => setForm({ ...form, costCenter: v })}
+              placeholder="— الرجاء الاختيار —"
+              searchPlaceholder="ابحث…"
+            />
+          </div>
         </label>
 
         <label className="flex flex-col gap-1"><span className="text-sm font-medium">المشروع</span>
-          <select className="w-full border rounded h-9 px-2 bg-background"
-            value={form.projectId}
-            onChange={e => setForm({ ...form, projectId: e.target.value })}
-            data-testid="select-project">
-            <option value="">— الرجاء الاختيار —</option>
-            {(projects as any[]).filter((p: any) => p.isActive !== false).map((p: any) =>
-              <option key={p.id} value={p.id}>{p.nameAr ?? p.name ?? `#${p.id}`}</option>)}
-          </select>
+          <div data-testid="select-project">
+            <SearchCombobox
+              items={projectItems}
+              value={form.projectId || undefined}
+              onValueChange={(v) => setForm({ ...form, projectId: v })}
+              placeholder="— الرجاء الاختيار —"
+              searchPlaceholder="ابحث…"
+            />
+          </div>
         </label>
 
         <label className="flex items-center gap-2 mt-2 md:col-start-1">

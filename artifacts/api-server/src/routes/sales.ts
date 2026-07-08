@@ -1609,6 +1609,15 @@ router.patch("/sales-invoices/:id/unpost", requireAdminRole, async (req, res) =>
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
 
+    // ZATCA-approved invoices are sealed fiscal documents: once cleared /
+    // reported by the authority they can NEVER be unposted (doing so would
+    // break the reported ICV/PIH chain and the legal audit trail).
+    const _zsUnpost = String(inv.zatcaStatus || "").toLowerCase();
+    if (_zsUnpost === "approved" || _zsUnpost === "cleared" || _zsUnpost === "reported") {
+      res.status(409).json({ error: "لا يمكن فك ترحيل فاتورة معتمدة من هيئة الزكاة والضريبة (ZATCA)." });
+      return;
+    }
+
     // GDN-sourced invoices never touched stock (the GDN did), so the stock
     // loop below would be a no-op anyway — short-circuit for clarity.
     const gdnSourced = !!(inv as any).sourceGdnId;
@@ -1671,6 +1680,14 @@ router.delete("/sales-invoices/:id", async (req, res) => {
     const [inv] = await db.select().from(salesInvoicesTable)
       .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    // ZATCA-approved invoices can never be deleted — the reported fiscal chain
+    // is sealed (this also defends against a rejected→approved edge landing on
+    // a draft-status row).
+    const _zsDel = String(inv.zatcaStatus || "").toLowerCase();
+    if (_zsDel === "approved" || _zsDel === "cleared" || _zsDel === "reported") {
+      res.status(409).json({ error: "لا يمكن حذف فاتورة معتمدة من هيئة الزكاة والضريبة (ZATCA)." });
+      return;
+    }
     if (inv.status === "posted") {
       res.status(400).json({ error: "لا يمكن حذف فاتورة مُرحَّلة. قم بإلغاء الترحيل أولاً ثم احذفها." });
       return;
@@ -3684,6 +3701,10 @@ router.get("/sales-invoices-zatca-bridge", async (req, res) => {
       ))
       .where(and(
         eq(salesInvoicesTable.companyId, cid),
+        // Only POSTED (مرحّلة) invoices belong in the ZATCA bridge — draft
+        // (مسودة) invoices are NOT eligible for submission and must never
+        // appear here (they also skewed the header totals).
+        eq(salesInvoicesTable.status, "posted"),
         ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ))
       .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id));

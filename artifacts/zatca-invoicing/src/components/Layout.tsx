@@ -546,6 +546,7 @@ const cashSubNav: NavDef[] = [
   { nameKey: "nav.cashBoxes",        href: "/cash/boxes",            icon: Wallet,          permKey: "cash_boxes" },
   { nameKey: "nav.banks",            href: "/cash/banks",            icon: Landmark,        permKey: "bank_accounts" },
   { nameKey: "nav.receiptVouchers",  href: "/cash/receipt-vouchers", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
+  { nameKey: "nav.receiptVouchersMulti", href: "/cash/receipt-vouchers/multi/new", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
   { nameKey: "nav.paymentVouchers",  href: "/cash/payment-vouchers", icon: ArrowUpCircle,   permKey: "payment_vouchers" },
   { nameKey: "nav.paymentVouchersMulti", href: "/cash/payment-vouchers/multi/new", icon: ArrowUpCircle, permKey: "payment_vouchers" },
   // transfers: no dedicated module key; gate under cash_boxes.
