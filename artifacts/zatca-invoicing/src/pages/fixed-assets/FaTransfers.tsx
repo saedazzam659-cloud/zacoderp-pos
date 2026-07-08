@@ -22,8 +22,9 @@ type Transfer = {
   fromCostCenterId: number | null; toCostCenterId: number | null;
   transferDate: string; reason: string | null; approvedBy: string | null; notes: string | null;
 };
-type Asset = { id: number; code: string; nameAr: string };
+type Asset = { id: number; code: string; nameAr: string; branchId: number | null; costCenterId: number | null };
 type Branch = { id: number; nameAr?: string; name?: string };
+type CostCenter = { id: number; code?: string; nameAr: string; isActive?: boolean };
 
 const EMPTY = {
   code:"", assetId:"",
@@ -59,6 +60,11 @@ export default function FaTransfers() {
     queryFn: async () => (await fetch(`${API}/api/branches?companyId=${cid}`, { headers })).json(),
     enabled: !!cid,
   });
+  const { data: costCenters = [] } = useQuery<CostCenter[]>({
+    queryKey:["cost-centers", cid],
+    queryFn: async () => (await fetch(`${API}/api/cost-centers?companyId=${cid}`, { headers })).json(),
+    enabled: !!cid,
+  });
 
   const assetName = (id:number) => {
     const a = assets.find(x=>x.id===id); return a ? `${a.code} — ${a.nameAr}` : `#${id}`;
@@ -68,8 +74,30 @@ export default function FaTransfers() {
     const b = branches.find(x=>x.id===id);
     return b ? (b.nameAr || b.name || `#${id}`) : `#${id}`;
   };
+  const costCenterName = (id:number|null) => {
+    if (!id) return "—";
+    const c = costCenters.find(x=>x.id===id);
+    return c ? (c.code ? `${c.code} — ${c.nameAr}` : c.nameAr) : `#${id}`;
+  };
+  const ccLabel = (c:CostCenter) => c.code ? `${c.code} — ${c.nameAr}` : c.nameAr;
 
-  function openNew() { setForm({...EMPTY, assetId: assets[0]?.id ? String(assets[0].id) : ""}); setShowForm(true); }
+  // Selecting an asset auto-fills the "from" side from its current branch/cost-center.
+  const selectAsset = (assetId:string) => {
+    const a = assets.find(x=>String(x.id)===String(assetId));
+    setForm(f => ({ ...f, assetId,
+      fromBranchId:     a?.branchId     ? String(a.branchId)     : "",
+      fromCostCenterId: a?.costCenterId ? String(a.costCenterId) : "",
+    }));
+  };
+
+  function openNew() {
+    const a = assets[0];
+    setForm({...EMPTY, assetId: a?.id ? String(a.id) : "",
+      fromBranchId:     a?.branchId     ? String(a.branchId)     : "",
+      fromCostCenterId: a?.costCenterId ? String(a.costCenterId) : "",
+    });
+    setShowForm(true);
+  }
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -87,10 +115,15 @@ export default function FaTransfers() {
       if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.error || "فشل الحفظ"); }
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data:any) => {
       qc.invalidateQueries({ queryKey:["fa/transfers", cid] });
       qc.invalidateQueries({ queryKey:["fa/assets", cid] });
-      toast({ title: "تم نقل الأصل" });
+      qc.invalidateQueries({ queryKey:["journal-entries"] });
+      qc.invalidateQueries({ queryKey:["cost-centers", cid] });
+      const parts:string[] = [];
+      if (data?.reallocated) parts.push(`تم تحديث مركز التكلفة على ${data.reallocated} قيد إهلاك من تاريخ النقل`);
+      if (data?.skipped)     parts.push(`تُخطّي ${data.skipped} قيد في فترات محاسبية مقفلة`);
+      toast({ title: "تم نقل الأصل", description: parts.join(" • ") || undefined });
       setShowForm(false); setForm(EMPTY);
     },
     onError: (e:any) => toast({ title:"خطأ", description: e?.message, variant:"destructive" }),
@@ -134,7 +167,7 @@ export default function FaTransfers() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><Label>الأصل *</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
-                value={form.assetId} onChange={(e)=>setForm({...form,assetId:e.target.value})}>
+                value={form.assetId} onChange={(e)=>selectAsset(e.target.value)}>
                 <option value="">— اختر —</option>
                 {assets.map(a => <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
               </select></div>
@@ -146,12 +179,28 @@ export default function FaTransfers() {
                 <option value="">— بدون —</option>
                 {branches.map(b => <option key={b.id} value={b.id}>{b.nameAr || b.name}</option>)}
               </select></div>
-            <div><Label>إلى فرع *</Label>
+            <div><Label>إلى فرع</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.toBranchId} onChange={(e)=>setForm({...form,toBranchId:e.target.value})}>
                 <option value="">— بدون —</option>
                 {branches.map(b => <option key={b.id} value={b.id}>{b.nameAr || b.name}</option>)}
               </select></div>
+            <div><Label>من مركز تكلفة</Label>
+              <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                value={form.fromCostCenterId} onChange={(e)=>setForm({...form,fromCostCenterId:e.target.value})}>
+                <option value="">— بدون —</option>
+                {costCenters.filter(c=>c.isActive!==false).map(c => <option key={c.id} value={c.id}>{ccLabel(c)}</option>)}
+              </select></div>
+            <div><Label>إلى مركز تكلفة</Label>
+              <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                value={form.toCostCenterId} onChange={(e)=>setForm({...form,toCostCenterId:e.target.value})}
+                data-testid="select-to-cost-center">
+                <option value="">— بدون —</option>
+                {costCenters.filter(c=>c.isActive!==false).map(c => <option key={c.id} value={c.id}>{ccLabel(c)}</option>)}
+              </select></div>
+            <div className="md:col-span-2 text-[11px] text-muted-foreground bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
+              الجهة المستلمة إلزامية: حدّد «إلى فرع» أو «إلى مركز تكلفة» (أو كليهما). عند اختيار مركز تكلفة جديد، تُنقل قيود إهلاك الموديول من تاريخ النقل فأكثر إلى المركز الجديد تلقائياً، وتُتخطّى أي فترة محاسبية مقفلة مع تنبيه.
+            </div>
             <div className="md:col-span-2"><Label>سبب النقل</Label>
               <Input value={form.reason} onChange={(e)=>setForm({...form,reason:e.target.value})} /></div>
             <div><Label>اعتماد المسؤول</Label>
@@ -170,20 +219,24 @@ export default function FaTransfers() {
               <th className="px-3 py-2 text-start font-semibold">الأصل</th>
               <th className="px-3 py-2 text-start font-semibold">من فرع</th>
               <th className="px-3 py-2 text-start font-semibold">إلى فرع</th>
+              <th className="px-3 py-2 text-start font-semibold">من مركز تكلفة</th>
+              <th className="px-3 py-2 text-start font-semibold">إلى مركز تكلفة</th>
               <th className="px-3 py-2 text-start font-semibold">التاريخ</th>
               <th className="px-3 py-2 text-start font-semibold">السبب</th>
               <th className="px-3 py-2 text-center font-semibold w-16">إجراءات</th>
             </tr>
           </thead>
           <tbody className="divide-y">
-            {isLoading && <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
-            {!isLoading && rows.length===0 && <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">لا توجد سجلات</td></tr>}
+            {isLoading && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
+            {!isLoading && rows.length===0 && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">لا توجد سجلات</td></tr>}
             {rows.map(t => (
               <tr key={t.id} className="hover:bg-indigo-50/40">
                 <td className="px-3 py-2 font-mono">{t.code}</td>
                 <td className="px-3 py-2 font-semibold">{assetName(t.assetId)}</td>
                 <td className="px-3 py-2">{branchName(t.fromBranchId)}</td>
                 <td className="px-3 py-2">{branchName(t.toBranchId)}</td>
+                <td className="px-3 py-2">{costCenterName(t.fromCostCenterId)}</td>
+                <td className="px-3 py-2">{costCenterName(t.toCostCenterId)}</td>
                 <td className="px-3 py-2 font-mono">{t.transferDate}</td>
                 <td className="px-3 py-2">{t.reason || "—"}</td>
                 <td className="px-3 py-2 text-center">

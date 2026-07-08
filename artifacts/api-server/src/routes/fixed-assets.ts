@@ -8,8 +8,10 @@ import { db } from "@workspace/db";
 import {
   fixedAssetsTable, faCategoriesTable, faMaintenanceTable, faTransfersTable,
   faDepreciationRunsTable, faDisposalsTable,
+  journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { assertWritableForDate } from "../lib/periodGuard.js";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -359,7 +361,10 @@ router.post("/transfers", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body ?? {};
     const assetId = Number(b.assetId);
-    if (!await ownsRow(fixedAssetsTable, assetId, cid)) { res.status(400).json({ error: "الأصل غير موجود" }); return; }
+    const [asset] = await db.select().from(fixedAssetsTable)
+      .where(and(eq(fixedAssetsTable.id, assetId), eq(fixedAssetsTable.companyId, cid)));
+    if (!asset) { res.status(400).json({ error: "الأصل غير موجود" }); return; }
+    const oldCostCenterId = asset.costCenterId ?? null;
     const code = String(b.code ?? "").trim() || await nextCode(cid, faTransfersTable, "FAT");
     const [row] = await db.insert(faTransfersTable).values({
       companyId: cid, assetId, code,
@@ -380,7 +385,40 @@ router.post("/transfers", async (req, res) => {
       await db.update(fixedAssetsTable).set(upd)
         .where(and(eq(fixedAssetsTable.id, assetId), eq(fixedAssetsTable.companyId, cid)));
     }
-    res.status(201).json(row);
+
+    // ── Reallocate module-generated depreciation cost center ─────────────────
+    // When the asset moves to a NEW cost center, re-tag the cost center on the
+    // depreciation journal entries the module itself generated for periods on
+    // or after the transfer date (edit-in-place). Closed accounting periods are
+    // skipped (never mutated) and reported back so the UI can notify the user.
+    // Manual JEs entered by hand are NOT linked to depreciation runs → untouched.
+    let reallocated = 0, skipped = 0;
+    const newCcId = b.toCostCenterId ? Number(b.toCostCenterId) : null;
+    if (newCcId && newCcId !== oldCostCenterId) {
+      const newCc = String(newCcId);
+      const oldCc = oldCostCenterId != null ? String(oldCostCenterId) : null;
+      const transferDate = row.transferDate; // YYYY-MM-DD
+      const runs = await db.select().from(faDepreciationRunsTable)
+        .where(and(eq(faDepreciationRunsTable.assetId, assetId), eq(faDepreciationRunsTable.companyId, cid)));
+      for (const run of runs) {
+        if (!run.journalEntryId) continue;
+        const [je] = await db.select().from(journalEntriesTable)
+          .where(and(eq(journalEntriesTable.id, run.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        if (!je || !je.entryDate) continue;
+        if (je.entryDate < transferDate) continue; // only from the transfer date onward
+        const w = await assertWritableForDate(cid, je.entryDate);
+        if (!w.ok) { skipped++; continue; }        // closed period → skip + notify
+        await db.update(journalEntryLinesTable)
+          .set({ costCenter: newCc })
+          .where(and(
+            eq(journalEntryLinesTable.entryId, je.id),
+            oldCc ? eq(journalEntryLinesTable.costCenter, oldCc) : isNull(journalEntryLinesTable.costCenter),
+          ));
+        reallocated++;
+      }
+    }
+
+    res.status(201).json({ ...row, reallocated, skipped });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

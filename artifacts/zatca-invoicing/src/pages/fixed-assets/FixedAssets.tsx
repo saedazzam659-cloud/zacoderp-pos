@@ -21,6 +21,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 type Asset = {
   id: number; code: string; nameAr: string; nameEn: string | null;
   status: string; categoryId: number | null; branchId: number | null;
+  costCenterId: number | null;
   purchaseDate: string | null; purchaseValue: string;
   supplierName: string | null; supplierId: number | null;
   invoiceNo: string | null; paymentMethod: string | null;
@@ -114,6 +115,11 @@ export default function FixedAssets() {
     queryFn: async () => (await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers })).json(),
     enabled: !!cid,
   });
+  const { data: costCenters = [] } = useQuery<any[]>({
+    queryKey:["cost-centers", cid],
+    queryFn: async () => (await fetch(`${API}/api/cost-centers?companyId=${cid}`, { headers })).json(),
+    enabled: !!cid,
+  });
 
   const filtered = rows.filter(a => !search.trim() ||
     a.nameAr?.toLowerCase().includes(search.toLowerCase()) ||
@@ -127,7 +133,7 @@ export default function FixedAssets() {
     setForm({
       code:a.code??"", nameAr:a.nameAr??"", nameEn:a.nameEn??"", status:a.status??"active",
       categoryId:a.categoryId?String(a.categoryId):"", branchId:a.branchId?String(a.branchId):"",
-      costCenterId:"",
+      costCenterId:a.costCenterId?String(a.costCenterId):"",
       purchaseDate:a.purchaseDate??"", purchaseValue:String(a.purchaseValue??"0"),
       supplierName:a.supplierName??"", supplierId:a.supplierId?String(a.supplierId):"",
       invoiceNo:a.invoiceNo??"", paymentMethod:a.paymentMethod??"cash",
@@ -207,6 +213,7 @@ export default function FixedAssets() {
       const body: any = { ...form, companyId: cid,
         categoryId: form.categoryId ? Number(form.categoryId) : null,
         branchId:   form.branchId   ? Number(form.branchId)   : null,
+        costCenterId: form.costCenterId ? Number(form.costCenterId) : null,
         custodianEmployeeId: form.custodianEmployeeId ? Number(form.custodianEmployeeId) : null,
         initialKm:  form.initialKm  ? Number(form.initialKm)  : null,
         currentKm:  form.currentKm  ? Number(form.currentKm)  : null,
@@ -347,6 +354,15 @@ export default function FixedAssets() {
                     value={form.status} onChange={(e)=>setForm({...form,status:e.target.value})}>
                     {STATUSES.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
                   </select></div>
+                <div><Label>مركز التكلفة</Label>
+                  <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    value={form.costCenterId} onChange={(e)=>setForm({...form,costCenterId:e.target.value})}
+                    data-testid="select-cost-center">
+                    <option value="">— بدون —</option>
+                    {costCenters.filter((c:any)=>c.isActive!==false).map((c:any) =>
+                      <option key={c.id} value={c.id}>{c.code ? `${c.code} — ${c.nameAr}` : c.nameAr}</option>)}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1">يُستخدم في توزيع مصروف الإهلاك على مراكز التكلفة.</p></div>
                 <div><Label>الموقع</Label>
                   <Input value={form.location} onChange={(e)=>setForm({...form,location:e.target.value})} /></div>
               </div>

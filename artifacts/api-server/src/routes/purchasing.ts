@@ -1024,6 +1024,29 @@ router.get("/purchase-invoices", async (req, res) => {
       arr.push(l);
       byInvoice.set(l.purchaseInvoiceId, arr);
     }
+    // Σ effective per-line discount (percent OR fixed amount) per invoice so the
+    // audit grid can render a real total-discount column (document + line),
+    // mirroring the sales list endpoint. List rows only carry the document-level
+    // discountAmount otherwise.
+    const lineDiscByInvoice = new Map<number, number>();
+    {
+      const plines = await db.select({
+        invoiceId:      purchaseInvoiceLinesTable.invoiceId,
+        qty:            purchaseInvoiceLinesTable.qty,
+        unitPrice:      purchaseInvoiceLinesTable.unitPrice,
+        discount:       purchaseInvoiceLinesTable.discount,
+        discountAmount: purchaseInvoiceLinesTable.discountAmount,
+      }).from(purchaseInvoiceLinesTable).where(inArray(purchaseInvoiceLinesTable.invoiceId, ids));
+      for (const l of plines) {
+        if (!l.invoiceId) continue;
+        const gross = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
+        const amt   = Math.max(0, Number(l.discountAmount) || 0);
+        const eff   = amt > 0
+          ? Math.min(amt, gross)
+          : (gross * Math.max(0, Math.min(100, Number(l.discount) || 0))) / 100;
+        lineDiscByInvoice.set(l.invoiceId, (lineDiscByInvoice.get(l.invoiceId) ?? 0) + eff);
+      }
+    }
     const enriched = enrichedRows.map(r => {
       const arr = byInvoice.get(r.id) ?? [];
       const sorted = [...arr].sort((a, b) => {
@@ -1034,6 +1057,7 @@ router.get("/purchase-invoices", async (req, res) => {
       const top = sorted[0];
       return {
         ...r,
+        lineDiscountTotal: (lineDiscByInvoice.get(r.id) ?? 0).toFixed(2),
         paymentSettlement: top ? {
           voucherId:   top.voucherId,
           code:        top.code,
@@ -2182,7 +2206,31 @@ router.get("/purchase-returns", async (req, res) => {
         ...multiBranchScopeSpread(req, purchaseReturnsTable.branchId, req.query.branchIds ?? req.query.branchId),
       ))
       .orderBy(desc(purchaseReturnsTable.returnDate));
-    res.json(rows);
+    // Σ effective per-line discount per return so the audit grid can show a real
+    // total-discount column (document + line); list rows only carry the
+    // document-level discountAmount otherwise.
+    const ids = rows.map(r => r.id);
+    const lineDiscByReturn = new Map<number, number>();
+    if (ids.length > 0) {
+      const { inArray } = await import("drizzle-orm");
+      const rlines = await db.select({
+        returnId:       purchaseReturnLinesTable.returnId,
+        qty:            purchaseReturnLinesTable.qty,
+        unitPrice:      purchaseReturnLinesTable.unitPrice,
+        discount:       purchaseReturnLinesTable.discount,
+        discountAmount: purchaseReturnLinesTable.discountAmount,
+      }).from(purchaseReturnLinesTable).where(inArray(purchaseReturnLinesTable.returnId, ids));
+      for (const l of rlines) {
+        if (!l.returnId) continue;
+        const gross = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
+        const amt   = Math.max(0, Number(l.discountAmount) || 0);
+        const eff   = amt > 0
+          ? Math.min(amt, gross)
+          : (gross * Math.max(0, Math.min(100, Number(l.discount) || 0))) / 100;
+        lineDiscByReturn.set(l.returnId, (lineDiscByReturn.get(l.returnId) ?? 0) + eff);
+      }
+    }
+    res.json(rows.map(r => ({ ...r, lineDiscountTotal: (lineDiscByReturn.get(r.id) ?? 0).toFixed(2) })));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 

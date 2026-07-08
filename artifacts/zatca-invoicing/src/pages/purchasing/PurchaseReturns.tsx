@@ -827,6 +827,7 @@ export default function PurchaseReturns() {
     { key: "subtotal", label: tr("listCols.subtotal"),type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0) },
     { key: "vat",      label: tr("listCols.vat"),     type: "num",  valueOf: (r) => Number(r.vatAmount ?? 0) },
     { key: "total",    label: tr("listCols.total"),   type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) },
+    { key: "discount", label: "الخصم",                type: "num",  valueOf: (r) => Number(r.discountAmount ?? 0) + Number(r.lineDiscountTotal ?? 0) },
     { key: "netAfterDiscount", label: t("common.netAfterDiscount"), type: "num", valueOf: (r) => Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0) },
     { key: "journal",  label: tr("listCols.journal"), type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
     { key: "status",   label: tr("listCols.status"),  type: "text", valueOf: (r) => statusLabel(r.status) },
@@ -888,10 +889,11 @@ export default function PurchaseReturns() {
       a.subtotal += Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0);
       a.vat      += Number(r.vatAmount ?? 0);
       a.total    += Number(r.totalAmount ?? 0);
+      a.discount += Number(r.discountAmount ?? 0) + Number(r.lineDiscountTotal ?? 0);
       a.netAfterDiscount += Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0);
       return a;
     },
-    { subtotal: 0, vat: 0, total: 0, netAfterDiscount: 0 },
+    { subtotal: 0, vat: 0, total: 0, discount: 0, netAfterDiscount: 0 },
   ), [filteredReturns]);
 
   const visibleColumns = useMemo(() => {
@@ -1086,12 +1088,13 @@ ${sections}
       "المجموع": (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2),
       "الضريبة": Number(r.vatAmount ?? 0).toFixed(2),
       "الإجمالي": Number(r.totalAmount ?? 0).toFixed(2),
+      "الخصم": (Number(r.discountAmount ?? 0) + Number(r.lineDiscountTotal ?? 0)).toFixed(2),
       "الإجمالي بعد الخصم": (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2),
       "القيد": r.journalEntryId ? `JE-${r.journalEntryId}` : "",
       "الحالة": statusLabel(r.status),
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 16 }];
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 16 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "مردودات الشراء");
     void saveWorkbook(wb, `purchase-returns-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -2009,6 +2012,8 @@ ${sections}
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-amber-700">{fmt(r.vatAmount)}</td>;
                       case "total":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono font-bold text-slate-900">{fmt(r.totalAmount)}</td>;
+                      case "discount":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-rose-700">{fmt(Number(r.discountAmount ?? 0) + Number(r.lineDiscountTotal ?? 0))}</td>;
                       case "netAfterDiscount":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-slate-800">{fmt(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0))}</td>;
                       case "journal":
@@ -2125,6 +2130,9 @@ ${sections}
                     }
                     if (col.key === "total") {
                       return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.total)}</td>;
+                    }
+                    if (col.key === "discount") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.discount)}</td>;
                     }
                     if (col.key === "netAfterDiscount") {
                       return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.netAfterDiscount)}</td>;
