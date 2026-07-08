@@ -257,6 +257,71 @@ export default function ScreenAssistant() {
   const recognitionRef = useRef<any>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
+  // ── Draggable floating button ──────────────────────────────────────
+  // The collapsed FAB can be dragged anywhere on screen (it sometimes covers
+  // content on smaller screens). Position is clamped to the viewport and
+  // persisted per browser. `null` means "use the default corner".
+  const FAB_SIZE = 48; // h-12 w-12
+  const FAB_MARGIN = 8;
+  const [fabPos, setFabPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem("zatca_assistant_fab_pos");
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      if (typeof p?.x === "number" && typeof p?.y === "number") return p;
+    } catch { /* ignore malformed */ }
+    return null;
+  });
+  const dragRef = useRef({ dragging: false, moved: false, startX: 0, startY: 0, offX: 0, offY: 0 });
+
+  const clampFab = useCallback((x: number, y: number) => {
+    const maxX = Math.max(FAB_MARGIN, window.innerWidth - FAB_SIZE - FAB_MARGIN);
+    const maxY = Math.max(FAB_MARGIN, window.innerHeight - FAB_SIZE - FAB_MARGIN);
+    return {
+      x: Math.min(Math.max(FAB_MARGIN, x), maxX),
+      y: Math.min(Math.max(FAB_MARGIN, y), maxY),
+    };
+  }, []);
+
+  const onFabPointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      dragging: true, moved: false,
+      startX: e.clientX, startY: e.clientY,
+      offX: e.clientX - rect.left, offY: e.clientY - rect.top,
+    };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* older browsers */ }
+  }, []);
+
+  const onFabPointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const s = dragRef.current;
+    if (!s.dragging) return;
+    if (Math.abs(e.clientX - s.startX) + Math.abs(e.clientY - s.startY) > 4) s.moved = true;
+    setFabPos(clampFab(e.clientX - s.offX, e.clientY - s.offY));
+  }, [clampFab]);
+
+  const onFabPointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const s = dragRef.current;
+    if (!s.dragging) return;
+    s.dragging = false;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (s.moved) {
+      setFabPos(prev => {
+        if (prev) { try { localStorage.setItem("zatca_assistant_fab_pos", JSON.stringify(prev)); } catch { /* ignore */ } }
+        return prev;
+      });
+    }
+  }, []);
+
+  // Keep the button on-screen when the viewport is resized/rotated.
+  useEffect(() => {
+    if (!fabPos) return;
+    const onResize = () => setFabPos(p => (p ? clampFab(p.x, p.y) : p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [fabPos, clampFab]);
+
   const screenContext = useMemo(() => pathToScreenContext(location), [location]);
   const isRtl = i18n.dir() === "rtl";
   const lang = i18n.language?.startsWith("en") ? "en" : "ar";
@@ -509,14 +574,24 @@ export default function ScreenAssistant() {
 
   return (
     <>
-      {/* Collapsed: floating action button */}
+      {/* Collapsed: floating action button (draggable) */}
       {!open && (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            // Suppress the "open" click that terminates a drag gesture.
+            if (dragRef.current.moved) { dragRef.current.moved = false; return; }
+            setOpen(true);
+          }}
+          onPointerDown={onFabPointerDown}
+          onPointerMove={onFabPointerMove}
+          onPointerUp={onFabPointerUp}
+          onPointerCancel={() => { dragRef.current.dragging = false; }}
           aria-label={t("assistant.openButton")}
+          title={t("assistant.openButton")}
           data-testid="screen-assistant-open"
-          className={`fixed bottom-4 ${sideClass} z-50 flex h-12 w-12 items-center justify-center rounded-full bg-violet-600 text-white shadow-lg ring-1 ring-violet-300 transition hover:scale-105 hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-400 dark:bg-violet-700 dark:hover:bg-violet-600`}
+          style={fabPos ? { left: fabPos.x, top: fabPos.y, right: "auto", bottom: "auto" } : undefined}
+          className={`fixed ${fabPos ? "" : `bottom-4 ${sideClass}`} z-50 flex h-12 w-12 touch-none cursor-grab items-center justify-center rounded-full bg-violet-600 text-white shadow-lg ring-1 ring-violet-300 transition hover:scale-105 hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-400 active:cursor-grabbing dark:bg-violet-700 dark:hover:bg-violet-600`}
         >
           <Sparkles className="h-5 w-5" />
         </button>
