@@ -142,7 +142,10 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
   const invoiceNumber = doc.invoiceNumber || "";
   const tafqeet = numberToArabicWords(amount);
   // Table rows: one per allocation line when present, else the legacy single
-  // account row. المبلغ = net, الإجمالي = net + per-line VAT (0 for receipts).
+  // account row. المبلغ = net, الإجمالي = net + per-line VAT (payments only).
+  // Receipts have no VAT, so المبلغ (net) always equals الإجمالي (total) — the
+  // duplicate "المبلغ" column is hidden for receipts and kept for payments.
+  const showNetCol = !isReceipt;
   const bodyRows = hasLines
     ? lines!.map((l) => {
         const net = Number(l.amount || 0);
@@ -151,7 +154,7 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
       <td class="num">${esc(l.code ?? "")}</td>
       <td>${esc(l.name ?? "—")}</td>
       <td>${esc(l.description ?? "")}</td>
-      <td class="num">${fmtMoney(net)}</td>
+      ${showNetCol ? `<td class="num">${fmtMoney(net)}</td>` : ""}
       <td class="num">${fmtMoney(net + tax)}</td>
     </tr>`;
       }).join("\n")
@@ -159,7 +162,7 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
       <td class="num">${esc(account?.code ?? "")}</td>
       <td>${esc(account?.name ?? "—")}</td>
       <td>${esc(desc || "")}</td>
-      <td class="num">${fmtMoney(amount)}</td>
+      ${showNetCol ? `<td class="num">${fmtMoney(amount)}</td>` : ""}
       <td class="num">${fmtMoney(amount)}</td>
     </tr>`;
   const footNet = hasLines
@@ -259,7 +262,7 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
       <th>رمز الحساب</th>
       <th>اسم الحساب</th>
       <th style="width:50%;">البيان</th>
-      <th>المبلغ</th>
+      ${showNetCol ? "<th>المبلغ</th>" : ""}
       <th>الإجمالي</th>
     </tr>
   </thead>
@@ -269,7 +272,7 @@ ${bodyRows}
   <tfoot>
     <tr>
       <td colspan="3" style="text-align:left;">الإجمالي</td>
-      <td class="num">${fmtMoney(footNet)}</td>
+      ${showNetCol ? `<td class="num">${fmtMoney(footNet)}</td>` : ""}
       <td class="num">${fmtMoney(footTotal)}</td>
     </tr>
   </tfoot>
