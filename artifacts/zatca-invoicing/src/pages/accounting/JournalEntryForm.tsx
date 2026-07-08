@@ -26,7 +26,7 @@ import { getSaveToastTitle } from "@/lib/saveToast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
-import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check } from "lucide-react";
+import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check, Percent } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import {
@@ -724,6 +724,101 @@ export default function JournalEntryForm() {
     toast({
       title: direction === "input" ? "تمت إضافة سطر ضريبة المدخلات" : "تمت إضافة سطر ضريبة المخرجات",
       description: `إجمالي الضريبة ${vatAmount.toFixed(2)} ${currency} • ${resolvedAccountLabel} • ${resolvedSource === "tax" ? "حساب الضريبة المعرّف" : resolvedSource === "ai" ? "اقتراح ذكاء اصطناعي" : "قواعد محلية"}`,
+    });
+  }
+
+  // ── ضريبة صفرية (Zero-rated Tax Entry) ──────────────────────────
+  // Convenience action exposed from the quick-tax dropdown. Appends ONE
+  // VAT line with a 0.00 amount (zero-rated treatment) to the company tax
+  // account on the chosen side, referencing the focused source line's base
+  // amount in its description so it surfaces in the VAT declaration as a
+  // zero-rated sale/purchase. Unlike applyTaxEntry it never rewrites the
+  // source line (nothing to extract) and ignores the inclusive toggle.
+  async function applyZeroTaxEntry(direction: "input" | "output") {
+    if (isLockedSourceEntry) return;
+    if (lines.length === 0) {
+      toast({ title: "لا توجد سطور", description: "أضف سطراً أولاً قبل إضافة سطر ضريبة صفرية.", variant: "destructive" });
+      return;
+    }
+    const sideField: "debit" | "credit" = direction === "input" ? "debit" : "credit";
+    const sourceLine = lines.find(l => l.id === focusLineId) ?? lines[lines.length - 1];
+    const amount = parseFloat(sourceLine[sideField] || "0") || 0;
+    const srcDesc = (sourceLine.description || "").trim();
+    const sourceIsVatLine =
+      srcDesc.startsWith("ضريبة المدخلات") || srcDesc.startsWith("ضريبة المخرجات") || srcDesc.startsWith("ضريبة صفرية");
+
+    if (!sourceLine.accountId || amount <= 0 || sourceIsVatLine) {
+      toast({
+        title: direction === "input" ? "السطر الحالي غير صالح لضريبة صفرية مدين" : "السطر الحالي غير صالح لضريبة صفرية دائن",
+        description: direction === "input"
+          ? "قف على سطر فيه حساب ومبلغ مدين (وليس سطر ضريبة) ثم اختر ضريبة صفرية."
+          : "قف على سطر فيه حساب ومبلغ دائن (وليس سطر ضريبة) ثم اختر ضريبة صفرية.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Route the zero-rated VAT line to the same account "قيد الضريبة" would
+    // use (default-tax routing first, AI/rules fallback second) so it lands
+    // in the correct box of the VAT return.
+    let resolvedAccountId: number | null = null;
+    let resolvedAccountLabel = "";
+    if (selectedJeTax) {
+      const routed = direction === "output"
+        ? (selectedJeTax.salesTaxAccountId ?? selectedJeTax.accountId)
+        : (selectedJeTax.purchaseTaxAccountId ?? selectedJeTax.accountId);
+      if (routed) {
+        resolvedAccountId = routed;
+        resolvedAccountLabel = selectedJeTax.nameAr || "ضريبة الشركة الافتراضية";
+      }
+    }
+    if (!resolvedAccountId) {
+      let suggestion: { accountId: number | null; accountLabel: string; reasoning: string; source: "ai" | "rules" };
+      try {
+        suggestion = await taxEntryMutation.mutateAsync(direction);
+      } catch (e: any) {
+        toast({ title: "تعذر اقتراح حساب الضريبة", description: e?.message ?? "حدث خطأ أثناء الاتصال بالخدمة.", variant: "destructive" });
+        return;
+      }
+      if (!suggestion.accountId) {
+        toast({
+          title: direction === "input" ? "لم يتم العثور على حساب ضريبة المدخلات" : "لم يتم العثور على حساب ضريبة المخرجات",
+          description: suggestion.reasoning || "أنشئ الحساب في دليل الحسابات أو حدّده يدوياً.",
+          variant: "destructive",
+        });
+        return;
+      }
+      resolvedAccountId = suggestion.accountId;
+      resolvedAccountLabel = suggestion.accountLabel;
+    }
+    const vatAccountId = String(resolvedAccountId);
+
+    if (sourceLine.accountId === vatAccountId) {
+      toast({ title: "تعذّر إضافة الضريبة الصفرية", description: "السطر الحالي يستخدم حساب الضريبة نفسه.", variant: "destructive" });
+      return;
+    }
+
+    const zeroLine: JournalLine = {
+      id: crypto.randomUUID(),
+      accountId: vatAccountId,
+      costCenter: sourceLine.costCenter ?? "",
+      debit:  direction === "input"  ? "0.00" : "",
+      credit: direction === "output" ? "0.00" : "",
+      description: direction === "input"
+        ? `ضريبة صفرية — مدخلات (0%) على ${amount.toFixed(2)}`
+        : `ضريبة صفرية — مخرجات (0%) على ${amount.toFixed(2)}`,
+      supplierName:          sourceLine.supplierName ?? "",
+      supplierVatNumber:     sourceLine.supplierVatNumber ?? "",
+      supplierInvoiceNumber: sourceLine.supplierInvoiceNumber ?? "",
+      supplierInvoiceDate:   sourceLine.supplierInvoiceDate ?? "",
+    };
+
+    setLines(prev => [...prev, zeroLine]);
+    setFocusLineId(zeroLine.id);
+
+    toast({
+      title: direction === "input" ? "تمت إضافة سطر ضريبة صفرية (مدين)" : "تمت إضافة سطر ضريبة صفرية (دائن)",
+      description: `ضريبة صفرية 0.00 ${currency} • ${resolvedAccountLabel}`,
     });
   }
 
@@ -1800,6 +1895,65 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                           ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
                           : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي الدائن`}
                       </span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {/* ضريبة سريعة — قائمة اختصار تعرض نسبة الضريبة (مثل 15%)
+                    وتحتوي نفس اختيارات "قيد الضريبة" (مدين/دائن) بالإضافة
+                    إلى ضريبة صفرية مدين/دائن (سطر ضريبة بقيمة 0.00). إضافة
+                    للتسهيل فقط — "قيد الضريبة" يبقى كما هو. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline" size="sm"
+                      disabled={isLockedSourceEntry || taxEntryMutation.isPending}
+                      className="h-7 gap-1 text-xs shrink-0"
+                      title={`ضريبة سريعة (${ratePctLabel}) — اختر مدين/دائن أو ضريبة صفرية`}
+                      data-testid="btn-quick-tax"
+                    >
+                      <Percent className="h-3.5 w-3.5" />
+                      {ratePctLabel}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-60">
+                    <DropdownMenuLabel className="text-xs">{`ضريبة سريعة (${ratePctLabel})`}</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={() => applyTaxEntry("input")}
+                      className="text-xs flex flex-col items-start gap-0.5"
+                    >
+                      <span className="font-semibold">{`مدين — ضريبة المدخلات (${ratePctLabel})`}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {vatInclusive
+                          ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
+                          : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي المدين`}
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => applyTaxEntry("output")}
+                      className="text-xs flex flex-col items-start gap-0.5"
+                    >
+                      <span className="font-semibold">{`دائن — ضريبة المخرجات (${ratePctLabel})`}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {vatInclusive
+                          ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
+                          : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي الدائن`}
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={() => applyZeroTaxEntry("input")}
+                      className="text-xs flex flex-col items-start gap-0.5"
+                    >
+                      <span className="font-semibold">ضريبة صفرية — مدين (0%)</span>
+                      <span className="text-[10px] text-muted-foreground">إضافة سطر ضريبة بقيمة 0.00 على الجانب المدين</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => applyZeroTaxEntry("output")}
+                      className="text-xs flex flex-col items-start gap-0.5"
+                    >
+                      <span className="font-semibold">ضريبة صفرية — دائن (0%)</span>
+                      <span className="text-[10px] text-muted-foreground">إضافة سطر ضريبة بقيمة 0.00 على الجانب الدائن</span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
