@@ -26,17 +26,15 @@ import { getSaveToastTitle } from "@/lib/saveToast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
-import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check, Percent } from "lucide-react";
+import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
   FileText, Printer, FileSpreadsheet, FileDown, Lock,
   ChevronRight, ChevronLeft, Search, Wand2,
 } from "lucide-react";
-import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
 import {
   SupplierTaxDetailsMenu,
   type SupplierTaxDetails,
@@ -146,6 +144,8 @@ export default function JournalEntryForm() {
   const [branchId,     setBranchId]     = useState("");
   const [lines,        setLines]        = useState<JournalLine[]>([newLine(), newLine()]);
   const [focusLineId, setFocusLineId] = useState<string>(() => "");
+  // Which line's per-line tax popover is currently open (null = none).
+  const [taxPopoverLine, setTaxPopoverLine] = useState<string | null>(null);
   useEffect(() => {
     if (lines.length > 0 && !lines.some(l => l.id === focusLineId)) {
       setFocusLineId(lines[0].id);
@@ -592,7 +592,7 @@ export default function JournalEntryForm() {
       journalEntriesApi.suggestVatAccount({ direction, companyId: cid }),
   });
 
-  async function applyTaxEntry(direction: "input" | "output") {
+  async function applyTaxEntry(direction: "input" | "output", sourceLineId?: string) {
     if (isLockedSourceEntry) return;
     if (lines.length === 0) {
       toast({ title: "لا توجد سطور", description: "أضف سطراً أولاً قبل توليد قيد الضريبة.", variant: "destructive" });
@@ -600,12 +600,16 @@ export default function JournalEntryForm() {
     }
     const sideField: "debit" | "credit" = direction === "input" ? "debit" : "credit";
 
-    // Tax ONLY the line the user is currently standing on (the focused row),
-    // NOT every eligible line. This matches the manual workflow the user asked
-    // for: stand on the row you want taxed, pick input/output, and a single VAT
-    // line is appended as the LAST row, computed on THAT row's amount. Falls
-    // back to the last row when nothing is focused yet.
-    const sourceLine = lines.find(l => l.id === focusLineId) ?? lines[lines.length - 1];
+    // Tax EXACTLY the line whose per-line tax button was clicked. The explicit
+    // `sourceLineId` removes any reliance on focus tracking (`focusLineId` was
+    // only updated by the account combobox, never by typing an amount — so the
+    // old toolbar button taxed the wrong row). A single VAT line is inserted
+    // DIRECTLY BELOW that source row, computed on THAT row's amount. The
+    // focus/last-row fallback is kept only for safety.
+    const sourceLine =
+      (sourceLineId ? lines.find(l => l.id === sourceLineId) : null)
+      ?? lines.find(l => l.id === focusLineId)
+      ?? lines[lines.length - 1];
     const amount = parseFloat(sourceLine[sideField] || "0") || 0;
     const srcDesc = (sourceLine.description || "").trim();
     const sourceIsVatLine =
@@ -717,7 +721,10 @@ export default function JournalEntryForm() {
             ? { ...l, [sideField]: pendingNet!.toFixed(2), description: ((l.description || "") + NET_MARKER).trim() }
             : l)
         : prev;
-      return [...updated, vatLine];
+      // Insert the VAT line DIRECTLY BELOW its source row (not appended last).
+      const idx = updated.findIndex(l => l.id === sourceLine.id);
+      if (idx < 0) return [...updated, vatLine];
+      return [...updated.slice(0, idx + 1), vatLine, ...updated.slice(idx + 1)];
     });
     setFocusLineId(vatLine.id);
 
@@ -728,20 +735,23 @@ export default function JournalEntryForm() {
   }
 
   // ── ضريبة صفرية (Zero-rated Tax Entry) ──────────────────────────
-  // Convenience action exposed from the quick-tax dropdown. Appends ONE
-  // VAT line with a 0.00 amount (zero-rated treatment) to the company tax
-  // account on the chosen side, referencing the focused source line's base
+  // Exposed from the per-line tax popover. Inserts ONE VAT line with a 0.00
+  // amount (zero-rated treatment) to the company tax account on the chosen
+  // side, DIRECTLY BELOW the clicked source line, referencing that line's base
   // amount in its description so it surfaces in the VAT declaration as a
   // zero-rated sale/purchase. Unlike applyTaxEntry it never rewrites the
   // source line (nothing to extract) and ignores the inclusive toggle.
-  async function applyZeroTaxEntry(direction: "input" | "output") {
+  async function applyZeroTaxEntry(direction: "input" | "output", sourceLineId?: string) {
     if (isLockedSourceEntry) return;
     if (lines.length === 0) {
       toast({ title: "لا توجد سطور", description: "أضف سطراً أولاً قبل إضافة سطر ضريبة صفرية.", variant: "destructive" });
       return;
     }
     const sideField: "debit" | "credit" = direction === "input" ? "debit" : "credit";
-    const sourceLine = lines.find(l => l.id === focusLineId) ?? lines[lines.length - 1];
+    const sourceLine =
+      (sourceLineId ? lines.find(l => l.id === sourceLineId) : null)
+      ?? lines.find(l => l.id === focusLineId)
+      ?? lines[lines.length - 1];
     const amount = parseFloat(sourceLine[sideField] || "0") || 0;
     const srcDesc = (sourceLine.description || "").trim();
     const sourceIsVatLine =
@@ -813,7 +823,12 @@ export default function JournalEntryForm() {
       supplierInvoiceDate:   sourceLine.supplierInvoiceDate ?? "",
     };
 
-    setLines(prev => [...prev, zeroLine]);
+    setLines(prev => {
+      // Insert the zero-rated line DIRECTLY BELOW its source row.
+      const idx = prev.findIndex(l => l.id === sourceLine.id);
+      if (idx < 0) return [...prev, zeroLine];
+      return [...prev.slice(0, idx + 1), zeroLine, ...prev.slice(idx + 1)];
+    });
     setFocusLineId(zeroLine.id);
 
     toast({
@@ -1841,122 +1856,14 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     </div>
                   </div>
                 )}
-                {/* المبلغ شامل الضريبة — when checked, "قيد الضريبة"
-                    extracts 15% from inside each source amount instead
-                    of adding it on top. Mirrors invoice behaviour. */}
-                <label
-                  className="flex items-center gap-1.5 text-xs cursor-pointer select-none ml-1"
-                  title={`عند التفعيل، يتم استخراج ${ratePctLabel} من المبلغ الأصلي بدل إضافتها فوقه — مماثل لخيار (السعر شامل الضريبة) في الفواتير.`}
-                >
-                  <Checkbox
-                    checked={vatInclusive}
-                    onCheckedChange={(v) => setVatInclusive(v === true)}
-                    disabled={isLockedSourceEntry || taxEntryMutation.isPending}
-                    className="h-3.5 w-3.5"
-                  />
-                  <span className="font-medium">المبلغ شامل الضريبة</span>
-                </label>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="outline" size="sm"
-                      disabled={isLockedSourceEntry || taxEntryMutation.isPending}
-                      className="h-7 gap-1 text-xs shrink-0"
-                      title={vatInclusive
-                        ? `استخراج ${ratePctLabel} ضريبة من داخل مبلغ السطر (المبلغ شامل الضريبة)`
-                        : `إضافة ${ratePctLabel} ضريبة قيمة مضافة فوق مبلغ السطر`}
-                    >
-                      <Receipt className="h-3.5 w-3.5" />
-                      {taxEntryMutation.isPending ? "جارٍ التحليل..." : "قيد الضريبة"}
-                      <Sparkles className="h-3 w-3 text-primary/70" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel className="text-xs">{`قيد ضريبة القيمة المضافة (${ratePctLabel})`}</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onSelect={() => applyTaxEntry("input")}
-                      className="text-xs flex flex-col items-start gap-0.5"
-                    >
-                      <span className="font-semibold">مدين — ضريبة المدخلات</span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {vatInclusive
-                          ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
-                          : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي المدين`}
-                      </span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() => applyTaxEntry("output")}
-                      className="text-xs flex flex-col items-start gap-0.5"
-                    >
-                      <span className="font-semibold">دائن — ضريبة المخرجات</span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {vatInclusive
-                          ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
-                          : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي الدائن`}
-                      </span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                {/* ضريبة سريعة — قائمة اختصار تعرض نسبة الضريبة (مثل 15%)
-                    وتحتوي نفس اختيارات "قيد الضريبة" (مدين/دائن) بالإضافة
-                    إلى ضريبة صفرية مدين/دائن (سطر ضريبة بقيمة 0.00). إضافة
-                    للتسهيل فقط — "قيد الضريبة" يبقى كما هو. */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="outline" size="sm"
-                      disabled={isLockedSourceEntry || taxEntryMutation.isPending}
-                      className="h-7 gap-1 text-xs shrink-0"
-                      title={`ضريبة سريعة (${ratePctLabel}) — اختر مدين/دائن أو ضريبة صفرية`}
-                      data-testid="btn-quick-tax"
-                    >
-                      <Percent className="h-3.5 w-3.5" />
-                      {ratePctLabel}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-60">
-                    <DropdownMenuLabel className="text-xs">{`ضريبة سريعة (${ratePctLabel})`}</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onSelect={() => applyTaxEntry("input")}
-                      className="text-xs flex flex-col items-start gap-0.5"
-                    >
-                      <span className="font-semibold">{`مدين — ضريبة المدخلات (${ratePctLabel})`}</span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {vatInclusive
-                          ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
-                          : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي المدين`}
-                      </span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() => applyTaxEntry("output")}
-                      className="text-xs flex flex-col items-start gap-0.5"
-                    >
-                      <span className="font-semibold">{`دائن — ضريبة المخرجات (${ratePctLabel})`}</span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {vatInclusive
-                          ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
-                          : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي الدائن`}
-                      </span>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onSelect={() => applyZeroTaxEntry("input")}
-                      className="text-xs flex flex-col items-start gap-0.5"
-                    >
-                      <span className="font-semibold">ضريبة صفرية — مدين (0%)</span>
-                      <span className="text-[10px] text-muted-foreground">إضافة سطر ضريبة بقيمة 0.00 على الجانب المدين</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() => applyZeroTaxEntry("output")}
-                      className="text-xs flex flex-col items-start gap-0.5"
-                    >
-                      <span className="font-semibold">ضريبة صفرية — دائن (0%)</span>
-                      <span className="text-[10px] text-muted-foreground">إضافة سطر ضريبة بقيمة 0.00 على الجانب الدائن</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {/* Per-action tax controls (قيد الضريبة / شامل الضريبة /
+                    ضريبة سريعة / ضريبة صفرية) were MOVED out of this toolbar
+                    onto EACH journal line — see the per-line "قيد الضريبة"
+                    button in the line row. This removes the ambiguity where the
+                    old toolbar button taxed the focused/first row instead of the
+                    row the user was actually filling. The الضريبة picker above
+                    stays here because it selects WHICH company tax (rate +
+                    routed account) all per-line actions use. */}
                 <Button
                   type="button"
                   variant="outline" size="sm"
@@ -1988,13 +1895,14 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
               />
 
               {/* Column headers — same grid template as line rows */}
-              <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px] gap-2 px-4 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
+              <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px] gap-2 px-4 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
                 <span />
                 <span>الحساب</span>
                 <span>مدين</span>
                 <span>دائن</span>
                 <span>البيان</span>
                 <span>مركز التكلفة</span>
+                <span />
                 <span />
                 <span />
               </div>
@@ -2004,7 +1912,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 {lines.map((line, idx) => (
                   <div
                     key={line.id}
-                    className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px] gap-2 px-4 py-2.5 items-center hover:bg-muted/10"
+                    className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px] gap-2 px-4 py-2.5 items-center hover:bg-muted/10"
                   >
                     <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
 
@@ -2165,6 +2073,93 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       );
                     })()}
 
+                    {/* Per-line tax button — generates a VAT (or zero-rated)
+                        line DIRECTLY BELOW THIS row, computed on THIS row's
+                        amount and honoring the per-action "شامل الضريبة" toggle.
+                        Hidden on VAT lines themselves (can't tax a tax line). */}
+                    {isVatAccountLine(line) ? (
+                      <div className="h-7 w-7 shrink-0" aria-hidden />
+                    ) : (
+                      <Popover
+                        open={taxPopoverLine === line.id}
+                        onOpenChange={(o) => setTaxPopoverLine(o ? line.id : null)}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost" size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-primary"
+                            disabled={isLockedSourceEntry || taxEntryMutation.isPending}
+                            title={`قيد الضريبة (${ratePctLabel}) على هذا السطر`}
+                            data-testid={`btn-line-tax-${idx}`}
+                          >
+                            <Receipt className="h-3.5 w-3.5" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-64 p-2 text-xs space-y-1.5">
+                          <div className="flex items-center gap-1.5 font-semibold px-1">
+                            <Receipt className="h-3.5 w-3.5 text-primary" />
+                            <span>{`قيد ضريبة القيمة المضافة (${ratePctLabel})`}</span>
+                          </div>
+                          <label
+                            className="flex items-center gap-1.5 px-1 py-1 cursor-pointer select-none rounded hover:bg-muted/50"
+                            title={`عند التفعيل، يتم استخراج ${ratePctLabel} من داخل مبلغ السطر بدل إضافتها فوقه — مماثل لخيار (السعر شامل الضريبة) في الفواتير.`}
+                          >
+                            <Checkbox
+                              checked={vatInclusive}
+                              onCheckedChange={(v) => setVatInclusive(v === true)}
+                              className="h-3.5 w-3.5"
+                            />
+                            <span className="font-medium">المبلغ شامل الضريبة</span>
+                          </label>
+                          <div className="border-t pt-1.5 space-y-1">
+                            <Button
+                              type="button" variant="ghost" size="sm"
+                              className="w-full h-auto py-1.5 flex flex-col items-start gap-0.5"
+                              onClick={() => { applyTaxEntry("input", line.id); setTaxPopoverLine(null); }}
+                            >
+                              <span className="font-semibold">مدين — ضريبة المدخلات</span>
+                              <span className="text-[10px] text-muted-foreground font-normal">
+                                {vatInclusive
+                                  ? `استخراج ${ratePctLabel} من داخل مبلغ هذا السطر (شامل الضريبة)`
+                                  : `إضافة ${ratePctLabel} فوق مبلغ هذا السطر المدين`}
+                              </span>
+                            </Button>
+                            <Button
+                              type="button" variant="ghost" size="sm"
+                              className="w-full h-auto py-1.5 flex flex-col items-start gap-0.5"
+                              onClick={() => { applyTaxEntry("output", line.id); setTaxPopoverLine(null); }}
+                            >
+                              <span className="font-semibold">دائن — ضريبة المخرجات</span>
+                              <span className="text-[10px] text-muted-foreground font-normal">
+                                {vatInclusive
+                                  ? `استخراج ${ratePctLabel} من داخل مبلغ هذا السطر (شامل الضريبة)`
+                                  : `إضافة ${ratePctLabel} فوق مبلغ هذا السطر الدائن`}
+                              </span>
+                            </Button>
+                          </div>
+                          <div className="border-t pt-1.5 space-y-1">
+                            <Button
+                              type="button" variant="ghost" size="sm"
+                              className="w-full h-auto py-1.5 flex flex-col items-start gap-0.5"
+                              onClick={() => { applyZeroTaxEntry("input", line.id); setTaxPopoverLine(null); }}
+                            >
+                              <span className="font-semibold">ضريبة صفرية — مدين (0%)</span>
+                              <span className="text-[10px] text-muted-foreground font-normal">إضافة سطر ضريبة بقيمة 0.00 على الجانب المدين</span>
+                            </Button>
+                            <Button
+                              type="button" variant="ghost" size="sm"
+                              className="w-full h-auto py-1.5 flex flex-col items-start gap-0.5"
+                              onClick={() => { applyZeroTaxEntry("output", line.id); setTaxPopoverLine(null); }}
+                            >
+                              <span className="font-semibold">ضريبة صفرية — دائن (0%)</span>
+                              <span className="text-[10px] text-muted-foreground font-normal">إضافة سطر ضريبة بقيمة 0.00 على الجانب الدائن</span>
+                            </Button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+
                     {/* Supplier-tax ⋮ menu ONLY on VAT lines — hidden on
                         normal lines so the user can't mistakenly attach
                         supplier details to a non-tax line. A same-size spacer
@@ -2243,7 +2238,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 
               {/* Totals footer */}
               <div className="border-t bg-muted/20 px-4 py-3">
-                <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px] gap-2 items-center">
+                <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px] gap-2 items-center">
                   <span />
                   <span className="text-xs font-semibold text-muted-foreground">الإجماليات</span>
                   <span className={cn(
@@ -2265,6 +2260,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     {!isBalanced && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
                     {isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}
                   </div>
+                  <span />
                   <span />
                   <span />
                   <span />
