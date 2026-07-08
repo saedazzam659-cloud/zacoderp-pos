@@ -26,6 +26,7 @@ type Asset = {
   invoiceNo: string | null; paymentMethod: string | null;
   cashBoxId: number | null; bankAccountId: number | null;
   model: string | null; brand: string | null; serialNo: string | null;
+  serialNumber: string | null; skipAcquisitionJe: boolean;
   plateNumber: string | null; color: string | null;
   initialKm: number | null; currentKm: number | null;
   lifeYears: number; depreciationMethod: string;
@@ -38,7 +39,11 @@ type Asset = {
   riskLevel: string | null; aiRecommendation: string | null;
   qrPayload: string | null; notes: string | null;
 };
-type Category = { id: number; nameAr: string };
+type Category = {
+  id: number; nameAr: string;
+  defaultLifeYears?: number | string; defaultDepreciationMethod?: string;
+  defaultScrapRate?: string; defaultScrapType?: string;
+};
 
 const STATUSES = [
   ["active","نشط"],["in_maintenance","تحت الصيانة"],["transferred","منقول"],
@@ -53,7 +58,8 @@ const EMPTY = {
   categoryId:"", branchId:"", costCenterId:"",
   purchaseDate:"", purchaseValue:"0", supplierName:"", supplierId:"",
   invoiceNo:"", paymentMethod:"cash", cashBoxId:"", bankAccountId:"",
-  model:"", brand:"", serialNo:"", plateNumber:"", color:"",
+  model:"", brand:"", serialNo:"", serialNumber:"", skipAcquisitionJe:false,
+  plateNumber:"", color:"",
   initialKm:"", currentKm:"",
   lifeYears:"5", depreciationMethod:"straight_line",
   vatRate:"15", priceIncludesVat:false,
@@ -75,6 +81,10 @@ export default function FixedAssets() {
   const [editing, setEditing] = useState<Asset | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY);
+  // Track which depreciation fields the user manually touched, so picking a
+  // category only auto-fills UNTOUCHED fields (never clobbers a manual edit,
+  // even if the manual value happens to equal an initial default).
+  const [depTouched, setDepTouched] = useState({ lifeYears:false, depreciationMethod:false, scrapValue:false });
   const [del, setDel] = useState<Asset | null>(null);
   const [showQr, setShowQr] = useState<Asset | null>(null);
   const [activeTab, setActiveTab] = useState<"basic"|"purchase"|"tech"|"depreciation"|"insurance"|"extra"|"tax">("basic");
@@ -111,7 +121,7 @@ export default function FixedAssets() {
     a.serialNo?.toLowerCase().includes(search.toLowerCase()) ||
     a.plateNumber?.toLowerCase().includes(search.toLowerCase()));
 
-  function openNew() { setEditing(null); setForm(EMPTY); setActiveTab("basic"); setShowForm(true); }
+  function openNew() { setEditing(null); setForm(EMPTY); setDepTouched({ lifeYears:false, depreciationMethod:false, scrapValue:false }); setActiveTab("basic"); setShowForm(true); }
   function openEdit(a: Asset) {
     setEditing(a);
     setForm({
@@ -123,6 +133,7 @@ export default function FixedAssets() {
       invoiceNo:a.invoiceNo??"", paymentMethod:a.paymentMethod??"cash",
       cashBoxId:a.cashBoxId?String(a.cashBoxId):"", bankAccountId:a.bankAccountId?String(a.bankAccountId):"",
       model:a.model??"", brand:a.brand??"", serialNo:a.serialNo??"",
+      serialNumber:a.serialNumber??"", skipAcquisitionJe:!!a.skipAcquisitionJe,
       plateNumber:a.plateNumber??"", color:a.color??"",
       initialKm:a.initialKm?String(a.initialKm):"", currentKm:a.currentKm?String(a.currentKm):"",
       lifeYears:String(a.lifeYears??5), depreciationMethod:a.depreciationMethod??"straight_line",
@@ -136,7 +147,47 @@ export default function FixedAssets() {
       custodianEmployeeId:a.custodianEmployeeId?String(a.custodianEmployeeId):"",
       location:a.location??"", notes:a.notes??"",
     });
+    setDepTouched({ lifeYears:true, depreciationMethod:true, scrapValue:true });
     setActiveTab("basic"); setShowForm(true);
+  }
+
+  // Pick a category in Basic Data → auto-populate the Depreciation tab
+  // defaults (life / method / scrap) from the category. Fill EMPTY (or
+  // still-at-initial-default) fields ONLY — never clobber a manual edit.
+  function selectCategory(catId: string) {
+    const cat = cats.find(c => String(c.id) === String(catId));
+    setForm(f => {
+      const next: typeof f = { ...f, categoryId: catId };
+      if (!cat) return next;
+      if (!depTouched.lifeYears && cat.defaultLifeYears != null && cat.defaultLifeYears !== "")
+        next.lifeYears = String(cat.defaultLifeYears);
+      if (!depTouched.depreciationMethod && cat.defaultDepreciationMethod)
+        next.depreciationMethod = cat.defaultDepreciationMethod;
+      if (!depTouched.scrapValue) {
+        const rate = Number(cat.defaultScrapRate ?? 0);
+        const scrap = cat.defaultScrapType === "value"
+          ? rate
+          : (Number(f.purchaseValue || 0) * rate) / 100;
+        if (scrap > 0) next.scrapValue = String(+scrap.toFixed(2));
+      }
+      return next;
+    });
+  }
+
+  // Percent-scrap categories compute scrap from purchase value; if the user
+  // picks the category before entering the purchase value, recompute the scrap
+  // default when the purchase value changes — but only while it's untouched.
+  function updatePurchaseValue(v: string) {
+    setForm(f => {
+      const next: typeof f = { ...f, purchaseValue: v };
+      if (depTouched.scrapValue || !f.categoryId) return next;
+      const cat = cats.find(c => String(c.id) === String(f.categoryId));
+      if (!cat || cat.defaultScrapType === "value") return next;
+      const rate = Number(cat.defaultScrapRate ?? 0);
+      const scrap = (Number(v || 0) * rate) / 100;
+      if (scrap > 0) next.scrapValue = String(+scrap.toFixed(2));
+      return next;
+    });
   }
 
   const TABS = [
@@ -286,10 +337,11 @@ export default function FixedAssets() {
                   <Input value={form.nameEn} onChange={(e)=>setForm({...form,nameEn:e.target.value})} /></div>
                 <div><Label>الفئة</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
-                    value={form.categoryId} onChange={(e)=>setForm({...form,categoryId:e.target.value})}>
+                    value={form.categoryId} onChange={(e)=>selectCategory(e.target.value)}>
                     <option value="">— بدون —</option>
                     {cats.map(c => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                  </select></div>
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1">اختيار الفئة يملأ بيانات الإهلاك (العمر / الطريقة / الخردة) تلقائياً في تبويب «الإهلاك».</p></div>
                 <div><Label>الحالة</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.status} onChange={(e)=>setForm({...form,status:e.target.value})}>
@@ -306,11 +358,27 @@ export default function FixedAssets() {
               <legend className="px-2 text-sm font-bold text-blue-700 flex items-center gap-1">
                 <ShoppingCart className="h-4 w-4" /> بيانات الشراء
               </legend>
+              <label className={`flex items-center gap-3 p-3 mb-4 rounded-xl border-2 cursor-pointer transition-all ${
+                form.skipAcquisitionJe ? "border-amber-500 bg-amber-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"
+              }`}>
+                <input type="checkbox" checked={form.skipAcquisitionJe}
+                  onChange={(e)=>setForm({...form,skipAcquisitionJe:e.target.checked})}
+                  className="h-5 w-5 rounded accent-amber-600" data-testid="check-skip-acquisition-je" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-slate-800">الأصل مُسجّل مسبقاً (قيد يومية أو فاتورة مشتريات)</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    فعّلها لتتبّع الإهلاك فقط بدون إنشاء قيد اقتناء جديد — يمنع ازدواج تسجيل قيمة الأصل في الدفاتر.
+                  </p>
+                </div>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded ${form.skipAcquisitionJe ? "bg-amber-600 text-white" : "bg-slate-200 text-slate-600"}`}>
+                  {form.skipAcquisitionJe ? "إهلاك فقط" : "شراء جديد"}
+                </span>
+              </label>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>تاريخ الشراء</Label>
                   <DateField value={form.purchaseDate} onChange={(e)=>setForm({...form,purchaseDate:e.target.value})} /></div>
                 <div><Label>قيمة الشراء</Label>
-                  <Input type="number" step="0.01" value={form.purchaseValue} onChange={(e)=>setForm({...form,purchaseValue:e.target.value})} /></div>
+                  <Input type="number" step="0.01" value={form.purchaseValue} onChange={(e)=>updatePurchaseValue(e.target.value)} /></div>
                 <div><Label>المورد</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.supplierId} onChange={(e)=>setForm({...form,supplierId:e.target.value})}
@@ -379,8 +447,10 @@ export default function FixedAssets() {
                   <Input value={form.model} onChange={(e)=>setForm({...form,model:e.target.value})} placeholder="2023" /></div>
                 <div><Label>الماركة</Label>
                   <Input value={form.brand} onChange={(e)=>setForm({...form,brand:e.target.value})} placeholder="Toyota" /></div>
-                <div><Label>رقم الشاسيه / المسلسل</Label>
+                <div><Label>رقم الشاسيه</Label>
                   <Input value={form.serialNo} onChange={(e)=>setForm({...form,serialNo:e.target.value})} /></div>
+                <div><Label>المسلسل</Label>
+                  <Input value={form.serialNumber} onChange={(e)=>setForm({...form,serialNumber:e.target.value})} /></div>
                 <div><Label>رقم اللوحة</Label>
                   <Input value={form.plateNumber} onChange={(e)=>setForm({...form,plateNumber:e.target.value})} /></div>
                 <div><Label>اللون</Label>
@@ -526,14 +596,14 @@ export default function FixedAssets() {
                 <TrendingDown className="h-4 w-4" /> بيانات الإهلاك
               </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <YearMonthInput value={form.lifeYears} onChange={(v)=>setForm({...form,lifeYears:v})} />
+                <YearMonthInput value={form.lifeYears} onChange={(v)=>{setDepTouched(t=>({...t,lifeYears:true}));setForm({...form,lifeYears:v});}} />
                 <div><Label>طريقة الإهلاك</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
-                    value={form.depreciationMethod} onChange={(e)=>setForm({...form,depreciationMethod:e.target.value})}>
+                    value={form.depreciationMethod} onChange={(e)=>{setDepTouched(t=>({...t,depreciationMethod:true}));setForm({...form,depreciationMethod:e.target.value});}}>
                     {METHODS.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
                   </select></div>
                 <div><Label>قيمة الخردة</Label>
-                  <Input type="number" step="0.01" value={form.scrapValue} onChange={(e)=>setForm({...form,scrapValue:e.target.value})} /></div>
+                  <Input type="number" step="0.01" value={form.scrapValue} onChange={(e)=>{setDepTouched(t=>({...t,scrapValue:true}));setForm({...form,scrapValue:e.target.value});}} /></div>
                 <div><Label>تاريخ بداية الإهلاك</Label>
                   <DateField value={form.depreciationStart} onChange={(e)=>setForm({...form,depreciationStart:e.target.value})} /></div>
                 <div><Label>الإهلاك المتراكم</Label>

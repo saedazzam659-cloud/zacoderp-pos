@@ -33,7 +33,11 @@ export const faCategoriesTable = pgTable("fa_categories", {
   nameEn:              text("name_en"),
   defaultLifeYears:    numeric("default_life_years", { precision: 8, scale: 4 }).notNull().default("5"),
   defaultDepreciationMethod: faDepreciationMethodEnum("default_depreciation_method").notNull().default("straight_line"),
-  defaultScrapRate:    numeric("default_scrap_rate", { precision: 5, scale: 2 }).notNull().default("10"),
+  defaultScrapRate:    numeric("default_scrap_rate", { precision: 15, scale: 2 }).notNull().default("10"),
+  // How to interpret defaultScrapRate: "percent" = % of purchase value,
+  // "value" = a fixed absolute scrap amount. Widened precision above so the
+  // same column can hold either a small % or a large absolute figure.
+  defaultScrapType:    text("default_scrap_type").notNull().default("percent"), // percent | value
   isActive:            boolean("is_active").notNull().default(true),
   // ─── Phase-2: per-category JE account overrides (IAS 16). NULL = fall
   // back to the company-wide defaults on `companies.faXxxAccountId`. The
@@ -81,11 +85,16 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   // generic acquisition-clearing account.
   cashBoxId:           integer("cash_box_id"),
   bankAccountId:       integer("bank_account_id"),
+  // When TRUE the asset's cost was ALREADY recorded elsewhere (a manual JE
+  // or a purchase invoice), so POST /assets must NOT post another
+  // acquisition JE — it only tracks depreciation. Prevents double-counting.
+  skipAcquisitionJe:   boolean("skip_acquisition_je").notNull().default(false),
 
   // ── Technical / vehicle data ─────────────────────────────────
   model:               text("model"),                 // e.g. 2023
   brand:               text("brand"),                 // e.g. Toyota
-  serialNo:            text("serial_no"),             // chassis / serial
+  serialNo:            text("serial_no"),             // chassis number (رقم الشاسيه)
+  serialNumber:        text("serial_number"),         // serial / asset serial (المسلسل)
   plateNumber:         text("plate_number"),
   color:               text("color"),
   initialKm:           integer("initial_km"),

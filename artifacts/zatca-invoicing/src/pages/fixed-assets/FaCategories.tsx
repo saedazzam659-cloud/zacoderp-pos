@@ -13,13 +13,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Tag } from "lucide-react";
 import { YearMonthInput } from "@/components/YearMonthInput";
+import { AccountCombobox } from "@/components/AccountCombobox";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type Category = {
   id: number; code: string; nameAr: string; nameEn: string | null;
   defaultLifeYears: number; defaultDepreciationMethod: string;
-  defaultScrapRate: string; isActive: boolean;
+  defaultScrapRate: string; defaultScrapType: string; isActive: boolean;
+  costAccountId: number | null; accumDepreciationAccountId: number | null;
+  depreciationExpenseAccountId: number | null;
 };
 
 const METHODS = [
@@ -27,7 +30,9 @@ const METHODS = [
 ] as const;
 
 const EMPTY = { code:"", nameAr:"", nameEn:"", defaultLifeYears:"5",
-  defaultDepreciationMethod:"straight_line", defaultScrapRate:"10", isActive:true };
+  defaultDepreciationMethod:"straight_line", defaultScrapRate:"10", defaultScrapType:"percent",
+  costAccountId:"", accumDepreciationAccountId:"", depreciationExpenseAccountId:"",
+  isActive:true };
 
 export default function FaCategories() {
   const { user, token } = useAuth() as any;
@@ -55,6 +60,10 @@ export default function FaCategories() {
       defaultLifeYears:String(c.defaultLifeYears??5),
       defaultDepreciationMethod:c.defaultDepreciationMethod??"straight_line",
       defaultScrapRate:String(c.defaultScrapRate??"10"),
+      defaultScrapType:c.defaultScrapType??"percent",
+      costAccountId:c.costAccountId?String(c.costAccountId):"",
+      accumDepreciationAccountId:c.accumDepreciationAccountId?String(c.accumDepreciationAccountId):"",
+      depreciationExpenseAccountId:c.depreciationExpenseAccountId?String(c.depreciationExpenseAccountId):"",
       isActive: c.isActive !== false,
     });
     setShowForm(true);
@@ -63,7 +72,11 @@ export default function FaCategories() {
   const saveMut = useMutation({
     mutationFn: async () => {
       if (!form.nameAr.trim()) throw new Error("الاسم مطلوب");
-      const body = { ...form, companyId: cid, defaultLifeYears: Number(form.defaultLifeYears||5) };
+      const body = { ...form, companyId: cid, defaultLifeYears: Number(form.defaultLifeYears||5),
+        costAccountId: form.costAccountId ? Number(form.costAccountId) : null,
+        accumDepreciationAccountId: form.accumDepreciationAccountId ? Number(form.accumDepreciationAccountId) : null,
+        depreciationExpenseAccountId: form.depreciationExpenseAccountId ? Number(form.depreciationExpenseAccountId) : null,
+      };
       const url = editing ? `${API}/api/fixed-assets/categories/${editing.id}` : `${API}/api/fixed-assets/categories`;
       const r = await fetch(url, { method: editing ? "PUT" : "POST",
         headers: { ...headers, "Content-Type":"application/json" }, body: JSON.stringify(body) });
@@ -128,12 +141,47 @@ export default function FaCategories() {
                 value={form.defaultDepreciationMethod} onChange={(e)=>setForm({...form,defaultDepreciationMethod:e.target.value})}>
                 {METHODS.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
               </select></div>
-            <div><Label>نسبة الخردة الافتراضية (%)</Label>
-              <Input type="number" step="0.01" value={form.defaultScrapRate} onChange={(e)=>setForm({...form,defaultScrapRate:e.target.value})} /></div>
+            <div>
+              <Label>الخردة الافتراضية {form.defaultScrapType === "value" ? "(قيمة ثابتة)" : "(%)"}</Label>
+              <div className="flex items-center gap-2">
+                <Input type="number" step="0.01" className="flex-1"
+                  value={form.defaultScrapRate}
+                  onChange={(e)=>setForm({...form,defaultScrapRate:e.target.value})} />
+                <select className="h-10 px-2 rounded-md border border-input bg-background text-sm shrink-0"
+                  value={form.defaultScrapType}
+                  onChange={(e)=>setForm({...form,defaultScrapType:e.target.value})}>
+                  <option value="percent">نسبة %</option>
+                  <option value="value">قيمة</option>
+                </select>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {form.defaultScrapType === "value"
+                  ? "قيمة الخردة كمبلغ ثابت يُطرح من تكلفة الأصل قبل الإهلاك."
+                  : "نسبة مئوية من قيمة الشراء تُحسب منها قيمة الخردة."}
+              </p>
+            </div>
             <div className="flex items-center gap-2 mt-6">
               <input type="checkbox" id="active-cat" checked={form.isActive}
                 onChange={(e)=>setForm({...form,isActive:e.target.checked})} className="h-4 w-4" />
               <Label htmlFor="active-cat">نشطة</Label>
+            </div>
+          </div>
+
+          <div className="mt-5 pt-4 border-t">
+            <h3 className="text-sm font-semibold text-slate-700 mb-1">الحسابات المحاسبية للفئة (اختياري)</h3>
+            <p className="text-[11px] text-muted-foreground mb-3">
+              تُحمّل من شجرة الحسابات وتُستخدم في قيود الأصول لهذه الفئة. لو تُركت فارغة يرجع النظام للحسابات الافتراضية للشركة.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div><Label>حساب الأصل (التكلفة)</Label>
+                <AccountCombobox value={form.costAccountId} filterTypes={["asset"]}
+                  onValueChange={(v)=>setForm({...form,costAccountId:v})} /></div>
+              <div><Label>حساب مجمّع الإهلاك</Label>
+                <AccountCombobox value={form.accumDepreciationAccountId} filterTypes={["asset"]}
+                  onValueChange={(v)=>setForm({...form,accumDepreciationAccountId:v})} /></div>
+              <div><Label>حساب مصروف الإهلاك</Label>
+                <AccountCombobox value={form.depreciationExpenseAccountId} filterTypes={["expense"]}
+                  onValueChange={(v)=>setForm({...form,depreciationExpenseAccountId:v})} /></div>
             </div>
           </div>
         </FormPanel>

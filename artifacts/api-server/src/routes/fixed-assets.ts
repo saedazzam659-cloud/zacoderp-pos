@@ -29,6 +29,12 @@ router.use((req, res, next) => {
   next();
 });
 
+function coerceBool(v: any): boolean {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") return v === "true" || v === "1";
+  if (typeof v === "number") return v !== 0;
+  return false;
+}
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.body?.companyId ?? req.query.companyId);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
@@ -86,12 +92,17 @@ router.post("/categories", async (req, res) => {
     if (!nameAr) { res.status(400).json({ error: "اسم الفئة مطلوب" }); return; }
     const code = String(b.code ?? "").trim() || await nextCode(cid, faCategoriesTable, "FAC");
     const method = (DEP_METHODS as readonly string[]).includes(b.defaultDepreciationMethod) ? b.defaultDepreciationMethod : "straight_line";
+    const scrapType = b.defaultScrapType === "value" ? "value" : "percent";
     const [row] = await db.insert(faCategoriesTable).values({
       companyId: cid, code, nameAr,
       nameEn: b.nameEn || null,
       defaultLifeYears: String(b.defaultLifeYears ?? 5),
       defaultDepreciationMethod: method as any,
       defaultScrapRate: String(b.defaultScrapRate ?? "10"),
+      defaultScrapType: scrapType,
+      costAccountId: b.costAccountId ? Number(b.costAccountId) : null,
+      accumDepreciationAccountId: b.accumDepreciationAccountId ? Number(b.accumDepreciationAccountId) : null,
+      depreciationExpenseAccountId: b.depreciationExpenseAccountId ? Number(b.depreciationExpenseAccountId) : null,
       isActive: b.isActive !== false,
     }).returning();
     res.status(201).json(row);
@@ -108,6 +119,9 @@ router.put("/categories/:id", async (req, res) => {
     for (const k of ["code","nameAr","nameEn"]) if (b[k] !== undefined) patch[k] = b[k] || null;
     if (b.defaultLifeYears !== undefined) patch.defaultLifeYears = Number(b.defaultLifeYears || 5);
     if (b.defaultScrapRate !== undefined) patch.defaultScrapRate = String(b.defaultScrapRate || "0");
+    if (b.defaultScrapType !== undefined) patch.defaultScrapType = b.defaultScrapType === "value" ? "value" : "percent";
+    for (const k of ["costAccountId","accumDepreciationAccountId","depreciationExpenseAccountId"])
+      if (b[k] !== undefined) patch[k] = b[k] ? Number(b[k]) : null;
     if (b.isActive !== undefined) patch.isActive = !!b.isActive;
     if ((DEP_METHODS as readonly string[]).includes(b.defaultDepreciationMethod)) patch.defaultDepreciationMethod = b.defaultDepreciationMethod;
     const [row] = await db.update(faCategoriesTable).set(patch)
@@ -178,16 +192,18 @@ router.post("/assets", async (req, res) => {
       paymentMethod: b.paymentMethod || null,
       cashBoxId: b.cashBoxId ? Number(b.cashBoxId) : null,
       bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
+      skipAcquisitionJe: coerceBool(b.skipAcquisitionJe),
       model: b.model || null,
       brand: b.brand || null,
       serialNo: b.serialNo || null,
+      serialNumber: b.serialNumber || null,
       plateNumber: b.plateNumber || null,
       color: b.color || null,
       initialKm: b.initialKm ? Number(b.initialKm) : null,
       currentKm: b.currentKm ? Number(b.currentKm) : null,
       lifeYears: String(b.lifeYears ?? 5),
       vatRate: String(b.vatRate ?? "15"),
-      priceIncludesVat: !!b.priceIncludesVat,
+      priceIncludesVat: coerceBool(b.priceIncludesVat),
       depreciationMethod: method as any,
       scrapValue,
       depreciationStart: b.depreciationStart || null,
@@ -206,9 +222,10 @@ router.post("/assets", async (req, res) => {
     // ── Phase-2: post acquisition JE if this is a fresh purchase (cost > 0
     // and no opening accumulated depreciation). Skipping when the user is
     // loading an opening-balance asset prevents double-counting against the
-    // historical balance sheet.
+    // historical balance sheet. Also skip when the user explicitly marked
+    // the asset as already recorded elsewhere (manual JE / purchase invoice).
     let warning: string | null = null;
-    if (Number(purchaseValue) > 0 && Number(accumulated) === 0) {
+    if (!b.skipAcquisitionJe && Number(purchaseValue) > 0 && Number(accumulated) === 0) {
       try {
         await buildAcquisitionJournal(cid, row.id, {
           cashBoxId:    b.paymentMethod === "cash" && b.cashBoxId    ? Number(b.cashBoxId)    : null,
@@ -230,8 +247,9 @@ router.put("/assets/:id", async (req, res) => {
     if (!await assertOwn(res, fixedAssetsTable, id, cid, "الأصل")) return;
     const b = req.body ?? {};
     const patch: any = { updatedAt: new Date() };
-    const strFields = ["code","nameAr","nameEn","supplierName","invoiceNo","paymentMethod","model","brand","serialNo","plateNumber","color","insuranceCompany","insurancePolicyNo","location","notes"];
+    const strFields = ["code","nameAr","nameEn","supplierName","invoiceNo","paymentMethod","model","brand","serialNo","serialNumber","plateNumber","color","insuranceCompany","insurancePolicyNo","location","notes"];
     for (const k of strFields) if (b[k] !== undefined) patch[k] = b[k] || null;
+    if (b.skipAcquisitionJe !== undefined) patch.skipAcquisitionJe = coerceBool(b.skipAcquisitionJe);
     const numStrFields = ["purchaseValue","scrapValue","insuranceValue","accumulatedDepreciation","bookValue"];
     for (const k of numStrFields) if (b[k] !== undefined) patch[k] = String(b[k] || "0");
     const dateFields = ["purchaseDate","depreciationStart","insuranceStart","insuranceEnd"];
@@ -240,7 +258,7 @@ router.put("/assets/:id", async (req, res) => {
     for (const k of intFields) if (b[k] !== undefined) patch[k] = b[k] ? Number(b[k]) : null;
     if (b.lifeYears !== undefined) patch.lifeYears = String(b.lifeYears || 5);
     if (b.vatRate !== undefined) patch.vatRate = String(b.vatRate || "15");
-    if (b.priceIncludesVat !== undefined) patch.priceIncludesVat = !!b.priceIncludesVat;
+    if (b.priceIncludesVat !== undefined) patch.priceIncludesVat = coerceBool(b.priceIncludesVat);
     if ((STATUSES as readonly string[]).includes(b.status)) patch.status = b.status;
     if ((DEP_METHODS as readonly string[]).includes(b.depreciationMethod)) patch.depreciationMethod = b.depreciationMethod;
     const [row] = await db.update(fixedAssetsTable).set(patch)
