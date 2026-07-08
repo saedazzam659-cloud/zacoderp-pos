@@ -632,12 +632,20 @@ export default function AdvancedReportGrid<R>({
               {orderedColumns.map(c => {
                 const advActive = isAdvActive(colAdv[c.key]);
                 const align = c.align === "end" ? "text-end" : c.align === "center" ? "text-center" : "text-start";
+                // Header content must sit on the SAME side as the cell values below
+                // it, otherwise (with a fixed justify-between) the label pins to the
+                // column start while numeric cells are centered/end-aligned and the
+                // two visually drift apart. Mirror the column alignment here.
+                const headerJustify =
+                  c.align === "center" ? "justify-center"
+                  : c.align === "end" ? "justify-end"
+                  : "justify-between";
                 return (
                   <th
                     key={c.key}
                     className={cn("px-3 py-2 font-semibold border-b border-white/20 select-none", align)}
                   >
-                    <div className="flex items-center gap-1 justify-between">
+                    <div className={cn("flex items-center gap-1", headerJustify)}>
                       <button
                         type="button"
                         onClick={() => setSort(p => cycleSort(p, c.key))}
