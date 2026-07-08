@@ -209,6 +209,7 @@ import FaTransfers from "@/pages/fixed-assets/FaTransfers";
 import FaDepreciation from "@/pages/fixed-assets/FaDepreciation";
 import FaDisposals from "@/pages/fixed-assets/FaDisposals";
 import FaReports from "@/pages/fixed-assets/FaReports";
+import FaMovementSchedule from "@/pages/fixed-assets/FaMovementSchedule";
 import FaAI from "@/pages/fixed-assets/FaAI";
 import FaSettings from "@/pages/fixed-assets/FaSettings";
 import HRCalculators from "@/pages/hr/HRCalculators";
@@ -876,6 +877,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/fixed-assets/disposals"         module="fixed_assets"   component={FaDisposals} />}
             {!isSuperAdmin && <PermRoute path="/fixed-assets/settings"          module="fixed_assets"   component={FaSettings} />}
             {!isSuperAdmin && <PermRoute path="/fixed-assets/reports"           module="fixed_assets"   component={FaReports} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/movement-schedule" module="fixed_assets"   component={FaMovementSchedule} />}
             {!isSuperAdmin && <PermRoute path="/fixed-assets/ai"                module="fixed_assets"   component={FaAI} />}
 
             {/* HR reports — all gated against hr_employees permission */}

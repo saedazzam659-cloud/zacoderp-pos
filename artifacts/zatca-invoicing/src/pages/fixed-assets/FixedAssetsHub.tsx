@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import {
-  Boxes, Tag, Wrench, ArrowRightLeft, TrendingUp, Trash2, Sparkles, Package, Settings2,
+  Boxes, Tag, Wrench, ArrowRightLeft, TrendingUp, Trash2, Sparkles, Package, Settings2, CalendarRange,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 
@@ -10,6 +10,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.faMaintenance",  href: "/fixed-assets/maintenance",  icon: Wrench,          tone: "orange",  permKey: "fixed_assets" },
   { nameKey: "nav.faTransfers",    href: "/fixed-assets/transfers",    icon: ArrowRightLeft,  tone: "indigo",  permKey: "fixed_assets" },
   { nameKey: "nav.faDepreciation", href: "/fixed-assets/depreciation", icon: TrendingUp,      tone: "violet",  permKey: "fixed_assets" },
+  { nameKey: "nav.faMovementSchedule", href: "/fixed-assets/movement-schedule", icon: CalendarRange, tone: "teal", permKey: "fixed_assets" },
   { nameKey: "nav.faDisposals",    href: "/fixed-assets/disposals",    icon: Trash2,          tone: "rose",    permKey: "fixed_assets" },
   { nameKey: "nav.faSettings",     href: "/fixed-assets/settings",     icon: Settings2,       tone: "slate",   permKey: "fixed_assets" },
   { nameKey: "nav.faAI",           href: "/fixed-assets/ai",           icon: Sparkles,        tone: "pink",    permKey: "fixed_assets" },

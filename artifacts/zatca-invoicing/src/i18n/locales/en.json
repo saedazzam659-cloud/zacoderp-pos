@@ -919,6 +919,7 @@
     "faMaintenance": "Asset Maintenance",
     "faTransfers": "Asset Transfers",
     "faDepreciation": "Depreciation",
+    "faMovementSchedule": "Depreciation & Movement Schedule",
     "faDisposals": "Disposals (Sale/Scrap)",
     "faSettings": "Account Settings",
     "faReports": "Asset Reports",
