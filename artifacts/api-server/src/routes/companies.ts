@@ -169,6 +169,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     menuLayout,
     // Invoice/document entry-form layout: "tabbed" (new SAP-style) | "classic".
     invoiceFormLayout,
+    // Account-statement print layout: "classic" (per-page view) | "unified"
+    // (shared exportStatementToPDF renderer). Validated below.
+    statementPrintFormat,
     // VAT calc mode: "before_discount" | "after_discount". Validated below.
     taxCalculationMode,
     // Document-archiving control center config. Validated + coerced below.
@@ -209,6 +212,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     journalSmartForm?: boolean;
     menuLayout?: string;
     invoiceFormLayout?: string;
+    statementPrintFormat?: string;
     taxCalculationMode?: string;
     archiveSettings?: {
       defaultMode?: string;
@@ -392,6 +396,14 @@ router.patch("/:id/general-settings", async (req, res) => {
       return;
     }
     updates.invoiceFormLayout = invoiceFormLayout;
+  }
+  // Account-statement print layout — only the two renderers we support.
+  if (statementPrintFormat !== undefined) {
+    if (statementPrintFormat !== "classic" && statementPrintFormat !== "unified") {
+      res.status(400).json({ error: "statementPrintFormat يجب أن يكون 'classic' أو 'unified'" });
+      return;
+    }
+    updates.statementPrintFormat = statementPrintFormat;
   }
   // Tax calc mode — only the two values the line calculators understand.
   if (taxCalculationMode !== undefined) {

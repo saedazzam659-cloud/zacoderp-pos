@@ -55,6 +55,22 @@ export default function SupplierStatement() {
     payment: "سند صرف",
   };
 
+  /** Full "نوع الوثيقة" label WITH the payment-type suffix (shown on screen
+   *  AND on the printout). Invoices/returns append أجل/نقدًا (always أجل here
+   *  since the A/P statement only carries credit documents); payment vouchers
+   *  append نقدي (cash box) or بنكي (bank) based on the payment channel. */
+  const docTypeLabelFor = (l: any): string => {
+    const base = DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type);
+    if (l.type === "invoice" || l.type === "return") {
+      return `${base} - ${l.paymentType === "cash" ? "نقدًا" : "أجل"}`;
+    }
+    if (l.type === "payment") {
+      if (l.channel === "cashbox") return `${base} - نقدي`;
+      if (l.channel === "bank")    return `${base} - بنكي`;
+    }
+    return base;
+  };
+
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers", cid],
     queryFn: async () => {
@@ -127,7 +143,7 @@ export default function SupplierStatement() {
     let bal = effectiveOpening;
     return (data?.lines ?? []).map(l => {
       bal += l.credit - l.debit;
-      return { ...l, balance: bal };
+      return { ...l, balance: bal, docTypeLabel: docTypeLabelFor(l) };
     });
   }, [data, effectiveOpening]);
 
@@ -157,7 +173,7 @@ export default function SupplierStatement() {
             id: l.id,
             journalEntryId: l.journalEntryId,
             date: l.date,
-            docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
+            docType: l.docTypeLabel,
             type: TYPE_LABEL[l.type] ?? l.type,
             docNumber: l.docNumber,
             journalEntryNumber: l.journalEntryNumber,
@@ -202,7 +218,7 @@ export default function SupplierStatement() {
               id: l.id,
               journalEntryId: l.journalEntryId,
               date: l.date,
-              docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
+              docType: l.docTypeLabel,
               type: TYPE_LABEL[l.type] ?? l.type,
               docNumber: l.docNumber,
             journalEntryNumber: l.journalEntryNumber,
@@ -326,7 +342,7 @@ export default function SupplierStatement() {
               id: l.id,
               journalEntryId: l.journalEntryId,
               date: l.date,
-              docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
+              docType: l.docTypeLabel,
               type: TYPE_LABEL[l.type] ?? l.type,
               docNumber: l.docNumber,
               docHref: docHrefFor(l.type, l.id),

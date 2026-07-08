@@ -77,6 +77,12 @@ export type CustomerStatementLine = {
   debit: number;
   credit: number;
   description: string;
+  /** Payment type for invoices/returns — always "credit" here (A/R only
+   *  carries credit docs); drives the "نوع الوثيقة" أجل/نقدًا suffix. */
+  paymentType?: string | null;
+  /** Collection channel for receipt vouchers — "cashbox" | "bank" | null;
+   *  drives the "نوع الوثيقة" نقدي/بنكي suffix. */
+  channel?: "cashbox" | "bank" | null;
 };
 
 export type CustomerStatement = { opening: number; lines: CustomerStatementLine[] };

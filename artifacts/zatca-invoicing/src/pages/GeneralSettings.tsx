@@ -814,6 +814,13 @@ export default function GeneralSettings() {
             <LayoutTemplate className="h-4 w-4 shrink-0" />
             <span className="truncate">طريقة عرض الفواتير</span>
           </TabsTrigger>
+          <TabsTrigger
+            value="statementPrintFormat"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <LayoutTemplate className="h-4 w-4 shrink-0" />
+            <span className="truncate">طريقة طباعة كشف الحساب</span>
+          </TabsTrigger>
           {isArchiveAdmin && (
             <TabsTrigger
               value="documentArchive"
@@ -2162,6 +2169,106 @@ export default function GeneralSettings() {
                       <p className="text-[11.5px] text-muted-foreground leading-relaxed">
                         كل الحقول في صفحة واحدة (بطاقة الرأس + الأصناف + أزرار الحفظ أسفل الشاشة) —
                         السلوك القديم المعتاد.
+                      </p>
+                    </button>
+                  </div>
+
+                  {postingSaving && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      جارٍ الحفظ…
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB: Account-statement print format ═══════════════════════════ */}
+        <TabsContent value="statementPrintFormat" className="mt-5 space-y-6">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <LayoutTemplate className="h-4 w-4 text-muted-foreground" />
+              طريقة طباعة كشف الحساب
+            </h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              اختر شكل طباعة/تصدير كشوف الحسابات (كشف حساب العميل، المورد، الحساب العام،
+              والشركات الشقيقة): النموذج <span className="font-semibold">العادي</span> (الطباعة
+              الكلاسيكية لكل شاشة كما هي حاليًا) وهو الافتراضي، أو النموذج
+              <span className="font-semibold"> الموحّد</span> الذي يستخدم مُصدِّر PDF المشترك بنفس
+              التصميم في كل الشاشات الأربع. لا يتغيّر أي بيان أو حساب — يتغيّر شكل الطباعة فقط.
+              يُطبَّق على كل مستخدمي الشركة.
+            </p>
+
+            {(() => {
+              const fmt = (user?.company?.statementPrintFormat === "unified") ? "unified" : "classic";
+              const isClassic = fmt === "classic";
+              return (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* CLASSIC card (default) */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ statementPrintFormat: "classic" })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        isClassic
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-statement-format-classic"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          isClassic ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <LayoutList className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">عادي (الافتراضي)</span>
+                        {isClassic && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-emerald-50 text-emerald-700 border-emerald-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        الطباعة الكلاسيكية المعتادة لكل شاشة كشف حساب كما هي الآن.
+                      </p>
+                    </button>
+
+                    {/* UNIFIED card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ statementPrintFormat: "unified" })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        !isClassic
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-statement-format-unified"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          !isClassic ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <LayoutGrid className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">موحّد (تصميم PDF مشترك)</span>
+                        {!isClassic && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-amber-50 text-amber-700 border-amber-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        نفس تصميم مُصدِّر PDF المشترك (المستخدَم في كشف العميل والمورد) على كل
+                        الشاشات الأربع لتوحيد شكل الطباعة.
                       </p>
                     </button>
                   </div>

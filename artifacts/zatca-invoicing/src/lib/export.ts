@@ -1625,7 +1625,7 @@ export interface StatementPdfVisibleCols {
 }
 
 export interface ExportStatementPdfOpts {
-  mode: "customer" | "supplier";
+  mode: "customer" | "supplier" | "general";
   company?: StatementPdfCompany | null;
   account: StatementPdfAccount;
   from: string;
@@ -1664,7 +1664,11 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     docType:     vc.docType     !== false,
     date:        vc.date        !== false,
     docNumber:   vc.docNumber   !== false,
-    type:        vc.type        !== false,
+    // "رقم القيد" (journal-entry number) is ALWAYS hidden on the printed /
+    // exported statement per user request — it duplicated bookkeeping detail
+    // the customer/supplier does not need. Forced false regardless of the
+    // on-screen column chooser.
+    type:        false,
     debit:       vc.debit       !== false,
     credit:      vc.credit      !== false,
     balance:     vc.balance     !== false,
@@ -1903,7 +1907,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       line-height: 1.25;
     }
     table.data tbody td.num { text-align: center; }
-    table.data tbody td.mono { font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; }
+    table.data tbody td.mono { font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
     table.data tbody td.debit { color: #0369a1; font-weight: 600; }
     table.data tbody td.credit { color: #047857; font-weight: 600; }
     table.data tbody td.muted { color: #cbd5e1; }
@@ -2030,7 +2034,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
                under the title in .period-range. -->
           <div class="party-strip">
             <div class="party-row">
-              <span class="lbl">${mode === "supplier" ? "اسم المورد" : "اسم العميل"}:</span>
+              <span class="lbl">${mode === "supplier" ? "اسم المورد" : mode === "general" ? "الحساب" : "اسم العميل"}:</span>
               <span class="party-name">${escape(account.partyNameAr || account.nameAr || account.nameEn || "—")}</span>
               ${account.partyNameEn ? `<span class="party-name-latin" dir="ltr">(${escape(account.partyNameEn)})</span>` : ""}
             </div>

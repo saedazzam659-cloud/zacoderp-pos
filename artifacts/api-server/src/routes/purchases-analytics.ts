@@ -486,6 +486,11 @@ router.get("/supplier-statement", async (req, res) => {
       amount: paymentVouchersTable.amount,
       description: paymentVouchersTable.description,
       notes: paymentVouchersTable.notes,
+      // Payment channel — drives the "نوع الوثيقة" suffix (نقدي / بنكي) so
+      // the statement shows HOW the payment was made. A voucher carries
+      // either a cash-box or a bank account (never both).
+      cashBoxId: paymentVouchersTable.cashBoxId,
+      bankAccountId: paymentVouchersTable.bankAccountId,
     }).from(paymentVouchersTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId))
       .where(and(...payConds));
@@ -523,13 +528,20 @@ router.get("/supplier-statement", async (req, res) => {
     // For supplier statements, invoices increase the payable (credit column),
     // returns and payments decrease it (debit column). Direct JE lines carry
     // their own debit/credit as posted.
-    type Line = { id: number | null; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
+    // `paymentType` (invoices/returns — always "credit" here since the A/P
+    // control account only ever carries credit documents) and `channel`
+    // ("cashbox" | "bank" for vouchers) feed the front-end "نوع الوثيقة"
+    // suffix. Cash invoices never touch this statement so أجل is guaranteed,
+    // but the field is emitted data-driven for forward-safety.
+    const voucherChannel = (cashBoxId: number | null, bankAccountId: number | null): "cashbox" | "bank" | null =>
+      cashBoxId != null ? "cashbox" : (bankAccountId != null ? "bank" : null);
+    type Line = { id: number | null; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string; paymentType?: string | null; channel?: "cashbox" | "bank" | null };
     const lines: Line[] = [
       // Invoice "الشرح" loads from the purchase invoice itself: the user-typed
       // header note when present, otherwise the item name(s) on the invoice.
-      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: (i.supplierInvoiceNumber && String(i.supplierInvoiceNumber).trim()) ? String(i.supplierInvoiceNumber).trim() : i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—") })),
-      ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
-      ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: voucherDesc(p.description, p.notes) })),
+      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: (i.supplierInvoiceNumber && String(i.supplierInvoiceNumber).trim()) ? String(i.supplierInvoiceNumber).trim() : i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—"), paymentType: "credit" })),
+      ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes), paymentType: "credit" })),
+      ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: voucherDesc(p.description, p.notes), channel: voucherChannel(p.cashBoxId, p.bankAccountId) })),
       // Manual / direct JE rows: show the actual journal-line text the user
       // wrote (resolved in fetchSupplierDirectJeLines), falling back to a
       // type-specific label only when the entry carries no description.

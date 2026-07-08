@@ -63,6 +63,12 @@ export type SupplierStatementLine = {
   debit: number;
   credit: number;
   description: string;
+  /** Payment type for invoices/returns — always "credit" here (A/P only
+   *  carries credit docs); drives the "نوع الوثيقة" أجل/نقدًا suffix. */
+  paymentType?: string | null;
+  /** Payment channel for payment vouchers — "cashbox" | "bank" | null;
+   *  drives the "نوع الوثيقة" نقدي/بنكي suffix. */
+  channel?: "cashbox" | "bank" | null;
 };
 
 export type SupplierStatement = { opening: number; lines: SupplierStatementLine[] };

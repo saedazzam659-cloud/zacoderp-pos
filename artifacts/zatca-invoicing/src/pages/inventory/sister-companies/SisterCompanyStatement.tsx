@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { branchesApi } from "@/lib/branchesApi";
-import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { exportToExcel, exportToPDF, exportStatementToPDF, type ExportColumn } from "@/lib/export";
 import { DateField } from "@/components/ui/date-field";
 import AccountStatementView from "@/components/AccountStatementView";
 import { useAuth } from "@/contexts/AuthContext";
@@ -70,7 +70,46 @@ export default function SisterCompanyStatement() {
             return (
               <>
                 <Button variant="outline" size="sm" disabled={disabled}
-                  onClick={() => window.print()}
+                  onClick={() => {
+                    // When the company chose the "unified" statement print
+                    // format, route the sister-company statement through the
+                    // shared exportStatementToPDF renderer (mode "general") so
+                    // it matches the customer/supplier printout. Otherwise keep
+                    // the legacy window.print() (in-page AccountStatementView).
+                    if (user?.company?.statementPrintFormat === "unified" && stmt) {
+                      const totDebit  = stmt.rows.reduce((s: number, r: any) => s + (Number(r.debit)  || 0), 0);
+                      const totCredit = stmt.rows.reduce((s: number, r: any) => s + (Number(r.credit) || 0), 0);
+                      exportStatementToPDF({
+                        mode: "general",
+                        company: (user?.company as any) ?? null,
+                        account: {
+                          nameAr: sister?.nameAr ?? null,
+                          nameEn: sister?.nameEn ?? null,
+                          partyNameAr: sister?.nameAr ?? null,
+                          partyNameEn: sister?.nameEn ?? null,
+                        },
+                        from: from || "",
+                        to: to || "",
+                        opening: Number(stmt.opening) || 0,
+                        lines: stmt.rows.map((r: any) => ({
+                          date: r.date,
+                          docType: r.type,
+                          type: r.type,
+                          docNumber: r.docNumber,
+                          description: r.description,
+                          debit: Number(r.debit) || 0,
+                          credit: Number(r.credit) || 0,
+                          balance: Number(r.balance) || 0,
+                        })),
+                        totals: { debit: totDebit, credit: totCredit },
+                        closing: Number(stmt.closing) || 0,
+                        filename: `sister-statement-${sid}`,
+                        autoPrint: true,
+                      });
+                    } else {
+                      window.print();
+                    }
+                  }}
                   data-testid="btn-print">
                   <Printer className="h-4 w-4 ml-1" /> طباعة
                 </Button>

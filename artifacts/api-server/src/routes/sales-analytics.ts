@@ -443,6 +443,11 @@ router.get("/customer-statement", async (req, res) => {
       amount: receiptVouchersTable.amount,
       description: receiptVouchersTable.description,
       notes: receiptVouchersTable.notes,
+      // Payment channel — drives the "نوع الوثيقة" suffix (نقدي / بنكي) so
+      // the statement shows HOW the receipt was collected. A voucher carries
+      // either a cash-box or a bank account (never both).
+      cashBoxId: receiptVouchersTable.cashBoxId,
+      bankAccountId: receiptVouchersTable.bankAccountId,
     }).from(receiptVouchersTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, receiptVouchersTable.journalEntryId))
       .where(and(...recConds));
@@ -469,13 +474,20 @@ router.get("/customer-statement", async (req, res) => {
     const voucherDesc = (desc?: string | null, notes?: string | null) =>
       mergeDesc(desc, notes) || "—";
 
-    type Line = { id: number; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
+    // `paymentType` (invoices/returns — always "credit" here since the A/R
+    // control account only ever carries credit documents) and `channel`
+    // ("cashbox" | "bank" for vouchers) feed the front-end "نوع الوثيقة"
+    // suffix. Cash invoices never touch this statement so أجل is guaranteed,
+    // but the field is emitted data-driven for forward-safety.
+    const voucherChannel = (cashBoxId: number | null, bankAccountId: number | null): "cashbox" | "bank" | null =>
+      cashBoxId != null ? "cashbox" : (bankAccountId != null ? "bank" : null);
+    type Line = { id: number; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string; paymentType?: string | null; channel?: "cashbox" | "bank" | null };
     const lines: Line[] = [
       // Invoice "الشرح" loads from the sales invoice: the user-typed header
       // note when present, otherwise the item name(s) on the invoice.
-      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—") })),
-      ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes) })),
-      ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: voucherDesc(r.description, r.notes) })),
+      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—"), paymentType: "credit" })),
+      ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes), paymentType: "credit" })),
+      ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
     res.json({ opening, lines });

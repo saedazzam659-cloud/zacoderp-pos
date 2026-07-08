@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
+import { exportStatementToPDF } from "@/lib/export";
 import { useFmt } from "@/hooks/use-fmt";
 import BranchFilter from "@/components/BranchFilter";
 import CostCenterFilter from "@/components/CostCenterFilter";
@@ -383,6 +384,52 @@ export default function AccountStatement() {
       }
     : null;
 
+  // Print handler: when the company chose the "unified" statement print
+  // format (طريقة طباعة كشف الحساب = موحّد in General Settings) route the
+  // general account statement through the SHARED exportStatementToPDF renderer
+  // (mode "general") so it matches the customer/supplier printout exactly.
+  // Otherwise keep the legacy per-page window.print() (the in-page block
+  // <AccountStatementView /> handles the classic printable layout).
+  const handlePrint = () => {
+    if (user?.company?.statementPrintFormat === "unified" && selectedAccount) {
+      exportStatementToPDF({
+        mode: "general",
+        company: (user?.company as any) ?? null,
+        account: {
+          code: selectedAccount.code,
+          nameAr: selectedAccount.nameAr,
+          nameEn: selectedAccount.nameEn,
+          partyNameAr: selectedAccount.nameAr,
+          partyNameEn: selectedAccount.nameEn,
+        },
+        from: fromDate,
+        to: toDate,
+        opening: previousBalance,
+        lines: rows.map((r: any) => ({
+          id: r.id ?? null,
+          journalEntryId: r.journalEntryId ?? null,
+          date: r.entryDate,
+          docType: docTypeFor(r),
+          type: docTypeFor(r),
+          docNumber: r.docNumber,
+          journalEntryNumber: r.journalEntryNumber ?? null,
+          description: r.description,
+          debit: r.debit || 0,
+          credit: r.credit || 0,
+          balance: r.balance,
+        })),
+        totals: { debit: totalDebit, credit: totalCredit },
+        closing: finalBalance,
+        filename: `${t("accountStatement.filename_prefix")}-${selectedAccount?.code ?? ""}-${fromDate}`,
+        autoPrint: true,
+        fmt,
+        userName: user?.username ?? null,
+      });
+    } else {
+      window.print();
+    }
+  };
+
   function handleSearch() {
     if (!accountId) { toast({ title: t("accountStatement.selectAccountFirst"), variant: "destructive" }); return; }
     setSearched(true);
@@ -410,7 +457,7 @@ export default function AccountStatement() {
                 title={t("accountStatement.title_with", { name: accountDisplayName, from: fromDate, to: toDate })}
                 totalsRow={exportTotalsRow}
               />
-              <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={() => window.print()}>
+              <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={handlePrint}>
                 <Printer className="h-4 w-4" />{t("accountingReports.print")}
               </Button>
             </>

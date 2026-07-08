@@ -86,6 +86,12 @@ export const companiesTable = pgTable("companies", {
   // Applies to the sales invoice, quotation, sales order, and purchase order
   // entry forms. Presentation only — save/post/validation rules are unchanged.
   invoiceFormLayout: text("invoice_form_layout").notNull().default("tabbed"),
+  // Account-statement print/PDF layout: "classic" (the legacy per-page
+  // printable view — window.print for general/sister, in-page block for
+  // customer/supplier) | "unified" (the shared exportStatementToPDF renderer
+  // used across all four statement screens). Presentation only. Default
+  // "classic" so existing tenants keep their current printout untouched.
+  statementPrintFormat: text("statement_print_format").notNull().default("classic"),
   // ─── Per-document-type auto-posting toggles ───────────────────────────
   // Each flag controls whether saving a document of that type immediately
   // posts the resulting journal entry (true) or leaves it as a draft for
