@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
 import { safeLogoSrc } from "@/lib/export";
+import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "@/lib/printLetterhead";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
 import { Button } from "@/components/ui/button";
@@ -540,19 +541,14 @@ export default function JournalEntries() {
     const dir = isRtl ? "rtl" : "ltr";
     const lang = isRtl ? "ar" : "en";
     const align = isRtl ? "right" : "left";
-    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
-    const logoHtml = safeLogo
-      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
-      : "";
-    const companyNameHtml = user?.company?.nameAr
-      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>`
-      : "";
+    const letterhead = buildLetterheadHtml(user?.company as any, { accent: "navy", size: "md" });
     return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
 <style>
 @page { size: A4 landscape; margin: 12mm 12mm 22mm 12mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; font-size: 9pt; color: #475569; } }
 @media print { thead { display: table-header-group; } }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; }
+${letterheadCss({ accent: "navy", size: "md" })}
 .h { text-align:center; margin-bottom:8px; }
 .h h1 { margin:0 0 4px; font-size:18px; }
 .h .meta { font-size:11px; color:#555; }
@@ -567,9 +563,8 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 @media print { .print-btn { display:none; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">${escapeHtml(t("journalEntries.printPdf"))}</button>
-<div class="h">${logoHtml}${companyNameHtml}<h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
-<div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${today} — ${escapeHtml(t("journalEntries.entriesCount", { count: rows.length }))}</div></div>
-<div class="totals">
+${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
+<div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${today} — ${escapeHtml(t("journalEntries.entriesCount", { count: rows.length }))}</div></div>`, `<div class="totals">
   <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${totalDebitOfRows.toFixed(2)}</b></span>
   <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${totalCreditOfRows.toFixed(2)}</b></span>
 </div>
@@ -577,7 +572,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 <tbody>${rows.map(r => `<tr>${cols.map(c => {
       const isNum = c === COL_DEBIT_L || c === COL_CREDIT_L;
       return `<td class="${isNum ? "num" : ""}">${escapeHtml((r as any)[c])}</td>`;
-    }).join("")}</tr>`).join("")}</tbody></table>
+    }).join("")}</tr>`).join("")}</tbody></table>`)}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
 
@@ -616,13 +611,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
     const dir = isRtl ? "rtl" : "ltr";
     const lang = isRtl ? "ar" : "en";
     const align = isRtl ? "right" : "left";
-    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
-    const logoHtml = safeLogo
-      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
-      : "";
-    const companyNameHtml = user?.company?.nameAr
-      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>`
-      : "";
+    const letterhead = buildLetterheadHtml(user?.company as any, { accent: "navy", size: "md" });
 
     // Grand totals across every selected entry.
     const grandDebit  = entriesWithLines.reduce((s, e) => s + Number(e.totalDebit  ?? 0), 0);
@@ -676,7 +665,6 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
       // its own complete journal-entry document, ready for filing/signing).
       const perPageHead = oneEntryPerPage ? `
   <header class="page-head">
-    ${logoHtml}${companyNameHtml}
     <div class="page-title">${escapeHtml(t("journalEntries.printSheetTitle"))}</div>
     <div class="page-meta">${escapeHtml(L.doc)}: <b>${escapeHtml(docNo)}</b> &nbsp;•&nbsp; ${escapeHtml(L.date)}: <b>${escapeHtml(e.entryDate ?? "")}</b></div>
   </header>` : "";
@@ -739,6 +727,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 @media print { thead { display: table-header-group; } .entry { page-break-inside: avoid; } ${oneEntryPerPage ? ".entry { page-break-after: always; } .entry:last-of-type { page-break-after: auto; }" : ""} }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; direction:${dir}; }
+${letterheadCss({ accent: "navy", size: "md" })}
 .h { text-align:center; margin-bottom:10px; }
 .h h1 { margin:0 0 4px; font-size:18px; }
 .h .meta { font-size:11px; color:#555; }
@@ -772,7 +761,7 @@ table.lines tfoot td { padding:4px 6px; border:1px solid #cbd5e1; background:#f1
 @media print { .print-btn { display:none; } ${oneEntryPerPage ? ".doc-global { display:none !important; }" : ""} }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">${escapeHtml(t("journalEntries.printPdf"))}</button>
-<div class="h doc-global">${logoHtml}${companyNameHtml}<h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
+${wrapWithLetterhead(letterhead, `<div class="h doc-global"><h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
 <div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${escapeHtml(today)} — ${escapeHtml(t("journalEntries.entriesCount", { count: entriesWithLines.length }))}</div></div>
 <div class="totals doc-global">
   <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${grandDebit.toFixed(2)}</b></span>
@@ -782,7 +771,7 @@ ${entrySections}
 <div class="grand doc-global">
   <span>${escapeHtml(L.grandTotal)} — ${escapeHtml(t("journalEntries.totalDebit"))}: <b>${grandDebit.toFixed(2)}</b></span>
   <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${grandCredit.toFixed(2)}</b></span>
-</div>
+</div>`)}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
 
@@ -811,15 +800,16 @@ ${entrySections}
     const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const align = isRtl ? "right" : "left";
-    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    const letterhead = buildLetterheadHtml(user?.company as any, {
+      accent: "navy",
+      size: "md",
+      extraMetaHtml: `${escapeHtml(t("journalEntries.printSheetTitle"))} — ${escapeHtml(today)} — ${rows.length} قيد`,
+    });
     return `<!DOCTYPE html><html dir="${dir}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
 <style>
 @page { size: A4 landscape; margin: 8mm; @bottom-center { content: counter(page) " / " counter(pages); font-size:8pt; color:#475569; } }
 body { font-family: "Segoe UI","Tahoma",sans-serif; color:#111; margin:0; font-size:9pt; }
-.h { display:flex; align-items:center; justify-content:space-between; padding:4px 6px 6px; border-bottom:2px solid #1e3a8a; margin-bottom:6px; }
-.h h1 { margin:0; font-size:13pt; color:#1e3a8a; }
-.h .meta { font-size:8.5pt; color:#475569; text-align:${isRtl ? "left" : "right"}; }
-.h img { max-height:38px; max-width:120px; object-fit:contain; }
+${letterheadCss({ accent: "navy", size: "md" })}
 table { width:100%; border-collapse:collapse; }
 thead th { background:#1e3a8a; color:#fff; padding:3px 5px; border:1px solid #1e3a8a; text-align:${align}; font-weight:600; font-size:8.5pt; }
 tbody td { padding:2.5px 5px; border:1px solid #e5e7eb; text-align:${align}; }
@@ -830,19 +820,14 @@ tfoot td { padding:4px 5px; border:1px solid #cbd5e1; background:#1e3a8a; color:
 @media print { .print-btn { display:none; } thead { display: table-header-group; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="h">
-  ${safeLogo ? `<img src="${safeLogo}" alt="" />` : `<div></div>`}
-  <h1>${escapeHtml(t("journalEntries.printSheetTitle"))} — ${escapeHtml((user?.company as any)?.nameAr ?? "")}</h1>
-  <div class="meta">${escapeHtml(today)}<br/>${rows.length} قيد</div>
-</div>
-<table><thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
+${wrapWithLetterhead(letterhead, `<table><thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
 <tbody>${rows.map(r => `<tr>${cols.map(c => {
   const isNum = c === COL_DEBIT_L || c === COL_CREDIT_L;
   return `<td class="${isNum ? "num" : ""}">${escapeHtml((r as any)[c])}</td>`;
 }).join("")}</tr>`).join("")}</tbody>
 <tfoot><tr><td colspan="${cols.length - 3}" style="text-align:${align};">الإجمالي</td>
 <td class="num">${totalDebit.toFixed(2)}</td><td class="num">${totalCredit.toFixed(2)}</td><td></td></tr></tfoot>
-</table>
+</table>`)}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
 
@@ -852,8 +837,9 @@ tfoot td { padding:4px 5px; border:1px solid #cbd5e1; background:#1e3a8a; color:
   const buildThermalPrintHtml = (entriesWithLines: any[]) => {
     const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
-    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
-    const companyName = (user?.company as any)?.nameAr ?? "";
+    const company = user?.company as any;
+    const safeLogo = safeLogoSrc(company?.logo);
+    const companyName = company?.nameAr ?? "";
     const sections = entriesWithLines.map((e: any) => {
       const docNo  = e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`;
       const lines: any[] = Array.isArray(e.lines) ? e.lines : [];
@@ -870,6 +856,9 @@ tfoot td { padding:4px 5px; border:1px solid #cbd5e1; background:#1e3a8a; color:
       return `<section class="ticket">
         ${safeLogo ? `<div class="logo"><img src="${safeLogo}" alt="" /></div>` : ""}
         <div class="title">${escapeHtml(companyName)}</div>
+        ${company?.crNumber ? `<div class="sub">س.ت: ${escapeHtml(company.crNumber)}</div>` : ""}
+        ${company?.vatNumber ? `<div class="sub">ض.ق.م: ${escapeHtml(company.vatNumber)}</div>` : ""}
+        ${company?.phone ? `<div class="sub">جوال: ${escapeHtml(company.phone)}</div>` : ""}
         <div class="sub">قيد محاسبي</div>
         <div class="hr"></div>
         <div class="row"><span>رقم القيد</span><b>${escapeHtml(docNo)}</b></div>
@@ -922,11 +911,11 @@ ${sections}
     const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const align = isRtl ? "right" : "left";
-    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
-    const company = user?.company as any;
-    const companyName = company?.nameAr ?? "";
-    const vat = company?.vatNumber ?? "";
-    const cr = company?.crNumber ?? "";
+    const letterhead = buildLetterheadHtml(user?.company as any, {
+      accent: "navy",
+      size: "md",
+      extraMetaHtml: `تاريخ الطباعة: ${escapeHtml(today)} — ${entriesWithLines.length} قيد`,
+    });
     const sections = entriesWithLines.map((e: any) => {
       const docNo  = e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`;
       const lines: any[] = Array.isArray(e.lines) ? e.lines : [];
@@ -945,25 +934,16 @@ ${sections}
               <td class="num end">${Number(ln.credit ?? 0).toFixed(2)}</td>
             </tr>`;
           }).join("");
-      // One-per-page: each section becomes a complete printable document with
-      // its own letterhead at the top and a prominent debit/credit total banner
-      // before the signature block. The global letterhead is hidden in print.
-      const perPageLetterhead = oneEntryPerPage ? `
-        <div class="page-letterhead">
-          ${safeLogo ? `<img src="${safeLogo}" alt="" />` : ""}
-          <div class="co">
-            <h1>${escapeHtml(companyName)}</h1>
-            <div class="reg">${cr ? `س.ت: ${escapeHtml(cr)}` : ""}${cr && vat ? " • " : ""}${vat ? `الرقم الضريبي: ${escapeHtml(vat)}` : ""}</div>
-          </div>
-          <div class="stamp">تاريخ الطباعة<br/><b>${escapeHtml(today)}</b></div>
-        </div>` : "";
+      // One-per-page: the shared letterhead repeats natively on every printed
+      // page via the lh-shell <thead>, so each entry-page keeps the full
+      // company identity; a prominent per-entry totals banner is appended
+      // before the signature block.
       const perPageTotals = oneEntryPerPage ? `
         <div class="page-totals">
           <span>إجمالي المدين: <b>${subDebit.toFixed(2)}</b></span>
           <span>إجمالي الدائن: <b>${subCredit.toFixed(2)}</b></span>
         </div>` : "";
       return `<section class="entry">
-        ${perPageLetterhead}
         <div class="banner">
           <div class="banner-l">
             <div class="docno">قيد رقم: <b>${escapeHtml(docNo)}</b></div>
@@ -1005,12 +985,7 @@ ${sections}
 <style>
 @page { size: A4 portrait; margin: 14mm 14mm 22mm 14mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family: "Segoe UI","Tahoma",sans-serif; font-size:9pt; color:#475569; } }
 body { font-family: "Segoe UI","Tahoma","Arial",sans-serif; color:#111; margin:0; }
-.letterhead { display:flex; align-items:center; gap:12px; padding-bottom:10px; border-bottom:3px double #1e3a8a; margin-bottom:14px; }
-.letterhead img { max-height:60px; max-width:140px; object-fit:contain; }
-.letterhead .co { flex:1; }
-.letterhead .co h1 { margin:0; font-size:16pt; color:#1e3a8a; }
-.letterhead .co .reg { font-size:9pt; color:#475569; margin-top:3px; }
-.letterhead .stamp { text-align:${isRtl ? "left" : "right"}; font-size:9pt; color:#475569; }
+${letterheadCss({ accent: "navy", size: "md" })}
 .entry { page-break-inside: avoid; margin-bottom:18px; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; }
 ${oneEntryPerPage ? "@media print { .entry { page-break-after: always; } .entry:last-of-type { page-break-after: auto; } }" : ""}
 .banner { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:#eef2ff; border-radius:6px; margin-bottom:8px; border-left: 4px solid #1e3a8a; }
@@ -1034,27 +1009,13 @@ tfoot td { padding:6px 8px; border:1px solid #cbd5e1; background:#f1f5f9; }
 .sign { flex:1; text-align:center; }
 .sign-line { border-top:1.5px solid #475569; margin-top:36px; }
 .sign-label { margin-top:4px; font-size:9pt; color:#475569; }
-.page-letterhead { display:flex; align-items:center; gap:12px; padding-bottom:8px; border-bottom:3px double #1e3a8a; margin-bottom:10px; }
-.page-letterhead img { max-height:54px; max-width:130px; object-fit:contain; }
-.page-letterhead .co { flex:1; }
-.page-letterhead .co h1 { margin:0; font-size:14pt; color:#1e3a8a; }
-.page-letterhead .co .reg { font-size:9pt; color:#475569; margin-top:2px; }
-.page-letterhead .stamp { text-align:${isRtl ? "left" : "right"}; font-size:9pt; color:#475569; }
 .page-totals { display:flex; gap:18px; justify-content:space-around; margin-top:10px; padding:9px 14px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:11pt; font-weight:600; }
 .page-totals span, .page-totals b { color:#fff; }
 .print-btn { position:fixed; top:10px; ${isRtl ? "left" : "right"}:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:11pt; }
-@media print { .print-btn { display:none; } ${oneEntryPerPage ? ".doc-global { display:none !important; }" : ""} }
+@media print { .print-btn { display:none; } thead { display: table-header-group; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="letterhead doc-global">
-  ${safeLogo ? `<img src="${safeLogo}" alt="" />` : ""}
-  <div class="co">
-    <h1>${escapeHtml(companyName)}</h1>
-    <div class="reg">${cr ? `س.ت: ${escapeHtml(cr)}` : ""}${cr && vat ? " • " : ""}${vat ? `الرقم الضريبي: ${escapeHtml(vat)}` : ""}</div>
-  </div>
-  <div class="stamp">تاريخ الطباعة<br/><b>${escapeHtml(today)}</b><br/>${entriesWithLines.length} قيد</div>
-</div>
-${sections}
+${wrapWithLetterhead(letterhead, sections)}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
 

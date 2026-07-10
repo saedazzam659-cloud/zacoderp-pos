@@ -6,7 +6,12 @@
 //
 // Self-contained (its own escape/tafqeet helpers) so it never drifts with the
 // other print builders.
-import { safeLogoSrc } from "@/lib/export";
+import {
+  addCanvasToPdfWithRepeatingHeader,
+  buildLetterheadHtml,
+  letterheadCss,
+  wrapWithLetterhead,
+} from "@/lib/printLetterhead";
 
 function esc(s: any): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -64,6 +69,14 @@ export interface CustodyVoucherCompany {
   nameAr?: string | null;
   nameEn?: string | null;
   logo?: string | null;
+  crNumber?: string | null;
+  vatNumber?: string | null;
+  phone?: string | null;
+  buildingNumber?: string | null;
+  street?: string | null;
+  district?: string | null;
+  city?: string | null;
+  postalCode?: string | null;
 }
 
 export interface CustodySettlementLine {
@@ -106,8 +119,10 @@ export function buildCustodyVoucherHtml(args: CustodyVoucherArgs): string {
     ? Number(doc.remaining)
     : +(amount - settled - returned).toFixed(2);
   const tafqeet = numberToArabicWords(amount);
-  const safeLogo = safeLogoSrc(company?.logo);
-  const coName = company?.nameAr || company?.nameEn || "اسم الشركة";
+  const letterhead = buildLetterheadHtml(
+    { ...company, nameAr: company?.nameAr || company?.nameEn || "اسم الشركة" },
+    { accent: "green", size: "lg" },
+  );
   const printedAt = new Date().toLocaleString("en-GB", {
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit",
@@ -156,11 +171,9 @@ export function buildCustodyVoucherHtml(args: CustodyVoucherArgs): string {
 @page { size: A4; margin: 14mm 14mm 16mm 14mm; }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; font-size:13px; }
-.sheet { min-height: 255mm; display:flex; flex-direction:column; }
-.header { display:flex; align-items:center; justify-content:center; gap:18px; border-bottom:3px solid #166534; padding:6px 0 16px; }
-.header .logo img { max-height:80px; max-width:140px; object-fit:contain; }
-.header .co-name { font-size:24px; font-weight:800; color:#14532d; text-align:center; }
-.title-bar { background:#166534; color:#fff; font-size:17px; font-weight:800; text-align:center; padding:8px 12px; margin:12px auto 0; border-radius:6px; width:60%; }
+${letterheadCss({ accent: "green", size: "lg" })}
+.sheet { min-height: 218mm; display:flex; flex-direction:column; }
+.title-bar { background:#166534; color:#fff; font-size:17px; font-weight:800; text-align:center; padding:8px 12px; margin:4px auto 0; border-radius:6px; width:60%; }
 .data-wrap { flex:1; display:flex; flex-direction:column; justify-content:flex-start; padding:14px 0 0; }
 .section-label { font-size:14px; font-weight:700; color:#166534; margin:0 0 10px; text-align:center; }
 table.data { width:80%; margin:0 auto; border-collapse:collapse; font-size:13.5px; }
@@ -185,11 +198,7 @@ table.lines td.num { font-weight:700; }
 @media print { .print-btn { display:none; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="sheet">
-  <div class="header">
-    ${safeLogo ? `<div class="logo"><img src="${safeLogo}" alt="" /></div>` : ""}
-    <div class="co-name">${esc(coName)}</div>
-  </div>
+${wrapWithLetterhead(letterhead, `<div class="sheet">
   <div class="title-bar">سند عهدة</div>
   <div class="data-wrap">
     <div class="section-label">بيانات العهدة</div>
@@ -216,9 +225,9 @@ table.lines td.num { font-weight:700; }
   </div>
   <div class="footer">
     <span>تاريخ الطباعة : ${esc(printedAt)}</span>
-    <span>الصفحة 1 من 1</span>
+    <span></span>
   </div>
-</div>
+</div>`)}
 <script>setTimeout(function(){window.print()},300);</script>
 </body></html>`;
 }
@@ -273,20 +282,10 @@ export async function downloadCustodyVoucherPdf(args: CustodyVoucherArgs, filena
       windowWidth: 794, windowHeight: fullHeight + 50, scrollX: 0, scrollY: 0, logging: false,
     });
     const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const imgH = (canvas.height * pageW) / canvas.width;
-    const img = canvas.toDataURL("image/jpeg", 0.95);
-    if (imgH <= pageH) {
-      pdf.addImage(img, "JPEG", 0, 0, pageW, imgH);
-    } else {
-      let remaining = imgH; let position = 0;
-      while (remaining > 0) {
-        pdf.addImage(img, "JPEG", 0, position, pageW, imgH);
-        remaining -= pageH;
-        if (remaining > 0) { pdf.addPage(); position -= pageH; }
-      }
-    }
+    // Repeat the letterhead band at the top of pages 2+ (canvas px = CSS px × scale 2).
+    const lhEl = doc.querySelector(".co-letterhead") as HTMLElement | null;
+    const headerPx = lhEl ? Math.ceil((lhEl.getBoundingClientRect().bottom + 2) * 2) : 0;
+    addCanvasToPdfWithRepeatingHeader(pdf, canvas, headerPx);
     pdf.save(`${filename}.pdf`);
   } finally {
     document.body.removeChild(iframe);

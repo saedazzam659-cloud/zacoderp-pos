@@ -17,7 +17,12 @@ import {
   ScrollText,
   Newspaper,
 } from "lucide-react";
-import { safeLogoSrc } from "@/lib/export";
+import {
+  buildLetterheadHtml,
+  letterheadCss,
+  wrapWithLetterhead,
+  type LetterheadCompany,
+} from "@/lib/printLetterhead";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Shared bulk-print toolkit used by every list screen that supports
@@ -112,13 +117,7 @@ export interface DocAdapter<T = any> {
 
 /* ─── Generic template builders ──────────────────────────────────────── */
 
-interface CompanyInfo {
-  nameAr?: string | null;
-  nameEn?: string | null;
-  vatNumber?: string | null;
-  crNumber?: string | null;
-  logo?: string | null;
-}
+interface CompanyInfo extends LetterheadCompany {}
 
 const STATUS_TONE: Record<string, string> = {
   posted:    "background:#d1fae5;color:#065f46;border-color:#6ee7b7;",
@@ -141,10 +140,11 @@ export function buildProfessionalDocsHtml<T>(
   company: CompanyInfo | null | undefined,
 ): string {
   const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
-  const safeLogo = safeLogoSrc(company?.logo) ?? "";
-  const companyName = company?.nameAr ?? company?.nameEn ?? "";
-  const vat = company?.vatNumber ?? "";
-  const cr  = company?.crNumber ?? "";
+  const letterhead = buildLetterheadHtml(company, {
+    accent: "navy",
+    size: "md",
+    extraMetaHtml: `تاريخ الطباعة: ${escapeHtml(today)} — ${docs.length} ${escapeHtml(adapter.docTypeLabel)}`,
+  });
 
   const sections = docs.map((d) => {
     const h = adapter.getHeader(d);
@@ -209,12 +209,7 @@ export function buildProfessionalDocsHtml<T>(
 @page { size: A4 portrait; margin: 14mm 14mm 22mm 14mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family:"Segoe UI",sans-serif; font-size:9pt; color:#475569; } }
 * { box-sizing: border-box; }
 body { font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
-.letterhead { display:flex; align-items:center; gap:12px; padding-bottom:10px; border-bottom:3px double #1e3a8a; margin-bottom:14px; }
-.letterhead img { max-height:60px; max-width:140px; object-fit:contain; }
-.letterhead .co { flex:1; }
-.letterhead .co h1 { margin:0; font-size:16pt; color:#1e3a8a; }
-.letterhead .co .reg { font-size:9pt; color:#475569; margin-top:3px; }
-.letterhead .stamp { text-align:left; font-size:9pt; color:#475569; }
+${letterheadCss({ accent: "navy", size: "md" })}
 .doc { page-break-inside: avoid; margin-bottom:18px; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; }
 .banner { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:#eef2ff; border-radius:6px; margin-bottom:8px; border-right: 4px solid #1e3a8a; }
 .banner .docno { font-size:11pt; color:#1e3a8a; }
@@ -234,18 +229,10 @@ tfoot td { padding:6px 8px; border:1px solid #cbd5e1; background:#f1f5f9; }
 .sign-line { border-top:1.5px solid #475569; margin-top:36px; }
 .sign-label { margin-top:4px; font-size:9pt; color:#475569; }
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:11pt; }
-@media print { .print-btn { display:none; } }
+@media print { .print-btn { display:none; } thead { display: table-header-group; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="letterhead">
-  ${safeLogo ? `<img src="${safeLogo}" alt="" />` : ""}
-  <div class="co">
-    <h1>${escapeHtml(companyName)}</h1>
-    <div class="reg">${cr ? `س.ت: ${escapeHtml(cr)}` : ""}${cr && vat ? " • " : ""}${vat ? `الرقم الضريبي: ${escapeHtml(vat)}` : ""}</div>
-  </div>
-  <div class="stamp">تاريخ الطباعة<br/><b>${escapeHtml(today)}</b><br/>${docs.length} ${escapeHtml(adapter.docTypeLabel)}</div>
-</div>
-${sections}
+${wrapWithLetterhead(letterhead, sections)}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
 }
 
@@ -257,8 +244,11 @@ export function buildCompactDocsHtml<T>(
   company: CompanyInfo | null | undefined,
 ): string {
   const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
-  const safeLogo = safeLogoSrc(company?.logo) ?? "";
-  const companyName = company?.nameAr ?? company?.nameEn ?? "";
+  const letterhead = buildLetterheadHtml(company, {
+    accent: "navy",
+    size: "md",
+    extraMetaHtml: `${escapeHtml(adapter.title)} — تاريخ الطباعة: ${escapeHtml(today)} — عدد الوثائق: ${docs.length}`,
+  });
   const grand = docs.reduce((acc, d) => {
     const t = adapter.getTotals(d);
     acc.sub += t.subtotal; acc.vat += t.vat; acc.tot += t.total;
@@ -290,10 +280,7 @@ export function buildCompactDocsHtml<T>(
 @page { size: A4 portrait; margin: 10mm; }
 * { box-sizing: border-box; }
 body { font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
-.h { text-align:center; margin-bottom:10px; padding-bottom:8px; border-bottom:2px solid #1e3a8a; }
-.h img { max-height:46px; max-width:140px; object-fit:contain; margin-bottom:4px; }
-.h h1 { margin:0; font-size:15pt; color:#1e3a8a; }
-.h .meta { font-size:10pt; color:#475569; margin-top:2px; }
+${letterheadCss({ accent: "navy", size: "md" })}
 .grand { display:flex; gap:14px; justify-content:center; margin:6px 0 12px; font-size:11pt; padding:6px 10px; background:#eef2ff; border-radius:6px; }
 .grand b { color:#1e3a8a; }
 .doc { page-break-inside: avoid; border:1px solid #cbd5e1; border-radius:8px; padding:8px 10px; margin-bottom:8px; background:#fff; }
@@ -304,20 +291,15 @@ body { font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111;
 .doc .row3 { display:flex; gap:14px; flex-wrap:wrap; font-size:10pt; }
 .doc .row3 .g { color:#0f766e; font-weight:600; margin-right:auto; }
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:11pt; }
-@media print { .print-btn { display:none; } }
+@media print { .print-btn { display:none; } thead { display: table-header-group; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="h">
-  ${safeLogo ? `<img src="${safeLogo}" alt="" />` : ""}
-  <h1>${escapeHtml(companyName)} — ${escapeHtml(adapter.title)}</h1>
-  <div class="meta">تاريخ الطباعة: ${today} — عدد الوثائق: ${docs.length}</div>
-</div>
-<div class="grand">
+${wrapWithLetterhead(letterhead, `<div class="grand">
   <span>إجمالي المجموع: <b>${grand.sub.toFixed(2)}</b></span>
   <span>إجمالي الضريبة: <b>${grand.vat.toFixed(2)}</b></span>
   <span>الإجمالي العام: <b>${grand.tot.toFixed(2)}</b></span>
 </div>
-${cards}
+${cards}`)}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
 }
 

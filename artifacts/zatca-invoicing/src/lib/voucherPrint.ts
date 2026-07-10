@@ -11,6 +11,7 @@
 
 import { safeLogoSrc } from "./export";
 import { currencySymbol } from "./format";
+import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "./printLetterhead";
 
 export type VoucherKind = "receipt" | "payment";
 export type VoucherTemplate = "a4" | "thermal";
@@ -20,8 +21,10 @@ export interface VoucherCompany {
   nameEn?: string | null;
   vatNumber?: string | null;
   crNumber?: string | null;
+  phone?: string | null;
   city?: string | null;
   street?: string | null;
+  district?: string | null;
   buildingNumber?: string | null;
   postalCode?: string | null;
   logo?: string | null;
@@ -159,18 +162,13 @@ function buildA4(args: BuildVoucherArgs): string {
     ? escapeHtml(counterparty.nameAr || counterparty.nameEn || "—")
     : "—";
   const counterpartyVat = counterparty?.vatNumber ? escapeHtml(counterparty.vatNumber) : "";
-  const companyAddress = [company?.street, company?.buildingNumber, company?.city]
-    .filter(Boolean)
-    .map(escapeHtml)
-    .join(" — ");
+  const letterhead = buildLetterheadHtml(company, { accent: "navy", size: "lg" });
   return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(titleAr)} — ${escapeHtml(docNumber)}</title>
 <style>
 @page { size: A4; margin: 14mm; }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; }
-.header { text-align:center; border-bottom: 3px double #1e3a8a; padding-bottom: 10px; margin-bottom: 14px; }
-.header .company { font-size:15px; font-weight:700; color:#1e3a8a; margin-bottom:2px; }
-.header .meta { font-size:11px; color:#555; }
+${letterheadCss({ accent: "navy", size: "lg" })}
 .title-bar { background:${isReceipt ? "#15803d" : "#b45309"}; color:#fff; padding:8px 14px; border-radius:6px; display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; font-size:14px; font-weight:700; }
 .info-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:6px 14px; font-size:12px; margin-bottom:14px; padding:10px; border:1px solid #e5e7eb; border-radius:6px; background:#fafbfd; }
 .info-grid .lbl { color:#6b7280; font-size:10px; }
@@ -189,13 +187,7 @@ body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111
 @media print { .print-btn { display:none; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
-<div class="header">
-  ${logoBlockHtml(company, 60)}
-  ${company?.nameAr ? `<div class="company">${escapeHtml(company.nameAr)}</div>` : ""}
-  ${companyAddress ? `<div class="meta">${companyAddress}</div>` : ""}
-  ${company?.vatNumber ? `<div class="meta">الرقم الضريبي: ${escapeHtml(company.vatNumber)}</div>` : ""}
-</div>
-<div class="title-bar">
+${wrapWithLetterhead(letterhead, `<div class="title-bar">
   <span>${escapeHtml(titleAr)}</span>
   <span>${escapeHtml(docNumber)}</span>
 </div>
@@ -220,7 +212,7 @@ ${doc.notes ? `<div class="notes-box"><span class="lbl">ملاحظات</span>${e
 <div class="signatures">
   <div class="sig-line">توقيع المُحاسب</div>
   <div class="sig-line">توقيع ${isReceipt ? "المستلم" : "المُستفيد"}</div>
-</div>
+</div>`)}
 <script>setTimeout(()=>window.print(),300);</script>
 </body></html>`;
 }
@@ -265,7 +257,9 @@ body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#000
 <button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
 ${logoBlockHtml(company, 50)}
 ${company?.nameAr ? `<div class="center bold" style="font-size:13px;">${escapeHtml(company.nameAr)}</div>` : ""}
+${company?.crNumber ? `<div class="center" style="font-size:10px;">س.ت: ${escapeHtml(company.crNumber)}</div>` : ""}
 ${company?.vatNumber ? `<div class="center" style="font-size:10px;">ض.ق.م: ${escapeHtml(company.vatNumber)}</div>` : ""}
+${company?.phone ? `<div class="center" style="font-size:10px;">جوال: ${escapeHtml(company.phone)}</div>` : ""}
 <div class="h2 center">${escapeHtml(titleAr)}</div>
 <div class="row"><span class="lbl">رقم</span><span class="val">${escapeHtml(docNumber)}</span></div>
 <div class="row"><span class="lbl">التاريخ</span><span class="val">${escapeHtml(doc.settlementDate ?? today)}</span></div>
