@@ -2112,6 +2112,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                             />
                             <span className="font-medium">المبلغ شامل الضريبة</span>
                           </label>
+                          {/* الترتيب المطلوب: مدين مدخلات → مدين صفرية → دائن مخرجات → دائن صفرية */}
                           <div className="border-t pt-1.5 space-y-1">
                             <Button
                               type="button" variant="ghost" size="sm"
@@ -2128,6 +2129,16 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                             <Button
                               type="button" variant="ghost" size="sm"
                               className="w-full h-auto py-1.5 flex flex-col items-start gap-0.5"
+                              onClick={() => { applyZeroTaxEntry("input", line.id); setTaxPopoverLine(null); }}
+                            >
+                              <span className="font-semibold">مدين — ضريبة صفرية (0%)</span>
+                              <span className="text-[10px] text-muted-foreground font-normal">إضافة سطر ضريبة بقيمة 0.00 على الجانب المدين</span>
+                            </Button>
+                          </div>
+                          <div className="border-t pt-1.5 space-y-1">
+                            <Button
+                              type="button" variant="ghost" size="sm"
+                              className="w-full h-auto py-1.5 flex flex-col items-start gap-0.5"
                               onClick={() => { applyTaxEntry("output", line.id); setTaxPopoverLine(null); }}
                             >
                               <span className="font-semibold">دائن — ضريبة المخرجات</span>
@@ -2137,22 +2148,12 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                                   : `إضافة ${ratePctLabel} فوق مبلغ هذا السطر الدائن`}
                               </span>
                             </Button>
-                          </div>
-                          <div className="border-t pt-1.5 space-y-1">
-                            <Button
-                              type="button" variant="ghost" size="sm"
-                              className="w-full h-auto py-1.5 flex flex-col items-start gap-0.5"
-                              onClick={() => { applyZeroTaxEntry("input", line.id); setTaxPopoverLine(null); }}
-                            >
-                              <span className="font-semibold">ضريبة صفرية — مدين (0%)</span>
-                              <span className="text-[10px] text-muted-foreground font-normal">إضافة سطر ضريبة بقيمة 0.00 على الجانب المدين</span>
-                            </Button>
                             <Button
                               type="button" variant="ghost" size="sm"
                               className="w-full h-auto py-1.5 flex flex-col items-start gap-0.5"
                               onClick={() => { applyZeroTaxEntry("output", line.id); setTaxPopoverLine(null); }}
                             >
-                              <span className="font-semibold">ضريبة صفرية — دائن (0%)</span>
+                              <span className="font-semibold">دائن — ضريبة صفرية (0%)</span>
                               <span className="text-[10px] text-muted-foreground font-normal">إضافة سطر ضريبة بقيمة 0.00 على الجانب الدائن</span>
                             </Button>
                           </div>

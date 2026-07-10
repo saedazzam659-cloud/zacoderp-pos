@@ -174,7 +174,7 @@ table.lines td.num { font-weight:700; }
 .notes { width:90%; margin:14px auto 0; font-size:12.5px; border:1px dashed #a7f3d0; border-radius:6px; padding:8px 12px; background:#f0fdf4; }
 .notes-label { font-weight:700; color:#166534; }
 .tafqeet { text-align:center; font-size:14px; font-weight:700; color:#14532d; margin:18px auto 0; padding:8px; width:80%; border-top:1px dashed #a7f3d0; }
-.recipient { display:flex; justify-content:center; margin:24px auto 0; width:100%; font-size:12.5px; text-align:center; }
+.recipient { display:flex; justify-content:center; margin:30px auto 0; width:100%; font-size:12.5px; text-align:center; }
 .sig-row { display:flex; justify-content:space-between; gap:40px; width:92%; margin:36px auto 0; font-size:12.5px; text-align:center; }
 .sig-row .sig { flex:1; }
 .sig { padding:0 8px; }
@@ -207,11 +207,11 @@ table.lines td.num { font-weight:700; }
         <div class="line">الاسم والتوقيع</div>
       </div>
     </div>
-  </div>
-  <div class="recipient">
-    <div class="sig">
-      <div class="role">اعتماد</div>
-      <div class="line">الاسم والتوقيع</div>
+    <div class="recipient">
+      <div class="sig">
+        <div class="role">اعتماد</div>
+        <div class="line">الاسم والتوقيع</div>
+      </div>
     </div>
   </div>
   <div class="footer">

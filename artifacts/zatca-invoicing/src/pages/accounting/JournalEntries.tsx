@@ -686,6 +686,15 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
     <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${subCredit.toFixed(2)}</b></span>
   </div>` : "";
 
+      // Signature strip (RTL order: إعداد → مراجعة → اعتماد) requested for the
+      // printed journal-entry sheet — matches the manual signing convention.
+      const sigRow = `
+  <div class="sig-row">
+    <div class="sig"><div class="sig-role">${isRtl ? "إعداد" : "Prepared By"}</div><div class="sig-line">${isRtl ? "الاسم والتوقيع" : "Name & Signature"}</div></div>
+    <div class="sig"><div class="sig-role">${isRtl ? "مراجعة" : "Reviewed By"}</div><div class="sig-line">${isRtl ? "الاسم والتوقيع" : "Name & Signature"}</div></div>
+    <div class="sig"><div class="sig-role">${isRtl ? "اعتماد" : "Approved By"}</div><div class="sig-line">${isRtl ? "الاسم والتوقيع" : "Name & Signature"}</div></div>
+  </div>`;
+
       return `
 <section class="entry">
   ${perPageHead}
@@ -720,6 +729,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
     </tfoot>
   </table>
   ${perPageTotals}
+  ${sigRow}
 </section>`;
     }).join("");
 
@@ -752,6 +762,10 @@ table.lines tfoot td { padding:5px 7px; border:1px solid #cbd5e1; background:#f1
 .page-head .page-title { margin:4px 0 2px; font-size:14px; font-weight:600; color:#1e3a8a; }
 .page-head .page-meta { font-size:10.5px; color:#475569; }
 .page-totals { display:flex; gap:18px; justify-content:space-around; margin-top:8px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:12px; }
+.sig-row { display:flex; justify-content:space-between; gap:24px; margin:26px 8px 4px; text-align:center; page-break-inside:avoid; }
+.sig-row .sig { flex:1; }
+.sig-row .sig-role { font-weight:700; font-size:12px; margin-bottom:34px; }
+.sig-row .sig-line { border-top:1px solid #111; padding-top:5px; color:#475569; font-size:10px; max-width:180px; margin:0 auto; }
 .page-totals span { color:#fff; }
 .page-totals b { color:#fff; }
 .print-btn { position:fixed; top:10px; ${isRtl ? "left" : "right"}:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
