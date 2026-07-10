@@ -735,7 +735,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 
     return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
 <style>
-@page { size: A4 portrait; margin: 12mm 12mm 22mm 12mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; font-size: 9pt; color: #475569; } }
+@page { size: A4 portrait; margin: 7mm 8mm 13mm 8mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; font-size: 9pt; color: #475569; } }
 @media print { thead { display: table-header-group; } .entry { page-break-inside: avoid; } ${oneEntryPerPage ? ".entry { page-break-after: always; } .entry:last-of-type { page-break-after: auto; }" : ""} }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; direction:${dir}; }
@@ -744,27 +744,27 @@ body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111
 .h .meta { font-size:11px; color:#555; }
 .totals { display:flex; gap:16px; justify-content:center; margin:6px 0 14px; font-size:12px; }
 .totals span b { color:#1e3a8a; }
-.entry { margin: 0 0 14px; border:1px solid #cbd5e1; border-radius:6px; padding:8px 10px; background:#fff; }
+.entry { margin: 0 0 14px; border:1px solid #cbd5e1; border-radius:6px; padding:6px 8px; background:#fff; }
 .entry-head { margin-bottom:6px; }
 .entry-title { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px; }
 .badge { display:inline-block; padding:2px 8px; background:#eef2ff; color:#1e3a8a; border:1px solid #c7d2fe; border-radius:999px; font-size:10.5px; font-weight:600; }
 .entry-desc { font-size:11px; color:#334155; margin-top:2px; }
-table.lines { width:100%; border-collapse:collapse; font-size:11px; margin-top:4px; }
-table.lines thead th { background:#1e3a8a; color:#fff; padding:5px 7px; border:1px solid #1e3a8a; text-align:${align}; font-weight:600; }
-table.lines tbody td { padding:4px 7px; border:1px solid #d1d5db; text-align:${align}; }
+table.lines { width:100%; border-collapse:collapse; font-size:10.5px; margin-top:4px; }
+table.lines thead th { background:#1e3a8a; color:#fff; padding:4px 6px; border:1px solid #1e3a8a; text-align:${align}; font-weight:600; }
+table.lines tbody td { padding:3px 6px; border:1px solid #d1d5db; text-align:${align}; }
 table.lines tbody tr:nth-child(even) td { background:#f8fafc; }
-table.lines tfoot td { padding:5px 7px; border:1px solid #cbd5e1; background:#f1f5f9; }
+table.lines tfoot td { padding:4px 6px; border:1px solid #cbd5e1; background:#f1f5f9; }
 .num { font-family: "Consolas",monospace; }
 .end { text-align:${isRtl ? "left" : "right"}; }
 .center { text-align:center; }
 .grand { margin-top:6px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; display:flex; justify-content:space-between; gap:18px; font-size:12px; }
-.page-head { text-align:center; margin: 0 0 8px; padding-bottom:6px; border-bottom:2px solid #1e3a8a; }
+.page-head { text-align:center; margin: 0 0 6px; padding-bottom:4px; border-bottom:2px solid #1e3a8a; }
 .page-head .page-title { margin:4px 0 2px; font-size:14px; font-weight:600; color:#1e3a8a; }
 .page-head .page-meta { font-size:10.5px; color:#475569; }
-.page-totals { display:flex; gap:18px; justify-content:space-around; margin-top:8px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:12px; }
-.sig-row { display:flex; justify-content:space-between; gap:24px; margin:26px 8px 4px; text-align:center; page-break-inside:avoid; }
+.page-totals { display:flex; gap:18px; justify-content:space-around; margin-top:6px; padding:6px 12px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:12px; }
+.sig-row { display:flex; justify-content:space-between; gap:24px; margin:14px 8px 2px; text-align:center; page-break-inside:avoid; }
 .sig-row .sig { flex:1; }
-.sig-row .sig-role { font-weight:700; font-size:12px; margin-bottom:34px; }
+.sig-row .sig-role { font-weight:700; font-size:12px; margin-bottom:22px; }
 .sig-row .sig-line { border-top:1px solid #111; padding-top:5px; color:#475569; font-size:10px; max-width:180px; margin:0 auto; }
 .page-totals span { color:#fff; }
 .page-totals b { color:#fff; }
