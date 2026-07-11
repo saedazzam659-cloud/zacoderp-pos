@@ -862,8 +862,9 @@ export default function FixedAssets() {
 
               <div className="mt-4 border-t border-violet-200 pt-3">
                 <DepreciationScheduleTimeline
-                  projection
-                  title="الجدول الزمني المتوقع للإهلاك"
+                  assetId={editing?.id}
+                  projection={!editing}
+                  title={editing ? "الجدول الزمني للإهلاك (المُرحَّل والمتبقّي)" : "الجدول الزمني المتوقع للإهلاك"}
                   purchaseValue={form.purchaseValue}
                   scrapValue={form.scrapValue}
                   lifeYears={form.lifeYears}

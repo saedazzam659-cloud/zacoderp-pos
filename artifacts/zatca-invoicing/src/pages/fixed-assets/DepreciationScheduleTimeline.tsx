@@ -122,9 +122,9 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
                   <div className="text-[10px] mt-0.5">
                     {showPosted ? (
                       done ? (
-                        <span className="text-emerald-700 font-semibold">أُهلِك ✅</span>
+                        <span className="text-emerald-700 font-semibold">تم ترحيلها ✅</span>
                       ) : (
-                        <span className="text-amber-600 font-semibold">لم يُهلك بعد ⏳</span>
+                        <span className="text-amber-600 font-semibold">لم تُرحَّل بعد ⏳</span>
                       )
                     ) : (
                       <span className="text-slate-500">{r.days} يوم</span>
