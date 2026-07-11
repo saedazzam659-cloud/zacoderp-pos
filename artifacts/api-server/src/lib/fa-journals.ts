@@ -200,7 +200,9 @@ export async function buildDepreciationRunJournal(
   cid: number,
   runId: number,
   dx: DbOrTx = db,
+  opts: { userId?: number | null } = {},
 ): Promise<number | null> {
+  const userId = opts.userId ?? null;
   const [run] = await dx.select().from(faDepreciationRunsTable)
     .where(and(eq(faDepreciationRunsTable.id, runId), eq(faDepreciationRunsTable.companyId, cid)));
   if (!run) throw new Error("سجل الإهلاك غير موجود");
@@ -230,6 +232,7 @@ export async function buildDepreciationRunJournal(
   const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
     userId: null, refTable: "journal_entries", branchId: a.branchId ?? null, docDate: entryDate,
   })) ?? `DEP-${a.code}-${run.periodYear}${String(run.periodMonth).padStart(2, "0")}`;
+  const jeStatus = await resolvePostingStatus(cid, "faDepreciation");
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: a.branchId ?? null,
@@ -239,7 +242,11 @@ export async function buildDepreciationRunJournal(
     exchangeRate: "1",
     description: desc,
     entryType: "fa_depreciation",
-    status: await resolvePostingStatus(cid, "faDepreciation"),
+    status: jeStatus,
+    // Audit trail — stamp the creator; stamp the poster only when the entry
+    // actually lands as "posted" (auto-post ON), mirroring fullAuditFor().
+    createdBy: userId,
+    ...(jeStatus === "posted" ? { postedBy: userId, postedAt: new Date() } : {}),
   }).returning();
 
   await dx.insert(journalEntryLinesTable).values([

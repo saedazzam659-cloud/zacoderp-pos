@@ -15,6 +15,7 @@ import { Plus, Pencil, Trash2, Search, Package, QrCode,
   Info, ShoppingCart, Cog, TrendingDown, Shield, FileText, Receipt, Calculator } from "lucide-react";
 import { YearMonthInput } from "@/components/YearMonthInput";
 import { DateField } from "@/components/ui/date-field";
+import DepreciationScheduleTimeline from "./DepreciationScheduleTimeline";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -857,6 +858,19 @@ export default function FixedAssets() {
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.accumulatedDepreciation} onChange={(e)=>setForm({...form,accumulatedDepreciation:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
                 <div><Label>القيمة الدفترية</Label>
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.bookValue} onChange={(e)=>setForm({...form,bookValue:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
+              </div>
+
+              <div className="mt-4 border-t border-violet-200 pt-3">
+                <DepreciationScheduleTimeline
+                  projection
+                  title="الجدول الزمني المتوقع للإهلاك"
+                  purchaseValue={form.purchaseValue}
+                  scrapValue={form.scrapValue}
+                  lifeYears={form.lifeYears}
+                  depreciationMethod={form.depreciationMethod}
+                  depreciationStart={form.depreciationStart || form.purchaseDate}
+                  purchaseDate={form.purchaseDate}
+                />
               </div>
             </fieldset>
             )}

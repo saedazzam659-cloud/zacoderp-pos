@@ -17,6 +17,7 @@ import {
   faDepreciationRunsTable,
 } from "@workspace/db";
 import { buildDepreciationRunJournal } from "./fa-journals.js";
+import { computePeriodDepreciation } from "./depreciationCalc.js";
 import { logger } from "./logger.js";
 
 export interface PostDepreciationResult {
@@ -31,7 +32,9 @@ export async function postDepreciationForCompany(
   month: number,
   year: number,
   postedBy: string | null,
+  opts: { userId?: number | null } = {},
 ): Promise<PostDepreciationResult> {
+  const userId = opts.userId ?? null;
   if (month < 1 || month > 12 || year < 2000) {
     throw new Error("فترة غير صالحة");
   }
@@ -62,18 +65,19 @@ export async function postDepreciationForCompany(
     const purchase = Number(a.purchaseValue || 0);
     const scrap    = Number(a.scrapValue || 0);
     const accum    = Number(a.accumulatedDepreciation || 0);
-    const years    = Math.max(1/12, Number(a.lifeYears || 1));
-    const months   = Math.max(1, Math.round(years * 12));
-    const method   = String(a.depreciationMethod || "straight_line");
-    const book     = Math.max(scrap, purchase - accum);
-    let monthly: number;
-    if (method === "declining_balance") {
-      monthly = (book * (2 / years)) / 12;
-    } else {
-      monthly = (purchase - scrap) / months;
-    }
+    // Day-based (pro-rata) depreciation for straight_line; legacy monthly for
+    // declining_balance. Shared with the preview + schedule so all three agree.
+    const { amount: monthly } = computePeriodDepreciation({
+      purchaseValue: purchase,
+      scrapValue: scrap,
+      lifeYears: Number(a.lifeYears || 1),
+      depreciationMethod: String(a.depreciationMethod || "straight_line"),
+      depreciationStart: a.depreciationStart as any,
+      purchaseDate: a.purchaseDate as any,
+      accumulatedDepreciation: accum,
+    }, month, year);
     const remaining = Math.max(0, purchase - scrap - accum);
-    const apply    = Math.min(monthly, remaining);
+    const apply    = Number(Math.min(monthly, remaining).toFixed(2));
     if (apply <= 0) { skipped += 1; continue; }
 
     const newAccum = accum + apply;
@@ -99,7 +103,7 @@ export async function postDepreciationForCompany(
     // the run row is already saved and the user can retry from مركز الترحيل
     // once any missing FA accounts are mapped on /fixed-assets/settings.
     try {
-      await buildDepreciationRunJournal(cid, run.id);
+      await buildDepreciationRunJournal(cid, run.id, db, { userId });
     } catch (e: any) {
       jeFailed += 1;
       logger.warn({ err: e, runId: run.id, companyId: cid }, "fa depreciation JE failed");

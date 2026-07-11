@@ -52,8 +52,13 @@ export function shouldRunForCompany(
   cfg: { autoPostFaDepreciation: boolean | null; faAutoDepDay: number | null },
 ): boolean {
   if (!cfg.autoPostFaDepreciation) return false;
-  const day = Math.max(1, Math.min(28, Number(cfg.faAutoDepDay ?? 1)));
-  return ksaParts(now).day >= day;
+  const parts = ksaParts(now);
+  const configured = Math.max(1, Math.min(31, Number(cfg.faAutoDepDay ?? 1)));
+  // End-of-month clamp: a configured day beyond this month's length (e.g. 30
+  // in February) fires on the LAST day of the month instead of never.
+  const daysThisMonth = new Date(parts.year, parts.month, 0).getDate();
+  const effectiveDay = Math.min(configured, daysThisMonth);
+  return parts.day >= effectiveDay;
 }
 
 export interface SchedulerSweepSummary {

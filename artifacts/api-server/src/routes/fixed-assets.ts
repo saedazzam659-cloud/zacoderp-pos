@@ -22,6 +22,7 @@ import {
   buildDisposalJournal,
 } from "../lib/fa-journals.js";
 import { postDepreciationForCompany } from "../lib/depreciationPosting.js";
+import { computePeriodDepreciation, buildSchedule } from "../lib/depreciationCalc.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -564,24 +565,25 @@ router.get("/depreciation/runs", async (req, res) => {
 router.get("/depreciation/preview", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
+    // Preview reflects a specific period (day-based amounts differ per month).
+    // Defaults to the current KSA-ish calendar month when not supplied.
+    const now = new Date();
+    const month = Math.min(12, Math.max(1, Number(req.query.month) || (now.getMonth() + 1)));
+    const year  = Math.max(2000, Number(req.query.year) || now.getFullYear());
     const assets = await db.select().from(fixedAssetsTable)
       .where(and(eq(fixedAssetsTable.companyId, cid), eq(fixedAssetsTable.status, "active" as any)));
     const out = assets.map(a => {
       const purchase = Number(a.purchaseValue || 0);
       const scrap    = Number(a.scrapValue || 0);
       const accum    = Number(a.accumulatedDepreciation || 0);
-      const years    = Math.max(1/12, Number(a.lifeYears || 1));
-      const months   = Math.max(1, Math.round(years * 12));
       const method   = String(a.depreciationMethod || "straight_line");
       const book     = Math.max(scrap, purchase - accum);
-      let monthly: number;
-      if (method === "declining_balance") {
-        // Double-declining balance, monthly: rate = 2 / lifeYears, monthly = book * rate / 12
-        monthly = (book * (2 / years)) / 12;
-      } else {
-        // straight_line (and fallback for units_of_production until usage tracking added)
-        monthly = (purchase - scrap) / months;
-      }
+      const { amount: monthly } = computePeriodDepreciation({
+        purchaseValue: purchase, scrapValue: scrap,
+        lifeYears: Number(a.lifeYears || 1), depreciationMethod: method,
+        depreciationStart: a.depreciationStart as any, purchaseDate: a.purchaseDate as any,
+        accumulatedDepreciation: accum,
+      }, month, year);
       const remaining = Math.max(0, purchase - scrap - accum);
       const apply    = Math.min(monthly, remaining);
       return {
@@ -595,6 +597,62 @@ router.get("/depreciation/preview", async (req, res) => {
       };
     });
     res.json(out);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Full month-by-month depreciation schedule. Two modes:
+//   • { assetId }  → real schedule for a saved asset + which months are posted.
+//   • raw params   → projection for the asset form (before save), no posted flags.
+router.post("/depreciation/schedule", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const b = req.body ?? {};
+    let input: any;
+    let assetId: number | null = null;
+
+    if (b.assetId != null && String(b.assetId) !== "") {
+      assetId = Number(b.assetId);
+      const [a] = await db.select().from(fixedAssetsTable)
+        .where(and(eq(fixedAssetsTable.id, assetId), eq(fixedAssetsTable.companyId, cid)));
+      if (!a) { res.status(404).json({ error: "الأصل غير موجود" }); return; }
+      input = {
+        purchaseValue: Number(a.purchaseValue || 0),
+        scrapValue: Number(a.scrapValue || 0),
+        lifeYears: Number(a.lifeYears || 1),
+        depreciationMethod: String(a.depreciationMethod || "straight_line"),
+        depreciationStart: a.depreciationStart,
+        purchaseDate: a.purchaseDate,
+      };
+    } else {
+      input = {
+        purchaseValue: Number(b.purchaseValue || 0),
+        scrapValue: Number(b.scrapValue || 0),
+        lifeYears: Number(b.lifeYears || 1),
+        depreciationMethod: String(b.depreciationMethod || "straight_line"),
+        depreciationStart: b.depreciationStart ?? null,
+        purchaseDate: b.purchaseDate ?? null,
+      };
+    }
+
+    const schedule = buildSchedule(input);
+
+    // Overlay real posted status when working against a saved asset.
+    const postedSet = new Set<string>();
+    if (assetId != null) {
+      const runs = await db.select({
+        periodMonth: faDepreciationRunsTable.periodMonth,
+        periodYear:  faDepreciationRunsTable.periodYear,
+      }).from(faDepreciationRunsTable)
+        .where(and(eq(faDepreciationRunsTable.companyId, cid), eq(faDepreciationRunsTable.assetId, assetId)));
+      for (const r of runs) postedSet.add(`${r.periodYear}-${r.periodMonth}`);
+    }
+
+    const rows = schedule.map(s => ({
+      ...s,
+      posted: postedSet.has(`${s.year}-${s.month}`),
+    }));
+    const totalDepreciation = rows.reduce((sum, r) => sum + r.amount, 0);
+    res.json({ schedule: rows, totalMonths: rows.length, totalDepreciation: Number(totalDepreciation.toFixed(2)) });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -623,6 +681,7 @@ router.post("/depreciation/post", async (req, res) => {
     const year  = Number(b.periodYear  ?? now.getFullYear());
     const out = await postDepreciationForCompany(
       cid, month, year, req.authUser?.username || null,
+      { userId: req.authUser?.id ?? null },
     );
     res.status(201).json(out);
   } catch (e: any) {

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, PlayCircle, Clock, Save } from "lucide-react";
+import { TrendingUp, PlayCircle, Clock, Save, CalendarDays } from "lucide-react";
+import DepreciationScheduleTimeline from "./DepreciationScheduleTimeline";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -28,10 +29,11 @@ export default function FaDepreciation() {
 
   const now = new Date();
   const [period, setPeriod] = useState({ month: now.getMonth() + 1, year: now.getFullYear() });
+  const [expandedAsset, setExpandedAsset] = useState<number | null>(null);
 
   const { data: preview = [], isLoading } = useQuery<Preview[]>({
-    queryKey:["fa/dep-preview", cid],
-    queryFn: async () => (await fetch(`${API}/api/fixed-assets/depreciation/preview?companyId=${cid}`, { headers })).json(),
+    queryKey:["fa/dep-preview", cid, period.month, period.year],
+    queryFn: async () => (await fetch(`${API}/api/fixed-assets/depreciation/preview?companyId=${cid}&month=${period.month}&year=${period.year}`, { headers })).json(),
     enabled: !!cid,
   });
   const { data: runs = [] } = useQuery<Run[]>({
@@ -170,7 +172,7 @@ export default function FaDepreciation() {
                 disabled={!autoEnabled}
                 className="h-9 px-3 rounded-md border border-violet-200 bg-white text-sm disabled:opacity-50"
               >
-                {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                {Array.from({ length: 30 }, (_, i) => i + 1).map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
               </select>
@@ -224,22 +226,45 @@ export default function FaDepreciation() {
                 <th className="px-3 py-2 text-start font-semibold">الدفترية</th>
                 <th className="px-3 py-2 text-start font-semibold">الإهلاك الشهري</th>
                 <th className="px-3 py-2 text-start font-semibold">المطبق</th>
+                <th className="px-3 py-2 text-center font-semibold">الجدول الزمني</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {isLoading && <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
-              {!isLoading && preview.length===0 && <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">لا توجد أصول نشطة</td></tr>}
+              {isLoading && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
+              {!isLoading && preview.length===0 && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">لا توجد أصول نشطة</td></tr>}
               {preview.map(p => (
-                <tr key={p.id} className="hover:bg-violet-50/40">
-                  <td className="px-3 py-2 font-mono">{p.code}</td>
-                  <td className="px-3 py-2 font-semibold">{p.nameAr}</td>
-                  <td className="px-3 py-2 font-mono">{p.purchaseValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
-                  <td className="px-3 py-2 font-mono">{p.scrapValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
-                  <td className="px-3 py-2 font-mono text-amber-700">{p.accumulatedDepreciation.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
-                  <td className="px-3 py-2 font-mono text-emerald-700">{p.bookValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
-                  <td className="px-3 py-2 font-mono">{p.monthlyDepreciation.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
-                  <td className="px-3 py-2 font-mono text-violet-700 font-bold">{p.applicable.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
-                </tr>
+                <Fragment key={p.id}>
+                  <tr className="hover:bg-violet-50/40">
+                    <td className="px-3 py-2 font-mono">{p.code}</td>
+                    <td className="px-3 py-2 font-semibold">{p.nameAr}</td>
+                    <td className="px-3 py-2 font-mono">{p.purchaseValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                    <td className="px-3 py-2 font-mono">{p.scrapValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                    <td className="px-3 py-2 font-mono text-amber-700">{p.accumulatedDepreciation.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                    <td className="px-3 py-2 font-mono text-emerald-700">{p.bookValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                    <td className="px-3 py-2 font-mono">{p.monthlyDepreciation.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                    <td className="px-3 py-2 font-mono text-violet-700 font-bold">{p.applicable.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedAsset(expandedAsset === p.id ? null : p.id)}
+                        className="inline-flex items-center gap-1 text-violet-600 hover:text-violet-800 font-semibold"
+                      >
+                        <CalendarDays className="h-4 w-4" />
+                        {expandedAsset === p.id ? "إخفاء" : "عرض"}
+                      </button>
+                    </td>
+                  </tr>
+                  {expandedAsset === p.id && (
+                    <tr key={`${p.id}-timeline`}>
+                      <td colSpan={9} className="px-4 py-3 bg-violet-50/40">
+                        <DepreciationScheduleTimeline
+                          assetId={p.id}
+                          title={`الجدول الزمني للإهلاك — ${p.nameAr}`}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
