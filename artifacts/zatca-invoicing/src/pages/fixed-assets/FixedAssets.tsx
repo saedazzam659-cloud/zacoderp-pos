@@ -142,6 +142,11 @@ export default function FixedAssets() {
     queryFn: async () => (await fetch(`${API}/api/cost-centers?companyId=${cid}`, { headers })).json(),
     enabled: !!cid,
   });
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey:["branches", cid],
+    queryFn: async () => { const j = await (await fetch(`${API}/api/branches?companyId=${cid}`, { headers })).json(); return Array.isArray(j) ? j : []; },
+    enabled: !!cid,
+  });
   // Chart of accounts — used only to label the debit lines of a fetched
   // journal entry in the import preview (so the user can pick the asset line).
   const { data: accounts = [] } = useQuery<any[]>({
@@ -478,6 +483,15 @@ export default function FixedAssets() {
                     value={form.status} onChange={(e)=>setForm({...form,status:e.target.value})}>
                     {STATUSES.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
                   </select></div>
+                <div><Label>الفرع</Label>
+                  <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    value={form.branchId} onChange={(e)=>setForm({...form,branchId:e.target.value})}
+                    data-testid="select-branch">
+                    <option value="">— بدون —</option>
+                    {branches.filter((b:any)=>b.isActive!==false).map((b:any) =>
+                      <option key={b.id} value={b.id}>{b.code ? `${b.code} — ${b.nameAr || b.name}` : (b.nameAr || b.name)}</option>)}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1">الفرع التابع له الأصل (يُستخدم في تخصيص الأصل وقيوده على الفرع).</p></div>
                 <div><Label>مركز التكلفة</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.costCenterId} onChange={(e)=>setForm({...form,costCenterId:e.target.value})}
