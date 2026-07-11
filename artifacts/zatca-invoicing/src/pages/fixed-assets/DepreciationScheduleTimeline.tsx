@@ -77,13 +77,19 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
 
   const [pageSize, setPageSize] = useState<number>(10);
   const [page, setPage] = useState<number>(1);
+  const [statusFilter, setStatusFilter] = useState<"all" | "posted" | "unposted">("all");
 
-  const totalRows = rows.length;
+  const postedCount = rows.filter((r) => r.posted).length;
+  const unpostedCount = rows.length - postedCount;
+  const filteredRows = showPosted && statusFilter !== "all"
+    ? rows.filter((r) => (statusFilter === "posted" ? r.posted : !r.posted))
+    : rows;
+
+  const totalRows = filteredRows.length;
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const safePage = Math.min(Math.max(1, page), totalPages);
   const start = (safePage - 1) * pageSize;
-  const pageRows = rows.slice(start, start + pageSize);
-  const postedCount = rows.filter((r) => r.posted).length;
+  const pageRows = filteredRows.slice(start, start + pageSize);
 
   if (!enabled) {
     return (
@@ -114,6 +120,38 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
       )}
       {!isLoading && rows.length > 0 && (
         <>
+          {showPosted && (
+            <div className="flex items-center gap-1 mb-2 flex-wrap">
+              {([
+                ["all", "الكل", rows.length],
+                ["posted", "المُرحَّلة", postedCount],
+                ["unposted", "غير المُرحَّلة", unpostedCount],
+              ] as const).map(([val, label, count]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => { setStatusFilter(val); setPage(1); }}
+                  className={[
+                    "h-7 px-3 rounded-md border text-[11px] font-semibold transition-colors",
+                    statusFilter === val
+                      ? val === "posted"
+                        ? "bg-emerald-600 border-emerald-600 text-white"
+                        : val === "unposted"
+                          ? "bg-amber-500 border-amber-500 text-white"
+                          : "bg-violet-600 border-violet-600 text-white"
+                      : "bg-background border-input text-slate-600 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  {label} ({count.toLocaleString(NUM)})
+                </button>
+              ))}
+            </div>
+          )}
+          {totalRows === 0 ? (
+            <div className="text-xs text-muted-foreground text-center py-6 border border-dashed border-slate-200 rounded-lg">
+              لا توجد أسطر مطابقة لهذا الفلتر.
+            </div>
+          ) : (
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="w-full text-xs border-collapse">
               <thead>
@@ -170,6 +208,7 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
               </tbody>
             </table>
           </div>
+          )}
 
           {/* pagination + totals */}
           <div className="flex items-center justify-between gap-3 mt-2 flex-wrap">
