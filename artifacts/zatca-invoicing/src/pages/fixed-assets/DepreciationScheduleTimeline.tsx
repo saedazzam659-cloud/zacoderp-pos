@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { CheckCircle2, Clock } from "lucide-react";
+import { CheckCircle2, Clock, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const NUM = "ar-EG-u-ca-gregory-nu-latn";
+const PAGE_SIZES = [10, 20, 50, 100, 500, 1000];
 const MONTHS_AR = [
   "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
   "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر",
@@ -31,6 +33,8 @@ export type TimelineProps = {
   projection?: boolean;
   title?: string;
 };
+
+const fmt = (n: number) => Number(n || 0).toLocaleString(NUM, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function DepreciationScheduleTimeline(props: TimelineProps) {
   const { token } = useAuth() as any;
@@ -71,6 +75,16 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
   const rows = data?.schedule ?? [];
   const showPosted = !props.projection;
 
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [page, setPage] = useState<number>(1);
+
+  const totalRows = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+  const postedCount = rows.filter((r) => r.posted).length;
+
   if (!enabled) {
     return (
       <div className="text-xs text-muted-foreground text-center py-6">
@@ -82,7 +96,15 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
   return (
     <div dir="rtl">
       {props.title && (
-        <div className="text-sm font-semibold text-violet-800 mb-2">{props.title}</div>
+        <div className="text-sm font-semibold text-violet-800 mb-2 flex items-center justify-between gap-2 flex-wrap">
+          <span>{props.title}</span>
+          {showPosted && totalRows > 0 && (
+            <span className="text-[11px] font-normal text-muted-foreground">
+              المُرحَّل <span className="font-semibold text-emerald-700">{postedCount.toLocaleString(NUM)}</span> من{" "}
+              <span className="font-semibold">{totalRows.toLocaleString(NUM)}</span> شهر
+            </span>
+          )}
+        </div>
       )}
       {isLoading && (
         <div className="text-xs text-muted-foreground text-center py-6">جاري حساب الجدول…</div>
@@ -92,52 +114,109 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
       )}
       {!isLoading && rows.length > 0 && (
         <>
-          <div className="flex flex-wrap gap-2">
-            {rows.map((r) => {
-              const done = showPosted && r.posted;
-              return (
-                <div
-                  key={`${r.year}-${r.month}`}
-                  className={[
-                    "relative rounded-lg border px-3 py-2 min-w-[7.5rem] shadow-sm transition-colors",
-                    done
-                      ? "bg-emerald-50 border-emerald-300"
-                      : "bg-white border-slate-200",
-                  ].join(" ")}
-                  title={`${r.days} يوم — متراكم ${r.cumulative.toLocaleString(NUM, { maximumFractionDigits: 2 })}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-slate-700">
-                      {MONTHS_AR[r.month - 1]} {r.year}
-                    </span>
-                    {done ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                    ) : (
-                      <Clock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                    )}
-                  </div>
-                  <div className="text-sm font-bold font-mono text-violet-800 mt-0.5">
-                    {r.amount.toLocaleString(NUM, { maximumFractionDigits: 2 })}
-                  </div>
-                  <div className="text-[10px] mt-0.5">
-                    {showPosted ? (
-                      done ? (
-                        <span className="text-emerald-700 font-semibold">تم ترحيلها ✅</span>
-                      ) : (
-                        <span className="text-amber-600 font-semibold">لم تُرحَّل بعد ⏳</span>
-                      )
-                    ) : (
-                      <span className="text-slate-500">{r.days} يوم</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="bg-violet-50 text-violet-800">
+                  <th className="px-2 py-2 text-center font-semibold border-b border-slate-200 w-12">#</th>
+                  <th className="px-3 py-2 text-right font-semibold border-b border-slate-200">الشهر</th>
+                  <th className="px-3 py-2 text-center font-semibold border-b border-slate-200">عدد الأيام</th>
+                  <th className="px-3 py-2 text-left font-semibold border-b border-slate-200">قيمة الإهلاك</th>
+                  <th className="px-3 py-2 text-left font-semibold border-b border-slate-200">المتراكم</th>
+                  {showPosted && (
+                    <th className="px-3 py-2 text-center font-semibold border-b border-slate-200">الحالة</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((r, i) => {
+                  const done = showPosted && r.posted;
+                  return (
+                    <tr
+                      key={`${r.year}-${r.month}`}
+                      className={done ? "bg-emerald-50/60" : i % 2 ? "bg-slate-50/50" : "bg-white"}
+                    >
+                      <td className="px-2 py-1.5 text-center text-slate-500 border-b border-slate-100">
+                        {(start + i + 1).toLocaleString(NUM)}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-medium text-slate-700 border-b border-slate-100 whitespace-nowrap">
+                        {MONTHS_AR[r.month - 1]} {r.year}
+                      </td>
+                      <td className="px-3 py-1.5 text-center text-slate-600 border-b border-slate-100">
+                        {r.days.toLocaleString(NUM)}
+                      </td>
+                      <td className="px-3 py-1.5 text-left font-mono font-bold text-violet-800 border-b border-slate-100">
+                        {fmt(r.amount)}
+                      </td>
+                      <td className="px-3 py-1.5 text-left font-mono text-slate-600 border-b border-slate-100">
+                        {fmt(r.cumulative)}
+                      </td>
+                      {showPosted && (
+                        <td className="px-3 py-1.5 text-center border-b border-slate-100 whitespace-nowrap">
+                          {done ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                              <CheckCircle2 className="h-3.5 w-3.5" /> تم ترحيلها
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-amber-600 font-semibold">
+                              <Clock className="h-3.5 w-3.5" /> لم تُرحَّل بعد
+                            </span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
+
+          {/* pagination + totals */}
+          <div className="flex items-center justify-between gap-3 mt-2 flex-wrap">
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span>عدد الأسطر:</span>
+              <select
+                className="h-7 px-2 rounded-md border border-input bg-background text-xs"
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+              >
+                {PAGE_SIZES.map((s) => (
+                  <option key={s} value={s}>{s.toLocaleString(NUM)}</option>
+                ))}
+              </select>
+              <span className="mr-1">
+                عرض {(start + 1).toLocaleString(NUM)}–{Math.min(start + pageSize, totalRows).toLocaleString(NUM)} من{" "}
+                {totalRows.toLocaleString(NUM)}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button type="button" disabled={safePage <= 1} onClick={() => setPage(1)}
+                className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-input bg-background disabled:opacity-40 hover:bg-slate-50">
+                <ChevronsRight className="h-4 w-4" />
+              </button>
+              <button type="button" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}
+                className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-input bg-background disabled:opacity-40 hover:bg-slate-50">
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <span className="text-[11px] text-slate-600 px-2 whitespace-nowrap">
+                صفحة {safePage.toLocaleString(NUM)} من {totalPages.toLocaleString(NUM)}
+              </span>
+              <button type="button" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}
+                className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-input bg-background disabled:opacity-40 hover:bg-slate-50">
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button type="button" disabled={safePage >= totalPages} onClick={() => setPage(totalPages)}
+                className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-input bg-background disabled:opacity-40 hover:bg-slate-50">
+                <ChevronsLeft className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
           <div className="text-[11px] text-muted-foreground mt-2">
-            إجمالي {data?.totalMonths ?? rows.length} شهر — إجمالي الإهلاك{" "}
+            إجمالي {(data?.totalMonths ?? rows.length).toLocaleString(NUM)} شهر — إجمالي الإهلاك{" "}
             <span className="font-mono font-semibold text-violet-700">
-              {(data?.totalDepreciation ?? 0).toLocaleString(NUM, { maximumFractionDigits: 2 })} ر.س
+              {fmt(data?.totalDepreciation ?? 0)} ر.س
             </span>
           </div>
         </>
