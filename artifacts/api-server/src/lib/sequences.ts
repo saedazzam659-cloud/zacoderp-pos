@@ -600,9 +600,10 @@ export async function reserveJeNumberFromEntry(
   sourceType: string,
   sourceId: number,
   journalEntryId: number | null | undefined,
+  dx: typeof db = db,
 ): Promise<void> {
   if (!journalEntryId || !sourceType || !sourceId) return;
-  const [je] = await db
+  const [je] = await dx
     .select({ docNumber: journalEntriesTable.docNumber, branchId: journalEntriesTable.branchId })
     .from(journalEntriesTable)
     .where(and(
@@ -610,7 +611,7 @@ export async function reserveJeNumberFromEntry(
       eq(journalEntriesTable.companyId, companyId),
     ));
   if (!je || !je.docNumber) return;            // nothing to reuse (no number)
-  await db.insert(jeNumberReservationsTable)
+  await dx.insert(jeNumberReservationsTable)
     .values({ companyId, sourceType, sourceId, docNumber: je.docNumber, branchId: je.branchId ?? null })
     .onConflictDoUpdate({
       target: [
@@ -634,8 +635,9 @@ export async function takeReservedJeNumber(
   companyId: number,
   sourceType: string,
   sourceId: number,
+  dx: typeof db = db,
 ): Promise<string | null> {
-  const deleted = await db.delete(jeNumberReservationsTable)
+  const deleted = await dx.delete(jeNumberReservationsTable)
     .where(and(
       eq(jeNumberReservationsTable.companyId, companyId),
       eq(jeNumberReservationsTable.sourceType, sourceType),
@@ -658,9 +660,16 @@ export async function resolveJeNumber(opts: {
   branchId?: number | null;
   docDate?: string | Date | null;
   userId?: number | null;
+  /**
+   * When resolving inside a caller transaction, pass it here so the reservation
+   * DELETE participates in that tx — a rollback then RESTORES the reservation
+   * (preserving unpost→repost number reuse). The fresh-draw fallback still uses
+   * its own tx (a rollback there only leaves an acceptable sequence gap).
+   */
+  dx?: typeof db;
 }): Promise<string | null> {
   if (opts.sourceType && opts.sourceId) {
-    const reserved = await takeReservedJeNumber(opts.companyId, opts.sourceType, opts.sourceId);
+    const reserved = await takeReservedJeNumber(opts.companyId, opts.sourceType, opts.sourceId, opts.dx ?? db);
     if (reserved) return reserved;
   }
   return await nextSequenceNumber(opts.companyId, "journal_entry", {

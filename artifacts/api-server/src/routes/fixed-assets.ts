@@ -21,7 +21,7 @@ import {
   buildDepreciationRunJournal,
   buildDisposalJournal,
 } from "../lib/fa-journals.js";
-import { postDepreciationForCompany } from "../lib/depreciationPosting.js";
+import { postDepreciationForCompany, unpostDepreciationRun, repostDepreciationRun } from "../lib/depreciationPosting.js";
 import { computePeriodDepreciation, buildSchedule } from "../lib/depreciationCalc.js";
 
 const router = Router();
@@ -687,6 +687,47 @@ router.post("/depreciation/post", async (req, res) => {
   } catch (e: any) {
     const msg = e?.message || "خطأ غير معروف";
     const code = msg === "فترة غير صالحة" ? 400 : 500;
+    res.status(code).json({ error: msg });
+  }
+});
+
+// UNPOST a single depreciation run — fully reverses its economic effect
+// (asset accumulated depreciation + book value AND its JE) and flips the run
+// to 'unposted'. Called from مركز الترحيل. Atomic + chain-guarded.
+router.post("/depreciation/:runId/unpost", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const runId = Number(req.params.runId);
+    if (!Number.isInteger(runId) || runId <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    await unpostDepreciationRun(cid, runId, { userId: req.authUser?.id ?? null });
+    res.json({ ok: true });
+  } catch (e: any) {
+    const msg = e?.message || "خطأ غير معروف";
+    const code = /غير موجود/.test(msg) ? 404
+               : /(بالفعل|لا يمكن)/.test(msg) ? 409
+               : 500;
+    res.status(code).json({ error: msg });
+  }
+});
+
+// (RE)POST a single depreciation run — recomputes day-based from the asset's
+// current state, reapplies it, rebuilds the JE (forced posted) and flips the
+// run to 'posted'. Called from مركز الترحيل. Atomic + chain-guarded.
+router.post("/depreciation/:runId/post", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const runId = Number(req.params.runId);
+    if (!Number.isInteger(runId) || runId <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    await repostDepreciationRun(cid, runId, {
+      userId: req.authUser?.id ?? null,
+      postedBy: req.authUser?.username || null,
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    const msg = e?.message || "خطأ غير معروف";
+    const code = /غير موجود/.test(msg) ? 404
+               : /(بالفعل|لا يمكن)/.test(msg) ? 409
+               : 500;
     res.status(code).json({ error: msg });
   }
 });

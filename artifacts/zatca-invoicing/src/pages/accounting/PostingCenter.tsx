@@ -64,7 +64,8 @@ type ModuleKey =
   | "goods_receipts"    | "goods_deliveries"
   | "cash_transfers"
   | "stock_transfers"   | "stock_adjustments" | "stock_counts"
-  | "sister_transfers"  | "sister_returns"    | "sister_settlements";
+  | "sister_transfers"  | "sister_returns"    | "sister_settlements"
+  | "fixed_asset_depreciation";
 
 type ModuleDef = {
   key: ModuleKey;
@@ -108,6 +109,11 @@ const MODULES: ModuleDef[] = [
   { key: "sister_transfers",   label: "تحويلات الشركات الشقيقة", group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/transfers/${id}/${a}`,   method: "POST", supportsUnpost: true },
   { key: "sister_returns",     label: "مرتجعات الشركات الشقيقة", group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/returns/${id}/${a}`,     method: "POST", supportsUnpost: true },
   { key: "sister_settlements", label: "تسويات الشركات الشقيقة",  group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/settlements/${id}/${a}`, method: "POST", supportsUnpost: true },
+  // ── Fixed Assets (الأصول الثابتة) ──
+  // Row id = fa_depreciation_runs.id. "unpost" fully reverses the run's effect
+  // (asset accum-dep + book value AND its JE); "post" recomputes day-based and
+  // reapplies. Both endpoints are POST /api/fixed-assets/depreciation/:id/:action.
+  { key: "fixed_asset_depreciation", label: "إهلاك الأصول الثابتة", group: "الأصول الثابتة", endpoint: (id, a) => `/api/fixed-assets/depreciation/${id}/${a}`, method: "POST", supportsUnpost: true },
 ];
 
 // Memoization-friendly conversion of MODULES into the SearchCombobox's
@@ -152,6 +158,7 @@ const SOURCE_ROUTE: Record<ModuleKey, (id: number) => string> = {
   sister_transfers:   (id) => `/inventory/sister-transfers/${id}`,
   sister_returns:     (id) => `/inventory/sister-returns/${id}`,
   sister_settlements: (id) => `/inventory/sister-settlements/${id}`,
+  fixed_asset_depreciation: ()   => `/fixed-assets/depreciation`,
 };
 
 type StatusFilter = "all" | "posted" | "unposted";

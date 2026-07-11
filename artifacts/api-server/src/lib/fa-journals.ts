@@ -41,7 +41,7 @@ import {
 import { resolvePostingStatus } from "./postingStatus.js";
 import { resolveCashAccount } from "./hr-journals.js";
 import { assertWritableForDate } from "./periodGuard.js";
-import { nextSequenceNumber } from "./sequences.js";
+import { nextSequenceNumber, resolveJeNumber } from "./sequences.js";
 
 type DbOrTx = typeof db;
 
@@ -200,7 +200,7 @@ export async function buildDepreciationRunJournal(
   cid: number,
   runId: number,
   dx: DbOrTx = db,
-  opts: { userId?: number | null } = {},
+  opts: { userId?: number | null; forcePosted?: boolean } = {},
 ): Promise<number | null> {
   const userId = opts.userId ?? null;
   const [run] = await dx.select().from(faDepreciationRunsTable)
@@ -228,11 +228,16 @@ export async function buildDepreciationRunJournal(
   const depW = await assertWritableForDate(cid, entryDate);
   if (!depW.ok) throw new Error(depW.reason);
   const desc = `إهلاك شهري ${period} — ${a.nameAr} (${a.code})`;
-  // JE draws its own continuous "journal_entry" number; falls back to DEP-*.
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-    userId: null, refTable: "journal_entries", branchId: a.branchId ?? null, docDate: entryDate,
+  // JE draws its own continuous "journal_entry" number; reuses a stashed number
+  // on unpost→repost (keyed by fa_depreciation:runId) so re-posting a run keeps
+  // its original JE number instead of leaving a gap. Falls back to DEP-*.
+  const jeDocNumber = (await resolveJeNumber({
+    companyId: cid, sourceType: "fa_depreciation", sourceId: runId,
+    branchId: a.branchId ?? null, docDate: entryDate, userId: null, dx,
   })) ?? `DEP-${a.code}-${run.periodYear}${String(run.periodMonth).padStart(2, "0")}`;
-  const jeStatus = await resolvePostingStatus(cid, "faDepreciation");
+  // Auto-run respects the company's faDepreciation auto-post toggle. A manual
+  // (re)post from مركز الترحيل passes forcePosted so the JE always lands posted.
+  const jeStatus = opts.forcePosted ? "posted" : await resolvePostingStatus(cid, "faDepreciation");
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: a.branchId ?? null,

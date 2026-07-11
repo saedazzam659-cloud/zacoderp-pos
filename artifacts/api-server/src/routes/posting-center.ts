@@ -36,6 +36,7 @@ import {
   warehousesTable, cashBoxesTable, bankAccountsTable,
   sisterTransfersTable, sisterReturnsTable, sisterSettlementsTable,
   sisterCompaniesTable,
+  fixedAssetsTable, faDepreciationRunsTable,
 } from "@workspace/db";
 import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -75,6 +76,7 @@ const MODULE_PERM_KEY: Record<string, string> = {
   sister_transfers:   "sister_companies",
   sister_returns:     "sister_companies",
   sister_settlements: "sister_companies",
+  fixed_asset_depreciation: "fixed_assets",
 };
 
 // Hard server-side cap on the number of rows returned per list call. The
@@ -105,6 +107,7 @@ const MODULES = [
   "sister_transfers",
   "sister_returns",
   "sister_settlements",
+  "fixed_asset_depreciation",
 ] as const;
 type ModuleKey = typeof MODULES[number];
 
@@ -126,6 +129,7 @@ const MODULE_LABELS_AR: Record<ModuleKey, string> = {
   sister_transfers:   "تحويلات الشركات الشقيقة",
   sister_returns:     "مرتجعات الشركات الشقيقة",
   sister_settlements: "تسويات الشركات الشقيقة",
+  fixed_asset_depreciation: "إهلاك الأصول الثابتة",
 };
 
 // Unified row shape returned to the client. Every module is mapped onto this
@@ -197,6 +201,7 @@ async function listForModule(
     case "sister_transfers":   return listSisterTransfers(req, cid, dateFrom, dateTo, branchIdRaw);
     case "sister_returns":     return listSisterReturns(req, cid, dateFrom, dateTo, branchIdRaw);
     case "sister_settlements": return listSisterSettlements(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "fixed_asset_depreciation": return listFixedAssetDepreciation(req, cid, dateFrom, dateTo, branchIdRaw);
     default:                   return [];
   }
 }
@@ -362,6 +367,7 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
       case "sister_transfers":   rows = await listSisterTransfers(req, cid, undefined, undefined, branchIdRaw);   break;
       case "sister_returns":     rows = await listSisterReturns(req, cid, undefined, undefined, branchIdRaw);     break;
       case "sister_settlements": rows = await listSisterSettlements(req, cid, undefined, undefined, branchIdRaw); break;
+      case "fixed_asset_depreciation": rows = await listFixedAssetDepreciation(req, cid, undefined, undefined, branchIdRaw); break;
     }
 
     const unposted = rows.filter(r => !r.posted && r.status !== "cancelled");
@@ -679,6 +685,61 @@ async function listPaymentVouchers(
     journalEntryId: d.journalEntryId,
     journalEntryDocNumber: null,
   }));
+}
+
+// ─── Fixed Asset Depreciation runs ──────────────────────────────────────────
+// Each row is one fa_depreciation_runs row (one asset × one period). The run
+// table has no branch_id of its own — branch isolation resolves through the
+// PARENT asset's branch_id (join + branchScopeSpread on fixedAssetsTable), same
+// as other child-row modules. `posted` reflects the RUN's lifecycle status
+// (posted/unposted), NOT the JE status: unposting a run fully reverses its
+// economic effect (asset accum-dep + book value AND its JE).
+async function listFixedAssetDepreciation(
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
+): Promise<PostingRow[]> {
+  const conds = [
+    eq(faDepreciationRunsTable.companyId, cid),
+    ...branchScopeSpread(req, fixedAssetsTable.branchId, branchIdRaw),
+  ];
+  const rows = await db
+    .select({
+      id:            faDepreciationRunsTable.id,
+      periodMonth:   faDepreciationRunsTable.periodMonth,
+      periodYear:    faDepreciationRunsTable.periodYear,
+      amount:        faDepreciationRunsTable.depreciationAmount,
+      status:        faDepreciationRunsTable.status,
+      journalEntryId: faDepreciationRunsTable.journalEntryId,
+      assetName:     fixedAssetsTable.nameAr,
+      assetCode:     fixedAssetsTable.code,
+    })
+    .from(faDepreciationRunsTable)
+    .innerJoin(fixedAssetsTable, eq(faDepreciationRunsTable.assetId, fixedAssetsTable.id))
+    .where(and(...conds))
+    .orderBy(desc(faDepreciationRunsTable.periodYear), desc(faDepreciationRunsTable.periodMonth), desc(faDepreciationRunsTable.id));
+
+  // The run stores no date, only period month/year. Represent it as the last
+  // day of the period (matches how the JE is dated) so date filters work.
+  const mapped = rows.map(r => {
+    const lastDay = new Date(r.periodYear, r.periodMonth, 0).getDate();
+    const date = `${r.periodYear}-${String(r.periodMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    return {
+      id: r.id,
+      module: "fixed_asset_depreciation" as ModuleKey,
+      docNumber: `${r.assetCode}-${r.periodYear}${String(r.periodMonth).padStart(2, "0")}`,
+      date,
+      type: MODULE_LABELS_AR.fixed_asset_depreciation,
+      description: `إهلاك ${String(r.periodMonth).padStart(2, "0")}/${r.periodYear} — ${r.assetName}`,
+      party: r.assetName,
+      amount: parseFloat(r.amount || "0"),
+      status: r.status,
+      posted: r.status === "posted",
+      journalEntryId: r.journalEntryId,
+      journalEntryDocNumber: null,
+    };
+  });
+  // Date filter on the synthesized period-end date (in-memory; runs are small).
+  return mapped.filter(r =>
+    (!dateFrom || r.date >= dateFrom) && (!dateTo || r.date <= dateTo));
 }
 
 // ─── Journal Entries ────────────────────────────────────────────────────────

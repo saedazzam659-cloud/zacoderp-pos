@@ -12,8 +12,8 @@ const MONTHS_AR = [
 ];
 
 type ScheduleRow = {
-  year: number; month: number; days: number;
-  amount: number; cumulative: number; posted: boolean;
+  year?: number; month?: number; days?: number;
+  amount?: number; cumulative?: number; posted?: boolean;
 };
 type ScheduleResp = {
   schedule: ScheduleRow[]; totalMonths: number; totalDepreciation: number;
@@ -34,7 +34,7 @@ export type TimelineProps = {
   title?: string;
 };
 
-const fmt = (n: number) => Number(n || 0).toLocaleString(NUM, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n?: number) => Number(n || 0).toLocaleString(NUM, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function DepreciationScheduleTimeline(props: TimelineProps) {
   const { token } = useAuth() as any;
@@ -178,10 +178,10 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
                         {(start + i + 1).toLocaleString(NUM)}
                       </td>
                       <td className="px-3 py-1.5 text-right font-medium text-slate-700 border-b border-slate-100 whitespace-nowrap">
-                        {MONTHS_AR[r.month - 1]} {r.year}
+                        {MONTHS_AR[(r.month ?? 0) - 1] ?? ""} {r.year ?? ""}
                       </td>
                       <td className="px-3 py-1.5 text-center text-slate-600 border-b border-slate-100">
-                        {r.days.toLocaleString(NUM)}
+                        {Number(r.days ?? 0).toLocaleString(NUM)}
                       </td>
                       <td className="px-3 py-1.5 text-left font-mono font-bold text-violet-800 border-b border-slate-100">
                         {fmt(r.amount)}

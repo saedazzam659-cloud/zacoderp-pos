@@ -31,6 +31,13 @@ counter back or mint a duplicate.
 - `takeReservedJeNumber` MUST be a single atomic `DELETE … RETURNING` — a
   select-then-delete lets two concurrent reposts of the same doc both read the
   reservation and mint a DUPLICATE number. (Architect-flagged, fixed.)
+- When a repost runs inside `db.transaction`, PASS that tx (`dx`) all the way
+  down: `resolveJeNumber({…, dx})` → `takeReservedJeNumber(…, dx)`, so the
+  reservation DELETE participates in the outer tx. Otherwise a rollback LOSES the
+  reservation (it committed on global `db`) and the retry mints a fresh number —
+  breaking reuse. The fresh-draw fallback (`nextSequenceNumber`) opens its OWN tx
+  by design; a rollback there only leaves an acceptable sequence gap, never a
+  duplicate — don't try to nest it into the caller tx.
 - Reservations are polymorphic (no FK to source docs). Safe because SERIAL ids
   are not reused within a table; the only residual risk is id reset/import where
   an orphaned reservation could be consumed by a different logical doc — low

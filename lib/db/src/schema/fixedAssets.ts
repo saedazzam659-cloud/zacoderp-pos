@@ -214,6 +214,13 @@ export const faDepreciationRunsTable = pgTable("fa_depreciation_runs", {
   postedAt:          timestamp("posted_at").defaultNow().notNull(),
   journalEntryId:    integer("journal_entry_id"),
   notes:             text("notes"),
+  // Posting lifecycle of the run itself (separate from JE status). A row
+  // existing historically meant "posted"; the Posting Center (مركز الترحيل)
+  // now lets an accountant UNPOST a run — which fully reverses its economic
+  // effect (asset accumulated depreciation + book value AND its JE) and flips
+  // this to 'unposted' while KEEPING the row so it can be re-posted (recomputed
+  // day-based). Defaults to 'posted' so all legacy rows migrate correctly.
+  status:            text("status").notNull().default("posted"), // 'posted' | 'unposted'
 });
 export type FaDepreciationRun       = typeof faDepreciationRunsTable.$inferSelect;
 export type InsertFaDepreciationRun = typeof faDepreciationRunsTable.$inferInsert;
