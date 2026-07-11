@@ -257,14 +257,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await apiFetch("/auth/me");
       if (!res.ok) {
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(SESSION_KEY);
-        setUser(null);
-        setToken(null);
-        // Force-expiry path: also clear manual-session state so a stale id
-        // can't bleed into the next login attempt before login() repopulates.
-        setManualSessions([]);
-        persistManualSession(null);
+        // Only a genuine auth rejection (401/403) proves the token is invalid
+        // and must be cleared. Transient failures — 500/502/503/504/429 while
+        // the server restarts during a publish, or a gateway hiccup — must NOT
+        // log the user out: clearing the token here forced EVERY open tab to
+        // re-login on each deploy (and deep-linked routes then 404 as the app
+        // renders logged-out). Treat non-auth statuses like a network error:
+        // keep the session and let the next poll (or a refresh) re-validate.
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem(TOKEN_KEY);
+          localStorage.removeItem(SESSION_KEY);
+          setUser(null);
+          setToken(null);
+          // Force-expiry path: also clear manual-session state so a stale id
+          // can't bleed into the next login attempt before login() repopulates.
+          setManualSessions([]);
+          persistManualSession(null);
+        }
         return;
       }
       const data = await res.json();

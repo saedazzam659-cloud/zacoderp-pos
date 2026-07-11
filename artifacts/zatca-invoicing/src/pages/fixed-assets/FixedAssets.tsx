@@ -89,6 +89,7 @@ export default function FixedAssets() {
   const [depTouched, setDepTouched] = useState({ lifeYears:false, depreciationMethod:false, scrapValue:false });
   const [del, setDel] = useState<Asset | null>(null);
   const [showQr, setShowQr] = useState<Asset | null>(null);
+  const [showSchedule, setShowSchedule] = useState<Asset | null>(null);
   const [activeTab, setActiveTab] = useState<"basic"|"purchase"|"tech"|"depreciation"|"insurance"|"extra"|"tax">("basic");
 
   // ── Import-from-source: pull the purchase data from an already-recorded
@@ -942,8 +943,9 @@ export default function FixedAssets() {
                 <div className="bg-teal-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">القيمة الدفترية</div><div className="font-mono font-bold text-teal-800">{Number(a.bookValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div></div>
               </div>
             </div>
-            <div className="grid grid-cols-3 border-t divide-x divide-slate-100 [direction:ltr]">
+            <div className="grid grid-cols-4 border-t divide-x divide-slate-100 [direction:ltr]">
               <button onClick={()=>setDel(a)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" />حذف</button>
+              <button onClick={()=>setShowSchedule(a)} className="py-2.5 text-violet-700 text-xs font-semibold hover:bg-violet-50 flex items-center justify-center gap-1"><TrendingDown className="h-3.5 w-3.5" />الإهلاك</button>
               <button onClick={()=>setShowQr(a)} className="py-2.5 text-slate-700 text-xs font-semibold hover:bg-slate-50 flex items-center justify-center gap-1"><QrCode className="h-3.5 w-3.5" />QR</button>
               <button onClick={()=>openEdit(a)} className="py-2.5 text-teal-700 text-xs font-semibold hover:bg-teal-50 flex items-center justify-center gap-1"><Pencil className="h-3.5 w-3.5" />تعديل</button>
             </div>
@@ -998,6 +1000,9 @@ export default function FixedAssets() {
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center justify-center gap-1">
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-violet-700 hover:bg-violet-50" onClick={()=>setShowSchedule(a)} title="جدول الإهلاك" data-testid={`btn-schedule-${a.id}`}>
+                        <TrendingDown className="h-3.5 w-3.5" />
+                      </Button>
                       <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={()=>setShowQr(a)} title="QR">
                         <QrCode className="h-3.5 w-3.5" />
                       </Button>
@@ -1043,6 +1048,34 @@ export default function FixedAssets() {
                 alt="QR"
                 src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(showQr.qrPayload || showQr.code)}`}
                 className="border rounded-lg p-2 bg-white"
+              />
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>إغلاق</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!showSchedule} onOpenChange={(o)=>!o && setShowSchedule(null)}>
+        <AlertDialogContent dir="rtl" className="max-w-3xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>جدول الإهلاك</AlertDialogTitle>
+            <AlertDialogDescription>
+              الجدول الزمني للإهلاك (المُرحَّل والمتبقّي) للأصل {showSchedule?.code} — {showSchedule?.nameAr}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {showSchedule && (
+            <div className="my-2 max-h-[70vh] overflow-y-auto">
+              <DepreciationScheduleTimeline
+                assetId={showSchedule.id}
+                projection={false}
+                purchaseValue={showSchedule.purchaseValue}
+                scrapValue={showSchedule.scrapValue}
+                lifeYears={showSchedule.lifeYears}
+                depreciationMethod={showSchedule.depreciationMethod}
+                depreciationStart={showSchedule.depreciationStart || showSchedule.purchaseDate}
+                purchaseDate={showSchedule.purchaseDate}
               />
             </div>
           )}

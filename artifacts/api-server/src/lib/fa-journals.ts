@@ -37,6 +37,7 @@ import {
   journalEntriesTable,
   journalEntryLinesTable,
   suppliersTable,
+  branchesTable,
 } from "@workspace/db";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { resolveCashAccount } from "./hr-journals.js";
@@ -44,6 +45,25 @@ import { assertWritableForDate } from "./periodGuard.js";
 import { nextSequenceNumber, resolveJeNumber } from "./sequences.js";
 
 type DbOrTx = typeof db;
+
+// Fixed-asset JEs (acquisition / depreciation / disposal) draw their human
+// number from the company-wide "journal_entry" sequence. That counter is keyed
+// PER BRANCH, so an asset with no branch (branchId null) coalesces to the
+// branch-0 bucket and restarts at 1 (QYD-0001, QYD/06/0006 …) — diverging from
+// the main JE series that manual/sales JEs consume on the company's operating
+// branch. To keep ONE continuous series, resolve the numbering branch to the
+// asset's branch, else the company's main branch. NOTE: this only steers the
+// number stream — the JE's own branchId stays null (company-wide, visible from
+// every branch), so branch-scoped reports are unchanged. fa_* JEs carry no
+// ZATCA chain (no ICV/PIH), so realigning the number is safe.
+async function resolveNumberingBranch(
+  cid: number, assetBranchId: number | null | undefined, dx: DbOrTx,
+): Promise<number | null> {
+  if (assetBranchId != null) return assetBranchId;
+  const [mb] = await dx.select({ id: branchesTable.id }).from(branchesTable)
+    .where(and(eq(branchesTable.companyId, cid), eq(branchesTable.isMain, true)));
+  return mb?.id ?? null;
+}
 
 export interface FaAccountMap {
   assetCost:             number | null;
@@ -162,8 +182,9 @@ export async function buildAcquisitionJournal(
   const desc = `اقتناء أصل ثابت: ${a.nameAr} (${a.code})`;
   // JE draws its own continuous "journal_entry" number; asset code stays in the
   // description + source link. Falls back to the asset code.
+  const acqNumBranch = await resolveNumberingBranch(cid, a.branchId, dx);
   const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-    userId: null, refTable: "journal_entries", branchId: a.branchId ?? null, docDate: acqDate,
+    userId: null, refTable: "journal_entries", branchId: acqNumBranch, docDate: acqDate,
   })) ?? a.code;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
@@ -231,9 +252,10 @@ export async function buildDepreciationRunJournal(
   // JE draws its own continuous "journal_entry" number; reuses a stashed number
   // on unpost→repost (keyed by fa_depreciation:runId) so re-posting a run keeps
   // its original JE number instead of leaving a gap. Falls back to DEP-*.
+  const depNumBranch = await resolveNumberingBranch(cid, a.branchId, dx);
   const jeDocNumber = (await resolveJeNumber({
     companyId: cid, sourceType: "fa_depreciation", sourceId: runId,
-    branchId: a.branchId ?? null, docDate: entryDate, userId: null, dx,
+    branchId: depNumBranch, docDate: entryDate, userId: null, dx,
   })) ?? `DEP-${a.code}-${run.periodYear}${String(run.periodMonth).padStart(2, "0")}`;
   // Auto-run respects the company's faDepreciation auto-post toggle. A manual
   // (re)post from مركز الترحيل passes forcePosted so the JE always lands posted.
@@ -330,8 +352,9 @@ export async function buildDisposalJournal(
   if (!dispW.ok) throw new Error(dispW.reason);
   // JE draws its own continuous "journal_entry" number; disposal code stays in
   // the description + source link. Falls back to the disposal code.
+  const dispNumBranch = await resolveNumberingBranch(cid, a.branchId, dx);
   const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-    userId: null, refTable: "journal_entries", branchId: a.branchId ?? null, docDate: d.disposalDate,
+    userId: null, refTable: "journal_entries", branchId: dispNumBranch, docDate: d.disposalDate,
   })) ?? d.code;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
