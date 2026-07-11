@@ -4,6 +4,7 @@
 - [Atomic claim-and-post in PG](atomic-claim-post.md) — conditional UPDATE alone is NOT enough; the SET must flip the gating column or two concurrent callers both win.
 - [Gated download URL exposure](gated-download-url.md) — metered downloads must return the resource URL ONLY from the consuming /claim step, never from the metadata/release endpoint.
 - [Module gate keys live in two places](module-gate-sync.md) — backend `COMPANY_MODULE_GATE` (permissions.ts) AND frontend group-perms arrays in `Layout.tsx` must both list any new module key, or sidebar/company-toggle silently breaks.
+- [User-perms form default-DENY seed](user-perms-default-deny-seed.md) — Users.tsx must seed the perm map from emptyPermissions() (create/edit/copy), never viewOnlyPermissions(), or opening+saving any user silently re-grants view on EVERY module → sidebar leak.
 - [Multi-domain host resolution](multi-domain-host-fallback.md) — custom domain→company is a SA-only lowest-priority fallback; إدارة النطاقات screen is SA-only, NO module gate; is_main=null company=multi-company.
 - [Document archive ACL](document-archive-acl.md) — archive policy (mode off / allowedUserIds) must be enforced on EVERY backend op (UI gating is cosmetic); private files stream via guarded /document-archives/:id/download (row-ownership), never raw /storage/objects.
 - [Employee Custody module](employee-custody-module.md) — SAP imprest, separate from loans (not salary-deducted), COA 11082, reuses hr_loans permKey; mutating endpoints need FOR UPDATE row lock + per-company FK validation.

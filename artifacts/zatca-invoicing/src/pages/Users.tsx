@@ -111,7 +111,11 @@ const emptyForm = () => ({
   viewAllBranches: true,
   scopeOwnCustomersOnly: false,
   branchIds: [] as number[],
-  permissions: viewOnlyPermissions(),
+  // Default-DENY: a brand-new user starts with NO permissions. The admin must
+  // explicitly grant each module/action, so an ungranted module never leaks
+  // into the user's sidebar. (Was viewOnlyPermissions() which silently granted
+  // view on every module and made "I picked HR only" show every menu.)
+  permissions: emptyPermissions(),
   // Approval defaults: off, level 0, no cap, single-signature is fine.
   canApprove: false,
   approvalLevel: 0,
@@ -326,7 +330,10 @@ export default function Users() {
       viewAllBranches: u.viewAllBranches ?? true,
       scopeOwnCustomersOnly: !!u.scopeOwnCustomersOnly,
       branchIds: u.branchIds ?? [],
-      permissions: { ...viewOnlyPermissions(), ...(u.permissions ?? {}) },
+      // Base on emptyPermissions() (NOT viewOnly) so the matrix reflects EXACTLY
+      // what was saved: modules the user was never granted stay unchecked and a
+      // plain re-save can never silently grant view on every module.
+      permissions: { ...emptyPermissions(), ...(u.permissions ?? {}) },
       // Approval workflow fields — coerce numeric-string cap to a string the
       // <Input type="number"> can render without leading zeros.
       canApprove: !!u.canApprove,
@@ -499,7 +506,7 @@ export default function Users() {
   const copyPermissionsFrom = (sourceId: number) => {
     const src = users.find(x => x.id === sourceId);
     if (!src) return;
-    const srcPerms = { ...viewOnlyPermissions(), ...(src.permissions ?? {}) };
+    const srcPerms = { ...emptyPermissions(), ...(src.permissions ?? {}) };
     setForm(f => ({ ...f, permissions: srcPerms }));
     toast({
       title: "✅ تم نسخ الصلاحيات",
