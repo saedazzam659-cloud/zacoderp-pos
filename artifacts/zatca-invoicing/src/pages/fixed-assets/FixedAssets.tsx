@@ -24,7 +24,7 @@ type Asset = {
   costCenterId: number | null;
   purchaseDate: string | null; purchaseValue: string;
   supplierName: string | null; supplierId: number | null;
-  invoiceNo: string | null; paymentMethod: string | null;
+  invoiceNo: string | null; acquisitionJeNo: string | null; paymentMethod: string | null;
   cashBoxId: number | null; bankAccountId: number | null;
   model: string | null; brand: string | null; serialNo: string | null;
   serialNumber: string | null; skipAcquisitionJe: boolean;
@@ -58,7 +58,7 @@ const EMPTY = {
   code:"", nameAr:"", nameEn:"", status:"active",
   categoryId:"", groupId:"", branchId:"", costCenterId:"",
   purchaseDate:"", purchaseValue:"0", supplierName:"", supplierId:"",
-  invoiceNo:"", paymentMethod:"cash", cashBoxId:"", bankAccountId:"",
+  invoiceNo:"", acquisitionJeNo:"", paymentMethod:"cash", cashBoxId:"", bankAccountId:"",
   model:"", brand:"", serialNo:"", serialNumber:"", skipAcquisitionJe:false,
   plateNumber:"", color:"",
   initialKm:"", currentKm:"",
@@ -168,7 +168,7 @@ export default function FixedAssets() {
       costCenterId:a.costCenterId?String(a.costCenterId):"",
       purchaseDate:a.purchaseDate??"", purchaseValue:String(a.purchaseValue??"0"),
       supplierName:a.supplierName??"", supplierId:a.supplierId?String(a.supplierId):"",
-      invoiceNo:a.invoiceNo??"", paymentMethod:a.paymentMethod??"cash",
+      invoiceNo:a.invoiceNo??"", acquisitionJeNo:a.acquisitionJeNo??"", paymentMethod:a.paymentMethod??"cash",
       cashBoxId:a.cashBoxId?String(a.cashBoxId):"", bankAccountId:a.bankAccountId?String(a.bankAccountId):"",
       model:a.model??"", brand:a.brand??"", serialNo:a.serialNo??"",
       serialNumber:a.serialNumber??"", skipAcquisitionJe:!!a.skipAcquisitionJe,
@@ -279,6 +279,7 @@ export default function FixedAssets() {
       purchaseDate:  inv.invoiceDate || f.purchaseDate,
       purchaseValue: String(+Number(val).toFixed(2)),
       invoiceNo:     String(inv.supplierInvoiceNumber || inv.docNumber || f.invoiceNo || ""),
+      acquisitionJeNo: "",
       supplierId:    inv.supplierId ? String(inv.supplierId) : f.supplierId,
       paymentMethod: pType ?? f.paymentMethod,
       cashBoxId:     (pType ?? f.paymentMethod) === "cash" && inv.cashBoxId    ? String(inv.cashBoxId)     : "",
@@ -297,7 +298,9 @@ export default function FixedAssets() {
   function applyJe(je:any, opts:{ value?: number }) {
     setForm(f => ({ ...f,
       purchaseDate:  je.entryDate || f.purchaseDate,
-      invoiceNo:     String(je.docNumber || f.invoiceNo || ""),
+      // The JE number goes into its OWN field (رقم القيد المحاسبي), never into
+      // رقم الفاتورة — a JE reference is not a purchase-invoice number.
+      acquisitionJeNo: String(je.docNumber || f.acquisitionJeNo || ""),
       purchaseValue: opts.value != null ? String(+Number(opts.value).toFixed(2)) : f.purchaseValue,
       notes:         je.description ? (f.notes ? `${f.notes} — ${je.description}` : je.description) : f.notes,
       skipAcquisitionJe: true,
@@ -629,6 +632,11 @@ export default function FixedAssets() {
                   </select></div>
                 <div><Label>رقم الفاتورة</Label>
                   <Input value={form.invoiceNo} onChange={(e)=>setForm({...form,invoiceNo:e.target.value})} /></div>
+                {(form.acquisitionJeNo || impSource === "je") && (
+                  <div><Label>رقم القيد المحاسبي</Label>
+                    <Input value={form.acquisitionJeNo} onChange={(e)=>setForm({...form,acquisitionJeNo:e.target.value})}
+                      placeholder="يُملأ تلقائياً عند جلب قيد محاسبي" data-testid="input-acquisition-je-no" /></div>
+                )}
                 <div><Label>طريقة الدفع</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.paymentMethod}

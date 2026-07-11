@@ -99,6 +99,10 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   // user types a one-off vendor) keep working.
   supplierId:          integer("supplier_id"),
   invoiceNo:           text("invoice_no"),
+  // Acquisition journal-entry number when the asset was loaded from an
+  // existing manual JE. Kept SEPARATE from invoice_no so a JE reference never
+  // masquerades as a purchase-invoice number (print/reports read invoice_no).
+  acquisitionJeNo:     text("acquisition_je_no"),
   // cash | bank | credit — same vocabulary as purchase invoices.
   paymentMethod:       text("payment_method"),
   // When paymentMethod = 'cash' or 'bank', point at the source of funds so

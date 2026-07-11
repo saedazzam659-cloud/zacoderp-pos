@@ -302,6 +302,7 @@ router.post("/assets", async (req, res) => {
       supplierName: b.supplierName || null,
       supplierId: b.supplierId ? Number(b.supplierId) : null,
       invoiceNo: b.invoiceNo || null,
+      acquisitionJeNo: b.acquisitionJeNo || null,
       paymentMethod: b.paymentMethod || null,
       cashBoxId: b.cashBoxId ? Number(b.cashBoxId) : null,
       bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
@@ -360,7 +361,7 @@ router.put("/assets/:id", async (req, res) => {
     if (!await assertOwn(res, fixedAssetsTable, id, cid, "الأصل")) return;
     const b = req.body ?? {};
     const patch: any = { updatedAt: new Date() };
-    const strFields = ["code","nameAr","nameEn","supplierName","invoiceNo","paymentMethod","model","brand","serialNo","serialNumber","plateNumber","color","insuranceCompany","insurancePolicyNo","location","notes"];
+    const strFields = ["code","nameAr","nameEn","supplierName","invoiceNo","acquisitionJeNo","paymentMethod","model","brand","serialNo","serialNumber","plateNumber","color","insuranceCompany","insurancePolicyNo","location","notes"];
     for (const k of strFields) if (b[k] !== undefined) patch[k] = b[k] || null;
     if (b.skipAcquisitionJe !== undefined) patch.skipAcquisitionJe = coerceBool(b.skipAcquisitionJe);
     const numStrFields = ["purchaseValue","scrapValue","insuranceValue","accumulatedDepreciation","bookValue"];
