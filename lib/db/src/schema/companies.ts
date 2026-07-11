@@ -233,6 +233,19 @@ export const companiesTable = pgTable("companies", {
   autoBackupFrequencyHours: integer("auto_backup_frequency_hours").notNull().default(24),
   autoBackupRetention:      integer("auto_backup_retention").notNull().default(7),
   lastAutoBackupAt:         timestamp("last_auto_backup_at"),
+  // Flexible schedule: value + unit (minute|hour|day|week|month). When set they
+  // override autoBackupFrequencyHours (which is kept in sync for back-compat).
+  autoBackupIntervalValue:  integer("auto_backup_interval_value"),
+  autoBackupIntervalUnit:   text("auto_backup_interval_unit"),
+  // Email (cloud) destination. The address only becomes an active destination
+  // AFTER OTP verification. *Pending* fields hold the address awaiting a code.
+  backupEmail:              text("backup_email"),
+  backupEmailVerified:      boolean("backup_email_verified").notNull().default(false),
+  autoBackupEmailEnabled:   boolean("auto_backup_email_enabled").notNull().default(false),
+  backupEmailPending:       text("backup_email_pending"),
+  backupEmailOtpHash:       text("backup_email_otp_hash"),
+  backupEmailOtpExpiresAt:  timestamp("backup_email_otp_expires_at", { withTimezone: true }),
+  backupEmailOtpAttempts:   integer("backup_email_otp_attempts").notNull().default(0),
   // Registration workflow
   status: text("status").notNull().default("active"), // pending | active | rejected
   rejectionReason: text("rejection_reason"),

@@ -937,13 +937,15 @@ function isGroupAllowed(
   // Admin bypasses per-user perm check (matches `usePermission` policy).
   if (user?.role === "admin") return true;
   const userPerms = (user?.permissions ?? {}) as Record<string, { view?: boolean } | undefined>;
-  // Legacy fallback: if no key in this group has any per-user entry at all,
-  // trust the company gate alone — avoids hiding everything for tenants who
-  // never configured per-user RBAC.
-  const definedKeys = keys.filter(k => userPerms[k] !== undefined);
-  if (definedKeys.length === 0) return true;
-  // Otherwise at least ONE key in the group must explicitly grant view.
-  return definedKeys.some(k => userPerms[k]?.view === true);
+  // USER-level legacy fallback (not group-level): only when the user has NO
+  // per-user permissions configured AT ALL do we trust the company gate alone
+  // — this protects legacy tenants who never set up per-user RBAC. Once ANY
+  // permission is defined on the user, enforce a STRICT per-group check so a
+  // group the user wasn't granted can't leak in just because it has no key in
+  // their perm map (mirrors `groupVisible`: company-enabled AND view granted).
+  const hasAnyPerm = Object.keys(userPerms).length > 0;
+  if (!hasAnyPerm) return true;
+  return keys.some(k => menuPerms[k] === true && userPerms[k]?.view === true);
 }
 const PLAN_KEYS: Record<string, string> = {
   starter: "plans.starter", professional: "plans.professional", enterprise: "plans.enterprise",

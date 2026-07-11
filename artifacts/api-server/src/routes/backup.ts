@@ -14,7 +14,99 @@ import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { writeAudit } from "../middleware/permissions.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import { sendEmail, emailConfigured } from "../lib/email.js";
+import { randomInt, createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+
+/* ─── Auto-backup schedule + email helpers ──────────────────────────────────
+ * The flexible schedule stores a (value, unit) pair; we normalise it to
+ * minutes so a single scheduler tick can compare against elapsed time no
+ * matter which unit the operator picked. A month is treated as 30 days — the
+ * granularity users expect for "monthly" backups without a calendar library.
+ * ─────────────────────────────────────────────────────────────────────────── */
+// Accept both the plural forms the UI sends (minutes/hours/…) and the legacy
+// singular forms, so the value round-trips: what the client stores is what it
+// reads back to re-populate the picker. month ≈ 30 days.
+const UNIT_MINUTES: Record<string, number> = {
+  minute: 1,        minutes: 1,
+  hour: 60,         hours: 60,
+  day: 60 * 24,     days: 60 * 24,
+  week: 60 * 24 * 7, weeks: 60 * 24 * 7,
+  month: 60 * 24 * 30, months: 60 * 24 * 30,
+};
+const BACKUP_UNITS = Object.keys(UNIT_MINUTES);
+
+/** Effective interval in minutes. Prefers (value, unit); falls back to frequencyHours. */
+function effectiveIntervalMinutes(
+  value: number | null | undefined,
+  unit: string | null | undefined,
+  frequencyHours: number | null | undefined,
+): number {
+  if (value && value > 0 && unit && UNIT_MINUTES[unit]) {
+    return Math.max(1, Math.floor(value) * UNIT_MINUTES[unit]);
+  }
+  return Math.max(1, (frequencyHours ?? 24) * 60);
+}
+
+const OTP_TTL_MS = 10 * 60_000;      // verification code validity
+const OTP_MAX_ATTEMPTS = 5;          // wrong-code attempts before the code is burnt
+const OTP_RESEND_COOLDOWN_MS = 60_000; // min gap between OTP sends (anti-flood)
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+const newOtp = () => String(randomInt(0, 1_000_000)).padStart(6, "0");
+const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+/**
+ * If the company has a VERIFIED backup email AND email delivery is enabled,
+ * send the freshly-built snapshot as a JSON attachment. Best-effort: never
+ * throws so a mail outage can't abort the snapshot itself. Returns whether a
+ * message was actually dispatched.
+ */
+async function deliverSnapshotEmail(
+  companyId: number,
+  companyName: string | null,
+  toEmail: string,
+  payload: any,
+): Promise<boolean> {
+  try {
+    if (!emailConfigured()) return false;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const filename = `backup-company-${companyId}-${stamp}.json`;
+    const json = JSON.stringify(payload, null, 2);
+    const countsList = Object.entries(payload?.counts ?? {})
+      .filter(([, n]) => (n as number) > 0)
+      .map(([k, n]) => `<li>${k}: <b>${n as number}</b></li>`)
+      .join("");
+    const body = `
+      <p>مرفق بهذه الرسالة أحدث نسخة احتياطية لبيانات شركة <strong>${companyName ?? companyId}</strong>.</p>
+      <p>تاريخ النسخة: <strong>${new Date().toLocaleString("ar-EG")}</strong></p>
+      ${countsList ? `<p>محتويات النسخة:</p><ul style="line-height:1.9;">${countsList}</ul>` : ""}
+      <p style="color:#64748b; font-size:12px;">احتفظ بهذا الملف في مكان آمن — يمكن استعادته من تبويب النسخ الاحتياطية داخل النظام.</p>`;
+    const html = `<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;color:#334155;line-height:1.7;">${body}</div>`;
+    const r = await sendEmail({
+      to: toEmail,
+      subject: `النسخة الاحتياطية — ${companyName ?? `شركة #${companyId}`} — ${stamp}`,
+      html,
+      attachments: [{ filename, content: json, contentType: "application/json; charset=utf-8" }],
+    });
+    if (!r.ok) console.error(`[auto-backup] email delivery failed for company ${companyId}: ${r.reason}`);
+    return r.ok;
+  } catch (e: any) {
+    console.error(`[auto-backup] email delivery error for company ${companyId}:`, e?.message ?? e);
+    return false;
+  }
+}
+
+/** Gate on opt-in (enabled + verified) then deliver. Used by the scheduler/manual runs. */
+async function maybeEmailSnapshot(companyId: number, payload: any): Promise<boolean> {
+  const [c] = await db.select({
+    name: companiesTable.nameAr,
+    email: companiesTable.backupEmail,
+    verified: companiesTable.backupEmailVerified,
+    enabled: companiesTable.autoBackupEmailEnabled,
+  }).from(companiesTable).where(eq(companiesTable.id, companyId));
+  if (!c || !c.enabled || !c.verified || !c.email) return false;
+  return deliverSnapshotEmail(companyId, c.name ?? null, c.email, payload);
+}
 
 /**
  * Helper: when a superadmin operates against a tenant from cross-tenant tools
@@ -424,7 +516,11 @@ export async function buildSnapshot(companyId: number): Promise<{ payload: any; 
 }
 
 /** Write a snapshot row and enforce per-company retention. */
-export async function persistSnapshot(companyId: number, reason: "scheduled" | "manual"): Promise<number> {
+export async function persistSnapshot(
+  companyId: number,
+  reason: "scheduled" | "manual",
+  deliverEmail = false,
+): Promise<number> {
   const { payload, counts } = await buildSnapshot(companyId);
   const sizeBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
   const [row] = await db.insert(autoBackupsTable).values({
@@ -449,6 +545,12 @@ export async function persistSnapshot(companyId: number, reason: "scheduled" | "
   await db.update(companiesTable)
     .set({ lastAutoBackupAt: new Date() })
     .where(eq(companiesTable.id, companyId));
+
+  // Deliver to the cloud (email) destination when the caller asked for it and
+  // the company opted in. Best-effort — a mail failure never fails the backup.
+  if (deliverEmail) {
+    await maybeEmailSnapshot(companyId, payload).catch(() => {});
+  }
 
   return row.id;
 }
@@ -476,7 +578,19 @@ router.get("/auto/list", async (req, res) => {
       frequencyHours: companiesTable.autoBackupFrequencyHours,
       retention: companiesTable.autoBackupRetention,
       lastAt: companiesTable.lastAutoBackupAt,
+      intervalValue: companiesTable.autoBackupIntervalValue,
+      intervalUnit: companiesTable.autoBackupIntervalUnit,
+      backupEmail: companiesTable.backupEmail,
+      backupEmailVerified: companiesTable.backupEmailVerified,
+      autoBackupEmailEnabled: companiesTable.autoBackupEmailEnabled,
+      backupEmailPending: companiesTable.backupEmailPending,
     }).from(companiesTable).where(eq(companiesTable.id, companyId));
+
+    // Surface whether ANY email transport is configured so the UI can warn the
+    // operator that the cloud destination won't deliver until SMTP/Outlook is set.
+    const settings = company
+      ? { ...company, emailTransportReady: emailConfigured() }
+      : null;
 
     if (isCrossTenantSuperadmin(req)) {
       await writeAudit({
@@ -487,7 +601,7 @@ router.get("/auto/list", async (req, res) => {
       });
     }
 
-    res.json({ settings: company ?? null, snapshots: rows });
+    res.json({ settings, snapshots: rows });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -601,6 +715,29 @@ router.post("/auto/settings", async (req, res) => {
       const r = Math.max(1, Math.min(30, Number(req.body.retention)));
       patch.autoBackupRetention = r;
     }
+    // Flexible schedule: (value, unit). When a valid pair is supplied we store
+    // it AND keep autoBackupFrequencyHours roughly in sync (min 1h) so any
+    // legacy reader still behaves sanely; the scheduler prefers (value, unit).
+    if (req.body.intervalUnit !== undefined || req.body.intervalValue !== undefined) {
+      const unit = String(req.body.intervalUnit ?? "");
+      const rawVal = Number(req.body.intervalValue);
+      if (!BACKUP_UNITS.includes(unit)) { res.status(400).json({ error: "وحدة زمنية غير صالحة" }); return; }
+      if (!Number.isFinite(rawVal) || rawVal < 1) { res.status(400).json({ error: "قيمة الفترة غير صالحة" }); return; }
+      const value = Math.max(1, Math.min(999, Math.floor(rawVal)));
+      patch.autoBackupIntervalValue = value;
+      patch.autoBackupIntervalUnit = unit;
+      const mins = effectiveIntervalMinutes(value, unit, null);
+      patch.autoBackupFrequencyHours = Math.max(1, Math.min(168, Math.round(mins / 60)));
+    }
+    if (typeof req.body.autoBackupEmailEnabled === "boolean") {
+      // Only allow enabling email delivery once the address is verified.
+      if (req.body.autoBackupEmailEnabled) {
+        const [c] = await db.select({ verified: companiesTable.backupEmailVerified })
+          .from(companiesTable).where(eq(companiesTable.id, companyId));
+        if (!c?.verified) { res.status(400).json({ error: "يجب توثيق البريد الإلكتروني أولاً" }); return; }
+      }
+      patch.autoBackupEmailEnabled = req.body.autoBackupEmailEnabled;
+    }
     if (!Object.keys(patch).length) { res.status(400).json({ error: "لا توجد تغييرات" }); return; }
 
     await db.update(companiesTable).set(patch).where(eq(companiesTable.id, companyId));
@@ -642,32 +779,195 @@ router.post("/auto/run-now", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+/* ═════════════════════════════════════════════════════════════════════════
+ * Email (cloud) destination — secure linking via OTP verification
+ * An address never becomes an active destination until a one-time code sent to
+ * that inbox is confirmed, proving the operator controls the mailbox.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+/* ─── POST /email/request ─── send an OTP to the address to be linked ──────── */
+router.post("/email/request", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const email = String(req.body.email ?? "").trim().toLowerCase();
+    if (!isValidEmail(email)) { res.status(400).json({ error: "بريد إلكتروني غير صالح" }); return; }
+    if (!emailConfigured()) { res.status(503).json({ error: "خدمة البريد غير مهيأة على الخادم" }); return; }
+
+    // Anti-flood: refuse a resend within the cooldown window. lastSent is derived
+    // from the pending code's expiry (expiresAt = sentAt + OTP_TTL_MS).
+    const [prev] = await db.select({ expiresAt: companiesTable.backupEmailOtpExpiresAt })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (prev?.expiresAt) {
+      const lastSentMs = new Date(prev.expiresAt).getTime() - OTP_TTL_MS;
+      const waitMs = OTP_RESEND_COOLDOWN_MS - (Date.now() - lastSentMs);
+      if (waitMs > 0) {
+        res.status(429).json({ error: "يرجى الانتظار قبل طلب رمز جديد", retryAfterSec: Math.ceil(waitMs / 1000) });
+        return;
+      }
+    }
+
+    const code = newOtp();
+    await db.update(companiesTable).set({
+      backupEmailPending: email,
+      backupEmailOtpHash: sha256(code),
+      backupEmailOtpExpiresAt: new Date(Date.now() + OTP_TTL_MS),
+      backupEmailOtpAttempts: 0,
+    }).where(eq(companiesTable.id, companyId));
+
+    const body = `
+      <p>رمز توثيق البريد الإلكتروني لاستقبال النسخ الاحتياطية:</p>
+      <p style="font-size:34px;font-weight:bold;letter-spacing:6px;text-align:center;background:#ecfdf5;color:#065f46;padding:14px;border-radius:8px;margin:12px 0;">${code}</p>
+      <p>صالح لمدة <strong>10 دقائق</strong>. أدخله في الشاشة لإتمام ربط البريد.</p>
+      <p style="color:#94a3b8;font-size:12px;">إذا لم تطلب هذا الرمز، تجاهل الرسالة.</p>`;
+    const html = `<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;color:#334155;line-height:1.7;">${body}</div>`;
+    const r = await sendEmail({ to: email, subject: "رمز توثيق البريد — النسخ الاحتياطية", html });
+    if (!r.ok) { res.status(502).json({ error: "تعذّر إرسال رمز التحقق، تحقق من إعدادات البريد" }); return; }
+
+    await writeAudit({
+      userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "edit",
+      success: true, message: `طلب توثيق بريد النسخ الاحتياطية للشركة #${companyId}`,
+    });
+    res.json({ ok: true, expiresInSec: OTP_TTL_MS / 1000 });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /email/verify ─── confirm the OTP → activate the address ────────── */
+router.post("/email/verify", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const code = String(req.body.code ?? "").trim();
+    if (!/^\d{6}$/.test(code)) { res.status(400).json({ error: "رمز غير صالح" }); return; }
+
+    const [c] = await db.select({
+      pending: companiesTable.backupEmailPending,
+      hash: companiesTable.backupEmailOtpHash,
+      expiresAt: companiesTable.backupEmailOtpExpiresAt,
+      attempts: companiesTable.backupEmailOtpAttempts,
+    }).from(companiesTable).where(eq(companiesTable.id, companyId));
+
+    if (!c?.pending || !c.hash || !c.expiresAt) { res.status(400).json({ error: "لا يوجد طلب توثيق نشط" }); return; }
+    if (new Date(c.expiresAt).getTime() < Date.now()) { res.status(400).json({ error: "انتهت صلاحية الرمز، أعد الإرسال" }); return; }
+    if ((c.attempts ?? 0) >= OTP_MAX_ATTEMPTS) { res.status(429).json({ error: "محاولات كثيرة، أعد إرسال رمز جديد" }); return; }
+
+    if (sha256(code) !== c.hash) {
+      await db.update(companiesTable)
+        .set({ backupEmailOtpAttempts: (c.attempts ?? 0) + 1 })
+        .where(eq(companiesTable.id, companyId));
+      res.status(400).json({ error: "الرمز غير صحيح" });
+      return;
+    }
+
+    await db.update(companiesTable).set({
+      backupEmail: c.pending,
+      backupEmailVerified: true,
+      autoBackupEmailEnabled: true,        // linking implies wanting delivery
+      backupEmailPending: null,
+      backupEmailOtpHash: null,
+      backupEmailOtpExpiresAt: null,
+      backupEmailOtpAttempts: 0,
+    }).where(eq(companiesTable.id, companyId));
+
+    await writeAudit({
+      userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "edit",
+      success: true, message: `توثيق بريد النسخ الاحتياطية (${c.pending}) للشركة #${companyId}`,
+    });
+    res.json({ ok: true, email: c.pending });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /email/disable ─── unlink the email destination ─────────────────── */
+router.post("/email/disable", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    await db.update(companiesTable).set({
+      backupEmail: null,
+      backupEmailVerified: false,
+      autoBackupEmailEnabled: false,
+      backupEmailPending: null,
+      backupEmailOtpHash: null,
+      backupEmailOtpExpiresAt: null,
+      backupEmailOtpAttempts: 0,
+    }).where(eq(companiesTable.id, companyId));
+    await writeAudit({
+      userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "edit",
+      success: true, message: `إلغاء ربط بريد النسخ الاحتياطية للشركة #${companyId}`,
+    });
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /email/send-now ─── build a fresh snapshot and email it now ─────── */
+router.post("/email/send-now", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const [c] = await db.select({
+      email: companiesTable.backupEmail,
+      verified: companiesTable.backupEmailVerified,
+    }).from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!c?.verified || !c.email) { res.status(400).json({ error: "لا يوجد بريد موثّق" }); return; }
+    if (!emailConfigured()) { res.status(503).json({ error: "خدمة البريد غير مهيأة على الخادم" }); return; }
+
+    const [nameRow] = await db.select({ name: companiesTable.nameAr })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    const { payload } = await buildSnapshot(companyId);
+    const sent = await deliverSnapshotEmail(companyId, nameRow?.name ?? null, c.email, payload);
+    if (!sent) { res.status(502).json({ error: "تعذّر إرسال النسخة عبر البريد" }); return; }
+
+    await writeAudit({
+      userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "create",
+      success: true, message: `إرسال نسخة احتياطية بالبريد للشركة #${companyId} (${c.email})`,
+    });
+    res.json({ ok: true, email: c.email });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 /* ─── Scheduler ───────────────────────────────────────────────────────────────
  * Runs every 15 minutes. For each company with autoBackupEnabled=true,
  * if (now - lastAutoBackupAt) >= frequencyHours, a new scheduled snapshot is
  * created. Runs guard-railed so one company's failure doesn't abort others.
  * ─────────────────────────────────────────────────────────────────────────── */
 let schedulerStarted = false;
-export function startBackupScheduler(intervalMs = 15 * 60_000) {
+export function startBackupScheduler(intervalMs = 60_000) {
   if (schedulerStarted) return;
   schedulerStarted = true;
 
+  // Single-flight guard: a slow tick (many companies / large snapshots) must
+  // never overlap the next 60s tick, or two runs read the same stale `lastAt`
+  // and each write a duplicate snapshot for the same company.
+  let tickInFlight = false;
+
   async function tick() {
+    if (tickInFlight) return;
+    tickInFlight = true;
     try {
       const companies = await db.select({
         id: companiesTable.id,
         enabled: companiesTable.autoBackupEnabled,
         frequencyHours: companiesTable.autoBackupFrequencyHours,
+        intervalValue: companiesTable.autoBackupIntervalValue,
+        intervalUnit: companiesTable.autoBackupIntervalUnit,
         lastAt: companiesTable.lastAutoBackupAt,
       }).from(companiesTable);
 
       for (const c of companies) {
         if (!c.enabled) continue;
-        const dueMs = (c.frequencyHours ?? 24) * 60 * 60_000;
+        // Effective cadence honours the flexible (value, unit) pair — down to a
+        // one-minute granularity — falling back to the legacy hour cadence.
+        const dueMs = effectiveIntervalMinutes(c.intervalValue, c.intervalUnit, c.frequencyHours) * 60_000;
         const lastMs = c.lastAt ? new Date(c.lastAt).getTime() : 0;
         if (Date.now() - lastMs < dueMs) continue;
         try {
-          await persistSnapshot(c.id, "scheduled");
+          // deliverEmail=true → also push to the cloud (email) destination when
+          // the company has a verified address and delivery is enabled.
+          await persistSnapshot(c.id, "scheduled", true);
           console.log(`[auto-backup] snapshot saved for company ${c.id}`);
         } catch (e: any) {
           console.error(`[auto-backup] failed for company ${c.id}:`, e.message);
@@ -675,10 +975,13 @@ export function startBackupScheduler(intervalMs = 15 * 60_000) {
       }
     } catch (e: any) {
       console.error("[auto-backup] scheduler tick error:", e.message);
+    } finally {
+      tickInFlight = false;
     }
   }
 
-  // Run soon after startup (5 s), then every `intervalMs`.
+  // Run soon after startup (5 s), then every `intervalMs` (default 1 min so
+  // minute-granularity schedules fire on time).
   setTimeout(tick, 5_000);
   setInterval(tick, intervalMs);
 }

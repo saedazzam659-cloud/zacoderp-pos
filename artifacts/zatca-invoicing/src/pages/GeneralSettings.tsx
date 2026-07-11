@@ -15,7 +15,8 @@ import {
   Users as UsersIcon, Percent, Calculator,
   Wand2, PanelTop, PanelRight, Scale,
   Archive, Cloud, HardDrive, Ban,
-  LayoutTemplate, LayoutGrid, LayoutList
+  LayoutTemplate, LayoutGrid, LayoutList,
+  Mail, Send, ShieldAlert
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -576,6 +577,206 @@ export default function GeneralSettings() {
   const [aiSummary, setAiSummary] = useState<{ summary: string; warnings: string[]; counts: Record<string, number> } | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreReport, setRestoreReport] = useState<any | null>(null);
+
+  // ─── Scheduled auto-backup + email (cloud) destination ───────────────────
+  type BackupSettings = {
+    autoBackupEnabled?: boolean;
+    autoBackupRetention?: number;
+    autoBackupIntervalValue?: number | null;
+    autoBackupIntervalUnit?: string | null;
+    lastAutoBackupAt?: string | null;
+    backupEmail?: string | null;
+    backupEmailVerified?: boolean;
+    autoBackupEmailEnabled?: boolean;
+    backupEmailPending?: string | null;
+    emailTransportReady?: boolean;
+  };
+  const [autoSettings, setAutoSettings] = useState<BackupSettings | null>(null);
+  const [autoSnapshots, setAutoSnapshots] = useState<any[]>([]);
+  const [autoLoading, setAutoLoading] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  // schedule form (local editable copy)
+  const [schedEnabled, setSchedEnabled] = useState(false);
+  const [schedValue, setSchedValue] = useState(1);
+  const [schedUnit, setSchedUnit] = useState("days");
+  const [schedRetention, setSchedRetention] = useState(7);
+  // email form
+  const [emailInput, setEmailInput] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [runningNow, setRunningNow] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
+
+  const BACKUP_UNIT_KEYS = ["minutes", "hours", "days", "weeks", "months"] as const;
+
+  const loadAutoBackup = useCallback(async () => {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setAutoLoading(true);
+    try {
+      const res = await fetch(`${API}/api/backup/auto/list?companyId=${cid}`, { headers });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || "فشل تحميل الإعدادات");
+      const s: BackupSettings = j.settings ?? {};
+      setAutoSettings(s);
+      setAutoSnapshots(Array.isArray(j.snapshots) ? j.snapshots : []);
+      setSchedEnabled(!!s.autoBackupEnabled);
+      setSchedValue(s.autoBackupIntervalValue && s.autoBackupIntervalValue > 0 ? s.autoBackupIntervalValue : 1);
+      setSchedUnit(s.autoBackupIntervalUnit || "days");
+      setSchedRetention(s.autoBackupRetention && s.autoBackupRetention > 0 ? s.autoBackupRetention : 7);
+    } catch (e: any) {
+      toast({ title: e.message || "فشل تحميل الإعدادات", variant: "destructive" });
+    } finally {
+      setAutoLoading(false);
+    }
+  }, [user, API, token]);
+
+  useEffect(() => { loadAutoBackup(); }, [loadAutoBackup]);
+
+  async function handleSaveSchedule() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setSavingSchedule(true);
+    try {
+      const res = await fetch(`${API}/api/backup/auto/settings`, {
+        method: "POST", headers,
+        body: JSON.stringify({
+          companyId: cid,
+          enabled: schedEnabled,
+          intervalValue: schedValue,
+          intervalUnit: schedUnit,
+          retention: schedRetention,
+        }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      toast({ title: t("pages.generalSettings.scheduleSaved") });
+      await loadAutoBackup();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function handleRunBackupNow() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setRunningNow(true);
+    try {
+      const res = await fetch(`${API}/api/backup/auto/run-now`, {
+        method: "POST", headers, body: JSON.stringify({ companyId: cid }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      toast({ title: t("pages.generalSettings.snapshotTaken") });
+      await loadAutoBackup();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setRunningNow(false);
+    }
+  }
+
+  async function handleRequestEmailOtp() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setEmailBusy(true);
+    try {
+      const res = await fetch(`${API}/api/backup/email/request`, {
+        method: "POST", headers,
+        body: JSON.stringify({ companyId: cid, email: emailInput.trim() }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      setOtpSent(true);
+      setEmailOtp("");
+      toast({ title: t("pages.generalSettings.otpSent") });
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setEmailBusy(false);
+    }
+  }
+
+  async function handleVerifyEmailOtp() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setEmailBusy(true);
+    try {
+      const res = await fetch(`${API}/api/backup/email/verify`, {
+        method: "POST", headers,
+        body: JSON.stringify({ companyId: cid, code: emailOtp.trim() }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      setOtpSent(false);
+      setEmailOtp("");
+      setEmailInput("");
+      toast({ title: t("pages.generalSettings.emailVerified") });
+      await loadAutoBackup();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setEmailBusy(false);
+    }
+  }
+
+  async function handleDisableEmail() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    if (!window.confirm(t("pages.generalSettings.confirmUnlinkEmail"))) return;
+    setEmailBusy(true);
+    try {
+      const res = await fetch(`${API}/api/backup/email/disable`, {
+        method: "POST", headers, body: JSON.stringify({ companyId: cid }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      setOtpSent(false); setEmailOtp(""); setEmailInput("");
+      toast({ title: t("pages.generalSettings.emailUnlinked") });
+      await loadAutoBackup();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setEmailBusy(false);
+    }
+  }
+
+  async function handleToggleEmailDelivery(next: boolean) {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    try {
+      const res = await fetch(`${API}/api/backup/auto/settings`, {
+        method: "POST", headers,
+        body: JSON.stringify({ companyId: cid, autoBackupEmailEnabled: next }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      await loadAutoBackup();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    }
+  }
+
+  async function handleSendEmailNow() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setSendingEmail(true);
+    try {
+      const res = await fetch(`${API}/api/backup/email/send-now`, {
+        method: "POST", headers, body: JSON.stringify({ companyId: cid }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      toast({ title: t("pages.generalSettings.emailSent") });
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setSendingEmail(false);
+    }
+  }
 
   async function handleBackupExport() {
     setExporting(true);
@@ -1509,6 +1710,235 @@ export default function GeneralSettings() {
                 : <><Download className="h-4 w-4" />{t("pages.generalSettings.downloadBackup")}</>
               }
             </Button>
+          </div>
+
+          {/* ─── Scheduled auto-backup card ─────────────────────────────── */}
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                <CalendarClock className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-sm">{t("pages.generalSettings.autoBackupTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{t("pages.generalSettings.autoBackupDesc")}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Switch checked={schedEnabled} onCheckedChange={setSchedEnabled} disabled={autoLoading} />
+                <span className="text-xs font-medium">{schedEnabled ? t("pages.generalSettings.statusOn") : t("pages.generalSettings.statusOff")}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("pages.generalSettings.everyLabel")}</Label>
+                <Input
+                  type="text" inputMode="numeric" dir="ltr"
+                  value={schedValue === 0 ? "" : String(schedValue)}
+                  onChange={(e) => setSchedValue(Math.max(0, Math.min(999, Number(e.target.value.replace(/[^\d]/g, "")) || 0)))}
+                  disabled={!schedEnabled}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("pages.generalSettings.unitLabel")}</Label>
+                <select
+                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
+                  value={schedUnit}
+                  onChange={(e) => setSchedUnit(e.target.value)}
+                  disabled={!schedEnabled}
+                >
+                  {BACKUP_UNIT_KEYS.map((u) => (
+                    <option key={u} value={u}>{t(`pages.generalSettings.unit_${u}`)}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("pages.generalSettings.retentionLabel")}</Label>
+                <Input
+                  type="text" inputMode="numeric" dir="ltr"
+                  value={schedRetention === 0 ? "" : String(schedRetention)}
+                  onChange={(e) => setSchedRetention(Math.max(1, Math.min(30, Number(e.target.value.replace(/[^\d]/g, "")) || 1)))}
+                  disabled={!schedEnabled}
+                />
+              </div>
+            </div>
+
+            {autoSettings?.lastAutoBackupAt && (
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <History className="h-3 w-3" />
+                {t("pages.generalSettings.lastBackupAt", { date: String(autoSettings.lastAutoBackupAt).slice(0, 16).replace("T", " ") })}
+              </p>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button" size="sm" onClick={handleSaveSchedule} disabled={savingSchedule}
+                className="gap-1.5 bg-sky-600 hover:bg-sky-700"
+              >
+                {savingSchedule ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {t("pages.generalSettings.saveSchedule")}
+              </Button>
+              <Button
+                type="button" size="sm" variant="outline" onClick={handleRunBackupNow} disabled={runningNow}
+                className="gap-1.5"
+              >
+                {runningNow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                {t("pages.generalSettings.runBackupNow")}
+              </Button>
+            </div>
+
+            {autoSnapshots.length > 0 && (
+              <div className="rounded-lg border bg-muted/20 divide-y">
+                {autoSnapshots.slice(0, 5).map((s: any) => (
+                  <div key={s.id} className="flex items-center justify-between px-3 py-2 text-[11px]">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <FileJson className="h-3 w-3" />
+                      {String(s.createdAt).slice(0, 16).replace("T", " ")}
+                      <span className="inline-flex items-center rounded-full bg-white border px-1.5 py-0.5">
+                        {s.trigger === "manual" ? t("pages.generalSettings.triggerManual")
+                          : s.trigger === "scheduled" ? t("pages.generalSettings.triggerScheduled")
+                          : s.trigger}
+                      </span>
+                    </span>
+                    <a
+                      href={`${API}/api/backup/auto/${s.id}/download?companyId=${user?.company?.id ?? user?.companyId}`}
+                      className="inline-flex items-center gap-1 text-sky-700 hover:underline"
+                      onClick={(e) => {
+                        // token-authed download via fetch-blob (header can't ride an <a>)
+                        e.preventDefault();
+                        (async () => {
+                          try {
+                            const r = await fetch(e.currentTarget?.getAttribute("href") || "", { headers });
+                            if (!r.ok) throw new Error();
+                            const blob = await r.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url; a.download = `backup-snapshot-${s.id}.json`; a.click();
+                            URL.revokeObjectURL(url);
+                          } catch { toast({ title: t("pages.generalSettings.exportFailed"), variant: "destructive" }); }
+                        })();
+                      }}
+                    >
+                      <Download className="h-3 w-3" />{t("pages.generalSettings.downloadBackup")}
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ─── Email (cloud) destination card ─────────────────────────── */}
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                <Cloud className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-sm">{t("pages.generalSettings.emailDestTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{t("pages.generalSettings.emailDestDesc")}</p>
+              </div>
+            </div>
+
+            {autoSettings && autoSettings.emailTransportReady === false && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 inline-flex items-center gap-1">
+                <ShieldAlert className="h-3 w-3" />
+                {t("pages.generalSettings.emailTransportMissing")}
+              </p>
+            )}
+
+            {/* Verified state */}
+            {autoSettings?.backupEmailVerified && autoSettings?.backupEmail ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border bg-emerald-50/50 px-3 py-2">
+                  <span className="flex items-center gap-2 text-sm">
+                    <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                    <span className="font-medium" dir="ltr">{autoSettings.backupEmail}</span>
+                  </span>
+                  <span className="text-[10px] rounded-full bg-emerald-600 text-white px-2 py-0.5">
+                    {t("pages.generalSettings.verified")}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={!!autoSettings.autoBackupEmailEnabled}
+                    onCheckedChange={handleToggleEmailDelivery}
+                  />
+                  <span className="text-xs">{t("pages.generalSettings.emailDeliveryToggle")}</span>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button" size="sm" variant="outline" onClick={handleSendEmailNow} disabled={sendingEmail}
+                    className="gap-1.5"
+                  >
+                    {sendingEmail ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                    {t("pages.generalSettings.sendEmailNow")}
+                  </Button>
+                  <Button
+                    type="button" size="sm" variant="ghost" onClick={handleDisableEmail} disabled={emailBusy}
+                    className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <Ban className="h-3.5 w-3.5" />
+                    {t("pages.generalSettings.unlinkEmail")}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              /* Linking flow */
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("pages.generalSettings.emailAddressLabel")}</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="email" dir="ltr" placeholder="backup@example.com"
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      disabled={otpSent || emailBusy}
+                    />
+                    <Button
+                      type="button" size="sm" onClick={handleRequestEmailOtp}
+                      disabled={emailBusy || !emailInput.trim() || otpSent}
+                      className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 shrink-0"
+                    >
+                      {emailBusy && !otpSent ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                      {t("pages.generalSettings.sendOtp")}
+                    </Button>
+                  </div>
+                </div>
+
+                {otpSent && (
+                  <div className="space-y-1.5 rounded-lg border bg-muted/20 p-3">
+                    <Label className="text-xs">{t("pages.generalSettings.enterOtpLabel")}</Label>
+                    <p className="text-[11px] text-muted-foreground">{t("pages.generalSettings.otpHint")}</p>
+                    <div className="flex gap-2">
+                      <Input
+                        type="text" inputMode="numeric" dir="ltr" maxLength={6}
+                        placeholder="______"
+                        className="tracking-[0.5em] text-center font-mono"
+                        value={emailOtp}
+                        onChange={(e) => setEmailOtp(e.target.value.replace(/[^\d]/g, "").slice(0, 6))}
+                        disabled={emailBusy}
+                      />
+                      <Button
+                        type="button" size="sm" onClick={handleVerifyEmailOtp}
+                        disabled={emailBusy || emailOtp.length !== 6}
+                        className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 shrink-0"
+                      >
+                        {emailBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                        {t("pages.generalSettings.verifyOtp")}
+                      </Button>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-[11px] text-sky-700 hover:underline"
+                      onClick={() => { setOtpSent(false); setEmailOtp(""); }}
+                    >
+                      {t("pages.generalSettings.changeEmail")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </TabsContent>
 

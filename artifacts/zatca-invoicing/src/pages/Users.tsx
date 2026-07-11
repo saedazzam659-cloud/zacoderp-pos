@@ -56,6 +56,14 @@ const GROUP_TO_MENU_KEYS: Record<string, string[]> = {
   "perms.groups.security":              ["security_events"],
   "perms.groups.aiTools":               ["ai_tools"],
   "perms.groups.multiLink":             ["multi_link"],
+  "perms.groups.office":                ["office"],
+  "perms.groups.deliveryDocs":          ["delivery_receipt_docs"],
+  "perms.groups.safety":                ["safety"],
+  "perms.groups.voiceAssistant":        ["voice_assistant"],
+  "perms.groups.sessions":              ["sessions"],
+  "perms.groups.chat":                  ["chat"],
+  "perms.groups.companyMaintenance":    ["company_maintenance"],
+  "perms.groups.fieldService":          ["field_service"],
 };
 
 function parseCompanyMenuPerms(raw: string | null | undefined): Record<string, boolean> {
