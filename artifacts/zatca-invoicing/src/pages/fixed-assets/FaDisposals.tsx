@@ -138,13 +138,13 @@ export default function FaDisposals() {
               <DateField value={form.disposalDate} onChange={(e)=>setForm({...form,disposalDate:e.target.value})} /></div>
             {form.type === "sale" && <>
               <div><Label>سعر البيع</Label>
-                <Input type="number" step="0.01" value={form.salePrice} onChange={(e)=>setForm({...form,salePrice:e.target.value})} /></div>
+                <Input type="text" inputMode="decimal" dir="ltr" value={form.salePrice} onChange={(e)=>setForm({...form,salePrice:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
               <div className="md:col-span-2"><Label>المشتري</Label>
                 <Input value={form.buyerName} onChange={(e)=>setForm({...form,buyerName:e.target.value})} /></div>
             </>}
             {form.type === "scrap" && (
               <div><Label>قيمة الخردة الفعلية</Label>
-                <Input type="number" step="0.01" value={form.scrapValue} onChange={(e)=>setForm({...form,scrapValue:e.target.value})} /></div>
+                <Input type="text" inputMode="decimal" dir="ltr" value={form.scrapValue} onChange={(e)=>setForm({...form,scrapValue:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
             )}
             <div className="md:col-span-2"><Label>سبب التخلص</Label>
               <Input value={form.reason} onChange={(e)=>setForm({...form,reason:e.target.value})} /></div>

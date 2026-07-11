@@ -144,9 +144,9 @@ export default function FaCategories() {
             <div>
               <Label>الخردة الافتراضية {form.defaultScrapType === "value" ? "(قيمة ثابتة)" : "(%)"}</Label>
               <div className="flex items-center gap-2">
-                <Input type="number" step="0.01" className="flex-1"
+                <Input type="text" inputMode="decimal" dir="ltr" className="flex-1"
                   value={form.defaultScrapRate}
-                  onChange={(e)=>setForm({...form,defaultScrapRate:e.target.value})} />
+                  onChange={(e)=>setForm({...form,defaultScrapRate:e.target.value.replace(/[^0-9.]/g,"")})} />
                 <select className="h-10 px-2 rounded-md border border-input bg-background text-sm shrink-0"
                   value={form.defaultScrapType}
                   onChange={(e)=>setForm({...form,defaultScrapType:e.target.value})}>

@@ -620,7 +620,7 @@ export default function FixedAssets() {
                 <div><Label>تاريخ الشراء</Label>
                   <DateField value={form.purchaseDate} onChange={(e)=>setForm({...form,purchaseDate:e.target.value})} /></div>
                 <div><Label>قيمة الشراء</Label>
-                  <Input type="number" step="0.01" value={form.purchaseValue} onChange={(e)=>updatePurchaseValue(e.target.value)} /></div>
+                  <Input type="text" inputMode="decimal" dir="ltr" value={form.purchaseValue} onChange={(e)=>updatePurchaseValue(e.target.value.replace(/[^0-9.]/g,""))} /></div>
                 <div><Label>المورد</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.supplierId} onChange={(e)=>setForm({...form,supplierId:e.target.value})}
@@ -703,9 +703,9 @@ export default function FixedAssets() {
                 <div><Label>اللون</Label>
                   <Input value={form.color} onChange={(e)=>setForm({...form,color:e.target.value})} /></div>
                 <div><Label>كم عند الشراء</Label>
-                  <Input type="number" value={form.initialKm} onChange={(e)=>setForm({...form,initialKm:e.target.value})} /></div>
+                  <Input type="text" inputMode="numeric" dir="ltr" value={form.initialKm} onChange={(e)=>setForm({...form,initialKm:e.target.value.replace(/[^0-9]/g,"")})} /></div>
                 <div><Label>الكم الحالي</Label>
-                  <Input type="number" value={form.currentKm} onChange={(e)=>setForm({...form,currentKm:e.target.value})} /></div>
+                  <Input type="text" inputMode="numeric" dir="ltr" value={form.currentKm} onChange={(e)=>setForm({...form,currentKm:e.target.value.replace(/[^0-9]/g,"")})} /></div>
               </div>
             </fieldset>
             )}
@@ -767,10 +767,10 @@ export default function FixedAssets() {
                   {/* قيمة الأصل قبل الضريبة */}
                   <div>
                     <Label className="text-slate-700">قيمة الأصل قبل الضريبة</Label>
-                    <Input type="number" step="0.01" min="0"
+                    <Input type="text" inputMode="decimal" dir="ltr"
                       value={form.purchaseValue}
                       readOnly={incl}
-                      onChange={(e) => setNet(Number(e.target.value) || 0)}
+                      onChange={(e) => setNet(Number(e.target.value.replace(/[^0-9.]/g, "")) || 0)}
                       className={`mt-1 font-mono text-base ${incl ? "bg-slate-100 text-slate-600 cursor-not-allowed" : "bg-white"}`} />
                   </div>
 
@@ -778,7 +778,7 @@ export default function FixedAssets() {
                   <div>
                     <Label className="text-slate-700">نسبة الضريبة %</Label>
                     <div className="mt-1 relative">
-                      <Input type="number" step="0.01" min="0" max="100"
+                      <Input type="text" inputMode="decimal" dir="ltr"
                         value={form.vatRate}
                         onChange={(e) => setForm({ ...form, vatRate: e.target.value.replace(/[^0-9.]/g, "") })}
                         className="font-mono text-base pl-9" />
@@ -799,10 +799,10 @@ export default function FixedAssets() {
                   {/* الإجمالي بعد الضريبة */}
                   <div>
                     <Label className="text-emerald-700 font-bold">الإجمالي بعد الضريبة</Label>
-                    <Input type="number" step="0.01" min="0"
+                    <Input type="text" inputMode="decimal" dir="ltr"
                       value={incl ? form.purchaseValue && rate >= 0 ? gross.toFixed(2) : "0" : gross.toFixed(2)}
                       readOnly={!incl}
-                      onChange={(e) => incl && setGross(Number(e.target.value) || 0)}
+                      onChange={(e) => incl && setGross(Number(e.target.value.replace(/[^0-9.]/g, "")) || 0)}
                       className={`mt-1 font-mono text-base font-bold ${incl ? "bg-white text-emerald-900 border-2 border-emerald-300" : "bg-emerald-50 text-emerald-800 border-emerald-200 cursor-not-allowed"}`} />
                   </div>
                 </div>
@@ -850,13 +850,13 @@ export default function FixedAssets() {
                     {METHODS.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
                   </select></div>
                 <div><Label>قيمة الخردة</Label>
-                  <Input type="number" step="0.01" value={form.scrapValue} onChange={(e)=>{setDepTouched(t=>({...t,scrapValue:true}));setForm({...form,scrapValue:e.target.value});}} /></div>
+                  <Input type="text" inputMode="decimal" dir="ltr" value={form.scrapValue} onChange={(e)=>{setDepTouched(t=>({...t,scrapValue:true}));setForm({...form,scrapValue:e.target.value.replace(/[^0-9.]/g,"")});}} /></div>
                 <div><Label>تاريخ بداية الإهلاك</Label>
                   <DateField value={form.depreciationStart} onChange={(e)=>setForm({...form,depreciationStart:e.target.value})} /></div>
                 <div><Label>الإهلاك المتراكم</Label>
-                  <Input type="number" step="0.01" value={form.accumulatedDepreciation} onChange={(e)=>setForm({...form,accumulatedDepreciation:e.target.value})} /></div>
+                  <Input type="text" inputMode="decimal" dir="ltr" value={form.accumulatedDepreciation} onChange={(e)=>setForm({...form,accumulatedDepreciation:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
                 <div><Label>القيمة الدفترية</Label>
-                  <Input type="number" step="0.01" value={form.bookValue} onChange={(e)=>setForm({...form,bookValue:e.target.value})} /></div>
+                  <Input type="text" inputMode="decimal" dir="ltr" value={form.bookValue} onChange={(e)=>setForm({...form,bookValue:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
               </div>
             </fieldset>
             )}
@@ -872,7 +872,7 @@ export default function FixedAssets() {
                 <div><Label>رقم الوثيقة</Label>
                   <Input value={form.insurancePolicyNo} onChange={(e)=>setForm({...form,insurancePolicyNo:e.target.value})} /></div>
                 <div><Label>قيمة التأمين</Label>
-                  <Input type="number" step="0.01" value={form.insuranceValue} onChange={(e)=>setForm({...form,insuranceValue:e.target.value})} /></div>
+                  <Input type="text" inputMode="decimal" dir="ltr" value={form.insuranceValue} onChange={(e)=>setForm({...form,insuranceValue:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
                 <div><Label>تاريخ البداية</Label>
                   <DateField value={form.insuranceStart} onChange={(e)=>setForm({...form,insuranceStart:e.target.value})} /></div>
                 <div><Label>تاريخ الانتهاء</Label>
@@ -888,7 +888,7 @@ export default function FixedAssets() {
               </legend>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div><Label>المسؤول عن الأصل (رقم الموظف)</Label>
-                  <Input type="number" value={form.custodianEmployeeId} onChange={(e)=>setForm({...form,custodianEmployeeId:e.target.value})} /></div>
+                  <Input type="text" inputMode="numeric" dir="ltr" value={form.custodianEmployeeId} onChange={(e)=>setForm({...form,custodianEmployeeId:e.target.value.replace(/[^0-9]/g,"")})} /></div>
                 <div><Label>ملاحظات</Label>
                   <Input value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})} /></div>
               </div>

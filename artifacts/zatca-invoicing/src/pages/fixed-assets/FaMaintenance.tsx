@@ -161,13 +161,13 @@ export default function FaMaintenance() {
             <div><Label>التاريخ</Label>
               <DateField value={form.serviceDate} onChange={(e)=>setForm({...form,serviceDate:e.target.value})} /></div>
             <div><Label>التكلفة</Label>
-              <Input type="number" step="0.01" value={form.cost} onChange={(e)=>setForm({...form,cost:e.target.value})} /></div>
+              <Input type="text" inputMode="decimal" dir="ltr" value={form.cost} onChange={(e)=>setForm({...form,cost:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
             <div><Label>المورد / الورشة</Label>
               <Input value={form.vendorName} onChange={(e)=>setForm({...form,vendorName:e.target.value})} /></div>
             <div><Label>الفني</Label>
               <Input value={form.technicianName} onChange={(e)=>setForm({...form,technicianName:e.target.value})} /></div>
             <div><Label>كم وقت الصيانة</Label>
-              <Input type="number" value={form.kmAtService} onChange={(e)=>setForm({...form,kmAtService:e.target.value})} /></div>
+              <Input type="text" inputMode="numeric" dir="ltr" value={form.kmAtService} onChange={(e)=>setForm({...form,kmAtService:e.target.value.replace(/[^0-9]/g,"")})} /></div>
             <div className="md:col-span-2"><Label>وصف العطل / العمل المنجز</Label>
               <Input value={form.description} onChange={(e)=>setForm({...form,description:e.target.value})} /></div>
             <div className="flex items-center gap-2">
