@@ -90,6 +90,18 @@ export default function FixedAssets() {
   const [showQr, setShowQr] = useState<Asset | null>(null);
   const [activeTab, setActiveTab] = useState<"basic"|"purchase"|"tech"|"depreciation"|"insurance"|"extra"|"tax">("basic");
 
+  // ── Import-from-source: pull the purchase data from an already-recorded
+  //    purchase invoice OR journal entry (looked up by its number) so the
+  //    user never retypes an asset that is already in the books. Applying a
+  //    result also auto-enables skipAcquisitionJe to prevent double-posting.
+  const [impSource, setImpSource] = useState<"invoice"|"je">("invoice");
+  const [impNumber, setImpNumber] = useState("");
+  const [impBusy, setImpBusy] = useState(false);
+  const [impErr, setImpErr] = useState("");
+  const [impInvoice, setImpInvoice] = useState<any|null>(null);
+  const [impJe, setImpJe] = useState<any|null>(null);
+  function resetImport() { setImpNumber(""); setImpErr(""); setImpInvoice(null); setImpJe(null); }
+
   const { data: rows = [], isLoading } = useQuery<Asset[]>({
     queryKey:["fa/assets", cid],
     queryFn: async () => (await fetch(`${API}/api/fixed-assets/assets?companyId=${cid}`, { headers })).json(),
@@ -128,6 +140,18 @@ export default function FixedAssets() {
     queryFn: async () => (await fetch(`${API}/api/cost-centers?companyId=${cid}`, { headers })).json(),
     enabled: !!cid,
   });
+  // Chart of accounts — used only to label the debit lines of a fetched
+  // journal entry in the import preview (so the user can pick the asset line).
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey:["accounts", cid],
+    queryFn: async () => { const j = await (await fetch(`${API}/api/accounts?companyId=${cid}`, { headers })).json(); return Array.isArray(j) ? j : []; },
+    enabled: !!cid,
+  });
+  const acctName = (id:number|null) => {
+    if (id == null) return "—";
+    const a = accounts.find((x:any)=>String(x.id)===String(id));
+    return a ? `${a.code ? a.code+" · " : ""}${a.nameAr ?? a.nameEn ?? "#"+id}` : `#${id}`;
+  };
 
   const filtered = rows.filter(a => !search.trim() ||
     a.nameAr?.toLowerCase().includes(search.toLowerCase()) ||
@@ -135,7 +159,7 @@ export default function FixedAssets() {
     a.serialNo?.toLowerCase().includes(search.toLowerCase()) ||
     a.plateNumber?.toLowerCase().includes(search.toLowerCase()));
 
-  function openNew() { setEditing(null); setForm(EMPTY); setDepTouched({ lifeYears:false, depreciationMethod:false, scrapValue:false }); setActiveTab("basic"); setShowForm(true); }
+  function openNew() { setEditing(null); setForm(EMPTY); setDepTouched({ lifeYears:false, depreciationMethod:false, scrapValue:false }); resetImport(); setActiveTab("basic"); setShowForm(true); }
   function openEdit(a: Asset) {
     setEditing(a);
     setForm({
@@ -162,7 +186,7 @@ export default function FixedAssets() {
       location:a.location??"", notes:a.notes??"",
     });
     setDepTouched({ lifeYears:true, depreciationMethod:true, scrapValue:true });
-    setActiveTab("basic"); setShowForm(true);
+    resetImport(); setActiveTab("basic"); setShowForm(true);
   }
 
   // Pick a category in Basic Data → auto-populate the Depreciation tab
@@ -202,6 +226,85 @@ export default function FixedAssets() {
       if (scrap > 0) next.scrapValue = String(+scrap.toFixed(2));
       return next;
     });
+  }
+
+  // Look up a purchase invoice / journal entry by its number, company-scoped,
+  // and stash the full document (with lines) for preview before applying.
+  async function runImport() {
+    const num = impNumber.trim();
+    if (!num) { setImpErr("أدخل رقم الفاتورة أو القيد أولاً"); return; }
+    setImpBusy(true); setImpErr(""); setImpInvoice(null); setImpJe(null);
+    // Fetch JSON but fail loudly on a non-2xx response — otherwise an error
+    // envelope ({error:"…"}) would be treated as a valid document and the user
+    // could "apply" garbage (value → 0) with skipAcquisitionJe silently on.
+    const getJson = async (url:string) => {
+      const r = await fetch(url, { headers });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((body && (body.error || body.message)) || `HTTP ${r.status}`);
+      return body;
+    };
+    try {
+      if (impSource === "invoice") {
+        const list = await getJson(`${API}/api/purchasing/purchase-invoices?companyId=${cid}`);
+        const arr = Array.isArray(list) ? list : [];
+        const hit = arr.find((r:any)=> String(r.supplierInvoiceNumber ?? "").trim()===num || String(r.docNumber ?? "").trim()===num);
+        if (!hit) { setImpErr("لا توجد فاتورة مشتريات بهذا الرقم"); return; }
+        const full = await getJson(`${API}/api/purchasing/purchase-invoices/${hit.id}?companyId=${cid}`);
+        if (!full || full.id == null) { setImpErr("تعذّر تحميل تفاصيل الفاتورة"); return; }
+        setImpInvoice(full);
+      } else {
+        const list = await getJson(`${API}/api/journal-entries?companyId=${cid}`);
+        const arr = Array.isArray(list) ? list : [];
+        const hit = arr.find((r:any)=> String(r.docNumber ?? "").trim()===num);
+        if (!hit) { setImpErr("لا يوجد قيد محاسبي بهذا الرقم"); return; }
+        const full = await getJson(`${API}/api/journal-entries/${hit.id}?companyId=${cid}`);
+        if (!full || full.id == null) { setImpErr("تعذّر تحميل تفاصيل القيد"); return; }
+        setImpJe(full);
+      }
+    } catch (e:any) {
+      setImpErr(e?.message || "تعذّر جلب البيانات");
+    } finally { setImpBusy(false); }
+  }
+
+  // Map a fetched purchase invoice onto the purchase fields. Asset cost is the
+  // NET subtotal (VAT lives in the tax tab); payment method + settlement box
+  // carry over. Auto-enables skipAcquisitionJe (asset already in the books).
+  function applyInvoice(inv:any) {
+    const net   = Number(inv.subtotal ?? 0);
+    const vat   = Number(inv.vatAmount ?? 0);
+    const total = Number(inv.totalAmount ?? 0);
+    const val   = net > 0 ? net : total;
+    const pType = ["cash","bank","credit"].includes(inv.paymentType) ? inv.paymentType : null;
+    setForm(f => ({ ...f,
+      purchaseDate:  inv.invoiceDate || f.purchaseDate,
+      purchaseValue: String(+Number(val).toFixed(2)),
+      invoiceNo:     String(inv.supplierInvoiceNumber || inv.docNumber || f.invoiceNo || ""),
+      supplierId:    inv.supplierId ? String(inv.supplierId) : f.supplierId,
+      paymentMethod: pType ?? f.paymentMethod,
+      cashBoxId:     (pType ?? f.paymentMethod) === "cash" && inv.cashBoxId    ? String(inv.cashBoxId)     : "",
+      bankAccountId: (pType ?? f.paymentMethod) === "bank" && inv.bankAccountId ? String(inv.bankAccountId) : "",
+      vatRate:       net > 0 ? String(+(vat / net * 100).toFixed(2)) : f.vatRate,
+      priceIncludesVat: false,
+      skipAcquisitionJe: true,
+    }));
+    setDepTouched(d => ({ ...d, scrapValue: true }));
+    toast({ title:"تم جلب بيانات الفاتورة", description:"روجعت حقول الشراء تلقائياً — فُعّل «الأصل مُسجّل مسبقاً»" });
+  }
+
+  // Map a fetched journal entry. entryDate → purchase date, docNumber → ref,
+  // description appended to notes. Value is optional: pass it from the debit
+  // line the user picks (or the total). Supplier/payment can't be inferred.
+  function applyJe(je:any, opts:{ value?: number }) {
+    setForm(f => ({ ...f,
+      purchaseDate:  je.entryDate || f.purchaseDate,
+      invoiceNo:     String(je.docNumber || f.invoiceNo || ""),
+      purchaseValue: opts.value != null ? String(+Number(opts.value).toFixed(2)) : f.purchaseValue,
+      notes:         je.description ? (f.notes ? `${f.notes} — ${je.description}` : je.description) : f.notes,
+      skipAcquisitionJe: true,
+    }));
+    if (opts.value != null) setDepTouched(d => ({ ...d, scrapValue: true }));
+    toast({ title:"تم جلب بيانات القيد",
+      description: opts.value != null ? "تم ضبط قيمة الأصل من السطر المختار — فُعّل «الأصل مُسجّل مسبقاً»" : "تم ضبط التاريخ والمرجع" });
   }
 
   const TABS = [
@@ -314,7 +417,7 @@ export default function FixedAssets() {
           title={editing?`تعديل: ${editing.nameAr}`:"أصل جديد"}
           subtitle={editing?`الكود: ${editing.code}`:"الكود يُولَّد تلقائياً (AST0001)"}
           width="6xl"
-          onClose={()=>{ setShowForm(false); setEditing(null); }}
+          onClose={()=>{ setShowForm(false); setEditing(null); resetImport(); }}
           onSave={()=>saveMut.mutate()} saving={saveMut.isPending}
           saveLabel="حفظ" cancelLabel="إلغاء"
         >
@@ -390,6 +493,110 @@ export default function FixedAssets() {
               <legend className="px-2 text-sm font-bold text-blue-700 flex items-center gap-1">
                 <ShoppingCart className="h-4 w-4" /> بيانات الشراء
               </legend>
+
+              {/* ── أداة سحب البيانات من فاتورة مشتريات أو قيد محاسبي ── */}
+              <div className="mb-4 rounded-xl border-2 border-indigo-200 bg-indigo-50/40 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Search className="h-4 w-4 text-indigo-600" />
+                  <p className="text-sm font-bold text-indigo-800">جلب البيانات من مستند موجود</p>
+                </div>
+                <p className="text-[11px] text-slate-500 mb-3">
+                  ابحث برقم فاتورة المشتريات أو رقم القيد المحاسبي لسحب تاريخ الشراء والقيمة والمورد ورقم الفاتورة وطريقة الدفع تلقائياً — دون إعادة إدخال. سيُفعَّل «الأصل مُسجّل مسبقاً» تلقائياً لتفادي ازدواج التسجيل في الدفاتر.
+                </p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex rounded-md border border-indigo-200 overflow-hidden">
+                    <button type="button" onClick={()=>{ setImpSource("invoice"); resetImport(); }}
+                      data-testid="imp-source-invoice"
+                      className={`px-3 py-2 text-xs font-semibold ${impSource==="invoice" ? "bg-indigo-600 text-white" : "bg-white text-indigo-700"}`}>
+                      فاتورة مشتريات
+                    </button>
+                    <button type="button" onClick={()=>{ setImpSource("je"); resetImport(); }}
+                      data-testid="imp-source-je"
+                      className={`px-3 py-2 text-xs font-semibold border-s border-indigo-200 ${impSource==="je" ? "bg-indigo-600 text-white" : "bg-white text-indigo-700"}`}>
+                      قيد محاسبي
+                    </button>
+                  </div>
+                  <div className="flex-1 min-w-[180px]">
+                    <Input value={impNumber} onChange={(e)=>setImpNumber(e.target.value)}
+                      onKeyDown={(e)=>{ if (e.key==="Enter"){ e.preventDefault(); runImport(); } }}
+                      placeholder={impSource==="invoice" ? "رقم فاتورة المشتريات / رقم فاتورة المورد…" : "رقم القيد المحاسبي…"}
+                      data-testid="imp-number" />
+                  </div>
+                  <Button type="button" onClick={runImport} disabled={impBusy}
+                    className="bg-indigo-600 hover:bg-indigo-700" data-testid="imp-fetch">
+                    {impBusy ? "جارٍ الجلب…" : "جلب البيانات"}
+                  </Button>
+                </div>
+                {impErr && <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded p-2 mt-2" data-testid="imp-error">{impErr}</p>}
+
+                {impInvoice && (
+                  <div className="mt-3 rounded-lg border border-emerald-200 bg-white p-3" data-testid="imp-invoice-result">
+                    <p className="text-xs font-bold text-emerald-700 mb-1">فاتورة مشتريات #{impInvoice.docNumber ?? impInvoice.id}</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                      <div>التاريخ: <span className="font-mono">{impInvoice.invoiceDate ?? "—"}</span></div>
+                      <div>المورد: {suppliers.find((s:any)=>String(s.id)===String(impInvoice.supplierId))?.nameAr ?? impInvoice.supplierId ?? "—"}</div>
+                      <div>الصافي: <span className="font-mono">{Number(impInvoice.subtotal ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span></div>
+                      <div>الضريبة: <span className="font-mono">{Number(impInvoice.vatAmount ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span></div>
+                      <div>الإجمالي: <span className="font-mono">{Number(impInvoice.totalAmount ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span></div>
+                      <div>رقم فاتورة المورد: {impInvoice.supplierInvoiceNumber ?? "—"}</div>
+                      <div>الدفع: {({cash:"نقدي",bank:"بنك",credit:"آجل"} as any)[impInvoice.paymentType] ?? impInvoice.paymentType ?? "—"}</div>
+                    </div>
+                    <Button type="button" size="sm" onClick={()=>applyInvoice(impInvoice)}
+                      className="mt-2 bg-emerald-600 hover:bg-emerald-700" data-testid="imp-apply-invoice">
+                      تطبيق البيانات على النموذج
+                    </Button>
+                  </div>
+                )}
+
+                {impJe && (()=>{
+                  const dLines = (impJe.lines ?? []).filter((l:any)=>Number(l.debit ?? 0) > 0);
+                  const totDebit = (impJe.lines ?? []).reduce((s:number,l:any)=>s+Number(l.debit ?? 0), 0);
+                  return (
+                  <div className="mt-3 rounded-lg border border-violet-200 bg-white p-3" data-testid="imp-je-result">
+                    <p className="text-xs font-bold text-violet-700 mb-1">قيد محاسبي #{impJe.docNumber ?? impJe.id}</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-600 mb-2">
+                      <div>التاريخ: <span className="font-mono">{impJe.entryDate ?? "—"}</span></div>
+                      <div>البيان: {impJe.description ?? "—"}</div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mb-1">اختر السطر (المدين) الذي يمثل قيمة الأصل، أو طبّق إجمالي المدين. لا يمكن استنتاج المورد وطريقة الدفع من القيد — أدخلهما يدوياً إن لزم.</p>
+                    <div className="border border-slate-200 rounded overflow-hidden">
+                      <table className="w-full text-[11px]">
+                        <thead className="bg-slate-50 text-slate-600">
+                          <tr><th className="px-2 py-1 text-start">الحساب</th><th className="px-2 py-1 text-start">البيان</th><th className="px-2 py-1 text-end">مدين</th><th className="px-2 py-1"></th></tr>
+                        </thead>
+                        <tbody>
+                          {dLines.map((l:any,i:number)=>(
+                            <tr key={i} className="border-t border-slate-100">
+                              <td className="px-2 py-1">{acctName(l.accountId)}</td>
+                              <td className="px-2 py-1 text-slate-500">{l.description ?? "—"}</td>
+                              <td className="px-2 py-1 text-end font-mono">{Number(l.debit ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                              <td className="px-2 py-1 text-end">
+                                <button type="button" onClick={()=>applyJe(impJe,{ value: Number(l.debit ?? 0) })}
+                                  className="text-[11px] font-semibold text-violet-700 hover:underline" data-testid={`imp-use-line-${i}`}>
+                                  استخدم كقيمة الأصل
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {dLines.length===0 && <tr><td colSpan={4} className="px-2 py-2 text-center text-slate-400">لا توجد سطور مدينة</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <Button type="button" size="sm" onClick={()=>applyJe(impJe,{ value: totDebit })}
+                        className="bg-violet-600 hover:bg-violet-700" data-testid="imp-apply-je-total">
+                        تطبيق إجمالي المدين ({Number(totDebit).toLocaleString("ar-EG-u-ca-gregory-nu-latn")})
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={()=>applyJe(impJe,{})}
+                        data-testid="imp-apply-je-meta">
+                        التاريخ والمرجع فقط
+                      </Button>
+                    </div>
+                  </div>
+                  );
+                })()}
+              </div>
+
               <label className={`flex items-center gap-3 p-3 mb-4 rounded-xl border-2 cursor-pointer transition-all ${
                 form.skipAcquisitionJe ? "border-amber-500 bg-amber-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"
               }`}>
