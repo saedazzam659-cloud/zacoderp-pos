@@ -114,6 +114,12 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   // or a purchase invoice), so POST /assets must NOT post another
   // acquisition JE — it only tracks depreciation. Prevents double-counting.
   skipAcquisitionJe:   boolean("skip_acquisition_je").notNull().default(false),
+  // When TRUE the asset was loaded as an OPENING BALANCE (رصيد افتتاحي): it is
+  // NOT tied to a purchase invoice or a manual JE, so no acquisition JE is
+  // posted (implies skipAcquisitionJe) and supplier/invoice are optional. The
+  // asset still surfaces in the depreciation schedule + fixed-asset movement
+  // reports (which read the asset rows, not the JEs).
+  isOpeningBalance:    boolean("is_opening_balance").notNull().default(false),
 
   // ── Technical / vehicle data ─────────────────────────────────
   model:               text("model"),                 // e.g. 2023

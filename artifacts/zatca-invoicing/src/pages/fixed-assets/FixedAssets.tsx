@@ -28,7 +28,7 @@ type Asset = {
   invoiceNo: string | null; acquisitionJeNo: string | null; paymentMethod: string | null;
   cashBoxId: number | null; bankAccountId: number | null;
   model: string | null; brand: string | null; serialNo: string | null;
-  serialNumber: string | null; skipAcquisitionJe: boolean;
+  serialNumber: string | null; skipAcquisitionJe: boolean; isOpeningBalance: boolean;
   plateNumber: string | null; color: string | null;
   initialKm: number | null; currentKm: number | null;
   lifeYears: number; depreciationMethod: string;
@@ -60,7 +60,7 @@ const EMPTY = {
   categoryId:"", groupId:"", branchId:"", costCenterId:"",
   purchaseDate:"", purchaseValue:"0", supplierName:"", supplierId:"",
   invoiceNo:"", acquisitionJeNo:"", paymentMethod:"cash", cashBoxId:"", bankAccountId:"",
-  model:"", brand:"", serialNo:"", serialNumber:"", skipAcquisitionJe:false,
+  model:"", brand:"", serialNo:"", serialNumber:"", skipAcquisitionJe:false, isOpeningBalance:false,
   plateNumber:"", color:"",
   initialKm:"", currentKm:"",
   lifeYears:"5", depreciationMethod:"straight_line",
@@ -178,7 +178,7 @@ export default function FixedAssets() {
       invoiceNo:a.invoiceNo??"", acquisitionJeNo:a.acquisitionJeNo??"", paymentMethod:a.paymentMethod??"cash",
       cashBoxId:a.cashBoxId?String(a.cashBoxId):"", bankAccountId:a.bankAccountId?String(a.bankAccountId):"",
       model:a.model??"", brand:a.brand??"", serialNo:a.serialNo??"",
-      serialNumber:a.serialNumber??"", skipAcquisitionJe:!!a.skipAcquisitionJe,
+      serialNumber:a.serialNumber??"", skipAcquisitionJe:!!a.skipAcquisitionJe, isOpeningBalance:!!a.isOpeningBalance,
       plateNumber:a.plateNumber??"", color:a.color??"",
       initialKm:a.initialKm?String(a.initialKm):"", currentKm:a.currentKm?String(a.currentKm):"",
       lifeYears:String(a.lifeYears??5), depreciationMethod:a.depreciationMethod??"straight_line",
@@ -616,6 +616,29 @@ export default function FixedAssets() {
                 })()}
               </div>
 
+              {/* رصيد افتتاحي — opening-balance loader: no acquisition JE, invoice/supplier optional. */}
+              <label className={`flex items-center gap-3 p-3 mb-3 rounded-xl border-2 cursor-pointer transition-all ${
+                form.isOpeningBalance ? "border-emerald-500 bg-emerald-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"
+              }`}>
+                <input type="checkbox" checked={form.isOpeningBalance}
+                  onChange={(e)=>{
+                    const on = e.target.checked;
+                    setForm(f=>({ ...f, isOpeningBalance:on,
+                      ...(on ? { skipAcquisitionJe:true, paymentMethod:"", cashBoxId:"", bankAccountId:"" } : {}) }));
+                  }}
+                  className="h-5 w-5 rounded accent-emerald-600" data-testid="check-opening-balance" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-slate-800">رصيد افتتاحي (إدخال الأصل بدون قيد محاسبي)</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    فعّلها لإدخال أصل قديم كرصيد افتتاحي — بدون إنشاء قيد اقتناء ودون إلزام برقم فاتورة أو مورد. يظهر مباشرةً في جدول الإهلاك وحركة الأصول الثابتة. (أدخل الإهلاك المتراكم الافتتاحي في تبويب «الإهلاك» إن وجد).
+                  </p>
+                </div>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded ${form.isOpeningBalance ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"}`}>
+                  {form.isOpeningBalance ? "افتتاحي" : "غير مفعّل"}
+                </span>
+              </label>
+
+              {!form.isOpeningBalance && (
               <label className={`flex items-center gap-3 p-3 mb-4 rounded-xl border-2 cursor-pointer transition-all ${
                 form.skipAcquisitionJe ? "border-amber-500 bg-amber-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"
               }`}>
@@ -632,12 +655,13 @@ export default function FixedAssets() {
                   {form.skipAcquisitionJe ? "إهلاك فقط" : "شراء جديد"}
                 </span>
               </label>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>تاريخ الشراء</Label>
                   <DateField value={form.purchaseDate} onChange={(e)=>setForm({...form,purchaseDate:e.target.value})} /></div>
                 <div><Label>قيمة الشراء</Label>
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.purchaseValue} onChange={(e)=>updatePurchaseValue(e.target.value.replace(/[^0-9.]/g,""))} /></div>
-                <div><Label>المورد</Label>
+                <div><Label>المورد{form.isOpeningBalance ? " (اختياري)" : ""}</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.supplierId} onChange={(e)=>setForm({...form,supplierId:e.target.value})}
                     data-testid="select-supplier">
@@ -646,13 +670,14 @@ export default function FixedAssets() {
                       <option key={s.id} value={s.id}>{s.nameAr ?? s.nameEn ?? `#${s.id}`}</option>
                     ))}
                   </select></div>
-                <div><Label>رقم الفاتورة</Label>
+                <div><Label>رقم الفاتورة{form.isOpeningBalance ? " (اختياري)" : ""}</Label>
                   <Input value={form.invoiceNo} onChange={(e)=>setForm({...form,invoiceNo:e.target.value})} /></div>
                 {(form.acquisitionJeNo || impSource === "je") && (
                   <div><Label>رقم القيد المحاسبي</Label>
                     <Input value={form.acquisitionJeNo} onChange={(e)=>setForm({...form,acquisitionJeNo:e.target.value})}
                       placeholder="يُملأ تلقائياً عند جلب قيد محاسبي" data-testid="input-acquisition-je-no" /></div>
                 )}
+                {!form.isOpeningBalance && (<>
                 <div><Label>طريقة الدفع</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.paymentMethod}
@@ -696,6 +721,7 @@ export default function FixedAssets() {
                     </p>
                   </div>
                 )}
+                </>)}
               </div>
             </fieldset>
             )}

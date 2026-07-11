@@ -328,7 +328,8 @@ router.post("/assets", async (req, res) => {
       paymentMethod: b.paymentMethod || null,
       cashBoxId: b.cashBoxId ? Number(b.cashBoxId) : null,
       bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
-      skipAcquisitionJe: coerceBool(b.skipAcquisitionJe),
+      skipAcquisitionJe: coerceBool(b.skipAcquisitionJe) || coerceBool(b.isOpeningBalance),
+      isOpeningBalance: coerceBool(b.isOpeningBalance),
       model: b.model || null,
       brand: b.brand || null,
       serialNo: b.serialNo || null,
@@ -361,7 +362,7 @@ router.post("/assets", async (req, res) => {
     // historical balance sheet. Also skip when the user explicitly marked
     // the asset as already recorded elsewhere (manual JE / purchase invoice).
     let warning: string | null = null;
-    if (!b.skipAcquisitionJe && Number(purchaseValue) > 0 && Number(accumulated) === 0) {
+    if (!b.skipAcquisitionJe && !coerceBool(b.isOpeningBalance) && Number(purchaseValue) > 0 && Number(accumulated) === 0) {
       try {
         await buildAcquisitionJournal(cid, row.id, {
           cashBoxId:    b.paymentMethod === "cash" && b.cashBoxId    ? Number(b.cashBoxId)    : null,
@@ -391,6 +392,10 @@ router.put("/assets/:id", async (req, res) => {
     const strFields = ["code","nameAr","nameEn","supplierName","invoiceNo","acquisitionJeNo","paymentMethod","model","brand","serialNo","serialNumber","plateNumber","color","insuranceCompany","insurancePolicyNo","location","notes"];
     for (const k of strFields) if (b[k] !== undefined) patch[k] = b[k] || null;
     if (b.skipAcquisitionJe !== undefined) patch.skipAcquisitionJe = coerceBool(b.skipAcquisitionJe);
+    if (b.isOpeningBalance !== undefined) {
+      patch.isOpeningBalance = coerceBool(b.isOpeningBalance);
+      if (patch.isOpeningBalance) patch.skipAcquisitionJe = true;
+    }
     const numStrFields = ["purchaseValue","scrapValue","insuranceValue","accumulatedDepreciation","bookValue"];
     for (const k of numStrFields) if (b[k] !== undefined) patch[k] = String(b[k] || "0");
     const dateFields = ["purchaseDate","depreciationStart","insuranceStart","insuranceEnd"];
@@ -963,38 +968,9 @@ router.get("/reports/movement-schedule", async (req, res) => {
       linkAccumCost(c.accumDepreciationAccountId ?? null, c.costAccountId ?? null);
     }
 
-    // Posted GL lines on all FA accounts, branch-scoped
-    const allAcctIds = [...new Set<number>([...costAccountIds, ...accumAccountIds])];
-    let glLines: any[] = [];
-    if (allAcctIds.length) {
-      glLines = await db.select({
-        accountId: journalEntryLinesTable.accountId,
-        debit:     journalEntryLinesTable.debit,
-        credit:    journalEntryLinesTable.credit,
-        entryDate: journalEntriesTable.entryDate,
-      }).from(journalEntryLinesTable)
-        .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
-        .where(and(
-          eq(journalEntriesTable.companyId, cid),
-          eq(journalEntriesTable.status, "posted"),
-          inArray(journalEntryLinesTable.accountId, allAcctIds),
-          ...branchScopeSpread(req, journalEntriesTable.branchId, req.query.branchId),
-        ));
-    }
-    const glByAcct = new Map<number, { openNet: number; drIn: number; crIn: number }>();
-    const getGl = (id: number) => {
-      let g = glByAcct.get(id);
-      if (!g) { g = { openNet: 0, drIn: 0, crIn: 0 }; glByAcct.set(id, g); }
-      return g;
-    };
-    for (const l of glLines) {
-      if (l.accountId == null) continue;
-      const dt = d10(l.entryDate);
-      const dr = Number(l.debit || 0), cr = Number(l.credit || 0);
-      const g = getGl(l.accountId);
-      if (dt < from) g.openNet += dr - cr;      // signed net (debit-positive)
-      else if (dt <= to) { g.drIn += dr; g.crIn += cr; }
-    }
+    // NOTE: the posted-GL fetch that fed the removed "حركات غير مربوطة بأصل"
+    // reconciliation row is no longer needed — the schedule reports strictly from
+    // registered asset rows, so we skip that per-request query entirely.
 
     const methodLabel: Record<string, string> = {
       straight_line: "القسط الثابت",
@@ -1041,9 +1017,14 @@ router.get("/reports/movement-schedule", async (req, res) => {
       const disposedInPeriod = !!dispDate && dispDate >= from && dispDate <= to;
       if (disposedBefore) continue;
 
+      // رصيد أول (opening) is reserved for assets entered via the opening-balance
+      // tool (is_opening_balance). Every other registered asset — regardless of its
+      // purchase date — is reported as an addition (إضافات). Disposals in the period
+      // still reduce the balance via exclusions.
+      const isOpeningBalanceAsset = coerceBool((a as any).isOpeningBalance);
       const cost: Move = { opening: 0, additions: 0, exclusions: 0 };
-      if (acquiredBefore && !disposedBefore) cost.opening = pv;
-      if (acquiredInPeriod) cost.additions = pv;
+      if (isOpeningBalanceAsset) cost.opening = pv;
+      else cost.additions = pv;
       if (disposedInPeriod) cost.exclusions = pv;
       const costClosing = cost.opening + cost.additions - cost.exclusions;
 
@@ -1059,7 +1040,7 @@ router.get("/reports/movement-schedule", async (req, res) => {
       const curAccum = Number(a.accumulatedDepreciation || 0);
       const openingBalanceAccum = Math.max(0, curAccum - runsAll); // opening-balance load, not tracked by runs
       const dep: Move = { opening: 0, additions: 0, exclusions: 0 };
-      dep.opening   = runsBefore + (acquiredBefore ? openingBalanceAccum : 0);
+      dep.opening   = runsBefore + ((acquiredBefore || isOpeningBalanceAsset) ? openingBalanceAccum : 0);
       dep.additions = runsWithin;
       if (disposedInPeriod) dep.exclusions = dep.opening + dep.additions; // full accum removed → closing 0
       const depClosing = dep.opening + dep.additions - dep.exclusions;
@@ -1088,69 +1069,9 @@ router.get("/reports/movement-schedule", async (req, res) => {
       });
     }
 
-    // Reconciliation: GL movement not explained by registered assets.
-    // Depreciation side is computed PER ACCUM ACCOUNT (not per cost group): a shared
-    // accum account's GL movement minus the registered dep of EVERY cost group that
-    // uses it is the true "unlinked" residual, attributed once to that accum's
-    // primary cost group. Doing it per-group (old code) double-subtracted regDep and
-    // made non-primary groups show a spurious negative depreciation.
-    const eps = 0.005;
-    const hasMove = (m: Move) => Math.abs(m.opening) > eps || Math.abs(m.additions) > eps || Math.abs(m.exclusions) > eps;
-
-    const uDepByGroup = new Map<number, Move>();
-    const ensureUDep = (costId: number): Move => {
-      let m = uDepByGroup.get(costId);
-      if (!m) { m = { opening: 0, additions: 0, exclusions: 0 }; uDepByGroup.set(costId, m); }
-      return m;
-    };
-    for (const accumId of accumAccountIds) {
-      const glA = glByAcct.get(accumId) || { openNet: 0, drIn: 0, crIn: 0 };
-      const move: Move = { opening: -glA.openNet, additions: glA.crIn, exclusions: glA.drIn }; // accum is credit-natured
-      const costSet = accumToCosts.get(accumId);
-      if (costSet) {
-        for (const costId of costSet) {
-          const g = groups.get(costId);
-          if (!g) continue;
-          move.opening    -= g.regDep.opening;
-          move.additions  -= g.regDep.additions;
-          move.exclusions -= g.regDep.exclusions;
-        }
-      }
-      let targetCostId = accumPrimaryCost.get(accumId) ?? null;
-      if (targetCostId == null || !groups.has(targetCostId)) {
-        targetCostId = costSet && costSet.size ? [...costSet].find(id => groups.has(id)) ?? null : null;
-      }
-      if (targetCostId == null) targetCostId = defCost != null && groups.has(defCost) ? defCost : -1;
-      const m = ensureUDep(targetCostId);
-      m.opening    += move.opening;
-      m.additions  += move.additions;
-      m.exclusions += move.exclusions;
-    }
-
-    for (const g of groups.values()) {
-      if (g.accountId == null) continue;
-      const glCost = glByAcct.get(g.accountId) || { openNet: 0, drIn: 0, crIn: 0 };
-      const uCost: Move = {
-        opening:    glCost.openNet - g.regCost.opening,
-        additions:  glCost.drIn    - g.regCost.additions,
-        exclusions: glCost.crIn    - g.regCost.exclusions,
-      };
-      const uDep: Move = uDepByGroup.get(g.accountId) ?? { opening: 0, additions: 0, exclusions: 0 };
-
-      if (hasMove(uCost) || hasMove(uDep)) {
-        const cClose = uCost.opening + uCost.additions - uCost.exclusions;
-        const dClose = uDep.opening + uDep.additions - uDep.exclusions;
-        g.rows.push({
-          kind: "unlinked",
-          assetId: null, code: "—", name: "حركات غير مربوطة بأصل (قيود/فواتير)",
-          status: null, acquisitionDate: null, depreciationStart: null,
-          method: null, methodLabel: null, lifeYears: null, rate: null,
-          cost: { opening: r2(uCost.opening), additions: r2(uCost.additions), exclusions: r2(uCost.exclusions), closing: r2(cClose) },
-          dep:  { opening: r2(uDep.opening),  additions: r2(uDep.additions),  exclusions: r2(uDep.exclusions),  closing: r2(dClose) },
-          bookValue: r2(cClose - dClose),
-        });
-      }
-    }
+    // NOTE: the GL-reconciliation "حركات غير مربوطة بأصل" row was intentionally
+    // removed by request — the schedule now reports strictly from the registered
+    // asset rows (opening-balance-tool assets → رصيد أول, all others → إضافات).
 
     const zero = () => ({ opening: 0, additions: 0, exclusions: 0, closing: 0 });
     const grand = { cost: zero(), dep: zero(), bookValue: 0 };
