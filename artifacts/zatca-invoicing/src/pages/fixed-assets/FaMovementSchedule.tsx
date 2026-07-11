@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { DateField } from "@/components/ui/date-field";
-import { CalendarRange, Printer, Download, FileSpreadsheet, Loader2 } from "lucide-react";
+import { CalendarRange, Printer, FileSpreadsheet, Loader2, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -83,6 +83,21 @@ export default function FaMovementSchedule() {
     [groups],
   );
 
+  // Collapsible category groups (SAP/Odoo-style): each category row acts as a
+  // subtotal and is collapsed by default (the user will hold many assets, so
+  // showing every row up-front is noise). Clicking a category expands its rows.
+  const groupKey = (g: Group) => String(g.accountId ?? g.accountCode);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleGroup = (k: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  const expandAll = () => setExpanded(new Set(groups.map(groupKey)));
+  const collapseAll = () => setExpanded(new Set());
+  const allExpanded = groups.length > 0 && groups.every((g) => expanded.has(groupKey(g)));
+
   function exportCsv() {
     if (!data) return;
     const head = [
@@ -142,6 +157,14 @@ export default function FaMovementSchedule() {
             إلى
             <DateField value={to} onChange={(e) => setTo(e.target.value)} className="block mt-1 w-36" />
           </label>
+          <button
+            onClick={() => (allExpanded ? collapseAll() : expandAll())}
+            disabled={flatCount === 0}
+            className="h-9 px-3 rounded-md border border-slate-300 bg-white text-slate-700 text-sm flex items-center gap-1 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
+            {allExpanded ? "طي الكل" : "توسيع الكل"}
+          </button>
           <button
             onClick={() => window.print()}
             className="h-9 px-3 rounded-md bg-slate-700 text-white text-sm flex items-center gap-1 hover:bg-slate-800"
@@ -204,7 +227,13 @@ export default function FaMovementSchedule() {
             </thead>
             <tbody>
               {groups.map((g) => (
-                <GroupBlock key={g.accountId ?? g.accountCode} g={g} numCell={numCell} />
+                <GroupBlock
+                  key={g.accountId ?? g.accountCode}
+                  g={g}
+                  numCell={numCell}
+                  expanded={expanded.has(groupKey(g))}
+                  onToggle={() => toggleGroup(groupKey(g))}
+                />
               ))}
             </tbody>
             {totals && (
@@ -230,20 +259,44 @@ export default function FaMovementSchedule() {
   );
 }
 
-function GroupBlock({ g, numCell }: { g: Group; numCell: string }) {
+function GroupBlock({
+  g, numCell, expanded, onToggle,
+}: {
+  g: Group; numCell: string; expanded: boolean; onToggle: () => void;
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronLeft;
   return (
     <>
-      <tr className="bg-emerald-100/70 text-emerald-900 font-bold">
-        <td className="px-2 py-1.5 text-right" colSpan={14}>
-          <span className="font-mono">{g.accountCode}</span> — {g.accountName}
+      {/* Category row = clickable header AND subtotal (numbers always visible). */}
+      <tr
+        className="bg-emerald-100/70 text-emerald-900 font-bold cursor-pointer hover:bg-emerald-200/70 print:cursor-auto"
+        onClick={onToggle}
+      >
+        <td className="px-2 py-1.5 text-right" colSpan={5}>
+          <span className="inline-flex items-center gap-1.5">
+            <Chevron className="h-4 w-4 shrink-0 text-emerald-700 print:hidden" />
+            <span className="font-mono">{g.accountCode}</span>
+            <span>— {g.accountName}</span>
+            <span className="text-[10px] font-normal text-emerald-700/80">({g.rows.length} أصل)</span>
+          </span>
         </td>
+        <td className={numCell}>{fmt(g.totals.cost.opening)}</td>
+        <td className={numCell}>{fmt(g.totals.cost.additions)}</td>
+        <td className={numCell}>{fmt(g.totals.cost.exclusions)}</td>
+        <td className={`${numCell} font-bold`}>{fmt(g.totals.cost.closing)}</td>
+        <td className={numCell}>{fmt(g.totals.dep.opening)}</td>
+        <td className={numCell}>{fmt(g.totals.dep.additions)}</td>
+        <td className={numCell}>{fmt(g.totals.dep.exclusions)}</td>
+        <td className={`${numCell} font-bold`}>{fmt(g.totals.dep.closing)}</td>
+        <td className={`${numCell} font-bold text-sky-800`}>{fmt(g.totals.bookValue)}</td>
       </tr>
+      {/* Detail rows: hidden while collapsed on screen, always shown in print. */}
       {g.rows.map((r, i) => (
         <tr
           key={`${r.assetId ?? "u"}-${i}`}
-          className={r.kind === "unlinked" ? "bg-slate-50 text-slate-600 italic" : "hover:bg-slate-50"}
+          className={`${r.kind === "unlinked" ? "bg-slate-50 text-slate-600 italic" : "hover:bg-slate-50"} ${expanded ? "" : "hidden print:table-row"}`}
         >
-          <td className="px-2 py-1 text-right whitespace-nowrap">
+          <td className="py-1 pe-2 ps-7 text-right whitespace-nowrap">
             {r.code !== "—" && <span className="font-mono text-slate-400 ml-1">{r.code}</span>}
             {r.name}
             {r.status && (
@@ -267,18 +320,6 @@ function GroupBlock({ g, numCell }: { g: Group; numCell: string }) {
           <td className={`${numCell} font-bold text-sky-800`}>{fmt(r.bookValue)}</td>
         </tr>
       ))}
-      <tr className="bg-slate-100 font-semibold border-t border-slate-300">
-        <td className="px-2 py-1 text-right" colSpan={5}>إجمالي {g.accountName}</td>
-        <td className={numCell}>{fmt(g.totals.cost.opening)}</td>
-        <td className={numCell}>{fmt(g.totals.cost.additions)}</td>
-        <td className={numCell}>{fmt(g.totals.cost.exclusions)}</td>
-        <td className={numCell}>{fmt(g.totals.cost.closing)}</td>
-        <td className={numCell}>{fmt(g.totals.dep.opening)}</td>
-        <td className={numCell}>{fmt(g.totals.dep.additions)}</td>
-        <td className={numCell}>{fmt(g.totals.dep.exclusions)}</td>
-        <td className={numCell}>{fmt(g.totals.dep.closing)}</td>
-        <td className={`${numCell} text-sky-800`}>{fmt(g.totals.bookValue)}</td>
-      </tr>
     </>
   );
 }
