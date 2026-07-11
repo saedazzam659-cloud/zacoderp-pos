@@ -21,7 +21,7 @@ import {
   buildDepreciationRunJournal,
   buildDisposalJournal,
 } from "../lib/fa-journals.js";
-import { postDepreciationForCompany, unpostDepreciationRun, repostDepreciationRun } from "../lib/depreciationPosting.js";
+import { postDepreciationForCompany, unpostDepreciationRun, repostDepreciationRun, postDepreciationCatchUpForAsset } from "../lib/depreciationPosting.js";
 import { computePeriodDepreciation, buildSchedule } from "../lib/depreciationCalc.js";
 
 const router = Router();
@@ -265,6 +265,27 @@ router.get("/assets", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Run per-asset catch-up depreciation on save, gated on the company's
+// `autoPostFaDepreciation` flag (the same switch the auto-scheduler honours,
+// default ON). Fully non-fatal + best-effort: any error is swallowed so it can
+// never break an asset create/update. The catch-up helper is itself idempotent
+// (skips periods that already have a run row), so calling it on every save is
+// safe and never double-posts.
+async function runDepreciationCatchUp(
+  cid: number,
+  assetId: number,
+  userId: number | null,
+): Promise<void> {
+  try {
+    const [c] = await db.select({ auto: companiesTable.autoPostFaDepreciation })
+      .from(companiesTable).where(eq(companiesTable.id, cid));
+    if (!c?.auto) return;
+    await postDepreciationCatchUpForAsset(cid, assetId, "system_auto", { userId });
+  } catch {
+    // Best-effort: never surface a catch-up failure to the save request.
+  }
+}
+
 router.post("/assets", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -351,6 +372,11 @@ router.post("/assets", async (req, res) => {
         warning = e.message ?? "تعذّر إنشاء قيد الاقتناء";
       }
     }
+    // ── Auto catch-up depreciation: post every missing monthly run from the
+    // asset's depreciation-start month up to the last COMPLETED month. Gated
+    // on the company's auto-post flag (same switch the scheduler honours) and
+    // fully non-fatal — a failure here must never break asset creation.
+    await runDepreciationCatchUp(cid, row.id, (req as any).authUser?.id ?? null);
     res.status(201).json(warning ? { ...row, warning } : row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -382,6 +408,8 @@ router.put("/assets/:id", async (req, res) => {
     }
     const [row] = await db.update(fixedAssetsTable).set(patch)
       .where(and(eq(fixedAssetsTable.id, id), eq(fixedAssetsTable.companyId, cid))).returning();
+    // Auto catch-up depreciation on every save (idempotent, gated, non-fatal).
+    await runDepreciationCatchUp(cid, id, (req as any).authUser?.id ?? null);
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

@@ -85,6 +85,9 @@ export async function postDepreciationForCompany(
 
     const newAccum = accum + apply;
     const newBook  = Math.max(scrap, purchase - newAccum);
+    // ON CONFLICT DO NOTHING against uq_fa_dep_run_period: if a concurrent
+    // caller already inserted this period, `run` is undefined — skip without
+    // touching the asset accum/book (idempotent, no double-post).
     const [run] = await db.insert(faDepreciationRunsTable).values({
       companyId: cid, assetId: a.id,
       periodMonth: month, periodYear: year,
@@ -92,7 +95,8 @@ export async function postDepreciationForCompany(
       bookValueBefore: String((purchase - accum).toFixed(2)),
       bookValueAfter:  String(newBook.toFixed(2)),
       postedBy,
-    }).returning();
+    }).onConflictDoNothing().returning();
+    if (!run) { skipped += 1; continue; }
 
     const newStatus = newBook <= scrap + 0.01 ? "fully_depreciated" : a.status;
     await db.update(fixedAssetsTable).set({
@@ -115,6 +119,139 @@ export async function postDepreciationForCompany(
   }
 
   return { posted, skipped, jeFailed, period: { month, year } };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// CATCH-UP: post every MISSING monthly depreciation run for ONE asset, from
+// its depreciation-start month up to the last COMPLETED calendar month
+// (previous KSA month — the current month is skipped until it ends, matching
+// the auto-scheduler which only ever posts a finished period).
+// ═════════════════════════════════════════════════════════════════════════
+// Called right after an asset is created/updated so a back-dated asset
+// immediately gets all its historical monthly JEs (each month its own entry,
+// day-based, with the accumulated chain rolled forward).
+//
+// Fully idempotent + duplicate-proof: a period that already has ANY run row
+// (posted OR unposted) is skipped, so
+//   • re-saving the asset never double-posts a month, and
+//   • a month the user intentionally unposted is NOT resurrected.
+// The stored asset.accumulatedDepreciation already reflects every existing
+// run, so starting the local chain from it and skipping existing periods
+// stays consistent.
+//
+// JE build failures are non-fatal (run row stays; user retries from مركز
+// الترحيل after mapping accounts / reopening a closed period) so a save never
+// breaks. Stops once the asset is fully depreciated.
+const KSA_OFFSET_MIN = 3 * 60;
+
+// Last completed KSA calendar month = the month before "now" (KSA-local).
+function lastCompletedMonth(now: Date = new Date()): { month: number; year: number } {
+  const nk = new Date(now.getTime() + KSA_OFFSET_MIN * 60_000);
+  let year = nk.getUTCFullYear();
+  let month = nk.getUTCMonth() + 1;
+  if (month === 1) { month = 12; year -= 1; } else { month -= 1; }
+  return { month, year };
+}
+
+export async function postDepreciationCatchUpForAsset(
+  cid: number,
+  assetId: number,
+  postedBy: string | null,
+  opts: { userId?: number | null; now?: Date } = {},
+): Promise<{ posted: number; skipped: number; jeFailed: number }> {
+  const userId = opts.userId ?? null;
+
+  const [a] = await db.select().from(fixedAssetsTable)
+    .where(and(eq(fixedAssetsTable.id, assetId), eq(fixedAssetsTable.companyId, cid)));
+  if (!a) return { posted: 0, skipped: 0, jeFailed: 0 };
+  // Only active assets depreciate; a start date is required to know where the
+  // chain begins.
+  if (a.status !== "active") return { posted: 0, skipped: 0, jeFailed: 0 };
+  if (!a.depreciationStart) return { posted: 0, skipped: 0, jeFailed: 0 };
+
+  const ds = new Date(a.depreciationStart as any);
+  let y = ds.getFullYear();
+  let m = ds.getMonth() + 1;
+  if (!Number.isFinite(y) || y < 2000 || m < 1 || m > 12) {
+    return { posted: 0, skipped: 0, jeFailed: 0 };
+  }
+
+  const target = lastCompletedMonth(opts.now);
+  const purchase = Number(a.purchaseValue || 0);
+  const scrap    = Number(a.scrapValue || 0);
+  const method   = String(a.depreciationMethod || "straight_line");
+  const lifeYears = Number(a.lifeYears || 1);
+  let accum = Number(a.accumulatedDepreciation || 0);
+
+  let posted = 0, skipped = 0, jeFailed = 0;
+  // Bound the loop defensively (~50 years) against any date-math surprise.
+  let guard = 0;
+  while ((y < target.year || (y === target.year && m <= target.month)) && guard < 600) {
+    guard += 1;
+
+    // Idempotency: skip a period that already has a run row (any status).
+    const existing = await db.select({ id: faDepreciationRunsTable.id }).from(faDepreciationRunsTable)
+      .where(and(
+        eq(faDepreciationRunsTable.companyId, cid),
+        eq(faDepreciationRunsTable.assetId, assetId),
+        eq(faDepreciationRunsTable.periodMonth, m),
+        eq(faDepreciationRunsTable.periodYear, y),
+      )).limit(1);
+
+    if (existing.length > 0) {
+      skipped += 1;
+    } else {
+      const { amount: monthly } = computePeriodDepreciation({
+        purchaseValue: purchase, scrapValue: scrap, lifeYears, depreciationMethod: method,
+        depreciationStart: a.depreciationStart as any, purchaseDate: a.purchaseDate as any,
+        accumulatedDepreciation: accum,
+      }, m, y);
+      const remaining = Math.max(0, purchase - scrap - accum);
+      const apply = Number(Math.min(monthly, remaining).toFixed(2));
+
+      if (apply > 0) {
+        const newAccum = accum + apply;
+        const newBook  = Math.max(scrap, purchase - newAccum);
+        // ON CONFLICT DO NOTHING against uq_fa_dep_run_period: a concurrent
+        // save may have inserted this period between the check above and here.
+        // If so, `run` is undefined — skip WITHOUT advancing the accum chain
+        // (the other caller owns this period), so no double-post.
+        const [run] = await db.insert(faDepreciationRunsTable).values({
+          companyId: cid, assetId,
+          periodMonth: m, periodYear: y,
+          depreciationAmount: String(apply.toFixed(2)),
+          bookValueBefore: String((purchase - accum).toFixed(2)),
+          bookValueAfter:  String(newBook.toFixed(2)),
+          postedBy,
+        }).onConflictDoNothing().returning();
+        if (!run) { skipped += 1; if (m === 12) { m = 1; y += 1; } else { m += 1; } continue; }
+
+        const fully = newBook <= scrap + 0.01;
+        await db.update(fixedAssetsTable).set({
+          accumulatedDepreciation: String(newAccum.toFixed(2)),
+          bookValue: String(newBook.toFixed(2)),
+          status: (fully ? "fully_depreciated" : a.status) as any,
+          updatedAt: new Date(),
+        }).where(and(eq(fixedAssetsTable.id, assetId), eq(fixedAssetsTable.companyId, cid)));
+        accum = newAccum;
+
+        try {
+          await buildDepreciationRunJournal(cid, run.id, db, { userId });
+        } catch (e: any) {
+          jeFailed += 1;
+          logger.warn({ err: e, runId: run.id, companyId: cid, period: { m, y } }, "fa catch-up dep JE failed");
+        }
+        posted += 1;
+        if (fully) break; // nothing left to depreciate
+      } else {
+        skipped += 1;
+      }
+    }
+
+    if (m === 12) { m = 1; y += 1; } else { m += 1; }
+  }
+
+  return { posted, skipped, jeFailed };
 }
 
 // ═════════════════════════════════════════════════════════════════════════

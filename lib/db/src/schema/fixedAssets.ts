@@ -5,7 +5,7 @@
 // and insurance fields plus AI risk metadata.
 // ─────────────────────────────────────────────────────────────────────────
 import {
-  pgTable, serial, text, integer, numeric, timestamp, boolean, pgEnum, date,
+  pgTable, serial, text, integer, numeric, timestamp, boolean, pgEnum, date, uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
@@ -221,7 +221,13 @@ export const faDepreciationRunsTable = pgTable("fa_depreciation_runs", {
   // this to 'unposted' while KEEPING the row so it can be re-posted (recomputed
   // day-based). Defaults to 'posted' so all legacy rows migrate correctly.
   status:            text("status").notNull().default("posted"), // 'posted' | 'unposted'
-});
+}, (t) => ({
+  // One run per asset per calendar month — DB-level guarantee that catch-up /
+  // scheduler / manual posting can never double-post the same period, even
+  // under concurrent asset saves (the app-level existence check races). Insert
+  // paths use ON CONFLICT DO NOTHING against this constraint.
+  uqPeriod: uniqueIndex("uq_fa_dep_run_period").on(t.companyId, t.assetId, t.periodMonth, t.periodYear),
+}));
 export type FaDepreciationRun       = typeof faDepreciationRunsTable.$inferSelect;
 export type InsertFaDepreciationRun = typeof faDepreciationRunsTable.$inferInsert;
 
