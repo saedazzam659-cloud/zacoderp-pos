@@ -403,6 +403,15 @@ export default function JournalEntryForm() {
     if (!c) return value ? String(value) : "—";
     return `${c.code} — ${c.nameAr || c.nameEn || ""}`;
   };
+  // The combobox options key off `c.code`, but system-generated JEs
+  // (fa-journals depreciation, production, contracting) store the numeric
+  // id on the line. Normalize whatever is stored to the CODE so the picker
+  // shows the selected centre in view/edit mode too (it already resolved in
+  // print + tooltip via findCc). Falls through unchanged when unresolved.
+  const ccCode = (value: any) => {
+    const c = findCc(value);
+    return c ? String(c.code) : (value == null ? "" : String(value));
+  };
 
   useEffect(() => {
     if (!existing) return;
@@ -2059,7 +2068,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                               <div className="w-full">
                                 <SearchCombobox
                                   items={costCenterOptions}
-                                  value={line.costCenter}
+                                  value={ccCode(line.costCenter)}
                                   onValueChange={(v) => updateLine(line.id, "costCenter", v)}
                                   placeholder="— مركز التكلفة —"
                                 />
