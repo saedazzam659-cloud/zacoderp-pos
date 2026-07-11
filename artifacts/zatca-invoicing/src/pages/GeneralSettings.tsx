@@ -16,7 +16,7 @@ import {
   Wand2, PanelTop, PanelRight, Scale,
   Archive, Cloud, HardDrive, Ban,
   LayoutTemplate, LayoutGrid, LayoutList,
-  Mail, Send, ShieldAlert
+  Mail, Send, ShieldAlert, MessageCircle
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -590,6 +590,11 @@ export default function GeneralSettings() {
     autoBackupEmailEnabled?: boolean;
     backupEmailPending?: string | null;
     emailTransportReady?: boolean;
+    backupWhatsapp?: string | null;
+    backupWhatsappVerified?: boolean;
+    autoBackupWhatsappEnabled?: boolean;
+    backupWhatsappPending?: string | null;
+    whatsappTransportReady?: boolean;
   };
   const [autoSettings, setAutoSettings] = useState<BackupSettings | null>(null);
   const [autoSnapshots, setAutoSnapshots] = useState<any[]>([]);
@@ -607,6 +612,12 @@ export default function GeneralSettings() {
   const [emailBusy, setEmailBusy] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
+  // whatsapp form
+  const [waInput, setWaInput] = useState("");
+  const [waOtp, setWaOtp] = useState("");
+  const [waOtpSent, setWaOtpSent] = useState(false);
+  const [waBusy, setWaBusy] = useState(false);
+  const [sendingWa, setSendingWa] = useState(false);
 
   const BACKUP_UNIT_KEYS = ["minutes", "hours", "days", "weeks", "months"] as const;
 
@@ -775,6 +786,105 @@ export default function GeneralSettings() {
       toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
     } finally {
       setSendingEmail(false);
+    }
+  }
+
+  async function handleRequestWaOtp() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setWaBusy(true);
+    try {
+      const res = await fetch(`${API}/api/backup/whatsapp/request`, {
+        method: "POST", headers,
+        body: JSON.stringify({ companyId: cid, phone: waInput.trim() }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      setWaOtpSent(true);
+      setWaOtp("");
+      toast({ title: t("pages.generalSettings.waOtpSent") });
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setWaBusy(false);
+    }
+  }
+
+  async function handleVerifyWaOtp() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setWaBusy(true);
+    try {
+      const res = await fetch(`${API}/api/backup/whatsapp/verify`, {
+        method: "POST", headers,
+        body: JSON.stringify({ companyId: cid, code: waOtp.trim() }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      setWaOtpSent(false);
+      setWaOtp("");
+      setWaInput("");
+      toast({ title: t("pages.generalSettings.waVerified") });
+      await loadAutoBackup();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setWaBusy(false);
+    }
+  }
+
+  async function handleDisableWa() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    if (!window.confirm(t("pages.generalSettings.confirmUnlinkWa"))) return;
+    setWaBusy(true);
+    try {
+      const res = await fetch(`${API}/api/backup/whatsapp/disable`, {
+        method: "POST", headers, body: JSON.stringify({ companyId: cid }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      setWaOtpSent(false); setWaOtp(""); setWaInput("");
+      toast({ title: t("pages.generalSettings.waUnlinked") });
+      await loadAutoBackup();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setWaBusy(false);
+    }
+  }
+
+  async function handleToggleWaDelivery(next: boolean) {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    try {
+      const res = await fetch(`${API}/api/backup/auto/settings`, {
+        method: "POST", headers,
+        body: JSON.stringify({ companyId: cid, autoBackupWhatsappEnabled: next }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      await loadAutoBackup();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    }
+  }
+
+  async function handleSendWaNow() {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) return;
+    setSendingWa(true);
+    try {
+      const res = await fetch(`${API}/api/backup/whatsapp/send-now`, {
+        method: "POST", headers, body: JSON.stringify({ companyId: cid }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.saveFailed"));
+      toast({ title: t("pages.generalSettings.waSent") });
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.saveFailed"), variant: "destructive" });
+    } finally {
+      setSendingWa(false);
     }
   }
 
@@ -1934,6 +2044,122 @@ export default function GeneralSettings() {
                       onClick={() => { setOtpSent(false); setEmailOtp(""); }}
                     >
                       {t("pages.generalSettings.changeEmail")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ─── WhatsApp (cloud) destination card ──────────────────────── */}
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-lg bg-green-100 text-green-700 flex items-center justify-center shrink-0">
+                <MessageCircle className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-sm">{t("pages.generalSettings.waDestTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{t("pages.generalSettings.waDestDesc")}</p>
+              </div>
+            </div>
+
+            {autoSettings && autoSettings.whatsappTransportReady === false && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 inline-flex items-center gap-1">
+                <ShieldAlert className="h-3 w-3" />
+                {t("pages.generalSettings.waTransportMissing")}
+              </p>
+            )}
+
+            {/* Verified state */}
+            {autoSettings?.backupWhatsappVerified && autoSettings?.backupWhatsapp ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border bg-green-50/50 px-3 py-2">
+                  <span className="flex items-center gap-2 text-sm">
+                    <ShieldCheck className="h-4 w-4 text-green-600" />
+                    <span className="font-medium" dir="ltr">{autoSettings.backupWhatsapp}</span>
+                  </span>
+                  <span className="text-[10px] rounded-full bg-green-600 text-white px-2 py-0.5">
+                    {t("pages.generalSettings.verified")}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={!!autoSettings.autoBackupWhatsappEnabled}
+                    onCheckedChange={handleToggleWaDelivery}
+                  />
+                  <span className="text-xs">{t("pages.generalSettings.waDeliveryToggle")}</span>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button" size="sm" variant="outline" onClick={handleSendWaNow} disabled={sendingWa}
+                    className="gap-1.5"
+                  >
+                    {sendingWa ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                    {t("pages.generalSettings.sendWaNow")}
+                  </Button>
+                  <Button
+                    type="button" size="sm" variant="ghost" onClick={handleDisableWa} disabled={waBusy}
+                    className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <Ban className="h-3.5 w-3.5" />
+                    {t("pages.generalSettings.unlinkWa")}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              /* Linking flow */
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("pages.generalSettings.waPhoneLabel")}</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="tel" dir="ltr" placeholder="9665XXXXXXXX"
+                      value={waInput}
+                      onChange={(e) => setWaInput(e.target.value)}
+                      disabled={waOtpSent || waBusy}
+                    />
+                    <Button
+                      type="button" size="sm" onClick={handleRequestWaOtp}
+                      disabled={waBusy || !waInput.trim() || waOtpSent}
+                      className="gap-1.5 bg-green-600 hover:bg-green-700 shrink-0"
+                    >
+                      {waBusy && !waOtpSent ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
+                      {t("pages.generalSettings.sendOtp")}
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{t("pages.generalSettings.waPhoneHint")}</p>
+                </div>
+
+                {waOtpSent && (
+                  <div className="space-y-1.5 rounded-lg border bg-muted/20 p-3">
+                    <Label className="text-xs">{t("pages.generalSettings.enterOtpLabel")}</Label>
+                    <p className="text-[11px] text-muted-foreground">{t("pages.generalSettings.waOtpHint")}</p>
+                    <div className="flex gap-2">
+                      <Input
+                        type="text" inputMode="numeric" dir="ltr" maxLength={6}
+                        placeholder="______"
+                        className="tracking-[0.5em] text-center font-mono"
+                        value={waOtp}
+                        onChange={(e) => setWaOtp(e.target.value.replace(/[^\d]/g, "").slice(0, 6))}
+                        disabled={waBusy}
+                      />
+                      <Button
+                        type="button" size="sm" onClick={handleVerifyWaOtp}
+                        disabled={waBusy || waOtp.length !== 6}
+                        className="gap-1.5 bg-green-600 hover:bg-green-700 shrink-0"
+                      >
+                        {waBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                        {t("pages.generalSettings.verifyOtp")}
+                      </Button>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-[11px] text-sky-700 hover:underline"
+                      onClick={() => { setWaOtpSent(false); setWaOtp(""); }}
+                    >
+                      {t("pages.generalSettings.changeWa")}
                     </button>
                   </div>
                 )}

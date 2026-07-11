@@ -15,7 +15,11 @@ import { writeAudit } from "../middleware/permissions.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { sendEmail, emailConfigured } from "../lib/email.js";
-import { randomInt, createHash } from "node:crypto";
+import {
+  whatsappConfigured, normalizeWhatsappPhone,
+  sendWhatsappOtp, sendWhatsappBackupNotice,
+} from "../lib/whatsapp.js";
+import { randomInt, createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /* ─── Auto-backup schedule + email helpers ──────────────────────────────────
@@ -54,6 +58,49 @@ const OTP_RESEND_COOLDOWN_MS = 60_000; // min gap between OTP sends (anti-flood)
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const newOtp = () => String(randomInt(0, 1_000_000)).padStart(6, "0");
 const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+// ─── Signed, time-limited download links (for the WhatsApp destination) ──────
+// A WhatsApp recipient clicking a link on their phone has NO app session, so
+// the auth-guarded /auto/:id/download can't serve them. Instead we mint an
+// HMAC-signed link (keyed off SESSION_SECRET) that a PUBLIC route validates.
+// The signature IS the authorization — no login required, valid until expiry.
+const SIGNED_DL_TTL_MS = Number(process.env.WHATSAPP_LINK_TTL_HOURS) > 0
+  ? Number(process.env.WHATSAPP_LINK_TTL_HOURS) * 3_600_000
+  : 7 * 24 * 3_600_000; // default 7 days
+
+function signBackupDownload(id: number, expMs: number): string {
+  const sig = createHmac("sha256", process.env.SESSION_SECRET || "")
+    .update(`bkp.${id}.${expMs}`).digest("base64url");
+  return `${expMs}.${sig}`;
+}
+function verifyBackupDownload(id: number, token: string): boolean {
+  const [expStr, sig = ""] = String(token).split(".");
+  const expMs = Number(expStr);
+  if (!Number.isFinite(expMs) || expMs < Date.now()) return false;
+  const expected = createHmac("sha256", process.env.SESSION_SECRET || "")
+    .update(`bkp.${id}.${expMs}`).digest("base64url");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function buildSignedDownloadUrl(id: number, baseUrl: string): string {
+  const expMs = Date.now() + SIGNED_DL_TTL_MS;
+  const token = signBackupDownload(id, expMs);
+  return `${baseUrl.replace(/\/$/, "")}/api/backup/auto/${id}/signed-download?token=${encodeURIComponent(token)}`;
+}
+
+// Best-effort public origin: prefer the proxied request headers, else the first
+// published domain. Used to build absolute links the scheduler (no req) can send.
+function backupPublicBaseUrl(req?: any): string {
+  if (req?.headers) {
+    const proto = ((req.headers["x-forwarded-proto"] as string) || "https").split(",")[0].trim();
+    const host = ((req.headers["x-forwarded-host"] as string) || (req.headers.host as string) || "");
+    if (host) return `${proto}://${host}`;
+  }
+  const domains = (process.env.REPLIT_DOMAINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (domains.length) return `https://${domains[0]}`;
+  return "";
+}
 
 /**
  * If the company has a VERIFIED backup email AND email delivery is enabled,
@@ -109,6 +156,56 @@ async function maybeEmailSnapshot(companyId: number, payload: any): Promise<bool
 }
 
 /**
+ * Send a WhatsApp text notification with a signed download link for a snapshot.
+ * Best-effort: never throws so a WhatsApp outage can't abort the snapshot.
+ */
+async function deliverSnapshotWhatsapp(
+  companyId: number,
+  companyName: string | null,
+  toPhone: string,
+  payload: any,
+  snapshotId: number,
+  baseUrl: string,
+): Promise<boolean> {
+  try {
+    if (!whatsappConfigured()) return false;
+    if (!baseUrl) {
+      console.error(`[auto-backup] no public base URL for whatsapp link (company ${companyId})`);
+      return false;
+    }
+    const downloadUrl = buildSignedDownloadUrl(snapshotId, baseUrl);
+    const countsSummary = Object.entries(payload?.counts ?? {})
+      .filter(([, n]) => (n as number) > 0)
+      .map(([k, n]) => `${k}: ${n as number}`)
+      .join("، ") || "—";
+    const dateStr = new Date().toLocaleString("ar-EG");
+    const r = await sendWhatsappBackupNotice(toPhone, {
+      companyName: companyName ?? `#${companyId}`,
+      dateStr, countsSummary, downloadUrl,
+    });
+    if (!r.ok) console.error(`[auto-backup] whatsapp delivery failed for company ${companyId}: ${r.reason}`);
+    return r.ok;
+  } catch (e: any) {
+    console.error(`[auto-backup] whatsapp delivery error for company ${companyId}:`, e?.message ?? e);
+    return false;
+  }
+}
+
+/** Gate on opt-in (enabled + verified) then deliver the WhatsApp notification. */
+async function maybeWhatsappSnapshot(
+  companyId: number, payload: any, snapshotId: number, baseUrl: string,
+): Promise<boolean> {
+  const [c] = await db.select({
+    name: companiesTable.nameAr,
+    phone: companiesTable.backupWhatsapp,
+    verified: companiesTable.backupWhatsappVerified,
+    enabled: companiesTable.autoBackupWhatsappEnabled,
+  }).from(companiesTable).where(eq(companiesTable.id, companyId));
+  if (!c || !c.enabled || !c.verified || !c.phone) return false;
+  return deliverSnapshotWhatsapp(companyId, c.name ?? null, c.phone, payload, snapshotId, baseUrl);
+}
+
+/**
  * Helper: when a superadmin operates against a tenant from cross-tenant tools
  * (e.g. the Backup Operations Center), we want the action recorded in the
  * audit log even though tenant-side users would normally see this without
@@ -159,7 +256,26 @@ const router = Router();
     }
     return (__nativeFetch as any)(input, init);
   }
-  
+
+/* ─── PUBLIC (pre-auth): GET /auto/:id/signed-download?token=… ──────────────
+ * Streams one snapshot as a JSON file when the HMAC token validates. The
+ * WhatsApp notification links here so the recipient can download from a phone
+ * without an app login. Registered BEFORE extractAuth so it stays public. */
+router.get("/auto/:id/signed-download", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const token = String(req.query.token ?? "");
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+    if (!verifyBackupDownload(id, token)) { res.status(403).json({ error: "رابط غير صالح أو منتهي الصلاحية" }); return; }
+    const [row] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="backup-company-${row.companyId}-${stamp}.json"`);
+    res.send(JSON.stringify(row.data, null, 2));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.use(extractAuth);
 router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
@@ -519,7 +635,8 @@ export async function buildSnapshot(companyId: number): Promise<{ payload: any; 
 export async function persistSnapshot(
   companyId: number,
   reason: "scheduled" | "manual",
-  deliverEmail = false,
+  deliverCloud = false,
+  baseUrl = "",
 ): Promise<number> {
   const { payload, counts } = await buildSnapshot(companyId);
   const sizeBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
@@ -546,10 +663,12 @@ export async function persistSnapshot(
     .set({ lastAutoBackupAt: new Date() })
     .where(eq(companiesTable.id, companyId));
 
-  // Deliver to the cloud (email) destination when the caller asked for it and
-  // the company opted in. Best-effort — a mail failure never fails the backup.
-  if (deliverEmail) {
+  // Deliver to the cloud destinations (email + WhatsApp) when the caller asked
+  // for it and the company opted in. Best-effort — a delivery failure never
+  // fails the backup. WhatsApp needs the persisted snapshot id for its link.
+  if (deliverCloud) {
     await maybeEmailSnapshot(companyId, payload).catch(() => {});
+    await maybeWhatsappSnapshot(companyId, payload, row.id, baseUrl || backupPublicBaseUrl()).catch(() => {});
   }
 
   return row.id;
@@ -584,12 +703,16 @@ router.get("/auto/list", async (req, res) => {
       backupEmailVerified: companiesTable.backupEmailVerified,
       autoBackupEmailEnabled: companiesTable.autoBackupEmailEnabled,
       backupEmailPending: companiesTable.backupEmailPending,
+      backupWhatsapp: companiesTable.backupWhatsapp,
+      backupWhatsappVerified: companiesTable.backupWhatsappVerified,
+      autoBackupWhatsappEnabled: companiesTable.autoBackupWhatsappEnabled,
+      backupWhatsappPending: companiesTable.backupWhatsappPending,
     }).from(companiesTable).where(eq(companiesTable.id, companyId));
 
-    // Surface whether ANY email transport is configured so the UI can warn the
-    // operator that the cloud destination won't deliver until SMTP/Outlook is set.
+    // Surface whether each transport is configured so the UI can warn the
+    // operator that a destination won't deliver until the server is set up.
     const settings = company
-      ? { ...company, emailTransportReady: emailConfigured() }
+      ? { ...company, emailTransportReady: emailConfigured(), whatsappTransportReady: whatsappConfigured() }
       : null;
 
     if (isCrossTenantSuperadmin(req)) {
@@ -737,6 +860,15 @@ router.post("/auto/settings", async (req, res) => {
         if (!c?.verified) { res.status(400).json({ error: "يجب توثيق البريد الإلكتروني أولاً" }); return; }
       }
       patch.autoBackupEmailEnabled = req.body.autoBackupEmailEnabled;
+    }
+    if (typeof req.body.autoBackupWhatsappEnabled === "boolean") {
+      // Only allow enabling WhatsApp delivery once the number is verified.
+      if (req.body.autoBackupWhatsappEnabled) {
+        const [c] = await db.select({ verified: companiesTable.backupWhatsappVerified })
+          .from(companiesTable).where(eq(companiesTable.id, companyId));
+        if (!c?.verified) { res.status(400).json({ error: "يجب توثيق رقم الواتساب أولاً" }); return; }
+      }
+      patch.autoBackupWhatsappEnabled = req.body.autoBackupWhatsappEnabled;
     }
     if (!Object.keys(patch).length) { res.status(400).json({ error: "لا توجد تغييرات" }); return; }
 
@@ -926,6 +1058,151 @@ router.post("/email/send-now", async (req, res) => {
       success: true, message: `إرسال نسخة احتياطية بالبريد للشركة #${companyId} (${c.email})`,
     });
     res.json({ ok: true, email: c.email });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * WhatsApp (cloud) destination — secure linking via OTP verification, mirrors
+ * the email flow. A number never becomes active until an OTP sent to it (via a
+ * Meta-approved template) is confirmed. Delivery is a TEXT notification with a
+ * signed, time-limited download link — the file itself is never attached.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+/* ─── POST /whatsapp/request ─── send an OTP to the number to be linked ─────── */
+router.post("/whatsapp/request", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const phone = normalizeWhatsappPhone(String(req.body.phone ?? ""));
+    if (!phone) { res.status(400).json({ error: "رقم واتساب غير صالح" }); return; }
+    if (!whatsappConfigured()) { res.status(503).json({ error: "خدمة الواتساب غير مهيأة على الخادم" }); return; }
+
+    // Anti-flood: refuse a resend within the cooldown window.
+    const [prev] = await db.select({ expiresAt: companiesTable.backupWhatsappOtpExpiresAt })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (prev?.expiresAt) {
+      const lastSentMs = new Date(prev.expiresAt).getTime() - OTP_TTL_MS;
+      const waitMs = OTP_RESEND_COOLDOWN_MS - (Date.now() - lastSentMs);
+      if (waitMs > 0) {
+        res.status(429).json({ error: "يرجى الانتظار قبل طلب رمز جديد", retryAfterSec: Math.ceil(waitMs / 1000) });
+        return;
+      }
+    }
+
+    const code = newOtp();
+    await db.update(companiesTable).set({
+      backupWhatsappPending: phone,
+      backupWhatsappOtpHash: sha256(code),
+      backupWhatsappOtpExpiresAt: new Date(Date.now() + OTP_TTL_MS),
+      backupWhatsappOtpAttempts: 0,
+    }).where(eq(companiesTable.id, companyId));
+
+    const r = await sendWhatsappOtp(phone, code);
+    if (!r.ok) { res.status(502).json({ error: "تعذّر إرسال رمز التحقق عبر الواتساب" }); return; }
+
+    await writeAudit({
+      userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "edit",
+      success: true, message: `طلب توثيق واتساب النسخ الاحتياطية للشركة #${companyId}`,
+    });
+    res.json({ ok: true, expiresInSec: OTP_TTL_MS / 1000 });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /whatsapp/verify ─── confirm the OTP → activate the number ───────── */
+router.post("/whatsapp/verify", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const code = String(req.body.code ?? "").trim();
+    if (!/^\d{6}$/.test(code)) { res.status(400).json({ error: "رمز غير صالح" }); return; }
+
+    const [c] = await db.select({
+      pending: companiesTable.backupWhatsappPending,
+      hash: companiesTable.backupWhatsappOtpHash,
+      expiresAt: companiesTable.backupWhatsappOtpExpiresAt,
+      attempts: companiesTable.backupWhatsappOtpAttempts,
+    }).from(companiesTable).where(eq(companiesTable.id, companyId));
+
+    if (!c?.pending || !c.hash || !c.expiresAt) { res.status(400).json({ error: "لا يوجد طلب توثيق نشط" }); return; }
+    if (new Date(c.expiresAt).getTime() < Date.now()) { res.status(400).json({ error: "انتهت صلاحية الرمز، أعد الإرسال" }); return; }
+    if ((c.attempts ?? 0) >= OTP_MAX_ATTEMPTS) { res.status(429).json({ error: "محاولات كثيرة، أعد إرسال رمز جديد" }); return; }
+
+    if (sha256(code) !== c.hash) {
+      await db.update(companiesTable)
+        .set({ backupWhatsappOtpAttempts: (c.attempts ?? 0) + 1 })
+        .where(eq(companiesTable.id, companyId));
+      res.status(400).json({ error: "الرمز غير صحيح" });
+      return;
+    }
+
+    await db.update(companiesTable).set({
+      backupWhatsapp: c.pending,
+      backupWhatsappVerified: true,
+      autoBackupWhatsappEnabled: true,        // linking implies wanting delivery
+      backupWhatsappPending: null,
+      backupWhatsappOtpHash: null,
+      backupWhatsappOtpExpiresAt: null,
+      backupWhatsappOtpAttempts: 0,
+    }).where(eq(companiesTable.id, companyId));
+
+    await writeAudit({
+      userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "edit",
+      success: true, message: `توثيق واتساب النسخ الاحتياطية (${c.pending}) للشركة #${companyId}`,
+    });
+    res.json({ ok: true, phone: c.pending });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /whatsapp/disable ─── unlink the WhatsApp destination ───────────── */
+router.post("/whatsapp/disable", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    await db.update(companiesTable).set({
+      backupWhatsapp: null,
+      backupWhatsappVerified: false,
+      autoBackupWhatsappEnabled: false,
+      backupWhatsappPending: null,
+      backupWhatsappOtpHash: null,
+      backupWhatsappOtpExpiresAt: null,
+      backupWhatsappOtpAttempts: 0,
+    }).where(eq(companiesTable.id, companyId));
+    await writeAudit({
+      userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "edit",
+      success: true, message: `إلغاء ربط واتساب النسخ الاحتياطية للشركة #${companyId}`,
+    });
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /whatsapp/send-now ─── snapshot now + WhatsApp the download link ── */
+router.post("/whatsapp/send-now", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const [c] = await db.select({
+      name: companiesTable.nameAr,
+      phone: companiesTable.backupWhatsapp,
+      verified: companiesTable.backupWhatsappVerified,
+    }).from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!c?.verified || !c.phone) { res.status(400).json({ error: "لا يوجد رقم واتساب موثّق" }); return; }
+    if (!whatsappConfigured()) { res.status(503).json({ error: "خدمة الواتساب غير مهيأة على الخادم" }); return; }
+
+    // WhatsApp links to a PERSISTED snapshot, so take one now and link to it.
+    const id = await persistSnapshot(companyId, "manual");
+    const [row] = await db.select({ data: autoBackupsTable.data }).from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    const sent = await deliverSnapshotWhatsapp(companyId, c.name ?? null, c.phone, row?.data, id, backupPublicBaseUrl(req));
+    if (!sent) { res.status(502).json({ error: "تعذّر إرسال الإشعار عبر الواتساب" }); return; }
+
+    await writeAudit({
+      userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "create",
+      success: true, message: `إرسال إشعار نسخة احتياطية بالواتساب للشركة #${companyId} (${c.phone})`,
+    });
+    res.json({ ok: true, phone: c.phone });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

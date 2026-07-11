@@ -246,6 +246,18 @@ export const companiesTable = pgTable("companies", {
   backupEmailOtpHash:       text("backup_email_otp_hash"),
   backupEmailOtpExpiresAt:  timestamp("backup_email_otp_expires_at", { withTimezone: true }),
   backupEmailOtpAttempts:   integer("backup_email_otp_attempts").notNull().default(0),
+
+  // WhatsApp (cloud) backup destination — mirrors the 7 email cols above. A
+  // number never becomes an active destination until an OTP sent to it (via a
+  // Meta-approved template) is confirmed. The scheduler sends a text
+  // notification with a signed, time-limited download link (never the file).
+  backupWhatsapp:              text("backup_whatsapp"),
+  backupWhatsappVerified:      boolean("backup_whatsapp_verified").notNull().default(false),
+  autoBackupWhatsappEnabled:   boolean("auto_backup_whatsapp_enabled").notNull().default(false),
+  backupWhatsappPending:       text("backup_whatsapp_pending"),
+  backupWhatsappOtpHash:       text("backup_whatsapp_otp_hash"),
+  backupWhatsappOtpExpiresAt:  timestamp("backup_whatsapp_otp_expires_at", { withTimezone: true }),
+  backupWhatsappOtpAttempts:   integer("backup_whatsapp_otp_attempts").notNull().default(0),
   // Registration workflow
   status: text("status").notNull().default("active"), // pending | active | rejected
   rejectionReason: text("rejection_reason"),
