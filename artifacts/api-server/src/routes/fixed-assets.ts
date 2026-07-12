@@ -1017,13 +1017,15 @@ router.get("/reports/movement-schedule", async (req, res) => {
       const disposedInPeriod = !!dispDate && dispDate >= from && dispDate <= to;
       if (disposedBefore) continue;
 
-      // رصيد أول (opening) is reserved for assets entered via the opening-balance
-      // tool (is_opening_balance). Every other registered asset — regardless of its
-      // purchase date — is reported as an addition (إضافات). Disposals in the period
-      // still reduce the balance via exclusions.
+      // رصيد أول (opening) = opening-balance-tool assets (is_opening_balance)
+      // PLUS any asset acquired BEFORE the report period start — an asset bought
+      // in 2025 must roll into رصيد أول when viewing 2026, not repeat as an
+      // addition every year. إضافات (additions) = assets acquired WITHIN the
+      // period (or with no purchase date and no flag — never silently dropped).
+      // Disposals in the period still reduce the balance via exclusions.
       const isOpeningBalanceAsset = coerceBool((a as any).isOpeningBalance);
       const cost: Move = { opening: 0, additions: 0, exclusions: 0 };
-      if (isOpeningBalanceAsset) cost.opening = pv;
+      if (isOpeningBalanceAsset || acquiredBefore) cost.opening = pv;
       else cost.additions = pv;
       if (disposedInPeriod) cost.exclusions = pv;
       const costClosing = cost.opening + cost.additions - cost.exclusions;
