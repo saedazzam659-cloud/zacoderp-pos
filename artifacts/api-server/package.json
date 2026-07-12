@@ -20,6 +20,7 @@
     "@workspace/db": "workspace:*",
     "@xmldom/xmldom": "^0.9.10",
     "bcryptjs": "^3.0.3",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
     "drizzle-kit": "^0.31.9",
@@ -41,6 +42,7 @@
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@types/bcryptjs": "^3.0.0",
+    "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",

@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import compression from "compression";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import { eq, asc, desc } from "drizzle-orm";
@@ -190,6 +191,20 @@ app.use(
   }),
 );
 app.use(cors());
+// Gzip every JSON/text response. Data-heavy tenants pull multi-hundred-KB
+// list payloads (journal entries, invoices, audit grids) — without this the
+// raw JSON crosses the wire uncompressed and the list screens feel slow on
+// production even when the DB answers in milliseconds. SSE streams
+// (Accept: text/event-stream, e.g. the realtime session-events channel)
+// are excluded: compression buffers chunks and would stall event delivery.
+app.use(
+  compression({
+    filter: (req, res) => {
+      if ((req.headers.accept ?? "").includes("text/event-stream")) return false;
+      return compression.filter(req, res);
+    },
+  }),
+);
 // Bumped from 100kb default so the Settings → Data Import/Export wizard
 // can post realistic Excel/CSV payloads (5k–20k rows ≈ several MB of JSON).
 app.use(express.json({ limit: "25mb" }));
