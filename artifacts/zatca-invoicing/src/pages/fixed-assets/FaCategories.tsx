@@ -195,14 +195,15 @@ export default function FaCategories() {
               <th className="px-3 py-2 text-start font-semibold">الاسم</th>
               <th className="px-3 py-2 text-start font-semibold">العمر (سنوات)</th>
               <th className="px-3 py-2 text-start font-semibold">طريقة الإهلاك</th>
+              <th className="px-3 py-2 text-start font-semibold">قيمة الخردة</th>
               <th className="px-3 py-2 text-start font-semibold">نسبة الخردة</th>
               <th className="px-3 py-2 text-start font-semibold">الحالة</th>
               <th className="px-3 py-2 text-center font-semibold w-24">إجراءات</th>
             </tr>
           </thead>
           <tbody className="divide-y">
-            {isLoading && <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
-            {!isLoading && rows.length===0 && <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">لا توجد فئات</td></tr>}
+            {isLoading && <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
+            {!isLoading && rows.length===0 && <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">لا توجد فئات</td></tr>}
             {rows.map(c => (
               <tr key={c.id} className="hover:bg-amber-50/40">
                 <td className="px-3 py-2 font-mono">{c.code}</td>
@@ -210,7 +211,14 @@ export default function FaCategories() {
                 {/* numeric DB columns arrive as strings like "10.0000" — Number() trims the zeros */}
                 <td className="px-3 py-2">{Number(c.defaultLifeYears)}</td>
                 <td className="px-3 py-2">{methodLabel(c.defaultDepreciationMethod)}</td>
-                <td className="px-3 py-2">{Number(c.defaultScrapRate)}%</td>
+                <td className="px-3 py-2" dir="ltr">
+                  {c.defaultScrapType === "value"
+                    ? Number(c.defaultScrapRate).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : "—"}
+                </td>
+                <td className="px-3 py-2" dir="ltr">
+                  {c.defaultScrapType === "value" ? "—" : `${Number(c.defaultScrapRate)}%`}
+                </td>
                 <td className="px-3 py-2">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${c.isActive ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
                     {c.isActive ? "نشطة" : "متوقفة"}
