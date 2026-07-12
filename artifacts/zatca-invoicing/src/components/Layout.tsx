@@ -880,7 +880,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   purchasing:  ["purchasing", "purchases_module", "purchases_reports", "suppliers"],
   cash:        ["cash", "cash_module", "cash_reports"],
   accounting:  ["accounting", "accounts", "accounting_reports", "accounting_maintenance"],
-  hr:          ["hr", "hr_module"],
+  hr:          ["hr", "hr_module", "hr_employees", "hr_attendance", "hr_face_attendance", "hr_loans", "hr_payroll", "hr_eos", "hr_calculators", "hr_settings"],
   production:  ["production"],
   safety:      ["safety", "safety_dashboard", "safety_risk", "safety_incidents"],
   contracting: ["contracting"],
