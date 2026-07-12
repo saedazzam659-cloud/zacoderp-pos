@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { accountsTable } from "@workspace/db";
+import { accountsTable, journalEntryLinesTable, suppliersTable, customersTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -197,10 +197,48 @@ router.put("/:id", async (req, res) => {
 });
 
 // ─── DELETE ───────────────────────────────────────────────────────────────────
+// Guarded: refuse to delete an account that is still referenced. Deleting a
+// referenced account silently strands the referencing rows (suppliers/customers
+// whose account_id dangles → "الربط المحاسبي لا يعمل", JE lines pointing at a
+// ghost account, orphaned child accounts). 409 with a clear reason instead.
 router.delete("/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+
+    const [acc] = await db.select().from(accountsTable)
+      .where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid)));
+    if (!acc) { res.status(404).json({ error: "الحساب غير موجود" }); return; }
+
+    const [children, jeLines, linkedSuppliers, linkedCustomers] = await Promise.all([
+      db.select({ id: accountsTable.id }).from(accountsTable)
+        .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.parentId, id))).limit(1),
+      db.select({ id: journalEntryLinesTable.id }).from(journalEntryLinesTable)
+        .where(eq(journalEntryLinesTable.accountId, id)).limit(1),
+      db.select({ id: suppliersTable.id, nameAr: suppliersTable.nameAr }).from(suppliersTable)
+        .where(and(eq(suppliersTable.companyId, cid), eq(suppliersTable.accountId, id))).limit(1),
+      db.select({ id: customersTable.id, nameAr: customersTable.nameAr }).from(customersTable)
+        .where(and(eq(customersTable.companyId, cid), eq(customersTable.accountId, id))).limit(1),
+    ]);
+
+    if (children.length) {
+      res.status(409).json({ error: "لا يمكن حذف الحساب — لديه حسابات فرعية. احذف أو انقل الحسابات الفرعية أولاً" });
+      return;
+    }
+    if (jeLines.length) {
+      res.status(409).json({ error: "لا يمكن حذف الحساب — مستخدم في قيود يومية. يمكنك إيقاف تفعيله بدلاً من حذفه" });
+      return;
+    }
+    if (linkedSuppliers.length) {
+      res.status(409).json({ error: `لا يمكن حذف الحساب — مرتبط بالمورد «${linkedSuppliers[0].nameAr ?? ""}». افصل الربط من شاشة الموردين أولاً` });
+      return;
+    }
+    if (linkedCustomers.length) {
+      res.status(409).json({ error: `لا يمكن حذف الحساب — مرتبط بالعميل «${linkedCustomers[0].nameAr ?? ""}». افصل الربط من شاشة العملاء أولاً` });
+      return;
+    }
+
     await db.delete(accountsTable).where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }

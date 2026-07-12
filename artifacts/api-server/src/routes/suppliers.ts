@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { branchesTable } from "@workspace/db";
 import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
-  journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
+  journalEntriesTable, journalEntryLinesTable, accountsTable } from "@workspace/db";
 import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -274,6 +274,49 @@ router.post("/import", async (req, res) => {
   }
 });
 
+/* POST /api/suppliers/repair-accounts
+   Re-links suppliers whose account_id is NULL or points at a DELETED account
+   (historically possible before the accounts DELETE guard). For each broken
+   supplier we re-mint (or idempotently reuse a same-name sibling) an AP
+   sub-account under the suppliers parent. Registered BEFORE "/:id". */
+router.post("/repair-accounts", async (req, res) => {
+  try {
+    const rawCompanyId = req.query.companyId ? parseInt(req.query.companyId as string) : undefined;
+    const cid = resolveCompanyId(req, rawCompanyId);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+
+    const [allSuppliers, allAccounts] = await Promise.all([
+      db.select().from(suppliersTable).where(eq(suppliersTable.companyId, cid)),
+      db.select({ id: accountsTable.id }).from(accountsTable).where(eq(accountsTable.companyId, cid)),
+    ]);
+    const accountIds = new Set(allAccounts.map(a => a.id));
+    const broken = allSuppliers.filter(s => s.accountId == null || !accountIds.has(s.accountId));
+
+    let repaired = 0, failed = 0;
+    const details: { id: number; nameAr: string | null; accountId: number | null }[] = [];
+    for (const s of broken) {
+      const name = (s.nameAr ?? "").trim();
+      if (!name) { failed++; continue; }
+      try {
+        const newAccId = await ensureSupplierAccount(cid, name);
+        if (newAccId) {
+          await db.update(suppliersTable).set({ accountId: newAccId }).where(eq(suppliersTable.id, s.id));
+          repaired++;
+          details.push({ id: s.id, nameAr: s.nameAr, accountId: newAccId });
+        } else {
+          failed++;
+        }
+      } catch (err) {
+        console.error(`repair-accounts: supplier ${s.id} failed:`, err);
+        failed++;
+      }
+    }
+    res.json({ checked: allSuppliers.length, broken: broken.length, repaired, failed, details });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "فشل إصلاح الربط المحاسبي" });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   const id = parseInt(req.params.id);
   const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
@@ -314,6 +357,30 @@ router.put("/:id", async (req, res) => {
     if (!b) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
   }
 
+  // Resolve the final accountId. Never silently NULL the link on edit:
+  //  - explicit accountId from the form wins;
+  //  - otherwise keep the existing link IF its account still exists;
+  //  - otherwise (never linked, or the linked account was deleted) re-mint
+  //    an AP sub-account — same behaviour as create.
+  let accountId: number | null = data.accountId ? Number(data.accountId) : null;
+  if (!accountId && existing.accountId != null) {
+    const [still] = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, existing.accountId), eq(accountsTable.companyId, existing.companyId)));
+    if (still) accountId = existing.accountId;
+  }
+  if (!accountId) {
+    const supplierCategory: SupplierCategory | undefined =
+      data.accountCategory === "foreign" ? "foreign"
+      : data.accountCategory === "local" ? "local"
+      : undefined;
+    try {
+      accountId = await ensureSupplierAccount(existing.companyId, String(data.nameAr ?? existing.nameAr ?? "").trim(), supplierCategory);
+    } catch (err) {
+      console.error("ensureSupplierAccount (PUT) failed:", err);
+      accountId = null;
+    }
+  }
+
   const [supplier] = await db.update(suppliersTable).set({
     code: data.code ?? null,
     nameAr: data.nameAr,
@@ -328,7 +395,7 @@ router.put("/:id", async (req, res) => {
     buildingNumber: data.buildingNumber ?? null,
     postalCode: data.postalCode ?? null,
     country: data.country ?? "SA",
-    accountId: data.accountId ? Number(data.accountId) : null,
+    accountId,
     ...(data.branchId !== undefined
       ? { branchId: data.branchId === null || data.branchId === "" ? null : Number(data.branchId) }
       : {}),

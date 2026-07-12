@@ -8,7 +8,7 @@ import { JournalScanArchive } from "@/components/JournalScanArchive";
 import {
   Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package,
   Pencil, Trash2, TrendingUp, TrendingDown, Minus,
-  FileSpreadsheet, X, CreditCard,
+  FileSpreadsheet, X, CreditCard, Wrench,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
@@ -307,6 +307,35 @@ export default function Suppliers() {
     onError: (e: any) => toast({ title: t("pages.suppliers.addError", "تعذّر إضافة المورد"), description: e?.message, variant: "destructive" }),
   });
 
+  // Re-links suppliers whose AP account was deleted from شجرة الحسابات
+  // (or was never created) — the server re-mints/reuses the sub-account.
+  const repairMutation = useMutation({
+    mutationFn: async () => {
+      const url = user?.companyId
+        ? `${API}/api/suppliers/repair-accounts?companyId=${user.companyId}`
+        : `${API}/api/suppliers/repair-accounts`;
+      const res = await fetch(url, { method: "POST", headers });
+      if (!res.ok) {
+        const txt = await res.text();
+        let msg = txt;
+        try { msg = JSON.parse(txt).error ?? txt; } catch {}
+        throw new Error(msg || "فشل إصلاح الربط المحاسبي");
+      }
+      return res.json();
+    },
+    onSuccess: (r: any) => {
+      toast({
+        title: r.broken === 0
+          ? "الربط المحاسبي سليم — لا يوجد ما يحتاج إصلاحاً"
+          : `تم إصلاح ربط ${r.repaired} مورد${r.failed ? ` (تعذّر ${r.failed})` : ""}`,
+      });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["supplier-balances"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (e: any) => toast({ title: "تعذّر إصلاح الربط المحاسبي", description: e?.message, variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API}/api/suppliers/${id}`, {
@@ -375,6 +404,17 @@ export default function Suppliers() {
             <a href="/suppliers/reports/lc-statement">
               <CreditCard className="h-4 w-4" />{t("navExtra.lcStatement")}
             </a>
+          </Button>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => repairMutation.mutate()}
+            disabled={repairMutation.isPending}
+            title="إعادة إنشاء/ربط حسابات الدائنين للموردين الذين حُذفت حساباتهم من شجرة الحسابات"
+            data-testid="button-repair-supplier-accounts"
+          >
+            <Wrench className="h-4 w-4" />
+            {repairMutation.isPending ? "جارٍ الإصلاح..." : "إصلاح الربط المحاسبي"}
           </Button>
           <Button onClick={openCreate} className="gap-2">
             <Plus className="h-4 w-4" />{t("common.add")} {t("pages.suppliers.supplier")}
@@ -454,6 +494,9 @@ export default function Suppliers() {
                     placeholder={`— ${t("pages.suppliers.selectAccountsPayable")} —`}
                     filterTypes={["liability"]}
                     grouped={false}
+                    excludeIds={suppliers
+                      .filter((s: any) => s.id !== editSup?.id)
+                      .map((s: any) => s.accountId)}
                   />
                   <p className="text-xs text-muted-foreground">{t("pages.suppliers.accountingLinkHelp")}</p>
                 </div>

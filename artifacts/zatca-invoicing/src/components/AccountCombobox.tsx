@@ -31,6 +31,10 @@ interface AccountComboboxProps {
   allowEmpty?:    boolean;
   emptyLabel?:    string;
   autoFocus?:     boolean;
+  /** Account ids to hide from the list (e.g. AP sub-accounts already
+   *  linked to OTHER suppliers — the server rejects them with 409 anyway).
+   *  The current `value` is never hidden. */
+  excludeIds?:    Array<number | string | null | undefined>;
 }
 
 export function AccountCombobox({
@@ -44,6 +48,7 @@ export function AccountCombobox({
   allowEmpty     = true,
   emptyLabel     = "بدون حساب",
   autoFocus,
+  excludeIds,
 }: AccountComboboxProps) {
   const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -60,9 +65,17 @@ export function AccountCombobox({
     staleTime: 60_000,
   });
 
-  const filtered = filterTypes
-    ? accounts.filter((a: any) => filterTypes.includes(a.accountType))
-    : accounts;
+  const excluded = new Set(
+    (excludeIds ?? [])
+      .filter((x) => x != null && String(x) !== "")
+      .map((x) => String(x)),
+  );
+  const filtered = accounts.filter((a: any) => {
+    if (filterTypes && !filterTypes.includes(a.accountType)) return false;
+    // Hide excluded accounts, but never hide the currently-selected value.
+    if (excluded.has(String(a.id)) && String(a.id) !== String(value ?? "")) return false;
+    return true;
+  });
 
   // Build set of parent IDs (any account that is referenced as parent
   // by another account) — these are header/group accounts and must not

@@ -76,6 +76,19 @@ export default function SupplierNew() {
   const vatVal = form.watch("vatNumber");
 
   const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+  // Existing suppliers — used only to hide OTHER suppliers' AP sub-accounts
+  // from the picker (server 409s them anyway).
+  const { data: existingSuppliers = [] } = useQuery<any[]>({
+    queryKey: ["suppliers", user?.companyId],
+    queryFn: async () => {
+      const url = user?.companyId
+        ? `${API}/api/suppliers?companyId=${user.companyId}`
+        : `${API}/api/suppliers`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      return res.json();
+    },
+    enabled: !!user,
+  });
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", user?.companyId],
     enabled: !!user?.companyId,
@@ -260,6 +273,7 @@ export default function SupplierNew() {
                     placeholder="— اختر حساب الدائنين —"
                     filterTypes={["liability"]}
                     grouped={false}
+                    excludeIds={(existingSuppliers as any[]).map((s: any) => s.accountId)}
                   />
                   <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ</p>
                 </div>
