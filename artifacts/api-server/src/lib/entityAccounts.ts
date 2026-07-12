@@ -81,20 +81,43 @@ async function resolveEntityParent(
  * fall back to the dashed pattern "<parentCode>-NNN" used by the older
  * customer/supplier flow so we never produce a duplicate.
  */
-async function nextChildCode(companyId: number, parent: { id: number; code: string }): Promise<string> {
-  const siblings = await db.select({ code: accountsTable.code })
-    .from(accountsTable)
-    .where(and(
-      eq(accountsTable.companyId, companyId),
-      eq(accountsTable.parentId, parent.id),
-    ));
-  const taken = new Set(siblings.map(s => (s.code ?? "").trim()));
-
-  const parentCode = (parent.code ?? "").trim();
+export function computeNextChildCode(parentCodeRaw: string, taken: Set<string>): string {
+  const parentCode = (parentCodeRaw ?? "").trim();
   const numericParent = /^\d+$/.test(parentCode);
 
   if (numericParent) {
-    // Try concatenated numeric: 1102 → 11021..11029, then 110210, 110211, …
+    // 1) Continue the DOMINANT existing numeric scheme first. COA imports
+    //    typically create zero-padded children (21011 → 2101101..2101116);
+    //    the old "parentCode + n" probe would mint "210111" (unpadded, off
+    //    by a digit) next to them, which reads as a totally different
+    //    account. Instead: among numeric siblings extending the parent
+    //    code, find the most common suffix width, take max+1 at that
+    //    width (padding preserved; width may grow past 99 → 100).
+    const numericSibs = [...taken].filter(c =>
+      /^\d+$/.test(c) && c.startsWith(parentCode) && c.length > parentCode.length,
+    );
+    if (numericSibs.length > 0) {
+      const widthCount = new Map<number, number>();
+      for (const c of numericSibs) {
+        const w = c.length - parentCode.length;
+        widthCount.set(w, (widthCount.get(w) ?? 0) + 1);
+      }
+      // Most common width wins; ties break toward the WIDER (newer) scheme.
+      const width = [...widthCount.entries()]
+        .sort((a, b) => b[1] - a[1] || b[0] - a[0])[0]![0];
+      let max = 0;
+      for (const c of numericSibs) {
+        if (c.length - parentCode.length !== width) continue;
+        const n = parseInt(c.slice(parentCode.length), 10);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+      for (let n = max + 1; n <= max + 10_000; n++) {
+        const candidate = `${parentCode}${String(n).padStart(width, "0")}`;
+        if (!taken.has(candidate)) return candidate;
+      }
+    }
+
+    // 2) No numeric children yet — legacy concatenated probe: 1102 → 11021…
     let n = 1;
     while (n < 10_000) {
       const candidate = `${parentCode}${n}`;
@@ -113,6 +136,21 @@ async function nextChildCode(companyId: number, parent: { id: number; code: stri
     }
   }
   return `${prefix}${String(maxSeq + 1).padStart(3, "0")}`;
+}
+
+async function siblingCodes(companyId: number, parentId: number): Promise<Set<string>> {
+  const siblings = await db.select({ code: accountsTable.code })
+    .from(accountsTable)
+    .where(and(
+      eq(accountsTable.companyId, companyId),
+      eq(accountsTable.parentId, parentId),
+    ));
+  return new Set(siblings.map(s => (s.code ?? "").trim()).filter(Boolean));
+}
+
+async function nextChildCode(companyId: number, parent: { id: number; code: string }): Promise<string> {
+  const taken = await siblingCodes(companyId, parent.id);
+  return computeNextChildCode(parent.code, taken);
 }
 
 /**
@@ -242,6 +280,17 @@ export const ensureCustomerLedger = (
     forceNew,
   });
 
+// Shared between ensureSupplierLedger (creation) and peekSupplierNextAccount
+// (preview) so the previewed code can NEVER diverge from the minted one.
+const supplierRoleKeys = (category?: SupplierCategory): string[] =>
+  category === "foreign"
+    ? ["supplier_foreign_account_parent", "supplier_account_parent"]
+    : category === "local"
+    ? ["supplier_local_account_parent", "supplier_account_parent"]
+    : ["supplier_account_parent"];
+const SUPPLIER_CODE_PREFIXES = ["2101", "2110", "211"];
+const SUPPLIER_NAME_LIKES = ["موردين", "ذمم دائن", "دائن", "supplier", "payab"];
+
 export const ensureSupplierLedger = (
   companyId: number,
   name: string,
@@ -250,16 +299,45 @@ export const ensureSupplierLedger = (
   ensureEntitySubAccount({
     companyId,
     // Category-specific parent first, generic parent as fallback.
-    roleKeys: category === "foreign"
-      ? ["supplier_foreign_account_parent", "supplier_account_parent"]
-      : category === "local"
-      ? ["supplier_local_account_parent", "supplier_account_parent"]
-      : ["supplier_account_parent"],
+    roleKeys: supplierRoleKeys(category),
     name,
-    fallbackCodePrefixes: ["2101", "2110", "211"],
-    nameLikes: ["موردين", "ذمم دائن", "دائن", "supplier", "payab"],
+    fallbackCodePrefixes: SUPPLIER_CODE_PREFIXES,
+    nameLikes: SUPPLIER_NAME_LIKES,
     accountType: "liability",
   });
+
+/**
+ * Preview (read-only, nothing created) which parent the auto-minted supplier
+ * AP sub-account would nest under for the given category, the LAST code
+ * already used there, and the NEXT code that would be assigned. Powers the
+ * "آخر حساب / الحساب التالي" hint on the supplier create forms.
+ */
+export async function peekSupplierNextAccount(companyId: number, category?: SupplierCategory) {
+  const parent = await resolveEntityParent(
+    companyId, supplierRoleKeys(category), SUPPLIER_CODE_PREFIXES, SUPPLIER_NAME_LIKES, "liability",
+  );
+  if (!parent) return null;
+
+  const taken = await siblingCodes(companyId, parent.id);
+  const nextCode = computeNextChildCode(parent.code ?? "", taken);
+
+  // "Last used" = numerically-highest numeric sibling (matches how users read
+  // the COA tree); falls back to lexicographic max for non-numeric schemes.
+  const codes = [...taken];
+  const numeric = codes.filter(c => /^\d+$/.test(c));
+  const lastCode = numeric.length > 0
+    ? numeric.reduce((a, b) => (BigInt(b) > BigInt(a) ? b : a))
+    : (codes.sort().at(-1) ?? null);
+
+  return {
+    parentId: parent.id,
+    parentCode: parent.code ?? null,
+    parentName: parent.nameAr ?? parent.nameEn ?? null,
+    lastCode,
+    nextCode,
+    childCount: taken.size,
+  };
+}
 
 export const ensureWarehouseAccount = (companyId: number, name: string) =>
   ensureEntitySubAccount({

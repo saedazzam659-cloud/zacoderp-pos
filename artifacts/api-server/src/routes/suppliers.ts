@@ -6,7 +6,7 @@ import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSe
 import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
-import { ensureSupplierLedger, type SupplierCategory } from "../lib/entityAccounts.js";
+import { ensureSupplierLedger, peekSupplierNextAccount, type SupplierCategory } from "../lib/entityAccounts.js";
 import { importPartyOpeningBalances } from "../lib/openingBalanceImport.js";
 import { importPartyMasterData } from "../lib/partyMasterImport.js";
 
@@ -44,13 +44,15 @@ router.get("/balances", async (req, res) => {
   if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
   // Suppliers with their AP account ids (for direct-JE aggregation below).
-  // Display-only suppliers are intentionally excluded — their balance is
-  // hidden everywhere else (statement / aging) for consistency.
+  // ALL suppliers are included — even "display-only" (includeInStatements=false)
+  // ones. The الرصيد column in the suppliers list must always reflect the real
+  // ledger position; the display-only flag only filters statement/aging REPORTS,
+  // hiding a live balance behind "—" here misled users into thinking their
+  // journal entries were lost.
   const supplierRows = await db.select({ id: suppliersTable.id, accountId: suppliersTable.accountId })
-    .from(suppliersTable).where(and(
+    .from(suppliersTable).where(
       eq(suppliersTable.companyId, companyId),
-      eq(suppliersTable.includeInStatements, true),
-    ));
+    );
   const accIdToSupplier = new Map<number, number>();
   for (const s of supplierRows) if (s.accountId != null) accIdToSupplier.set(s.accountId, s.id);
   const supplierAccIds: number[] = Array.from(accIdToSupplier.keys());
@@ -106,9 +108,15 @@ router.get("/balances", async (req, res) => {
       .groupBy(supplierSettlementsTable.supplierId),
 
     // Direct JE postings to supplier AP accounts that are NOT already aggregated
-    // via purchase_invoices / purchase_returns / payment_vouchers. This captures:
+    // via purchase_invoices / purchase_returns / supplier_settlements. This captures:
     //   • Fixed-asset credit acquisitions (entryType = 'fa_acquisition')
     //   • Manual / opening-balance JEs (entryType = 'general' / 'trial_balance_adjustment')
+    //   • Payment vouchers (entryType = 'payment') — سندات الصرف post their JE
+    //     directly against the supplier AP account and do NOT write a
+    //     supplier_settlements row, so the JE is the ONLY record of the payment.
+    //     (Excluding 'payment' here silently dropped voucher payments from the
+    //     balance; supplier_settlements rows are created only by the manual
+    //     settlements screen, which never posts a JE — no double-count.)
     //   • Any future direct-to-AP posting source.
     // Net = credit - debit (credit increases payable, debit decreases it).
     supplierAccIds.length === 0
@@ -125,7 +133,7 @@ router.get("/balances", async (req, res) => {
             eq(journalEntriesTable.status, "posted"),
             inArray(journalEntryLinesTable.accountId, supplierAccIds),
             notInArray(journalEntriesTable.entryType, [
-              "purchase_invoice", "purchase_return", "payment",
+              "purchase_invoice", "purchase_return",
               "contracting_outgoing_bill", "contracting_incoming_bill",
             ]),
           ))
@@ -166,6 +174,26 @@ router.get("/balances", async (req, res) => {
   });
 
   res.json(result);
+});
+
+// Read-only preview for the supplier create forms: which parent (محلي/أجنبي)
+// the auto-minted AP sub-account would nest under, the LAST code already used
+// there, and the NEXT code that would be assigned. Uses the exact same
+// resolution+numbering as the create path so the hint can't diverge.
+// NOTE: registered BEFORE /:id (Express 5 matches in order).
+router.get("/next-account-code", async (req, res) => {
+  const rawCompanyId = req.query.companyId ? parseInt(String(req.query.companyId)) : undefined;
+  const companyId = resolveCompanyId(req, rawCompanyId);
+  if (!companyId) { res.status(400).json({ error: "معرّف الشركة مطلوب" }); return; }
+  const cat = String(req.query.category ?? "");
+  const category: SupplierCategory | undefined =
+    cat === "foreign" ? "foreign" : cat === "local" ? "local" : undefined;
+  const peek = await peekSupplierNextAccount(companyId, category);
+  if (!peek) {
+    res.json({ found: false, parentCode: null, parentName: null, lastCode: null, nextCode: null });
+    return;
+  }
+  res.json({ found: true, ...peek });
 });
 
 router.post("/", async (req, res) => {

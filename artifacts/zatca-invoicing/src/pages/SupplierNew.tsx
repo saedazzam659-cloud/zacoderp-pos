@@ -76,6 +76,18 @@ export default function SupplierNew() {
   const vatVal = form.watch("vatNumber");
 
   const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  // Preview of the AP sub-account code the server would auto-mint for the
+  // chosen محلي/أجنبي category — "آخر حساب: 2101116 → الحساب الجديد: 2101117".
+  const { data: nextAcc } = useQuery<any>({
+    queryKey: ["supplier-next-account", user?.companyId, accountCategory],
+    queryFn: () =>
+      fetch(`${API}/api/suppliers/next-account-code?category=${accountCategory}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => (r.ok ? r.json() : null)),
+    enabled: !accountId,
+    staleTime: 15_000,
+  });
   // Existing suppliers — used only to hide OTHER suppliers' AP sub-accounts
   // from the picker (server 409s them anyway).
   const { data: existingSuppliers = [] } = useQuery<any[]>({
@@ -293,6 +305,21 @@ export default function SupplierNew() {
                     لم تختر حساباً — سيُنشئ النظام حساباً فرعياً تلقائياً باسم المورد تحت الحساب الأب لهذا التصنيف
                     (يُضبط من «الإعدادات ← ربط القيود المحاسبية»).
                   </p>
+                  {nextAcc?.found && (
+                    <div
+                      className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900"
+                      data-testid="supplier-next-account-hint"
+                    >
+                      <span className="font-medium">{nextAcc.parentName ?? "الحساب الأب"}</span>
+                      {nextAcc.parentCode && <span dir="ltr" className="font-mono"> ({nextAcc.parentCode})</span>}
+                      {" — "}
+                      {nextAcc.lastCode
+                        ? <>آخر حساب مستخدم: <span dir="ltr" className="font-mono font-bold">{nextAcc.lastCode}</span>{" • "}</>
+                        : <>لا توجد حسابات فرعية بعد{" • "}</>}
+                      سيأخذ المورد الجديد الرقم:{" "}
+                      <span dir="ltr" className="font-mono font-bold">{nextAcc.nextCode}</span>
+                    </div>
+                  )}
                 </div>
               )}
 

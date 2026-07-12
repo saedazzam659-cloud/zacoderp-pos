@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -106,7 +106,39 @@ export default function Suppliers() {
     setEditSup(null);
   }
 
+  // The add/edit FormPanel renders INLINE above the table — a user who clicks
+  // تعديل on a row far down the list would otherwise see nothing happen.
+  // Whenever the panel opens (or switches to another supplier), scroll it into
+  // view and move focus into it so keyboard/screen-reader users land there too.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelOpen = creating || editSup != null;
+  const panelKey = editSup?.id ?? (creating ? "new" : null);
+  useEffect(() => {
+    if (!panelOpen || panelKey == null) return;
+    // rAF: wait for the panel to be mounted/laid out before scrolling.
+    const raf = requestAnimationFrame(() => {
+      const el = panelRef.current;
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      const firstInput = el.querySelector<HTMLElement>("input, select, textarea");
+      firstInput?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [panelOpen, panelKey]);
+
   const headers = { Authorization: `Bearer ${token}` };
+
+  // Preview of the AP sub-account code the server would auto-mint for the
+  // chosen محلي/أجنبي category — "آخر حساب: 2101116 → الحساب الجديد: 2101117".
+  // Read-only; fetched only while the CREATE panel is open with no account picked.
+  const { data: nextAcc } = useQuery({
+    queryKey: ["supplier-next-account", user?.companyId, accountCategory],
+    queryFn: () =>
+      fetch(`${API}/api/suppliers/next-account-code?category=${accountCategory}`, { headers })
+        .then(r => (r.ok ? r.json() : null)),
+    enabled: creating && !editForm.accountId,
+    staleTime: 15_000,
+  });
 
   const { data: suppliers = [], isLoading } = useQuery({
     queryKey: ["suppliers", user?.companyId],
@@ -423,6 +455,7 @@ export default function Suppliers() {
       </div>
 
       {(editSup || creating) && (
+        <div ref={panelRef} className="scroll-mt-24">
         <FormPanel
           icon={Truck}
           title={editSup
@@ -514,12 +547,28 @@ export default function Suppliers() {
                       لم تختر حساباً — سيُنشئ النظام حساباً فرعياً تلقائياً باسم المورد تحت الحساب الأب لهذا التصنيف
                       (يُضبط من «الإعدادات ← ربط القيود المحاسبية»).
                     </p>
+                    {nextAcc?.found && (
+                      <div
+                        className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900"
+                        data-testid="supplier-next-account-hint"
+                      >
+                        <span className="font-medium">{nextAcc.parentName ?? "الحساب الأب"}</span>
+                        {nextAcc.parentCode && <span dir="ltr" className="font-mono"> ({nextAcc.parentCode})</span>}
+                        {" — "}
+                        {nextAcc.lastCode
+                          ? <>آخر حساب مستخدم: <span dir="ltr" className="font-mono font-bold">{nextAcc.lastCode}</span>{" • "}</>
+                          : <>لا توجد حسابات فرعية بعد{" • "}</>}
+                        سيأخذ المورد الجديد الرقم:{" "}
+                        <span dir="ltr" className="font-mono font-bold">{nextAcc.nextCode}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             </TabsContent>
           </Tabs>
         </FormPanel>
+        </div>
       )}
 
       {/* Stats */}
