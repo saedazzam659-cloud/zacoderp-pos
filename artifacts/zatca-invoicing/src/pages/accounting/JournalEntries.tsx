@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
 import { safeLogoSrc } from "@/lib/export";
 import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "@/lib/printLetterhead";
+import {
+  buildDetailedJournalPrintHtml,
+  type JournalPrintEntry,
+  type JournalPrintLabels,
+} from "@/lib/journalPrint";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
 import { Button } from "@/components/ui/button";
@@ -115,7 +120,11 @@ export default function JournalEntries() {
   const COL_CREDIT_L = t("journalEntries.credit");
   const COL_STATUS_L = t("journalEntries.status");
 
-  const COLUMNS: ColDef[] = [
+  // Memoized on `t`: on data-heavy companies a fresh COLUMNS array every
+  // render used to invalidate the `filtered` useMemo below on EVERY render
+  // (selection, hover, dialog open …) re-filtering + re-sorting thousands of
+  // rows each time — a major source of the perceived hang on this screen.
+  const COLUMNS: ColDef[] = useMemo(() => [
     { key: "_sel",   label: "",           type: "none", valueOf: () => "" },
     { key: "_idx",   label: "#",          type: "none", valueOf: () => "" },
     { key: "doc",    label: COL_DOC_L,    type: "text", valueOf: (e) => e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}` },
@@ -133,7 +142,8 @@ export default function JournalEntries() {
     { key: "postedBy",  label: t("journalEntries.postedBy",  { defaultValue: "رحّله" }),
       type: "text", valueOf: (e) => e.postedByName  ?? "—" },
     { key: "_act",   label: t("journalEntries.actions"), type: "none", valueOf: () => "" },
-  ];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [t]);
   const DATA_KEYS = useMemo(() => COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key), [COLUMNS]);
   const ALL_KEYS  = useMemo(() => COLUMNS.map(c => c.key), [COLUMNS]);
 
@@ -422,8 +432,12 @@ export default function JournalEntries() {
   const clearAllColFilters = () => { clearColFilters(); setColAdv({}); };
 
   /* ── Filtering ── */
+  // Deferring the search text keeps typing responsive on data-heavy
+  // companies: React paints the keystroke first, then re-filters the
+  // (potentially huge) list at lower priority.
+  const deferredSearch = useDeferredValue(search);
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     const rows = (entries as any[]).filter((e) => {
       if (statusFilter !== "all" && e.status !== statusFilter) return false;
       // Date-range filter — entryDate stored as YYYY-MM-DD, lexicographic
@@ -462,7 +476,7 @@ export default function JournalEntries() {
       }
     }
     return rows;
-  }, [entries, search, statusFilter, dateFrom, dateTo, colAdv, ctx, COLUMNS, sort, isRtl]);
+  }, [entries, deferredSearch, statusFilter, dateFrom, dateTo, colAdv, ctx, COLUMNS, sort, isRtl]);
 
   /* ── Pagination ── */
   const { pageSize, page, setPage } = layout;
@@ -489,9 +503,12 @@ export default function JournalEntries() {
     );
   }, [filtered]);
   // Print/Excel exports historically used the unfiltered totals — keep that
-  // legacy value available but compute it from the same source.
-  const totalDebitAll  = entries.reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0);
-  const totalCreditAll = entries.reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0);
+  // legacy value available but compute it from the same source. Memoized so
+  // the full-list reduce doesn't rerun on every unrelated render.
+  const { totalDebitAll, totalCreditAll } = useMemo(() => ({
+    totalDebitAll:  (entries as any[]).reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0),
+    totalCreditAll: (entries as any[]).reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0),
+  }), [entries]);
 
   /* ── Visible columns in user's saved order ── */
   const visibleColumns = useMemo(() => {
@@ -605,174 +622,57 @@ ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEnt
     [accountsList],
   );
 
+  // Thin wrapper around the SHARED detailed template (lib/journalPrint.ts).
+  // The journal-entry FORM's "طباعة" button uses the exact same builder, so
+  // both paths always print identical sheets. This wrapper only resolves
+  // screen-local data (account labels, type/status labels) into plain strings.
+  const journalPrintLabels = (): JournalPrintLabels => ({
+    sheetTitle: t("journalEntries.printSheetTitle"),
+    doc:        COL_DOC_L,
+    date:       COL_DATE_L,
+    type:       COL_TYPE_L,
+    desc:       COL_DESC_L,
+    debit:      COL_DEBIT_L,
+    credit:     COL_CREDIT_L,
+    status:     COL_STATUS_L,
+    account:    isRtl ? "الحساب" : "Account",
+    lineDesc:   isRtl ? "البيان"  : "Description",
+    costCenter: isRtl ? "مركز التكلفة" : "Cost Center",
+    lineNo:     isRtl ? "م" : "#",
+    subtotal:   isRtl ? "الإجمالي" : "Subtotal",
+    noLines:    isRtl ? "لا توجد أطراف لهذا القيد." : "No lines for this entry.",
+    grandTotal: isRtl ? "الإجمالي العام" : "Grand Total",
+    totalDebit:  t("journalEntries.totalDebit"),
+    totalCredit: t("journalEntries.totalCredit"),
+    printBtn:    t("journalEntries.printPdf"),
+  });
+
   const buildBulkPrintHtml = (entriesWithLines: any[], opts?: { oneEntryPerPage?: boolean }) => {
-    const oneEntryPerPage = !!opts?.oneEntryPerPage;
-    const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
-    const dir = isRtl ? "rtl" : "ltr";
-    const lang = isRtl ? "ar" : "en";
-    const align = isRtl ? "right" : "left";
-    const letterhead = buildLetterheadHtml(user?.company as any, { accent: "navy", size: "md" });
-
-    // Grand totals across every selected entry.
-    const grandDebit  = entriesWithLines.reduce((s, e) => s + Number(e.totalDebit  ?? 0), 0);
-    const grandCredit = entriesWithLines.reduce((s, e) => s + Number(e.totalCredit ?? 0), 0);
-
-    // Localized labels for the per-entry header strip and the line table.
-    // Reuse the same i18n keys the existing exports rely on (COL_*_L).
-    const L = {
-      doc:        COL_DOC_L,
-      date:       COL_DATE_L,
-      type:       COL_TYPE_L,
-      desc:       COL_DESC_L,
-      debit:      COL_DEBIT_L,
-      credit:     COL_CREDIT_L,
-      status:     COL_STATUS_L,
-      account:    isRtl ? "الحساب" : "Account",
-      lineDesc:   isRtl ? "البيان"  : "Description",
-      costCenter: isRtl ? "مركز التكلفة" : "Cost Center",
-      lineNo:     isRtl ? "م" : "#",
-      subtotal:   isRtl ? "الإجمالي" : "Subtotal",
-      noLines:    isRtl ? "لا توجد أطراف لهذا القيد." : "No lines for this entry.",
-      grandTotal: isRtl ? "الإجمالي العام" : "Grand Total",
-    };
-
-    const entrySections = entriesWithLines.map((e: any) => {
-      const docNo  = e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`;
-      const lines: any[] = Array.isArray(e.lines) ? e.lines : [];
-      const subDebit  = lines.reduce((s, ln) => s + Number(ln.debit  ?? 0), 0);
-      const subCredit = lines.reduce((s, ln) => s + Number(ln.credit ?? 0), 0);
-
-      const linesHtml = lines.length === 0
-        ? `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:10px;">${escapeHtml(L.noLines)}</td></tr>`
-        : lines.map((ln, i) => {
-            const acc = acctMap.get(Number(ln.accountId));
-            const accLabel = acc
-              ? `${escapeHtml(acc.code ?? "")} — ${escapeHtml(acc.nameAr ?? acc.nameEn ?? "")}`
-              : `#${escapeHtml(ln.accountId)}`;
-            return `<tr>
-              <td class="num center">${i + 1}</td>
-              <td>${accLabel}</td>
-              <td>${escapeHtml(ln.description ?? "")}</td>
-              <td class="num end">${Number(ln.debit  ?? 0).toFixed(2)}</td>
-              <td class="num end">${Number(ln.credit ?? 0).toFixed(2)}</td>
-              <td>${escapeHtml(ln.costCenter ?? "")}</td>
-            </tr>`;
-          }).join("");
-
-      // When one-entry-per-page mode is on, each section becomes a self-contained
-      // printed page: prepend a mini letterhead + entry meta, and append a
-      // prominent per-entry debit/credit totals banner (so each page reads as
-      // its own complete journal-entry document, ready for filing/signing).
-      const perPageHead = oneEntryPerPage ? `
-  <header class="page-head">
-    <div class="page-title">${escapeHtml(t("journalEntries.printSheetTitle"))}</div>
-    <div class="page-meta">${escapeHtml(L.doc)}: <b>${escapeHtml(docNo)}</b> &nbsp;•&nbsp; ${escapeHtml(L.date)}: <b>${escapeHtml(e.entryDate ?? "")}</b></div>
-  </header>` : "";
-      const perPageTotals = oneEntryPerPage ? `
-  <div class="page-totals">
-    <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${subDebit.toFixed(2)}</b></span>
-    <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${subCredit.toFixed(2)}</b></span>
-  </div>` : "";
-
-      // Signature strip (RTL order: إعداد → مراجعة → اعتماد) requested for the
-      // printed journal-entry sheet — matches the manual signing convention.
-      const sigRow = `
-  <div class="sig-row">
-    <div class="sig"><div class="sig-role">${isRtl ? "إعداد" : "Prepared By"}</div><div class="sig-line">${isRtl ? "الاسم والتوقيع" : "Name & Signature"}</div></div>
-    <div class="sig"><div class="sig-role">${isRtl ? "مراجعة" : "Reviewed By"}</div><div class="sig-line">${isRtl ? "الاسم والتوقيع" : "Name & Signature"}</div></div>
-    <div class="sig"><div class="sig-role">${isRtl ? "اعتماد" : "Approved By"}</div><div class="sig-line">${isRtl ? "الاسم والتوقيع" : "Name & Signature"}</div></div>
-  </div>`;
-
-      return `
-<section class="entry">
-  ${perPageHead}
-  <div class="entry-head">
-    <div class="entry-title">
-      <span class="badge">${escapeHtml(L.doc)}: ${escapeHtml(docNo)}</span>
-      <span class="badge">${escapeHtml(L.date)}: ${escapeHtml(e.entryDate ?? "")}</span>
-      <span class="badge">${escapeHtml(L.type)}: ${escapeHtml(ENTRY_TYPES[e.entryType] ?? e.entryType ?? "")}</span>
-      <span class="badge">${escapeHtml(L.status)}: ${escapeHtml((STATUS_MAP[e.status] ?? STATUS_MAP.posted).label)}</span>
-    </div>
-    ${e.description ? `<div class="entry-desc"><b>${escapeHtml(L.desc)}:</b> ${escapeHtml(e.description)}</div>` : ""}
-  </div>
-  <table class="lines">
-    <thead>
-      <tr>
-        <th style="width:36px;">${escapeHtml(L.lineNo)}</th>
-        <th>${escapeHtml(L.account)}</th>
-        <th>${escapeHtml(L.lineDesc)}</th>
-        <th style="width:90px;">${escapeHtml(L.debit)}</th>
-        <th style="width:90px;">${escapeHtml(L.credit)}</th>
-        <th style="width:120px;">${escapeHtml(L.costCenter)}</th>
-      </tr>
-    </thead>
-    <tbody>${linesHtml}</tbody>
-    <tfoot>
-      <tr>
-        <td colspan="3" class="end"><b>${escapeHtml(L.subtotal)}</b></td>
-        <td class="num end"><b>${subDebit.toFixed(2)}</b></td>
-        <td class="num end"><b>${subCredit.toFixed(2)}</b></td>
-        <td></td>
-      </tr>
-    </tfoot>
-  </table>
-  ${perPageTotals}
-  ${sigRow}
-</section>`;
-    }).join("");
-
-    return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
-<style>
-@page { size: A4 portrait; margin: 7mm 8mm 13mm 8mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; font-size: 9pt; color: #475569; } }
-@media print { thead { display: table-header-group; } .entry { page-break-inside: avoid; } ${oneEntryPerPage ? ".entry { page-break-after: always; } .entry:last-of-type { page-break-after: auto; }" : ""} }
-* { box-sizing: border-box; }
-body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; direction:${dir}; }
-${letterheadCss({ accent: "navy", size: "md" })}
-.h { text-align:center; margin-bottom:10px; }
-.h h1 { margin:0 0 4px; font-size:18px; }
-.h .meta { font-size:11px; color:#555; }
-.totals { display:flex; gap:16px; justify-content:center; margin:6px 0 14px; font-size:12px; }
-.totals span b { color:#1e3a8a; }
-.entry { margin: 0 0 14px; border:1px solid #cbd5e1; border-radius:6px; padding:6px 8px; background:#fff; }
-.entry-head { margin-bottom:6px; }
-.entry-title { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px; }
-.badge { display:inline-block; padding:2px 8px; background:#eef2ff; color:#1e3a8a; border:1px solid #c7d2fe; border-radius:999px; font-size:10.5px; font-weight:600; }
-.entry-desc { font-size:11px; color:#334155; margin-top:2px; }
-table.lines { width:100%; border-collapse:collapse; font-size:10.5px; margin-top:4px; }
-table.lines thead th { background:#1e3a8a; color:#fff; padding:4px 6px; border:1px solid #1e3a8a; text-align:${align}; font-weight:600; }
-table.lines tbody td { padding:3px 6px; border:1px solid #d1d5db; text-align:${align}; }
-table.lines tbody tr:nth-child(even) td { background:#f8fafc; }
-table.lines tfoot td { padding:4px 6px; border:1px solid #cbd5e1; background:#f1f5f9; }
-.num { font-family: "Consolas",monospace; }
-.end { text-align:${isRtl ? "left" : "right"}; }
-.center { text-align:center; }
-.grand { margin-top:6px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; display:flex; justify-content:space-between; gap:18px; font-size:12px; }
-.page-head { text-align:center; margin: 0 0 6px; padding-bottom:4px; border-bottom:2px solid #1e3a8a; }
-.page-head .page-title { margin:4px 0 2px; font-size:14px; font-weight:600; color:#1e3a8a; }
-.page-head .page-meta { font-size:10.5px; color:#475569; }
-.page-totals { display:flex; gap:18px; justify-content:space-around; margin-top:6px; padding:6px 12px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:12px; }
-.sig-row { display:flex; justify-content:space-between; gap:24px; margin:14px 8px 2px; text-align:center; page-break-inside:avoid; }
-.sig-row .sig { flex:1; }
-.sig-row .sig-role { font-weight:700; font-size:12px; margin-bottom:22px; }
-.sig-row .sig-line { border-top:1px solid #111; padding-top:5px; color:#475569; font-size:10px; max-width:180px; margin:0 auto; }
-.page-totals span { color:#fff; }
-.page-totals b { color:#fff; }
-.print-btn { position:fixed; top:10px; ${isRtl ? "left" : "right"}:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
-@media print { .print-btn { display:none; } ${oneEntryPerPage ? ".doc-global { display:none !important; }" : ""} }
-</style></head><body>
-<button class="print-btn" onclick="window.print()">${escapeHtml(t("journalEntries.printPdf"))}</button>
-${wrapWithLetterhead(letterhead, `<div class="h doc-global"><h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
-<div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${escapeHtml(today)} — ${escapeHtml(t("journalEntries.entriesCount", { count: entriesWithLines.length }))}</div></div>
-<div class="totals doc-global">
-  <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${grandDebit.toFixed(2)}</b></span>
-  <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${grandCredit.toFixed(2)}</b></span>
-</div>
-${entrySections}
-<div class="grand doc-global">
-  <span>${escapeHtml(L.grandTotal)} — ${escapeHtml(t("journalEntries.totalDebit"))}: <b>${grandDebit.toFixed(2)}</b></span>
-  <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${grandCredit.toFixed(2)}</b></span>
-</div>`)}
-<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+    const printEntries: JournalPrintEntry[] = entriesWithLines.map((e: any) => ({
+      docNo:       e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`,
+      entryDate:   e.entryDate ?? "",
+      typeLabel:   ENTRY_TYPES[e.entryType] ?? e.entryType ?? "",
+      statusLabel: (STATUS_MAP[e.status] ?? STATUS_MAP.posted).label,
+      description: e.description ?? null,
+      lines: (Array.isArray(e.lines) ? e.lines : []).map((ln: any) => {
+        const acc = acctMap.get(Number(ln.accountId));
+        return {
+          accountLabel: acc
+            ? `${acc.code ?? ""} — ${acc.nameAr ?? acc.nameEn ?? ""}`
+            : `#${ln.accountId}`,
+          description: ln.description ?? null,
+          debit:  Number(ln.debit  ?? 0),
+          credit: Number(ln.credit ?? 0),
+          costCenterLabel: ln.costCenter ?? null,
+        };
+      }),
+    }));
+    return buildDetailedJournalPrintHtml(printEntries, {
+      company: user?.company as any,
+      isRtl,
+      oneEntryPerPage: !!opts?.oneEntryPerPage,
+      labels: journalPrintLabels(),
+    });
   };
 
   /* ─── 5 print templates the user can pick from the bulk-bar dropdown.

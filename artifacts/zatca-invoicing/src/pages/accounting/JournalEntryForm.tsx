@@ -4,6 +4,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
 import { branchesApi } from "@/lib/branchesApi";
+import {
+  buildDetailedJournalPrintHtml,
+  JE_ONE_PER_PAGE_LS_KEY,
+  type JournalPrintEntry,
+} from "@/lib/journalPrint";
 import { safeLogoSrc } from "@/lib/export";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import AccountBrowserDialog from "@/components/AccountBrowserDialog";
@@ -23,6 +28,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import { getSaveToastTitle } from "@/lib/saveToast";
+import { useFormatters } from "@/lib/format";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
@@ -133,6 +139,8 @@ export default function JournalEntryForm() {
   const qc       = useQueryClient();
   const { toast } = useToast();
   const { t }     = useTranslation();
+  // Same isRtl source as the LIST screen so both print paths stay in parity.
+  const { isRtl } = useFormatters();
 
   const [activeTab,    setActiveTab]    = useState("header");
   const [docNumber,    setDocNumber]    = useState("");
@@ -1219,107 +1227,66 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
 </body></html>`;
   };
 
+  // A4 print — delegates to the SHARED detailed template (lib/journalPrint.ts),
+  // the exact same builder the journal-entries LIST screen's blue print button
+  // uses, so printing from inside the entry and from the list always produces
+  // identical sheets. Unsaved entries additionally get a DRAFT watermark.
   const buildEntryPrintHtml = () => {
-    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
-    // Forward the configured company logo and Arabic name into the print
-    // header so single-entry printouts carry the same branding as the
-    // rest of the system's reports.  `safeLogoSrc` defangs any crafted
-    // value before it is interpolated into the print HTML.
-    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
-    const logoHtml = safeLogo
-      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
-      : "";
-    const companyNameHtml = user?.company?.nameAr
-      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>`
-      : "";
-    const lineRowsHtml = printableLines.map((l, i) => {
-      const a = acctMap.get(Number(l.accountId));
-      return `<tr>
-        <td class="c">${i + 1}</td>
-        <td class="num">${escapeHtml(a?.code ?? "")}</td>
-        <td>${escapeHtml(a?.nameAr || a?.nameEn || "—")}</td>
-        <td>${escapeHtml(ccLabel(l.costCenter))}</td>
-        <td class="num">${Number(l.debit  || 0).toFixed(2)}</td>
-        <td class="num">${Number(l.credit || 0).toFixed(2)}</td>
-        <td>${escapeHtml(l.description || "—")}</td>
-      </tr>`;
-    }).join("");
-    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>قيد ${escapeHtml(docLabel)}</title>
-<style>
-@page {
-  size: A4;
-  margin: 12mm 12mm 22mm 12mm;
-  @bottom-center {
-    content: "صفحة " counter(page) " من " counter(pages);
-    font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif;
-    font-size: 9pt;
-    color: #475569;
-  }
-}
-@media print { thead { display: table-header-group; } }
-* { box-sizing: border-box; }
-body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; }
-.head { text-align:center; border-bottom: 2px solid #1e3a8a; padding-bottom:10px; margin-bottom:12px; }
-.head h1 { margin:0 0 4px; font-size:20px; color:#1e3a8a; }
-.head .meta { font-size:11px; color:#555; }
-.info { display:grid; grid-template-columns: repeat(3, 1fr); gap:6px 14px; font-size:12px; margin-bottom:14px; padding:10px; border:1px solid #e5e7eb; border-radius:6px; background:#fafbfd; }
-.info .lbl { color:#6b7280; font-size:10px; }
-.info .val { font-weight:600; }
-.desc { font-size:12px; padding:8px 10px; border:1px dashed #cbd5e1; border-radius:6px; margin-bottom:12px; }
-.desc .lbl { color:#6b7280; font-size:10px; display:block; margin-bottom:2px; }
-table { width:100%; border-collapse:collapse; font-size:11px; }
-thead th { background:#1e3a8a; color:#fff; padding:6px 8px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
-tbody td { padding:6px 8px; border:1px solid #d1d5db; text-align:right; vertical-align: middle; }
-tbody tr:nth-child(even) td { background:#f5f7fb; }
-.c { text-align:center; }
-.num { font-family:"Consolas",monospace; }
-tfoot td { background:#eef2ff; font-weight:700; padding:8px; border:1px solid #1e3a8a; }
-.balanced { color:#15803d; }
-.unbalanced { color:#b91c1c; }
-.signatures { display:flex; justify-content:space-between; gap:24px; margin-top:40px; page-break-inside:avoid; }
-.signatures .sig { flex:1; text-align:center; }
-.signatures .sig-space { height:44px; }
-.signatures .sig-line { border-top:1px solid #64748b; margin:0 6px 6px; }
-.signatures .sig-role { font-size:12px; font-weight:700; color:#334155; }
-.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
-@media print { .print-btn { display:none; } }
-</style></head><body>
-<button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
-<div class="head">
-  ${logoHtml}
-  ${companyNameHtml}
-  <h1>قيد محاسبي — ${escapeHtml(docLabel)}</h1>
-  <div class="meta">طُبع في ${today}${isDraftPrint ? " — <span style=\"color:#b91c1c;font-weight:700;\">مسودة (غير محفوظ)</span>" : ""}</div>
-</div>
-${isDraftPrint ? `<div style="position:fixed;top:40%;left:0;right:0;text-align:center;font-size:90px;font-weight:900;color:rgba(185,28,28,0.10);transform:rotate(-22deg);pointer-events:none;letter-spacing:8px;z-index:0;">مسودة • DRAFT</div>` : ""}
-<div class="info">
-  <div><div class="lbl">رقم القيد</div><div class="val">${escapeHtml(docLabel)}</div></div>
-  <div><div class="lbl">التاريخ</div><div class="val">${escapeHtml(entryDate)}</div></div>
-  <div><div class="lbl">النوع</div><div class="val">${escapeHtml(typeLabel)}</div></div>
-  <div><div class="lbl">العملة</div><div class="val">${escapeHtml(currency)} (سعر الصرف ${escapeHtml(exchangeRate)})</div></div>
-  <div><div class="lbl">الفرع</div><div class="val">${escapeHtml(branchLabel)}</div></div>
-  <div><div class="lbl">عدد السطور</div><div class="val">${printableLines.length}</div></div>
-</div>
-${description ? `<div class="desc"><span class="lbl">البيان العام</span>${escapeHtml(description)}</div>` : ""}
-<table>
-  <thead><tr>
-    <th class="c">#</th><th>كود الحساب</th><th>اسم الحساب</th><th>مركز التكلفة</th><th>مدين</th><th>دائن</th><th>البيان</th>
-  </tr></thead>
-  <tbody>${lineRowsHtml}</tbody>
-  <tfoot><tr>
-    <td colspan="4" class="c">الإجمالي</td>
-    <td class="num">${totalDebit.toFixed(2)}</td>
-    <td class="num">${totalCredit.toFixed(2)}</td>
-    <td class="${isBalanced ? "balanced" : "unbalanced"}">${isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}</td>
-  </tr></tfoot>
-</table>
-<div class="signatures">
-  <div class="sig"><div class="sig-space"></div><div class="sig-line"></div><div class="sig-role">إعداد</div></div>
-  <div class="sig"><div class="sig-space"></div><div class="sig-line"></div><div class="sig-role">مراجعة</div></div>
-  <div class="sig"><div class="sig-space"></div><div class="sig-line"></div><div class="sig-role">اعتماد</div></div>
-</div>
-<script>setTimeout(()=>window.print(),300);</script>
-</body></html>`;
+    const statusLabel = isDraftPrint
+      ? t("journalEntries.statusDraft")
+      : (existing?.status === "posted"
+          ? t("journalEntries.statusPosted")
+          : existing?.status === "voided"
+            ? t("journalEntries.statusVoided")
+            : t("journalEntries.statusDraft"));
+    const entry: JournalPrintEntry = {
+      docNo:       docLabel,
+      entryDate:   entryDate,
+      typeLabel:   typeLabel,
+      statusLabel,
+      description: description || null,
+      lines: printableLines.map((l) => {
+        const a = acctMap.get(Number(l.accountId));
+        return {
+          accountLabel: a ? `${a.code ?? ""} — ${a.nameAr || a.nameEn || ""}` : `#${l.accountId}`,
+          description: l.description || null,
+          debit:  Number(l.debit  || 0),
+          credit: Number(l.credit || 0),
+          costCenterLabel: ccLabel(l.costCenter) || null,
+        };
+      }),
+    };
+    let oneEntryPerPage = false;
+    try { oneEntryPerPage = localStorage.getItem(JE_ONE_PER_PAGE_LS_KEY) === "1"; } catch { /* SSR/no-LS */ }
+    // Labels mirror the LIST screen's journalPrintLabels() 1:1 (same t()
+    // keys, same isRtl-conditional literals) so both entry points always
+    // print byte-identical sheets in either language.
+    return buildDetailedJournalPrintHtml([entry], {
+      company: user?.company as any,
+      isRtl,
+      oneEntryPerPage,
+      draftWatermark: isDraftPrint,
+      labels: {
+        sheetTitle: t("journalEntries.printSheetTitle"),
+        doc:        t("journalEntries.docNumber"),
+        date:       t("journalEntries.date"),
+        type:       t("journalEntries.type"),
+        desc:       t("journalEntries.description"),
+        debit:      t("journalEntries.debit"),
+        credit:     t("journalEntries.credit"),
+        status:     t("journalEntries.status"),
+        account:    isRtl ? "الحساب" : "Account",
+        lineDesc:   isRtl ? "البيان"  : "Description",
+        costCenter: isRtl ? "مركز التكلفة" : "Cost Center",
+        lineNo:     isRtl ? "م" : "#",
+        subtotal:   isRtl ? "الإجمالي" : "Subtotal",
+        noLines:    isRtl ? "لا توجد أطراف لهذا القيد." : "No lines for this entry.",
+        grandTotal: isRtl ? "الإجمالي العام" : "Grand Total",
+        totalDebit:  t("journalEntries.totalDebit"),
+        totalCredit: t("journalEntries.totalCredit"),
+        printBtn:    t("journalEntries.printPdf"),
+      },
+    });
   };
 
   // Open the print popup using either the A4 layout (default) or the

@@ -329,6 +329,16 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS approval_log_doc_idx ON approval_log (company_id, document_type, document_id)` },
     { label: "approval_log_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS approval_log_company_idx ON approval_log (company_id, created_at)` },
+    // ─── Journal-entries list performance. The JE list screen (and the
+    // Posting Center built on it) filters by company and orders by
+    // created_at DESC; the per-entry debit/credit totals aggregate lines by
+    // entry_id. Neither column had an index, so data-heavy companies caused
+    // full-table scans on every list load → severe slowness on
+    // /accounting/journals. Idempotent, safe on every boot.
+    { label: "journal_entries_company_created_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS journal_entries_company_created_idx ON journal_entries (company_id, created_at DESC)` },
+    { label: "journal_entry_lines_entry_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS journal_entry_lines_entry_idx ON journal_entry_lines (entry_id)` },
     // ─── Voucher allocation lines (multi-allocation model, see schema/cash.ts).
     // Created here because ensureColumns only ALTERs existing tables. Legacy
     // single-`amount` vouchers keep posting without any line rows. Idempotent.

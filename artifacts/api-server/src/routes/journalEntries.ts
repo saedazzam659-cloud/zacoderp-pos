@@ -29,6 +29,16 @@ function guard(req: any, res: any): number | null {
   return cid;
 }
 
+// Batch size for IN-list lookups — keeps every query far below Postgres's
+// 65 535 bind-parameter protocol cap even on data-heavy companies.
+const IN_CHUNK = 5000;
+function chunk<T>(arr: T[], size: number): T[][] {
+  if (arr.length <= size) return arr.length ? [arr] : [];
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 // Trim a free-text per-line supplier-tax metadata field to null when blank.
 function jeTxtOrNull(v: any): string | null {
   if (v == null) return null;
@@ -161,17 +171,23 @@ async function sourceDocExists(
 router.get("/", async (req, res) => {
   try {
     const cid = getCompanyId(req);
-    const rows = cid
+    // Build the entries filter ONCE so the row fetch and the line-sum
+    // aggregation below share the exact same predicate (via a subquery)
+    // instead of exploding thousands of entry ids into a giant IN list.
+    const whereExpr = cid
+      ? and(
+          eq(journalEntriesTable.companyId, cid),
+          // Branch scope: a specific ?branchId yields `branch_id = X OR NULL`
+          // (NULL = shared/opening/system entries visible from every branch);
+          // restricted users are auto-capped to their assigned branches; an
+          // admin with no branchId sees all. Without this the JE list (and the
+          // Posting Center built on it) leaked every branch regardless of filter.
+          ...branchScopeSpread(req, journalEntriesTable.branchId, req.query.branchId),
+        )
+      : undefined;
+    const rows = whereExpr
       ? await db.select().from(journalEntriesTable)
-          .where(and(
-            eq(journalEntriesTable.companyId, cid),
-            // Branch scope: a specific ?branchId yields `branch_id = X OR NULL`
-            // (NULL = shared/opening/system entries visible from every branch);
-            // restricted users are auto-capped to their assigned branches; an
-            // admin with no branchId sees all. Without this the JE list (and the
-            // Posting Center built on it) leaked every branch regardless of filter.
-            ...branchScopeSpread(req, journalEntriesTable.branchId, req.query.branchId),
-          ))
+          .where(whereExpr)
           .orderBy(desc(journalEntriesTable.createdAt))
       : await db.select().from(journalEntriesTable)
           .orderBy(desc(journalEntriesTable.createdAt));
@@ -179,14 +195,20 @@ router.get("/", async (req, res) => {
     if (rows.length === 0) { res.json([]); return; }
 
     // 1) Aggregate debit/credit per entry in a single SQL pass instead of N+1.
-    const ids = rows.map(r => r.id);
+    //    The scope is expressed as a SUBQUERY over the same whereExpr — on
+    //    data-heavy companies the old inArray(ids) shape shipped tens of
+    //    thousands of bind params per request, which both bloated the query
+    //    and risked the 65 535-param protocol cap.
+    const idsSubquery = whereExpr
+      ? db.select({ id: journalEntriesTable.id }).from(journalEntriesTable).where(whereExpr)
+      : db.select({ id: journalEntriesTable.id }).from(journalEntriesTable);
     const sums = await db.select({
       entryId:     journalEntryLinesTable.entryId,
       totalDebit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}),  0)`.as("total_debit"),
       totalCredit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`.as("total_credit"),
     })
       .from(journalEntryLinesTable)
-      .where(inArray(journalEntryLinesTable.entryId, ids))
+      .where(inArray(journalEntryLinesTable.entryId, idsSubquery))
       .groupBy(journalEntryLinesTable.entryId);
     const sumByEntry = new Map(sums.map(s => [s.entryId, s]));
 
@@ -223,8 +245,13 @@ router.get("/", async (req, res) => {
       const docNums = Array.from(new Set(items.map(i => i.docNum)));
       // Always company-scoped — every source table follows the same
       // `company_id` convention so the same WHERE shape works for all.
-      const found = await db.select({ id: (table as any).id, key: col }).from(table)
-        .where(and(eq((table as any).companyId, groupCid), inArray(col, docNums)));
+      // Chunked so a data-heavy company can never overflow the protocol's
+      // bind-parameter cap with one giant IN list.
+      const found: any[] = [];
+      for (const part of chunk(docNums, IN_CHUNK)) {
+        found.push(...await db.select({ id: (table as any).id, key: col }).from(table)
+          .where(and(eq((table as any).companyId, groupCid), inArray(col, part))));
+      }
       const byKey = new Map(found.map((f: any) => [f.key, f.id]));
       for (const it of items) {
         const sid = byKey.get(it.docNum);
@@ -253,8 +280,11 @@ router.get("/", async (req, res) => {
       const groupCid = Number(key.slice(sep + 1));
       const { table, jeCol } = REVERSE_SOURCE[et];
       const jeIds = Array.from(new Set(jeIdList));
-      const found = await db.select({ id: (table as any).id, jeId: jeCol }).from(table)
-        .where(and(eq((table as any).companyId, groupCid), inArray(jeCol, jeIds)));
+      const found: any[] = [];
+      for (const part of chunk(jeIds, IN_CHUNK)) {
+        found.push(...await db.select({ id: (table as any).id, jeId: jeCol }).from(table)
+          .where(and(eq((table as any).companyId, groupCid), inArray(jeCol, part))));
+      }
       for (const f of found as any[]) {
         if (f.jeId != null) sourceIdByEntry.set(f.jeId as number, f.id as number);
       }
@@ -274,8 +304,13 @@ router.get("/", async (req, res) => {
 
     res.json(rows.map(r => {
       const s = sumByEntry.get(r.id);
+      // Strip the audit IP/user-agent columns from the LIST payload — no
+      // frontend consumer reads them here (they stay on GET /:id and the
+      // audit endpoint) and on data-heavy companies they add megabytes of
+      // useless text to every list response.
+      const { createdIp, createdUserAgent, postedIp, postedUserAgent, ...lean } = r as any;
       return {
-        ...r,
+        ...lean,
         totalDebit:    s?.totalDebit  ?? "0",
         totalCredit:   s?.totalCredit ?? "0",
         sourceId:      sourceIdByEntry.get(r.id) ?? null,
