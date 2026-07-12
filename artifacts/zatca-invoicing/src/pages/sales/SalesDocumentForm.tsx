@@ -2707,6 +2707,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // draft-without-warehouse policy: when warehouses are mandatory (policy OFF)
   // the header warehouse must be chosen before advancing.
   const basicFieldsValid = (() => {
+    // EXISTING docs (drafts included) already passed the save validation when
+    // they were created — never lock the items tab on edit/view, otherwise a
+    // draft saved without a warehouse (allowed under the draft-without-
+    // warehouse policy, or legacy data) becomes uneditable: the user can't
+    // even reach its lines. The full hard gate in handleSave still runs on
+    // every save/post.
+    if (!isNew) return true;
     if (isInvoice || isOrder) {
       if (!customerId) return false;
       if (usesBranch && !branchId) return false;
