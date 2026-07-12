@@ -207,9 +207,10 @@ export default function FaCategories() {
               <tr key={c.id} className="hover:bg-amber-50/40">
                 <td className="px-3 py-2 font-mono">{c.code}</td>
                 <td className="px-3 py-2 font-semibold">{c.nameAr}</td>
-                <td className="px-3 py-2">{c.defaultLifeYears}</td>
+                {/* numeric DB columns arrive as strings like "10.0000" — Number() trims the zeros */}
+                <td className="px-3 py-2">{Number(c.defaultLifeYears)}</td>
                 <td className="px-3 py-2">{methodLabel(c.defaultDepreciationMethod)}</td>
-                <td className="px-3 py-2">{c.defaultScrapRate}%</td>
+                <td className="px-3 py-2">{Number(c.defaultScrapRate)}%</td>
                 <td className="px-3 py-2">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${c.isActive ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
                     {c.isActive ? "نشطة" : "متوقفة"}

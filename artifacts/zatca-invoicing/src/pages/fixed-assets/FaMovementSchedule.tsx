@@ -109,7 +109,7 @@ export default function FaMovementSchedule() {
     const lines = [head.join(",")];
     for (const g of groups) {
       for (const r of g.rows) {
-        const life = r.lifeYears ? `${r.lifeYears} سنة${r.rate ? ` / ${r.rate}%` : ""}` : "";
+        const life = r.lifeYears ? `${Number(r.lifeYears)} سنة${r.rate ? ` / ${Number(r.rate)}%` : ""}` : "";
         const cells = [
           `${g.accountCode} ${g.accountName}`,
           `${r.code !== "—" ? r.code + " " : ""}${r.name}`,
@@ -307,7 +307,7 @@ function GroupBlock({
           <td className="px-2 py-1 text-center whitespace-nowrap">{fmtDate(r.depreciationStart)}</td>
           <td className="px-2 py-1 text-center whitespace-nowrap">{r.methodLabel ?? "—"}</td>
           <td className="px-2 py-1 text-center whitespace-nowrap">
-            {r.lifeYears ? `${r.lifeYears} سنة${r.rate ? ` / ${r.rate}%` : ""}` : "—"}
+            {r.lifeYears ? `${Number(r.lifeYears)} سنة${r.rate ? ` / ${Number(r.rate)}%` : ""}` : "—"}
           </td>
           <td className={numCell}>{fmt(r.cost.opening)}</td>
           <td className={numCell}>{fmt(r.cost.additions)}</td>
