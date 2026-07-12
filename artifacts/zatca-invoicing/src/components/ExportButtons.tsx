@@ -30,10 +30,17 @@ interface ExportButtonsProps {
   // render as titled sub-tables; in Excel they are appended below the
   // main rows, separated by a blank row and a bold title row.
   extraSections?: ExportExtraSection[] | null;
+  // Optional custom trigger label (defaults to "تصدير") — lets a screen
+  // render TWO export buttons side by side (e.g. "تصدير إجمالي" vs
+  // "تصدير تفصيلي") each feeding different rows/columns.
+  label?: string;
+  // PDF/print only: force every table cell onto ONE line (nowrap) with
+  // auto font shrinking by column count. Excel is unaffected.
+  pdfFitOneLine?: boolean;
 }
 
 export default function ExportButtons({
-  rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections,
+  rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections, label, pdfFitOneLine,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
   // The company brand (logo + name + CR/VAT/phone/address) is stored on the
@@ -120,10 +127,10 @@ export default function ExportButtons({
         // offscreen, rasterises it (so Arabic/RTL renders correctly) and
         // saves as `${filename}.pdf`. Must await so the busy spinner
         // stays visible until the file dialog appears.
-        await exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections, company);
+        await exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections, company, { fitOneLine: pdfFitOneLine });
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
-        await exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections, company);
+        await exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections, company, { fitOneLine: pdfFitOneLine });
       }
     } finally {
       setBusy(false);
@@ -142,7 +149,7 @@ export default function ExportButtons({
           {busy
             ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
             : <Download className="h-3.5 w-3.5" />}
-          تصدير
+          {label ?? "تصدير"}
           <ChevronDown className="h-3 w-3 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>

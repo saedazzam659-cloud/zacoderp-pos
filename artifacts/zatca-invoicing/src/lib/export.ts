@@ -447,6 +447,11 @@ export async function exportToPDF(
   // Optional company info rendered as an attractive branded block (name,
   // CR, VAT, phone, address) in the green header beneath the logo.
   company?: ExportCompanyInfo | null,
+  // Optional layout options. `fitOneLine` forces every table cell onto a
+  // SINGLE line (white-space: nowrap) and auto-shrinks the table font and
+  // cell padding based on the column count, so wide reports (e.g. the
+  // fixed-assets movement schedule with 15 columns) never wrap mid-cell.
+  opts?: { fitOneLine?: boolean } | null,
 ) {
   const escape = (s: unknown) =>
     String(s ?? "")
@@ -514,6 +519,17 @@ export async function exportToPDF(
        ${companyAddressLine ? `<div class="company-meta">${escape(companyAddressLine)}</div>` : ""}
        <div class="title-sep"></div>`
     : "";
+
+  // One-line fitting: shrink the table font + cell padding by column count
+  // so every cell stays on a single line even for very wide reports.
+  const fit = !!opts?.fitOneLine;
+  const tableFont = fit
+    ? (columns.length >= 14 ? "7.5pt" : columns.length >= 11 ? "8pt" : "9pt")
+    : "9.5pt";
+  const thPad = fit ? "7px 4px" : "9px 8px";
+  const tdPad = fit ? "5px 4px" : "7px 8px";
+  const tdNowrap = fit ? "white-space: nowrap;" : "";
+  const totalsFont = fit ? tableFont : "10pt";
 
   const theadCells = columns
     .map(c => `<th>${escape(c.header)}</th>`)
@@ -597,21 +613,22 @@ export async function exportToPDF(
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 9.5pt;
+      font-size: ${tableFont};
     }
     thead tr { background: #166534; color: #fff; }
     thead th {
-      padding: 9px 8px;
+      padding: ${thPad};
       text-align: center;
       font-weight: 600;
       border: 1px solid #14532d;
       white-space: nowrap;
     }
     tbody td {
-      padding: 7px 8px;
+      padding: ${tdPad};
       border: 1px solid #e2e8f0;
       text-align: center;
       vertical-align: middle;
+      ${tdNowrap}
     }
     tr.even { background: #f8fafb; }
     tr.odd  { background: #ffffff; }
@@ -643,8 +660,8 @@ export async function exportToPDF(
     }
     tbody tr.totals td {
       border-top: 2px solid #166534;
-      padding: 9px 8px;
-      font-size: 10pt;
+      padding: ${fit ? "7px 4px" : "9px 8px"};
+      font-size: ${totalsFont};
     }
     .footer {
       margin-top: 14px;

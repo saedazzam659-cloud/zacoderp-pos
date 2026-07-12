@@ -4,7 +4,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DateField } from "@/components/ui/date-field";
 import ExportButtons from "@/components/ExportButtons";
 import { exportToPDF, type ExportColumn, type ExportCompanyInfo } from "@/lib/export";
-import { CalendarRange, Printer, Loader2, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent,
+  DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { CalendarRange, Printer, Loader2, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown, Layers, ListTree } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -182,16 +186,57 @@ export default function FaMovementSchedule() {
     bookValue: totals.bookValue,
   } : null, [totals]);
 
+  // ── Summary (no-details) variant — mirrors the on-screen COLLAPSED table:
+  // one subtotal row per category + the grand total, WITHOUT per-asset rows.
+  // Detail-only columns (status/dates/method/life) are dropped entirely so
+  // the printed table stays compact and every cell fits on one line.
+  const summaryColumns: ExportColumn[] = useMemo(() => [
+    { header: "الأصل / البيان",     key: "item", width: 40 },
+    { header: "تكلفة — رصيد أول",   key: "costOpen",  numFmt: num },
+    { header: "تكلفة — إضافات",     key: "costAdd",   numFmt: num },
+    { header: "تكلفة — استبعادات",  key: "costExcl",  numFmt: num },
+    { header: "تكلفة — رصيد آخر",   key: "costClose", numFmt: num },
+    { header: "إهلاك — رصيد أول",   key: "depOpen",   numFmt: num },
+    { header: "إهلاك الفترة",       key: "depAdd",    numFmt: num },
+    { header: "إهلاك — استبعادات",  key: "depExcl",   numFmt: num },
+    { header: "إهلاك — رصيد آخر",   key: "depClose",  numFmt: num },
+    { header: "القيمة الدفترية",    key: "bookValue", numFmt: num },
+  ], []);
+
+  const summaryRows = useMemo(() =>
+    groups.map((g) => ({
+      item: `${g.accountCode} — ${g.accountName} (${g.rows.length} أصل)`,
+      costOpen: g.totals.cost.opening,  costAdd: g.totals.cost.additions,
+      costExcl: g.totals.cost.exclusions, costClose: g.totals.cost.closing,
+      depOpen: g.totals.dep.opening,    depAdd: g.totals.dep.additions,
+      depExcl: g.totals.dep.exclusions, depClose: g.totals.dep.closing,
+      bookValue: g.totals.bookValue,
+    })), [groups]);
+
+  const summaryTotalsRow = useMemo(() => totals ? {
+    item: "الإجمالي العام",
+    costOpen: totals.cost.opening,  costAdd: totals.cost.additions,
+    costExcl: totals.cost.exclusions, costClose: totals.cost.closing,
+    depOpen: totals.dep.opening,    depAdd: totals.dep.additions,
+    depExcl: totals.dep.exclusions, depClose: totals.dep.closing,
+    bookValue: totals.bookValue,
+  } : null, [totals]);
+
   const reportTitle = "جدول الإهلاك وحركة الأصول الثابتة";
   const reportSubtitle = `من ${from} إلى ${to}`;
   const reportFilename = `جدول-الإهلاك_${from}_${to}`;
 
   // Branded print — same template exportToPDF renders for every other report
   // (company header + logo + styled table), opened in a new tab with
-  // window.print() triggered automatically.
+  // window.print() triggered automatically. Two variants:
+  //   summary  → category subtotal rows only (same as the collapsed screen)
+  //   detailed → category rows + every asset row
   const [printing, setPrinting] = useState(false);
-  async function handlePrint() {
-    if (!exportRows.length) return;
+  async function handlePrint(mode: "summary" | "detailed") {
+    const rows = mode === "summary" ? summaryRows : exportRows;
+    const cols = mode === "summary" ? summaryColumns : exportColumns;
+    const totRow = mode === "summary" ? summaryTotalsRow : exportTotalsRow;
+    if (!rows.length) return;
     setPrinting(true);
     try {
       const c = user?.company;
@@ -204,8 +249,11 @@ export default function FaMovementSchedule() {
         logo: c.logo ?? null,
       } : null;
       await exportToPDF(
-        exportRows, exportColumns, reportFilename, reportTitle, reportSubtitle,
-        true, exportTotalsRow, null, c?.logo ?? null, null, company,
+        rows, cols, reportFilename,
+        reportTitle,
+        `${reportSubtitle} — ${mode === "summary" ? "إجمالي" : "تفصيلي"}`,
+        true, totRow, null, c?.logo ?? null, null, company,
+        { fitOneLine: true },
       );
     } finally {
       setPrinting(false);
@@ -258,22 +306,50 @@ export default function FaMovementSchedule() {
             {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
             {allExpanded ? "طي الكل" : "توسيع الكل"}
           </button>
-          <button
-            onClick={handlePrint}
-            disabled={flatCount === 0 || printing}
-            className="h-9 px-3 rounded-md bg-slate-700 text-white text-sm flex items-center gap-1 hover:bg-slate-800 disabled:opacity-50"
-          >
-            {printing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} طباعة
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                disabled={flatCount === 0 || printing}
+                className="h-9 px-3 rounded-md bg-slate-700 text-white text-sm flex items-center gap-1 hover:bg-slate-800 disabled:opacity-50"
+              >
+                {printing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} طباعة
+                <ChevronDown className="h-3 w-3 opacity-70" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handlePrint("summary")}>
+                <Layers className="h-4 w-4 text-emerald-600" />
+                <span>طباعة إجمالية (بدون تفاصيل)</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handlePrint("detailed")}>
+                <ListTree className="h-4 w-4 text-sky-600" />
+                <span>طباعة تفصيلية (بالأصول)</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <ExportButtons
+            rows={summaryRows}
+            columns={summaryColumns}
+            filename={`${reportFilename}_إجمالي`}
+            title={reportTitle}
+            subtitle={`${reportSubtitle} — إجمالي`}
+            totalsRow={summaryTotalsRow}
+            disabled={flatCount === 0}
+            size="default"
+            label="تصدير إجمالي"
+            pdfFitOneLine
+          />
           <ExportButtons
             rows={exportRows}
             columns={exportColumns}
-            filename={reportFilename}
+            filename={`${reportFilename}_تفصيلي`}
             title={reportTitle}
-            subtitle={reportSubtitle}
+            subtitle={`${reportSubtitle} — تفصيلي`}
             totalsRow={exportTotalsRow}
             disabled={flatCount === 0}
             size="default"
+            label="تصدير تفصيلي"
+            pdfFitOneLine
           />
         </div>
       </div>
