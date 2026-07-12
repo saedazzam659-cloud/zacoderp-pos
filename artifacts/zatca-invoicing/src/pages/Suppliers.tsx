@@ -492,8 +492,6 @@ export default function Suppliers() {
                     value={editForm.accountId}
                     onValueChange={(v) => setEditForm(f => ({ ...f, accountId: v }))}
                     placeholder={`— ${t("pages.suppliers.selectAccountsPayable")} —`}
-                    filterTypes={["liability"]}
-                    grouped={false}
                     excludeIds={suppliers
                       .filter((s: any) => s.id !== editSup?.id)
                       .map((s: any) => s.accountId)}
