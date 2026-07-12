@@ -1,5 +1,11 @@
 import * as React from "react";
-import { Calendar as CalendarIconLucide } from "lucide-react";
+import {
+  Calendar as CalendarIconLucide,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsUpDown,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -81,6 +87,213 @@ function localDateToIso(d: Date): string {
   return toIso(d.getFullYear(), d.getMonth() + 1, d.getDate());
 }
 
+// ---------------------------------------------------------------------------
+// Open year range — wide enough for birth dates and far-future expiries alike.
+// ---------------------------------------------------------------------------
+const START_YEAR = 1930;
+const END_YEAR = 2100;
+
+const MONTHS_AR = [
+  "يناير",
+  "فبراير",
+  "مارس",
+  "أبريل",
+  "مايو",
+  "يونيو",
+  "يوليو",
+  "أغسطس",
+  "سبتمبر",
+  "أكتوبر",
+  "نوفمبر",
+  "ديسمبر",
+];
+
+type InlineItem = { value: string; label: string };
+
+const MONTH_ITEMS: InlineItem[] = MONTHS_AR.map((label, i) => ({
+  value: String(i),
+  label: `${label} (${i + 1})`,
+}));
+
+const YEAR_ITEMS: InlineItem[] = Array.from(
+  { length: END_YEAR - START_YEAR + 1 },
+  (_, i) => {
+    const y = START_YEAR + i;
+    return { value: String(y), label: String(y) };
+  },
+);
+
+/**
+ * Searchable combobox styled after the system-wide `SearchCombobox`, but
+ * rendered INLINE (no portal). A portaled nested Popover inside the calendar
+ * popover triggers Radix's outside-interaction dismissal and closes the whole
+ * calendar — the inline dropdown avoids that while keeping the same look.
+ */
+function InlineSearchCombobox({
+  items,
+  value,
+  onValueChange,
+  className,
+  searchPlaceholder,
+  ariaLabel,
+}: {
+  items: InlineItem[];
+  value: string;
+  onValueChange: (value: string) => void;
+  className?: string;
+  searchPlaceholder?: string;
+  ariaLabel?: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
+  const [highlight, setHighlight] = React.useState(0);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
+
+  const selected = items.find((i) => i.value === value);
+  const displayValue = open ? search : (selected?.label ?? "");
+
+  const filtered = React.useMemo(() => {
+    const q = normalizeDigits(search).trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (it) =>
+        it.label.toLowerCase().includes(q) ||
+        it.value.toLowerCase().includes(q),
+    );
+  }, [items, search]);
+
+  // When opening (or filtering), highlight the currently-selected row if it is
+  // visible, else the first row — and scroll it into view.
+  React.useEffect(() => {
+    if (!open) return;
+    const selIdx = filtered.findIndex((it) => it.value === value);
+    setHighlight(selIdx === -1 ? 0 : selIdx);
+  }, [open, filtered, value]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const el = listRef.current?.querySelector<HTMLElement>(
+      `[data-idx="${highlight}"]`,
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [highlight, open]);
+
+  const commit = (val: string) => {
+    onValueChange(val);
+    setOpen(false);
+    setSearch("");
+    inputRef.current?.blur();
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!open) setOpen(true);
+      setHighlight((h) => (filtered.length ? (h + 1) % filtered.length : 0));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) =>
+        filtered.length ? (h - 1 + filtered.length) % filtered.length : 0,
+      );
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (open && filtered[highlight]) commit(filtered[highlight].value);
+    } else if (e.key === "Escape") {
+      e.stopPropagation();
+      setOpen(false);
+      setSearch("");
+      inputRef.current?.blur();
+    } else if (e.key === "Tab") {
+      setOpen(false);
+      setSearch("");
+    }
+  };
+
+  return (
+    <div className={cn("relative", className)}>
+      <input
+        ref={inputRef}
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        aria-label={ariaLabel}
+        value={displayValue}
+        placeholder={selected ? "" : searchPlaceholder}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          if (!open) setOpen(true);
+        }}
+        onKeyDown={onKeyDown}
+        onBlur={() => {
+          setOpen(false);
+          setSearch("");
+        }}
+        dir="auto"
+        className={cn(
+          "flex h-8 w-full rounded-md border border-input bg-background ps-2 pe-7 text-sm text-foreground shadow-sm",
+          "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        )}
+      />
+      <div className="pointer-events-none absolute inset-y-0 end-1.5 flex items-center">
+        <ChevronsUpDown className="h-3.5 w-3.5 opacity-40" />
+      </div>
+      {open && (
+        <div
+          ref={listRef}
+          className="absolute start-0 top-full z-50 mt-1 max-h-60 w-full min-w-[7rem] overflow-y-auto rounded-md border bg-popover py-1 shadow-md"
+        >
+          {filtered.length === 0 ? (
+            <div className="py-4 text-center text-xs text-muted-foreground">
+              لا توجد نتائج
+            </div>
+          ) : (
+            filtered.map((it, idx) => {
+              const isSel = it.value === value;
+              const isHi = idx === highlight;
+              return (
+                <div
+                  key={it.value}
+                  data-idx={idx}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    commit(it.value);
+                  }}
+                  onMouseEnter={() => setHighlight(idx)}
+                  className={cn(
+                    "mx-1 flex cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1.5 text-sm tabular-nums",
+                    isHi ? "bg-accent text-accent-foreground" : "hover:bg-muted/60",
+                  )}
+                >
+                  <Check
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0 text-primary",
+                      isSel ? "opacity-100" : "opacity-0",
+                    )}
+                  />
+                  <span>{it.label}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** First day of the month `n` months away, clamped to the supported range. */
+function addMonthsClamped(d: Date, n: number): Date {
+  const next = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  if (next.getFullYear() < START_YEAR) return new Date(START_YEAR, 0, 1);
+  if (next.getFullYear() > END_YEAR) return new Date(END_YEAR, 11, 1);
+  return next;
+}
+
 export type SmartDateInputProps = Omit<
   React.InputHTMLAttributes<HTMLInputElement>,
   "value" | "onChange" | "min" | "max" | "type"
@@ -103,6 +316,10 @@ export type SmartDateInputProps = Omit<
  * available in every month that actually has it. Manual typing in `DD/MM/YYYY`
  * is also supported; impossible days are clamped to the month end on commit.
  * The stored/emitted value (`value` / `onChange`) is always ISO `YYYY-MM-DD`.
+ *
+ * The popover header exposes SEARCHABLE month + year comboboxes (same style as
+ * the system-wide SearchCombobox) over an open 1930–2100 range, plus اليوم/مسح
+ * shortcuts in the footer.
  */
 export const SmartDateInput = React.forwardRef<
   HTMLInputElement,
@@ -130,6 +347,9 @@ export const SmartDateInput = React.forwardRef<
 ) {
   const [draft, setDraft] = React.useState(() => isoToDisplay(value));
   const [open, setOpen] = React.useState(false);
+  // The month currently DISPLAYED in the calendar grid (independent from the
+  // selected value — the header comboboxes/arrows navigate this).
+  const [viewMonth, setViewMonth] = React.useState<Date>(() => new Date());
   // While the field is focused the user owns the draft — we must NOT reformat
   // it on every keystroke or the caret jumps to the end (typing one digit in
   // the "day" slot would otherwise push the next digit into the "year",
@@ -203,6 +423,23 @@ export const SmartDateInput = React.forwardRef<
   const maxDate = isoToLocalDate(max);
   const showPicker = !readOnly && !disabled;
 
+  const openCalendar = (o: boolean) => {
+    if (o) {
+      // Land on the month of the current value (or the policy minimum, or
+      // today) every time the popover opens.
+      const base = selected ?? minDate ?? new Date();
+      setViewMonth(new Date(base.getFullYear(), base.getMonth(), 1));
+    }
+    setOpen(o);
+  };
+
+  const pickIso = (iso: string) => {
+    const bounded = clampToBounds(iso, min, max);
+    setDraft(isoToDisplay(bounded));
+    onChange(bounded);
+    setOpen(false);
+  };
+
   return (
     <div className="relative w-full" dir="ltr">
       <Input
@@ -232,7 +469,7 @@ export const SmartDateInput = React.forwardRef<
         )}
       />
       {showPicker && (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={open} onOpenChange={openCalendar}>
           <PopoverTrigger asChild>
             <Button
               type="button"
@@ -245,27 +482,100 @@ export const SmartDateInput = React.forwardRef<
               <CalendarIconLucide className="h-4 w-4" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="start">
+          <PopoverContent className="w-auto p-0" align="start" dir="rtl">
+            {/* Header: prev/next month + searchable month & year comboboxes */}
+            <div className="flex items-center gap-1 border-b bg-muted/40 px-2 py-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                aria-label="الشهر السابق"
+                onClick={() => setViewMonth((m) => addMonthsClamped(m, -1))}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <InlineSearchCombobox
+                items={MONTH_ITEMS}
+                value={String(viewMonth.getMonth())}
+                onValueChange={(v) =>
+                  setViewMonth(
+                    (m) => new Date(m.getFullYear(), Number(v), 1),
+                  )
+                }
+                className="w-[7.5rem]"
+                searchPlaceholder="الشهر"
+                ariaLabel="اختيار الشهر"
+              />
+              <InlineSearchCombobox
+                items={YEAR_ITEMS}
+                value={String(viewMonth.getFullYear())}
+                onValueChange={(v) =>
+                  setViewMonth((m) => new Date(Number(v), m.getMonth(), 1))
+                }
+                className="w-[5.5rem]"
+                searchPlaceholder="السنة"
+                ariaLabel="اختيار السنة"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                aria-label="الشهر التالي"
+                onClick={() => setViewMonth((m) => addMonthsClamped(m, 1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            </div>
             <Calendar
               mode="single"
+              dir="rtl"
               selected={selected}
-              defaultMonth={selected ?? minDate ?? new Date()}
-              captionLayout="dropdown"
-              startMonth={new Date(2000, 0)}
-              endMonth={new Date(2100, 11)}
+              month={viewMonth}
+              onMonthChange={setViewMonth}
+              hideNavigation
+              classNames={{ month_caption: "hidden", nav: "hidden" }}
+              formatters={{
+                formatWeekdayName: (date) =>
+                  date.toLocaleDateString("ar", { weekday: "narrow" }),
+              }}
+              startMonth={new Date(START_YEAR, 0)}
+              endMonth={new Date(END_YEAR, 11)}
               disabled={[
                 ...(minDate ? [{ before: minDate }] : []),
                 ...(maxDate ? [{ after: maxDate }] : []),
               ]}
               onSelect={(d) => {
-                if (d) {
-                  const iso = clampToBounds(localDateToIso(d), min, max);
-                  setDraft(isoToDisplay(iso));
-                  onChange(iso);
-                }
-                setOpen(false);
+                if (d) pickIso(localDateToIso(d));
+                else setOpen(false);
               }}
             />
+            {/* Footer: today / clear shortcuts */}
+            <div className="flex items-center justify-between border-t px-2 py-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-primary"
+                onClick={() => pickIso(localDateToIso(new Date()))}
+              >
+                اليوم
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-muted-foreground"
+                onClick={() => {
+                  setDraft("");
+                  onChange("");
+                  setOpen(false);
+                }}
+              >
+                مسح
+              </Button>
+            </div>
           </PopoverContent>
         </Popover>
       )}
