@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { DateField } from "@/components/ui/date-field";
-import { CalendarRange, Printer, FileSpreadsheet, Loader2, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
+import ExportButtons from "@/components/ExportButtons";
+import { exportToPDF, type ExportColumn, type ExportCompanyInfo } from "@/lib/export";
+import { CalendarRange, Printer, Loader2, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -98,38 +100,116 @@ export default function FaMovementSchedule() {
   const collapseAll = () => setExpanded(new Set());
   const allExpanded = groups.length > 0 && groups.every((g) => expanded.has(groupKey(g)));
 
-  function exportCsv() {
-    if (!data) return;
-    const head = [
-      "الحساب", "الأصل", "الحالة", "تاريخ الاستحواذ", "بداية الإهلاك", "الطريقة", "العمر/المعدل",
-      "تكلفة رصيد أول", "تكلفة إضافات", "تكلفة استبعادات", "تكلفة رصيد آخر",
-      "إهلاك رصيد أول", "إهلاك إضافات", "إهلاك استبعادات", "إهلاك رصيد آخر",
-      "القيمة الدفترية",
-    ];
-    const lines = [head.join(",")];
+  // ── Year quick-filter ──────────────────────────────────────────────────────
+  // Picking a year sets the range to Jan 1 → Dec 31 of that year. The manual
+  // from/to date fields stay usable; the select shows the year only while the
+  // range exactly matches a full calendar year.
+  const currentYear = new Date().getFullYear();
+  const yearOptions = useMemo(() => {
+    const ys: number[] = [];
+    for (let y = currentYear + 1; y >= currentYear - 10; y--) ys.push(y);
+    return ys;
+  }, [currentYear]);
+  const selectedYear = useMemo(() => {
+    const m = /^(\d{4})-01-01$/.exec(from);
+    return m && to === `${m[1]}-12-31` ? m[1] : "";
+  }, [from, to]);
+  const pickYear = (y: string) => {
+    if (!y) return;
+    setFrom(`${y}-01-01`);
+    setTo(`${y}-12-31`);
+  };
+
+  // ── Export (Excel / PDF / Print) — same pattern as the rest of the system ──
+  const num = "#,##0.00";
+  const exportColumns: ExportColumn[] = useMemo(() => [
+    { header: "الأصل / البيان",     key: "item", width: 34 },
+    { header: "الحالة",             key: "status", width: 12 },
+    { header: "تاريخ الاستحواذ",    key: "acq", width: 13 },
+    { header: "بداية الإهلاك",      key: "depStart", width: 13 },
+    { header: "الطريقة",            key: "method", width: 12 },
+    { header: "العمر / المعدل",     key: "life", width: 13 },
+    { header: "تكلفة — رصيد أول",   key: "costOpen",  numFmt: num },
+    { header: "تكلفة — إضافات",     key: "costAdd",   numFmt: num },
+    { header: "تكلفة — استبعادات",  key: "costExcl",  numFmt: num },
+    { header: "تكلفة — رصيد آخر",   key: "costClose", numFmt: num },
+    { header: "إهلاك — رصيد أول",   key: "depOpen",   numFmt: num },
+    { header: "إهلاك الفترة",       key: "depAdd",    numFmt: num },
+    { header: "إهلاك — استبعادات",  key: "depExcl",   numFmt: num },
+    { header: "إهلاك — رصيد آخر",   key: "depClose",  numFmt: num },
+    { header: "القيمة الدفترية",    key: "bookValue", numFmt: num },
+  ], []);
+
+  const exportRows = useMemo(() => {
+    const out: Record<string, unknown>[] = [];
     for (const g of groups) {
+      // Category subtotal row (mirrors the on-screen green group row).
+      out.push({
+        item: `${g.accountCode} — ${g.accountName} (${g.rows.length} أصل)`,
+        status: "", acq: "", depStart: "", method: "", life: "",
+        costOpen: g.totals.cost.opening,  costAdd: g.totals.cost.additions,
+        costExcl: g.totals.cost.exclusions, costClose: g.totals.cost.closing,
+        depOpen: g.totals.dep.opening,    depAdd: g.totals.dep.additions,
+        depExcl: g.totals.dep.exclusions, depClose: g.totals.dep.closing,
+        bookValue: g.totals.bookValue,
+      });
       for (const r of g.rows) {
-        const life = r.lifeYears ? `${Number(r.lifeYears)} سنة${r.rate ? ` / ${Number(r.rate)}%` : ""}` : "";
-        const cells = [
-          `${g.accountCode} ${g.accountName}`,
-          `${r.code !== "—" ? r.code + " " : ""}${r.name}`,
-          r.status ? STATUS_LABELS[r.status] ?? r.status : "",
-          r.acquisitionDate ?? "", r.depreciationStart ?? "",
-          r.methodLabel ?? "", life,
-          r.cost.opening, r.cost.additions, r.cost.exclusions, r.cost.closing,
-          r.dep.opening, r.dep.additions, r.dep.exclusions, r.dep.closing,
-          r.bookValue,
-        ];
-        lines.push(cells.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","));
+        out.push({
+          item: `${r.code !== "—" ? r.code + " " : ""}${r.name}`,
+          status: r.status ? STATUS_LABELS[r.status] ?? r.status : "",
+          acq: r.acquisitionDate ?? "—",
+          depStart: r.depreciationStart ?? "—",
+          method: r.methodLabel ?? "—",
+          life: r.lifeYears ? `${Number(r.lifeYears)} سنة${r.rate ? ` / ${Number(r.rate)}%` : ""}` : "—",
+          costOpen: r.cost.opening,  costAdd: r.cost.additions,
+          costExcl: r.cost.exclusions, costClose: r.cost.closing,
+          depOpen: r.dep.opening,    depAdd: r.dep.additions,
+          depExcl: r.dep.exclusions, depClose: r.dep.closing,
+          bookValue: r.bookValue,
+        });
       }
     }
-    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `جدول-الإهلاك_${from}_${to}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    return out;
+  }, [groups]);
+
+  const exportTotalsRow = useMemo(() => totals ? {
+    item: "الإجمالي العام",
+    status: "", acq: "", depStart: "", method: "", life: "",
+    costOpen: totals.cost.opening,  costAdd: totals.cost.additions,
+    costExcl: totals.cost.exclusions, costClose: totals.cost.closing,
+    depOpen: totals.dep.opening,    depAdd: totals.dep.additions,
+    depExcl: totals.dep.exclusions, depClose: totals.dep.closing,
+    bookValue: totals.bookValue,
+  } : null, [totals]);
+
+  const reportTitle = "جدول الإهلاك وحركة الأصول الثابتة";
+  const reportSubtitle = `من ${from} إلى ${to}`;
+  const reportFilename = `جدول-الإهلاك_${from}_${to}`;
+
+  // Branded print — same template exportToPDF renders for every other report
+  // (company header + logo + styled table), opened in a new tab with
+  // window.print() triggered automatically.
+  const [printing, setPrinting] = useState(false);
+  async function handlePrint() {
+    if (!exportRows.length) return;
+    setPrinting(true);
+    try {
+      const c = user?.company;
+      const company: ExportCompanyInfo | null = c ? {
+        nameAr: c.nameAr ?? c.name ?? null, nameEn: c.nameEn ?? null,
+        crNumber: c.crNumber ?? null, vatNumber: c.vatNumber ?? null,
+        phone: c.phone ?? null, buildingNumber: c.buildingNumber ?? null,
+        street: c.street ?? null, district: c.district ?? null,
+        city: c.city ?? null, postalCode: c.postalCode ?? null,
+        logo: c.logo ?? null,
+      } : null;
+      await exportToPDF(
+        exportRows, exportColumns, reportFilename, reportTitle, reportSubtitle,
+        true, exportTotalsRow, null, c?.logo ?? null, null, company,
+      );
+    } finally {
+      setPrinting(false);
+    }
   }
 
   const numCell = "px-2 py-1 text-center font-mono tabular-nums whitespace-nowrap";
@@ -150,6 +230,19 @@ export default function FaMovementSchedule() {
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <label className="text-xs text-slate-600">
+            السنة
+            <select
+              value={selectedYear}
+              onChange={(e) => pickYear(e.target.value)}
+              className="block mt-1 h-9 w-24 px-2 rounded-md border border-slate-300 bg-white text-sm"
+            >
+              <option value="">مخصص</option>
+              {yearOptions.map((y) => (
+                <option key={y} value={String(y)}>{y}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-600">
             من
             <DateField value={from} onChange={(e) => setFrom(e.target.value)} className="block mt-1 w-36" />
           </label>
@@ -166,17 +259,22 @@ export default function FaMovementSchedule() {
             {allExpanded ? "طي الكل" : "توسيع الكل"}
           </button>
           <button
-            onClick={() => window.print()}
-            className="h-9 px-3 rounded-md bg-slate-700 text-white text-sm flex items-center gap-1 hover:bg-slate-800"
+            onClick={handlePrint}
+            disabled={flatCount === 0 || printing}
+            className="h-9 px-3 rounded-md bg-slate-700 text-white text-sm flex items-center gap-1 hover:bg-slate-800 disabled:opacity-50"
           >
-            <Printer className="h-4 w-4" /> طباعة
+            {printing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} طباعة
           </button>
-          <button
-            onClick={exportCsv}
-            className="h-9 px-3 rounded-md bg-emerald-600 text-white text-sm flex items-center gap-1 hover:bg-emerald-700"
-          >
-            <FileSpreadsheet className="h-4 w-4" /> تصدير CSV
-          </button>
+          <ExportButtons
+            rows={exportRows}
+            columns={exportColumns}
+            filename={reportFilename}
+            title={reportTitle}
+            subtitle={reportSubtitle}
+            totalsRow={exportTotalsRow}
+            disabled={flatCount === 0}
+            size="default"
+          />
         </div>
       </div>
 
