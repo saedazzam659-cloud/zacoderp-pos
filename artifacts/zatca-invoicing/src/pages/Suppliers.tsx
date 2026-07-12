@@ -14,6 +14,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
 import { FormPanel } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -90,11 +91,15 @@ export default function Suppliers() {
   const [creating,  setCreating]  = useState(false);
   const [editForm,  setEditForm]  = useState<typeof EMPTY_FORM>(EMPTY_FORM);
   const [deleteSup, setDeleteSup] = useState<any>(null);
+  // CREATE-only: when no account is picked, decides which parent the
+  // auto-created AP sub-account nests under (محلي/أجنبي) — mirrors /suppliers/new.
+  const [accountCategory, setAccountCategory] = useState<"local" | "foreign">("local");
 
   function openCreate() {
     setCreating(true);
     setEditSup(null);
     setEditForm(EMPTY_FORM);
+    setAccountCategory("local");
   }
   function closePanel() {
     setCreating(false);
@@ -275,6 +280,9 @@ export default function Suppliers() {
         ...values,
         companyId: user?.companyId,
         accountId: values.accountId ? Number(values.accountId) : null,
+        // Same contract as /suppliers/new: the category matters only when the
+        // user did NOT pick an account (server auto-mints the AP sub-account).
+        accountCategory: values.accountId ? undefined : accountCategory,
       };
       const res = await fetch(`${API}/api/suppliers`, {
         method: "POST",
@@ -394,9 +402,22 @@ export default function Suppliers() {
             ? t("pages.suppliers.saveChanges")
             : t("common.save", "حفظ")}
         >
-          <div className="space-y-6">
-            <div className="space-y-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><Truck className="h-3.5 w-3.5" />{t("pages.suppliers.commercialIdentity")}</p>
+          {/* 3 tabs (RTL → first tab renders on the RIGHT):
+              ١ الهوية التجارية · ٢ العنوان الوطني · ٣ الربط المحاسبي */}
+          <Tabs key={editSup ? `edit-${editSup.id}` : "create"} defaultValue="identity" dir="rtl" className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="identity" className="gap-1.5" data-testid="supplier-tab-identity">
+                <Truck className="h-3.5 w-3.5" />{t("pages.suppliers.commercialIdentity")}
+              </TabsTrigger>
+              <TabsTrigger value="address" className="gap-1.5" data-testid="supplier-tab-address">
+                <MapPin className="h-3.5 w-3.5" />{t("pages.suppliers.nationalAddress")}
+              </TabsTrigger>
+              <TabsTrigger value="accounting" className="gap-1.5" data-testid="supplier-tab-accounting">
+                <CreditCard className="h-3.5 w-3.5" />{t("pages.suppliers.accountingLink")}
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="identity" className="mt-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
                 <Field label="رقم المورد" value={editForm.code} onChange={v => setEditForm(f => ({ ...f, code: v }))} placeholder="SUP-001" dir="ltr" />
                 <Field label={`${t("pages.suppliers.supplierNameAr")} *`} value={editForm.nameAr} onChange={v => setEditForm(f => ({ ...f, nameAr: v }))} placeholder={t("pages.suppliers.supplierNameArPlaceholder")} />
@@ -406,9 +427,9 @@ export default function Suppliers() {
                 <Field label={t("pages.suppliers.emailLabel")} value={editForm.email} onChange={v => setEditForm(f => ({ ...f, email: v }))} placeholder="info@supplier.com" dir="ltr" />
                 <Field label={t("pages.suppliers.phoneLabel")} value={editForm.phone} onChange={v => setEditForm(f => ({ ...f, phone: v }))} placeholder="0500000000" dir="ltr" />
               </div>
-            </div>
-            <div className="space-y-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><MapPin className="h-3.5 w-3.5" />{t("pages.suppliers.nationalAddress")}</p>
+            </TabsContent>
+
+            <TabsContent value="address" className="mt-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
                 <Field label={t("pages.suppliers.streetName")} value={editForm.street} onChange={v => setEditForm(f => ({ ...f, street: v }))} placeholder={t("pages.suppliers.streetPlaceholder")} />
                 <Field label={t("pages.suppliers.buildingNumber")} value={editForm.buildingNumber} onChange={v => setEditForm(f => ({ ...f, buildingNumber: v }))} placeholder="1234" dir="ltr" />
@@ -416,14 +437,15 @@ export default function Suppliers() {
                 <Field label={t("pages.suppliers.cityLabel")} value={editForm.city} onChange={v => setEditForm(f => ({ ...f, city: v }))} placeholder={t("pages.suppliers.cityPlaceholder")} />
                 <Field label={t("pages.suppliers.postalCode")} value={editForm.postalCode} onChange={v => setEditForm(f => ({ ...f, postalCode: v }))} placeholder="12345" dir="ltr" />
               </div>
-            </div>
-            {/* Accounting link: hidden on CREATE so every new supplier auto-mints
-                its OWN AP sub-account under the موردين parent (same behaviour as
-                customers, which have no picker) and therefore shows individually
-                in شجرة الحسابات. Kept on EDIT for remapping legacy suppliers. */}
-            {editSup && (
+            </TabsContent>
+
+            {/* Accounting link: shown on CREATE and EDIT alike (mirrors
+                /suppliers/new). Picking an account is OPTIONAL on create —
+                leaving it empty keeps the old behaviour where the server
+                auto-mints an AP sub-account (named after the supplier) under
+                the محلي/أجنبي parent chosen below. */}
+            <TabsContent value="accounting" className="mt-4">
               <div className="space-y-4">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2">{t("pages.suppliers.accountingLink")}</p>
                 <div className="max-w-sm space-y-1.5">
                   <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
                   <AccountCombobox
@@ -435,9 +457,27 @@ export default function Suppliers() {
                   />
                   <p className="text-xs text-muted-foreground">{t("pages.suppliers.accountingLinkHelp")}</p>
                 </div>
+                {!editSup && !editForm.accountId && (
+                  <div className="max-w-xl space-y-1.5 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4">
+                    <label className="text-sm font-medium">تصنيف المورد (للإنشاء التلقائي للحساب)</label>
+                    <select
+                      value={accountCategory}
+                      onChange={e => setAccountCategory(e.target.value as "local" | "foreign")}
+                      className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                      data-testid="supplier-account-category"
+                    >
+                      <option value="local">مورد محلي (موردون محليون)</option>
+                      <option value="foreign">مورد أجنبي (موردون أجانب)</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      لم تختر حساباً — سيُنشئ النظام حساباً فرعياً تلقائياً باسم المورد تحت الحساب الأب لهذا التصنيف
+                      (يُضبط من «الإعدادات ← ربط القيود المحاسبية»).
+                    </p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </TabsContent>
+          </Tabs>
         </FormPanel>
       )}
 
