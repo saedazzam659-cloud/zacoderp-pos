@@ -216,6 +216,7 @@ const hrSubNav: NavDef[] = [
   { nameKey: "nav.hrLoans",         href: "/hr/loans",           icon: Wallet,          permKey: "hr_loans" },
   { nameKey: "nav.hrCustody",       href: "/hr/custody",         icon: Briefcase,       permKey: "hr_loans" },
   { nameKey: "nav.hrPayroll",       href: "/hr/payroll",         icon: Banknote,        permKey: "hr_payroll" },
+  { nameKey: "nav.hrMudad",         href: "/hr/mudad",           icon: Landmark,        permKey: "hr_payroll" },
   { nameKey: "nav.hrEos",           href: "/hr/end-of-service",  icon: Scale,           permKey: "hr_eos" },
   { nameKey: "nav.hrCalculators",   href: "/hr/calculators",     icon: Calculator,      permKey: "hr_calculators" },
   { nameKey: "nav.hrReports",       href: "/hr/reports",         icon: BarChart3,       permKey: "hr_employees" },

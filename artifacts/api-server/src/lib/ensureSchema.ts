@@ -378,6 +378,58 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       )` },
     { label: "je_number_reservations_src_unq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS je_number_reservations_src_unq ON je_number_reservations (company_id, source_type, source_id)` },
+    // ─── Saudi Mudad salary batches (see schema/hr.ts). WPS-compatible salary
+    // export to منصة مدد. Created here because ensureColumns only ALTERs
+    // existing tables, never CREATEs. Idempotent — safe on every boot.
+    { label: "create mudad_salary_batches table",
+      sql:   `CREATE TABLE IF NOT EXISTS mudad_salary_batches (
+        id                   SERIAL PRIMARY KEY,
+        company_id           INTEGER NOT NULL REFERENCES companies(id),
+        branch_id            INTEGER REFERENCES branches(id),
+        payroll_run_id       INTEGER REFERENCES payroll_runs(id) ON DELETE SET NULL,
+        code                 TEXT NOT NULL,
+        year                 INTEGER NOT NULL,
+        month                INTEGER NOT NULL,
+        send_mode            TEXT NOT NULL DEFAULT 'sponsored_only',
+        establishment_number TEXT,
+        total_employees      INTEGER NOT NULL DEFAULT 0,
+        included_count       INTEGER NOT NULL DEFAULT 0,
+        excluded_count       INTEGER NOT NULL DEFAULT 0,
+        sent_count           INTEGER NOT NULL DEFAULT 0,
+        rejected_count       INTEGER NOT NULL DEFAULT 0,
+        total_net            NUMERIC(14,2) NOT NULL DEFAULT '0',
+        file_format          TEXT NOT NULL DEFAULT 'wps_csv',
+        status               TEXT NOT NULL DEFAULT 'generated',
+        created_by           INTEGER,
+        created_by_name      TEXT,
+        notes                TEXT,
+        created_at           TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at           TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "mudad_salary_batches_company_code_unq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS uq_mudad_batch_company_code ON mudad_salary_batches (company_id, code)` },
+    { label: "mudad_salary_batches_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS mudad_salary_batches_company_idx ON mudad_salary_batches (company_id)` },
+    { label: "create mudad_salary_batch_lines table",
+      sql:   `CREATE TABLE IF NOT EXISTS mudad_salary_batch_lines (
+        id               SERIAL PRIMARY KEY,
+        batch_id         INTEGER NOT NULL REFERENCES mudad_salary_batches(id) ON DELETE CASCADE,
+        company_id       INTEGER NOT NULL REFERENCES companies(id),
+        employee_id      INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+        employee_code    TEXT,
+        employee_name    TEXT,
+        id_number        TEXT,
+        iban             TEXT,
+        bank_name        TEXT,
+        net_salary       NUMERIC(12,2) NOT NULL DEFAULT '0',
+        included         BOOLEAN NOT NULL DEFAULT FALSE,
+        excluded_reason  TEXT,
+        status           TEXT NOT NULL DEFAULT 'pending',
+        rejection_reason TEXT,
+        created_at       TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "mudad_salary_batch_lines_batch_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS mudad_salary_batch_lines_batch_idx ON mudad_salary_batch_lines (batch_id)` },
     // ─── pos_terminal_users: optional per-terminal user allow-list (see
     // schema/pos.ts). Same rationale as approval_log — created here because
     // ensureColumns only ALTERs.

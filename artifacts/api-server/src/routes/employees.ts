@@ -179,6 +179,16 @@ router.post("/", async (req, res) => {
       payableAccountId: N(b.payableAccountId) ? Number(b.payableAccountId) : null,
       photoUrl: N(b.photoUrl),
       notes: N(b.notes),
+      // Mudad / kafala eligibility
+      borderNumber: N(b.borderNumber),
+      saudiType: b.saudiType || "non_saudi",
+      employmentType: b.employmentType || "regular",
+      onSponsorship: b.onSponsorship === false ? false : true,
+      establishmentNumber: N(b.establishmentNumber),
+      sponsorshipStart: N(b.sponsorshipStart),
+      sponsorshipEnd: N(b.sponsorshipEnd),
+      workPermitExpiry: N(b.workPermitExpiry),
+      bankApproved: b.bankApproved === false ? false : true,
     }).returning();
     res.status(201).json(row);
   } catch (e: any) {
@@ -203,10 +213,13 @@ router.put("/:id", async (req, res) => {
     const updates: any = { updatedAt: new Date() };
     const fields = ["branchId","nameAr","nameEn","idType","idNumber","iqamaExpiry","passportNumber","passportExpiry",
       "nationality","gender","birthDate","mobile","email","hireDate","endDate","department","jobTitle","sponsor",
-      "profession","status","bankAccountIban","bankName","photoUrl","notes"];
+      "profession","status","bankAccountIban","bankName","photoUrl","notes",
+      "borderNumber","saudiType","employmentType","establishmentNumber","sponsorshipStart","sponsorshipEnd","workPermitExpiry"];
     for (const f of fields) if (f in b) updates[f] = N(b[f]);
     for (const f of ["basicSalary","housingAllow","transportAllow","otherAllow"])
       if (f in b) updates[f] = String(b[f] ?? 0);
+    for (const f of ["onSponsorship","bankApproved"])
+      if (f in b) updates[f] = b[f] === false ? false : true;
     if ("payableAccountId" in b) updates.payableAccountId = N(b.payableAccountId) ? Number(b.payableAccountId) : null;
     if ("branchId" in b) updates.branchId = N(b.branchId) ? Number(b.branchId) : null;
 

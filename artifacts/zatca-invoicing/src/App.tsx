@@ -136,6 +136,7 @@ import Attendance from "@/pages/hr/Attendance";
 import EmployeeLoans from "@/pages/hr/EmployeeLoans";
 import EmployeeCustodies from "@/pages/hr/EmployeeCustodies";
 import Payroll from "@/pages/hr/Payroll";
+import MudadPayroll from "@/pages/hr/MudadPayroll";
 import AllContracts from "@/pages/hr/AllContracts";
 import EndOfService from "@/pages/hr/EndOfService";
 import ProductionDashboard from "@/pages/ProductionDashboard";
@@ -762,6 +763,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/loans"                   module="hr_loans"       component={EmployeeLoans} />}
             {!isSuperAdmin && <PermRoute path="/hr/custody"                 module="hr_loans"       component={EmployeeCustodies} />}
             {!isSuperAdmin && <PermRoute path="/hr/payroll"                 module="hr_payroll"     component={Payroll} />}
+            {!isSuperAdmin && <PermRoute path="/hr/mudad"                   module="hr_payroll"     component={MudadPayroll} />}
             {!isSuperAdmin && <PermRoute path="/hr/end-of-service"          module="hr_eos"         component={EndOfService} />}
             {!isSuperAdmin && <PermRoute path="/hr/calculators"             module="hr_calculators" component={HRCalculators} />}
             {!isSuperAdmin && <PermRoute path="/hr/settings"                module="hr_settings"    component={HRSettings} />}

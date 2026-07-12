@@ -201,6 +201,15 @@ export const employeesApi = {
     return req<{ summary: any; rows: any[] }>("GET", `/hr/reports/leaves${q ? `?${q}` : ""}`);
   },
 
+  // ─────────────────────── Mudad (منصة مدد) salary sending ───────────────────
+  mudadStats:   () => req<any>("GET", "/employees/mudad/stats"),
+  mudadPreview: (payrollRunId: number, mode: "sponsored_only" | "all" = "sponsored_only") =>
+    req<any>("GET", `/employees/mudad/preview?payrollRunId=${payrollRunId}&mode=${mode}`),
+  mudadBatches: () => req<any[]>("GET", "/employees/mudad/batches"),
+  mudadBatch:   (id: number) => req<any>("GET", `/employees/mudad/batches/${id}`),
+  mudadCreateBatch: (data: { payrollRunId: number; mode?: "sponsored_only" | "all"; establishmentNumber?: string; notes?: string }) =>
+    req<any>("POST", "/employees/mudad/batches", data),
+
   // AI — analyze any HR report (insights, recommendations, risks)
   aiAnalyzeHrReport: (input: {
     reportType: string; title: string; summary: any; rows: any[]; period?: any;

@@ -13,7 +13,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Plus, Pencil, Trash2, Search, UserCog, BadgeAlert,
-  Sparkles, FileSignature, Loader2, CheckCircle2, IdCard,
+  Sparkles, FileSignature, Loader2, CheckCircle2, IdCard, Landmark,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
@@ -27,6 +27,11 @@ const EMPTY: any = {
   sponsor: "", profession: "", status: "active",
   basicSalary: 0, housingAllow: 0, transportAllow: 0, otherAllow: 0,
   bankAccountIban: "", bankName: "", notes: "",
+  // Mudad / kafala eligibility
+  borderNumber: "", saudiType: "non_saudi", employmentType: "regular",
+  onSponsorship: true, establishmentNumber: "",
+  sponsorshipStart: "", sponsorshipEnd: "", workPermitExpiry: "",
+  bankApproved: true,
 };
 
 function daysUntil(date?: string): number | null {
@@ -182,6 +187,7 @@ export default function Employees() {
                 <TabsList className="mb-4">
                   <TabsTrigger value="info">{tr("tabInfo")}</TabsTrigger>
                   <TabsTrigger value="job">{tr("tabJob")}</TabsTrigger>
+                  <TabsTrigger value="kafala" className="gap-1.5"><Landmark className="h-3.5 w-3.5" /> {tr("tabKafala")}</TabsTrigger>
                   <TabsTrigger value="ai" className="gap-1.5"><Sparkles className="h-3.5 w-3.5" /> {tr("tabAi")}</TabsTrigger>
                 </TabsList>
 
@@ -260,6 +266,81 @@ export default function Employees() {
                     <div className="text-lg font-bold text-emerald-700">
                       {(Number(editing.basicSalary || 0) + Number(editing.housingAllow || 0) + Number(editing.transportAllow || 0) + Number(editing.otherAllow || 0)).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {tr("currencySAR")}
                     </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="kafala" className="space-y-4">
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-sm text-emerald-900">
+                    {tr("kafalaBlurb")}
+                  </div>
+                  <FormGrid>
+                    <Field label={tr("fSaudiType")}>
+                      <SearchCombobox
+                        items={[
+                          { value: "saudi",     label: tr("saudiTypeSaudi") },
+                          { value: "non_saudi", label: tr("saudiTypeNonSaudi") },
+                        ]}
+                        value={editing.saudiType || "non_saudi"}
+                        onValueChange={(v) => setF("saudiType", v)}
+                        placeholder={tr("fSaudiTypePh")}
+                        className="w-full"
+                      />
+                    </Field>
+                    <Field label={tr("fEmploymentType")}>
+                      <SearchCombobox
+                        items={[
+                          { value: "regular",   label: tr("employmentRegular") },
+                          { value: "irregular", label: tr("employmentIrregular") },
+                        ]}
+                        value={editing.employmentType || "regular"}
+                        onValueChange={(v) => setF("employmentType", v)}
+                        placeholder={tr("fEmploymentTypePh")}
+                        className="w-full"
+                      />
+                    </Field>
+                    <Field label={tr("fOnSponsorship")}>
+                      <SearchCombobox
+                        items={[
+                          { value: "yes", label: tr("yes") },
+                          { value: "no",  label: tr("no") },
+                        ]}
+                        value={editing.onSponsorship === false ? "no" : "yes"}
+                        onValueChange={(v) => setF("onSponsorship", v === "yes")}
+                        placeholder=""
+                        className="w-full"
+                      />
+                    </Field>
+                    <Field label={tr("fBankApproved")}>
+                      <SearchCombobox
+                        items={[
+                          { value: "yes", label: tr("yes") },
+                          { value: "no",  label: tr("no") },
+                        ]}
+                        value={editing.bankApproved === false ? "no" : "yes"}
+                        onValueChange={(v) => setF("bankApproved", v === "yes")}
+                        placeholder=""
+                        className="w-full"
+                      />
+                    </Field>
+                    <Field label={tr("fEstablishmentNumber")}><Input value={editing.establishmentNumber} onChange={e => setF("establishmentNumber", e.target.value)} dir="ltr" /></Field>
+                    <Field label={tr("fBorderNumber")}><Input value={editing.borderNumber} onChange={e => setF("borderNumber", e.target.value)} dir="ltr" /></Field>
+                    <Field label={tr("fSponsorshipStart")}><DateField value={editing.sponsorshipStart || ""} onChange={e => setF("sponsorshipStart", e.target.value)} /></Field>
+                    <Field label={tr("fSponsorshipEnd")}><DateField value={editing.sponsorshipEnd || ""} onChange={e => setF("sponsorshipEnd", e.target.value)} /></Field>
+                    <Field label={tr("fWorkPermitExpiry")}><DateField value={editing.workPermitExpiry || ""} onChange={e => setF("workPermitExpiry", e.target.value)} /></Field>
+                  </FormGrid>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="text-xs text-muted-foreground self-center">{tr("kafalaStatus")}:</span>
+                    {(editing.saudiType !== "saudi") && (
+                      <span className="text-xs self-center">{tr("fIqamaExpiry")}: <ExpiryBadge date={editing.iqamaExpiry} tr={tr} /></span>
+                    )}
+                    {(editing.saudiType !== "saudi") && (
+                      <span className="text-xs self-center">{tr("fWorkPermitExpiry")}: <ExpiryBadge date={editing.workPermitExpiry} tr={tr} /></span>
+                    )}
+                    <Badge className={editing.employmentType === "irregular"
+                      ? "bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-100"
+                      : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-50"}>
+                      {editing.employmentType === "irregular" ? tr("employmentIrregular") : tr("employmentRegular")}
+                    </Badge>
                   </div>
                 </TabsContent>
 

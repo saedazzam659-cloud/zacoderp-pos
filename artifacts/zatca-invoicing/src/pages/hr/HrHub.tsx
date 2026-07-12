@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import {
   UserCog, FileSignature, CalendarRange, ScanFace, Wallet,
-  Banknote, Scale, Calculator, BarChart3, Settings, Users,
+  Banknote, Scale, Calculator, BarChart3, Settings, Users, Landmark,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 
@@ -12,6 +12,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.hrFaceAttendance",href: "/hr/face",           icon: ScanFace,       tone: "violet",  permKey: "hr_face_attendance" },
   { nameKey: "nav.hrLoans",         href: "/hr/loans",          icon: Wallet,         tone: "amber",   permKey: "hr_loans" },
   { nameKey: "nav.hrPayroll",       href: "/hr/payroll",        icon: Banknote,       tone: "teal",    permKey: "hr_payroll" },
+  { nameKey: "nav.hrMudad",         href: "/hr/mudad",          icon: Landmark,       tone: "emerald", permKey: "hr_payroll" },
   { nameKey: "nav.hrEos",           href: "/hr/end-of-service", icon: Scale,          tone: "rose",    permKey: "hr_eos" },
   { nameKey: "nav.hrCalculators",   href: "/hr/calculators",    icon: Calculator,     tone: "fuchsia", permKey: "hr_calculators" },
   { nameKey: "nav.hrReports",       href: "/hr/reports",        icon: BarChart3,      tone: "sky",     permKey: "hr_employees" },

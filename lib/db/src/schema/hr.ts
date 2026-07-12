@@ -33,6 +33,20 @@ export const employeesTable = pgTable("employees", {
   otherAllow:     decimal("other_allow", { precision: 12, scale: 2 }).default("0"),
   bankAccountIban:text("bank_account_iban"),
   bankName:       text("bank_name"),
+  // ─── Saudi Mudad / WPS payroll eligibility (kafala / sponsorship) ─────
+  // Data used to build the Mudad salary-upload file and to auto-exclude
+  // employees who cannot be paid via the platform. residency/work-permit
+  // *validity* is DERIVED at runtime from iqamaExpiry / workPermitExpiry —
+  // only the raw dates are stored.
+  borderNumber:        text("border_number"),            // رقم الحدود (للمقيمين)
+  saudiType:           text("saudi_type"),               // 'saudi' | 'non_saudi'
+  employmentType:      text("employment_type").default("regular"), // 'regular' | 'irregular'
+  onSponsorship:       boolean("on_sponsorship").default(true),    // على كفالة المنشأة
+  establishmentNumber: text("establishment_number"),     // رقم المنشأة في مدد
+  sponsorshipStart:    date("sponsorship_start"),
+  sponsorshipEnd:      date("sponsorship_end"),
+  workPermitExpiry:    date("work_permit_expiry"),       // انتهاء رخصة العمل
+  bankApproved:        boolean("bank_approved").default(true),     // الحساب البنكي معتمد لدى مدد (يُعلَّم false لاستبعاده)
   payableAccountId:integer("payable_account_id").references(() => accountsTable.id),
   photoUrl:       text("photo_url"),
   notes:          text("notes"),
@@ -294,6 +308,58 @@ export const payrollLinesTable = pgTable("payroll_lines", {
   workedDays:     integer("worked_days").notNull().default(30),
   absentDays:     integer("absent_days").notNull().default(0),
   notes:          text("notes"),
+});
+
+// ─── Saudi Mudad salary batches (WPS-compatible export) ──────────────────────
+// A batch is one "send salaries to Mudad" operation. It snapshots the payroll
+// run's net salaries, applies eligibility rules, records who is included /
+// excluded (with the Arabic reason), and totals. The exported file is
+// regenerated on demand from the persisted lines, so a live Mudad API can be
+// wired later without changing this model. sendMode: 'sponsored_only' (default)
+// | 'all'. status: 'generated' | 'sent' | 'partial'.
+export const mudadSalaryBatchesTable = pgTable("mudad_salary_batches", {
+  id:                  serial("id").primaryKey(),
+  companyId:           integer("company_id").references(() => companiesTable.id).notNull(),
+  branchId:            integer("branch_id").references(() => branchesTable.id),
+  payrollRunId:        integer("payroll_run_id").references(() => payrollRunsTable.id, { onDelete: "set null" }),
+  code:                text("code").notNull(),
+  year:                integer("year").notNull(),
+  month:               integer("month").notNull(),
+  sendMode:            text("send_mode").notNull().default("sponsored_only"),
+  establishmentNumber: text("establishment_number"),
+  totalEmployees:      integer("total_employees").notNull().default(0),
+  includedCount:       integer("included_count").notNull().default(0),
+  excludedCount:       integer("excluded_count").notNull().default(0),
+  sentCount:           integer("sent_count").notNull().default(0),
+  rejectedCount:       integer("rejected_count").notNull().default(0),
+  totalNet:            decimal("total_net", { precision: 14, scale: 2 }).notNull().default("0"),
+  fileFormat:          text("file_format").notNull().default("wps_csv"),
+  status:              text("status").notNull().default("generated"),
+  createdBy:           integer("created_by"),
+  createdByName:       text("created_by_name"),
+  notes:               text("notes"),
+  createdAt:           timestamp("created_at").defaultNow().notNull(),
+  updatedAt:           timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  uqCode: unique("uq_mudad_batch_company_code").on(t.companyId, t.code),
+}));
+
+export const mudadSalaryBatchLinesTable = pgTable("mudad_salary_batch_lines", {
+  id:              serial("id").primaryKey(),
+  batchId:         integer("batch_id").references(() => mudadSalaryBatchesTable.id, { onDelete: "cascade" }).notNull(),
+  companyId:       integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:      integer("employee_id").references(() => employeesTable.id, { onDelete: "set null" }),
+  employeeCode:    text("employee_code"),
+  employeeName:    text("employee_name"),
+  idNumber:        text("id_number"),
+  iban:            text("iban"),
+  bankName:        text("bank_name"),
+  netSalary:       decimal("net_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  included:        boolean("included").notNull().default(false),
+  excludedReason:  text("excluded_reason"),   // reason code (mapped to Arabic in the UI/report)
+  status:          text("status").notNull().default("pending"), // sent | rejected | pending | excluded
+  rejectionReason: text("rejection_reason"),
+  createdAt:       timestamp("created_at").defaultNow().notNull(),
 });
 
 export const employeeLeavesTable = pgTable("employee_leaves", {
