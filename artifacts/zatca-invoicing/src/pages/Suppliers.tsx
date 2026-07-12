@@ -94,12 +94,16 @@ export default function Suppliers() {
   // CREATE-only: when no account is picked, decides which parent the
   // auto-created AP sub-account nests under (محلي/أجنبي) — mirrors /suppliers/new.
   const [accountCategory, setAccountCategory] = useState<"local" | "foreign">("local");
+  // CREATE-only: OPTIONAL explicit parent account (الحساب الرئيسي) — when set,
+  // it overrides the category heuristic for both the hint and the creation.
+  const [accountParentId, setAccountParentId] = useState<string>("");
 
   function openCreate() {
     setCreating(true);
     setEditSup(null);
     setEditForm(EMPTY_FORM);
     setAccountCategory("local");
+    setAccountParentId("");
   }
   function closePanel() {
     setCreating(false);
@@ -132,10 +136,12 @@ export default function Suppliers() {
   // chosen محلي/أجنبي category — "آخر حساب: 2101116 → الحساب الجديد: 2101117".
   // Read-only; fetched only while the CREATE panel is open with no account picked.
   const { data: nextAcc } = useQuery({
-    queryKey: ["supplier-next-account", user?.companyId, accountCategory],
+    queryKey: ["supplier-next-account", user?.companyId, accountCategory, accountParentId],
     queryFn: () =>
-      fetch(`${API}/api/suppliers/next-account-code?category=${accountCategory}`, { headers })
-        .then(r => (r.ok ? r.json() : null)),
+      fetch(
+        `${API}/api/suppliers/next-account-code?category=${accountCategory}${accountParentId ? `&parentId=${accountParentId}` : ""}`,
+        { headers },
+      ).then(r => (r.ok ? r.json() : null)),
     enabled: creating && !editForm.accountId,
     staleTime: 15_000,
   });
@@ -315,6 +321,8 @@ export default function Suppliers() {
         // Same contract as /suppliers/new: the category matters only when the
         // user did NOT pick an account (server auto-mints the AP sub-account).
         accountCategory: values.accountId ? undefined : accountCategory,
+        // Explicit parent (الحساب الرئيسي) wins over the category heuristic.
+        accountParentId: !values.accountId && accountParentId ? Number(accountParentId) : undefined,
       };
       const res = await fetch(`${API}/api/suppliers`, {
         method: "POST",
@@ -335,6 +343,7 @@ export default function Suppliers() {
       qc.invalidateQueries({ queryKey: ["supplier-balances"] });
       setCreating(false);
       setEditForm(EMPTY_FORM);
+      setAccountParentId("");
     },
     onError: (e: any) => toast({ title: t("pages.suppliers.addError", "تعذّر إضافة المورد"), description: e?.message, variant: "destructive" }),
   });
@@ -541,12 +550,25 @@ export default function Suppliers() {
                       data-testid="supplier-account-category"
                     >
                       <option value="local">مورد محلي (موردون محليون)</option>
-                      <option value="foreign">مورد أجنبي (موردون أجانب)</option>
+                      <option value="foreign">مورد أجنبي (موردون أجانب / خارجيون)</option>
                     </select>
                     <p className="text-xs text-muted-foreground">
                       لم تختر حساباً — سيُنشئ النظام حساباً فرعياً تلقائياً باسم المورد تحت الحساب الأب لهذا التصنيف
                       (يُضبط من «الإعدادات ← ربط القيود المحاسبية»).
                     </p>
+                    <div className="pt-2 space-y-1.5">
+                      <label className="text-sm font-medium">أو اختر الحساب الرئيسي بنفسك (اختياري)</label>
+                      <AccountCombobox
+                        value={accountParentId}
+                        onValueChange={setAccountParentId}
+                        placeholder="— اتركه فارغاً للاستنتاج التلقائي من التصنيف —"
+                        filterTypes={["liability"]}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        عند اختيار حساب رئيسي هنا، سيُنشأ حساب المورد الجديد تحته مباشرةً
+                        متجاهلاً التصنيف أعلاه — والتلميح بالأسفل يتحدّث فوراً ليعرض آخر رقم والرقم التالي تحته.
+                      </p>
+                    </div>
                     {nextAcc?.found && (
                       <div
                         className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900"

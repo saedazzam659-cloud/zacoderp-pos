@@ -6,7 +6,11 @@ import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSe
 import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
-import { ensureSupplierLedger, peekSupplierNextAccount, type SupplierCategory } from "../lib/entityAccounts.js";
+import {
+  ensureSupplierLedger, ensureSupplierLedgerUnderParent,
+  peekSupplierNextAccount, peekSupplierNextAccountUnderParent,
+  type SupplierCategory,
+} from "../lib/entityAccounts.js";
 import { importPartyOpeningBalances } from "../lib/openingBalanceImport.js";
 import { importPartyMasterData } from "../lib/partyMasterImport.js";
 
@@ -188,7 +192,15 @@ router.get("/next-account-code", async (req, res) => {
   const cat = String(req.query.category ?? "");
   const category: SupplierCategory | undefined =
     cat === "foreign" ? "foreign" : cat === "local" ? "local" : undefined;
-  const peek = await peekSupplierNextAccount(companyId, category);
+  // Explicit parent picked by the user in the form wins over the heuristic.
+  const rawParentId = req.query.parentId ? parseInt(String(req.query.parentId)) : NaN;
+  // Mirror POST /: explicit parent first, but if it's invalid (wrong tenant,
+  // not liability, deleted…) fall back to the category heuristic so preview
+  // and save can never diverge.
+  const explicitPeek = Number.isInteger(rawParentId) && rawParentId > 0
+    ? await peekSupplierNextAccountUnderParent(companyId, rawParentId)
+    : null;
+  const peek = explicitPeek ?? await peekSupplierNextAccount(companyId, category);
   if (!peek) {
     res.json({ found: false, parentCode: null, parentName: null, lastCode: null, nextCode: null });
     return;
@@ -233,10 +245,22 @@ router.post("/", async (req, res) => {
     data.accountCategory === "foreign" ? "foreign"
     : data.accountCategory === "local" ? "local"
     : undefined;
+  // `accountParentId` = explicit parent picked in the form ("الحساب الرئيسي")
+  // — takes priority over the category heuristic. Invalid/foreign ids resolve
+  // to null inside ensureSupplierLedgerUnderParent (tenant+liability guarded)
+  // and we then fall back to the heuristic so creation never hard-fails.
+  const accountParentId: number | null =
+    data.accountParentId && Number.isInteger(Number(data.accountParentId)) && Number(data.accountParentId) > 0
+      ? Number(data.accountParentId) : null;
   let accountId: number | null = data.accountId ? Number(data.accountId) : null;
   if (!accountId) {
     try {
-      accountId = await ensureSupplierAccount(companyId, String(data.nameAr).trim(), supplierCategory);
+      if (accountParentId) {
+        accountId = await ensureSupplierLedgerUnderParent(companyId, String(data.nameAr).trim(), accountParentId);
+      }
+      if (!accountId) {
+        accountId = await ensureSupplierAccount(companyId, String(data.nameAr).trim(), supplierCategory);
+      }
     } catch (err) {
       console.error("ensureSupplierAccount failed:", err);
       accountId = null;

@@ -64,10 +64,31 @@ async function resolveEntityParent(
   ));
   if (candidates.length === 0) return null;
 
-  // Prefer code-prefix matches in the order given.
+  // Pass 1 — EXACT group-node code match, in the order given. `like '21011%'`
+  // also matches that group's own children (2101101…) and `like '2101%'`
+  // matches the whole subtree, so a prefix hit that is not the group node
+  // itself may be a LEAF account — nesting a new supplier under a leaf is
+  // semantically wrong. Only an exact code match is trusted here.
   for (const p of fallbackCodePrefixes) {
-    const hit = candidates.find(a => a.code?.startsWith(p));
-    if (hit) return hit;
+    const exact = candidates.find(a => (a.code ?? "").trim() === p);
+    if (exact) return exact;
+  }
+  // Pass 2 — name-like matches in the order given (category-specific names
+  // come first in the list, generic ones last), shortest code wins ties.
+  for (const n of nameLikes) {
+    const hits = candidates
+      .filter(a => (a.nameAr ?? "").includes(n) || (a.nameEn ?? "").toLowerCase().includes(n.toLowerCase()))
+      .sort((a, b) => (a.code ?? "").length - (b.code ?? "").length);
+    if (hits.length > 0) return hits[0]!;
+  }
+  // Pass 3 — last resort for non-standard COAs with neither the standard
+  // group codes nor recognizable names: shortest code among prefix hits
+  // (legacy behavior; better than failing outright).
+  for (const p of fallbackCodePrefixes) {
+    const hits = candidates
+      .filter(a => a.code?.startsWith(p))
+      .sort((a, b) => (a.code ?? "").length - (b.code ?? "").length);
+    if (hits.length > 0) return hits[0]!;
   }
   return candidates[0];
 }
@@ -187,7 +208,22 @@ export async function ensureEntitySubAccount(args: {
   const { companyId, roleKeys, name, fallbackCodePrefixes, nameLikes, accountType, forceNew = false } = args;
   const parent = await resolveEntityParent(companyId, roleKeys, fallbackCodePrefixes, nameLikes, accountType);
   if (!parent) return null;
+  return mintChildUnderParent(companyId, parent, name, accountType, forceNew);
+}
 
+/**
+ * Create (or idempotently reuse) a child posting account under an ALREADY
+ * RESOLVED parent row. Shared by ensureEntitySubAccount (heuristic parent)
+ * and the explicit-parent supplier flow so numbering/idempotency/races are
+ * handled identically in both.
+ */
+async function mintChildUnderParent(
+  companyId: number,
+  parent: typeof accountsTable.$inferSelect,
+  name: string,
+  accountType: AccountType,
+  forceNew = false,
+): Promise<number | null> {
   // Idempotency: same-name sibling under this parent (bypassed when forceNew)
   if (!forceNew) {
     const siblings = await db.select().from(accountsTable).where(and(
@@ -288,8 +324,20 @@ const supplierRoleKeys = (category?: SupplierCategory): string[] =>
     : category === "local"
     ? ["supplier_local_account_parent", "supplier_account_parent"]
     : ["supplier_account_parent"];
-const SUPPLIER_CODE_PREFIXES = ["2101", "2110", "211"];
-const SUPPLIER_NAME_LIKES = ["موردين", "ذمم دائن", "دائن", "supplier", "payab"];
+// Category-specific prefixes/names FIRST (21011 محليون / 21012 خارجيون-أجانب),
+// generic supplier fallbacks LAST — resolveEntityParent honors this order, so
+// a company with the standard COA nests locals under 21011 and foreigners
+// under 21012 instead of both landing on the generic 2101 group.
+const SUPPLIER_CODE_PREFIXES = (category?: SupplierCategory): string[] =>
+  category === "foreign" ? ["21012", "2101", "2110", "211"]
+  : category === "local" ? ["21011", "2101", "2110", "211"]
+  : ["2101", "2110", "211"];
+const SUPPLIER_NAME_LIKES = (category?: SupplierCategory): string[] =>
+  category === "foreign"
+    ? ["موردون خارجي", "موردين خارجي", "خارجي", "أجانب", "اجانب", "أجنبي", "اجنبي", "foreign", "موردين", "ذمم دائن", "دائن", "supplier", "payab"]
+  : category === "local"
+    ? ["موردون محلي", "موردين محلي", "محلي", "local", "موردين", "ذمم دائن", "دائن", "supplier", "payab"]
+  : ["موردين", "ذمم دائن", "دائن", "supplier", "payab"];
 
 export const ensureSupplierLedger = (
   companyId: number,
@@ -301,10 +349,33 @@ export const ensureSupplierLedger = (
     // Category-specific parent first, generic parent as fallback.
     roleKeys: supplierRoleKeys(category),
     name,
-    fallbackCodePrefixes: SUPPLIER_CODE_PREFIXES,
-    nameLikes: SUPPLIER_NAME_LIKES,
+    fallbackCodePrefixes: SUPPLIER_CODE_PREFIXES(category),
+    nameLikes: SUPPLIER_NAME_LIKES(category),
     accountType: "liability",
   });
+
+/** Fetch + validate an EXPLICITLY user-picked parent for the supplier AP
+ *  sub-account: must belong to the company and be a liability account. */
+async function resolveExplicitSupplierParent(companyId: number, parentId: number) {
+  const [parent] = await db.select().from(accountsTable).where(and(
+    eq(accountsTable.id, parentId),
+    eq(accountsTable.companyId, companyId), // tenant guard
+    eq(accountsTable.accountType, "liability"), // never nest AP under a non-liability
+  ));
+  return parent ?? null;
+}
+
+/** Create the supplier AP sub-account under an EXPLICIT parent picked by the
+ *  user in the form (بديل سهل عن الاستنتاج التلقائي). Same minting path. */
+export async function ensureSupplierLedgerUnderParent(
+  companyId: number,
+  name: string,
+  parentId: number,
+): Promise<number | null> {
+  const parent = await resolveExplicitSupplierParent(companyId, parentId);
+  if (!parent) return null;
+  return mintChildUnderParent(companyId, parent, name, "liability");
+}
 
 /**
  * Preview (read-only, nothing created) which parent the auto-minted supplier
@@ -314,10 +385,21 @@ export const ensureSupplierLedger = (
  */
 export async function peekSupplierNextAccount(companyId: number, category?: SupplierCategory) {
   const parent = await resolveEntityParent(
-    companyId, supplierRoleKeys(category), SUPPLIER_CODE_PREFIXES, SUPPLIER_NAME_LIKES, "liability",
+    companyId, supplierRoleKeys(category), SUPPLIER_CODE_PREFIXES(category), SUPPLIER_NAME_LIKES(category), "liability",
   );
   if (!parent) return null;
+  return buildSupplierPeek(companyId, parent);
+}
 
+/** Same preview but under an EXPLICIT user-picked parent account —
+ *  mirrors ensureSupplierLedgerUnderParent so hint and save can't diverge. */
+export async function peekSupplierNextAccountUnderParent(companyId: number, parentId: number) {
+  const parent = await resolveExplicitSupplierParent(companyId, parentId);
+  if (!parent) return null;
+  return buildSupplierPeek(companyId, parent);
+}
+
+async function buildSupplierPeek(companyId: number, parent: typeof accountsTable.$inferSelect) {
   const taken = await siblingCodes(companyId, parent.id);
   const nextCode = computeNextChildCode(parent.code ?? "", taken);
 
