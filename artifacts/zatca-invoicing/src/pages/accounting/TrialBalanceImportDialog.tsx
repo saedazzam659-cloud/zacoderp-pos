@@ -9,6 +9,7 @@ import { Upload, FileSpreadsheet, Download, AlertTriangle, CheckCircle2 } from "
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import { trialBalancesApi, type ImportLine } from "@/lib/trialBalancesApi";
+import { fmt2 } from "@/lib/format";
 
 // Header aliases — case-insensitive, whitespace/RTL-mark/NBSP-normalized
 // at lookup time. Any new variant we encounter from a real exported
@@ -343,11 +344,11 @@ export default function TrialBalanceImportDialog({ trialBalanceId, open, onOpenC
             <>
               <div className="flex items-center justify-between text-sm bg-muted/30 p-2 rounded">
                 <div className="flex items-center gap-3">
-                  <span><strong>{t("trialBalanceMaintenance.totalDebit")}:</strong> {totalD.toFixed(2)}</span>
-                  <span><strong>{t("trialBalanceMaintenance.totalCredit")}:</strong> {totalC.toFixed(2)}</span>
+                  <span><strong>{t("trialBalanceMaintenance.totalDebit")}:</strong> {fmt2(totalD)}</span>
+                  <span><strong>{t("trialBalanceMaintenance.totalCredit")}:</strong> {fmt2(totalC)}</span>
                   {balanced
                     ? <span className="text-green-600 flex items-center gap-1"><CheckCircle2 className="h-4 w-4" /> {t("trialBalanceMaintenance.balanced")}</span>
-                    : <span className="text-red-600 flex items-center gap-1"><AlertTriangle className="h-4 w-4" /> {t("trialBalanceMaintenance.unbalanced", { diff: (totalD-totalC).toFixed(2) })}</span>
+                    : <span className="text-red-600 flex items-center gap-1"><AlertTriangle className="h-4 w-4" /> {t("trialBalanceMaintenance.unbalanced", { diff: fmt2(totalD-totalC) })}</span>
                   }
                 </div>
                 <label className="flex items-center gap-1 text-xs">
@@ -371,8 +372,8 @@ export default function TrialBalanceImportDialog({ trialBalanceId, open, onOpenC
                       <tr key={i} className="border-t">
                         <td className="p-1 font-mono">{r.accountCode}</td>
                         <td className="p-1">{r.accountName ?? "—"}</td>
-                        <td className="p-1 text-end font-mono">{Number(r.debit ?? 0).toFixed(2)}</td>
-                        <td className="p-1 text-end font-mono">{Number(r.credit ?? 0).toFixed(2)}</td>
+                        <td className="p-1 text-end font-mono">{fmt2(r.debit ?? 0)}</td>
+                        <td className="p-1 text-end font-mono">{fmt2(r.credit ?? 0)}</td>
                       </tr>
                     ))}
                     {parsed.length > 200 && (

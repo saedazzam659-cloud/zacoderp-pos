@@ -21,6 +21,7 @@ import {
   buildCustodySettlementJournal,
   buildCustodyReturnJournal,
 } from "../lib/hr-journals.js";
+import { dateOrNull, requireDate, requirePositiveMoney, respondHrError } from "../lib/hrValidate.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -95,8 +96,8 @@ router.post("/", async (req, res) => {
     if (!b.employeeId || !b.amount || !b.custodyDate) {
       res.status(400).json({ error: "الموظف والمبلغ والتاريخ مطلوبة" }); return;
     }
-    const amt = Number(b.amount);
-    if (!(amt > 0)) { res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return; }
+    const custodyDate = requireDate(b.custodyDate, "تاريخ العهدة");
+    const amt = Number(requirePositiveMoney(b.amount, "مبلغ العهدة"));
     const [emp] = await db.select({ branchId: employeesTable.branchId }).from(employeesTable)
       .where(and(eq(employeesTable.id, Number(b.employeeId)), eq(employeesTable.companyId, cid)));
     if (!emp) { res.status(400).json({ error: "الموظف غير موجود" }); return; }
@@ -106,7 +107,7 @@ router.post("/", async (req, res) => {
       companyId: cid,
       branchId: b.branchId ? Number(b.branchId) : (emp.branchId ?? null),
       employeeId: Number(b.employeeId),
-      custodyDate: b.custodyDate,
+      custodyDate,
       amount: String(amt),
       settledAmount: "0",
       returnedAmount: "0",
@@ -116,7 +117,7 @@ router.post("/", async (req, res) => {
       custodyAccountId: b.custodyAccountId ? Number(b.custodyAccountId) : null,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 // ─── UPDATE (principal locked once disbursed) ─────────────────────────────────
@@ -135,11 +136,9 @@ router.put("/:id", async (req, res) => {
       // amount / date / account would corrupt the posted disbursement JE).
     } else {
       if (b.employeeId) { await assertEmployeeInCompany(db, cid, Number(b.employeeId)); upd.employeeId = Number(b.employeeId); }
-      if (b.custodyDate) upd.custodyDate = b.custodyDate;
+      if (b.custodyDate) upd.custodyDate = requireDate(b.custodyDate, "تاريخ العهدة");
       if (b.amount != null && b.amount !== "") {
-        const amt = Number(b.amount);
-        if (!(amt > 0)) { res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return; }
-        upd.amount = String(amt);
+        upd.amount = requirePositiveMoney(b.amount, "مبلغ العهدة");
       }
       if (b.branchId !== undefined) {
         if (b.branchId) await assertBranchInCompany(db, cid, Number(b.branchId));
@@ -154,7 +153,7 @@ router.put("/:id", async (req, res) => {
       .where(and(eq(employeeCustodiesTable.id, id), eq(employeeCustodiesTable.companyId, cid)))
       .returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 // ─── DELETE (only undisbursed) ────────────────────────────────────────────────
@@ -240,18 +239,18 @@ router.post("/:id/settlements", async (req, res) => {
       if (!cust) throw Object.assign(new Error("العهدة غير موجودة"), { status: 404 });
       if (!cust.disbursementJournalId) throw new Error("يجب صرف العهدة أولاً قبل التسوية");
       if (cust.status === "cancelled") throw new Error("العهدة ملغاة");
-      const amt = Number(b.amount);
-      if (!(amt > 0)) throw new Error("مبلغ التسوية مطلوب");
+      const amt = Number(requirePositiveMoney(b.amount, "مبلغ التسوية"));
       if (!b.expenseAccountId) throw new Error("يجب اختيار حساب المصروف");
       await assertAccountInCompany(tx, cid, Number(b.expenseAccountId));
       if (!b.settleDate) throw new Error("تاريخ التسوية مطلوب");
+      const settleDate = requireDate(b.settleDate, "تاريخ التسوية");
       const remaining = remainingOf(cust);
       if (amt > remaining + 0.005) throw new Error(`المبلغ أكبر من المتبقي (${remaining.toFixed(2)} ر.س)`);
 
       const [stl] = await tx.insert(employeeCustodySettlementsTable).values({
         companyId: cid,
         custodyId: id,
-        settleDate: b.settleDate,
+        settleDate,
         kind: "expense",
         expenseAccountId: Number(b.expenseAccountId),
         amount: String(amt),
@@ -272,7 +271,10 @@ router.post("/:id/settlements", async (req, res) => {
       return { ...stl, journalId };
     });
     res.status(201).json(result);
-  } catch (e: any) { res.status(e?.status || 400).json({ error: e.message }); }
+  } catch (e: any) {
+    if (e?.name === "HrValidationError") return respondHrError(req, res, e);
+    res.status(e?.status || 400).json({ error: e.message });
+  }
 });
 
 // ─── DELETE SETTLEMENT (reverses by removing its JE) ──────────────────────────
@@ -333,7 +335,7 @@ router.post("/:id/return", async (req, res) => {
       const amt = b.amount != null && b.amount !== "" ? Number(b.amount) : remaining;
       if (!(amt > 0)) throw new Error("لا يوجد مبلغ متبقٍ للإرجاع");
       if (amt > remaining + 0.005) throw new Error(`المبلغ أكبر من المتبقي (${remaining.toFixed(2)} ر.س)`);
-      const returnDate = String(b.returnDate || new Date().toISOString().slice(0, 10));
+      const returnDate = dateOrNull(b.returnDate, "تاريخ الإرجاع") || new Date().toISOString().slice(0, 10);
 
       const journalId = await buildCustodyReturnJournal(cid, id, amt, returnDate, {
         cashBoxId:     b.cashBoxId     ? Number(b.cashBoxId)     : null,
@@ -362,7 +364,10 @@ router.post("/:id/return", async (req, res) => {
       return { ...stl, journalId };
     });
     res.json(result);
-  } catch (e: any) { res.status(e?.status || 400).json({ error: e.message }); }
+  } catch (e: any) {
+    if (e?.name === "HrValidationError") return respondHrError(req, res, e);
+    res.status(e?.status || 400).json({ error: e.message });
+  }
 });
 
 export default router;

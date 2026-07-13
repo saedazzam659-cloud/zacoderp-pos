@@ -22,6 +22,7 @@ import {
 import BranchFilter from "@/components/BranchFilter";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
+import { fmt2 } from "@/lib/format";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -162,7 +163,7 @@ export default function ZatcaReport() {
     return Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 5);
   }, [filtered]);
 
-  const fmtMoney = (v: number) => v.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtMoney = (v: number) => fmt2(v);
 
   // ─── CSV Export ──────────────────────────────────────────────────────
   const exportCsv = () => {

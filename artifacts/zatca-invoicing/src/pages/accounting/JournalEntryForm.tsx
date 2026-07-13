@@ -28,7 +28,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import { getSaveToastTitle } from "@/lib/saveToast";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, fmt2, fmtNum } from "@/lib/format";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
@@ -1066,7 +1066,7 @@ export default function JournalEntryForm() {
     // pre-existing safety rails (must be balanced, ≥2 lines) because an
     // edit that breaks an already-posted entry would corrupt the books.
     if (!isNew && !isBalanced) {
-      toast({ title: "القيد غير متوازن", description: `الفرق: ${diff.toFixed(2)}`, variant: "destructive" }); return;
+      toast({ title: "القيد غير متوازن", description: `الفرق: ${fmt2(diff)}`, variant: "destructive" }); return;
     }
     const validLines = lines.filter(l => l.accountId);
     if (!isNew && validLines.length < 2) {
@@ -1172,7 +1172,7 @@ export default function JournalEntryForm() {
       const a = acctMap.get(Number(l.accountId));
       const debit  = Number(l.debit  || 0);
       const credit = Number(l.credit || 0);
-      const side = debit > 0 ? `مدين ${debit.toFixed(2)}` : `دائن ${credit.toFixed(2)}`;
+      const side = debit > 0 ? `مدين ${fmt2(debit)}` : `دائن ${fmt2(credit)}`;
       const ccInline = l.costCenter
         ? `<div class="desc">مركز التكلفة: ${escapeHtml(ccLabel(l.costCenter))}</div>`
         : "";
@@ -1213,10 +1213,10 @@ ${user?.company?.nameAr ? `<div class="center bold" style="font-size:13px;">${es
 ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:1px dashed #000;margin-top:4px;"><span class="bold">البيان: </span>${escapeHtml(description)}</div>` : ""}
 <div style="margin-top:6px;">${linesHtml}</div>
 <div class="totals">
-  <div class="row"><span>إجمالي المدين</span><span>${totalDebit.toFixed(2)}</span></div>
-  <div class="row"><span>إجمالي الدائن</span><span>${totalCredit.toFixed(2)}</span></div>
+  <div class="row"><span>إجمالي المدين</span><span>${fmt2(totalDebit)}</span></div>
+  <div class="row"><span>إجمالي الدائن</span><span>${fmt2(totalCredit)}</span></div>
 </div>
-<div class="balance" style="color:${isBalanced ? "#15803d" : "#b91c1c"};">${isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}</div>
+<div class="balance" style="color:${isBalanced ? "#15803d" : "#b91c1c"};">${isBalanced ? "متوازن ✓" : `فرق: ${fmt2(diff)}`}</div>
 <div style="margin-top:10px;border-top:1px dashed #000;padding-top:8px;">
   <div class="row" style="margin-bottom:14px;"><span class="bold">إعداد</span><span>....................</span></div>
   <div class="row" style="margin-bottom:14px;"><span class="bold">مراجعة</span><span>....................</span></div>
@@ -1522,7 +1522,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
             : "bg-red-50 text-red-700 border-red-200"
         )}>
           {!isBalanced && <AlertCircle className="h-3.5 w-3.5" />}
-          {isBalanced ? "القيد متوازن ✓" : `فرق: ${diff.toFixed(2)}`}
+          {isBalanced ? "القيد متوازن ✓" : `فرق: ${fmt2(diff)}`}
         </div>
       </div>
 
@@ -1572,7 +1572,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
               <p className="text-[11px] text-muted-foreground">
                 {activeTab === "header"
                   ? "أدخل بيانات الرأسية ثم انتقل إلى سطور القيد"
-                  : `${lines.filter(l => l.accountId).length} سطر — مدين: ${totalDebit.toFixed(2)} | دائن: ${totalCredit.toFixed(2)}`}
+                  : `${lines.filter(l => l.accountId).length} سطر — مدين: ${fmt2(totalDebit)} | دائن: ${fmt2(totalCredit)}`}
               </p>
 
               {/* Right: tabs */}
@@ -1692,7 +1692,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                     />
                     {hasCurrencies && currency && (
                       <p className="text-[10px] text-muted-foreground mt-0.5">
-                        1 {currency} = {Number(exchangeRate) > 0 ? Number(exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                        1 {currency} = {Number(exchangeRate) > 0 ? fmtNum(Number(exchangeRate), 4) : "—"} {defaultCurrency?.code ?? "SAR"}
                       </p>
                     )}
                   </div>
@@ -2207,7 +2207,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                     >
                       {isBalanced
                         ? "متوازن ✓"
-                        : `الفرق المتبقي: ${diff.toFixed(2)} — سيُملأ تلقائياً عند إضافة سطر`}
+                        : `الفرق المتبقي: ${fmt2(diff)} — سيُملأ تلقائياً عند إضافة سطر`}
                     </span>
                   </>
                 )}
@@ -2222,20 +2222,20 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                     "font-mono font-bold text-sm text-left px-2",
                     totalDebit > 0 ? "text-green-700" : "text-muted-foreground"
                   )}>
-                    {totalDebit.toFixed(2)}
+                    {fmt2(totalDebit)}
                   </span>
                   <span className={cn(
                     "font-mono font-bold text-sm text-left px-2",
                     totalCredit > 0 ? "text-red-700" : "text-muted-foreground"
                   )}>
-                    {totalCredit.toFixed(2)}
+                    {fmt2(totalCredit)}
                   </span>
                   <div className={cn(
                     "flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium justify-self-start",
                     isBalanced ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
                   )}>
                     {!isBalanced && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
-                    {isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}
+                    {isBalanced ? "متوازن ✓" : `فرق: ${fmt2(diff)}`}
                   </div>
                   <span />
                   <span />
@@ -2260,9 +2260,9 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
             isLockedSourceEntry
               ? `لا يمكن تعديل هذا القيد — مُولَّد تلقائياً من ${lockInfo!.source}`
               : (isNew && !isBalanced
-                  ? `سيتم الحفظ كمسودة — القيد غير متوازن (الفرق ${diff.toFixed(2)} ${currency})`
+                  ? `سيتم الحفظ كمسودة — القيد غير متوازن (الفرق ${fmt2(diff)} ${currency})`
                   : (!isNew && !isBalanced
-                      ? `لا يمكن الحفظ — القيد غير متوازن (الفرق ${diff.toFixed(2)} ${currency})`
+                      ? `لا يمكن الحفظ — القيد غير متوازن (الفرق ${fmt2(diff)} ${currency})`
                       : undefined))
           }
         >
@@ -2311,7 +2311,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
         {!isBalanced && (
           <span className="text-xs text-destructive flex items-center gap-1">
             <AlertCircle className="h-3.5 w-3.5" />
-            القيد غير متوازن — الفرق {diff.toFixed(2)} {currency}
+            القيد غير متوازن — الفرق {fmt2(diff)} {currency}
           </span>
         )}
       </div>
@@ -2350,17 +2350,17 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
                 <div className="p-2 rounded border bg-muted/40">
                   <div className="text-muted-foreground">إجمالي مدين</div>
-                  <div className="font-semibold mt-1">{validateMutation.data.totalDebit.toFixed(2)}</div>
+                  <div className="font-semibold mt-1">{fmt2(validateMutation.data.totalDebit)}</div>
                 </div>
                 <div className="p-2 rounded border bg-muted/40">
                   <div className="text-muted-foreground">إجمالي دائن</div>
-                  <div className="font-semibold mt-1">{validateMutation.data.totalCredit.toFixed(2)}</div>
+                  <div className="font-semibold mt-1">{fmt2(validateMutation.data.totalCredit)}</div>
                 </div>
                 <div className={cn("p-2 rounded border",
                   validateMutation.data.isBalanced ? "bg-emerald-50 border-emerald-200" : "bg-destructive/10 border-destructive/30"
                 )}>
                   <div className="text-muted-foreground">الفرق</div>
-                  <div className="font-semibold mt-1">{Math.abs(validateMutation.data.diff).toFixed(2)}</div>
+                  <div className="font-semibold mt-1">{fmt2(Math.abs(validateMutation.data.diff))}</div>
                 </div>
               </div>
 

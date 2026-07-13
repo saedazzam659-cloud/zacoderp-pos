@@ -15,8 +15,10 @@ import { Briefcase, Plus, Trash2, Loader2, CheckCircle2, Banknote, Pencil, Print
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { DateField } from "@/components/ui/date-field";
 import { useAuth } from "@/contexts/AuthContext";
+import { fmt2 } from "@/lib/format";
 import { printCustodyVoucher, downloadCustodyVoucherPdf, type CustodyVoucherDoc } from "@/lib/custodyVoucherPrint";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
+import { HrFormCheck } from "@/lib/hrFormValidate";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY: any = { employeeId: "", custodyDate: today(), amount: 0, custodyAccountId: "", purpose: "", notes: "" };
@@ -235,7 +237,13 @@ export default function EmployeeCustodies() {
   }
 
   async function handleSave() {
-    const payload = { ...form };
+    const c = new HrFormCheck()
+      .requiredDate(form, "custodyDate", "تاريخ العهدة")
+      .positiveMoney(form, "amount", "مبلغ العهدة")
+      .custom(!form.employeeId, "employeeId", "يجب اختيار الموظف");
+    const err = c.first;
+    if (err) { toast({ variant: "destructive", title: tr("toastError"), description: err.message }); return; }
+    const payload = { ...form, ...c.clean };
     if (editingId) { await upd.mutateAsync({ id: editingId, data: payload }); resetForm(); }
     else { save.mutate(payload); }
   }
@@ -343,15 +351,15 @@ export default function EmployeeCustodies() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="rounded-lg border p-3 bg-card">
           <div className="text-xs text-muted-foreground">{tr("totalCustodies")}</div>
-          <div className="text-2xl font-semibold tabular-nums">{totals.totalAmt.toFixed(2)} <span className="text-sm text-muted-foreground">{tr("sar")}</span></div>
+          <div className="text-2xl font-semibold tabular-nums">{fmt2(totals.totalAmt)} <span className="text-sm text-muted-foreground">{tr("sar")}</span></div>
         </div>
         <div className="rounded-lg border p-3 bg-emerald-50/50 border-emerald-200">
           <div className="text-xs text-emerald-700">{tr("totalCleared")}</div>
-          <div className="text-2xl font-semibold text-emerald-700 tabular-nums">{totals.totalCleared.toFixed(2)} <span className="text-sm">{tr("sar")}</span></div>
+          <div className="text-2xl font-semibold text-emerald-700 tabular-nums">{fmt2(totals.totalCleared)} <span className="text-sm">{tr("sar")}</span></div>
         </div>
         <div className="rounded-lg border p-3 bg-amber-50/50 border-amber-200">
           <div className="text-xs text-amber-700">{tr("totalRemaining")}</div>
-          <div className="text-2xl font-semibold text-amber-700 tabular-nums">{totals.totalActive.toFixed(2)} <span className="text-sm">{tr("sar")}</span></div>
+          <div className="text-2xl font-semibold text-amber-700 tabular-nums">{fmt2(totals.totalActive)} <span className="text-sm">{tr("sar")}</span></div>
         </div>
       </div>
 
@@ -467,10 +475,10 @@ export default function EmployeeCustodies() {
                     <div className="text-xs text-muted-foreground">{c.empCode}</div>
                   </td>
                   <td className="p-2 text-xs">{c.custodyDate}</td>
-                  <td className="p-2 text-xs tabular-nums">{num(c.amount).toFixed(2)}</td>
-                  <td className="p-2 text-xs tabular-nums text-emerald-700">{num(c.settledAmount).toFixed(2)}</td>
-                  <td className="p-2 text-xs tabular-nums text-sky-700">{num(c.returnedAmount).toFixed(2)}</td>
-                  <td className="p-2 text-xs tabular-nums text-amber-700 font-medium">{remaining.toFixed(2)}</td>
+                  <td className="p-2 text-xs tabular-nums">{fmt2(num(c.amount))}</td>
+                  <td className="p-2 text-xs tabular-nums text-emerald-700">{fmt2(num(c.settledAmount))}</td>
+                  <td className="p-2 text-xs tabular-nums text-sky-700">{fmt2(num(c.returnedAmount))}</td>
+                  <td className="p-2 text-xs tabular-nums text-amber-700 font-medium">{fmt2(remaining)}</td>
                   <td className="p-2"><Badge variant="outline" className={st.cls}>{st.label}</Badge></td>
                   <td className="p-2 text-end whitespace-nowrap">
                     {!disbursed && c.status !== "cancelled" && (
@@ -515,7 +523,7 @@ export default function EmployeeCustodies() {
               <div className="rounded border bg-muted/30 p-3 space-y-1">
                 <div><span className="text-muted-foreground">{tr("labelEmployee")}</span> <strong>{pickName(disburseFor.empNameAr, disburseFor.empNameEn)}</strong> ({disburseFor.empCode})</div>
                 <div><span className="text-muted-foreground">{tr("labelDate")}</span> {disburseFor.custodyDate}</div>
-                <div><span className="text-muted-foreground">{tr("labelAmount")}</span> <strong className="text-emerald-700">{num(disburseFor.amount).toFixed(2)} {tr("sar")}</strong></div>
+                <div><span className="text-muted-foreground">{tr("labelAmount")}</span> <strong className="text-emerald-700">{fmt2(num(disburseFor.amount))} {tr("sar")}</strong></div>
                 {(disburseEmp?.bankName || disburseEmp?.bankAccountIban) && (
                   <>
                     <div><span className="text-muted-foreground">{tr("labelBankName")}</span> {disburseEmp.bankName || "—"}</div>
@@ -542,7 +550,7 @@ export default function EmployeeCustodies() {
                 <div className="text-[11px] text-muted-foreground">{tr("defaultsHint")}</div>
               </div>
               <div className="text-xs text-muted-foreground bg-blue-50/50 border border-blue-200 rounded p-2">
-                {tr("disburseJournalNote", { amount: num(disburseFor.amount).toFixed(2), methodLabel: payMethod === "cash" ? tr("labelCashBox") : tr("labelBankAccount") })}
+                {tr("disburseJournalNote", { amount: fmt2(num(disburseFor.amount)), methodLabel: payMethod === "cash" ? tr("labelCashBox") : tr("labelBankAccount") })}
               </div>
             </div>
           )}
@@ -564,9 +572,9 @@ export default function EmployeeCustodies() {
             <div className="space-y-4 text-sm">
               <div className="rounded border bg-muted/30 p-3 grid grid-cols-2 md:grid-cols-4 gap-2">
                 <div><div className="text-[11px] text-muted-foreground">{tr("labelEmployee")}</div><strong>{pickName(liveSettleFor.empNameAr, liveSettleFor.empNameEn)}</strong></div>
-                <div><div className="text-[11px] text-muted-foreground">{tr("colAmount")}</div><strong>{num(liveSettleFor.amount).toFixed(2)}</strong></div>
-                <div><div className="text-[11px] text-muted-foreground">{tr("colSettled")}</div><strong className="text-emerald-700">{(num(liveSettleFor.settledAmount) + num(liveSettleFor.returnedAmount)).toFixed(2)}</strong></div>
-                <div><div className="text-[11px] text-muted-foreground">{tr("colRemaining")}</div><strong className="text-amber-700">{remainingOf(liveSettleFor).toFixed(2)}</strong></div>
+                <div><div className="text-[11px] text-muted-foreground">{tr("colAmount")}</div><strong>{fmt2(num(liveSettleFor.amount))}</strong></div>
+                <div><div className="text-[11px] text-muted-foreground">{tr("colSettled")}</div><strong className="text-emerald-700">{fmt2(num(liveSettleFor.settledAmount) + num(liveSettleFor.returnedAmount))}</strong></div>
+                <div><div className="text-[11px] text-muted-foreground">{tr("colRemaining")}</div><strong className="text-amber-700">{fmt2(remainingOf(liveSettleFor))}</strong></div>
               </div>
 
               {/* Existing lines */}
@@ -597,7 +605,7 @@ export default function EmployeeCustodies() {
                         </td>
                         <td className="p-2">{pickName(s.accountNameAr, s.accountNameEn) || s.description || "—"}</td>
                         <td className="p-2">{s.invoiceNumber || "—"}</td>
-                        <td className="p-2 text-center tabular-nums">{num(s.amount).toFixed(2)}</td>
+                        <td className="p-2 text-center tabular-nums">{fmt2(num(s.amount))}</td>
                         <td className="p-2 text-end">
                           <Button size="sm" variant="ghost" onClick={() => { if (confirm(tr("deleteSettlementConfirm"))) delSettlement.mutate(s.id); }}
                             data-testid={`btn-del-settlement-${s.id}`}>

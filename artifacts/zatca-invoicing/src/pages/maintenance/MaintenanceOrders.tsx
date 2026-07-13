@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, ClipboardList, Eye, X, Wrench, Calendar, User, ChevronLeft } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import { fmt2 } from "@/lib/format";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -442,7 +443,7 @@ export default function MaintenanceOrders() {
                 <div className="flex items-center justify-between pt-1.5 border-t border-slate-100">
                   <span className="text-[11px] text-muted-foreground">الإجمالي</span>
                   <span className="font-bold tabular-nums text-emerald-700">
-                    {Number(o.totalCost).toFixed(2)} <span className="text-[10px] text-muted-foreground">ر.س</span>
+                    {fmt2(o.totalCost)} <span className="text-[10px] text-muted-foreground">ر.س</span>
                   </span>
                 </div>
               </button>
@@ -520,7 +521,7 @@ export default function MaintenanceOrders() {
                     <td className="px-3 py-2">
                       {st && <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${st[2]}`}>{st[1]}</span>}
                     </td>
-                    <td className="px-3 py-2 font-bold tabular-nums">{Number(o.totalCost).toFixed(2)}</td>
+                    <td className="px-3 py-2 font-bold tabular-nums">{fmt2(o.totalCost)}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-center gap-1">
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-emerald-700 hover:bg-emerald-50" onClick={() => setViewing(o)} data-testid={`btn-view-${o.id}`}>
@@ -562,8 +563,8 @@ export default function MaintenanceOrders() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                 <div className="bg-slate-50 rounded p-2"><div className="text-muted-foreground">تاريخ البلاغ</div><div className="font-semibold">{detail.reportedDate}</div></div>
                 <div className="bg-slate-50 rounded p-2"><div className="text-muted-foreground">تاريخ الإنجاز</div><div className="font-semibold">{detail.completionDate || "—"}</div></div>
-                <div className="bg-slate-50 rounded p-2"><div className="text-muted-foreground">العمالة</div><div className="font-semibold">{Number(detail.laborCost).toFixed(2)} ر.س</div></div>
-                <div className="bg-slate-50 rounded p-2"><div className="text-muted-foreground">الإجمالي</div><div className="font-bold text-emerald-700">{Number(detail.totalCost).toFixed(2)} ر.س</div></div>
+                <div className="bg-slate-50 rounded p-2"><div className="text-muted-foreground">العمالة</div><div className="font-semibold">{fmt2(detail.laborCost)} ر.س</div></div>
+                <div className="bg-slate-50 rounded p-2"><div className="text-muted-foreground">الإجمالي</div><div className="font-bold text-emerald-700">{fmt2(detail.totalCost)} ر.س</div></div>
               </div>
               {detail.problemDescription && (
                 <div>
@@ -581,7 +582,7 @@ export default function MaintenanceOrders() {
               <div>
                 <Label className="text-sm font-semibold flex items-center justify-between">
                   <span>قطع الغيار المستخدمة</span>
-                  <span className="text-xs font-normal text-muted-foreground">إجمالي القطع: {Number(detail.partsCost).toFixed(2)} ر.س</span>
+                  <span className="text-xs font-normal text-muted-foreground">إجمالي القطع: {fmt2(detail.partsCost)} ر.س</span>
                 </Label>
                 <div className="mt-2 border rounded overflow-hidden">
                   <table className="w-full text-xs">
@@ -604,9 +605,9 @@ export default function MaintenanceOrders() {
                             <div className="font-semibold">{p.itemName || `#${p.itemId}`}</div>
                             <div className="text-[10px] font-mono text-muted-foreground">{p.itemCode}</div>
                           </td>
-                          <td className="px-2 py-1.5 tabular-nums">{Number(p.quantity).toFixed(2)}</td>
-                          <td className="px-2 py-1.5 tabular-nums">{Number(p.unitCost).toFixed(2)}</td>
-                          <td className="px-2 py-1.5 tabular-nums font-semibold">{Number(p.total).toFixed(2)}</td>
+                          <td className="px-2 py-1.5 tabular-nums">{fmt2(p.quantity)}</td>
+                          <td className="px-2 py-1.5 tabular-nums">{fmt2(p.unitCost)}</td>
+                          <td className="px-2 py-1.5 tabular-nums font-semibold">{fmt2(p.total)}</td>
                           <td className="px-2 py-1.5">
                             <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-rose-600" onClick={() => removePartMut.mutate(p.id)} data-testid={`btn-remove-part-${p.id}`}>
                               <Trash2 className="h-3 w-3" />

@@ -19,7 +19,7 @@ import { useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, fmtInt0 } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -874,8 +874,8 @@ export default function PostingCenter() {
             </Button>
           )}
           <div className="text-xs text-slate-500 ms-auto">
-            <span className="font-bold text-slate-700">{filtered.length.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span>{" "}
-            من <span className="font-bold">{(data?.total ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span> عملية
+            <span className="font-bold text-slate-700">{fmtInt0(filtered.length)}</span>{" "}
+            من <span className="font-bold">{fmtInt0(data?.total ?? 0)}</span> عملية
           </div>
         </div>
         {/* Smart hint: when user pasted/typed a search but got 0 hits in the
@@ -908,8 +908,8 @@ export default function PostingCenter() {
             <AlertTriangle className="size-4 mt-0.5 shrink-0 text-amber-600" />
             <div>
               النتائج كثيرة جدًا — تم عرض أول{" "}
-              <span className="font-bold">{serverLimit.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span> سجل
-              من إجمالي <span className="font-bold">{totalMatched.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span>.
+              <span className="font-bold">{fmtInt0(serverLimit)}</span> سجل
+              من إجمالي <span className="font-bold">{fmtInt0(totalMatched)}</span>.
               ضيّق نطاق التاريخ أو استخدم البحث للوصول إلى الباقي.
             </div>
           </div>
@@ -942,7 +942,7 @@ export default function PostingCenter() {
           </Button>
           <div className="ms-auto flex items-center gap-3 text-sm">
             <span className="text-slate-600">
-              المحدد: <span className="font-bold text-teal-700">{selected.size.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span>
+              المحدد: <span className="font-bold text-teal-700">{fmtInt0(selected.size)}</span>
             </span>
             {selected.size > 0 && (
               <span className="text-slate-600">
@@ -1266,7 +1266,7 @@ function PaginationBar({
             <SelectContent>
               {PAGE_SIZE_OPTIONS.map(opt => (
                 <SelectItem key={opt} value={String(opt)} className="text-xs">
-                  {opt.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} سطر
+                  {fmtInt0(opt)} سطر
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1276,11 +1276,11 @@ function PaginationBar({
         <div className="text-slate-500">
           عرض{" "}
           <span className="font-bold text-slate-800">
-            {startNum.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}–{pageEndIdx.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}
+            {fmtInt0(startNum)}–{fmtInt0(pageEndIdx)}
           </span>{" "}
           من{" "}
           <span className="font-bold text-teal-700">
-            {totalRows.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}
+            {fmtInt0(totalRows)}
           </span>{" "}
           سجل
         </div>
@@ -1341,7 +1341,7 @@ function PaginationBar({
               )}
               data-testid={`btn-page-${p}`}
             >
-              {p.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}
+              {fmtInt0(p)}
             </button>
           ))}
         </div>
@@ -1401,7 +1401,7 @@ function StatCard({
     <div className={cn("rounded-lg border bg-gradient-to-b p-3", toneClass)}>
       <div className="text-[10px] font-medium opacity-70">{label}</div>
       <div className={cn("font-bold mt-0.5", small ? "text-sm font-mono" : "text-lg")}>
-        {typeof value === "number" ? value.toLocaleString("ar-EG-u-ca-gregory-nu-latn") : value}
+        {typeof value === "number" ? fmtInt0(value) : value}
       </div>
     </div>
   );

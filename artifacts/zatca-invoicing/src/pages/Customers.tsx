@@ -21,6 +21,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Trans } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { fmt2 } from "@/lib/format";
 import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
@@ -413,7 +414,7 @@ export default function Customers() {
                       <div className="text-end shrink-0">
                         <div className="text-[10px] text-muted-foreground">الرصيد</div>
                         <div className={cn("font-bold tabular-nums text-sm", balNum > 0 ? "text-rose-600" : balNum < 0 ? "text-emerald-600" : "text-slate-500")}>
-                          {Math.abs(balNum).toFixed(2)}
+                          {fmt2(Math.abs(balNum))}
                         </div>
                       </div>
                     )}
@@ -573,7 +574,7 @@ export default function Customers() {
                     : bal < 0 ? "credit"
                     : customer.vatNumber ? "active" : "inactive";
                   const overTooltip = overLimit
-                    ? `تجاوز حد الائتمان (${bal.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} > ${limit.toLocaleString("ar-SA-u-ca-gregory-nu-latn")})`
+                    ? `تجاوز حد الائتمان (${fmt2(bal)} > ${fmt2(limit)})`
                     : "";
                   const sel = isSelected(customer.id);
                   return (
@@ -683,7 +684,7 @@ export default function Customers() {
                         }
                         if (col.key === "balance") {
                           const abs = Math.abs(bal);
-                          const fmt = abs.toLocaleString(isRtl ? "ar-SA-u-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                          const fmt = fmt2(abs);
                           return (
                             <td key={col.key} className="px-2 py-1 tabular-nums text-end border-e border-slate-200/60">
                               {Math.abs(bal) < 0.005 ? (

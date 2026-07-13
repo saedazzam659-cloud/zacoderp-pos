@@ -2,6 +2,7 @@ import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
+import { fmtNum } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -88,7 +89,7 @@ export default function EOSReport() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <StatCard label="عدد الموظفين المنتهية خدمتهم" value={summary.total} color="rose" />
           <StatCard label="إجمالي تقدير المكافآت" value={fmt.fmt(summary.totalEosEstimate)} color="amber" />
-          <StatCard label="متوسط سنوات الخدمة" value={`${summary.averageYears.toFixed(1)} سنة`} color="indigo" />
+          <StatCard label="متوسط سنوات الخدمة" value={`${fmtNum(summary.averageYears, 1)} سنة`} color="indigo" />
         </div>
       )}
 
@@ -121,7 +122,7 @@ export default function EOSReport() {
                   <td className="px-3 py-2">{r.department || "—"}</td>
                   <td className="px-3 py-2 text-xs">{r.hireDate || "—"}</td>
                   <td className="px-3 py-2 text-xs">{r.endDate || "—"}</td>
-                  <td className="px-3 py-2 text-xs">{r.yearsServed ? r.yearsServed.toFixed(2) : "—"}</td>
+                  <td className="px-3 py-2 text-xs">{r.yearsServed ? fmtNum(r.yearsServed, 2) : "—"}</td>
                   <td className="px-3 py-2 text-left font-mono">{fmt.fmt(r.monthlyGross)}</td>
                   <td className="px-3 py-2 text-left font-mono font-bold text-amber-700">{fmt.fmt(r.eosEstimate)}</td>
                 </tr>

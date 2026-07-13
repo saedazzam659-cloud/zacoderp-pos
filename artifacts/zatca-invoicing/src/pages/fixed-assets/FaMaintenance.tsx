@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Wrench, Search } from "lucide-react";
+import { fmt2 } from "@/lib/format";
 import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -119,7 +120,7 @@ export default function FaMaintenance() {
             صيانة الأصول
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            سجل الصيانة الدورية والطارئة — {rows.length} عملية بإجمالي {totalCost.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س
+            سجل الصيانة الدورية والطارئة — {rows.length} عملية بإجمالي {fmt2(totalCost)} ر.س
           </p>
         </div>
         <Button onClick={openNew} className="bg-orange-600 hover:bg-orange-700">
@@ -204,7 +205,7 @@ export default function FaMaintenance() {
                 <td className="px-3 py-2 font-semibold">{assetName(m.assetId)}</td>
                 <td className="px-3 py-2">{typeLabel(m.type)}</td>
                 <td className="px-3 py-2 font-mono">{m.serviceDate}</td>
-                <td className="px-3 py-2 font-mono">{Number(m.cost).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                <td className="px-3 py-2 font-mono">{fmt2(m.cost)}</td>
                 <td className="px-3 py-2">{m.vendorName || "—"}</td>
                 <td className="px-3 py-2">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${m.approved ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>

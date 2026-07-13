@@ -54,7 +54,7 @@ const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "out
 };
 
 const fmt = (n: number | string) =>
-  Number(n || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function ContractingBills() {
   const { token } = useAuth() as any;
@@ -159,7 +159,7 @@ export default function ContractingBills() {
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard label="عدد المستخلصات" value={totals.count.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} tone="slate" />
+        <KpiCard label="عدد المستخلصات" value={totals.count.toLocaleString("en-US")} tone="slate" />
         <KpiCard label="إجمالي الأعمال" value={fmt(totals.gross)} tone="slate" suffix="ر.س" />
         <KpiCard label="المستحق قبل الضريبة" value={fmt(totals.due)} tone="amber" suffix="ر.س" />
         <KpiCard label="الصافي شامل الضريبة" value={fmt(totals.net)} tone="emerald" suffix="ر.س" />

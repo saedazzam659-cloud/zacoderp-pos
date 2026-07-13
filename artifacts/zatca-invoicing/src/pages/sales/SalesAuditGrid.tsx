@@ -518,7 +518,9 @@ function escHtml(s: unknown): string {
 }
 function fmtNum(n: unknown, dp = 2): string {
   const v = Number(n ?? 0);
-  return Number.isFinite(v) ? v.toFixed(dp) : "0.00";
+  return Number.isFinite(v)
+    ? v.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp })
+    : "0.00";
 }
 // ── Discount-aware totals ─────────────────────────────────────────────────
 // Line-level discounts are folded into the stored NET `subtotal` and never

@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, fmt2 } from "@/lib/format";
 import { safeLogoSrc } from "@/lib/export";
 import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "@/lib/printLetterhead";
 import {
@@ -582,8 +582,8 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 <button class="print-btn" onclick="window.print()">${escapeHtml(t("journalEntries.printPdf"))}</button>
 ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
 <div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${today} — ${escapeHtml(t("journalEntries.entriesCount", { count: rows.length }))}</div></div>`, `<div class="totals">
-  <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${totalDebitOfRows.toFixed(2)}</b></span>
-  <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${totalCreditOfRows.toFixed(2)}</b></span>
+  <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${fmt2(totalDebitOfRows)}</b></span>
+  <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${fmt2(totalCreditOfRows)}</b></span>
 </div>
 <table><thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
 <tbody>${rows.map(r => `<tr>${cols.map(c => {
@@ -726,7 +726,7 @@ ${wrapWithLetterhead(letterhead, `<table><thead><tr>${cols.map(c => `<th>${escap
   return `<td class="${isNum ? "num" : ""}">${escapeHtml((r as any)[c])}</td>`;
 }).join("")}</tr>`).join("")}</tbody>
 <tfoot><tr><td colspan="${cols.length - 3}" style="text-align:${align};">الإجمالي</td>
-<td class="num">${totalDebit.toFixed(2)}</td><td class="num">${totalCredit.toFixed(2)}</td><td></td></tr></tfoot>
+<td class="num">${fmt2(totalDebit)}</td><td class="num">${fmt2(totalCredit)}</td><td></td></tr></tfoot>
 </table>`)}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
@@ -750,7 +750,7 @@ ${wrapWithLetterhead(letterhead, `<table><thead><tr>${cols.map(c => `<th>${escap
         : lines.map((ln) => {
             const acc = acctMap.get(Number(ln.accountId));
             const accLabel = acc ? `${acc.code ?? ""} ${acc.nameAr ?? acc.nameEn ?? ""}`.trim() : `#${ln.accountId}`;
-            const amt = Number(ln.debit) > 0 ? `مدين ${Number(ln.debit).toFixed(2)}` : `دائن ${Number(ln.credit).toFixed(2)}`;
+            const amt = Number(ln.debit) > 0 ? `مدين ${fmt2(ln.debit)}` : `دائن ${fmt2(ln.credit)}`;
             return `<div class="ln"><div class="acc">${escapeHtml(accLabel)}</div><div class="amt">${escapeHtml(amt)}</div>${ln.description ? `<div class="dsc">${escapeHtml(ln.description)}</div>` : ""}</div>`;
           }).join("");
       return `<section class="ticket">
@@ -769,8 +769,8 @@ ${wrapWithLetterhead(letterhead, `<table><thead><tr>${cols.map(c => `<th>${escap
         <div class="hr"></div>
         ${linesHtml}
         <div class="hr"></div>
-        <div class="row"><span>إجمالي مدين</span><b>${subDebit.toFixed(2)}</b></div>
-        <div class="row"><span>إجمالي دائن</span><b>${subCredit.toFixed(2)}</b></div>
+        <div class="row"><span>إجمالي مدين</span><b>${fmt2(subDebit)}</b></div>
+        <div class="row"><span>إجمالي دائن</span><b>${fmt2(subCredit)}</b></div>
         <div class="footer">طُبع: ${escapeHtml(today)}</div>
       </section>`;
     }).join("");
@@ -830,8 +830,8 @@ ${sections}
               <td class="num center">${i + 1}</td>
               <td>${accLabel}</td>
               <td>${escapeHtml(ln.description ?? "")}</td>
-              <td class="num end">${Number(ln.debit  ?? 0).toFixed(2)}</td>
-              <td class="num end">${Number(ln.credit ?? 0).toFixed(2)}</td>
+              <td class="num end">${fmt2(ln.debit ?? 0)}</td>
+              <td class="num end">${fmt2(ln.credit ?? 0)}</td>
             </tr>`;
           }).join("");
       // One-per-page: the shared letterhead repeats natively on every printed
@@ -840,8 +840,8 @@ ${sections}
       // before the signature block.
       const perPageTotals = oneEntryPerPage ? `
         <div class="page-totals">
-          <span>إجمالي المدين: <b>${subDebit.toFixed(2)}</b></span>
-          <span>إجمالي الدائن: <b>${subCredit.toFixed(2)}</b></span>
+          <span>إجمالي المدين: <b>${fmt2(subDebit)}</b></span>
+          <span>إجمالي الدائن: <b>${fmt2(subCredit)}</b></span>
         </div>` : "";
       return `<section class="entry">
         <div class="banner">
@@ -868,8 +868,8 @@ ${sections}
           <tfoot>
             <tr>
               <td colspan="3" class="end"><b>الإجمالي</b></td>
-              <td class="num end"><b>${subDebit.toFixed(2)}</b></td>
-              <td class="num end"><b>${subCredit.toFixed(2)}</b></td>
+              <td class="num end"><b>${fmt2(subDebit)}</b></td>
+              <td class="num end"><b>${fmt2(subCredit)}</b></td>
             </tr>
           </tfoot>
         </table>

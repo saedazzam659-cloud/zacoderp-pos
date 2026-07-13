@@ -134,7 +134,7 @@ export default function QualityReport() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-xs text-muted-foreground">إجمالي الفحوصات</div>
-            <div className="text-2xl font-bold">{totalChecks.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
+            <div className="text-2xl font-bold">{totalChecks.toLocaleString("en-US")}</div>
           </CardContent>
         </Card>
         <Card>
@@ -152,13 +152,13 @@ export default function QualityReport() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-xs text-muted-foreground">مشروط</div>
-            <div className="text-2xl font-bold text-amber-700">{condCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
+            <div className="text-2xl font-bold text-amber-700">{condCount.toLocaleString("en-US")}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-xs text-muted-foreground">إجمالي العيوب</div>
-            <div className="text-2xl font-bold">{totalDefects.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
+            <div className="text-2xl font-bold">{totalDefects.toLocaleString("en-US")}</div>
           </CardContent>
         </Card>
       </div>
@@ -182,7 +182,7 @@ export default function QualityReport() {
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary">{RESULT_LABELS_AR[row.result] ?? row.result}</Badge>
                         <span className="text-xs text-muted-foreground">
-                          {c.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} فحص · {Number(row.defects).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} عيب
+                          {c.toLocaleString("en-US")} فحص · {Number(row.defects).toLocaleString("en-US")} عيب
                         </span>
                       </div>
                       <span className="font-mono font-semibold">{fmtPct(pct)}</span>
@@ -222,9 +222,9 @@ export default function QualityReport() {
                     return (
                       <tr key={r.checkType} className="border-t">
                         <td className="p-2">{CHECK_TYPE_LABELS_AR[r.checkType] ?? r.checkType}</td>
-                        <td className="p-2 font-mono">{total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
-                        <td className="p-2 font-mono text-red-700">{fails.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
-                        <td className="p-2 font-mono text-amber-700">{Number(r.conditionals).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                        <td className="p-2 font-mono">{total.toLocaleString("en-US")}</td>
+                        <td className="p-2 font-mono text-red-700">{fails.toLocaleString("en-US")}</td>
+                        <td className="p-2 font-mono text-amber-700">{Number(r.conditionals).toLocaleString("en-US")}</td>
                         <td className="p-2 font-mono">{fmtPct(rate)}</td>
                       </tr>
                     );
@@ -261,8 +261,8 @@ export default function QualityReport() {
                     return (
                       <tr key={`${r.productItemId}-${i}`} className="border-t">
                         <td className="p-2">{r.productNameAr ?? `#${r.productItemId ?? "—"}`}</td>
-                        <td className="p-2 font-mono">{total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
-                        <td className="p-2 font-mono text-red-700">{fails.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                        <td className="p-2 font-mono">{total.toLocaleString("en-US")}</td>
+                        <td className="p-2 font-mono text-red-700">{fails.toLocaleString("en-US")}</td>
                         <td className="p-2 font-mono">{fmtPct(rate)}</td>
                       </tr>
                     );

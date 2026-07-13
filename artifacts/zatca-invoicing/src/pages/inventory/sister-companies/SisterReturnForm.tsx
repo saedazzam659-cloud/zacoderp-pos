@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { inventoryApi } from "@/lib/inventoryApi";
+import { fmt2, fmtNum } from "@/lib/format";
 import { DateField } from "@/components/ui/date-field";
 
 export default function SisterReturnForm() {
@@ -168,10 +169,10 @@ export default function SisterReturnForm() {
                   return (
                     <tr key={it.id} className="border-t">
                       <td className="p-1">{itemMap[it.itemId] ?? `#${it.itemId}`}</td>
-                      <td className="p-1 text-left">{Number(it.qty).toFixed(2)}</td>
-                      <td className="p-1 text-left">{Number(it.returnedQty).toFixed(2)}</td>
-                      <td className="p-1 text-left font-semibold">{remaining.toFixed(2)}</td>
-                      <td className="p-1 text-left">{Number(it.costPrice).toFixed(4)}</td>
+                      <td className="p-1 text-left">{fmt2(it.qty)}</td>
+                      <td className="p-1 text-left">{fmt2(it.returnedQty)}</td>
+                      <td className="p-1 text-left font-semibold">{fmt2(remaining)}</td>
+                      <td className="p-1 text-left">{fmtNum(it.costPrice, 4)}</td>
                       <td className="p-1"><Input type="number" min="0" max={remaining} step="0.001"
                         disabled={remaining <= 0}
                         value={qtys[it.id] ?? ""}

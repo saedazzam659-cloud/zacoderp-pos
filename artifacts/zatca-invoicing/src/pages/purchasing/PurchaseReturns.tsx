@@ -30,7 +30,7 @@ import ReturnDocumentDetails from "@/components/documents/ReturnDocumentDetails"
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { DiscountRow } from "@/components/DiscountRow";
-import { currencySymbol } from "@/lib/format";
+import { currencySymbol, fmt2 } from "@/lib/format";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { cn } from "@/lib/utils";
 import {
@@ -93,7 +93,7 @@ const EMPTY = {
 export default function PurchaseReturns() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const tr = (k: string, opts?: any): string => t(`purchasingPages.purchaseReturns.${k}`, opts) as string;
   const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
   const itemName = (i: any) => isRtl ? (i?.nameAr ?? i?.nameEn ?? "") : (i?.nameEn ?? i?.nameAr ?? "");
@@ -955,9 +955,9 @@ tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(tr("title"))}</h1>
 <div class="meta">تاريخ التقرير: ${reportDate} — عدد المردودات: ${source.length}</div></div>
 <div class="totals">
-  <span>إجمالي المجموع: <b>${sumSub.toFixed(2)}</b></span>
-  <span>إجمالي الضريبة: <b>${sumVat.toFixed(2)}</b></span>
-  <span>الإجمالي: <b>${sumTot.toFixed(2)}</b></span>
+  <span>إجمالي المجموع: <b>${fmt2(sumSub)}</b></span>
+  <span>إجمالي الضريبة: <b>${fmt2(sumVat)}</b></span>
+  <span>الإجمالي: <b>${fmt2(sumTot)}</b></span>
 </div>
 <table><thead><tr>
   <th>#</th><th>رقم المستند</th><th>التاريخ</th><th>المورد</th><th>العملة</th>
@@ -969,17 +969,17 @@ ${source.map((r: any, i: number) => `<tr>
   <td>${escapeHtml(r.returnDate ?? "")}</td>
   <td>${escapeHtml(supMap[r.supplierId] ?? "")}</td>
   <td>${escapeHtml(r.currencyCode ?? "")}</td>
-  <td class="num">${(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2)}</td>
-  <td class="num">${Number(r.vatAmount ?? 0).toFixed(2)}</td>
-  <td class="num">${Number(r.totalAmount ?? 0).toFixed(2)}</td>
+  <td class="num">${fmt2((Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)))}</td>
+  <td class="num">${fmt2(Number(r.vatAmount ?? 0))}</td>
+  <td class="num">${fmt2(Number(r.totalAmount ?? 0))}</td>
   <td>${r.journalEntryId ? `JE-${escapeHtml(r.journalEntryId)}` : ""}</td>
   <td>${escapeHtml(statusLabel(r.status))}</td>
 </tr>`).join("")}
 </tbody><tfoot><tr>
   <td colspan="5">الإجمالي العام</td>
-  <td class="num">${sumSub.toFixed(2)}</td>
-  <td class="num">${sumVat.toFixed(2)}</td>
-  <td class="num">${sumTot.toFixed(2)}</td>
+  <td class="num">${fmt2(sumSub)}</td>
+  <td class="num">${fmt2(sumVat)}</td>
+  <td class="num">${fmt2(sumTot)}</td>
   <td colspan="2"></td>
 </tr></tfoot></table>
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
@@ -1008,10 +1008,10 @@ ${source.map((r: any, i: number) => `<tr>
             return `<tr>
               <td style="text-align:center;">${i + 1}</td>
               <td>${escapeHtml(itemLabel)}</td>
-              <td class="num">${qty.toFixed(2)}</td>
-              <td class="num">${up.toFixed(2)}</td>
-              <td class="num">${vat.toFixed(2)}</td>
-              <td class="num">${ttl.toFixed(2)}</td>
+              <td class="num">${fmt2(qty)}</td>
+              <td class="num">${fmt2(up)}</td>
+              <td class="num">${fmt2(vat)}</td>
+              <td class="num">${fmt2(ttl)}</td>
             </tr>`;
           }).join("");
       return `<section class="doc">
@@ -1031,8 +1031,8 @@ ${source.map((r: any, i: number) => `<tr>
           <tbody>${linesHtml}</tbody>
           <tfoot><tr>
             <td colspan="4" style="text-align:left;">المجموع</td>
-            <td class="num">${Number(d.vatAmount ?? 0).toFixed(2)}</td>
-            <td class="num">${Number(d.totalAmount ?? 0).toFixed(2)}</td>
+            <td class="num">${fmt2(Number(d.vatAmount ?? 0))}</td>
+            <td class="num">${fmt2(Number(d.totalAmount ?? 0))}</td>
           </tr></tfoot>
         </table>
       </section>`;
@@ -1068,9 +1068,9 @@ tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <div class="h">${logoHtml}${companyHtml}<h1>مردودات الشراء المحدّدة</h1>
 <div class="meta">تاريخ التقرير: ${reportDate} — عدد المردودات: ${docs.length}</div></div>
 <div class="grand">
-  <span>إجمالي المجموع: <b>${grandSub.toFixed(2)}</b></span>
-  <span>إجمالي الضريبة: <b>${grandVat.toFixed(2)}</b></span>
-  <span>الإجمالي العام: <b>${grandTot.toFixed(2)}</b></span>
+  <span>إجمالي المجموع: <b>${fmt2(grandSub)}</b></span>
+  <span>إجمالي الضريبة: <b>${fmt2(grandVat)}</b></span>
+  <span>الإجمالي العام: <b>${fmt2(grandTot)}</b></span>
 </div>
 ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;

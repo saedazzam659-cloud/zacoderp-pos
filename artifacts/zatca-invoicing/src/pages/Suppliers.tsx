@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { fmt2 } from "@/lib/format";
 import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
@@ -403,13 +404,13 @@ export default function Suppliers() {
     if (bal > 0) return (
       <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 whitespace-nowrap" dir="ltr">
         <TrendingUp className="h-3 w-3 shrink-0" />
-        {bal.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {t("pages.suppliers.creditor")}
+        {fmt2(bal)} {t("pages.suppliers.creditor")}
       </span>
     );
     return (
       <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200 whitespace-nowrap" dir="ltr">
         <TrendingDown className="h-3 w-3 shrink-0" />
-        {Math.abs(bal).toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {t("pages.suppliers.debtor")}
+        {fmt2(Math.abs(bal))} {t("pages.suppliers.debtor")}
       </span>
     );
   }
@@ -806,7 +807,7 @@ export default function Suppliers() {
                     : bal < 0 ? "credit"
                     : supplier.vatNumber ? "active" : "inactive";
                   const overTooltip = overLimit
-                    ? `تجاوز حد الائتمان (${owed.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} > ${limit.toLocaleString("ar-SA-u-ca-gregory-nu-latn")})`
+                    ? `تجاوز حد الائتمان (${fmt2(owed)} > ${fmt2(limit)})`
                     : "";
                   const sel = isSelected(supplier.id);
                   return (

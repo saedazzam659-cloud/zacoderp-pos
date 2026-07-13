@@ -6,6 +6,7 @@ import {
   Eye, EyeOff, Search, ExternalLink, ShieldCheck,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { fmt2 } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -414,7 +415,7 @@ function DashboardTab({ storeId, headers }: { storeId: number; headers: Record<s
   const cards = [
     { label: "إجمالي الطلبات",   value: k.orders ?? 0,        icon: ShoppingCart, color: "text-blue-600 bg-blue-50" },
     { label: "طلبات مفتوحة",      value: k.openOrders ?? 0,    icon: AlertTriangle, color: "text-amber-600 bg-amber-50" },
-    { label: "الإيرادات (مؤكدة)", value: `${Number(k.revenue ?? 0).toFixed(2)} ر.س`, icon: TrendingUp, color: "text-emerald-600 bg-emerald-50" },
+    { label: "الإيرادات (مؤكدة)", value: `${fmt2(k.revenue ?? 0)} ر.س`, icon: TrendingUp, color: "text-emerald-600 bg-emerald-50" },
     { label: "منتجات منشورة",     value: `${k.visibleProducts ?? 0} / ${k.products ?? 0}`, icon: Package, color: "text-indigo-600 bg-indigo-50" },
   ];
   return (
@@ -466,7 +467,7 @@ function OrderRow({ order, onClick }: { order: Order; onClick?: () => void }) {
         {statusBadge(order.status)}
       </div>
       <div className="flex items-center gap-2 text-sm">
-        <span className="font-bold text-primary">{Number(order.total).toFixed(2)}</span>
+        <span className="font-bold text-primary">{fmt2(order.total)}</span>
         <span className="text-xs text-muted-foreground">ر.س</span>
       </div>
     </div>
@@ -712,7 +713,7 @@ function OrdersTab({ storeId, headers }: { storeId: number; headers: Record<stri
                   <div className="text-[11px] text-muted-foreground">{o.customerPhone || ""}</div>
                 </div>
                 {statusBadge(o.status)}
-                <div className="text-sm font-bold text-primary">{Number(o.total).toFixed(2)} ر.س</div>
+                <div className="text-sm font-bold text-primary">{fmt2(o.total)} ر.س</div>
                 <div className="flex gap-1">
                   {o.status === "new" && (
                     <Button size="sm" onClick={() => confirmM.mutate(o.id)} disabled={confirmM.isPending}>
@@ -959,7 +960,7 @@ function AiTab({ storeId, headers }: { storeId: number; headers: Record<string, 
                     {analysisQ.data.topProducts.slice(0, 5).map((p: any, i: number) => (
                       <div key={i} className="flex items-center justify-between text-sm border rounded p-2">
                         <span>{p.name}</span>
-                        <span className="font-mono text-primary">{Number(p.revenue).toFixed(2)} ر.س</span>
+                        <span className="font-mono text-primary">{fmt2(p.revenue)} ر.س</span>
                       </div>
                     ))}
                   </div>
@@ -988,7 +989,7 @@ function AiTab({ storeId, headers }: { storeId: number; headers: Record<string, 
                     <div className="text-sm font-medium">{r.nameAr}</div>
                     <div className="text-[11px] text-muted-foreground">{r.reason}</div>
                   </div>
-                  <span className="text-sm font-mono text-primary">{Number(r.salePrice).toFixed(2)}</span>
+                  <span className="text-sm font-mono text-primary">{fmt2(r.salePrice)}</span>
                 </div>
               ))}
             </div>

@@ -14,7 +14,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
-import { useFormatters, currencySymbol } from "@/lib/format";
+import { useFormatters, currencySymbol, fmt2 } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1333,9 +1333,9 @@ tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(t("salesReturns.title"))}</h1>
 <div class="meta">تاريخ التقرير: ${today} — عدد المرتجعات: ${source.length}</div></div>
 <div class="totals">
-  <span>إجمالي المجموع: <b>${sumSubtotal.toFixed(2)}</b></span>
-  <span>إجمالي الضريبة: <b>${sumVat.toFixed(2)}</b></span>
-  <span>الإجمالي: <b>${sumTotal.toFixed(2)}</b></span>
+  <span>إجمالي المجموع: <b>${fmt2(sumSubtotal)}</b></span>
+  <span>إجمالي الضريبة: <b>${fmt2(sumVat)}</b></span>
+  <span>الإجمالي: <b>${fmt2(sumTotal)}</b></span>
 </div>
 <table><thead><tr>
   <th>#</th><th>رقم المرتجع</th><th>التاريخ</th><th>العميل</th><th>الفاتورة</th>
@@ -1351,17 +1351,17 @@ ${source.map((r: any, i: number) => {
     <td>${escapeHtml(cusMap[r.customerId] ?? "")}</td>
     <td>${escapeHtml(r.invoiceId ? (invMap[r.invoiceId] ?? `SI-${r.invoiceId}`) : "")}</td>
     <td>${escapeHtml(r.currencyCode ?? "")}</td>
-    <td class="num">${sub.toFixed(2)}</td>
-    <td class="num">${Number(r.vatAmount ?? 0).toFixed(2)}</td>
-    <td class="num">${Number(r.totalAmount ?? 0).toFixed(2)}</td>
+    <td class="num">${fmt2(sub)}</td>
+    <td class="num">${fmt2(Number(r.vatAmount ?? 0))}</td>
+    <td class="num">${fmt2(Number(r.totalAmount ?? 0))}</td>
     <td>${status}</td>
   </tr>`;
 }).join("")}
 </tbody><tfoot><tr>
   <td colspan="6">الإجمالي العام</td>
-  <td class="num">${sumSubtotal.toFixed(2)}</td>
-  <td class="num">${sumVat.toFixed(2)}</td>
-  <td class="num">${sumTotal.toFixed(2)}</td>
+  <td class="num">${fmt2(sumSubtotal)}</td>
+  <td class="num">${fmt2(sumVat)}</td>
+  <td class="num">${fmt2(sumTotal)}</td>
   <td></td>
 </tr></tfoot></table>
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
@@ -1532,10 +1532,10 @@ ${source.map((r: any, i: number) => {
               <td style="text-align:center;">${i + 1}</td>
               <td>${escapeHtml(itemLabel)}</td>
               <td>${escapeHtml(l.description ?? "")}</td>
-              <td class="num">${qty.toFixed(2)}</td>
-              <td class="num">${up.toFixed(2)}</td>
-              <td class="num">${vat.toFixed(2)}</td>
-              <td class="num">${ttl.toFixed(2)}</td>
+              <td class="num">${fmt2(qty)}</td>
+              <td class="num">${fmt2(up)}</td>
+              <td class="num">${fmt2(vat)}</td>
+              <td class="num">${fmt2(ttl)}</td>
             </tr>`;
           }).join("");
       return `
@@ -1557,11 +1557,11 @@ ${source.map((r: any, i: number) => {
     <tbody>${linesHtml}</tbody>
     <tfoot><tr>
       <td colspan="5" style="text-align:left;">إجمالي المرتجع</td>
-      <td class="num">${Number(d.vatAmount ?? 0).toFixed(2)}</td>
-      <td class="num">${Number(d.totalAmount ?? 0).toFixed(2)}</td>
+      <td class="num">${fmt2(Number(d.vatAmount ?? 0))}</td>
+      <td class="num">${fmt2(Number(d.totalAmount ?? 0))}</td>
     </tr><tr>
       <td colspan="5" style="text-align:left;">المجموع قبل الضريبة</td>
-      <td colspan="2" class="num" style="text-align:right;">${sub.toFixed(2)}</td>
+      <td colspan="2" class="num" style="text-align:right;">${fmt2(sub)}</td>
     </tr></tfoot>
   </table>
 </section>`;
@@ -1599,9 +1599,9 @@ tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <div class="h">${logoHtml}${companyHtml}<h1>المرتجعات المحدّدة</h1>
 <div class="meta">تاريخ التقرير: ${today} — عدد المرتجعات: ${docs.length}</div></div>
 <div class="grand">
-  <span>إجمالي المجموع: <b>${grandSub.toFixed(2)}</b></span>
-  <span>إجمالي الضريبة: <b>${grandVat.toFixed(2)}</b></span>
-  <span>الإجمالي العام: <b>${grandTot.toFixed(2)}</b></span>
+  <span>إجمالي المجموع: <b>${fmt2(grandSub)}</b></span>
+  <span>إجمالي الضريبة: <b>${fmt2(grandVat)}</b></span>
+  <span>الإجمالي العام: <b>${fmt2(grandTot)}</b></span>
 </div>
 ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;

@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Calculator, Sparkles, Loader2, ScrollText, Printer, Banknote, CheckCircle2 } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { fmt2 } from "@/lib/format";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
@@ -173,9 +174,9 @@ export default function EndOfService() {
             <div><span className="text-muted-foreground">{tr("empNationality")}</span> <strong>{selectedEmp.nationality || "—"}</strong></div>
             <div><span className="text-muted-foreground">{tr("empJobTitle")}</span> <strong>{pickName(selectedEmp.jobTitle, selectedEmp.jobTitleEn) || "—"}</strong></div>
             <div><span className="text-muted-foreground">{tr("empHireDate")}</span> <strong>{selectedEmp.hireDate || <span className="text-rose-600">{tr("notRegistered")}</span>}</strong></div>
-            <div><span className="text-muted-foreground">{tr("empBasic")}</span> <strong>{Number(selectedEmp.basicSalary || 0).toFixed(2)} {tr("step5SuffixSar")}</strong></div>
-            <div><span className="text-muted-foreground">{tr("empHousing")}</span> <strong>{Number(selectedEmp.housingAllow || 0).toFixed(2)}</strong></div>
-            <div><span className="text-muted-foreground">{tr("empTransport")}</span> <strong>{Number(selectedEmp.transportAllow || 0).toFixed(2)}</strong></div>
+            <div><span className="text-muted-foreground">{tr("empBasic")}</span> <strong>{fmt2(selectedEmp.basicSalary || 0)} {tr("step5SuffixSar")}</strong></div>
+            <div><span className="text-muted-foreground">{tr("empHousing")}</span> <strong>{fmt2(selectedEmp.housingAllow || 0)}</strong></div>
+            <div><span className="text-muted-foreground">{tr("empTransport")}</span> <strong>{fmt2(selectedEmp.transportAllow || 0)}</strong></div>
           </div>
         )}
       </div>
@@ -186,9 +187,9 @@ export default function EndOfService() {
         <div className="space-y-4" id="eos-report">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card label={tr("cardServicePeriod")} value={tr("cardYearsUnit", { years: calc.yearsOfService })} hint={`${calc.hireDate} → ${calc.endDate}`} />
-            <Card label={tr("cardMonthlySalary")} value={`${calc.monthlySalary.toFixed(2)}`} hint={tr("cardMonthlySalaryHint")} />
-            <Card label={tr("cardGross")} value={`${calc.grossEntitlement.toFixed(2)}`} hint={tr("cardGrossHint")} amber />
-            <Card label={tr("cardNet")} value={`${calc.netAmount.toFixed(2)}`} hint={tr("cardNetHint", { percent: (calc.factor * 100).toFixed(0) })} emerald />
+            <Card label={tr("cardMonthlySalary")} value={fmt2(calc.monthlySalary)} hint={tr("cardMonthlySalaryHint")} />
+            <Card label={tr("cardGross")} value={fmt2(calc.grossEntitlement)} hint={tr("cardGrossHint")} amber />
+            <Card label={tr("cardNet")} value={fmt2(calc.netAmount)} hint={tr("cardNetHint", { percent: (calc.factor * 100).toFixed(0) })} emerald />
           </div>
 
           <div className="rounded-lg border bg-card overflow-hidden">
@@ -201,19 +202,19 @@ export default function EndOfService() {
               </Step>
               <Step n="2" title={tr("step2Title")}>
                 <span dangerouslySetInnerHTML={{ __html: tr("step2Body", {
-                  basic: calc.basicSalary.toFixed(2),
-                  housing: calc.housingAllow.toFixed(2),
-                  transport: calc.transportAllow.toFixed(2),
-                  monthly: calc.monthlySalary.toFixed(2),
+                  basic: fmt2(calc.basicSalary),
+                  housing: fmt2(calc.housingAllow),
+                  transport: fmt2(calc.transportAllow),
+                  monthly: fmt2(calc.monthlySalary),
                 }) }} />
               </Step>
               <Step n="3" title={tr("step3Title")}>
                 <div className="space-y-1">
-                  <div dangerouslySetInnerHTML={{ __html: tr("step3FirstFive", { years: calc.breakdown.firstFiveYears, amount: calc.breakdown.firstFiveAmount.toFixed(2) }) }} />
+                  <div dangerouslySetInnerHTML={{ __html: tr("step3FirstFive", { years: calc.breakdown.firstFiveYears, amount: fmt2(calc.breakdown.firstFiveAmount) }) }} />
                   {calc.breakdown.afterFiveYears > 0 && (
-                    <div dangerouslySetInnerHTML={{ __html: tr("step3AfterFive", { years: calc.breakdown.afterFiveYears, amount: calc.breakdown.afterFiveAmount.toFixed(2) }) }} />
+                    <div dangerouslySetInnerHTML={{ __html: tr("step3AfterFive", { years: calc.breakdown.afterFiveYears, amount: fmt2(calc.breakdown.afterFiveAmount) }) }} />
                   )}
-                  <div className="pt-1 border-t mt-2" dangerouslySetInnerHTML={{ __html: tr("step3Total", { amount: calc.grossEntitlement.toFixed(2) }) }} />
+                  <div className="pt-1 border-t mt-2" dangerouslySetInnerHTML={{ __html: tr("step3Total", { amount: fmt2(calc.grossEntitlement) }) }} />
                 </div>
               </Step>
               <Step n="4" title={tr("step4Title")}>
@@ -223,8 +224,8 @@ export default function EndOfService() {
                 </div>
               </Step>
               <Step n="5" title={tr("step5Title")}>
-                <div className="text-2xl font-bold text-emerald-700 tabular-nums">{calc.netAmount.toFixed(2)} {tr("step5SuffixSar")}</div>
-                <div className="text-xs text-muted-foreground mt-1">{calc.grossEntitlement.toFixed(2)} × {(calc.factor * 100).toFixed(0)}% = {calc.netAmount.toFixed(2)}</div>
+                <div className="text-2xl font-bold text-emerald-700 tabular-nums">{fmt2(calc.netAmount)} {tr("step5SuffixSar")}</div>
+                <div className="text-xs text-muted-foreground mt-1">{fmt2(calc.grossEntitlement)} × {(calc.factor * 100).toFixed(0)}% = {fmt2(calc.netAmount)}</div>
               </Step>
             </div>
           </div>
@@ -262,7 +263,7 @@ export default function EndOfService() {
             <div className="space-y-3 text-sm">
               <div className="rounded border bg-muted/30 p-3 space-y-1">
                 <div><span className="text-muted-foreground">{tr("labelEmpDialog")}</span> <strong>{pickName(selectedEmp.nameAr, selectedEmp.nameEn)}</strong> ({selectedEmp.code})</div>
-                <div><span className="text-muted-foreground">{tr("labelCalcNet")}</span> <strong className="text-emerald-700">{calc.netAmount.toFixed(2)} {tr("step5SuffixSar")}</strong></div>
+                <div><span className="text-muted-foreground">{tr("labelCalcNet")}</span> <strong className="text-emerald-700">{fmt2(calc.netAmount)} {tr("step5SuffixSar")}</strong></div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">

@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, fmt2, fmtNum } from "@/lib/format";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { parseError } from "@/lib/parseError";
 import { cn } from "@/lib/utils";
@@ -439,7 +439,7 @@ export default function ReceiptVoucherFormMulti() {
       .map((inv: any) => ({
         value: String(inv.id),
         label: inv.docNumber ?? `SI-${inv.id}`,
-        description: `${inv.invoiceDate} • ${Number(inv.totalAmount || 0).toFixed(2)} ${inv.currencyCode || "SAR"}`,
+        description: `${inv.invoiceDate} • ${fmt2(inv.totalAmount || 0)} ${inv.currencyCode || "SAR"}`,
         code: inv.status,
       }));
   }, [salesInvoices, form.entityId]);
@@ -926,7 +926,7 @@ export default function ReceiptVoucherFormMulti() {
                         const r = Number(form.exchangeRate);
                         return (
                           <span className="text-[10px] text-muted-foreground font-normal" dir="ltr">
-                            1 {sel.code} = {r > 0 ? r.toFixed(4) : "—"} {base.code}
+                            1 {sel.code} = {r > 0 ? fmtNum(r, 4) : "—"} {base.code}
                           </span>
                         );
                       })()}
@@ -940,7 +940,7 @@ export default function ReceiptVoucherFormMulti() {
                       if (!sel || !base || sel.id === base.id || !(amt > 0) || !(r > 0)) return null;
                       return (
                         <p className="text-[11px] text-muted-foreground" data-testid="rv-equiv">
-                          {t(`${NS}.equivalentIn`, "المكافئ بـ")} {base.code}: <span className="font-mono">{(amt * r).toFixed(2)}</span>
+                          {t(`${NS}.equivalentIn`, "المكافئ بـ")} {base.code}: <span className="font-mono">{fmt2(amt * r)}</span>
                         </p>
                       );
                     })()}

@@ -392,11 +392,11 @@ export default function ProductionOrders() {
                   <div className="grid grid-cols-2 gap-2 text-center text-xs">
                     <div className="bg-slate-50 rounded-lg p-1.5">
                       <div className="text-[10px] text-muted-foreground">{t("production.plannedQty")}</div>
-                      <div className="font-mono font-bold text-slate-800">{Number(o.plannedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} <span className="text-[10px] text-slate-400">{o.unitCode}</span></div>
+                      <div className="font-mono font-bold text-slate-800">{Number(o.plannedQty).toLocaleString("en-US")} <span className="text-[10px] text-slate-400">{o.unitCode}</span></div>
                     </div>
                     <div className="bg-orange-50 rounded-lg p-1.5">
                       <div className="text-[10px] text-muted-foreground">{t("production.producedQty")}</div>
-                      <div className="font-mono font-bold text-orange-800">{Number(o.producedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
+                      <div className="font-mono font-bold text-orange-800">{Number(o.producedQty).toLocaleString("en-US")}</div>
                     </div>
                   </div>
                 </div>
@@ -449,8 +449,8 @@ export default function ProductionOrders() {
                         {t(`production.status_${o.status}`)}
                       </span>
                     </td>
-                    <td className="p-3 text-end">{Number(o.plannedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} <span className="text-xs text-slate-400">{o.unitCode}</span></td>
-                    <td className="p-3 text-end">{Number(o.producedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                    <td className="p-3 text-end">{Number(o.plannedQty).toLocaleString("en-US")} <span className="text-xs text-slate-400">{o.unitCode}</span></td>
+                    <td className="p-3 text-end">{Number(o.producedQty).toLocaleString("en-US")}</td>
                     <td className="p-3 text-end">
                       <Link href={`/production/orders/${o.id}`}>
                         <Button size="sm" variant="ghost" data-testid={`btn-open-${o.id}`}>

@@ -323,7 +323,7 @@ export default function ProductionResources() {
                         {t(`production.resourceStatus_${r.status}`)}
                       </span>
                     </td>
-                    <td className="p-3 text-end">{Number(r.capacityPerHour ?? 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                    <td className="p-3 text-end">{Number(r.capacityPerHour ?? 0).toLocaleString("en-US")}</td>
                     <td className="p-3 text-end space-x-1 rtl:space-x-reverse">
                       <Button size="sm" variant="ghost" onClick={() => openEdit(r)} data-testid={`btn-edit-res-${r.id}`}>
                         <Pencil className="h-4 w-4" />

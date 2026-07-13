@@ -41,6 +41,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
 import { DateField } from "@/components/ui/date-field";
+import { fmt2 } from "@/lib/format";
 
 /** CollapsibleSection — labeled, togglable section for the item form (SAP-style). */
 function CollapsibleSection({
@@ -2366,7 +2367,7 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
                       {c.childCostPrice ? trimTrailingZeros(c.childCostPrice) : "—"}
                     </td>
                     <td className="px-3 py-2 hidden md:table-cell font-semibold">
-                      {subTotal > 0 ? subTotal.toFixed(2) : "—"}
+                      {subTotal > 0 ? fmt2(subTotal) : "—"}
                     </td>
                     <td className="px-3 py-2">
                       <Button
@@ -2388,10 +2389,10 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
                 <tr>
                   <td colSpan={3} className="px-3 py-2 text-right">{t("pages.items.bundle.totals")}</td>
                   <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
-                    {totalCost > 0 ? `${t("pages.items.bundle.totalCost")}: ${totalCost.toFixed(2)}` : "—"}
+                    {totalCost > 0 ? `${t("pages.items.bundle.totalCost")}: ${fmt2(totalCost)}` : "—"}
                   </td>
                   <td className="px-3 py-2 hidden md:table-cell">
-                    {totalSale > 0 ? `${t("pages.items.bundle.totalSale")}: ${totalSale.toFixed(2)}` : "—"}
+                    {totalSale > 0 ? `${t("pages.items.bundle.totalSale")}: ${fmt2(totalSale)}` : "—"}
                   </td>
                   <td></td>
                 </tr>

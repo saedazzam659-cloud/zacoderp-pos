@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { parseError } from "@/lib/parseError";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, fmt2, fmtNum } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -247,7 +247,7 @@ export default function CashTransfers() {
                   const r = Number(form.exchangeRate);
                   return (
                     <span className="text-[10px] text-muted-foreground font-normal" dir="ltr">
-                      1 {sel.code} = {r > 0 ? r.toFixed(4) : "—"} {base.code}
+                      1 {sel.code} = {r > 0 ? fmtNum(r, 4) : "—"} {base.code}
                     </span>
                   );
                 })()}
@@ -263,7 +263,7 @@ export default function CashTransfers() {
                   if (!sel || !base || sel.id === base.id || !(amt > 0) || !(r > 0)) return null;
                   return (
                     <p className="text-[11px] text-muted-foreground" data-testid="ct-equiv">
-                      {t("cashTransfers.equivalentIn", "المكافئ بـ")} {base.code}: <span className="font-mono">{(amt * r).toFixed(2)}</span>
+                      {t("cashTransfers.equivalentIn", "المكافئ بـ")} {base.code}: <span className="font-mono">{fmt2(amt * r)}</span>
                     </p>
                   );
                 })()}

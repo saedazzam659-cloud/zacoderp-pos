@@ -27,7 +27,7 @@ import { exportToExcel, printSectionsAsPDF } from "@/lib/export";
 const API = import.meta.env.VITE_API_URL ?? "";
 
 function fmtNum(n: number) {
-  return n.toLocaleString("en-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 type PeriodKey = "this_month" | "last_month" | "q1" | "q2" | "q3" | "q4" | "this_year";

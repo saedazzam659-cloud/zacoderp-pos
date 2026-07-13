@@ -15,8 +15,10 @@ import { Wallet, Plus, Trash2, X, Loader2, CheckCircle2, Banknote, Pencil, Print
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { DateField } from "@/components/ui/date-field";
 import { useAuth } from "@/contexts/AuthContext";
+import { fmt2 } from "@/lib/format";
 import { printLoanVoucher, downloadLoanVoucherPdf, type LoanVoucherDoc } from "@/lib/loanVoucherPrint";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
+import { HrFormCheck } from "@/lib/hrFormValidate";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY: any = { employeeId: "", loanDate: today(), loanType: "loan", amount: 0, installments: 1, installmentAmt: 0, installmentStartDate: "", loanAccountId: "", reason: "", notes: "" };
@@ -185,9 +187,22 @@ export default function EmployeeLoans() {
   }
 
   async function handleSave() {
+    const c = new HrFormCheck()
+      .requiredDate(form, "loanDate", "تاريخ السلفة")
+      .positiveMoney(form, "amount", "مبلغ السلفة")
+      .intRange(form, "installments", "عدد الأقساط", 1, 600)
+      .money(form, "installmentAmt", "قيمة القسط")
+      .date(form, "installmentStartDate", "تاريخ بداية السداد")
+      .custom(!form.employeeId, "employeeId", "يجب اختيار الموظف");
+    if (!c.first && Number(c.clean.installmentAmt ?? 0) > Number(c.clean.amount ?? 0)) {
+      c.errors.push({ field: "installmentAmt", message: "قيمة القسط لا يمكن أن تتجاوز مبلغ السلفة" });
+    }
+    const err = c.first;
+    if (err) { toast({ variant: "destructive", title: tr("toastError"), description: err.message }); return; }
     const payload = {
       ...form,
-      installmentStartDate: form.installmentStartDate || null,
+      ...c.clean,
+      installmentStartDate: c.clean.installmentStartDate || null,
       installmentEndDate: installmentEndDate || null,
     };
     if (editingId) {
@@ -294,15 +309,15 @@ export default function EmployeeLoans() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="rounded-lg border p-3 bg-card">
           <div className="text-xs text-muted-foreground">{tr("totalLoans")}</div>
-          <div className="text-2xl font-semibold tabular-nums">{totals.totalAmt.toFixed(2)} <span className="text-sm text-muted-foreground">{tr("sar")}</span></div>
+          <div className="text-2xl font-semibold tabular-nums">{fmt2(totals.totalAmt)} <span className="text-sm text-muted-foreground">{tr("sar")}</span></div>
         </div>
         <div className="rounded-lg border p-3 bg-emerald-50/50 border-emerald-200">
           <div className="text-xs text-emerald-700">{tr("totalPaid")}</div>
-          <div className="text-2xl font-semibold text-emerald-700 tabular-nums">{totals.totalPaid.toFixed(2)} <span className="text-sm">{tr("sar")}</span></div>
+          <div className="text-2xl font-semibold text-emerald-700 tabular-nums">{fmt2(totals.totalPaid)} <span className="text-sm">{tr("sar")}</span></div>
         </div>
         <div className="rounded-lg border p-3 bg-amber-50/50 border-amber-200">
           <div className="text-xs text-amber-700">{tr("totalRemaining")}</div>
-          <div className="text-2xl font-semibold text-amber-700 tabular-nums">{totals.totalActive.toFixed(2)} <span className="text-sm">{tr("sar")}</span></div>
+          <div className="text-2xl font-semibold text-amber-700 tabular-nums">{fmt2(totals.totalActive)} <span className="text-sm">{tr("sar")}</span></div>
         </div>
       </div>
 
@@ -405,7 +420,7 @@ export default function EmployeeLoans() {
             </div>
           )}
           <div className="text-xs text-muted-foreground bg-blue-50/50 border border-blue-200 rounded p-2 mt-2"
-            dangerouslySetInnerHTML={{ __html: tr("formNote", { amount: Number(form.installmentAmt || 0).toFixed(2) }) }}
+            dangerouslySetInnerHTML={{ __html: tr("formNote", { amount: fmt2(form.installmentAmt || 0) }) }}
           />
         </FormPanel>
       )}
@@ -442,11 +457,11 @@ export default function EmployeeLoans() {
                   </td>
                   <td className="p-2 text-xs">{TYPES[l.loanType] || l.loanType}</td>
                   <td className="p-2 text-xs">{l.loanDate}</td>
-                  <td className="p-2 text-xs tabular-nums">{Number(l.amount).toFixed(2)}</td>
+                  <td className="p-2 text-xs tabular-nums">{fmt2(l.amount)}</td>
                   <td className="p-2 text-center text-xs">{l.installments}</td>
-                  <td className="p-2 text-xs tabular-nums">{Number(l.installmentAmt).toFixed(2)}</td>
-                  <td className="p-2 text-xs tabular-nums text-emerald-700">{Number(l.paidAmount).toFixed(2)}</td>
-                  <td className="p-2 text-xs tabular-nums text-amber-700 font-medium">{remaining.toFixed(2)}</td>
+                  <td className="p-2 text-xs tabular-nums">{fmt2(l.installmentAmt)}</td>
+                  <td className="p-2 text-xs tabular-nums text-emerald-700">{fmt2(l.paidAmount)}</td>
+                  <td className="p-2 text-xs tabular-nums text-amber-700 font-medium">{fmt2(remaining)}</td>
                   <td className="p-2"><Badge variant="outline" className={st.cls}>{st.label}</Badge></td>
                   <td className="p-2 text-end whitespace-nowrap">
                     {l.status === "active" && !(l.notes || "").includes("JE#") && (
@@ -494,7 +509,7 @@ export default function EmployeeLoans() {
               <div className="rounded border bg-muted/30 p-3 space-y-1">
                 <div><span className="text-muted-foreground">{tr("labelEmployee")}</span> <strong>{pickName(disburseFor.empNameAr, disburseFor.empNameEn)}</strong> ({disburseFor.empCode})</div>
                 <div><span className="text-muted-foreground">{tr("labelDate")}</span> {disburseFor.loanDate}</div>
-                <div><span className="text-muted-foreground">{tr("labelAmount")}</span> <strong className="text-emerald-700">{Number(disburseFor.amount).toFixed(2)} {tr("sar")}</strong></div>
+                <div><span className="text-muted-foreground">{tr("labelAmount")}</span> <strong className="text-emerald-700">{fmt2(disburseFor.amount)} {tr("sar")}</strong></div>
                 {(disburseFor.empBankName || disburseFor.empBankIban) && (
                   <>
                     <div><span className="text-muted-foreground">{tr("labelBankName")}</span> {disburseFor.empBankName || "—"}</div>

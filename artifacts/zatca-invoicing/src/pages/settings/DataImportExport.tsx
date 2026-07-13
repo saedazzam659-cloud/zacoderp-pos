@@ -1083,7 +1083,7 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
     [lines],
   );
 
-  const fmt = (n: number) => n.toLocaleString(dateLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtDate = (v: any) => { const ms = stmtDateValue(v); return ms ? new Date(ms).toLocaleDateString(dateLocale) : String(v ?? ""); };
   const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 

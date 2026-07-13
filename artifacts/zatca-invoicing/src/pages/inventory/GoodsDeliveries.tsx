@@ -31,7 +31,7 @@ import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { DiscountRow } from "@/components/DiscountRow";
-import { currencySymbol } from "@/lib/format";
+import { currencySymbol, fmt2 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { downloadCsv, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
 import {
@@ -89,7 +89,7 @@ export default function GoodsDeliveries() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
-  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: any) => fmt2(n);
   const tr = (k: string, opts?: any): string => t(`warehousePages.goodsDeliveries.${k}`, opts) as string;
   const custName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
   const itemName = (i: any) => isRtl ? (i?.nameAr ?? i?.nameEn ?? "") : (i?.nameEn ?? i?.nameAr ?? "");
@@ -759,9 +759,9 @@ tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(tr("title"))}</h1>
 <div class="meta">${escapeHtml(tr("print.reportMeta", { date: reportDate, count: source.length }))}</div></div>
 <div class="totals">
-  <span>${escapeHtml(tr("print.totalSubtotal"))} <b>${sumSub.toFixed(2)}</b></span>
-  <span>${escapeHtml(tr("print.totalVat"))} <b>${sumVat.toFixed(2)}</b></span>
-  <span>${escapeHtml(tr("print.totalTotal"))} <b>${sumTot.toFixed(2)}</b></span>
+  <span>${escapeHtml(tr("print.totalSubtotal"))} <b>${fmt2(sumSub)}</b></span>
+  <span>${escapeHtml(tr("print.totalVat"))} <b>${fmt2(sumVat)}</b></span>
+  <span>${escapeHtml(tr("print.totalTotal"))} <b>${fmt2(sumTot)}</b></span>
 </div>
 <table><thead><tr>
   <th>#</th><th>${escapeHtml(tr("print.colDocNo"))}</th><th>${escapeHtml(tr("print.colDate"))}</th><th>${escapeHtml(tr("print.colCustomer"))}</th><th>${escapeHtml(tr("print.colCurrency"))}</th>
@@ -773,18 +773,18 @@ ${source.map((r: any, i: number) => `<tr>
   <td>${escapeHtml(r.deliveryDate ?? "")}</td>
   <td>${escapeHtml(custMap[r.customerId] ?? "")}</td>
   <td>${escapeHtml(r.currencyCode ?? "")}</td>
-  <td class="num">${(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2)}</td>
-  <td class="num">${Number(r.vatAmount ?? 0).toFixed(2)}</td>
-  <td class="num">${Number(r.totalAmount ?? 0).toFixed(2)}</td>
+  <td class="num">${fmt2(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0))}</td>
+  <td class="num">${fmt2(r.vatAmount ?? 0)}</td>
+  <td class="num">${fmt2(r.totalAmount ?? 0)}</td>
   <td>${r.journalEntryId ? `JE-${escapeHtml(r.journalEntryId)}` : ""}</td>
   <td>${r.linkedInvoiceId ? `SI-${escapeHtml(r.linkedInvoiceId)}` : ""}</td>
   <td>${escapeHtml(statusLabel(r.status))}</td>
 </tr>`).join("")}
 </tbody><tfoot><tr>
   <td colspan="5">${escapeHtml(tr("print.grandTotal"))}</td>
-  <td class="num">${sumSub.toFixed(2)}</td>
-  <td class="num">${sumVat.toFixed(2)}</td>
-  <td class="num">${sumTot.toFixed(2)}</td>
+  <td class="num">${fmt2(sumSub)}</td>
+  <td class="num">${fmt2(sumVat)}</td>
+  <td class="num">${fmt2(sumTot)}</td>
   <td colspan="3"></td>
 </tr></tfoot></table>
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
@@ -814,10 +814,10 @@ ${source.map((r: any, i: number) => `<tr>
             return `<tr>
               <td style="text-align:center;">${i + 1}</td>
               <td>${escapeHtml(itemLabel)}</td>
-              <td class="num">${qty.toFixed(2)}</td>
-              <td class="num">${up.toFixed(2)}</td>
+              <td class="num">${fmt2(qty)}</td>
+              <td class="num">${fmt2(up)}</td>
               <td class="num">${vat.toFixed(2)}%</td>
-              <td class="num">${ttl.toFixed(2)}</td>
+              <td class="num">${fmt2(ttl)}</td>
             </tr>`;
           }).join("");
       return `<section class="doc">
@@ -837,8 +837,8 @@ ${source.map((r: any, i: number) => `<tr>
           <tbody>${linesHtml}</tbody>
           <tfoot><tr>
             <td colspan="4" style="text-align:left;">${escapeHtml(tr("print.sumLabel"))}</td>
-            <td class="num">${Number(d.vatAmount ?? 0).toFixed(2)}</td>
-            <td class="num">${Number(d.totalAmount ?? 0).toFixed(2)}</td>
+            <td class="num">${fmt2(d.vatAmount ?? 0)}</td>
+            <td class="num">${fmt2(d.totalAmount ?? 0)}</td>
           </tr></tfoot>
         </table>
       </section>`;
@@ -875,9 +875,9 @@ tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(tr("print.bulkHeading"))}</h1>
 <div class="meta">${escapeHtml(tr("print.reportMeta", { date: reportDate, count: docs.length }))}</div></div>
 <div class="grand">
-  <span>${escapeHtml(tr("print.totalSubtotal"))} <b>${grandSub.toFixed(2)}</b></span>
-  <span>${escapeHtml(tr("print.totalVat"))} <b>${grandVat.toFixed(2)}</b></span>
-  <span>${escapeHtml(tr("print.grandTotalColon"))} <b>${grandTot.toFixed(2)}</b></span>
+  <span>${escapeHtml(tr("print.totalSubtotal"))} <b>${fmt2(grandSub)}</b></span>
+  <span>${escapeHtml(tr("print.totalVat"))} <b>${fmt2(grandVat)}</b></span>
+  <span>${escapeHtml(tr("print.grandTotalColon"))} <b>${fmt2(grandTot)}</b></span>
 </div>
 ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;

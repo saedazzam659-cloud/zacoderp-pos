@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { CheckCircle2, Clock, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const NUM = "ar-EG-u-ca-gregory-nu-latn";
+const NUM = "en-US";
 const PAGE_SIZES = [10, 20, 50, 100, 500, 1000];
 const MONTHS_AR = [
   "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",

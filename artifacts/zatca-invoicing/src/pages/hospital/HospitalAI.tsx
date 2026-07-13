@@ -9,6 +9,7 @@ import {
   Sparkles, ShieldCheck, ShieldAlert, FileCode, Stethoscope,
   AlertTriangle, CheckCircle2, XCircle, Activity, Users,
 } from "lucide-react";
+import { fmt2 } from "@/lib/format";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -192,7 +193,7 @@ export default function HospitalAI() {
               <option value="">— اختر فاتورة —</option>
               {invoices.map((i:any) => (
                 <option key={i.id} value={i.id}>
-                  {i.docNumber} — إجمالي {Number(i.totalAmount).toFixed(2)} ر.س
+                  {i.docNumber} — إجمالي {fmt2(i.totalAmount)} ر.س
                 </option>
               ))}
             </select>

@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, HardHat, Phone, Mail, Briefcase } from "lucide-react";
+import { fmt2 } from "@/lib/format";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -258,7 +259,7 @@ export default function MaintenanceTechnicians() {
               <div className="flex items-center justify-between pt-1.5 border-t border-slate-100">
                 <span className="text-[11px] text-muted-foreground">أجر الساعة</span>
                 <span className="font-bold tabular-nums text-indigo-700">
-                  {Number(t.hourlyRate).toFixed(2)} <span className="text-[10px] text-muted-foreground">ر.س</span>
+                  {fmt2(t.hourlyRate)} <span className="text-[10px] text-muted-foreground">ر.س</span>
                 </span>
               </div>
             </div>
@@ -311,7 +312,7 @@ export default function MaintenanceTechnicians() {
                   <td className="px-3 py-2 text-[11px]">
                     {t.email ? <span className="inline-flex items-center gap-1"><Mail className="h-3 w-3" />{t.email}</span> : "—"}
                   </td>
-                  <td className="px-3 py-2">{Number(t.hourlyRate).toFixed(2)} ر.س</td>
+                  <td className="px-3 py-2">{fmt2(t.hourlyRate)} ر.س</td>
                   <td className="px-3 py-2">
                     <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${t.isActive ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
                       {t.isActive ? "نشط" : "موقوف"}

@@ -15,6 +15,7 @@ import {
   Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { fmt2, fmtInt0 } from "@/lib/format";
 
 // ──────────────────────────────────────────────────────────────────────
 // ZATCA standard column schema (matches the official template export).
@@ -503,7 +504,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
     }
     const remaining = selectedClient.monthlyQuota - selectedClient.invoicesThisMonth;
     if (remaining < rows.length) {
-      toast({ title: "الحصة الشهرية غير كافية", description: `المتبقي للشركة ${remaining.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} فاتورة، والدفعة ${rows.length.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}.`, variant: "destructive" });
+      toast({ title: "الحصة الشهرية غير كافية", description: `المتبقي للشركة ${fmtInt0(remaining)} فاتورة، والدفعة ${fmtInt0(rows.length)}.`, variant: "destructive" });
       return;
     }
 
@@ -525,7 +526,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
       const isSandbox = result.env === "sandbox";
       toast({
         title: isSandbox ? "تم الإرسال (وضع التجربة)" : "تم تجهيز الدفعة للإنتاج",
-        description: `${result.submitted.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ناجحة، ${result.rejected.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} مرفوضة. ICV: ${result.chain.lastIcv}`,
+        description: `${fmtInt0(result.submitted)} ناجحة، ${fmtInt0(result.rejected)} مرفوضة. ICV: ${result.chain.lastIcv}`,
       });
       onConfirm(rows, result);
     } catch (e) {
@@ -607,7 +608,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
                 <StatCard icon={CheckCircle2} label="جاهزة للإرسال" value={stats.clean} accent="bg-emerald-100 text-emerald-700" />
                 <StatCard icon={AlertTriangle} label="تحذيرات" value={stats.warnings} accent="bg-amber-100 text-amber-700" />
                 <StatCard icon={FileWarning} label="أخطاء" value={stats.errors} accent="bg-rose-100 text-rose-700" />
-                <StatCard icon={TrendingUp} label="إجمالي شامل الضريبة" value={`${sumIncl.toFixed(2)} ﷼`} accent="bg-indigo-100 text-indigo-700" mono />
+                <StatCard icon={TrendingUp} label="إجمالي شامل الضريبة" value={`${fmt2(sumIncl)} ﷼`} accent="bg-indigo-100 text-indigo-700" mono />
               </div>
 
               {/* Action bar */}
@@ -761,7 +762,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
 
               <p className="text-xs text-muted-foreground flex items-center gap-1.5">
                 <Pencil className="h-3 w-3" />
-                اضغط أي خلية لتعديلها يدوياً • اضغط <Wand2 className="h-3 w-3 inline" /> لتصحيح صف بقواعد زاتكا • إجمالي الضريبة: <b className="font-mono">{sumVat.toFixed(2)} ﷼</b>
+                اضغط أي خلية لتعديلها يدوياً • اضغط <Wand2 className="h-3 w-3 inline" /> لتصحيح صف بقواعد زاتكا • إجمالي الضريبة: <b className="font-mono">{fmt2(sumVat)} ﷼</b>
               </p>
             </>
           )}

@@ -12,7 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
-import { useFormatters, currencySymbol } from "@/lib/format";
+import { useFormatters, currencySymbol, fmt2 } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useToast } from "@/hooks/use-toast";
@@ -3119,7 +3119,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                           return {
                             value: String(q.id),
                             code:  num,
-                            label: `${custName} — ${q.quotationDate ?? ""} — ${Number(q.totalAmount ?? 0).toFixed(2)}`,
+                            label: `${custName} — ${q.quotationDate ?? ""} — ${fmt2(Number(q.totalAmount ?? 0))}`,
                           };
                         }),
                       ]}

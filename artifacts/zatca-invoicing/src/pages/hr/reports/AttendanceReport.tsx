@@ -2,6 +2,7 @@ import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
+import { fmtNum } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -101,7 +102,7 @@ export default function AttendanceReport() {
           <StatCard label="غياب" value={summary.totalAbsent} color="rose" />
           <StatCard label="إجازات" value={summary.totalLeave} color="amber" />
           <StatCard label="تأخير" value={summary.totalLate} color="orange" />
-          <StatCard label="إجمالي ساعات العمل" value={summary.totalWorkedHours.toFixed(1)} color="violet" />
+          <StatCard label="إجمالي ساعات العمل" value={fmtNum(summary.totalWorkedHours, 1)} color="violet" />
           <StatCard label="متوسط نسبة الحضور" value={`${summary.avgAttendanceRate.toFixed(1)}%`} color="green" />
         </div>
       )}
@@ -140,8 +141,8 @@ export default function AttendanceReport() {
                   <td className="px-3 py-2 text-rose-700 font-semibold">{e.absent}</td>
                   <td className="px-3 py-2 text-amber-700">{e.leave}</td>
                   <td className="px-3 py-2 text-orange-700">{e.late}</td>
-                  <td className="px-3 py-2 text-left font-mono">{e.workedHours.toFixed(1)}</td>
-                  <td className="px-3 py-2 text-left font-mono">{e.overtimeHours.toFixed(1)}</td>
+                  <td className="px-3 py-2 text-left font-mono">{fmtNum(e.workedHours, 1)}</td>
+                  <td className="px-3 py-2 text-left font-mono">{fmtNum(e.overtimeHours, 1)}</td>
                 </tr>
               ))}
             </tbody>

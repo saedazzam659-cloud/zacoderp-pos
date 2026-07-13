@@ -22,7 +22,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 // numeric span to visible glyphs only. The `.mono` span in baseStyles is also
 // forced to `direction:ltr; unicode-bidi:isolate` so the browser never injects
 // new marks at render time.
-const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
 // Latin-digit formatter for English print mode.
@@ -1598,7 +1598,7 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
           <div className="flex gap-6">
             <span className="text-muted-foreground">الإجمالي:</span>
             <span className="font-bold text-primary">
-              {Number(data.doc.totalAmount || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {data.doc.currencyCode ?? "SAR"}
+              {Number(data.doc.totalAmount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {data.doc.currencyCode ?? "SAR"}
             </span>
             <span className="text-muted-foreground">الأصناف:</span>
             <span>{data.lines.length} صنف</span>

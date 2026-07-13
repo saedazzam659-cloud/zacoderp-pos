@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertTriangle, Trash2, Search, CheckCircle2, Package } from "lucide-react";
+import { fmtQty, fmtInt0 } from "@/lib/format";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -125,7 +126,7 @@ export default function OrphanStockCleanup() {
             ) : (
               <div className="flex items-center gap-2 p-3 rounded-md bg-amber-50 text-amber-900 border border-amber-200 text-sm">
                 <AlertTriangle className="h-4 w-4" />
-                تم العثور على <strong className="mx-1">{count}</strong> حركة يتيمة (مجموع الكمية: {orphanData.totalQty?.toFixed(2)}).
+                تم العثور على <strong className="mx-1">{fmtInt0(count)}</strong> حركة يتيمة (مجموع الكمية: {fmtQty(orphanData.totalQty)}).
               </div>
             )
           )}
@@ -161,8 +162,8 @@ export default function OrphanStockCleanup() {
                       <td className="px-3 py-2 text-xs font-mono">#{r.refId}</td>
                       <td className="px-3 py-2 text-xs">#{r.itemId}</td>
                       <td className="px-3 py-2 text-xs">#{r.warehouseId}</td>
-                      <td className="px-3 py-2 text-xs text-left font-mono">{Number(r.qty).toFixed(2)}</td>
-                      <td className="px-3 py-2 text-xs text-left font-mono">{Number(r.balanceQty).toFixed(2)}</td>
+                      <td className="px-3 py-2 text-xs text-left font-mono">{fmtQty(r.qty)}</td>
+                      <td className="px-3 py-2 text-xs text-left font-mono">{fmtQty(r.balanceQty)}</td>
                     </tr>
                   ))}
                 </tbody>

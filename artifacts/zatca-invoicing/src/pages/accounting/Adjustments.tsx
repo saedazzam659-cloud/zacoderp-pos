@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { fmt2 } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -339,7 +340,7 @@ export default function Adjustments() {
             </Field>
             <Field label="القسط الشهري المحسوب">
               <div className="h-10 rounded-md border bg-muted/30 px-3 flex items-center text-sm font-mono">
-                {monthlyPreview ? `${monthlyPreview.monthly.toFixed(2)} × ${monthlyPreview.months} شهر` : "—"}
+                {monthlyPreview ? `${fmt2(monthlyPreview.monthly)} × ${monthlyPreview.months} شهر` : "—"}
               </div>
             </Field>
             <Field label="تاريخ البداية" required>
@@ -437,14 +438,14 @@ export default function Adjustments() {
                         )}
                       </div>
                       <div className="text-xs text-muted-foreground flex items-center gap-3 flex-wrap">
-                        <span>الإجمالي: <strong className="text-foreground">{parseFloat(a.totalAmount).toFixed(2)}</strong></span>
-                        <span>الشهري: <strong className="text-foreground">{parseFloat(a.monthlyAmount).toFixed(2)}</strong></span>
+                        <span>الإجمالي: <strong className="text-foreground">{fmt2(a.totalAmount)}</strong></span>
+                        <span>الشهري: <strong className="text-foreground">{fmt2(a.monthlyAmount)}</strong></span>
                         <span className="text-emerald-700">
-                          مُحقّق: <strong>{parseFloat(a.recognizedAmount ?? "0").toFixed(2)}</strong>
+                          مُحقّق: <strong>{fmt2(a.recognizedAmount ?? "0")}</strong>
                           <span className="text-muted-foreground"> ({a.runCount ?? 0} شهر)</span>
                         </span>
                         <span className={cn(parseFloat(a.remainingAmount ?? "0") > 0.01 ? "text-amber-700 font-semibold" : "text-muted-foreground")}>
-                          متبقٍ: <strong>{parseFloat(a.remainingAmount ?? a.totalAmount).toFixed(2)}</strong>
+                          متبقٍ: <strong>{fmt2(a.remainingAmount ?? a.totalAmount)}</strong>
                         </span>
                         <span dir="ltr">{a.startDate} — {a.endDate}</span>
                         {a.lastGeneratedDate && (
@@ -538,10 +539,10 @@ export default function Adjustments() {
             </div>
             <div className="p-5 space-y-4">
               <div className="rounded-lg p-3 bg-purple-50 border border-purple-200 text-sm space-y-1.5">
-                <div className="flex justify-between"><span>الإجمالي الأصلي:</span><strong>{parseFloat(carryFor.totalAmount).toFixed(2)}</strong></div>
-                <div className="flex justify-between text-emerald-700"><span>المُحقّق حتى الآن:</span><strong>{parseFloat(carryFor.recognizedAmount ?? "0").toFixed(2)}</strong></div>
+                <div className="flex justify-between"><span>الإجمالي الأصلي:</span><strong>{fmt2(carryFor.totalAmount)}</strong></div>
+                <div className="flex justify-between text-emerald-700"><span>المُحقّق حتى الآن:</span><strong>{fmt2(carryFor.recognizedAmount ?? "0")}</strong></div>
                 <div className="flex justify-between text-purple-800 text-base pt-1 border-t border-purple-200">
-                  <span>سيُرحَّل:</span><strong>{parseFloat(carryFor.remainingAmount ?? "0").toFixed(2)}</strong>
+                  <span>سيُرحَّل:</span><strong>{fmt2(carryFor.remainingAmount ?? "0")}</strong>
                 </div>
                 <p className="text-[11px] text-muted-foreground pt-1">
                   ستُنشأ تسوية فرعية جديدة بنفس الحسابات تستحق المتبقي على الأشهر التي تختارها. التسوية الأصلية ستُختم بحالة «مُرحَّل».

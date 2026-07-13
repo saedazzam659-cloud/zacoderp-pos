@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { fmt2 } from "@/lib/format";
 
 const STATUS: Record<string, { label: string; color: string }> = {
   draft:  { label: "مسودة",  color: "bg-amber-50 text-amber-700" },
@@ -128,8 +129,8 @@ export default function SisterReturns() {
                     </td>
                     <td className="p-2">{r.returnDate}</td>
                     <td className="p-2">{sisterMap[r.sisterCompanyId] ?? `#${r.sisterCompanyId}`}</td>
-                    <td className="p-2 text-left">{Number(r.totalCost).toFixed(2)}</td>
-                    <td className="p-2 text-left">{Number(r.totalSupply).toFixed(2)}</td>
+                    <td className="p-2 text-left">{fmt2(r.totalCost)}</td>
+                    <td className="p-2 text-left">{fmt2(r.totalSupply)}</td>
                     <td className="p-2"><span className={`px-2 py-0.5 rounded text-xs ${st.color}`}>{st.label}</span></td>
                     <td className="p-2 flex gap-1">
                       {r.status === "draft" && (

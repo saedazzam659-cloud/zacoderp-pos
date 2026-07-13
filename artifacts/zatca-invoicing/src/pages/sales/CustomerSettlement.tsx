@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { fmt2 } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -36,7 +37,7 @@ import {
 import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
 
 const EMPTY = { docNumber: "", settlementDate: today(), customerId: "", paymentMethod: "bank", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1", notes: "" };
@@ -392,7 +393,7 @@ tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <button class="print-btn" onclick="window.print()">طباعة</button>
 <div class="h">${logoHtml}${companyHtml}<h1>تحصيل العملاء</h1>
 <div class="meta">تاريخ التقرير: ${today} — عدد التحصيلات: ${source.length}</div></div>
-<div class="totals"><span>إجمالي المبالغ: <b>${sumAmount.toFixed(2)}</b></span></div>
+<div class="totals"><span>إجمالي المبالغ: <b>${fmt2(sumAmount)}</b></span></div>
 <table><thead><tr>
   <th>#</th><th>رقم المستند</th><th>التاريخ</th><th>العميل</th>
   <th>طريقة الدفع</th><th>الحساب</th><th>المبلغ</th>
@@ -407,7 +408,7 @@ ${source.map((s: any, i: number) => {
     <td>${escapeHtml(cusMap[s.customerId] ?? "")}</td>
     <td>${escapeHtml(PAYMENT_LABEL[s.paymentMethod] ?? s.paymentMethod ?? "")}</td>
     <td>${escapeHtml(accMap[s.accountId] ?? "")}</td>
-    <td class="num">${Number(s.amount ?? 0).toFixed(2)}</td>
+    <td class="num">${fmt2(Number(s.amount ?? 0))}</td>
     <td>${escapeHtml(s.currencyCode ?? "")}</td>
     <td>${status}</td>
     <td>${escapeHtml(s.notes ?? "")}</td>
@@ -415,7 +416,7 @@ ${source.map((s: any, i: number) => {
 }).join("")}
 </tbody><tfoot><tr>
   <td colspan="6">الإجمالي العام</td>
-  <td class="num">${sumAmount.toFixed(2)}</td>
+  <td class="num">${fmt2(sumAmount)}</td>
   <td colspan="3"></td>
 </tr></tfoot></table>
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
@@ -447,7 +448,7 @@ ${source.map((s: any, i: number) => {
         <th>طريقة الدفع</th><td>${escapeHtml(PAYMENT_LABEL[d.paymentMethod] ?? d.paymentMethod ?? "")}</td></tr>
     <tr><th>الحساب البنكي / الخزنة</th><td>${escapeHtml(accMap[d.accountId] ?? "")}</td>
         <th>العملة</th><td>${escapeHtml(d.currencyCode ?? "")}</td></tr>
-    <tr><th>المبلغ</th><td class="amount" colspan="3">${Number(d.amount ?? 0).toFixed(2)}</td></tr>
+    <tr><th>المبلغ</th><td class="amount" colspan="3">${fmt2(Number(d.amount ?? 0))}</td></tr>
     ${d.notes ? `<tr><th>ملاحظات</th><td colspan="3">${escapeHtml(d.notes)}</td></tr>` : ""}
   </table>
 </section>`;
@@ -479,7 +480,7 @@ table.kv td.amount { font-family:"Consolas",monospace; font-size:14px; font-weig
 <button class="print-btn" onclick="window.print()">طباعة</button>
 <div class="h">${logoHtml}${companyHtml}<h1>سندات القبض المحدّدة</h1>
 <div class="meta">تاريخ التقرير: ${today} — عدد السندات: ${docs.length}</div></div>
-<div class="grand"><span>إجمالي المبالغ: <b>${grand.toFixed(2)}</b></span></div>
+<div class="grand"><span>إجمالي المبالغ: <b>${fmt2(grand)}</b></span></div>
 ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;
   };

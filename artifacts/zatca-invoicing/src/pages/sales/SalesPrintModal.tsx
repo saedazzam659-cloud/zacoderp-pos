@@ -36,7 +36,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 // totals card is also forced to `direction:ltr; unicode-bidi:isolate`
 // in `baseStyles()` so the browser never injects new BiDi marks at
 // render time.
-const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Codepoints to strip:
 //   U+061C  Arabic Letter Mark
 //   U+200E  LTR Mark
@@ -2733,7 +2733,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
           <div className="flex gap-6">
             <span className="text-muted-foreground">الإجمالي:</span>
             <span className="font-bold text-primary">
-              {Number(data.doc.totalAmount || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {data.doc.currencyCode ?? "SAR"}
+              {Number(data.doc.totalAmount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {data.doc.currencyCode ?? "SAR"}
             </span>
             <span className="text-muted-foreground">الأصناف:</span>
             <span>{data.lines.length} صنف</span>

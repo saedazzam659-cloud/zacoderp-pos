@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { inventoryApi } from "@/lib/inventoryApi";
+import { fmt2 } from "@/lib/format";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
 
@@ -245,7 +246,7 @@ export default function SisterTransferForm() {
                     onChange={e => updateLine(i, "costPrice", e.target.value)} className="h-8" /></td>
                   <td className="p-1"><Input type="number" min="0" step="0.0001" value={l.supplyPrice}
                     onChange={e => updateLine(i, "supplyPrice", e.target.value)} className="h-8" /></td>
-                  <td className="p-1 text-left">{(Number(l.qty || 0) * Number(l.supplyPrice || 0)).toFixed(2)}</td>
+                  <td className="p-1 text-left">{fmt2(Number(l.qty || 0) * Number(l.supplyPrice || 0))}</td>
                   <td className="p-1">
                     <Button type="button" size="sm" variant="ghost"
                       onClick={() => setLines(prev => prev.filter((_, idx) => idx !== i))}>
@@ -257,8 +258,8 @@ export default function SisterTransferForm() {
             </tbody>
             <tfoot className="font-semibold">
               <tr><td colSpan={3}></td>
-                <td className="p-1 text-left">تكلفة: {totals.cost.toFixed(2)}</td>
-                <td className="p-1 text-left">توريد: {totals.supply.toFixed(2)}</td>
+                <td className="p-1 text-left">تكلفة: {fmt2(totals.cost)}</td>
+                <td className="p-1 text-left">توريد: {fmt2(totals.supply)}</td>
                 <td colSpan={2}></td>
               </tr>
             </tfoot>

@@ -52,7 +52,7 @@ export default function MudadPayroll() {
     code ? (t(`hrPages.mudad.reason_${code}`) as string) : "";
 
   const fmt = (n: any) =>
-    Number(n || 0).toLocaleString(isRtl ? "ar-EG" : "en-US", {
+    Number(n || 0).toLocaleString("en-US", {
       minimumFractionDigits: 2, maximumFractionDigits: 2,
     });
 

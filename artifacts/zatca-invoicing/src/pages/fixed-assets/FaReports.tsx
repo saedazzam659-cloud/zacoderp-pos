@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { BarChart3, Package, Wrench, ArrowRightLeft, Trash2, AlertTriangle } from "lucide-react";
+import { fmt2 } from "@/lib/format";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -60,14 +61,14 @@ export default function FaReports() {
       {s && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {card("إجمالي الأصول", s.totalAssets, Package, "emerald")}
-          {card("قيمة الشراء", `${s.totalPurchase.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س`, Package, "blue")}
-          {card("القيمة الدفترية", `${s.totalBookValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س`, Package, "violet")}
-          {card("الإهلاك المتراكم", `${s.totalAccumulatedDepreciation.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س`, Package, "amber")}
+          {card("قيمة الشراء", `${fmt2(s.totalPurchase)} ر.س`, Package, "blue")}
+          {card("القيمة الدفترية", `${fmt2(s.totalBookValue)} ر.س`, Package, "violet")}
+          {card("الإهلاك المتراكم", `${fmt2(s.totalAccumulatedDepreciation)} ر.س`, Package, "amber")}
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {card("سجلات الصيانة", s.maintenanceCount, Wrench, "orange")}
-          {card("تكلفة الصيانة", `${s.totalMaintenanceCost.toLocaleString("ar-EG-u-ca-gregory-nu-latn")} ر.س`, Wrench, "orange")}
+          {card("تكلفة الصيانة", `${fmt2(s.totalMaintenanceCost)} ر.س`, Wrench, "orange")}
           {card("عمليات النقل", s.transfersCount, ArrowRightLeft, "indigo")}
           {card("عمليات التخلص", s.disposalsCount, Trash2, "rose")}
         </div>

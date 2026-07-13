@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { accountNotesApi, type AccountNote, type AccountNotePartyType, type AccountNoteType } from "@/lib/accountNotesApi";
 import { printAccountNote } from "@/lib/accountNotePrint";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import { fmt2 } from "@/lib/format";
 
 interface Props {
   partyType: AccountNotePartyType;
@@ -89,7 +90,7 @@ export default function AccountNotesList({ partyType, noteType }: Props) {
   });
 
   const total = (rows as AccountNote[]).reduce((s, r) => s + Number(r.totalAmount || 0), 0);
-  const num = (n: any) => Number(n || 0).toFixed(2);
+  const num = (n: any) => fmt2(n);
 
   const doPrint = (r: AccountNote) =>
     printAccountNote({
@@ -191,7 +192,7 @@ export default function AccountNotesList({ partyType, noteType }: Props) {
           emptyMessage="لا توجد إشعارات"
           totalsRow={(rows as AccountNote[]).length > 0 ? {
             __label: "الإجمالي",
-            totalAmount: <span className="tabular-nums">{total.toFixed(2)}</span>,
+            totalAmount: <span className="tabular-nums">{fmt2(total)}</span>,
           } : null}
         />
       )}

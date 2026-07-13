@@ -3,7 +3,7 @@ import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, fmt2 } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { trialBalancesApi, type TrialBalanceFull, type TrialBalance, type TrialBalanceDetail } from "@/lib/trialBalancesApi";
 import { Button } from "@/components/ui/button";
@@ -769,8 +769,8 @@ function AdjustmentDialog({ open, onOpenChange, accounts, defaultDate, onSave }:
           </div>
           <Button variant="outline" size="sm" onClick={() => setLines([...lines, { accountId: "", debit: "", credit: "", description: "" }])}><Plus className="h-3 w-3 me-1" />{t("trialBalanceMaintenance.addRow")}</Button>
           <div className="flex items-center justify-end gap-3 text-sm">
-            <span>{t("trialBalanceMaintenance.totalDebit")}: <strong className="font-mono">{td.toFixed(2)}</strong></span>
-            <span>{t("trialBalanceMaintenance.totalCredit")}: <strong className="font-mono">{tc.toFixed(2)}</strong></span>
+            <span>{t("trialBalanceMaintenance.totalDebit")}: <strong className="font-mono">{fmt2(td)}</strong></span>
+            <span>{t("trialBalanceMaintenance.totalCredit")}: <strong className="font-mono">{fmt2(tc)}</strong></span>
             {balanced
               ? <CheckCircle2 className="h-5 w-5 text-green-600" />
               : <span className="text-red-600 flex items-center gap-1"><AlertTriangle className="h-4 w-4" />{t("trialBalanceMaintenance.notBalanced")}</span>}

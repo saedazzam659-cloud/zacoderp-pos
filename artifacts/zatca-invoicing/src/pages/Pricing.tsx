@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { fmtInt0 } from "@/lib/format";
 import SaudiContactCta from "@/components/SaudiContactCta";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -342,12 +343,12 @@ export default function Pricing() {
 
                   <div className="mt-5">
                     <div className="flex items-baseline gap-1.5">
-                      <span className="text-4xl font-extrabold tabular-nums">{display.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
+                      <span className="text-4xl font-extrabold tabular-nums">{fmtInt0(display)}</span>
                       <span className="text-sm text-muted-foreground">{cycleLbl}</span>
                     </div>
                     {billingCycle === "annual" && monthly > 0 && annual < monthly * 12 && (
                       <p className="text-xs text-emerald-700 mt-1">
-                        وفّر {(monthly * 12 - annual).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س في السنة
+                        وفّر {fmtInt0(monthly * 12 - annual)} ر.س في السنة
                       </p>
                     )}
                   </div>
@@ -357,7 +358,7 @@ export default function Pricing() {
                       <span>{p.maxUsers >= 999 ? "مستخدمون غير محدودين" : `${p.maxUsers} مستخدم${p.maxUsers > 1 ? "/مستخدمون" : ""}`}</span>
                     </li>
                     <li className="flex items-start gap-2"><FileText className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                      <span>{p.maxInvoices >= 999999 ? "فواتير غير محدودة" : `${p.maxInvoices.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} فاتورة شهرياً`}</span>
+                      <span>{p.maxInvoices >= 999999 ? "فواتير غير محدودة" : `${fmtInt0(p.maxInvoices)} فاتورة شهرياً`}</span>
                     </li>
                     {p.includedModulesCount > 0 && (
                       <li className="flex items-start gap-2"><Package className="h-4 w-4 text-primary mt-0.5 shrink-0" />
@@ -440,7 +441,7 @@ export default function Pricing() {
                   <td className="p-3 text-muted-foreground">السعر الشهري</td>
                   {plans.map(p => (
                     <td key={p.key} className="p-3 text-center font-semibold tabular-nums">
-                      {Number(p.monthlyPrice).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س
+                      {fmtInt0(Number(p.monthlyPrice))} ر.س
                     </td>
                   ))}
                 </tr>
@@ -448,7 +449,7 @@ export default function Pricing() {
                   <td className="p-3 text-muted-foreground">السعر السنوي</td>
                   {plans.map(p => (
                     <td key={p.key} className="p-3 text-center font-semibold tabular-nums">
-                      {Number(p.annualPrice).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س
+                      {fmtInt0(Number(p.annualPrice))} ر.س
                     </td>
                   ))}
                 </tr>
@@ -464,7 +465,7 @@ export default function Pricing() {
                   <td className="p-3 text-muted-foreground">الفواتير الشهرية</td>
                   {plans.map(p => (
                     <td key={p.key} className="p-3 text-center">
-                      {p.maxInvoices >= 999999 ? "غير محدود" : p.maxInvoices.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
+                      {p.maxInvoices >= 999999 ? "غير محدود" : fmtInt0(p.maxInvoices)}
                     </td>
                   ))}
                 </tr>

@@ -55,7 +55,7 @@ export default function ContractingDashboard() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const fmt = (n: number) => Number(n || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { maximumFractionDigits: 0 });
+  const fmt = (n: number) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
   const fmtPct = (n: number) => `${Number(n || 0).toFixed(1)}%`;
 
   return (

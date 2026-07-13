@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { faceApi, type TimelineResponse } from "@/lib/faceAttendanceApi";
+import { fmtNum } from "@/lib/format";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -129,8 +130,8 @@ export default function AttendanceTimeline() {
           {/* Header tiles */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
             <StatTile icon={Calendar} label="أيام حضور" value={data.totals.daysPresent} color="text-emerald-600" />
-            <StatTile icon={Clock} label="ساعات عمل" value={data.totals.workedHours.toFixed(1)} color="text-blue-600" />
-            <StatTile icon={TrendingUp} label="ساعات إضافية" value={data.totals.overtimeHours.toFixed(1)} color="text-indigo-600" />
+            <StatTile icon={Clock} label="ساعات عمل" value={fmtNum(data.totals.workedHours, 1)} color="text-blue-600" />
+            <StatTile icon={TrendingUp} label="ساعات إضافية" value={fmtNum(data.totals.overtimeHours, 1)} color="text-indigo-600" />
             <StatTile icon={AlertTriangle} label="دقائق تأخير" value={data.totals.lateMinutes} color="text-amber-600" />
             <StatTile icon={ScanFace} label="عمليات تعرّف" value={data.totals.activityCount} color="text-violet-600" />
             <StatTile icon={MapPin} label="بحاجة موافقة" value={data.totals.flagged} color="text-rose-600" />
@@ -225,7 +226,7 @@ function DayBlock({ day }: { day: { date: string; attendance: any; activity: any
         <h3 className="font-semibold">{dateLabel}</h3>
         <div className="flex items-center gap-1.5 flex-wrap">
           {a?.workedHours && Number(a.workedHours) > 0 && (
-            <Badge variant="outline" className="text-xs">{Number(a.workedHours).toFixed(1)} ساعة</Badge>
+            <Badge variant="outline" className="text-xs">{fmtNum(a.workedHours, 1)} ساعة</Badge>
           )}
           {a?.lateMinutes ? <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300">{a.lateMinutes} د تأخير</Badge> : null}
           {a?.needsApproval && (

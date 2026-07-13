@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
+import { fmt2 } from "@/lib/format";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
+import { HrFormCheck } from "@/lib/hrFormValidate";
 
 const EMPTY: any = {
   code: "", nameAr: "", nameEn: "", idType: "iqama", idNumber: "",
@@ -102,6 +104,34 @@ export default function Employees() {
     onError: (e) => toast({ variant: "destructive", title: tr("toastError"), description: parseError(e) }),
   });
 
+  const handleSave = () => {
+    if (!editing) return;
+    const c = new HrFormCheck()
+      .date(editing, "iqamaExpiry", "انتهاء الإقامة", "info")
+      .date(editing, "passportExpiry", "انتهاء الجواز", "info")
+      .date(editing, "birthDate", "تاريخ الميلاد", "info")
+      .email(editing, "email", "البريد الإلكتروني", "info")
+      .digits(editing, "mobile", "رقم الجوال", 7, 15, "info")
+      .date(editing, "hireDate", "تاريخ التعيين", "job")
+      .date(editing, "endDate", "تاريخ انتهاء الخدمة", "job")
+      .money(editing, "basicSalary", "الراتب الأساسي", "job")
+      .money(editing, "housingAllow", "بدل السكن", "job")
+      .money(editing, "transportAllow", "بدل النقل", "job")
+      .money(editing, "otherAllow", "بدلات أخرى", "job")
+      .date(editing, "sponsorshipStart", "بداية الكفالة", "kafala")
+      .date(editing, "sponsorshipEnd", "نهاية الكفالة", "kafala")
+      .date(editing, "workPermitExpiry", "انتهاء رخصة العمل", "kafala")
+      .order("hireDate", "endDate", "تاريخ انتهاء الخدمة لا يمكن أن يسبق تاريخ التعيين", "job")
+      .order("sponsorshipStart", "sponsorshipEnd", "تاريخ نهاية الكفالة لا يمكن أن يسبق بدايتها", "kafala");
+    const err = c.first;
+    if (err) {
+      if (err.tab) setFormTab(err.tab);
+      toast({ variant: "destructive", title: tr("toastError"), description: err.message });
+      return;
+    }
+    upsert.mutate({ ...editing, ...c.clean });
+  };
+
   const openNew = () => { setEditing({ ...EMPTY }); setFormTab("info"); setAiText(""); setShowForm(true); };
   const openEdit = (e: any) => { setEditing({ ...EMPTY, ...e }); setFormTab("info"); setShowForm(true); };
 
@@ -179,7 +209,7 @@ export default function Employees() {
               subtitle={editing.id ? tr("formEditSubtitle", { code: editing.code }) : tr("formNewSubtitle")}
               width="5xl"
               onClose={() => { setShowForm(false); setEditing(null); }}
-              onSave={() => upsert.mutate(editing)}
+              onSave={handleSave}
               saving={upsert.isPending}
               saveDisabled={!editing.nameAr?.trim()}
             >
@@ -264,7 +294,7 @@ export default function Employees() {
                   <div className="rounded-lg border bg-muted/30 p-3">
                     <div className="text-xs text-muted-foreground mb-1">{tr("monthlyTotalLabel")}</div>
                     <div className="text-lg font-bold text-emerald-700">
-                      {(Number(editing.basicSalary || 0) + Number(editing.housingAllow || 0) + Number(editing.transportAllow || 0) + Number(editing.otherAllow || 0)).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {tr("currencySAR")}
+                      {fmt2(Number(editing.basicSalary || 0) + Number(editing.housingAllow || 0) + Number(editing.transportAllow || 0) + Number(editing.otherAllow || 0))} {tr("currencySAR")}
                     </div>
                   </div>
                 </TabsContent>
@@ -407,7 +437,7 @@ export default function Employees() {
                           </td>
                           <td className="px-3 py-2.5 font-mono text-xs">{e.idNumber || "—"}</td>
                           <td className="px-3 py-2.5"><ExpiryBadge date={e.iqamaExpiry} tr={tr} /></td>
-                          <td className="px-3 py-2.5 text-xs">{total > 0 ? `${total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ${tr("currencySAR")}` : "—"}</td>
+                          <td className="px-3 py-2.5 text-xs">{total > 0 ? `${fmt2(total)} ${tr("currencySAR")}` : "—"}</td>
                           <td className="px-3 py-2.5"><Badge className={cn("border", st.cls)}>{st.label}</Badge></td>
                           <td className="px-3 py-2.5">
                             <div className="flex items-center justify-end gap-1">

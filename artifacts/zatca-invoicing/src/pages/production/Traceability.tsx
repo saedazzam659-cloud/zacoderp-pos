@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const API = import.meta.env.VITE_API_URL || "";
 import { GitBranch, PackageSearch, AlertTriangle, Loader2 } from "lucide-react";
+import { fmtNum } from "@/lib/format";
 
 type OrderTrace = {
   order: any;
@@ -152,12 +153,12 @@ export default function Traceability() {
                   <div>
                     <div className="text-xs text-muted-foreground">منتَج / هالك</div>
                     <div>
-                      {Number(orderData.order.producedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} / {Number(orderData.order.wasteQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
+                      {Number(orderData.order.producedQty).toLocaleString("en-US")} / {Number(orderData.order.wasteQty).toLocaleString("en-US")}
                     </div>
                   </div>
                   <div>
                     <div className="text-xs text-muted-foreground">تكلفة فعلية</div>
-                    <div>{Number(orderData.order.actualCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
+                    <div>{Number(orderData.order.actualCost).toLocaleString("en-US")}</div>
                   </div>
                 </div>
               </Card>
@@ -191,9 +192,9 @@ export default function Traceability() {
                           <td className="p-1 font-mono">{r.batchNumber ?? "—"}</td>
                           <td className="p-1">{r.expiryDate ?? "—"}</td>
                           <td className="p-1">{r.warehouseName ?? "—"}</td>
-                          <td className="p-1 text-end">{Number(r.qty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
-                          <td className="p-1 text-end">{Number(r.costPrice).toFixed(4)}</td>
-                          <td className="p-1 text-end">{Number(r.totalCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                          <td className="p-1 text-end">{Number(r.qty).toLocaleString("en-US")}</td>
+                          <td className="p-1 text-end">{fmtNum(r.costPrice, 4)}</td>
+                          <td className="p-1 text-end">{Number(r.totalCost).toLocaleString("en-US")}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -234,9 +235,9 @@ export default function Traceability() {
                             {r.batchNumber ?? <span className="text-muted-foreground">— غير مرمَّز —</span>}
                           </td>
                           <td className="p-1">{r.expiryDate ?? "—"}</td>
-                          <td className="p-1 text-end">{Number(r.qty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
-                          <td className="p-1 text-end">{Number(r.avgCost).toFixed(4)}</td>
-                          <td className="p-1 text-end">{Number(r.totalCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                          <td className="p-1 text-end">{Number(r.qty).toLocaleString("en-US")}</td>
+                          <td className="p-1 text-end">{fmtNum(r.avgCost, 4)}</td>
+                          <td className="p-1 text-end">{Number(r.totalCost).toLocaleString("en-US")}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -313,8 +314,8 @@ export default function Traceability() {
                             <div>{r.rawItemNameAr}</div>
                             <div className="font-mono text-muted-foreground">{r.rawItemCode}</div>
                           </td>
-                          <td className="p-1 text-end">{Number(r.consumedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
-                          <td className="p-1 text-end">{Number(r.consumedCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                          <td className="p-1 text-end">{Number(r.consumedQty).toLocaleString("en-US")}</td>
+                          <td className="p-1 text-end">{Number(r.consumedCost).toLocaleString("en-US")}</td>
                           <td className="p-1">{r.issuedOn}</td>
                         </tr>
                       ))}
@@ -352,10 +353,10 @@ export default function Traceability() {
                           </td>
                           <td className="p-1">{r.warehouseName ?? "—"}</td>
                           <td className={`p-1 text-end ${Number(r.qty) < 0 ? "text-red-600" : "text-emerald-700"}`}>
-                            {Number(r.qty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
+                            {Number(r.qty).toLocaleString("en-US")}
                           </td>
-                          <td className="p-1 text-end">{Number(r.costPrice).toFixed(4)}</td>
-                          <td className="p-1 text-end">{Number(r.totalCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</td>
+                          <td className="p-1 text-end">{fmtNum(r.costPrice, 4)}</td>
+                          <td className="p-1 text-end">{Number(r.totalCost).toLocaleString("en-US")}</td>
                           <td className="p-1 text-muted-foreground">
                             {r.refType ? `${r.refType}#${r.refId}` : "—"}
                           </td>

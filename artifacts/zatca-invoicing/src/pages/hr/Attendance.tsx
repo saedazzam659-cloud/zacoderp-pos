@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
+import { fmtNum } from "@/lib/format";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -309,8 +310,8 @@ export default function Attendance() {
                     <td className="p-2 text-center font-semibold text-rose-700">{s.absent}</td>
                     <td className="p-2 text-center text-sky-700">{s.leave}</td>
                     <td className="p-2 text-center text-slate-600">{s.weekend}</td>
-                    <td className="p-2 text-center tabular-nums">{s.workedHrs.toFixed(1)}</td>
-                    <td className="p-2 text-center tabular-nums text-emerald-700">{s.overtime.toFixed(1)}</td>
+                    <td className="p-2 text-center tabular-nums">{fmtNum(s.workedHrs, 1)}</td>
+                    <td className="p-2 text-center tabular-nums text-emerald-700">{fmtNum(s.overtime, 1)}</td>
                   </tr>
                 ))}
               </tbody>

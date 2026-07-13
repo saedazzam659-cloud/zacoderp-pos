@@ -2,6 +2,7 @@ import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
+import { fmtNum } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -102,7 +103,7 @@ export default function LeavesReport() {
           <StatCard label="إجمالي الأيام" value={summary.totalDays} color="indigo" />
           <StatCard label="أيام مدفوعة" value={summary.paidDays} color="green" />
           <StatCard label="أيام غير مدفوعة" value={summary.unpaidDays} color="orange" />
-          <StatCard label="متوسط الأيام" value={summary.total ? (summary.totalDays / summary.total).toFixed(1) : 0} color="violet" />
+          <StatCard label="متوسط الأيام" value={summary.total ? fmtNum(summary.totalDays / summary.total, 1) : 0} color="violet" />
         </div>
       )}
 

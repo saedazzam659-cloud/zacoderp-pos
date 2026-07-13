@@ -18,7 +18,7 @@ import type { AccountNote, AccountNoteType } from "@/lib/accountNotesApi";
 // Number formatter mirroring SalesPrintModal: Arabic-Indic digits with all
 // invisible BiDi control codepoints stripped so Windows fonts never render a
 // stray ".notdef" vertical-stroke next to the totals.
-const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
 

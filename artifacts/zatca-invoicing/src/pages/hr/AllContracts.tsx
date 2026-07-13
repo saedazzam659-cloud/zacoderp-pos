@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
+import { fmt2 } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -89,7 +90,7 @@ export default function AllContracts() {
         </div>
         <div className="rounded-lg border p-3 bg-card">
           <div className="text-xs text-muted-foreground">التزام شهري للأجور النشطة</div>
-          <div className="text-2xl font-semibold tabular-nums">{stats.totalSalaries.toFixed(2)} <span className="text-sm text-muted-foreground">ر.س</span></div>
+          <div className="text-2xl font-semibold tabular-nums">{fmt2(stats.totalSalaries)} <span className="text-sm text-muted-foreground">ر.س</span></div>
         </div>
         <div className="rounded-lg border p-3 bg-amber-50/50 border-amber-200">
           <div className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle className="size-3.5" /> عقود تنتهي خلال 90 يوم</div>
@@ -149,7 +150,7 @@ export default function AllContracts() {
                   <td className="p-2 text-xs">{c.startDate}</td>
                   <td className="p-2 text-xs">{c.endDate || <span className="text-muted-foreground">—</span>}</td>
                   <td className="p-2"><ExpiryBadge date={c.endDate} /></td>
-                  <td className="p-2 text-xs tabular-nums font-medium">{total.toFixed(2)}</td>
+                  <td className="p-2 text-xs tabular-nums font-medium">{fmt2(total)}</td>
                   <td className="p-2 text-center text-xs">{c.vacationDays || 21} يوم</td>
                   <td className="p-2"><Badge variant="outline" className={st.cls}>{st.label}</Badge></td>
                   <td className="p-2">

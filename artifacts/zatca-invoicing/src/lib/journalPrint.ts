@@ -12,6 +12,7 @@
  * stays free of react-query / i18n / auth dependencies.
  */
 import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "@/lib/printLetterhead";
+import { fmt2 } from "@/lib/format";
 
 export interface JournalPrintLine {
   accountLabel: string;
@@ -99,8 +100,8 @@ export function buildDetailedJournalPrintHtml(
           <td class="num center">${i + 1}</td>
           <td>${escapeHtml(ln.accountLabel)}</td>
           <td>${escapeHtml(ln.description ?? "")}</td>
-          <td class="num end">${Number(ln.debit  || 0).toFixed(2)}</td>
-          <td class="num end">${Number(ln.credit || 0).toFixed(2)}</td>
+          <td class="num end">${fmt2(ln.debit)}</td>
+          <td class="num end">${fmt2(ln.credit)}</td>
           <td>${escapeHtml(ln.costCenterLabel ?? "")}</td>
         </tr>`).join("");
 
@@ -110,8 +111,8 @@ export function buildDetailedJournalPrintHtml(
   </header>` : "";
     const perPageTotals = oneEntryPerPage || entries.length === 1 ? `
   <div class="page-totals">
-    <span>${escapeHtml(L.totalDebit)}: <b>${subDebit.toFixed(2)}</b></span>
-    <span>${escapeHtml(L.totalCredit)}: <b>${subCredit.toFixed(2)}</b></span>
+    <span>${escapeHtml(L.totalDebit)}: <b>${fmt2(subDebit)}</b></span>
+    <span>${escapeHtml(L.totalCredit)}: <b>${fmt2(subCredit)}</b></span>
   </div>` : "";
 
     const sigRow = `
@@ -148,8 +149,8 @@ export function buildDetailedJournalPrintHtml(
     <tfoot>
       <tr>
         <td colspan="3" class="end"><b>${escapeHtml(L.subtotal)}</b></td>
-        <td class="num end"><b>${subDebit.toFixed(2)}</b></td>
-        <td class="num end"><b>${subCredit.toFixed(2)}</b></td>
+        <td class="num end"><b>${fmt2(subDebit)}</b></td>
+        <td class="num end"><b>${fmt2(subCredit)}</b></td>
         <td></td>
       </tr>
     </tfoot>
@@ -165,8 +166,8 @@ export function buildDetailedJournalPrintHtml(
 
   const grandBanner = entries.length > 1 ? `
 <div class="grand">
-  <span>${escapeHtml(L.grandTotal)} — ${escapeHtml(L.totalDebit)}: <b>${grandDebit.toFixed(2)}</b></span>
-  <span>${escapeHtml(L.totalCredit)}: <b>${grandCredit.toFixed(2)}</b></span>
+  <span>${escapeHtml(L.grandTotal)} — ${escapeHtml(L.totalDebit)}: <b>${fmt2(grandDebit)}</b></span>
+  <span>${escapeHtml(L.totalCredit)}: <b>${fmt2(grandCredit)}</b></span>
 </div>` : "";
 
   return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${escapeHtml(L.sheetTitle)}</title>

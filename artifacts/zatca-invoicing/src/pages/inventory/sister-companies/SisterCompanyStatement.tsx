@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { exportToExcel, exportToPDF, exportStatementToPDF, type ExportColumn } from "@/lib/export";
+import { fmt2 } from "@/lib/format";
 import { DateField } from "@/components/ui/date-field";
 import AccountStatementView from "@/components/AccountStatementView";
 import { useAuth } from "@/contexts/AuthContext";
@@ -201,7 +202,7 @@ export default function SisterCompanyStatement() {
             <tbody>
               <tr className="border-t bg-muted/20 font-semibold">
                 <td className="p-2" colSpan={6}>الرصيد الافتتاحي</td>
-                <td className="p-2 text-left">{Number(stmt.opening).toFixed(2)}</td>
+                <td className="p-2 text-left">{fmt2(stmt.opening)}</td>
               </tr>
               {stmt.rows.length === 0 && (
                 <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">لا توجد حركات في الفترة</td></tr>
@@ -212,14 +213,14 @@ export default function SisterCompanyStatement() {
                   <td className="p-2 font-mono">{r.docNumber}</td>
                   <td className="p-2">{r.type}</td>
                   <td className="p-2 text-muted-foreground">{r.description}</td>
-                  <td className="p-2 text-left">{r.debit  ? Number(r.debit ).toFixed(2) : ""}</td>
-                  <td className="p-2 text-left">{r.credit ? Number(r.credit).toFixed(2) : ""}</td>
-                  <td className="p-2 text-left font-medium">{Number(r.balance).toFixed(2)}</td>
+                  <td className="p-2 text-left">{r.debit  ? fmt2(r.debit) : ""}</td>
+                  <td className="p-2 text-left">{r.credit ? fmt2(r.credit) : ""}</td>
+                  <td className="p-2 text-left font-medium">{fmt2(r.balance)}</td>
                 </tr>
               ))}
               <tr className="border-t bg-muted/20 font-bold">
                 <td className="p-2" colSpan={6}>الرصيد الختامي</td>
-                <td className="p-2 text-left">{Number(stmt.closing).toFixed(2)}</td>
+                <td className="p-2 text-left">{fmt2(stmt.closing)}</td>
               </tr>
             </tbody>
           </table>

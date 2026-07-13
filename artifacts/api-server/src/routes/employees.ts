@@ -7,6 +7,10 @@ import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { requireAdminRole } from "../middleware/permissions.js";
 import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
+import {
+  dateOrNull, requireDate, assertDateOrder, moneyOrZero, requirePositiveMoney,
+  intOrDefault, emailOrNull, mobileOrNull, idNumberOrNull, timeOrNull, respondHrError,
+} from "../lib/hrValidate.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -18,6 +22,41 @@ function guard(req: any, res: any): number | null {
 }
 
 const N = (v: any) => (v == null || v === "" ? null : v);
+
+// Validate + normalize an employee payload (dates → ISO, money → clean numeric
+// strings, email/mobile/id formats, cross-field date order). Throws
+// HrValidationError (→ 400 Arabic) on any bad input — the class of input that
+// previously crashed the INSERT and leaked a raw "Failed query" to the user.
+function sanitizeEmployeeBody(b: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  const dateFields: [string, string][] = [
+    ["iqamaExpiry", "تاريخ انتهاء الإقامة"],
+    ["passportExpiry", "تاريخ انتهاء الجواز"],
+    ["birthDate", "تاريخ الميلاد"],
+    ["hireDate", "تاريخ التعيين"],
+    ["endDate", "تاريخ انتهاء الخدمة"],
+    ["sponsorshipStart", "بداية الكفالة"],
+    ["sponsorshipEnd", "نهاية الكفالة"],
+    ["workPermitExpiry", "انتهاء رخصة العمل"],
+  ];
+  for (const [f, label] of dateFields) if (f in b) out[f] = dateOrNull(b[f], label);
+  const moneyFields: [string, string][] = [
+    ["basicSalary", "الراتب الأساسي"],
+    ["housingAllow", "بدل السكن"],
+    ["transportAllow", "بدل النقل"],
+    ["otherAllow", "بدلات أخرى"],
+  ];
+  for (const [f, label] of moneyFields) if (f in b) out[f] = moneyOrZero(b[f], label);
+  if ("email" in b) out.email = emailOrNull(b.email);
+  if ("mobile" in b) out.mobile = mobileOrNull(b.mobile);
+  if ("idNumber" in b) out.idNumber = idNumberOrNull(b.idNumber, "رقم الهوية/الإقامة");
+  if ("borderNumber" in b) out.borderNumber = idNumberOrNull(b.borderNumber, "رقم الحدود");
+  assertDateOrder(out.hireDate ?? null, out.endDate ?? null,
+    "تاريخ انتهاء الخدمة لا يمكن أن يسبق تاريخ التعيين");
+  assertDateOrder(out.sponsorshipStart ?? null, out.sponsorshipEnd ?? null,
+    "تاريخ نهاية الكفالة لا يمكن أن يسبق تاريخ بدايتها");
+  return out;
+}
 
 // Validate a user-supplied loan COA account: it must exist, belong to THIS
 // company, and be a posting account. Returns the numeric id, or null when none
@@ -142,9 +181,10 @@ router.post("/", async (req, res) => {
         },
       );
     }
-    if (b.idNumber) {
+    const clean = sanitizeEmployeeBody(b);
+    if (clean.idNumber) {
       const dup = await db.select({ id: employeesTable.id }).from(employeesTable)
-        .where(and(eq(employeesTable.companyId, cid), eq(employeesTable.idNumber, String(b.idNumber))));
+        .where(and(eq(employeesTable.companyId, cid), eq(employeesTable.idNumber, String(clean.idNumber))));
       if (dup.length) { res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" }); return; }
     }
     const [row] = await db.insert(employeesTable).values({
@@ -154,40 +194,40 @@ router.post("/", async (req, res) => {
       nameAr: String(b.nameAr).trim(),
       nameEn: N(b.nameEn),
       idType: b.idType || "iqama",
-      idNumber: N(b.idNumber),
-      iqamaExpiry: N(b.iqamaExpiry),
+      idNumber: clean.idNumber ?? null,
+      iqamaExpiry: clean.iqamaExpiry ?? null,
       passportNumber: N(b.passportNumber),
-      passportExpiry: N(b.passportExpiry),
+      passportExpiry: clean.passportExpiry ?? null,
       nationality: N(b.nationality),
       gender: N(b.gender),
-      birthDate: N(b.birthDate),
-      mobile: N(b.mobile),
-      email: N(b.email),
-      hireDate: N(b.hireDate),
-      endDate: N(b.endDate),
+      birthDate: clean.birthDate ?? null,
+      mobile: clean.mobile ?? null,
+      email: clean.email ?? null,
+      hireDate: clean.hireDate ?? null,
+      endDate: clean.endDate ?? null,
       department: N(b.department),
       jobTitle: N(b.jobTitle),
       sponsor: N(b.sponsor),
       profession: N(b.profession),
       status: b.status || "active",
-      basicSalary: String(b.basicSalary ?? 0),
-      housingAllow: String(b.housingAllow ?? 0),
-      transportAllow: String(b.transportAllow ?? 0),
-      otherAllow: String(b.otherAllow ?? 0),
+      basicSalary: clean.basicSalary ?? "0",
+      housingAllow: clean.housingAllow ?? "0",
+      transportAllow: clean.transportAllow ?? "0",
+      otherAllow: clean.otherAllow ?? "0",
       bankAccountIban: N(b.bankAccountIban),
       bankName: N(b.bankName),
       payableAccountId: N(b.payableAccountId) ? Number(b.payableAccountId) : null,
       photoUrl: N(b.photoUrl),
       notes: N(b.notes),
       // Mudad / kafala eligibility
-      borderNumber: N(b.borderNumber),
+      borderNumber: clean.borderNumber ?? null,
       saudiType: b.saudiType || "non_saudi",
       employmentType: b.employmentType || "regular",
       onSponsorship: b.onSponsorship === false ? false : true,
       establishmentNumber: N(b.establishmentNumber),
-      sponsorshipStart: N(b.sponsorshipStart),
-      sponsorshipEnd: N(b.sponsorshipEnd),
-      workPermitExpiry: N(b.workPermitExpiry),
+      sponsorshipStart: clean.sponsorshipStart ?? null,
+      sponsorshipEnd: clean.sponsorshipEnd ?? null,
+      workPermitExpiry: clean.workPermitExpiry ?? null,
       bankApproved: b.bankApproved === false ? false : true,
     }).returning();
     res.status(201).json(row);
@@ -196,7 +236,7 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" });
     if (String(e?.message).includes("uq_employees_company_code"))
       return res.status(400).json({ error: "كود الموظف مكرر" });
-    res.status(500).json({ error: e.message });
+    respondHrError(req, res, e);
   }
 });
 
@@ -205,19 +245,24 @@ router.put("/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const b = req.body || {};
-    if (b.idNumber) {
+    if ("nameAr" in b && !String(b.nameAr ?? "").trim()) {
+      res.status(400).json({ error: "اسم الموظف بالعربي مطلوب" }); return;
+    }
+    const clean = sanitizeEmployeeBody(b);
+    if (clean.idNumber) {
       const dup = await db.select({ id: employeesTable.id }).from(employeesTable)
-        .where(and(eq(employeesTable.companyId, cid), eq(employeesTable.idNumber, String(b.idNumber))));
+        .where(and(eq(employeesTable.companyId, cid), eq(employeesTable.idNumber, String(clean.idNumber))));
       if (dup.some((d: any) => d.id !== id)) { res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" }); return; }
     }
     const updates: any = { updatedAt: new Date() };
-    const fields = ["branchId","nameAr","nameEn","idType","idNumber","iqamaExpiry","passportNumber","passportExpiry",
-      "nationality","gender","birthDate","mobile","email","hireDate","endDate","department","jobTitle","sponsor",
+    const fields = ["branchId","nameAr","nameEn","idType","passportNumber",
+      "nationality","gender","department","jobTitle","sponsor",
       "profession","status","bankAccountIban","bankName","photoUrl","notes",
-      "borderNumber","saudiType","employmentType","establishmentNumber","sponsorshipStart","sponsorshipEnd","workPermitExpiry"];
+      "saudiType","employmentType","establishmentNumber"];
     for (const f of fields) if (f in b) updates[f] = N(b[f]);
-    for (const f of ["basicSalary","housingAllow","transportAllow","otherAllow"])
-      if (f in b) updates[f] = String(b[f] ?? 0);
+    // Validated/normalized fields (dates → ISO, money → clean numeric strings,
+    // email/mobile/id formats) come from sanitizeEmployeeBody.
+    for (const f of Object.keys(clean)) updates[f] = clean[f];
     for (const f of ["onSponsorship","bankApproved"])
       if (f in b) updates[f] = b[f] === false ? false : true;
     if ("payableAccountId" in b) updates.payableAccountId = N(b.payableAccountId) ? Number(b.payableAccountId) : null;
@@ -231,7 +276,7 @@ router.put("/:id", async (req, res) => {
   } catch (e: any) {
     if (String(e?.message).includes("uq_employees_company_idnumber"))
       return res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" });
-    res.status(500).json({ error: e.message });
+    respondHrError(req, res, e);
   }
 });
 
@@ -280,28 +325,31 @@ router.post("/:id/contracts", async (req, res) => {
       );
     }
 
+    const startDate = requireDate(b.startDate, "تاريخ بداية العقد");
+    const endDate = dateOrNull(b.endDate, "تاريخ نهاية العقد");
+    assertDateOrder(startDate, endDate, "تاريخ نهاية العقد لا يمكن أن يسبق تاريخ بدايته");
     const [row] = await db.insert(employeeContractsTable).values({
       companyId: cid,
       employeeId: empId,
       contractNumber: cn,
       contractType: b.contractType || "fixed",
-      startDate: b.startDate,
-      endDate: N(b.endDate),
-      basicSalary: String(b.basicSalary ?? 0),
-      housingAllow: String(b.housingAllow ?? 0),
-      transportAllow: String(b.transportAllow ?? 0),
-      otherAllow: String(b.otherAllow ?? 0),
-      workingHours: Number(b.workingHours ?? 8),
-      probationDays: Number(b.probationDays ?? 90),
-      noticePeriod: Number(b.noticePeriod ?? 60),
-      vacationDays: Number(b.vacationDays ?? 21),
+      startDate,
+      endDate,
+      basicSalary: moneyOrZero(b.basicSalary, "الراتب الأساسي"),
+      housingAllow: moneyOrZero(b.housingAllow, "بدل السكن"),
+      transportAllow: moneyOrZero(b.transportAllow, "بدل النقل"),
+      otherAllow: moneyOrZero(b.otherAllow, "بدلات أخرى"),
+      workingHours: intOrDefault(b.workingHours, 8, "ساعات العمل", 1, 24),
+      probationDays: intOrDefault(b.probationDays, 90, "فترة التجربة (يوم)", 0, 365),
+      noticePeriod: intOrDefault(b.noticePeriod, 60, "فترة الإشعار (يوم)", 0, 365),
+      vacationDays: intOrDefault(b.vacationDays, 21, "أيام الإجازة السنوية", 0, 365),
       terms: N(b.terms),
       status: b.status || "active",
       renewedFromId: N(b.renewedFromId) ? Number(b.renewedFromId) : null,
       notes: N(b.notes),
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.post("/:id/contracts/:contractId/renew", async (req, res) => {
@@ -313,6 +361,10 @@ router.post("/:id/contracts/:contractId/renew", async (req, res) => {
     const [old] = await db.select().from(employeeContractsTable)
       .where(and(eq(employeeContractsTable.id, cnId), eq(employeeContractsTable.companyId, cid)));
     if (!old) { res.status(404).json({ error: "العقد غير موجود" }); return; }
+
+    const newStartDate = dateOrNull(b.startDate, "تاريخ بداية العقد") || new Date().toISOString().slice(0, 10);
+    const newEndDate = dateOrNull(b.endDate, "تاريخ نهاية العقد");
+    assertDateOrder(newStartDate, newEndDate, "تاريخ نهاية العقد لا يمكن أن يسبق تاريخ بدايته");
 
     await db.update(employeeContractsTable).set({ status: "renewed", updatedAt: new Date() })
       .where(eq(employeeContractsTable.id, cnId));
@@ -333,12 +385,12 @@ router.post("/:id/contracts/:contractId/renew", async (req, res) => {
       employeeId: empId,
       contractNumber: cn,
       contractType: old.contractType,
-      startDate: b.startDate || new Date().toISOString().slice(0, 10),
-      endDate: N(b.endDate),
-      basicSalary: b.basicSalary ?? old.basicSalary,
-      housingAllow: b.housingAllow ?? old.housingAllow,
-      transportAllow: b.transportAllow ?? old.transportAllow,
-      otherAllow: b.otherAllow ?? old.otherAllow,
+      startDate: newStartDate,
+      endDate: newEndDate,
+      basicSalary: b.basicSalary != null ? moneyOrZero(b.basicSalary, "الراتب الأساسي") : old.basicSalary,
+      housingAllow: b.housingAllow != null ? moneyOrZero(b.housingAllow, "بدل السكن") : old.housingAllow,
+      transportAllow: b.transportAllow != null ? moneyOrZero(b.transportAllow, "بدل النقل") : old.transportAllow,
+      otherAllow: b.otherAllow != null ? moneyOrZero(b.otherAllow, "بدلات أخرى") : old.otherAllow,
       workingHours: old.workingHours,
       probationDays: 0,
       noticePeriod: old.noticePeriod,
@@ -349,7 +401,7 @@ router.post("/:id/contracts/:contractId/renew", async (req, res) => {
       notes: `مجدد من العقد ${old.contractNumber}`,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.put("/:id/contracts/:contractId", async (req, res) => {
@@ -358,18 +410,38 @@ router.put("/:id/contracts/:contractId", async (req, res) => {
     const cnId = Number(req.params.contractId);
     const b = req.body || {};
     const updates: any = { updatedAt: new Date() };
-    const fields = ["contractType","startDate","endDate","status","terms","notes"];
+    const fields = ["contractType","status","terms","notes"];
     for (const f of fields) if (f in b) updates[f] = N(b[f]);
-    for (const f of ["basicSalary","housingAllow","transportAllow","otherAllow"])
-      if (f in b) updates[f] = String(b[f] ?? 0);
-    for (const f of ["workingHours","probationDays","noticePeriod","vacationDays"])
-      if (f in b) updates[f] = Number(b[f] ?? 0);
+    if ("startDate" in b) updates.startDate = requireDate(b.startDate, "تاريخ بداية العقد");
+    if ("endDate" in b) updates.endDate = dateOrNull(b.endDate, "تاريخ نهاية العقد");
+    if ("startDate" in b || "endDate" in b) {
+      const [existing] = await db.select({
+        startDate: employeeContractsTable.startDate,
+        endDate: employeeContractsTable.endDate,
+      }).from(employeeContractsTable)
+        .where(and(eq(employeeContractsTable.id, cnId), eq(employeeContractsTable.companyId, cid)));
+      if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+      const effStart = "startDate" in b ? updates.startDate : existing.startDate;
+      const effEnd = "endDate" in b ? updates.endDate : existing.endDate;
+      assertDateOrder(effStart ?? null, effEnd ?? null, "تاريخ نهاية العقد لا يمكن أن يسبق تاريخ بدايته");
+    }
+    const moneyLabels: Record<string, string> = { basicSalary: "الراتب الأساسي", housingAllow: "بدل السكن", transportAllow: "بدل النقل", otherAllow: "بدلات أخرى" };
+    for (const f of Object.keys(moneyLabels))
+      if (f in b) updates[f] = moneyOrZero(b[f], moneyLabels[f]);
+    const intDefs: Record<string, [number, string, number, number]> = {
+      workingHours: [8, "ساعات العمل", 1, 24],
+      probationDays: [0, "فترة التجربة (يوم)", 0, 365],
+      noticePeriod: [0, "فترة الإشعار (يوم)", 0, 365],
+      vacationDays: [0, "أيام الإجازة السنوية", 0, 365],
+    };
+    for (const f of Object.keys(intDefs))
+      if (f in b) updates[f] = intOrDefault(b[f], intDefs[f][0], intDefs[f][1], intDefs[f][2], intDefs[f][3]);
     const [row] = await db.update(employeeContractsTable).set(updates)
       .where(and(eq(employeeContractsTable.id, cnId), eq(employeeContractsTable.companyId, cid)))
       .returning();
     if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.delete("/:id/contracts/:contractId", async (req, res) => {
@@ -399,22 +471,25 @@ router.post("/:id/leaves", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const empId = Number(req.params.id);
     const b = req.body || {};
-    const start = new Date(b.startDate);
-    const end = new Date(b.endDate);
+    const startDate = requireDate(b.startDate, "تاريخ بداية الإجازة");
+    const endDate = requireDate(b.endDate, "تاريخ نهاية الإجازة");
+    assertDateOrder(startDate, endDate, "تاريخ نهاية الإجازة لا يمكن أن يسبق تاريخ بدايتها");
+    const start = new Date(startDate);
+    const end = new Date(endDate);
     const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400000) + 1);
     const [row] = await db.insert(employeeLeavesTable).values({
       companyId: cid,
       employeeId: empId,
       leaveType: b.leaveType || "annual",
-      startDate: b.startDate,
-      endDate: b.endDate,
-      days: Number(b.days ?? days),
+      startDate,
+      endDate,
+      days: intOrDefault(b.days, days, "عدد الأيام", 1, 3660),
       paid: b.paid !== false,
       status: b.status || "pending",
       reason: N(b.reason),
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.put("/:id/leaves/:leaveId", async (req, res) => {
@@ -530,18 +605,21 @@ router.post("/attendance", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body || {};
     if (!b.employeeId || !b.date) { res.status(400).json({ error: "الموظف والتاريخ مطلوبان" }); return; }
-    const { worked, overtime } = calcWorkedHours(b.checkIn, b.checkOut);
-    const status = b.status || (b.checkIn ? "present" : "absent");
+    const date = requireDate(b.date, "تاريخ الحضور");
+    const checkIn = timeOrNull(b.checkIn, "وقت الحضور");
+    const checkOut = timeOrNull(b.checkOut, "وقت الانصراف");
+    const { worked, overtime } = calcWorkedHours(checkIn ?? undefined, checkOut ?? undefined);
+    const status = b.status || (checkIn ? "present" : "absent");
     try {
       const [row] = await db.insert(employeeAttendanceTable).values({
         companyId: cid,
         employeeId: Number(b.employeeId),
-        date: b.date,
-        checkIn: N(b.checkIn),
-        checkOut: N(b.checkOut),
+        date,
+        checkIn,
+        checkOut,
         workedHours: String(worked),
         overtimeHours: String(overtime),
-        lateMinutes: Number(b.lateMinutes || 0),
+        lateMinutes: intOrDefault(b.lateMinutes, 0, "دقائق التأخير", 0, 1440),
         status,
         notes: N(b.notes),
       }).returning();
@@ -552,7 +630,7 @@ router.post("/attendance", async (req, res) => {
       }
       throw e;
     }
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.put("/attendance/:id", async (req, res) => {
@@ -560,19 +638,21 @@ router.put("/attendance/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const b = req.body || {};
-    const { worked, overtime } = calcWorkedHours(b.checkIn, b.checkOut);
+    const checkIn = timeOrNull(b.checkIn, "وقت الحضور");
+    const checkOut = timeOrNull(b.checkOut, "وقت الانصراف");
+    const { worked, overtime } = calcWorkedHours(checkIn ?? undefined, checkOut ?? undefined);
     const [row] = await db.update(employeeAttendanceTable).set({
-      checkIn: N(b.checkIn),
-      checkOut: N(b.checkOut),
+      checkIn,
+      checkOut,
       workedHours: String(worked),
       overtimeHours: String(overtime),
-      lateMinutes: Number(b.lateMinutes || 0),
+      lateMinutes: intOrDefault(b.lateMinutes, 0, "دقائق التأخير", 0, 1440),
       status: b.status || "present",
       notes: N(b.notes),
       updatedAt: new Date(),
     }).where(and(eq(employeeAttendanceTable.id, id), eq(employeeAttendanceTable.companyId, cid))).returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.delete("/attendance/:id", async (req, res) => {
@@ -587,33 +667,36 @@ router.delete("/attendance/:id", async (req, res) => {
 router.post("/attendance/bulk", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { date: d, records } = req.body as any;
-    if (!d || !Array.isArray(records)) { res.status(400).json({ error: "التاريخ والسجلات مطلوبة" }); return; }
+    const { date: rawDate, records } = req.body as any;
+    if (!rawDate || !Array.isArray(records)) { res.status(400).json({ error: "التاريخ والسجلات مطلوبة" }); return; }
+    const d = requireDate(rawDate, "تاريخ الحضور");
     const out: any[] = [];
     for (const r of records) {
       if (!r.employeeId) continue;
-      const { worked, overtime } = calcWorkedHours(r.checkIn, r.checkOut);
-      const status = r.status || (r.checkIn ? "present" : "absent");
+      const rIn = timeOrNull(r.checkIn, "وقت الحضور");
+      const rOut = timeOrNull(r.checkOut, "وقت الانصراف");
+      const { worked, overtime } = calcWorkedHours(rIn ?? undefined, rOut ?? undefined);
+      const status = r.status || (rIn ? "present" : "absent");
       try {
         const [row] = await db.insert(employeeAttendanceTable).values({
           companyId: cid,
           employeeId: Number(r.employeeId),
           date: d,
-          checkIn: N(r.checkIn),
-          checkOut: N(r.checkOut),
+          checkIn: rIn,
+          checkOut: rOut,
           workedHours: String(worked),
           overtimeHours: String(overtime),
-          lateMinutes: Number(r.lateMinutes || 0),
+          lateMinutes: intOrDefault(r.lateMinutes, 0, "دقائق التأخير", 0, 1440),
           status,
           notes: N(r.notes),
         }).onConflictDoUpdate({
           target: [employeeAttendanceTable.employeeId, employeeAttendanceTable.date],
           set: {
-            checkIn: N(r.checkIn),
-            checkOut: N(r.checkOut),
+            checkIn: rIn,
+            checkOut: rOut,
             workedHours: String(worked),
             overtimeHours: String(overtime),
-            lateMinutes: Number(r.lateMinutes || 0),
+            lateMinutes: intOrDefault(r.lateMinutes, 0, "دقائق التأخير", 0, 1440),
             status,
             notes: N(r.notes),
             updatedAt: new Date(),
@@ -623,7 +706,7 @@ router.post("/attendance/bulk", async (req, res) => {
       } catch {}
     }
     res.json({ saved: out.length, records: out });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 // ─── LOANS ────────────────────────────────────────────────────
@@ -667,20 +750,26 @@ router.post("/loans", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body || {};
     if (!b.employeeId || !b.amount || !b.loanDate) { res.status(400).json({ error: "الموظف والمبلغ والتاريخ مطلوبة" }); return; }
-    const installments = Math.max(1, Number(b.installments || 1));
-    const amt = Number(b.amount);
-    const inst = Number(b.installmentAmt) > 0 ? Number(b.installmentAmt) : +(amt / installments).toFixed(2);
+    const loanDate = requireDate(b.loanDate, "تاريخ السلفة");
+    const amtStr = requirePositiveMoney(b.amount, "مبلغ السلفة");
+    const amt = Number(amtStr);
+    const installments = intOrDefault(b.installments, 1, "عدد الأقساط", 1, 600);
+    const instRaw = b.installmentAmt != null && b.installmentAmt !== "" ? Number(moneyOrZero(b.installmentAmt, "قيمة القسط")) : 0;
+    const inst = instRaw > 0 ? instRaw : +(amt / installments).toFixed(2);
+    const instStart = dateOrNull(b.installmentStartDate, "تاريخ بداية الأقساط");
+    const instEnd = dateOrNull(b.installmentEndDate, "تاريخ نهاية الأقساط");
+    assertDateOrder(instStart, instEnd, "تاريخ نهاية الأقساط لا يمكن أن يسبق تاريخ بدايتها");
     const loanAccountId = await validateLoanAccount(cid, b.loanAccountId);
     const [row] = await db.insert(employeeLoansTable).values({
       companyId: cid,
       employeeId: Number(b.employeeId),
-      loanDate: b.loanDate,
+      loanDate,
       loanType: b.loanType || "loan",
       amount: String(amt),
       installments,
       installmentAmt: String(inst),
-      installmentStartDate: N(b.installmentStartDate),
-      installmentEndDate: N(b.installmentEndDate),
+      installmentStartDate: instStart,
+      installmentEndDate: instEnd,
       paidAmount: "0",
       status: "active",
       reason: N(b.reason),
@@ -688,7 +777,10 @@ router.post("/loans", async (req, res) => {
       loanAccountId,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(e?.code === "BAD_LOAN_ACCOUNT" ? 400 : 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (e?.code === "BAD_LOAN_ACCOUNT") return res.status(400).json({ error: e.message });
+    respondHrError(req, res, e);
+  }
 });
 
 // Disburse an existing loan — creates a journal entry (DR loans receivable / CR cash or bank)
@@ -721,10 +813,9 @@ router.post("/:id/eos-pay", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const empId = Number(req.params.id);
     const b = req.body || {};
-    const amount = Number(b.amount);
-    const payDate = String(b.payDate || new Date().toISOString().slice(0, 10));
+    const amount = Number(requirePositiveMoney(b.amount, "قيمة المكافأة"));
+    const payDate = dateOrNull(b.payDate, "تاريخ الصرف") || new Date().toISOString().slice(0, 10);
     const useProvision = !!b.useProvision;
-    if (!(amount > 0)) { res.status(400).json({ error: "قيمة المكافأة مطلوبة" }); return; }
     const result = await db.transaction(async (tx) => {
       const journalId = await buildEosPaymentJournal(cid, empId, amount, payDate, {
         cashBoxId:     b.cashBoxId     ? Number(b.cashBoxId)     : null,
@@ -738,7 +829,10 @@ router.post("/:id/eos-pay", async (req, res) => {
       return { ok: true, journalId };
     });
     res.json(result);
-  } catch (e: any) { res.status(400).json({ error: e.message }); }
+  } catch (e: any) {
+    if (e?.name === "HrValidationError" || e?.status) return respondHrError(req, res, e);
+    res.status(400).json({ error: e.message });
+  }
 });
 
 router.put("/loans/:id", async (req, res) => {
@@ -791,16 +885,17 @@ router.put("/loans/:id", async (req, res) => {
     const upd: any = { updatedAt: new Date() };
     // Quick status/payment patches (used by cancel + payroll deduction).
     if (b.status) upd.status = b.status;
-    if (b.paidAmount != null) upd.paidAmount = String(b.paidAmount);
+    if (b.paidAmount != null) upd.paidAmount = moneyOrZero(b.paidAmount, "المبلغ المسدد");
     // Full edit-form fields.
     if (b.employeeId != null) upd.employeeId = Number(b.employeeId);
-    if (b.loanDate != null) upd.loanDate = b.loanDate;
+    if (b.loanDate != null) upd.loanDate = requireDate(b.loanDate, "تاريخ السلفة");
     if (b.loanType != null) upd.loanType = b.loanType;
-    if (b.amount != null) upd.amount = String(Number(b.amount));
-    if (b.installments != null) upd.installments = Math.max(1, Number(b.installments));
-    if (b.installmentAmt != null) upd.installmentAmt = String(b.installmentAmt);
-    if (b.installmentStartDate !== undefined) upd.installmentStartDate = N(b.installmentStartDate);
-    if (b.installmentEndDate !== undefined) upd.installmentEndDate = N(b.installmentEndDate);
+    if (b.amount != null) upd.amount = requirePositiveMoney(b.amount, "مبلغ السلفة");
+    if (b.installments != null) upd.installments = intOrDefault(b.installments, 1, "عدد الأقساط", 1, 600);
+    if (b.installmentAmt != null) upd.installmentAmt = moneyOrZero(b.installmentAmt, "قيمة القسط");
+    if (b.installmentStartDate !== undefined) upd.installmentStartDate = dateOrNull(b.installmentStartDate, "تاريخ بداية الأقساط");
+    if (b.installmentEndDate !== undefined) upd.installmentEndDate = dateOrNull(b.installmentEndDate, "تاريخ نهاية الأقساط");
+    assertDateOrder(upd.installmentStartDate ?? null, upd.installmentEndDate ?? null, "تاريخ نهاية الأقساط لا يمكن أن يسبق تاريخ بدايتها");
     if (b.loanAccountId !== undefined) upd.loanAccountId = await validateLoanAccount(cid, b.loanAccountId);
     if (b.reason !== undefined) upd.reason = N(b.reason);
     // Preserve the disbursement marker (JE#…) so editing the loan from the
@@ -817,7 +912,10 @@ router.put("/loans/:id", async (req, res) => {
       .where(and(eq(employeeLoansTable.id, id), eq(employeeLoansTable.companyId, cid)))
       .returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (e?.code === "BAD_LOAN_ACCOUNT") return res.status(400).json({ error: e.message });
+    respondHrError(req, res, e);
+  }
 });
 
 router.delete("/loans/:id", async (req, res) => {
@@ -942,7 +1040,8 @@ router.post("/payroll/preview", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { year, month } = req.body || {};
     if (!year || !month) { res.status(400).json({ error: "السنة والشهر مطلوبان" }); return; }
-    const y = Number(year), m = Number(month);
+    const y = intOrDefault(year, 0, "السنة", 2000, 2100);
+    const m = intOrDefault(month, 0, "الشهر", 1, 12);
     const periodStart = `${y}-${String(m).padStart(2,"0")}-01`;
     const periodEnd = new Date(y, m, 0).toISOString().slice(0, 10);
     const monthDays = new Date(y, m, 0).getDate();
@@ -1032,7 +1131,7 @@ router.post("/payroll/preview", async (req, res) => {
       lines,
       totals: { gross: +totalGross.toFixed(2), deductions: +totalDed.toFixed(2), net: +totalNet.toFixed(2), employeesCount: lines.length },
     });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.post("/payroll/runs", async (req, res) => {
@@ -1041,7 +1140,8 @@ router.post("/payroll/runs", async (req, res) => {
     const b = req.body || {};
     const { year, month, lines, payDate, notes, branchId } = b;
     if (!year || !month || !Array.isArray(lines)) { res.status(400).json({ error: "بيانات غير مكتملة" }); return; }
-    const y = Number(year), m = Number(month);
+    const y = intOrDefault(year, 0, "السنة", 2000, 2100);
+    const m = intOrDefault(month, 0, "الشهر", 1, 12);
     const periodStart = `${y}-${String(m).padStart(2,"0")}-01`;
     const periodEnd = new Date(y, m, 0).toISOString().slice(0, 10);
     const code = `PR-${y}${String(m).padStart(2,"0")}`;
@@ -1084,7 +1184,7 @@ router.post("/payroll/runs", async (req, res) => {
         code,
         year: y, month: m,
         periodStart, periodEnd,
-        payDate: N(payDate),
+        payDate: dateOrNull(payDate, "تاريخ الصرف"),
         totalGross: String(totalGross.toFixed(2)),
         totalDeductions: String(totalDed.toFixed(2)),
         totalNet: String(totalNet.toFixed(2)),
@@ -1122,7 +1222,7 @@ router.post("/payroll/runs", async (req, res) => {
       }
       throw e;
     }
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.post("/payroll/runs/:id/post", async (req, res) => {

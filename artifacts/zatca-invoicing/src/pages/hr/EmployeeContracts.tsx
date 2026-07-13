@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { employeesApi } from "@/lib/employeesApi";
+import { fmt2 } from "@/lib/format";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
+import { HrFormCheck } from "@/lib/hrFormValidate";
 
 const EMPTY_CONTRACT: any = {
   contractNumber: "", contractType: "fixed",
@@ -82,6 +84,40 @@ export default function EmployeeContracts() {
 
   const setCF = (k: string, v: any) => setEditingC((p: any) => ({ ...p, [k]: v }));
   const setLF = (k: string, v: any) => setEditingL((p: any) => ({ ...p, [k]: v }));
+
+  const handleSaveContract = () => {
+    if (!editingC) return;
+    const c = new HrFormCheck()
+      .requiredDate(editingC, "startDate", "تاريخ بداية العقد")
+      .date(editingC, "endDate", "تاريخ نهاية العقد")
+      .money(editingC, "basicSalary", "الراتب الأساسي")
+      .money(editingC, "housingAllow", "بدل السكن")
+      .money(editingC, "transportAllow", "بدل النقل")
+      .money(editingC, "otherAllow", "بدلات أخرى")
+      .intRange(editingC, "workingHours", "ساعات العمل اليومية", 1, 24)
+      .intRange(editingC, "probationDays", "فترة التجربة", 0, 180)
+      .intRange(editingC, "noticePeriod", "فترة الإشعار", 0, 365)
+      .intRange(editingC, "vacationDays", "أيام الإجازة السنوية", 0, 365)
+      .order("startDate", "endDate", "تاريخ نهاية العقد لا يمكن أن يسبق تاريخ بدايته");
+    if (editingC.contractType === "fixed" && !c.clean.endDate) {
+      c.errors.unshift({ field: "endDate", message: "العقد محدد المدة يتطلب تاريخ نهاية" });
+    }
+    const err = c.first;
+    if (err) { toast({ variant: "destructive", title: tr("toastError"), description: err.message }); return; }
+    upsertContract.mutate({ ...editingC, ...c.clean });
+  };
+
+  const handleSaveLeave = () => {
+    if (!editingL) return;
+    const c = new HrFormCheck()
+      .requiredDate(editingL, "startDate", "تاريخ بداية الإجازة")
+      .requiredDate(editingL, "endDate", "تاريخ نهاية الإجازة")
+      .intRange(editingL, "days", "عدد الأيام", 1, 365)
+      .order("startDate", "endDate", "تاريخ نهاية الإجازة لا يمكن أن يسبق بدايتها");
+    const err = c.first;
+    if (err) { toast({ variant: "destructive", title: tr("toastError"), description: err.message }); return; }
+    upsertLeave.mutate({ ...editingL, ...c.clean });
+  };
 
   const upsertContract = useMutation({
     mutationFn: (d: any) => editingC?.id
@@ -234,7 +270,7 @@ export default function EmployeeContracts() {
               subtitle={tr("formSubtitle")}
               width="5xl"
               onClose={() => { setShowCForm(false); setEditingC(null); }}
-              onSave={() => upsertContract.mutate(editingC)}
+              onSave={handleSaveContract}
               saving={upsertContract.isPending}
               saveDisabled={!editingC.startDate}
             >
@@ -286,7 +322,7 @@ export default function EmployeeContracts() {
               <div className="mt-4 rounded-lg border bg-muted/30 p-3">
                 <div className="text-xs text-muted-foreground mb-1">{tr("monthlyTotal")}</div>
                 <div className="text-lg font-bold text-emerald-700">
-                  {(Number(editingC.basicSalary || 0) + Number(editingC.housingAllow || 0) + Number(editingC.transportAllow || 0) + Number(editingC.otherAllow || 0)).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {tr("currencySAR")}
+                  {fmt2(Number(editingC.basicSalary || 0) + Number(editingC.housingAllow || 0) + Number(editingC.transportAllow || 0) + Number(editingC.otherAllow || 0))} {tr("currencySAR")}
                 </div>
               </div>
             </FormPanel>
@@ -323,7 +359,7 @@ export default function EmployeeContracts() {
                         <td className="px-3 py-2.5 text-xs">{c.contractType === "fixed" ? tr("ctFixedShort") : tr("ctUnlimitedShort")}</td>
                         <td className="px-3 py-2.5 text-xs">{c.startDate}</td>
                         <td className="px-3 py-2.5 text-xs">{c.endDate || "—"}</td>
-                        <td className="px-3 py-2.5 text-xs font-semibold">{total.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {tr("currencySAR")}</td>
+                        <td className="px-3 py-2.5 text-xs font-semibold">{fmt2(total)} {tr("currencySAR")}</td>
                         <td className="px-3 py-2.5"><Badge className={cn("border", st.cls)}>{st.label}</Badge></td>
                         <td className="px-3 py-2.5">
                           <div className="flex items-center justify-end gap-1">
@@ -357,7 +393,7 @@ export default function EmployeeContracts() {
               subtitle={tr("leaveFormSubtitle")}
               width="3xl"
               onClose={() => { setShowLForm(false); setEditingL(null); }}
-              onSave={() => upsertLeave.mutate(editingL)}
+              onSave={handleSaveLeave}
               saving={upsertLeave.isPending}
             >
               <FormGrid>

@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { fmt2 } from "@/lib/format";
 
 export default function SisterSettlements() {
   const qc = useQueryClient();
@@ -129,7 +130,7 @@ export default function SisterSettlements() {
                   <td className="p-2">{r.direction === "receive"
                     ? <span className="text-green-700 flex items-center gap-1"><ArrowDownCircle className="h-3 w-3" /> تحصيل</span>
                     : <span className="text-red-700  flex items-center gap-1"><ArrowUpCircle   className="h-3 w-3" /> سداد</span>}</td>
-                  <td className="p-2 text-left font-semibold">{Number(r.amount).toFixed(2)}</td>
+                  <td className="p-2 text-left font-semibold">{fmt2(r.amount)}</td>
                   <td className="p-2">
                     <span className={`px-2 py-0.5 rounded text-xs ${r.status === "posted" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
                       {r.status === "posted" ? "مُرحَّل" : "مسودة"}

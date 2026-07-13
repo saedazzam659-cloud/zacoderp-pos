@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, fmt2 } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -405,7 +405,7 @@ export default function OpeningBalances() {
       const diff   = totalD - totalC;
       if (Math.abs(diff) > 0.005) {
         const proceed = window.confirm(
-          t("openingBalances.confirmUnbalanced", { diff: diff.toFixed(2) }),
+          t("openingBalances.confirmUnbalanced", { diff: fmt2(diff) }),
         );
         if (!proceed) throw new Error(t("openingBalances.cancelledByUser"));
       }

@@ -31,7 +31,7 @@ import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { DiscountRow } from "@/components/DiscountRow";
-import { currencySymbol } from "@/lib/format";
+import { currencySymbol, fmt2 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { downloadCsv, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
 import {
@@ -91,7 +91,7 @@ export default function GoodsReceipts() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
-  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: any) => fmt2(n);
   const tr = (k: string, opts?: any): string => t(`purchasingPages.goodsReceipts.${k}`, opts) as string;
   const tg = (k: string, opts?: any): string => t(`goodsReceiptsPage.${k}`, opts) as string;
   const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
@@ -769,9 +769,9 @@ tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(tr("title"))}</h1>
 <div class="meta">${tg("reportDateLabel")}: ${reportDate} — ${tg("receiptsCountLabel")}: ${source.length}</div></div>
 <div class="totals">
-  <span>${tg("totalSumLabel")}: <b>${sumSub.toFixed(2)}</b></span>
-  <span>${tg("totalVatLabel")}: <b>${sumVat.toFixed(2)}</b></span>
-  <span>${tg("grandTotalShort")}: <b>${sumTot.toFixed(2)}</b></span>
+  <span>${tg("totalSumLabel")}: <b>${fmt2(sumSub)}</b></span>
+  <span>${tg("totalVatLabel")}: <b>${fmt2(sumVat)}</b></span>
+  <span>${tg("grandTotalShort")}: <b>${fmt2(sumTot)}</b></span>
 </div>
 <table><thead><tr>
   <th>#</th><th>${tg("printColNumber")}</th><th>${tg("printColDate")}</th><th>${tg("printColSupplier")}</th><th>${tg("printColCurrency")}</th>
@@ -783,18 +783,18 @@ ${source.map((r: any, i: number) => `<tr>
   <td>${escapeHtml(r.receiptDate ?? "")}</td>
   <td>${escapeHtml(supMap[r.supplierId] ?? "")}</td>
   <td>${escapeHtml(r.currencyCode ?? "")}</td>
-  <td class="num">${(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2)}</td>
-  <td class="num">${Number(r.vatAmount ?? 0).toFixed(2)}</td>
-  <td class="num">${Number(r.totalAmount ?? 0).toFixed(2)}</td>
+  <td class="num">${fmt2(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0))}</td>
+  <td class="num">${fmt2(r.vatAmount ?? 0)}</td>
+  <td class="num">${fmt2(r.totalAmount ?? 0)}</td>
   <td>${r.journalEntryId ? `JE-${escapeHtml(r.journalEntryId)}` : ""}</td>
   <td>${r.linkedInvoiceId ? `PI-${escapeHtml(r.linkedInvoiceId)}` : ""}</td>
   <td>${escapeHtml(statusLabel(r.status))}</td>
 </tr>`).join("")}
 </tbody><tfoot><tr>
   <td colspan="5">${tg("grandTotalLabel")}</td>
-  <td class="num">${sumSub.toFixed(2)}</td>
-  <td class="num">${sumVat.toFixed(2)}</td>
-  <td class="num">${sumTot.toFixed(2)}</td>
+  <td class="num">${fmt2(sumSub)}</td>
+  <td class="num">${fmt2(sumVat)}</td>
+  <td class="num">${fmt2(sumTot)}</td>
   <td colspan="3"></td>
 </tr></tfoot></table>
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
@@ -823,10 +823,10 @@ ${source.map((r: any, i: number) => `<tr>
             return `<tr>
               <td style="text-align:center;">${i + 1}</td>
               <td>${escapeHtml(itemLabel)}</td>
-              <td class="num">${qty.toFixed(2)}</td>
-              <td class="num">${up.toFixed(2)}</td>
+              <td class="num">${fmt2(qty)}</td>
+              <td class="num">${fmt2(up)}</td>
               <td class="num">${vat.toFixed(2)}%</td>
-              <td class="num">${ttl.toFixed(2)}</td>
+              <td class="num">${fmt2(ttl)}</td>
             </tr>`;
           }).join("");
       return `<section class="doc">
@@ -846,8 +846,8 @@ ${source.map((r: any, i: number) => `<tr>
           <tbody>${linesHtml}</tbody>
           <tfoot><tr>
             <td colspan="4" style="text-align:left;">${tg("printSubtotal")}</td>
-            <td class="num">${Number(d.vatAmount ?? 0).toFixed(2)}</td>
-            <td class="num">${Number(d.totalAmount ?? 0).toFixed(2)}</td>
+            <td class="num">${fmt2(d.vatAmount ?? 0)}</td>
+            <td class="num">${fmt2(d.totalAmount ?? 0)}</td>
           </tr></tfoot>
         </table>
       </section>`;
@@ -884,9 +884,9 @@ tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 <div class="h">${logoHtml}${companyHtml}<h1>${tg("bulkPrintHeading")}</h1>
 <div class="meta">${tg("reportDateLabel")}: ${reportDate} — ${tg("receiptsCountLabel")}: ${docs.length}</div></div>
 <div class="grand">
-  <span>${tg("totalSumLabel")}: <b>${grandSub.toFixed(2)}</b></span>
-  <span>${tg("totalVatLabel")}: <b>${grandVat.toFixed(2)}</b></span>
-  <span>${tg("grandTotalLabel")}: <b>${grandTot.toFixed(2)}</b></span>
+  <span>${tg("totalSumLabel")}: <b>${fmt2(grandSub)}</b></span>
+  <span>${tg("totalVatLabel")}: <b>${fmt2(grandVat)}</b></span>
+  <span>${tg("grandTotalLabel")}: <b>${fmt2(grandTot)}</b></span>
 </div>
 ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;

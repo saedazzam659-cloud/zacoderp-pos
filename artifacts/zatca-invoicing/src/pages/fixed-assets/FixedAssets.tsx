@@ -16,6 +16,7 @@ import { Plus, Pencil, Trash2, Search, Package, QrCode,
 import { YearMonthInput } from "@/components/YearMonthInput";
 import { DateField } from "@/components/ui/date-field";
 import DepreciationScheduleTimeline from "./DepreciationScheduleTimeline";
+import { fmt2 } from "@/lib/format";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -554,9 +555,9 @@ export default function FixedAssets() {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-1 text-[11px] text-slate-600">
                       <div>التاريخ: <span className="font-mono">{impInvoice.invoiceDate ?? "—"}</span></div>
                       <div>المورد: {suppliers.find((s:any)=>String(s.id)===String(impInvoice.supplierId))?.nameAr ?? impInvoice.supplierId ?? "—"}</div>
-                      <div>الصافي: <span className="font-mono">{Number(impInvoice.subtotal ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span></div>
-                      <div>الضريبة: <span className="font-mono">{Number(impInvoice.vatAmount ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span></div>
-                      <div>الإجمالي: <span className="font-mono">{Number(impInvoice.totalAmount ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</span></div>
+                      <div>الصافي: <span className="font-mono">{fmt2(impInvoice.subtotal ?? 0)}</span></div>
+                      <div>الضريبة: <span className="font-mono">{fmt2(impInvoice.vatAmount ?? 0)}</span></div>
+                      <div>الإجمالي: <span className="font-mono">{fmt2(impInvoice.totalAmount ?? 0)}</span></div>
                       <div>رقم فاتورة المورد: {impInvoice.supplierInvoiceNumber ?? "—"}</div>
                       <div>الدفع: {({cash:"نقدي",bank:"بنك",credit:"آجل"} as any)[impInvoice.paymentType] ?? impInvoice.paymentType ?? "—"}</div>
                     </div>
@@ -588,7 +589,7 @@ export default function FixedAssets() {
                             <tr key={i} className="border-t border-slate-100">
                               <td className="px-2 py-1">{acctName(l.accountId)}</td>
                               <td className="px-2 py-1 text-slate-500">{l.description ?? "—"}</td>
-                              <td className="px-2 py-1 text-end font-mono">{Number(l.debit ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                              <td className="px-2 py-1 text-end font-mono">{fmt2(l.debit ?? 0)}</td>
                               <td className="px-2 py-1 text-end">
                                 <button type="button" onClick={()=>applyJe(impJe,{ value: Number(l.debit ?? 0) })}
                                   className="text-[11px] font-semibold text-violet-700 hover:underline" data-testid={`imp-use-line-${i}`}>
@@ -604,7 +605,7 @@ export default function FixedAssets() {
                     <div className="flex flex-wrap gap-2 mt-2">
                       <Button type="button" size="sm" onClick={()=>applyJe(impJe,{ value: totDebit })}
                         className="bg-violet-600 hover:bg-violet-700" data-testid="imp-apply-je-total">
-                        تطبيق إجمالي المدين ({Number(totDebit).toLocaleString("ar-EG-u-ca-gregory-nu-latn")})
+                        تطبيق إجمالي المدين ({fmt2(totDebit)})
                       </Button>
                       <Button type="button" size="sm" variant="outline" onClick={()=>applyJe(impJe,{})}
                         data-testid="imp-apply-je-meta">
@@ -834,7 +835,7 @@ export default function FixedAssets() {
                       <Calculator className="h-3.5 w-3.5" /> قيمة الضريبة (محسوبة)
                     </Label>
                     <div className="mt-1 h-10 px-3 flex items-center justify-end rounded-md border-2 border-amber-200 bg-amber-50 font-mono text-base font-bold text-amber-800">
-                      {vatAmt.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {fmt2(vatAmt)}
                     </div>
                   </div>
 
@@ -855,19 +856,19 @@ export default function FixedAssets() {
                     <div>
                       <div className="text-slate-500">الصافي</div>
                       <div className="font-mono font-bold text-slate-800 text-sm mt-0.5">
-                        {net.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {fmt2(net)}
                       </div>
                     </div>
                     <div className="border-x border-teal-200">
                       <div className="text-amber-600">+ ضريبة {rate}%</div>
                       <div className="font-mono font-bold text-amber-700 text-sm mt-0.5">
-                        {vatAmt.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {fmt2(vatAmt)}
                       </div>
                     </div>
                     <div>
                       <div className="text-emerald-600">= الإجمالي</div>
                       <div className="font-mono font-bold text-emerald-800 text-sm mt-0.5">
-                        {gross.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {fmt2(gross)}
                       </div>
                     </div>
                   </div>
@@ -979,8 +980,8 @@ export default function FixedAssets() {
               </div>
               {a.plateNumber && <div className="text-xs bg-slate-50 rounded p-1.5 px-2 font-mono"><span className="text-muted-foreground">اللوحة: </span>{a.plateNumber}</div>}
               <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة الشراء</div><div className="font-mono font-bold text-slate-800">{Number(a.purchaseValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div></div>
-                <div className="bg-teal-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">القيمة الدفترية</div><div className="font-mono font-bold text-teal-800">{Number(a.bookValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div></div>
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة الشراء</div><div className="font-mono font-bold text-slate-800">{fmt2(a.purchaseValue)}</div></div>
+                <div className="bg-teal-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">القيمة الدفترية</div><div className="font-mono font-bold text-teal-800">{fmt2(a.bookValue)}</div></div>
               </div>
             </div>
             <div className="grid grid-cols-4 border-t divide-x divide-slate-100 [direction:ltr]">
@@ -1026,8 +1027,8 @@ export default function FixedAssets() {
                   <td className="px-3 py-2 font-semibold">{a.nameAr}</td>
                   <td className="px-3 py-2">{[a.brand, a.model].filter(Boolean).join(" — ")}</td>
                   <td className="px-3 py-2 font-mono">{a.plateNumber || "—"}</td>
-                  <td className="px-3 py-2 font-mono">{Number(a.purchaseValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
-                  <td className="px-3 py-2 font-mono">{Number(a.bookValue).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                  <td className="px-3 py-2 font-mono">{fmt2(a.purchaseValue)}</td>
+                  <td className="px-3 py-2 font-mono">{fmt2(a.bookValue)}</td>
                   <td className="px-3 py-2">
                     <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusBadge(a.status)}`}>
                       {statusLabel(a.status)}

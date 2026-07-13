@@ -14,6 +14,7 @@ import { printAccountNote } from "@/lib/accountNotePrint";
 import { useCostCenters } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
 import { useAuth } from "@/contexts/AuthContext";
+import { fmt2 } from "@/lib/format";
 
 interface Props {
   partyType: AccountNotePartyType;
@@ -288,7 +289,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
             .map((inv: any) => ({
               value: inv.docNumber ?? String(inv.id),
               label: inv.docNumber ?? `#${inv.id}`,
-              description: `${String(inv.invoiceDate ?? "").slice(0, 10)} — ${Number(inv.totalAmount ?? 0).toFixed(2)}`,
+              description: `${String(inv.invoiceDate ?? "").slice(0, 10)} — ${fmt2(inv.totalAmount ?? 0)}`,
             })),
         ]
       : [];
@@ -479,9 +480,9 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
       </CardContent></Card>
 
       <Card><CardContent className="grid grid-cols-3 gap-4 pt-6 text-center">
-        <div><div className="text-xs text-muted-foreground">المبلغ</div><div className="text-lg font-semibold">{amount.toFixed(2)}</div></div>
-        <div><div className="text-xs text-muted-foreground">الضريبة</div><div className="text-lg font-semibold">{vatAmount.toFixed(2)}</div></div>
-        <div><div className="text-xs text-muted-foreground">الإجمالي</div><div className="text-lg font-bold text-primary" data-testid="total-amount">{total.toFixed(2)}</div></div>
+        <div><div className="text-xs text-muted-foreground">المبلغ</div><div className="text-lg font-semibold">{fmt2(amount)}</div></div>
+        <div><div className="text-xs text-muted-foreground">الضريبة</div><div className="text-lg font-semibold">{fmt2(vatAmount)}</div></div>
+        <div><div className="text-xs text-muted-foreground">الإجمالي</div><div className="text-lg font-bold text-primary" data-testid="total-amount">{fmt2(total)}</div></div>
       </CardContent></Card>
 
       <div className="flex gap-2">

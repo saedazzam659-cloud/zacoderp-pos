@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { fmt2 } from "@/lib/format";
 
 type PendingCarry = {
   id: number; name: string; type: "prepaid" | "accrued";
@@ -110,7 +111,7 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
       return safeJson(r, "تعذر ترحيل المتبقي");
     },
     onSuccess: (_d, a) => {
-      toast({ title: "تم ترحيل المتبقي", description: `${a.name} — رُحِّل ${parseFloat(a.remainingAmount).toFixed(2)} للسنة الجديدة` });
+      toast({ title: "تم ترحيل المتبقي", description: `${a.name} — رُحِّل ${fmt2(a.remainingAmount)} للسنة الجديدة` });
       carryQ.refetch();
       qc.invalidateQueries({ queryKey: ["adjustments"] });
     },
@@ -138,7 +139,7 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
     onSuccess: (d: any) => {
       toast({
         title: "تم إقفال الإيرادات والمصروفات",
-        description: `صافي الفترة: ${(d?.netIncome ?? 0).toFixed(2)}`,
+        description: `صافي الفترة: ${fmt2(d?.netIncome ?? 0)}`,
       });
       validateQ.refetch();
     },
@@ -159,7 +160,7 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
     onSuccess: (d: any) => {
       toast({
         title: d?.isProfit ? "تم ترحيل الأرباح" : "تم ترحيل الخسائر",
-        description: `المبلغ: ${(d?.amount ?? 0).toFixed(2)}`,
+        description: `المبلغ: ${fmt2(d?.amount ?? 0)}`,
       });
       validateQ.refetch();
     },
@@ -318,18 +319,18 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div className="rounded-md bg-emerald-50 border border-emerald-200 p-2">
                       <div className="text-[10px] text-emerald-600">الإيرادات</div>
-                      <div className="text-sm font-bold text-emerald-700">{ai.metrics.revenue.toFixed(2)}</div>
+                      <div className="text-sm font-bold text-emerald-700">{fmt2(ai.metrics.revenue)}</div>
                     </div>
                     <div className="rounded-md bg-orange-50 border border-orange-200 p-2">
                       <div className="text-[10px] text-orange-600">المصروفات</div>
-                      <div className="text-sm font-bold text-orange-700">{ai.metrics.expense.toFixed(2)}</div>
+                      <div className="text-sm font-bold text-orange-700">{fmt2(ai.metrics.expense)}</div>
                     </div>
                     <div className={cn("rounded-md border p-2",
                       ai.metrics.netIncome >= 0 ? "bg-blue-50 border-blue-200" : "bg-red-50 border-red-200")}>
                       <div className="text-[10px] text-muted-foreground">الصافي</div>
                       <div className={cn("text-sm font-bold",
                         ai.metrics.netIncome >= 0 ? "text-blue-700" : "text-red-700")}>
-                        {ai.metrics.netIncome.toFixed(2)}
+                        {fmt2(ai.metrics.netIncome)}
                       </div>
                     </div>
                   </div>
@@ -389,9 +390,9 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
                           <div className="flex-1 min-w-0">
                             <div className="font-semibold text-sm">{a.name}</div>
                             <div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap mt-0.5">
-                              <span>الإجمالي: <strong>{parseFloat(a.totalAmount).toFixed(2)}</strong></span>
-                              <span className="text-emerald-700">مُحقّق: <strong>{parseFloat(a.recognizedAmount).toFixed(2)}</strong></span>
-                              <span className="text-purple-800 font-bold">متبقٍ للترحيل: {parseFloat(a.remainingAmount).toFixed(2)}</span>
+                              <span>الإجمالي: <strong>{fmt2(a.totalAmount)}</strong></span>
+                              <span className="text-emerald-700">مُحقّق: <strong>{fmt2(a.recognizedAmount)}</strong></span>
+                              <span className="text-purple-800 font-bold">متبقٍ للترحيل: {fmt2(a.remainingAmount)}</span>
                               <span dir="ltr" className="text-muted-foreground">{a.startDate} → {a.endDate}</span>
                             </div>
                           </div>

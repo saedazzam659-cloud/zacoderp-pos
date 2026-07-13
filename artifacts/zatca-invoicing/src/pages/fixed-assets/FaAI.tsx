@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Brain, AlertTriangle, Bell } from "lucide-react";
+import { fmt2, fmtInt0 } from "@/lib/format";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -170,7 +171,7 @@ export default function FaAI() {
                 const h = (s.depreciation / max) * 100;
                 return (
                   <div key={i} className="flex-1 flex flex-col items-center min-w-[40px]">
-                    <div className="text-[10px] text-violet-700 mb-1">{Math.round(s.depreciation).toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</div>
+                    <div className="text-[10px] text-violet-700 mb-1">{fmtInt0(s.depreciation)}</div>
                     <div className="w-full bg-violet-500 rounded-t" style={{ height: `${h}%`, minHeight: "4px" }} />
                     <div className="text-[10px] text-muted-foreground mt-1">{s.period}</div>
                   </div>
@@ -207,8 +208,8 @@ export default function FaAI() {
                     <td className="px-3 py-2 font-semibold">{it.nameAr}</td>
                     <td className="px-3 py-2 font-mono">{it.ageMonths}</td>
                     <td className="px-3 py-2 font-mono">{it.remainingMonths}</td>
-                    <td className="px-3 py-2 font-mono">{it.totalMaintenanceCost.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
-                    <td className="px-3 py-2 font-mono">{it.bookValue.toLocaleString("ar-EG-u-ca-gregory-nu-latn")}</td>
+                    <td className="px-3 py-2 font-mono">{fmt2(it.totalMaintenanceCost)}</td>
+                    <td className="px-3 py-2 font-mono">{fmt2(it.bookValue)}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
                         <span className="font-bold font-mono">{it.score}</span>

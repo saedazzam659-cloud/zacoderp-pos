@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Banknote, FileSpreadsheet, Sparkles, Calculator, CheckCircle2, Trash2, Loader2, Eye, Save, Receipt, X, BookOpen, RotateCcw } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { fmt2 } from "@/lib/format";
 
 export default function Payroll() {
   const qc = useQueryClient();
@@ -215,9 +216,9 @@ export default function Payroll() {
                       <td className="p-2 font-medium">{r.code}</td>
                       <td className="p-2 text-xs">{MONTHS[r.month - 1]} {r.year}</td>
                       <td className="p-2 text-center">{r.employeesCount}</td>
-                      <td className="p-2 text-xs tabular-nums">{Number(r.totalGross).toFixed(2)}</td>
-                      <td className="p-2 text-xs tabular-nums text-rose-700">{Number(r.totalDeductions).toFixed(2)}</td>
-                      <td className="p-2 text-sm tabular-nums font-semibold text-emerald-700">{Number(r.totalNet).toFixed(2)}</td>
+                      <td className="p-2 text-xs tabular-nums">{fmt2(r.totalGross)}</td>
+                      <td className="p-2 text-xs tabular-nums text-rose-700">{fmt2(r.totalDeductions)}</td>
+                      <td className="p-2 text-sm tabular-nums font-semibold text-emerald-700">{fmt2(r.totalNet)}</td>
                       <td className="p-2"><Badge variant="outline" className={st.cls}>{st.label}</Badge></td>
                       <td className="p-2 text-end whitespace-nowrap">
                         <Button size="sm" variant="ghost" onClick={() => { setViewing(r.id); setTab("detail"); }} data-testid={`btn-view-${r.id}`}>
@@ -261,11 +262,11 @@ export default function Payroll() {
                 </div>
                 <div className="rounded-lg border p-3 bg-amber-50/50 border-amber-200">
                   <div className="text-xs text-amber-700">{tr("cardTotalSalaries")}</div>
-                  <div className="text-2xl font-semibold text-amber-700 tabular-nums">{preview.totals.gross.toFixed(2)}</div>
+                  <div className="text-2xl font-semibold text-amber-700 tabular-nums">{fmt2(preview.totals.gross)}</div>
                 </div>
                 <div className="rounded-lg border p-3 bg-emerald-50/50 border-emerald-200">
                   <div className="text-xs text-emerald-700">{tr("cardNetToPay")}</div>
-                  <div className="text-2xl font-semibold text-emerald-700 tabular-nums">{preview.totals.net.toFixed(2)}</div>
+                  <div className="text-2xl font-semibold text-emerald-700 tabular-nums">{fmt2(preview.totals.net)}</div>
                 </div>
               </div>
 
@@ -293,16 +294,16 @@ export default function Payroll() {
                           <div className="font-medium">{pickName(l.empNameAr, l.empNameEn)}</div>
                           <div className="text-[10px] text-muted-foreground">{l.empCode} {l.isSaudi && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 ms-1 text-[9px]">{tr("badgeSaudi")}</Badge>}</div>
                         </td>
-                        <td className="p-2 tabular-nums text-center">{l.basicSalary.toFixed(2)}</td>
-                        <td className="p-2 tabular-nums text-center">{l.housingAllow.toFixed(2)}</td>
-                        <td className="p-2 tabular-nums text-center">{l.transportAllow.toFixed(2)}</td>
-                        <td className="p-2 tabular-nums text-center">{l.overtimeAmount > 0 ? <span className="text-emerald-700 font-medium">{l.overtimeAmount.toFixed(2)}</span> : "—"}</td>
-                        <td className="p-2 tabular-nums text-center bg-amber-50/30 font-semibold">{l.grossSalary.toFixed(2)}</td>
-                        <td className="p-2 tabular-nums text-center text-rose-600">{l.gosiEmployee > 0 ? l.gosiEmployee.toFixed(2) : "—"}</td>
-                        <td className="p-2 tabular-nums text-center text-rose-600">{l.loanDeduction > 0 ? l.loanDeduction.toFixed(2) : "—"}</td>
-                        <td className="p-2 tabular-nums text-center text-rose-600">{l.absenceDeduction > 0 ? `${l.absenceDeduction.toFixed(2)} (${l.absentDays}${tr("absenceDaysSuffix")})` : "—"}</td>
-                        <td className="p-2 tabular-nums text-center bg-rose-50/30 text-rose-700">{l.totalDeductions.toFixed(2)}</td>
-                        <td className="p-2 tabular-nums text-center bg-emerald-50/30 font-semibold text-emerald-700">{l.netSalary.toFixed(2)}</td>
+                        <td className="p-2 tabular-nums text-center">{fmt2(l.basicSalary)}</td>
+                        <td className="p-2 tabular-nums text-center">{fmt2(l.housingAllow)}</td>
+                        <td className="p-2 tabular-nums text-center">{fmt2(l.transportAllow)}</td>
+                        <td className="p-2 tabular-nums text-center">{l.overtimeAmount > 0 ? <span className="text-emerald-700 font-medium">{fmt2(l.overtimeAmount)}</span> : "—"}</td>
+                        <td className="p-2 tabular-nums text-center bg-amber-50/30 font-semibold">{fmt2(l.grossSalary)}</td>
+                        <td className="p-2 tabular-nums text-center text-rose-600">{l.gosiEmployee > 0 ? fmt2(l.gosiEmployee) : "—"}</td>
+                        <td className="p-2 tabular-nums text-center text-rose-600">{l.loanDeduction > 0 ? fmt2(l.loanDeduction) : "—"}</td>
+                        <td className="p-2 tabular-nums text-center text-rose-600">{l.absenceDeduction > 0 ? `${fmt2(l.absenceDeduction)} (${l.absentDays}${tr("absenceDaysSuffix")})` : "—"}</td>
+                        <td className="p-2 tabular-nums text-center bg-rose-50/30 text-rose-700">{fmt2(l.totalDeductions)}</td>
+                        <td className="p-2 tabular-nums text-center bg-emerald-50/30 font-semibold text-emerald-700">{fmt2(l.netSalary)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -393,14 +394,14 @@ export default function Payroll() {
                               <tr key={i} className="border-t">
                                 <td className="p-2"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {pickName(l.accountNameAr, l.accountNameEn)}</td>
                                 <td className="p-2 text-xs">{l.description}</td>
-                                <td className="p-2 text-end tabular-nums text-emerald-700">{Number(l.debit) > 0 ? Number(l.debit).toFixed(2) : "—"}</td>
-                                <td className="p-2 text-end tabular-nums text-rose-700">{Number(l.credit) > 0 ? Number(l.credit).toFixed(2) : "—"}</td>
+                                <td className="p-2 text-end tabular-nums text-emerald-700">{Number(l.debit) > 0 ? fmt2(l.debit) : "—"}</td>
+                                <td className="p-2 text-end tabular-nums text-rose-700">{Number(l.credit) > 0 ? fmt2(l.credit) : "—"}</td>
                               </tr>
                             ))}
                             <tr className="border-t bg-muted/20 font-semibold">
                               <td className="p-2" colSpan={2}>{tr("totalRow")}</td>
-                              <td className="p-2 text-end tabular-nums text-emerald-700">{Number(journalData.entry.totalDebit).toFixed(2)}</td>
-                              <td className="p-2 text-end tabular-nums text-rose-700">{Number(journalData.entry.totalCredit).toFixed(2)}</td>
+                              <td className="p-2 text-end tabular-nums text-emerald-700">{fmt2(journalData.entry.totalDebit)}</td>
+                              <td className="p-2 text-end tabular-nums text-rose-700">{fmt2(journalData.entry.totalCredit)}</td>
                             </tr>
                           </tbody>
                         </table>
@@ -419,9 +420,9 @@ export default function Payroll() {
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="rounded-lg border p-3 bg-card"><div className="text-xs text-muted-foreground">{tr("cardEmployeesShort")}</div><div className="text-xl font-semibold">{viewRun.employeesCount}</div></div>
-                  <div className="rounded-lg border p-3 bg-card"><div className="text-xs text-muted-foreground">{tr("cardTotalShort")}</div><div className="text-xl font-semibold tabular-nums">{Number(viewRun.totalGross).toFixed(2)}</div></div>
-                  <div className="rounded-lg border p-3 bg-rose-50/50 border-rose-200"><div className="text-xs text-rose-700">{tr("cardDeductionsShort")}</div><div className="text-xl font-semibold text-rose-700 tabular-nums">{Number(viewRun.totalDeductions).toFixed(2)}</div></div>
-                  <div className="rounded-lg border p-3 bg-emerald-50/50 border-emerald-200"><div className="text-xs text-emerald-700">{tr("cardNetShort")}</div><div className="text-xl font-semibold text-emerald-700 tabular-nums">{Number(viewRun.totalNet).toFixed(2)}</div></div>
+                  <div className="rounded-lg border p-3 bg-card"><div className="text-xs text-muted-foreground">{tr("cardTotalShort")}</div><div className="text-xl font-semibold tabular-nums">{fmt2(viewRun.totalGross)}</div></div>
+                  <div className="rounded-lg border p-3 bg-rose-50/50 border-rose-200"><div className="text-xs text-rose-700">{tr("cardDeductionsShort")}</div><div className="text-xl font-semibold text-rose-700 tabular-nums">{fmt2(viewRun.totalDeductions)}</div></div>
+                  <div className="rounded-lg border p-3 bg-emerald-50/50 border-emerald-200"><div className="text-xs text-emerald-700">{tr("cardNetShort")}</div><div className="text-xl font-semibold text-emerald-700 tabular-nums">{fmt2(viewRun.totalNet)}</div></div>
                 </div>
 
                 <div className="rounded-lg border overflow-x-auto bg-card">
@@ -445,12 +446,12 @@ export default function Payroll() {
                             <div className="font-medium">{pickName(l.empNameAr, l.empNameEn)}</div>
                             <div className="text-[10px] text-muted-foreground">{l.empCode}</div>
                           </td>
-                          <td className="p-2 tabular-nums text-center">{Number(l.basicSalary).toFixed(2)}</td>
-                          <td className="p-2 tabular-nums text-center">{(Number(l.housingAllow)+Number(l.transportAllow)+Number(l.otherAllow)).toFixed(2)}</td>
-                          <td className="p-2 tabular-nums text-center">{Number(l.overtimeAmount).toFixed(2)}</td>
-                          <td className="p-2 tabular-nums text-center font-medium">{Number(l.grossSalary).toFixed(2)}</td>
-                          <td className="p-2 tabular-nums text-center text-rose-700">{Number(l.totalDeductions).toFixed(2)}</td>
-                          <td className="p-2 tabular-nums text-center font-semibold text-emerald-700">{Number(l.netSalary).toFixed(2)}</td>
+                          <td className="p-2 tabular-nums text-center">{fmt2(l.basicSalary)}</td>
+                          <td className="p-2 tabular-nums text-center">{fmt2(Number(l.housingAllow)+Number(l.transportAllow)+Number(l.otherAllow))}</td>
+                          <td className="p-2 tabular-nums text-center">{fmt2(l.overtimeAmount)}</td>
+                          <td className="p-2 tabular-nums text-center font-medium">{fmt2(l.grossSalary)}</td>
+                          <td className="p-2 tabular-nums text-center text-rose-700">{fmt2(l.totalDeductions)}</td>
+                          <td className="p-2 tabular-nums text-center font-semibold text-emerald-700">{fmt2(l.netSalary)}</td>
                           <td className="p-2 text-[10px] font-mono">{l.iban || "—"}</td>
                         </tr>
                       ))}

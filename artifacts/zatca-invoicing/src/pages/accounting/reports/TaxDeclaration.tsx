@@ -61,7 +61,7 @@ function SupRow({ label, value, mono }: { label: string; value: string | null; m
 // accounting reports (TrialBalance, BalanceSheet, …).
 // ─────────────────────────────────────────────────────────────────────
 function fmtNum(n: number) {
-  return n.toLocaleString("en-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function lastDayOfMonth(y: number, m0: number) {
   // m0 is 0-indexed; Date(y, m0+1, 0) → last day of month m0

@@ -146,7 +146,7 @@ export default function ContractingProjectDetail() {
 
   useEffect(() => { void loadProject(); }, [loadProject]);
 
-  const fmt = (n: string | number) => Number(n || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn");
+  const fmt = (n: string | number) => Number(n || 0).toLocaleString("en-US");
 
   if (!project) {
     return <div className="p-6"><Skeleton className="h-32 w-full" /></div>;
@@ -398,10 +398,10 @@ function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: ()
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.nameAr}<div className="text-[10px] text-slate-400">{r.code || ""}</div></TableCell>
                 <TableCell>{r.unit}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.plannedQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.actualQty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.unitCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.totalActualCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
+                <TableCell className="tabular-nums">{Number(r.plannedQty).toLocaleString("en-US")}</TableCell>
+                <TableCell className="tabular-nums">{Number(r.actualQty).toLocaleString("en-US")}</TableCell>
+                <TableCell className="tabular-nums">{Number(r.unitCost).toLocaleString("en-US")}</TableCell>
+                <TableCell className="tabular-nums">{Number(r.totalActualCost).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(r.progressPercent).toFixed(0)}%</TableCell>
                 <TableCell className="text-end">
                   <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
@@ -526,8 +526,8 @@ function ResourcesTab({ projectId }: { projectId: number }) {
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.name}</TableCell>
                 <TableCell><Badge variant="outline">{r.type}</Badge></TableCell>
-                <TableCell className="tabular-nums">{Number(r.qty).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} {r.unit}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.totalCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</TableCell>
+                <TableCell className="tabular-nums">{Number(r.qty).toLocaleString("en-US")} {r.unit}</TableCell>
+                <TableCell className="tabular-nums">{Number(r.totalCost).toLocaleString("en-US")} ر.س</TableCell>
                 <TableCell><Badge>{r.status}</Badge></TableCell>
                 <TableCell className="text-end">
                   <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
@@ -665,10 +665,10 @@ function BillsTab({ projectId }: { projectId: number }) {
       </Tabs>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalGross", "إجمالي")}</div><div className="font-bold tabular-nums">{totals.gross.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalDue", "مستحق")}</div><div className="font-bold tabular-nums">{totals.due.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalNet", "صافي")}</div><div className="font-bold tabular-nums">{totals.net.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalPaid", "مدفوع")}</div><div className="font-bold tabular-nums text-emerald-600">{totals.paid.toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalGross", "إجمالي")}</div><div className="font-bold tabular-nums">{totals.gross.toLocaleString("en-US")} ر.س</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalDue", "مستحق")}</div><div className="font-bold tabular-nums">{totals.due.toLocaleString("en-US")} ر.س</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalNet", "صافي")}</div><div className="font-bold tabular-nums">{totals.net.toLocaleString("en-US")} ر.س</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalPaid", "مدفوع")}</div><div className="font-bold tabular-nums text-emerald-600">{totals.paid.toLocaleString("en-US")} ر.س</div></div>
       </div>
 
       <div className="flex justify-between items-center">
@@ -709,11 +709,11 @@ function BillsTab({ projectId }: { projectId: number }) {
                   <TableCell>{b.billDate}</TableCell>
                   {direction === "incoming" && <TableCell>{contractor?.name ?? "—"}</TableCell>}
                   <TableCell className="tabular-nums">{Number(b.progressPercent).toFixed(1)}%</TableCell>
-                  <TableCell className="tabular-nums">{Number(b.grossAmount).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
-                  <TableCell className="tabular-nums">{Number(b.retentionAmount).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
-                  <TableCell className="tabular-nums">{Number(b.dueAmount).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
-                  <TableCell className="tabular-nums font-bold">{Number(b.netAmount).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
-                  <TableCell className="tabular-nums text-emerald-600">{Number(b.paidAmount).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
+                  <TableCell className="tabular-nums">{Number(b.grossAmount).toLocaleString("en-US")}</TableCell>
+                  <TableCell className="tabular-nums">{Number(b.retentionAmount).toLocaleString("en-US")}</TableCell>
+                  <TableCell className="tabular-nums">{Number(b.dueAmount).toLocaleString("en-US")}</TableCell>
+                  <TableCell className="tabular-nums font-bold">{Number(b.netAmount).toLocaleString("en-US")}</TableCell>
+                  <TableCell className="tabular-nums text-emerald-600">{Number(b.paidAmount).toLocaleString("en-US")}</TableCell>
                   <TableCell><Badge>{b.status}</Badge></TableCell>
                   <TableCell className="text-end">
                     <Button size="sm" variant="ghost" onClick={() => setEditing(b)}><Pencil className="h-4 w-4" /></Button>
@@ -1081,9 +1081,9 @@ function AITab({ projectId }: { projectId: number }) {
                       <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${RISK_TONE[costLvl]}`}>{RISK_LABEL[costLvl]}</span>
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      {t("contracting.ai.costOverrun", "تجاوز التكلفة")}: {Number(ind.costOverrun ?? 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س
+                      {t("contracting.ai.costOverrun", "تجاوز التكلفة")}: {Number(ind.costOverrun ?? 0).toLocaleString("en-US")} ر.س
                       {ind.projectedFinalCost != null && (
-                        <> • {t("contracting.ai.projectedFinalCost", "متوقع عند الإكمال")}: {Number(ind.projectedFinalCost).toLocaleString("ar-SA-u-ca-gregory-nu-latn")} ر.س</>
+                        <> • {t("contracting.ai.projectedFinalCost", "متوقع عند الإكمال")}: {Number(ind.projectedFinalCost).toLocaleString("en-US")} ر.س</>
                       )}
                     </div>
                   </div>
@@ -1232,8 +1232,8 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
                 <TableCell className="font-mono">{c.contractNumber}</TableCell>
                 <TableCell><Badge variant={c.contractType === "main" ? "default" : "secondary"}>{c.contractType === "main" ? t("contracting.ownerContract.main", "رئيسي") : t("contracting.ownerContract.changeOrder", "أمر تغيير")}</Badge></TableCell>
                 <TableCell>{c.clientName ?? "—"}</TableCell>
-                <TableCell className="tabular-nums font-bold">{Number(c.value).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
-                <TableCell className="tabular-nums">{Number(c.advancePayment).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
+                <TableCell className="tabular-nums font-bold">{Number(c.value).toLocaleString("en-US")}</TableCell>
+                <TableCell className="tabular-nums">{Number(c.advancePayment).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(c.retentionPercent).toFixed(1)}%</TableCell>
                 <TableCell className="tabular-nums">{c.durationDays}</TableCell>
                 <TableCell>{c.signedAt ?? "—"}</TableCell>
@@ -1406,7 +1406,7 @@ function SubContractsTab({ projectId }: { projectId: number }) {
                   <TableCell className="font-mono">{c.contractNumber}</TableCell>
                   <TableCell>{con?.name ?? `#${c.contractorId}`}{con?.specialty && <span className="text-xs text-slate-500 mx-1">({con.specialty})</span>}</TableCell>
                   <TableCell className="max-w-[240px] truncate" title={c.scopeOfWork ?? ""}>{c.scopeOfWork ?? "—"}</TableCell>
-                  <TableCell className="tabular-nums font-bold">{Number(c.value).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</TableCell>
+                  <TableCell className="tabular-nums font-bold">{Number(c.value).toLocaleString("en-US")}</TableCell>
                   <TableCell className="tabular-nums">{Number(c.retentionPercent).toFixed(1)}%</TableCell>
                   <TableCell className="tabular-nums">{c.durationDays}</TableCell>
                   <TableCell>{c.signedAt ?? "—"}</TableCell>

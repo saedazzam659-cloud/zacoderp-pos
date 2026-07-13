@@ -64,7 +64,7 @@ const monthStartISO = () => {
   return d.toISOString().slice(0, 10);
 };
 const fmtSAR = (n: number) =>
-  new Intl.NumberFormat("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+  new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
 
 // Lightweight markdown → HTML for AI panel. Supports headings, bold, lists.
 function renderMarkdown(md: string): string {

@@ -10,7 +10,7 @@
 //   - "thermal": narrow 80 mm receipt suitable for thermal printers
 
 import { safeLogoSrc } from "./export";
-import { currencySymbol } from "./format";
+import { currencySymbol, fmt2 } from "./format";
 import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "./printLetterhead";
 
 export type VoucherKind = "receipt" | "payment";
@@ -68,11 +68,7 @@ const escapeHtml = (s: any): string =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!),
   );
 
-const fmtMoney = (n: any): string =>
-  Number(n || 0).toLocaleString("ar-SA-u-ca-gregory-nu-latn", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+const fmtMoney = (n: any): string => fmt2(n);
 
 function paymentMethodLabel(m?: string | null): string {
   if (m === "cash")  return "نقدي";

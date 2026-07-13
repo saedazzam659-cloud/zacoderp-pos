@@ -1,14 +1,43 @@
 import { useTranslation } from "react-i18next";
 
-// Both number and date formatters use Latin (Western) numerals so a
-// printed Arabic report doesn't mix Arabic-Indic digits in amounts
-// (٢٦٬٤٢٠٫٦٦) with Latin digits in dates (2025-05-22). The grouping /
-// decimal *style* still follows the Arabic locale (e.g. NBSP grouping,
-// Arabic comma) — only the digit glyphs are forced to Latin via the
-// `-u-nu-latn` BCP-47 extension. This is the convention used by every
-// Saudi accounting / ZATCA system in production.
-export function getNumberLocale(lang: string): string {
-  return lang.startsWith("ar") ? "ar-SA-u-nu-latn" : "en-US";
+// Numbers are ALWAYS formatted in the international (en-US) style —
+// Latin digits, comma thousands separator, period decimal point
+// (1,000 / 100,000.34) — regardless of UI language. This matches the
+// Excel-style convention users expect for amounts and avoids the
+// Arabic-locale grouping marks (٬ / NBSP) that read ambiguously.
+export function getNumberLocale(_lang: string): string {
+  return "en-US";
+}
+
+/**
+ * Pure international-style number formatter (comma thousands separator,
+ * period decimal). Use for DISPLAY ONLY — never for input values, payloads,
+ * exports, or anything parsed back to a number.
+ */
+export function fmtNum(n: any, decimals = 2): string {
+  const num = Number(n ?? 0);
+  if (!isFinite(num)) return (0).toFixed(decimals);
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+/** Display amount with exactly 2 decimals + comma grouping: 100,000.34 */
+export const fmt2 = (n: any) => fmtNum(n, 2);
+
+/** Display integer with comma grouping: 100,000 (no decimals). */
+export function fmtInt0(n: any): string {
+  const num = Number(n ?? 0);
+  if (!isFinite(num)) return "0";
+  return Math.round(num).toLocaleString("en-US");
+}
+
+/** Display quantity with comma grouping, up to `maxDecimals` (trailing zeros trimmed). */
+export function fmtQty(n: any, maxDecimals = 2): string {
+  const num = Number(n ?? 0);
+  if (!isFinite(num)) return "0";
+  return num.toLocaleString("en-US", { maximumFractionDigits: maxDecimals });
 }
 
 // Central currency-symbol registry. Mirrors the symbols seeded in
