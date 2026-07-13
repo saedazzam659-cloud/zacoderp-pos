@@ -31,13 +31,15 @@ import { jsPDF } from "jspdf";
 import {
   Camera, Upload, FolderOpen, Trash2, FileText, Image as ImageIcon,
   Paperclip, CheckCircle2, AlertCircle, ScanLine, X, ExternalLink, RefreshCw, Save,
-  Cloud,
+  Cloud, PanelLeftOpen,
 } from "lucide-react";
 import {
   isFsAccessSupported, pickArchiveFolder, getArchiveFolder, clearArchiveFolder,
   saveToArchive, recordArchivedFile, getArchivedFiles, removeArchivedFile,
   openArchivedFile, type ArchivedFileMeta,
 } from "@/lib/localArchive";
+import { ArchiveSendButtons } from "@/components/ArchiveSendButtons";
+import { ArchivePreviewPanel } from "@/components/ArchivePreviewPanel";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -140,6 +142,13 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<"upload" | "camera">("upload");
 
+  // ─── Odoo-style split-screen preview panel ───────────────────────────────
+  // Auto-opens ONCE per document when previously-archived files exist, so the
+  // user sees the attachments beside the form (like Odoo's attachment viewer).
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelFocusId, setPanelFocusId] = useState<number | null>(null);
+  const autoOpenedRef = useRef(false);
+
   // ─── Camera state ────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -232,6 +241,22 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
   }, [jeKey, archived.length, isCloud, cloudFiles.length]);
   // In cloud mode, fetch once on mount so the badge is accurate before opening.
   useEffect(() => { if (isCloud) fetchCloud(); }, [isCloud, fetchCloud]);
+  // Local mode: load the archived index on mount too, so the split-screen
+  // panel can list files without the dialog ever being opened.
+  useEffect(() => { if (!isCloud) setArchived(getArchivedFiles(jeKey)); }, [isCloud, jeKey]);
+
+  // New document key → new context: close the panel and re-arm the auto-open.
+  useEffect(() => {
+    autoOpenedRef.current = false;
+    setPanelOpen(false);
+  }, [jeKey]);
+  // Auto-open the split view ONCE per document when archived files exist.
+  useEffect(() => {
+    if (badgeCount > 0 && !autoOpenedRef.current) {
+      autoOpenedRef.current = true;
+      setPanelOpen(true);
+    }
+  }, [badgeCount]);
 
   // ─── Camera lifecycle ────────────────────────────────────────────────────
   async function startCamera() {
@@ -399,6 +424,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
   if (mode === "off" || !allowed) return null;
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setPages([]); stopCamera(); } }}>
       <DialogTrigger asChild>
         <Button
@@ -576,11 +602,25 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
                     </div>
                     <Button
                       type="button" size="sm" variant="ghost" className="h-7 w-7 p-0"
+                      title="عرض في لوحة المعاينة الجانبية"
+                      onClick={() => { setPanelFocusId(f.id); setOpen(false); setPanelOpen(true); }}
+                    >
+                      <PanelLeftOpen className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button" size="sm" variant="ghost" className="h-7 w-7 p-0"
                       title="فتح الملف"
                       onClick={() => openCloud(f)}
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </Button>
+                    <ArchiveSendButtons
+                      fileId={f.id}
+                      filename={f.filename}
+                      token={token}
+                      companyName={companyName}
+                      variant="row"
+                    />
                     <Button
                       type="button" size="sm" variant="ghost"
                       className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
@@ -649,5 +689,39 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Split-view trigger — visible whenever archived files exist. */}
+    {badgeCount > 0 && (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 gap-1.5 text-xs"
+        title="عرض المرفقات المؤرشفة بجانب الشاشة (عرض منقسم)"
+        onClick={() => setPanelOpen((v) => !v)}
+        data-testid="button-archive-split-view"
+      >
+        <PanelLeftOpen className="h-3.5 w-3.5 text-primary" />
+        المرفقات ({badgeCount})
+      </Button>
+    )}
+
+    {/* Odoo-style split-screen attachment viewer (portal, left edge). */}
+    <ArchivePreviewPanel
+      open={panelOpen}
+      onClose={() => setPanelOpen(false)}
+      isCloud={isCloud}
+      cloudFiles={cloudFiles}
+      localFiles={archived}
+      token={token ?? null}
+      companyName={companyName}
+      focusCloudId={panelFocusId}
+      onDeleteCloud={(f) => deleteCloud(f as CloudFile)}
+      onDeleteLocal={(f) => {
+        removeArchivedFile(jeKey, f.filename);
+        setArchived(getArchivedFiles(jeKey));
+      }}
+    />
+    </>
   );
 }

@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { and, eq, desc } from "drizzle-orm";
 import { Readable } from "node:stream";
+import crypto from "node:crypto";
 import { db } from "@workspace/db";
 import { documentArchivesTable, companiesTable } from "@workspace/db";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -147,6 +148,99 @@ router.get("/", async (req: Request, res: Response) => {
     )
     .orderBy(desc(documentArchivesTable.createdAt));
   res.json(rows);
+});
+
+// ─── Share links (WhatsApp etc.) ─────────────────────────────────────────────
+// wa.me cannot attach files, so "sending via WhatsApp" means sharing a signed,
+// short-lived download link. The token is an HMAC over `${id}.${exp}` — no DB
+// state, self-expiring, and it can ONLY be minted by an authorised user via
+// POST /:id/share-link (the ACL runs there). The public GET below re-checks
+// tenant "off" mode before streaming.
+// SECURITY: NO hardcoded fallback — a guessable secret would let anyone forge
+// tokens for the PUBLIC /shared/:token route and enumerate archived files.
+// If SESSION_SECRET is absent the feature fails CLOSED (mint → 503, verify →
+// always rejects) instead of crashing the whole server at boot.
+const SHARE_SECRET = process.env.SESSION_SECRET || "";
+const SHARE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function signShareToken(id: number, exp: number): string {
+  const payload = `${id}.${exp}`;
+  const sig = crypto.createHmac("sha256", SHARE_SECRET).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
+}
+
+function verifyShareToken(token: string): number | null {
+  if (!SHARE_SECRET) return null; // fail closed — no secret, no public access
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [idS, expS, sig] = parts;
+  const id = Number(idS);
+  const exp = Number(expS);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(exp)) return null;
+  const expect = crypto.createHmac("sha256", SHARE_SECRET).update(`${idS}.${expS}`).digest("base64url");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  if (Date.now() > exp) return null;
+  return id;
+}
+
+// POST /api/document-archives/:id/share-link — mint a signed public link for
+// an archived file. Full tenant + permission + mode ACL (same as download).
+router.post("/:id/share-link", async (req: Request, res: Response) => {
+  const cid = guard(req, res); if (cid == null) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const [row] = await db
+    .select()
+    .from(documentArchivesTable)
+    .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)));
+  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  const settings = await loadSettings(cid);
+  if (!userAllowed(req, settings)) { res.status(403).json({ error: "ليست لديك صلاحية الوصول للأرشفة" }); return; }
+  if (modeFor(settings, row.screenKey) === "off") { res.status(403).json({ error: "الأرشفة معطّلة لهذه الشاشة" }); return; }
+  if (!SHARE_SECRET) {
+    res.status(503).json({ error: "مشاركة الروابط غير مهيأة على الخادم (SESSION_SECRET مفقود)" });
+    return;
+  }
+  const exp = Date.now() + SHARE_TTL_MS;
+  const token = signShareToken(id, exp);
+  // The frontend builds the absolute URL from its own origin so the link
+  // works for both the dev preview host and the production domain.
+  res.json({ token, path: `/api/document-archives/shared/${token}`, expiresAt: new Date(exp).toISOString() });
+});
+
+// GET /api/document-archives/shared/:token — PUBLIC (no auth): stream the file
+// referenced by a valid, unexpired share token. Registered before /:id/download
+// (Express 5: literal sub-segment first). Re-checks the company "off" switch so
+// disabling archiving also kills previously shared links.
+router.get("/shared/:token", async (req: Request, res: Response) => {
+  const id = verifyShareToken(String(req.params.token ?? ""));
+  if (id == null) { res.status(403).json({ error: "الرابط غير صالح أو منتهي الصلاحية" }); return; }
+  const [row] = await db
+    .select()
+    .from(documentArchivesTable)
+    .where(eq(documentArchivesTable.id, id));
+  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  const settings = await loadSettings(row.companyId);
+  if (modeFor(settings, row.screenKey) === "off") { res.status(403).json({ error: "الأرشفة معطّلة" }); return; }
+  try {
+    const objectFile = await objectStorageService.getObjectEntityFile(row.objectPath);
+    const response = await objectStorageService.downloadObject(objectFile);
+    res.status(response.status);
+    response.headers.forEach((value, key) => res.setHeader(key, value));
+    if (row.contentType) res.setHeader("Content-Type", row.contentType);
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(row.filename)}`);
+    if (response.body) {
+      Readable.fromWeb(response.body as any).pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (error) {
+    if (error instanceof ObjectNotFoundError) { res.status(404).json({ error: "الملف غير موجود في التخزين" }); return; }
+    req.log?.error({ err: error }, "document-archive shared download failed");
+    res.status(500).json({ error: "تعذّر تنزيل الملف" });
+  }
 });
 
 // GET /api/document-archives/:id/download — stream the archived file ONLY after
