@@ -672,6 +672,27 @@ export default function PurchaseOrderForm() {
     });
   }
 
+  // On NEW docs in the tabbed layout, drop the initial pristine seed line:
+  // entry happens via the quick-add bar (which always APPENDS a fresh line),
+  // so the pre-seeded empty row just lingers in the grid. Runs ONCE; a later
+  // flip to the classic layout re-seeds a single editable row. Save paths
+  // are unaffected — they already skip empty rows (filter on itemName).
+  // NOTE: these hooks MUST live ABOVE the loadingEdit early-return below —
+  // hooks after a conditional return change the hook count between the
+  // loading render and the loaded render → React error #310 (prod crash).
+  const seedPrunedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew) return;
+    if (useTabbedLayout) {
+      if (seedPrunedRef.current) return;
+      seedPrunedRef.current = true;
+      setLines(p => (p.length === 1 && !p[0].itemId && !p[0].itemName && !p[0].notes ? [] : p));
+    } else if (lines.length === 0) {
+      addLine();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useTabbedLayout, isNew, lines.length]);
+
   if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">{tr("loadingEdit")}</div>;
 
   const supplierItems = [
@@ -704,24 +725,6 @@ export default function PurchaseOrderForm() {
     tr("lineCols.lineTotal"),
     "",
   ];
-
-  // On NEW docs in the tabbed layout, drop the initial pristine seed line:
-  // entry happens via the quick-add bar (which always APPENDS a fresh line),
-  // so the pre-seeded empty row just lingers in the grid. Runs ONCE; a later
-  // flip to the classic layout re-seeds a single editable row. Save paths
-  // are unaffected — they already skip empty rows (filter on itemName).
-  const seedPrunedRef = useRef(false);
-  useEffect(() => {
-    if (!isNew) return;
-    if (useTabbedLayout) {
-      if (seedPrunedRef.current) return;
-      seedPrunedRef.current = true;
-      setLines(p => (p.length === 1 && !p[0].itemId && !p[0].itemName && !p[0].notes ? [] : p));
-    } else if (lines.length === 0) {
-      addLine();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useTabbedLayout, isNew, lines.length]);
 
   // ── tabbed-shell helpers ───────────────────────────────────────────────
   // Purchase orders are permissive (supplier is optional, "بدون مورد"), so the

@@ -8,7 +8,7 @@ import {
   journalEntriesTable, journalEntryLinesTable,
   accountsTable,
 } from "@workspace/db";
-import { eq, and, desc, inArray, asc } from "drizzle-orm";
+import { eq, and, or, desc, inArray, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
 import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
@@ -210,12 +210,30 @@ router.get("/", async (req, res) => {
   // Branch-Level Data Isolation: respect user scope and accept manager
   // multi-branch filter via ?branchIds=1,2,3 (or legacy ?branchId=).
   const branchScope = multiBranchScopeSpread(req, paymentVouchersTable.branchId, req.query.branchIds ?? req.query.branchId);
+  // Optional ?purchaseInvoiceId= filter (additive): return only vouchers linked
+  // to that invoice — either via the header `purchaseInvoiceId` OR any of the
+  // voucher's allocation lines. Used by the purchase-invoice «السداد» tab.
+  // When the param is absent the query is unchanged. Mirrors the
+  // ?salesInvoiceId= filter on receipt-vouchers.
+  const rawPiId = req.query.purchaseInvoiceId ? parseInt(req.query.purchaseInvoiceId as string) : NaN;
+  const piFilter: any[] = [];
+  if (Number.isInteger(rawPiId) && rawPiId > 0) {
+    const lineVoucherIds = await db
+      .selectDistinct({ voucherId: paymentVoucherLinesTable.voucherId })
+      .from(paymentVoucherLinesTable)
+      .where(eq(paymentVoucherLinesTable.purchaseInvoiceId, rawPiId));
+    const vIds = lineVoucherIds.map((r) => r.voucherId).filter((n): n is number => n != null);
+    const linkOr = vIds.length
+      ? or(eq(paymentVouchersTable.purchaseInvoiceId, rawPiId), inArray(paymentVouchersTable.id, vIds))
+      : eq(paymentVouchersTable.purchaseInvoiceId, rawPiId);
+    piFilter.push(linkOr);
+  }
   const rows = cid
     ? await db.select().from(paymentVouchersTable)
-        .where(and(eq(paymentVouchersTable.companyId, cid), ...branchScope))
+        .where(and(eq(paymentVouchersTable.companyId, cid), ...branchScope, ...piFilter))
         .orderBy(desc(paymentVouchersTable.createdAt))
     : await db.select().from(paymentVouchersTable)
-        .where(branchScope.length ? and(...branchScope) : undefined)
+        .where((branchScope.length || piFilter.length) ? and(...branchScope, ...piFilter) : undefined)
         .orderBy(desc(paymentVouchersTable.createdAt));
   res.json(rows);
 });

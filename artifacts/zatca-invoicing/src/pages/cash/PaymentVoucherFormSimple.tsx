@@ -111,6 +111,28 @@ export default function PaymentVoucherForm() {
   }, [isNew]);
   const sourceId = editId ?? fromId;
 
+  // Query-param prefill (additive): `/cash/payment-vouchers/new?purchaseInvoiceId=..`
+  // seeds the form when arriving from the purchase-invoice «السداد» tab.
+  // Mirrors the salesInvoiceId prefill on the receipt-voucher side. Captured
+  // once on mount; applied by an effect below after suppliers resolve.
+  const prefill = useMemo(() => {
+    if (!isNew) return null;
+    const q = new URLSearchParams(window.location.search);
+    const pi = q.get("purchaseInvoiceId");
+    if (!pi || !/^\d+$/.test(pi)) return null;
+    const num = (v: string | null) => (v && /^\d+$/.test(v) ? v : "");
+    const amt = q.get("amount");
+    return {
+      purchaseInvoiceId: pi,
+      entityId:      num(q.get("entityId")),
+      entityName:    q.get("entityName") ?? "",
+      amount:        amt && !Number.isNaN(Number(amt)) && Number(amt) > 0 ? amt : "",
+      paymentType:   (q.get("paymentType") === "bank" ? "bank" : "cash") as "cash" | "bank",
+      cashBoxId:     num(q.get("cashBoxId")),
+      bankAccountId: num(q.get("bankAccountId")),
+    };
+  }, [isNew]);
+
   const NS = "paymentVouchers";
   const cid = user?.companyId;
   const h = { Authorization: `Bearer ${token}` };
@@ -146,6 +168,33 @@ export default function PaymentVoucherForm() {
     queryFn: () => fetch(`${API}/api/suppliers?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
+
+  // Apply the purchase-invoice prefill exactly once, after suppliers resolve
+  // so the picked supplier's cached name lands in entityName for the JE
+  // preview. Never re-runs (ref-gated) so later manual edits stick.
+  const prefillDone = useRef(false);
+  useEffect(() => {
+    if (!prefill || prefillDone.current) return;
+    // Wait for the supplier list only when we actually need to resolve one.
+    if (prefill.entityId && (suppliers as any[]).length === 0) return;
+    const sup = prefill.entityId
+      ? (suppliers as any[]).find((s: any) => String(s.id) === prefill.entityId)
+      : null;
+    prefillDone.current = true;
+    setEntityMode("party");
+    setLinkInvoice(true);
+    setForm(p => ({
+      ...p,
+      paymentType:   prefill.paymentType,
+      cashBoxId:     prefill.paymentType === "cash" ? prefill.cashBoxId : "",
+      bankAccountId: prefill.paymentType === "bank" ? prefill.bankAccountId : "",
+      entityId:      prefill.entityId,
+      entityName:    prefill.entityName || sup?.nameAr || sup?.nameEn || p.entityName,
+      amount:        prefill.amount || "",
+      purchaseInvoiceId: prefill.purchaseInvoiceId,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, suppliers]);
   // Chart of accounts — feeds the general-account cascade picker.
   const { data: accounts = [] } = useQuery<any[]>({
     queryKey: ["accounts", cid],

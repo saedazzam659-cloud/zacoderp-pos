@@ -29,6 +29,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, ClipboardList, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock, Archive } from "lucide-react";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
+import PurchaseInvoicePaymentsTab from "@/pages/purchasing/PurchaseInvoicePaymentsTab";
 import { DateField } from "@/components/ui/date-field";
 import PurchaseInvoiceDetails from "./PurchaseInvoiceDetails";
 
@@ -126,7 +127,7 @@ export default function PurchaseInvoiceForm() {
   const viewMode = new URLSearchParams(search).get("view") === "1";
   const _co = (user as any)?.company;
   const useTabbedLayout = _co?.invoiceFormLayout !== "classic" || viewMode;
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "details">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "payments" | "archive" | "details">("basic");
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
@@ -828,6 +829,28 @@ export default function PurchaseInvoiceForm() {
     });
   }
 
+  // On NEW docs in the tabbed layout, drop the initial pristine seed line:
+  // entry happens via the quick-add bar (which always APPENDS a fresh line),
+  // so the pre-seeded empty row just lingers in the grid and confuses users.
+  // Runs ONCE; a later flip to the classic layout re-seeds a single editable
+  // row (in-grid entry is the norm there). Save paths are unaffected — they
+  // already skip empty rows (filter on itemName).
+  // NOTE: these hooks MUST live ABOVE the loadingEdit early-return below —
+  // hooks after a conditional return change the hook count between the
+  // loading render and the loaded render → React error #310 (prod crash).
+  const seedPrunedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew) return;
+    if (useTabbedLayout) {
+      if (seedPrunedRef.current) return;
+      seedPrunedRef.current = true;
+      setLines(p => (p.length === 1 && !p[0].itemId && !p[0].itemName && !p[0].notes ? [] : p));
+    } else if (lines.length === 0) {
+      addLine();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useTabbedLayout, isNew, lines.length]);
+
   if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">{tr("loadingEdit")}</div>;
 
   const supplierItems = [
@@ -877,25 +900,6 @@ export default function PurchaseInvoiceForm() {
     "تاريخ الانتهاء",
     "",
   ];
-
-  // On NEW docs in the tabbed layout, drop the initial pristine seed line:
-  // entry happens via the quick-add bar (which always APPENDS a fresh line),
-  // so the pre-seeded empty row just lingers in the grid and confuses users.
-  // Runs ONCE; a later flip to the classic layout re-seeds a single editable
-  // row (in-grid entry is the norm there). Save paths are unaffected — they
-  // already skip empty rows (filter on itemName).
-  const seedPrunedRef = useRef(false);
-  useEffect(() => {
-    if (!isNew) return;
-    if (useTabbedLayout) {
-      if (seedPrunedRef.current) return;
-      seedPrunedRef.current = true;
-      setLines(p => (p.length === 1 && !p[0].itemId && !p[0].itemName && !p[0].notes ? [] : p));
-    } else if (lines.length === 0) {
-      addLine();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useTabbedLayout, isNew, lines.length]);
 
   // ── tabbed-shell helpers ──────────────────────────────────────────────
   const isPosted = !isNew && (existing as any)?.status === "posted";
@@ -1128,6 +1132,9 @@ export default function PurchaseInvoiceForm() {
                   </TabsTrigger>
                   <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <Wallet className="h-3.5 w-3.5" />السداد
                   </TabsTrigger>
                   {editId && (
                     <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
@@ -1813,6 +1820,23 @@ export default function PurchaseInvoiceForm() {
 
           {useTabbedLayout && (
             <>
+            <TabsContent value="payments" className="mt-0">
+              <CardContent className="pt-5 pb-5">
+                <PurchaseInvoicePaymentsTab
+                  invoiceId={editId}
+                  docNumber={docNumber}
+                  companyId={user?.company?.id}
+                  token={token}
+                  supplierId={supplierId}
+                  supplierName={supName((suppliers as any[]).find((s: any) => String(s.id) === String(supplierId))) || ""}
+                  invoiceTotal={totalAmount + totalExpLoaded}
+                  invoiceExchangeRate={Number(exchangeRate) || 1}
+                  paymentType={paymentType}
+                  cashBoxId={cashBoxId}
+                  bankAccountId={bankAccountId}
+                />
+              </CardContent>
+            </TabsContent>
             {editId && (
               <TabsContent value="archive" className="mt-0">
                 <CardContent className="pt-5 pb-5">
