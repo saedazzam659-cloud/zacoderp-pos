@@ -86,13 +86,16 @@ export default function PurchaseInvoicePaymentsTab({
       .reduce((s, r) => s + toDoc(Number(r.totalAmount) || 0, r.exchangeRate), 0);
     const netDue = Math.max(0, total - returns);
     const remaining = Math.max(0, netDue - paid);
+    // Drafts count against the payable balance too (server enforces the same
+    // rule): the CTA may only seed what is left AFTER posted + draft vouchers.
+    const available = Math.max(0, netDue - paid - pending);
     const percent = netDue > 0 ? Math.min(100, (paid / netDue) * 100) : 0;
     const lastPaidDate = postedRows
       .map((v) => String(v.date ?? ""))
       .filter(Boolean)
       .sort()
       .pop() ?? null;
-    return { total, paid, pending, returns, netDue, remaining, percent, count: postedRows.length, lastPaidDate };
+    return { total, paid, pending, returns, netDue, remaining, available, percent, count: postedRows.length, lastPaidDate };
   }, [vouchers, allReturns, invoiceTotal, invoiceExchangeRate, invoiceId]);
 
   // Payment status pill.
@@ -115,8 +118,9 @@ export default function PurchaseInvoicePaymentsTab({
     params.set("purchaseInvoiceId", String(invoiceId));
     if (supplierId) params.set("entityId", supplierId);
     if (supplierName) params.set("entityName", supplierName);
-    // Cap the prefilled amount at the outstanding balance (no overpay seed).
-    if (summary.remaining > 0) params.set("amount", summary.remaining.toFixed(2));
+    // Cap the prefilled amount at the balance left AFTER posted + draft
+    // vouchers (server rejects anything above it).
+    if (summary.available > 0) params.set("amount", summary.available.toFixed(2));
     const pt = paymentType === "bank" ? "bank" : "cash";
     params.set("paymentType", pt);
     if (pt === "cash" && cashBoxId) params.set("cashBoxId", cashBoxId);
@@ -168,8 +172,12 @@ export default function PurchaseInvoicePaymentsTab({
         <Button
           size="sm"
           onClick={openNewVoucher}
-          disabled={summary.remaining <= 0.005}
-          title={summary.remaining <= 0.005 ? "الفاتورة مسدَّدة بالكامل — لا يوجد مبلغ متبقٍّ" : undefined}
+          disabled={summary.available <= 0.005}
+          title={summary.available <= 0.005
+            ? (summary.pending > 0.005
+              ? "قيمة الفاتورة مغطّاة بالكامل بسندات (مرحّلة + مسودّات) — رحّل أو عدّل المسودات أولاً"
+              : "الفاتورة مسدَّدة بالكامل — لا يوجد مبلغ متبقٍّ")
+            : undefined}
           data-testid="btn-pay-supplier"
         >
           <Plus className="h-4 w-4" />

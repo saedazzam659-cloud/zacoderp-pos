@@ -86,8 +86,11 @@ export default function InvoicePaymentsTab({
       .reduce((s, r) => s + toDoc(Number(r.totalAmount) || 0, r.exchangeRate), 0);
     const netDue = Math.max(0, total - returns);
     const remaining = Math.max(0, netDue - collected);
+    // Drafts count against the collectible balance too (server enforces the
+    // same rule): the CTA may only seed what's left AFTER posted + drafts.
+    const available = Math.max(0, netDue - collected - pending);
     const percent = netDue > 0 ? Math.min(100, (collected / netDue) * 100) : 0;
-    return { total, collected, pending, returns, netDue, remaining, percent };
+    return { total, collected, pending, returns, netDue, remaining, available, percent };
   }, [vouchers, allReturns, invoiceTotal, invoiceExchangeRate, invoiceId]);
 
   // Payment status pill.
@@ -110,8 +113,9 @@ export default function InvoicePaymentsTab({
     params.set("salesInvoiceId", String(invoiceId));
     if (customerId) params.set("entityId", customerId);
     if (customerName) params.set("entityName", customerName);
-    // Cap the prefilled amount at the outstanding balance (no overpay seed).
-    if (summary.remaining > 0) params.set("amount", summary.remaining.toFixed(2));
+    // Cap the prefilled amount at the balance left AFTER posted + draft
+    // vouchers (server rejects anything above it).
+    if (summary.available > 0) params.set("amount", summary.available.toFixed(2));
     const pt = paymentType === "bank" ? "bank" : "cash";
     params.set("paymentType", pt);
     if (pt === "cash" && cashBoxId) params.set("cashBoxId", cashBoxId);
@@ -155,8 +159,12 @@ export default function InvoicePaymentsTab({
         <Button
           size="sm"
           onClick={openNewVoucher}
-          disabled={summary.remaining <= 0.005}
-          title={summary.remaining <= 0.005 ? "الفاتورة مسدّدة بالكامل — لا يوجد مبلغ متبقٍّ" : undefined}
+          disabled={summary.available <= 0.005}
+          title={summary.available <= 0.005
+            ? (summary.pending > 0.005
+              ? "قيمة الفاتورة مغطّاة بالكامل بسندات (مرحّلة + مسودّات) — رحّل أو عدّل المسودات أولاً"
+              : "الفاتورة مسدّدة بالكامل — لا يوجد مبلغ متبقٍّ")
+            : undefined}
           data-testid="btn-collect-payment"
         >
           <Plus className="h-4 w-4" />

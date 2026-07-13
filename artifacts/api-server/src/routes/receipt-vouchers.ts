@@ -5,6 +5,7 @@ import {
   cashBoxesTable, bankAccountsTable,
   customersTable,
   salesInvoicesTable,
+  salesReturnsTable,
   journalEntriesTable, journalEntryLinesTable,
   accountsTable,
 } from "@workspace/db";
@@ -318,6 +319,94 @@ async function validateSalesInvoiceLink(cid: number, salesInvoiceId: number, cus
   }
 }
 
+// Overpayment guard — BUSINESS RULE (explicit user decision): DRAFT vouchers
+// count too. The sum of ALL receipt vouchers linked to a sales invoice
+// (draft + posted, header-linked or line-linked) plus the allocation being
+// saved must never exceed the invoice's net due (invoice total − linked
+// returns). Compared in BASE currency (amount × exchangeRate) so mixed
+// currencies stay consistent. `excludeVoucherId` skips the voucher being
+// updated (PUT) so its own old amount doesn't block the edit.
+async function assertNoSalesOvercollection(
+  cid: number,
+  voucherRate: number,
+  lines: RawRvLine[] | null,
+  headerInvoiceId: number | null,
+  headerAmount: number | null, // used only when the voucher has no lines
+  excludeVoucherId: number | null,
+): Promise<void> {
+  // Allocation this request adds, in base currency, per linked invoice.
+  const add = new Map<number, number>();
+  if (lines) {
+    for (const l of lines) {
+      if (!l.salesInvoiceId) continue;
+      add.set(l.salesInvoiceId, (add.get(l.salesInvoiceId) ?? 0) + l.amount * voucherRate);
+    }
+    // Bypass guard: a header link with NO matching line allocation still
+    // settles that invoice — count the whole voucher against it (mirrors how
+    // existing header-linked vouchers without line rows are summed below).
+    if (headerInvoiceId && !add.has(headerInvoiceId)) {
+      const total = lines.reduce((s, l) => s + l.amount, 0);
+      if (total > 0) add.set(headerInvoiceId, total * voucherRate);
+    }
+  } else if (headerInvoiceId && headerAmount && headerAmount > 0) {
+    add.set(headerInvoiceId, headerAmount * voucherRate);
+  }
+  for (const [invId, addBase] of add) {
+    const [inv] = await db.select({
+      total: salesInvoicesTable.totalAmount,
+      rate:  salesInvoicesTable.exchangeRate,
+    }).from(salesInvoicesTable)
+      .where(and(eq(salesInvoicesTable.id, invId), eq(salesInvoicesTable.companyId, cid)));
+    if (!inv) throw new Error("الفاتورة المرتبطة غير موجودة");
+    const invBase = (parseFloat(String(inv.total)) || 0) * (parseFloat(String(inv.rate)) || 1);
+    const rets = await db.select({
+      total: salesReturnsTable.totalAmount,
+      rate:  salesReturnsTable.exchangeRate,
+    }).from(salesReturnsTable)
+      .where(and(eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.invoiceId, invId)));
+    const retBase = rets.reduce((s, r) => s + (parseFloat(String(r.total)) || 0) * (parseFloat(String(r.rate)) || 1), 0);
+    const netDue = Math.max(0, invBase - retBase);
+
+    // Existing line-linked allocations (multi-form vouchers).
+    const lineRows = await db.select({
+      voucherId: receiptVoucherLinesTable.voucherId,
+      amount:    receiptVoucherLinesTable.amount,
+      vRate:     receiptVouchersTable.exchangeRate,
+    }).from(receiptVoucherLinesTable)
+      .innerJoin(receiptVouchersTable, eq(receiptVoucherLinesTable.voucherId, receiptVouchersTable.id))
+      .where(and(
+        eq(receiptVouchersTable.companyId, cid),
+        eq(receiptVoucherLinesTable.salesInvoiceId, invId),
+      ));
+    const lineLinked = new Set(lineRows.map((r) => r.voucherId));
+    let existing = 0;
+    for (const r of lineRows) {
+      if (excludeVoucherId && r.voucherId === excludeVoucherId) continue;
+      existing += (parseFloat(String(r.amount)) || 0) * (parseFloat(String(r.vRate)) || 1);
+    }
+    // Plus header-linked vouchers with NO line rows for this invoice
+    // (simple-form vouchers); line-carrying vouchers were counted above.
+    const headerRows = await db.select({
+      id:     receiptVouchersTable.id,
+      amount: receiptVouchersTable.amount,
+      vRate:  receiptVouchersTable.exchangeRate,
+    }).from(receiptVouchersTable)
+      .where(and(eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.salesInvoiceId, invId)));
+    for (const v of headerRows) {
+      if (excludeVoucherId && v.id === excludeVoucherId) continue;
+      if (lineLinked.has(v.id)) continue;
+      existing += (parseFloat(String(v.amount)) || 0) * (parseFloat(String(v.vRate)) || 1);
+    }
+
+    const remaining = netDue - existing;
+    if (addBase > remaining + 0.01) {
+      throw new Error(
+        `لا يمكن حفظ السند: إجمالي التحصيل يتجاوز قيمة الفاتورة المرتبطة. المتبقي المسموح ${Math.max(0, remaining).toFixed(2)} فقط (تُحتسب السندات المسودة المرتبطة ضمن التحصيل)`
+      );
+    }
+  }
+}
+
 router.post("/", async (req, res) => {
   const d = req.body;
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
@@ -339,6 +428,19 @@ router.post("/", async (req, res) => {
   if (headerSalesInvoiceId) {
     try { await validateSalesInvoiceLink(cid, headerSalesInvoiceId, entityId); }
     catch (e: any) { res.status(400).json({ error: e?.message || "فاتورة غير صالحة" }); return; }
+  }
+  // Overcollection guard BEFORE consuming a sequence number (no gap on reject).
+  if (salesInvoiceId) {
+    try {
+      await assertNoSalesOvercollection(
+        cid,
+        parseFloat(d.exchangeRate || "1") || 1,
+        lines,
+        headerSalesInvoiceId,
+        lines ? null : (parseFloat(d.amount || "0") || 0),
+        null,
+      );
+    } catch (e: any) { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return; }
   }
   const headerAmount = lines ? receiptLinesTotal(lines).toFixed(2) : (d.amount || "0");
 
@@ -422,6 +524,19 @@ router.put("/:id", async (req, res) => {
   if (headerSalesInvoiceId) {
     try { await validateSalesInvoiceLink(existing.companyId, headerSalesInvoiceId, entityId); }
     catch (e: any) { res.status(400).json({ error: e?.message || "فاتورة غير صالحة" }); return; }
+  }
+  // Overcollection guard — exclude THIS voucher's old amounts (being replaced).
+  if (salesInvoiceId) {
+    try {
+      await assertNoSalesOvercollection(
+        cid,
+        parseFloat(d.exchangeRate || "1") || 1,
+        lines,
+        headerSalesInvoiceId,
+        lines ? null : (parseFloat(d.amount || "0") || 0),
+        id,
+      );
+    } catch (e: any) { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return; }
   }
   // When `lines` is present, header amount is derived from them; a legacy
   // caller (no `lines`) keeps sending its own `amount`.
