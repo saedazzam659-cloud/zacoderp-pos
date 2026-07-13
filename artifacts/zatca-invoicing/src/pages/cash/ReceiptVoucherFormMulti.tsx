@@ -931,7 +931,7 @@ export default function ReceiptVoucherFormMulti() {
                         );
                       })()}
                     </Label>
-                    <Input type="number" step="0.000001" value={form.exchangeRate} onChange={e => { if (!fp.isReadOnly("exchangeRate")) setForm(p => ({ ...p, exchangeRate: e.target.value })); }} readOnly={fp.isReadOnly("exchangeRate")} placeholder="1" dir="ltr" className={cn("h-9 text-sm text-left font-mono", fp.isReadOnly("exchangeRate") && "bg-muted/40 cursor-not-allowed")} />
+                    <Input type="text" inputMode="decimal" value={form.exchangeRate} onChange={e => { if (!fp.isReadOnly("exchangeRate")) setForm(p => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") })); }} readOnly={fp.isReadOnly("exchangeRate")} placeholder="1" dir="ltr" className={cn("h-9 text-sm text-left font-mono", fp.isReadOnly("exchangeRate") && "bg-muted/40 cursor-not-allowed")} />
                     {(() => {
                       const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
                       const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
@@ -1122,9 +1122,9 @@ export default function ReceiptVoucherFormMulti() {
                       <div className="space-y-1.5 rounded-lg bg-background/70 border border-green-100 p-3 md:p-4">
                         <Label className="text-sm font-semibold">{t(`${NS}.colAmount`, "المبلغ")} <span className="text-destructive">*</span></Label>
                         <Input
-                          type="number" step="0.01" placeholder="0.00" dir="ltr"
+                          type="text" inputMode="decimal" placeholder="0.00" dir="ltr"
                           value={l.amount}
-                          onChange={e => updateLine(l.key, { amount: e.target.value })}
+                          onChange={e => updateLine(l.key, { amount: e.target.value.replace(/[^0-9.]/g, "") })}
                           onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
                           className="h-14 text-lg text-left font-mono font-semibold"
                           data-testid={`rv-line-amount-${idx}`}

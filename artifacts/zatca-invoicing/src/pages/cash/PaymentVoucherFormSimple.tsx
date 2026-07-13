@@ -781,7 +781,7 @@ export default function PaymentVoucherForm() {
                         );
                       })()}
                     </Label>
-                    <Input type="number" step="0.000001" value={form.exchangeRate} onChange={e => setForm(p => ({ ...p, exchangeRate: e.target.value }))} placeholder="1" dir="ltr" className="h-9 text-sm text-left font-mono" />
+                    <Input type="text" inputMode="decimal" value={form.exchangeRate} onChange={e => setForm(p => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} placeholder="1" dir="ltr" className="h-9 text-sm text-left font-mono" />
                     {(() => {
                       const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
                       const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
@@ -957,9 +957,9 @@ export default function PaymentVoucherForm() {
                   <div className="relative">
                     <Banknote className={cn("h-5 w-5 absolute top-1/2 -translate-y-1/2 text-red-600 pointer-events-none", isRtl ? "right-3" : "left-3")} />
                     <Input
-                      type="number" step="0.01" placeholder="0.00"
+                      type="text" inputMode="decimal" placeholder="0.00"
                       value={form.amount}
-                      onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
+                      onChange={e => setForm(p => ({ ...p, amount: e.target.value.replace(/[^0-9.]/g, "") }))}
                       onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
                       dir="ltr"
                       data-testid="pv-amount"

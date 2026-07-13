@@ -934,7 +934,7 @@ export default function PaymentVoucherForm() {
                         );
                       })()}
                     </Label>
-                    <Input type="number" step="0.000001" value={form.exchangeRate} onChange={e => setForm(p => ({ ...p, exchangeRate: e.target.value }))} placeholder="1" dir="ltr" className="h-9 text-sm text-left font-mono" />
+                    <Input type="text" inputMode="decimal" value={form.exchangeRate} onChange={e => setForm(p => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} placeholder="1" dir="ltr" className="h-9 text-sm text-left font-mono" />
                     {(() => {
                       const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
                       const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
@@ -1094,9 +1094,9 @@ export default function PaymentVoucherForm() {
                               emptyText={t(`${NS}.noAccounts`, "لا توجد حسابات")}
                             />
                             <Input
-                              type="number" step="0.01" placeholder="0.00" dir="ltr"
+                              type="text" inputMode="decimal" placeholder="0.00" dir="ltr"
                               value={l.amount}
-                              onChange={e => updateLine(l.key, { amount: e.target.value })}
+                              onChange={e => updateLine(l.key, { amount: e.target.value.replace(/[^0-9.]/g, "") })}
                               onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
                               className="h-8 text-sm text-left font-mono"
                               data-testid={`pv-line-amount-${idx}`}
@@ -1140,9 +1140,9 @@ export default function PaymentVoucherForm() {
                                     {t(`${NS}.taxAdded`, "ضريبة القيمة المضافة")} ({l.taxRate || "15"}%)
                                   </span>
                                   <Input
-                                    type="number" step="0.01" placeholder="0.00" dir="ltr"
+                                    type="text" inputMode="decimal" placeholder="0.00" dir="ltr"
                                     value={l.taxAmount}
-                                    onChange={e => updateLine(l.key, { taxAmount: e.target.value })}
+                                    onChange={e => updateLine(l.key, { taxAmount: e.target.value.replace(/[^0-9.]/g, "") })}
                                     onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
                                     className="h-7 w-28 text-xs text-left font-mono"
                                     data-testid={`pv-line-tax-amount-${idx}`}

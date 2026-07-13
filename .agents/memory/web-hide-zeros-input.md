@@ -24,6 +24,12 @@ LINE zeros stay visible while the rest of the app hides them. (Route note:
 inputs individually is error-prone; a single shared-component hook is uniform and
 reversible via the toggle.
 
+**Typing must un-blank (critical):** the zero-blank must STOP as soon as the user
+types during the current focus session (`typedSinceFocus` state: reset on focus, set
+in onChange). Otherwise typing "0" on the way to "0.58" is swallowed → value ends up
+".58". An untouched zero field stays blank on focus (no clearing needed) — only a
+typed zero shows.
+
 **How to keep it display-only (critical invariant):**
 - Blank ONLY a *controlled* input: `value !== undefined && typeof onChange === "function"`.
   Controlled inputs submit from parent React state (which still holds 0), so blanking

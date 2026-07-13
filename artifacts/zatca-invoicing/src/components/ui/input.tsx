@@ -61,6 +61,12 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
     // can type decimals freely ("10.0" must not collapse to "10" mid-edit).
     // The trailing-zero trim only applies once the field is at rest (blurred).
     const [focused, setFocused] = React.useState(false);
+    // Whether the user has TYPED into the field during the current focus
+    // session. Hide-zeros must stop blanking as soon as the user types —
+    // otherwise typing "0" (on the way to "0.58") is swallowed and the value
+    // ends up as ".58". On focus the flag resets, so an untouched zero field
+    // still shows blank (typing over it needs no clearing).
+    const [typedSinceFocus, setTypedSinceFocus] = React.useState(false);
 
     let displayValue = value;
     let displayPlaceholder = placeholder;
@@ -89,7 +95,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
       (type === undefined || type === "text") &&
       (props as any)["data-no-group"] == null;
     if (isNumericField && isControlled) {
-      if (!showZeros && isZeroValue(value)) {
+      if (!showZeros && isZeroValue(value) && !(focused && typedSinceFocus)) {
         displayValue = "";
         // Faint "0" hint (placeholder:text-muted-foreground in the class list).
         if (displayPlaceholder == null) displayPlaceholder = "0";
@@ -107,12 +113,15 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
     // Caret is remembered as "non-comma chars before caret" and restored
     // after the grouped repaint below.
     const parentOnChange = props.onChange;
-    const handleChange = !isGroupable ? parentOnChange : (e: React.ChangeEvent<HTMLInputElement>) => {
-      const el = e.target;
-      const typed = el.value;
-      const caret = el.selectionStart ?? typed.length;
-      caretRef.current = typed.slice(0, caret).replace(/,/g, "").length;
-      if (typed.includes(",")) el.value = typed.replace(/,/g, "");
+    const handleChange = !isControlled ? parentOnChange : (e: React.ChangeEvent<HTMLInputElement>) => {
+      setTypedSinceFocus(true);
+      if (isGroupable) {
+        const el = e.target;
+        const typed = el.value;
+        const caret = el.selectionStart ?? typed.length;
+        caretRef.current = typed.slice(0, caret).replace(/,/g, "").length;
+        if (typed.includes(",")) el.value = typed.replace(/,/g, "");
+      }
       parentOnChange?.(e);
     };
 
@@ -147,7 +156,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
           className
         )}
         ref={setRefs}
-        onFocus={(e) => { setFocused(true); onFocus?.(e); }}
+        onFocus={(e) => { setFocused(true); setTypedSinceFocus(false); onFocus?.(e); }}
         onBlur={(e) => { setFocused(false); onBlur?.(e); }}
         {...props}
         onChange={handleChange}
