@@ -861,6 +861,13 @@ export default function PurchaseReturns() {
     "",
   ];
 
+  // Gate the items tab until the mandatory header fields are filled — mirrors
+  // SalesDocumentForm's basicFieldsValid. Existing docs (edit/view) already
+  // passed save validation, so they are never locked out of their lines.
+  const basicFieldsValid =
+    editingId != null || viewMode ||
+    (!!form.supplierId && !!form.branchId && !!form.returnDate);
+
   // ── "إضافة صنف" quick-entry bar (tabbed items tab) ────────────────────
   // Same design as the sales-invoice items tab: pick item → commit. The item
   // picker auto-fills the accurate cost/unit/VAT on commit (handleQuickAdd →
@@ -1467,7 +1474,7 @@ ${sections}
           subtitle={form.invoiceId
             ? <>{tr("fromInvoiceHint")} <span className="font-mono text-orange-600">{invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}</span> {tr("fromInvoiceTail")}</>
             : tr("createSubtitle")}
-          width="6xl"
+          width="7xl"
           onClose={reset}
           onSave={viewMode ? undefined : () => handleSubmit({ preventDefault() {} } as any)}
           saving={saveMut.isPending}
@@ -1486,7 +1493,7 @@ ${sections}
               <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <FileText className="h-3.5 w-3.5" />{tr("headerData")}
               </TabsTrigger>
-              <TabsTrigger value="items" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <ListOrdered className="h-3.5 w-3.5" />{tr("linesTitle")}
               </TabsTrigger>
               <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
@@ -1778,8 +1785,13 @@ ${sections}
             </fieldset>
 
             {useTabbedLayout && !viewMode && (
-              <div className="flex justify-end pt-2">
-                <Button type="button" size="sm" className="gap-1.5" onClick={() => setActiveTab("items")}>
+              <div className="border-t pt-4 mt-2 flex items-center justify-between gap-3">
+                <p className="text-[11px] text-muted-foreground">
+                  {basicFieldsValid
+                    ? "اكتملت البيانات الأساسية — انتقل إلى الأصناف."
+                    : "أكمل الحقول الأساسية المطلوبة (المورد، الفرع، التاريخ) للمتابعة."}
+                </p>
+                <Button type="button" size="sm" className="gap-1.5" onClick={() => setActiveTab("items")} disabled={!basicFieldsValid} data-testid="button-next-to-items">
                   {tr("linesTitle")} <ListOrdered className="h-4 w-4" />
                 </Button>
               </div>
@@ -1803,7 +1815,7 @@ ${sections}
               </div>
               {useTabbedLayout && !viewMode && quickAddBar}
               {(() => {
-                const GRID_COLS_PR = "38px 100px minmax(220px,1.3fr) 130px 100px 70px 70px 100px 75px 70px 120px 34px";
+                const GRID_COLS_PR = "38px 80px minmax(160px,1.3fr) 118px 100px 64px 64px 98px 74px 64px 108px 34px";
                 const addGridLine = () => {
                   const nl = newLine();
                   const r = percentRateOf(headerTaxId);
