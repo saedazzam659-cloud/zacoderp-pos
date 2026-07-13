@@ -872,6 +872,30 @@ export default function PurchaseReturns() {
           <Plus className="h-4 w-4" />
           <span>إضافة صنف</span>
         </div>
+        {/* Compact ‹السعر شامل الضريبة› toggle — mirrors the sales invoice
+            items tab: lives at the top beside the quick-add title. */}
+        <label
+          data-testid="price-includes-vat-toggle"
+          className={cn(
+            "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs cursor-pointer select-none transition-colors",
+            priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+          )}
+          title={priceIncludesVat ? (tr("vatHintIncl") as string) : (tr("vatHintExcl") as string)}
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary cursor-pointer"
+            checked={priceIncludesVat}
+            onChange={e => {
+              setForm((p: any) => ({ ...p, priceIncludesVat: e.target.checked }));
+              stickyPriceIncl.persist(e.target.checked);
+            }}
+          />
+          <span className="font-semibold whitespace-nowrap">{tr("priceIncludesVat")}</span>
+          <span className={cn("px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+            {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
+          </span>
+        </label>
       </div>
       <div
         ref={quickAddRef}
@@ -1899,6 +1923,44 @@ ${sections}
             </div>
 
             {/* Totals */}
+            {useTabbedLayout ? (
+            /* Compact single-strip totals — mirrors the sales invoice items
+               tab. The VAT toggle lives at the top of the tab (quickAddBar),
+               so it is intentionally absent here. */
+            <div className="mt-3 rounded-xl border bg-muted/30 px-4 py-2.5">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+                  {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
+                </span>
+                <div className="flex items-center gap-1.5 ms-auto">
+                  <span className="text-muted-foreground text-xs">{tr("subtotalIncl")}</span>
+                  <span className="font-mono">{fmt(grossTotal)}</span>
+                </div>
+                {lineDiscountTotal > 0 && (
+                  <div className="flex items-center gap-1.5" data-testid="line-discount-total">
+                    <span className="text-muted-foreground text-xs">{tr("itemDiscount")}</span>
+                    <span className="font-mono text-rose-700">−{fmt(lineDiscountTotal)}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground text-xs">{tr("vatAmount")}</span>
+                  <span className="font-mono text-amber-700">{fmt(vatAmount)}</span>
+                </div>
+                <div className="min-w-[210px]">
+                  <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} currencySymbol={currencySymbol(form.currencyCode, currencies)} />
+                </div>
+                <div className="flex items-center gap-1.5 border-s ps-4">
+                  <span className="font-semibold text-xs">{priceIncludesVat ? tr("totalIncl") : tr("totalLabel")}</span>
+                  <span className="font-mono text-base font-bold text-primary">{fmt(totalAmount)}</span>
+                </div>
+              </div>
+              {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(form.exchangeRate) > 0 && (
+                <p className="mt-1 text-[10px] text-muted-foreground text-end">
+                  {tr("equivIn")} {defaultCurrency?.code}: {fmt(totalAmount * Number(form.exchangeRate))}
+                </p>
+              )}
+            </div>
+            ) : (
             <div className="mt-5 flex flex-wrap justify-between gap-4">
               <label
                 data-testid="price-includes-vat-toggle"
@@ -1957,6 +2019,7 @@ ${sections}
                 )}
               </div>
             </div>
+            )}
             </fieldset>
             </TabsContent>
 

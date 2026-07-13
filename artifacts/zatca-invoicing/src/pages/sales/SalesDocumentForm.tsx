@@ -3025,8 +3025,40 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
-            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
-              <p className="text-[11px] text-muted-foreground">
+            {/* Tab chips FIRST (inline-start): RTL Arabic → tabs start from the
+                right; LTR English → from the left. flex-nowrap + shrink-0 keep
+                every chip on ONE line; the hint text truncates instead. */}
+            <div className="flex items-center justify-between gap-3 flex-nowrap px-4 py-2 border-b bg-muted/20">
+              {useTabbedLayout ? (
+                <TabsList className="h-8 bg-background border gap-1 shrink-0">
+                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
+                  </TabsTrigger>
+                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  {isInvoice && (
+                    <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Wallet className="h-3.5 w-3.5" />المدفوعات
+                    </TabsTrigger>
+                  )}
+                  {isInvoice && editId && (
+                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Archive className="h-3.5 w-3.5" />أرشفة
+                    </TabsTrigger>
+                  )}
+                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                  </TabsTrigger>
+                </TabsList>
+              ) : (
+                <TabsList className="h-8 bg-background border gap-1 shrink-0">
+                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
+                  </TabsTrigger>
+                </TabsList>
+              )}
+              <p className="flex-1 min-w-0 text-[11px] text-muted-foreground truncate text-end">
                 {!useTabbedLayout
                   ? t("salesDocForm.headerHint")
                   : activeTab === "items"
@@ -3035,35 +3067,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       ? "تفاصيل العمليات الناتجة عن هذا المستند"
                       : t("salesDocForm.headerHint")}
               </p>
-              {useTabbedLayout ? (
-                <TabsList className="h-8 bg-background border gap-1">
-                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
-                  </TabsTrigger>
-                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
-                  </TabsTrigger>
-                  {isInvoice && (
-                    <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      <Wallet className="h-3.5 w-3.5" />المدفوعات
-                    </TabsTrigger>
-                  )}
-                  {isInvoice && editId && (
-                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      <Archive className="h-3.5 w-3.5" />أرشفة
-                    </TabsTrigger>
-                  )}
-                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
-                  </TabsTrigger>
-                </TabsList>
-              ) : (
-                <TabsList className="h-8 bg-background border gap-1">
-                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
-                  </TabsTrigger>
-                </TabsList>
-              )}
             </div>
           </CardHeader>
 
