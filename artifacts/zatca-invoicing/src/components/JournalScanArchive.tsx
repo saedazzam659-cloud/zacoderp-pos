@@ -31,8 +31,11 @@ import { jsPDF } from "jspdf";
 import {
   Camera, Upload, FolderOpen, Trash2, FileText, Image as ImageIcon,
   Paperclip, CheckCircle2, AlertCircle, ScanLine, X, ExternalLink, RefreshCw, Save,
-  Cloud, PanelLeftOpen,
+  Cloud, PanelLeftOpen, Download, Printer,
 } from "lucide-react";
+import {
+  agentHealth, agentDevices, agentScan, dataUrlToFile, type ScannerDevice,
+} from "@/lib/scanAgent";
 import {
   isFsAccessSupported, pickArchiveFolder, getArchiveFolder, clearArchiveFolder,
   saveToArchive, recordArchivedFile, getArchivedFiles, removeArchivedFile,
@@ -140,7 +143,34 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
   const [archived, setArchived] = useState<ArchivedFileMeta[]>([]);
   const [cloudFiles, setCloudFiles] = useState<CloudFile[]>([]);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState<"upload" | "camera">("upload");
+  const [tab, setTab] = useState<"upload" | "camera" | "scanner">("upload");
+
+  // ─── Scanner (local scan-agent) state ────────────────────────────────────
+  const [agentOk, setAgentOk] = useState<boolean | null>(null); // null = checking
+  const [scanDevices, setScanDevices] = useState<ScannerDevice[]>([]);
+  const [scanDeviceId, setScanDeviceId] = useState<string>("");
+  const [scanDpi, setScanDpi] = useState<number>(200);
+  const [scanColor, setScanColor] = useState<1 | 2>(1);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  const checkAgent = useCallback(async () => {
+    setAgentOk(null);
+    setScanError(null);
+    const ok = await agentHealth();
+    setAgentOk(ok);
+    if (ok) {
+      try {
+        const devs = await agentDevices();
+        setScanDevices(devs);
+        setScanDeviceId((prev) => prev || devs[0]?.id || "");
+        if (devs.length === 0) setScanError("الوكيل شغّال لكن لا يوجد ماسح ضوئي معرّف على الجهاز");
+      } catch (e: any) {
+        setScanDevices([]);
+        setScanError(e?.message ?? "تعذّر قراءة قائمة الماسحات");
+      }
+    }
+  }, []);
 
   // ─── Odoo-style split-screen preview panel ───────────────────────────────
   // Auto-opens ONCE per document when previously-archived files exist, so the
@@ -287,6 +317,32 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
     return () => stopCamera();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, open]);
+
+  // Check the local scan agent whenever the scanner tab is shown.
+  useEffect(() => {
+    if (tab === "scanner" && open) checkAgent();
+  }, [tab, open, checkAgent]);
+
+  async function scanPage() {
+    setScanning(true);
+    setScanError(null);
+    try {
+      const dataUrl = await agentScan({ deviceId: scanDeviceId || null, dpi: scanDpi, color: scanColor });
+      // Route through the SAME pipeline as camera/file pages (compression + PDF).
+      const file = dataUrlToFile(dataUrl, `scan_${Date.now()}.jpg`);
+      const { dataUrl: compressed, bytes } = await fileToCompressedDataUrl(file);
+      setPages((p) => [...p, { id: crypto.randomUUID(), dataUrl: compressed, bytes }]);
+      toast({ title: "تم سحب الصفحة من الماسح", description: `إجمالي الصفحات: ${pages.length + 1}` });
+    } catch (e: any) {
+      const msg = e?.name === "AbortError"
+        ? "انتهت مهلة المسح — تأكد أن الماسح موصّل وجاهز"
+        : (e?.message ?? "فشل المسح الضوئي");
+      setScanError(msg);
+      toast({ title: "تعذّر المسح الضوئي", description: msg, variant: "destructive" });
+    } finally {
+      setScanning(false);
+    }
+  }
 
   async function captureFromCamera() {
     const video = videoRef.current;
@@ -484,12 +540,15 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
         )}
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="mt-3">
-          <TabsList className="grid grid-cols-2 w-full">
+          <TabsList className="grid grid-cols-3 w-full">
             <TabsTrigger value="upload" className="gap-1.5">
               <Upload className="h-4 w-4" />ملفات / صور
             </TabsTrigger>
             <TabsTrigger value="camera" className="gap-1.5">
               <Camera className="h-4 w-4" />كاميرا
+            </TabsTrigger>
+            <TabsTrigger value="scanner" className="gap-1.5" data-testid="tab-scanner">
+              <ScanLine className="h-4 w-4" />ماسح ضوئي
             </TabsTrigger>
           </TabsList>
 
@@ -537,6 +596,129 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
             >
               <Camera className="h-4 w-4" />التقط صفحة
             </Button>
+          </TabsContent>
+
+          {/* ── Tab 3: local scanner (via Zacode Scan Agent) ─────────── */}
+          <TabsContent value="scanner" className="mt-3 space-y-3">
+            {agentOk === null && (
+              <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+                <RefreshCw className="h-6 w-6 mx-auto animate-spin mb-2" />
+                جاري البحث عن وكيل المسح على جهازك…
+              </div>
+            )}
+
+            {agentOk === false && (
+              <div className="rounded-lg border-2 border-amber-300 bg-amber-50/50 p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <div className="font-semibold mb-1">وكيل المسح غير شغّال على هذا الجهاز</div>
+                    <div className="text-xs text-muted-foreground leading-relaxed">
+                      المتصفح لا يستطيع الوصول للماسح الضوئي مباشرةً (قيود أمنية في كل المتصفحات).
+                      حمّل «وكيل المسح» — ملف واحد صغير يعمل مع أي ماسح ضوئي معرّف على ويندوز:
+                    </div>
+                    <ol className="text-xs text-muted-foreground mt-2 mr-4 list-decimal space-y-1">
+                      <li>اضغط زر التحميل بالأسفل</li>
+                      <li>شغّل الملف بنقرة مزدوجة واترك نافذته مفتوحة</li>
+                      <li>ارجع هنا واضغط «إعادة الفحص»</li>
+                      <li>اختياري: شغّله مرة بالأمر <span dir="ltr" className="font-mono">ZacodeScanAgent.bat install</span> ليعمل تلقائياً مع بدء ويندوز</li>
+                    </ol>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <a
+                    href={`${API}/scan-agent/ZacodeScanAgent.bat`}
+                    download="ZacodeScanAgent.bat"
+                    className="flex-1"
+                    data-testid="link-download-scan-agent"
+                  >
+                    <Button type="button" className="w-full gap-2" variant="default">
+                      <Download className="h-4 w-4" />تحميل وكيل المسح
+                    </Button>
+                  </a>
+                  <Button type="button" variant="outline" onClick={checkAgent} className="gap-2" data-testid="button-recheck-agent">
+                    <RefreshCw className="h-4 w-4" />إعادة الفحص
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {agentOk === true && (
+              <div className="space-y-3">
+                <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/50 p-3 flex items-center gap-2 text-sm">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  <span className="text-xs">وكيل المسح متصل</span>
+                  <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 mr-auto" title="تحديث قائمة الماسحات" onClick={checkAgent}>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+
+                {scanDevices.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="sm:col-span-3">
+                      <Label className="text-xs mb-1 block">الماسح الضوئي</Label>
+                      <select
+                        className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+                        value={scanDeviceId}
+                        onChange={(e) => setScanDeviceId(e.target.value)}
+                        data-testid="select-scanner-device"
+                      >
+                        {scanDevices.map((d) => (
+                          <option key={d.id} value={d.id}>{d.name || d.id}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <Label className="text-xs mb-1 block">الدقة (DPI)</Label>
+                      <select
+                        className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+                        value={scanDpi}
+                        onChange={(e) => setScanDpi(Number(e.target.value))}
+                      >
+                        <option value={150}>150 — سريع</option>
+                        <option value={200}>200 — قياسي</option>
+                        <option value={300}>300 — عالي</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label className="text-xs mb-1 block">الألوان</Label>
+                      <select
+                        className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+                        value={scanColor}
+                        onChange={(e) => setScanColor(Number(e.target.value) as 1 | 2)}
+                      >
+                        <option value={1}>ملوّن</option>
+                        <option value={2}>رمادي</option>
+                      </select>
+                    </div>
+                    <div className="flex items-end">
+                      <Button
+                        type="button"
+                        onClick={scanPage}
+                        disabled={scanning}
+                        className="w-full gap-2"
+                        data-testid="button-scan-page"
+                      >
+                        {scanning
+                          ? <><RefreshCw className="h-4 w-4 animate-spin" />جاري المسح…</>
+                          : <><Printer className="h-4 w-4" />امسح صفحة</>}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {scanError && (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2.5 text-xs text-destructive flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>{scanError}</span>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-muted-foreground">
+                  كل صفحة تُسحب تُضاف لقائمة «صفحات قيد التحضير» بالأسفل — امسح كل الصفحات ثم اضغط «احفظ كملف PDF».
+                </p>
+              </div>
+            )}
           </TabsContent>
         </Tabs>
 
