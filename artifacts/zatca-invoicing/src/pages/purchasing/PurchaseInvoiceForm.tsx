@@ -168,6 +168,21 @@ export default function PurchaseInvoiceForm() {
     setFocusLineId(l._id);
   };
   useEnterNavContainer({ onAppend: () => addLine() });
+  // ── "إضافة صنف" quick-add bar state (tabbed items tab) ────────────────
+  // Same design as SalesDocumentForm: pick item → warehouse/unit → qty/free/
+  // price/discount → commit. Discount here is PERCENT-only (purchase lines
+  // have no fixed-amount discount field — no calc-path change).
+  const [qaItemId, setQaItemId]           = useState("");
+  const [qaWarehouseId, setQaWarehouseId] = useState("");
+  const [qaUnitId, setQaUnitId]           = useState("");
+  const [qaQty, setQaQty]                 = useState("1");
+  const [qaFreeQty, setQaFreeQty]         = useState("0");
+  const [qaPrice, setQaPrice]             = useState("");
+  const [qaDiscount, setQaDiscount]       = useState("0");
+  const quickAddRef = useRef<HTMLDivElement>(null);
+  const focusQuickAddStart = () => {
+    quickAddRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+  };
   const { containerRef, onKeyDown } = useEnterNavigation(() => handleSave());
   const docNumberRef = useRef<HTMLInputElement>(null);
 
@@ -437,7 +452,7 @@ export default function PurchaseInvoiceForm() {
       batchNumber: l.batchNumber ?? "",
       expiryDate:  l.expiryDate  ?? "",
       notes:       l.notes ?? "",
-    })) : [newLine()]);
+    })) : (useTabbedLayout ? [] : [newLine()]));
   }, [existing]);
 
   const duplicatedRef = useRef(false);
@@ -493,7 +508,7 @@ export default function PurchaseInvoiceForm() {
           batchNumber: l.batchNumber ?? "",
           expiryDate:  l.expiryDate  ?? "",
           notes:       l.notes ?? "",
-        })) : [newLine()]);
+        })) : (useTabbedLayout ? [] : [newLine()]));
         toast({ title: tr("duplicated") });
         const url = new URL(window.location.href);
         url.searchParams.delete("from");
@@ -528,6 +543,21 @@ export default function PurchaseInvoiceForm() {
     setItemUnitsMap(prev => ({ ...prev, [itemId]: rows }));
     return rows;
   }
+
+  // Pre-fetch units for the quick-add bar's chosen item so its unit picker is
+  // populated BEFORE commit, and default the picker to the item's base unit.
+  useEffect(() => {
+    if (!qaItemId) { setQaUnitId(""); return; }
+    let cancelled = false;
+    (async () => {
+      const us = await fetchItemUnits(qaItemId);
+      if (cancelled) return;
+      const base = us.find((u: any) => u.isBase) ?? us[0];
+      setQaUnitId(base?.unitId != null ? String(base.unitId) : "");
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qaItemId]);
 
   // Per-currency cost cache: itemId → [{ currencyCode, costPrice, ... }]
   const [itemCurrencyPricesMap, setItemCurrencyPricesMap] = useState<Record<string, any[]>>({});
@@ -577,6 +607,33 @@ export default function PurchaseInvoiceForm() {
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
     }));
+  }
+
+  // Commit the "إضافة صنف" bar into a new grid line. Appends an empty line,
+  // runs the SAME selectItem auto-fill (catalog/currency cost, base unit,
+  // VAT), then applies the bar's overrides through updateLine (which
+  // recomputes lineTotal/finalCost per field). Zero duplicated pricing logic.
+  async function handleQuickAdd() {
+    if (!qaItemId) return;
+    const l = newLine();
+    const r = percentRateOf(headerTaxId);
+    if (r !== null) l.vatRate = String(r);
+    // Seed the warehouse BEFORE selectItem (it preserves warehouseId for
+    // non-service items, and blanks it for service items automatically).
+    if (qaWarehouseId) l.warehouseId = qaWarehouseId;
+    else if (headerWarehouseId) l.warehouseId = headerWarehouseId;
+    setLines(p => [...p, l]);
+    await selectItem(l._id, qaItemId);
+    // Honor an explicit unit choice from the bar (multi-unit items). Runs
+    // BEFORE price/discount below so a manually typed price still wins.
+    if (qaUnitId) changeLineUnit(l._id, qaUnitId);
+    updateLine(l._id, "qty", qaQty || "1");
+    if (qaFreeQty && qaFreeQty !== "0") updateLine(l._id, "freeQty", qaFreeQty);
+    if (qaPrice.trim() !== "" && qaPrice !== "0") updateLine(l._id, "unitPrice", qaPrice);
+    if (qaDiscount && qaDiscount !== "0") updateLine(l._id, "discount", qaDiscount);
+    setFocusLineId(l._id);
+    // Reset the bar for the next entry.
+    setQaItemId(""); setQaQty("1"); setQaFreeQty("0"); setQaPrice(""); setQaDiscount("0");
   }
 
   const repriceVersion = useRef(0);
@@ -800,7 +857,10 @@ export default function PurchaseInvoiceForm() {
   ], usageModes);
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));
 
+  // Ledger-grid headers (sales-invoice items-tab design): leading "#" index
+  // column; notes moved OUT of the columns into a full-width sub-row.
   const HEADERS = [
+    "#",
     tr("lineCols.itemCode"),
     tr("lineCols.item"),
     tr("lineCols.warehouse"),
@@ -815,9 +875,27 @@ export default function PurchaseInvoiceForm() {
     tr("lineCols.finalCost"),
     "رقم الدفعة",
     "تاريخ الانتهاء",
-    tr("lineCols.notes"),
     "",
   ];
+
+  // On NEW docs in the tabbed layout, drop the initial pristine seed line:
+  // entry happens via the quick-add bar (which always APPENDS a fresh line),
+  // so the pre-seeded empty row just lingers in the grid and confuses users.
+  // Runs ONCE; a later flip to the classic layout re-seeds a single editable
+  // row (in-grid entry is the norm there). Save paths are unaffected — they
+  // already skip empty rows (filter on itemName).
+  const seedPrunedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew) return;
+    if (useTabbedLayout) {
+      if (seedPrunedRef.current) return;
+      seedPrunedRef.current = true;
+      setLines(p => (p.length === 1 && !p[0].itemId && !p[0].itemName && !p[0].notes ? [] : p));
+    } else if (lines.length === 0) {
+      addLine();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useTabbedLayout, isNew, lines.length]);
 
   // ── tabbed-shell helpers ──────────────────────────────────────────────
   const isPosted = !isNew && (existing as any)?.status === "posted";
@@ -849,6 +927,102 @@ export default function PurchaseInvoiceForm() {
       </Button>
       <div className="flex flex-wrap items-center gap-2">
         {saveButton}
+      </div>
+    </div>
+  );
+
+  // ── "إضافة صنف" quick-entry bar (tabbed items tab) ────────────────────
+  // Same design as the sales-invoice items tab: pick item → commit. The item
+  // picker auto-fills the accurate cost/unit/VAT on commit (handleQuickAdd →
+  // selectItem), so leaving السعر blank is the norm.
+  const quickAddBar = (
+    <div className="mb-3 rounded-xl border-2 border-primary/30 bg-primary/5 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+          <Plus className="h-4 w-4" />
+          <span>إضافة صنف</span>
+        </div>
+      </div>
+      <div
+        ref={quickAddRef}
+        data-enter-scope
+        className="grid gap-2 items-end"
+        style={{ gridTemplateColumns: "minmax(200px,2fr) 140px 120px 76px 76px 110px 110px auto" }}
+      >
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">الصنف</label>
+          <SearchCombobox
+            items={itemComboItems}
+            value={qaItemId}
+            onValueChange={setQaItemId}
+            placeholder={tr("itemSearchPh")}
+            searchPlaceholder="ابحث بالكود أو الاسم..."
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{tr("lineCols.warehouse")}</label>
+          <SearchCombobox
+            items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn }))}
+            value={qaWarehouseId}
+            onValueChange={setQaWarehouseId}
+            placeholder={tr("lineCols.warehouse")}
+            searchPlaceholder="ابحث بالكود أو الاسم..."
+            className="h-9 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{tr("lineCols.unit")}</label>
+          {(() => {
+            const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
+            const opts = iu.map((u: any) => ({
+              value: String(u.unitId),
+              label: `${unitNameOf(u.unit)}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
+            }));
+            return (
+              <Select value={qaUnitId || undefined} onValueChange={setQaUnitId} disabled={opts.length === 0}>
+                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>
+                <SelectContent>
+                  {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            );
+          })()}
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{tr("lineCols.qty")}</label>
+          <Input className="h-9 text-xs" type="text" inputMode="numeric" dir="ltr" value={qaQty}
+            onChange={e => setQaQty(e.target.value.replace(/[^0-9]/g, ""))} />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colFreeQty")}</label>
+          <Input className="h-9 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono" type="text" inputMode="numeric" dir="ltr" value={qaFreeQty}
+            onChange={e => setQaFreeQty(e.target.value.replace(/[^0-9]/g, ""))} />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">{tr("lineCols.unitPrice")}</label>
+          <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" placeholder="تلقائي" value={qaPrice}
+            onChange={e => setQaPrice(e.target.value.replace(/[^0-9.]/g, ""))} />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground">خصم %</label>
+          <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" value={qaDiscount}
+            onChange={e => setQaDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+            onKeyDown={e => {
+              // Last field in the bar: Enter commits the line (if an item is
+              // chosen) and loops focus back to the item picker so the user
+              // can keep entering without touching the mouse.
+              if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (qaItemId) void handleQuickAdd().finally(focusQuickAddStart);
+                else focusQuickAddStart();
+              }
+            }} />
+        </div>
+        <Button type="button" size="sm" className="h-9 gap-1.5 whitespace-nowrap" onClick={() => void handleQuickAdd()} disabled={!qaItemId} data-testid="button-quick-add-item">
+          <Plus className="h-4 w-4" />
+          إضافة إلى الجريدة
+        </Button>
       </div>
     </div>
   );
@@ -1358,13 +1532,23 @@ export default function PurchaseInvoiceForm() {
                 <ListOrdered className="h-4 w-4" />
                 <span>{tr("linesTitle")} ({lines.filter(l => l.itemName).length})</span>
               </div>
+              {useTabbedLayout && quickAddBar}
               {(() => {
-                const GRID_COLS = "110px minmax(260px,1.4fr) 160px 120px 90px 80px 80px 110px 80px 80px 110px 130px 120px 130px 180px 40px";
+                const GRID_COLS = "38px 100px minmax(220px,1.3fr) 130px 100px 64px 64px 70px 95px 70px 64px 95px 105px 110px 125px 34px";
+                const addGridLine = () => {
+                  const nl = newLine();
+                  const r = percentRateOf(headerTaxId);
+                  if (r !== null) nl.vatRate = String(r);
+                  if (headerWarehouseId) nl.warehouseId = headerWarehouseId;
+                  setLines(p => [...p, nl]);
+                  setFocusLineId(nl._id);
+                };
                 return (
-              <div data-enter-nav-container="lines" className="mb-3 rounded-xl border bg-card overflow-x-auto">
+              <div data-enter-nav-container="lines" className="mb-3 rounded-xl border bg-card overflow-hidden">
+                <div className="overflow-auto max-h-[calc(100vh-360px)] min-h-[200px]">
                 <div className="min-w-max">
                 <div
-                  className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0"
+                  className="grid gap-1.5 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10"
                   style={{ gridTemplateColumns: GRID_COLS }}
                 >
                   {HEADERS.map((h, i) => (
@@ -1379,12 +1563,18 @@ export default function PurchaseInvoiceForm() {
                   ))}
                 </div>
                 <div className="divide-y">
-                {lines.map(l => (
+                {lines.length === 0 && (
+                  <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                    لا توجد أصناف بعد — أضف صنفًا من الشريط بالأعلى.
+                  </div>
+                )}
+                {lines.map((l, idx) => (
                   <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
                     <div
-                      className="grid gap-2 items-center"
+                      className="grid gap-1.5 items-center"
                       style={{ gridTemplateColumns: GRID_COLS }}
                     >
+                      <span className="text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
                       <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={tr("auto")} value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {inventoryItems.length > 0 ? (
@@ -1465,24 +1655,34 @@ export default function PurchaseInvoiceForm() {
                         <DateField className="h-8 text-xs" value={l.expiryDate}
                           onChange={e => updateLine(l._id, "expiryDate", e.target.value)} />
                       )}
-                      <Input className="h-8 text-xs" value={l.notes}
-                        onChange={e => updateLine(l._id, "notes", e.target.value)} />
                       <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
-                        onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
+                        onClick={() => setLines(p => p.filter(x => x._id !== l._id))}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
+                    {(l.itemId || l.itemName || l.notes) && (
+                      <div className="mt-1.5 pr-[38px]">
+                        <Input
+                          className="h-7 text-[11px] bg-muted/20 border-dashed"
+                          placeholder={t("salesDocForm.notesPlaceholder")}
+                          value={l.notes}
+                          onChange={e => updateLine(l._id, "notes", e.target.value)}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))}
                 </div>
                 </div>
+                </div>
+                <div className="border-t bg-muted/20 px-3 py-2">
+                  <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addGridLine}>
+                    <Plus className="h-4 w-4" />{tr("addLine")}
+                  </Button>
+                </div>
               </div>
                 );
               })()}
-
-              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
-                <Plus className="h-4 w-4" />{tr("addLine")}
-              </Button>
 
               <div className="mt-5 flex flex-wrap justify-between gap-4">
                 <label

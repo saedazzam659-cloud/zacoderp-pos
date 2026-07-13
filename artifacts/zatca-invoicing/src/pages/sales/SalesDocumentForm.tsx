@@ -1915,7 +1915,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), "الضريبة %", t("salesDocForm.colTotal"), ""];
     const whName = (id: string) => (warehouses as any[]).find((w: any) => String(w.id) === String(id))?.nameAr ?? "—";
     const filled = lines;
-    const removeLine = (id: string) => setLines(p => { const n = p.filter(x => x._id !== id); return n.length ? n : [newLine()]; });
+    // Tabbed grid: removing the last row leaves the grid EMPTY (the friendly
+    // "لا توجد أصناف بعد" placeholder shows) — never re-seed a blank row here.
+    const removeLine = (id: string) => setLines(p => p.filter(x => x._id !== id));
     // Append a blank editable row so the user can add items INSIDE the grid
     // (not only via the top quick-add bar). Seeds the default tax + warehouse.
     const addGridLine = () => {
@@ -2699,6 +2701,25 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // shell so the interactive التفاصيل tab is reachable even for companies whose
   // default layout is "classic".
   const useTabbedLayout = _co?.invoiceFormLayout !== "classic" || viewMode;
+
+  // On NEW docs in the tabbed layout, drop the initial pristine seed line:
+  // entry happens via the quick-add bar (which always APPENDS a fresh line),
+  // so the pre-seeded empty row just lingers in the grid and confuses users
+  // (invoices + orders + quotations alike). Runs ONCE; a later flip to the
+  // classic layout re-seeds a single editable row (in-grid entry is the norm
+  // there). Save paths are unaffected — they already skip empty rows.
+  const seedPrunedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew) return;
+    if (useTabbedLayout) {
+      if (seedPrunedRef.current) return;
+      seedPrunedRef.current = true;
+      setLines(p => (p.length === 1 && !p[0].itemId && !p[0].itemName && !p[0].notes ? [] : p));
+    } else if (lines.length === 0) {
+      addLine();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useTabbedLayout, isNew, lines.length]);
 
   // Tab 1 ("البيانات الأساسية") gates advancing to the items tab: the user can
   // only proceed once the mandatory header fields are valid. This mirrors (a

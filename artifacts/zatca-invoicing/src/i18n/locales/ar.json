@@ -417,6 +417,7 @@
     "colVatPct": "ضريبة%",
     "colTotal": "الإجمالي",
     "colNotes": "ملاحظات",
+    "notesPlaceholder": "ملاحظات اختيارية",
     "itemPlaceholder": "اختر صنف...",
     "itemNamePlaceholder": "اسم الصنف",
     "selectItem": "— اختر صنف —",

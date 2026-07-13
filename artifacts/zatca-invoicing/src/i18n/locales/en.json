@@ -417,6 +417,7 @@
     "colVatPct": "VAT %",
     "colTotal": "Total",
     "colNotes": "Notes",
+    "notesPlaceholder": "Optional notes",
     "itemPlaceholder": "Select item...",
     "itemNamePlaceholder": "Item name",
     "selectItem": "— Select item —",
