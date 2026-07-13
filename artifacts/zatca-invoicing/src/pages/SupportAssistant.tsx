@@ -91,8 +91,23 @@ export default function SupportAssistant() {
         credentials: "include",
         body: JSON.stringify({ question, pagePath: location, locale: isRtl ? "ar" : "en" }),
       });
-      const j: AskResp = await r.json();
-      setAnswer(j);
+      // Defensive normalization: an error body ({error} / HTML / non-JSON)
+      // has no `citations` — rendering it raw crashed the page (reading 'map').
+      const j: any = await r.json().catch(() => null);
+      if (!r.ok || !j || typeof j.answer !== "string") {
+        setAnswer({
+          answer: (j && typeof j.error === "string" && j.error) || "تعذّر الحصول على إجابة من الخادم. حاول مرة أخرى.",
+          source: "none",
+          citations: [],
+        });
+      } else {
+        setAnswer({
+          answer: j.answer,
+          source: j.source === "ai" || j.source === "kb" ? j.source : "none",
+          provider: j.provider,
+          citations: Array.isArray(j.citations) ? j.citations : [],
+        });
+      }
     } catch {
       setAnswer({ answer: "تعذّر الوصول للخادم. حاول مرة أخرى.", source: "none", citations: [] });
     } finally {
@@ -158,7 +173,7 @@ export default function SupportAssistant() {
                       ? "من قاعدة المعرفة"
                       : "لا توجد إجابة"}
                 </Badge>
-                {answer.citations.map(c => (
+                {(answer.citations ?? []).map(c => (
                   <Badge key={c.id} variant="outline" className="font-normal max-w-[260px] truncate" title={c.title}>
                     📎 {c.title}
                   </Badge>
