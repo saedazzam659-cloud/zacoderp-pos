@@ -334,6 +334,7 @@ router.post("/:id/email", async (req: Request, res: Response) => {
     html: `<div dir="rtl">${text.replace(/\n/g, "<br/>")}</div>`,
     text,
     attachments: [{ filename: row.filename, content: buf, contentType: row.contentType ?? "application/octet-stream" }],
+    companyId: cid,
   });
   if (!r.ok) { res.status(502).json({ error: "تعذّر إرسال البريد", reason: r.reason }); return; }
   res.json({ ok: true });

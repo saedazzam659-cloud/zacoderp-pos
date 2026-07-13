@@ -1095,7 +1095,7 @@ router.post("/email", requirePermission("purchase_invoices", "export"), async (r
         }]
       : undefined;
 
-    const result = await sendEmail({ to: recipients, subject: subj, html, attachments });
+    const result = await sendEmail({ to: recipients, subject: subj, html, attachments, companyId });
     if (!result.ok) { res.status(502).json({ error: `تعذر إرسال البريد: ${result.reason ?? "unknown"}` }); return; }
     res.json({ ok: true });
   } catch (e: any) {

@@ -448,6 +448,7 @@ ${branchHint}
               content: csv,
               contentType: "text/csv; charset=utf-8",
             }],
+            companyId,
           });
           emailSent = true;
         }

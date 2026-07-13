@@ -258,6 +258,19 @@ export const companiesTable = pgTable("companies", {
   backupWhatsappOtpHash:       text("backup_whatsapp_otp_hash"),
   backupWhatsappOtpExpiresAt:  timestamp("backup_whatsapp_otp_expires_at", { withTimezone: true }),
   backupWhatsappOtpAttempts:   integer("backup_whatsapp_otp_attempts").notNull().default(0),
+  // ─── Company sender settings (ضبط المرسلات) ──────────────────────────
+  // Per-company outgoing-mail identity. When the 4 SMTP fields are set the
+  // company's OUTGOING business emails (archive attachments, reports, backups,
+  // delivery receipts…) are sent through the company's own mailbox instead of
+  // the system default sender. Password is AES-256-GCM encrypted with
+  // SESSION_SECRET (same scheme as system_settings.smtp_pass_enc) — NEVER
+  // returned to the client. senderWhatsapp is the company's public WhatsApp
+  // number used as the sending identity for WhatsApp shares.
+  senderEmail:       text("sender_email"),
+  senderSmtpHost:    text("sender_smtp_host"),
+  senderSmtpPort:    integer("sender_smtp_port"),
+  senderSmtpPassEnc: text("sender_smtp_pass_enc"),
+  senderWhatsapp:    text("sender_whatsapp"),
   // Registration workflow
   status: text("status").notNull().default("active"), // pending | active | rejected
   rejectionReason: text("rejection_reason"),

@@ -447,6 +447,7 @@ router.post("/:id/email", async (req: Request, res: Response) => {
     subject,
     html: `<div dir="rtl">${body}</div>`,
     text: parsed.data.message || `مرفق ${label} رقم ${doc.docNumber}.`,
+    companyId: cid,
     attachments: [{ filename, content: buf, contentType: "application/pdf" }],
   });
   if (!r.ok) { res.status(502).json({ error: "تعذّر إرسال البريد", reason: r.reason }); return; }

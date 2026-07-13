@@ -134,6 +134,7 @@ async function deliverSnapshotEmail(
       subject: `النسخة الاحتياطية — ${companyName ?? `شركة #${companyId}`} — ${stamp}`,
       html,
       attachments: [{ filename, content: json, contentType: "application/json; charset=utf-8" }],
+      companyId,
     });
     if (!r.ok) console.error(`[auto-backup] email delivery failed for company ${companyId}: ${r.reason}`);
     return r.ok;
@@ -953,7 +954,7 @@ router.post("/email/request", async (req, res) => {
       <p>صالح لمدة <strong>10 دقائق</strong>. أدخله في الشاشة لإتمام ربط البريد.</p>
       <p style="color:#94a3b8;font-size:12px;">إذا لم تطلب هذا الرمز، تجاهل الرسالة.</p>`;
     const html = `<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;color:#334155;line-height:1.7;">${body}</div>`;
-    const r = await sendEmail({ to: email, subject: "رمز توثيق البريد — النسخ الاحتياطية", html });
+    const r = await sendEmail({ to: email, subject: "رمز توثيق البريد — النسخ الاحتياطية", html, companyId });
     if (!r.ok) { res.status(502).json({ error: "تعذّر إرسال رمز التحقق، تحقق من إعدادات البريد" }); return; }
 
     await writeAudit({

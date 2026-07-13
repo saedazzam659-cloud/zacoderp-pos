@@ -28,6 +28,7 @@ import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet, detectU
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
+import SenderSettingsTab from "./settings/SenderSettingsTab";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1139,6 +1140,16 @@ export default function GeneralSettings() {
             >
               <Archive className="h-4 w-4 shrink-0" />
               <span className="truncate">أرشفة المستندات</span>
+            </TabsTrigger>
+          )}
+          {isArchiveAdmin && (
+            <TabsTrigger
+              value="senderSettings"
+              className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+              data-testid="tab-trigger-sender-settings"
+            >
+              <Send className="h-4 w-4 shrink-0" />
+              <span className="truncate">ضبط المرسلات</span>
             </TabsTrigger>
           )}
         </TabsList>
@@ -3109,6 +3120,16 @@ export default function GeneralSettings() {
             </Button>
             {archiveDirty && <span className="text-xs text-amber-600">تغييرات غير محفوظة</span>}
           </div>
+        </TabsContent>
+        )}
+
+        {/* ═══ TAB: Sender settings (ضبط المرسلات) ═══════════════════════════ */}
+        {isArchiveAdmin && (
+        <TabsContent value="senderSettings" className="mt-5">
+          <SenderSettingsTab
+            companyId={Number(user?.company?.id ?? user?.companyId ?? 0)}
+            token={token ?? null}
+          />
         </TabsContent>
         )}
       </Tabs>

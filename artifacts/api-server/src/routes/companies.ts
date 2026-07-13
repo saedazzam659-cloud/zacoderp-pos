@@ -9,6 +9,7 @@ import { seedDefaultChartOfAccounts } from "../lib/seedDefaultChartOfAccounts.js
 import { logger } from "../lib/logger.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
+import { encryptSecret, testCompanySender } from "../lib/email.js";
 
 const router = Router();
 
@@ -446,6 +447,134 @@ router.patch("/:id/general-settings", async (req, res) => {
     .where(eq(companiesTable.id, id)).returning();
   if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
   res.json(company);
+});
+
+// ─── ضبط المرسلات — per-company sender settings ─────────────────────────────
+// Each company may define its OWN outbound sender: an email address (+ SMTP
+// credentials for that mailbox) and a WhatsApp number. General (non-security)
+// emails scoped to the company are then sent FROM that address; when unset,
+// the system default sender (zacoderp@outlook.com via system SMTP) is used.
+// The SMTP password is stored encrypted (AES-256-GCM) and NEVER returned to
+// the client — only a hasPassword flag.
+
+function senderSettingsGuard(req: Request, res: Response): number | null {
+  const id = parseInt(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return null; }
+  const u = (req as any).authUser;
+  if (!u) { res.status(401).json({ error: "غير مصرّح" }); return null; }
+  if (u.role !== "superadmin" && !(u.companyId === id && u.role === "admin")) {
+    res.status(403).json({ error: "ليست لديك صلاحية لتعديل إعدادات المرسلات لهذه الشركة" });
+    return null;
+  }
+  return id;
+}
+
+// GET /:id/sender-settings — current sender config (password NEVER included).
+router.get("/:id/sender-settings", async (req, res) => {
+  const id = senderSettingsGuard(req, res); if (id == null) return;
+  try {
+    const [row] = await db
+      .select({
+        senderEmail: companiesTable.senderEmail,
+        senderSmtpHost: companiesTable.senderSmtpHost,
+        senderSmtpPort: companiesTable.senderSmtpPort,
+        senderSmtpPassEnc: companiesTable.senderSmtpPassEnc,
+        senderWhatsapp: companiesTable.senderWhatsapp,
+      })
+      .from(companiesTable)
+      .where(eq(companiesTable.id, id));
+    if (!row) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+    res.json({
+      senderEmail: row.senderEmail ?? "",
+      senderSmtpHost: row.senderSmtpHost ?? "",
+      senderSmtpPort: row.senderSmtpPort ?? 587,
+      hasPassword: !!row.senderSmtpPassEnc,
+      senderWhatsapp: row.senderWhatsapp ?? "",
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذّر جلب إعدادات المرسلات" });
+  }
+});
+
+// PUT /:id/sender-settings — update sender config. Password semantics:
+//   undefined → keep the stored password unchanged
+//   ""        → clear the stored password
+//   "xxx"     → encrypt and store the new password
+router.put("/:id/sender-settings", async (req, res) => {
+  const id = senderSettingsGuard(req, res); if (id == null) return;
+  try {
+    const { senderEmail, senderSmtpHost, senderSmtpPort, senderSmtpPass, senderWhatsapp } = req.body ?? {};
+    const updates: Record<string, any> = { updatedAt: new Date() };
+
+    if (senderEmail !== undefined) {
+      const v = String(senderEmail ?? "").trim();
+      if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+        res.status(400).json({ error: "صيغة البريد الإلكتروني غير صحيحة" }); return;
+      }
+      updates.senderEmail = v || null;
+    }
+    if (senderSmtpHost !== undefined) {
+      const v = String(senderSmtpHost ?? "").trim().slice(0, 255);
+      updates.senderSmtpHost = v || null;
+    }
+    if (senderSmtpPort !== undefined) {
+      if (senderSmtpPort === null || senderSmtpPort === "") {
+        updates.senderSmtpPort = null;
+      } else {
+        const p = Number(senderSmtpPort);
+        if (!Number.isInteger(p) || p < 1 || p > 65535) {
+          res.status(400).json({ error: "منفذ SMTP غير صالح (1-65535)" }); return;
+        }
+        updates.senderSmtpPort = p;
+      }
+    }
+    if (senderSmtpPass !== undefined) {
+      if (senderSmtpPass === null || senderSmtpPass === "") {
+        updates.senderSmtpPassEnc = null;
+      } else {
+        const v = String(senderSmtpPass);
+        if (v.length > 512) { res.status(400).json({ error: "كلمة المرور طويلة جداً" }); return; }
+        updates.senderSmtpPassEnc = encryptSecret(v);
+      }
+    }
+    if (senderWhatsapp !== undefined) {
+      const v = String(senderWhatsapp ?? "").trim().slice(0, 32);
+      if (v && !/^\+?[0-9\s-]{6,}$/.test(v)) {
+        res.status(400).json({ error: "صيغة رقم الواتساب غير صحيحة" }); return;
+      }
+      updates.senderWhatsapp = v || null;
+    }
+
+    const [updated] = await db
+      .update(companiesTable)
+      .set(updates)
+      .where(eq(companiesTable.id, id))
+      .returning({ id: companiesTable.id });
+    if (!updated) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذّر حفظ إعدادات المرسلات" });
+  }
+});
+
+// POST /:id/sender-settings/test — send a test email using the company sender
+// (strict: if company SMTP is configured it MUST work; no silent fallback).
+router.post("/:id/sender-settings/test", async (req, res) => {
+  const id = senderSettingsGuard(req, res); if (id == null) return;
+  try {
+    const to = String(req.body?.to ?? "").trim();
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      res.status(400).json({ error: "أدخل بريداً إلكترونياً صحيحاً للاختبار" }); return;
+    }
+    const r = await testCompanySender(id, to);
+    if (!r.ok) {
+      res.status(502).json({ error: `فشل الإرسال: ${r.reason ?? "غير معروف"}`, usedSender: r.usedSender, source: r.source });
+      return;
+    }
+    res.json({ ok: true, usedSender: r.usedSender, source: r.source });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذّر إرسال رسالة الاختبار" });
+  }
 });
 
 // PATCH /:id/profile — tenant-facing identity edit (name, VAT, CR, address).

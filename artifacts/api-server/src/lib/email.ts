@@ -1,5 +1,5 @@
 import nodemailer, { type Transporter } from "nodemailer";
-import { db, systemSettingsTable } from "@workspace/db";
+import { db, systemSettingsTable, companiesTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "crypto";
 
@@ -388,9 +388,129 @@ export interface SendOpts {
   html: string;
   text?: string;
   attachments?: EmailAttachment[];
+  // "security" → SuperAdmin OTP / security alerts. These MUST keep going out
+  //   through the Outlook connector mailbox (the SuperAdmin's own address,
+  //   self-send) regardless of any general/company SMTP configuration, so the
+  //   security channel stays isolated from business correspondence.
+  // "general" (default) → business emails. Sender resolution order:
+  //   company sender (per-company SMTP, ضبط المرسلات) → system SMTP (default
+  //   sender, e.g. zacoderp@outlook.com) → Outlook connector fallback.
+  channel?: "security" | "general";
+  // Tenant whose "ضبط المرسلات" (sender settings) should be used, if set.
+  companyId?: number;
+}
+
+// ─── Per-company sender (ضبط المرسلات) ────────────────────────────────────
+// A company may configure its own outgoing mailbox (email + SMTP host/port +
+// app password). When fully configured, general-channel emails carrying that
+// companyId are sent through the company's mailbox; otherwise the system
+// default transport is used. Config is read fresh per send (sends are rare)
+// so there is no cache to invalidate after settings changes.
+interface CompanySenderConfig {
+  email: string;
+  host: string;
+  port: number;
+  pass: string;
+}
+
+async function getCompanySender(companyId: number): Promise<CompanySenderConfig | null> {
+  try {
+    const [row] = await db.select({
+      senderEmail: companiesTable.senderEmail,
+      senderSmtpHost: companiesTable.senderSmtpHost,
+      senderSmtpPort: companiesTable.senderSmtpPort,
+      senderSmtpPassEnc: companiesTable.senderSmtpPassEnc,
+    }).from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+    if (!row) return null;
+    const email = (row.senderEmail ?? "").trim();
+    const host = (row.senderSmtpHost ?? "").trim();
+    const passEnc = (row.senderSmtpPassEnc ?? "").trim();
+    if (!email || !host || !passEnc) return null;
+    const pass = decryptSecret(passEnc);
+    if (!pass) return null;
+    const port = row.senderSmtpPort ?? 587;
+    return { email, host, port, pass };
+  } catch (err: any) {
+    console.warn("[email] could not read company sender config", companyId, err?.message ?? err);
+    return null;
+  }
+}
+
+async function sendViaCompanySender(
+  cfg: CompanySenderConfig,
+  opts: SendOpts,
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const transporter = nodemailer.createTransport({
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.port === 465,
+      auth: { user: cfg.email, pass: cfg.pass },
+    });
+    await transporter.sendMail({
+      from: cfg.email,
+      to: Array.isArray(opts.to) ? opts.to.join(", ") : opts.to,
+      subject: opts.subject,
+      html: opts.html,
+      text: opts.text,
+      attachments: opts.attachments?.map(a => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.contentType ?? "text/csv; charset=utf-8",
+      })),
+    });
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, reason: err?.message ?? "company_smtp_send_failed" };
+  }
+}
+
+// Explicit test hook for the "ضبط المرسلات" tab. Unlike sendEmail() it does
+// NOT silently fall back to the system default when the company transport
+// fails — the whole point of the test is to verify the company's own config.
+export async function testCompanySender(
+  companyId: number,
+  to: string,
+): Promise<{ ok: boolean; usedSender: string; source: "company" | "default"; reason?: string }> {
+  const html = wrapHtml("رسالة اختبار — ضبط المرسلات", `
+    <p>هذه رسالة اختبار من نظام الفاتورة الإلكترونية للتأكد من صحة إعدادات المرسلات.</p>
+    <p style="color:#64748b; font-size:12px;">إذا وصلتك هذه الرسالة فإعدادات الإرسال تعمل بنجاح.</p>`);
+  const opts: SendOpts = { to, subject: "رسالة اختبار — ضبط المرسلات", html };
+  const cfg = await getCompanySender(companyId);
+  if (cfg) {
+    const r = await sendViaCompanySender(cfg, opts);
+    return { ok: r.ok, usedSender: cfg.email, source: "company", reason: r.reason };
+  }
+  const info = await resolveActiveSender();
+  const r = await sendEmail(opts);
+  return { ok: r.ok, usedSender: info.willActuallySendFrom, source: "default", reason: r.reason };
 }
 
 export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?: string }> {
+  // Security channel: Outlook connector FIRST (SuperAdmin mailbox self-send),
+  // system SMTP only as a fallback. This keeps OTP/security emails pinned to
+  // the security mailbox even after a general default sender is configured.
+  if (opts.channel === "security" && outlookEnabled()) {
+    const r = await sendViaOutlook(opts);
+    if (r.ok) return r;
+    console.error("[email] security-channel Outlook send failed; falling back to SMTP", r.reason);
+  }
+
+  // General channel: per-company sender (ضبط المرسلات) takes precedence when
+  // configured; on failure we fall through to the system default transport so
+  // business emails are never silently dropped because of a bad tenant config.
+  if (opts.channel !== "security" && opts.companyId != null) {
+    const cfg = await getCompanySender(opts.companyId);
+    if (cfg) {
+      const r = await sendViaCompanySender(cfg, opts);
+      if (r.ok) return r;
+      console.error(
+        `[email] company sender failed for company ${opts.companyId}; falling back to default`,
+        r.reason,
+      );
+    }
+  }
+
   const transporter = await getTransporter();
   let smtpReason: string | null = null;
   if (transporter) {
@@ -413,7 +533,7 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
       console.error("[email] SMTP send failed; will try Outlook fallback if available", smtpReason);
     }
   }
-  if (outlookEnabled()) {
+  if (outlookEnabled() && opts.channel !== "security") {
     const r = await sendViaOutlook(opts);
     if (r.ok) {
       console.info("[email] sent via Outlook connector", { to: opts.to, subject: opts.subject });
@@ -448,7 +568,7 @@ export async function sendOtpEmail(to: string, code: string, ip: string | null, 
       background:#ecfdf5; color:#065f46; padding:14px; border-radius:8px; margin:12px 0;">${code}</p>
     <p>صالح لمدة <strong>60 ثانية</strong> فقط.</p>
     <p style="color:#64748b; font-size:12px;">عنوان IP: ${ip ?? "غير معروف"}<br/>المتصفح: ${ua ?? "غير معروف"}</p>`;
-  return sendEmail({ to, subject: "رمز التحقق — تسجيل الدخول", html: wrapHtml("رمز التحقق", body) });
+  return sendEmail({ to, subject: "رمز التحقق — تسجيل الدخول", html: wrapHtml("رمز التحقق", body), channel: "security" });
 }
 
 export async function sendNewDeviceAlert(to: string, ip: string | null, ua: string | null) {
@@ -460,7 +580,7 @@ export async function sendNewDeviceAlert(to: string, ip: string | null, ua: stri
       المتصفح: ${ua ?? "غير معروف"}
     </p>
     <p>إذا كنت أنت من قام بهذا، فلا داعي لأي إجراء. وإلا، فيرجى تغيير كلمة المرور وتعطيل جميع الأجهزة فورًا من صفحة الأمان.</p>`;
-  return sendEmail({ to, subject: "تنبيه: تسجيل دخول من جهاز جديد", html: wrapHtml("جهاز جديد", body) });
+  return sendEmail({ to, subject: "تنبيه: تسجيل دخول من جهاز جديد", html: wrapHtml("جهاز جديد", body), channel: "security" });
 }
 
 export async function sendFailedLoginAlert(to: string, ip: string | null, reason: string) {
@@ -472,7 +592,7 @@ export async function sendFailedLoginAlert(to: string, ip: string | null, reason
       السبب: ${reason}
     </p>
     <p>إذا تكررت هذه المحاولات، فيرجى تغيير كلمة المرور فورًا.</p>`;
-  return sendEmail({ to, subject: "تنبيه: محاولة دخول فاشلة", html: wrapHtml("محاولة فاشلة", body) });
+  return sendEmail({ to, subject: "تنبيه: محاولة دخول فاشلة", html: wrapHtml("محاولة فاشلة", body), channel: "security" });
 }
 
 export async function sendPasswordChangeAlert(to: string, ip: string | null) {
@@ -483,7 +603,7 @@ export async function sendPasswordChangeAlert(to: string, ip: string | null) {
       عنوان IP: ${ip ?? "غير معروف"}
     </p>
     <p>إذا لم تكن أنت، فيرجى استخدام رابط الاسترجاع في صفحة تسجيل الدخول فورًا.</p>`;
-  return sendEmail({ to, subject: "تم تغيير كلمة المرور", html: wrapHtml("تغيير كلمة المرور", body) });
+  return sendEmail({ to, subject: "تم تغيير كلمة المرور", html: wrapHtml("تغيير كلمة المرور", body), channel: "security" });
 }
 
 export async function sendDeviceApprovalRequest(
@@ -504,7 +624,7 @@ export async function sendDeviceApprovalRequest(
     <p>للموافقة على هذا الجهاز، افتح الرابط التالي من جهاز موثوق ومسجَّل الدخول مسبقًا:</p>
     <p><a href="${link}" style="display:inline-block; background:#10b981; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px;">مراجعة الطلب</a></p>
     <p style="font-size:12px; color:#94a3b8;">صالح لمدة 15 دقيقة. إذا لم تطلب هذا، تجاهل الرسالة وسيُمنع الجهاز تلقائيًا.</p>`;
-  return sendEmail({ to, subject: "طلب اعتماد جهاز جديد", html: wrapHtml("جهاز جديد ينتظر الاعتماد", body) });
+  return sendEmail({ to, subject: "طلب اعتماد جهاز جديد", html: wrapHtml("جهاز جديد ينتظر الاعتماد", body), channel: "security" });
 }
 
 // Invitation to join the SuperAdmin scheduled-reports recipient list. The
@@ -812,5 +932,5 @@ export async function sendRecoveryLink(to: string, token: string, publicBaseUrl:
     <p>لمتابعة الاسترجاع، افتح الرابط التالي خلال 30 دقيقة:</p>
     <p><a href="${link}" style="display:inline-block; background:#dc2626; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px;">استرجاع الحساب</a></p>
     <p style="font-size:12px; color:#94a3b8;">سيؤدي الاسترجاع إلى إنهاء جميع الجلسات وإلغاء جميع الأجهزة الموثوقة وتوليد رموز استرجاع جديدة.</p>`;
-  return sendEmail({ to, subject: "استرجاع حساب السوبر أدمن", html: wrapHtml("استرجاع الحساب", body) });
+  return sendEmail({ to, subject: "استرجاع حساب السوبر أدمن", html: wrapHtml("استرجاع الحساب", body), channel: "security" });
 }

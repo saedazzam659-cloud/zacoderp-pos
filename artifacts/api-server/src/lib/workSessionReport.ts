@@ -401,7 +401,7 @@ export async function sendSessionReportEmail(
   // Plain-text fallback — strip HTML tags, keep newlines.
   const text = reportMd;
 
-  return sendEmail({ to: recipients, subject, html, text });
+  return sendEmail({ to: recipients, subject, html, text, companyId: (session as any).companyId ?? undefined });
 }
 
 // --- End-of-session orchestrator -------------------------------------------
