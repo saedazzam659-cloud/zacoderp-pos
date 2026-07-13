@@ -223,7 +223,10 @@ tbody td { padding:5px 8px; border:1px solid #d1d5db; text-align:right; }
 tbody tr:nth-child(even) td { background:#f8fafc; }
 tfoot td { padding:6px 8px; border:1px solid #cbd5e1; background:#f1f5f9; }
 .num { font-family:"Consolas",monospace; }
-.end { text-align:left; }
+/* Amounts align RIGHT (international convention) — matches the right-aligned
+   tbody amount cells so the totals rows don't flip to the other side. */
+.end { text-align:right; }
+tbody td.num, tfoot td.num { text-align:right; }
 .center { text-align:center; }
 .signs { display:flex; justify-content:space-around; gap:14px; margin-top:22px; padding-top:6px; }
 .sign { flex:1; text-align:center; }

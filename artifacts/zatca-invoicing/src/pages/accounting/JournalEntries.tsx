@@ -903,7 +903,10 @@ tbody td { padding:5px 8px; border:1px solid #d1d5db; text-align:${align}; }
 tbody tr:nth-child(even) td { background:#f8fafc; }
 tfoot td { padding:6px 8px; border:1px solid #cbd5e1; background:#f1f5f9; }
 .num { font-family: "Consolas",monospace; }
-.end { text-align:${isRtl ? "left" : "right"}; }
+/* Amounts align RIGHT everywhere (international convention) so body rows
+   and the totals row always match in both RTL and LTR prints. */
+.end { text-align:right; }
+tbody td.num, tfoot td.num { text-align:right; }
 .center { text-align:center; }
 .signs { display:flex; justify-content:space-around; gap:14px; margin-top:22px; padding-top:6px; }
 .sign { flex:1; text-align:center; }

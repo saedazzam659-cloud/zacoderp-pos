@@ -188,7 +188,12 @@ table.lines tbody td { padding:3px 6px; border:1px solid #d1d5db; text-align:${a
 table.lines tbody tr:nth-child(even) td { background:#f8fafc; }
 table.lines tfoot td { padding:4px 6px; border:1px solid #cbd5e1; background:#f1f5f9; }
 .num { font-family: "Consolas",monospace; }
-.end { text-align:${isRtl ? "left" : "right"}; }
+/* Amount cells align RIGHT everywhere (international convention) — the
+   tbody/tfoot selectors below outrank generic cell rules so body rows and
+   the totals row always match (the old .end class left-aligned the tfoot
+   totals in RTL while tbody amounts stayed right-aligned). */
+.end { text-align:right; }
+table.lines tbody td.num, table.lines tfoot td.num { text-align:right; }
 .center { text-align:center; }
 .grand { margin-top:6px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; display:flex; justify-content:space-between; gap:18px; font-size:12px; }
 .page-head { text-align:center; margin: 0 0 6px; padding-bottom:4px; border-bottom:2px solid #1e3a8a; }

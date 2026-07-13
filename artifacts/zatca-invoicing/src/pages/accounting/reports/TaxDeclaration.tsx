@@ -361,7 +361,7 @@ function VatDrilldownDialog({
       .tdx-print table{width:100%;border-collapse:collapse;font-size:12px;}
       .tdx-print th,.tdx-print td{border:1px solid #cbd5e1;padding:6px 8px;text-align:right;}
       .tdx-print th{background:#1e293b;color:#fff;}
-      .tdx-print td.num,.tdx-print th.num{text-align:left;font-variant-numeric:tabular-nums;}
+      .tdx-print td.num,.tdx-print th.num{text-align:right;font-variant-numeric:tabular-nums;}
       .tdx-print tfoot td{font-weight:bold;background:#f1f5f9;}
     </style>
     <div class="tdx-print">
@@ -744,7 +744,7 @@ export default function TaxDeclaration() {
       .tdx-print table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:4px;}
       .tdx-print th,.tdx-print td{border:1px solid #cbd5e1;padding:6px 8px;text-align:right;}
       .tdx-print th{background:#334155;color:#fff;}
-      .tdx-print td.num,.tdx-print th.num{text-align:left;font-variant-numeric:tabular-nums;}
+      .tdx-print td.num,.tdx-print th.num{text-align:right;font-variant-numeric:tabular-nums;}
       .tdx-print tr.tot td{font-weight:bold;background:#f1f5f9;}
     </style>
     <div class="tdx-print">
