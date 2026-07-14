@@ -198,26 +198,44 @@ export default function FixedAssets() {
   }
 
   // Pick a category in Basic Data → auto-populate the Depreciation tab
-  // defaults (life / method / scrap) from the category. Fill EMPTY (or
-  // still-at-initial-default) fields ONLY — never clobber a manual edit.
+  // defaults (life / method / scrap) from the category.
+  //  • Same category (initial pick while typing): fill EMPTY / untouched
+  //    fields only — never clobber a manual edit.
+  //  • CHANGED category (create OR edit): the user deliberately switched
+  //    categories, so re-read ALL category defaults (life / method / scrap)
+  //    exactly like picking the category on a brand-new asset — otherwise an
+  //    edited asset keeps the OLD category's life (e.g. 7y) instead of the
+  //    new one's (e.g. 10y) and re-posted depreciation never changes.
   function selectCategory(catId: string) {
     const cat = cats.find(c => String(c.id) === String(catId));
+    // Compute "changed" from the CURRENT form state in the handler (not inside
+    // the setForm updater) so the updater stays pure/StrictMode-safe.
+    const changed = !!form.categoryId && String(catId) !== String(form.categoryId);
+    const force = changed; // deliberate switch ⇒ take the new category's data
     setForm(f => {
       const next: typeof f = { ...f, categoryId: catId };
       if (!cat) return next;
-      if (!depTouched.lifeYears && cat.defaultLifeYears != null && cat.defaultLifeYears !== "")
-        next.lifeYears = String(cat.defaultLifeYears);
-      if (!depTouched.depreciationMethod && cat.defaultDepreciationMethod)
-        next.depreciationMethod = cat.defaultDepreciationMethod;
-      if (!depTouched.scrapValue) {
+      if (force || !depTouched.lifeYears)
+        next.lifeYears = (cat.defaultLifeYears != null && cat.defaultLifeYears !== "")
+          ? String(cat.defaultLifeYears)
+          : (force ? EMPTY.lifeYears : f.lifeYears);
+      if (force || !depTouched.depreciationMethod)
+        next.depreciationMethod = cat.defaultDepreciationMethod
+          ? cat.defaultDepreciationMethod
+          : (force ? EMPTY.depreciationMethod : f.depreciationMethod);
+      if (force || !depTouched.scrapValue) {
         const rate = Number(cat.defaultScrapRate ?? 0);
         const scrap = cat.defaultScrapType === "value"
           ? rate
           : (Number(f.purchaseValue || 0) * rate) / 100;
         if (scrap > 0) next.scrapValue = String(+scrap.toFixed(2));
+        else if (force) next.scrapValue = EMPTY.scrapValue;
       }
       return next;
     });
+    // After a switch, treat the dep fields as fresh category defaults so a
+    // later purchase-value change can still recompute a percent-type scrap.
+    if (changed && cat) setDepTouched({ lifeYears:false, depreciationMethod:false, scrapValue:false });
   }
 
   // Percent-scrap categories compute scrap from purchase value; if the user
