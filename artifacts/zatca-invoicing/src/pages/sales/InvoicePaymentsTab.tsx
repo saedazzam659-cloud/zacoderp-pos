@@ -156,20 +156,33 @@ export default function InvoicePaymentsTab({
             طريقة السداد: <span className="font-medium text-foreground">{paymentTypeLabel(paymentType)}</span>
           </span>
         </div>
-        <Button
-          size="sm"
-          onClick={openNewVoucher}
-          disabled={summary.available <= 0.005}
-          title={summary.available <= 0.005
-            ? (summary.pending > 0.005
-              ? "قيمة الفاتورة مغطّاة بالكامل بسندات (مرحّلة + مسودّات) — رحّل أو عدّل المسودات أولاً"
-              : "الفاتورة مسدّدة بالكامل — لا يوجد مبلغ متبقٍّ")
-            : undefined}
-          data-testid="btn-collect-payment"
-        >
-          <Plus className="h-4 w-4" />
-          تسجيل دفعة (سند قبض)
-        </Button>
+        {paymentType === "cash" || paymentType === "bank" ? (
+          // Cash/bank invoices settle automatically on posting — manual
+          // receipt vouchers are for CREDIT invoices only.
+          <div
+            className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200"
+            title="سند القبض يُنشأ تلقائياً عند ترحيل الفاتورة النقدية/البنكية — تسجيل الدفعات اليدوي متاح للفواتير الآجلة فقط"
+            data-testid="badge-paid-by-type"
+          >
+            <CircleCheck className="h-3.5 w-3.5" />
+            {paymentType === "bank" ? "مسدَّدة بنكياً" : "مسدَّدة نقداً"}
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            onClick={openNewVoucher}
+            disabled={summary.available <= 0.005}
+            title={summary.available <= 0.005
+              ? (summary.pending > 0.005
+                ? "قيمة الفاتورة مغطّاة بالكامل بسندات (مرحّلة + مسودّات) — رحّل أو عدّل المسودات أولاً"
+                : "الفاتورة مسدّدة بالكامل — لا يوجد مبلغ متبقٍّ")
+              : undefined}
+            data-testid="btn-collect-payment"
+          >
+            <Plus className="h-4 w-4" />
+            تسجيل دفعة (سند قبض)
+          </Button>
+        )}
       </div>
 
       {/* Summary cards */}

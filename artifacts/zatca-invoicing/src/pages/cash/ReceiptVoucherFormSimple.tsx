@@ -111,6 +111,28 @@ export default function ReceiptVoucherFormSimple() {
   }, [isNew]);
   const sourceId = editId ?? fromId;
 
+  // Query-param prefill (additive): `/cash/receipt-vouchers/new?salesInvoiceId=..`
+  // seeds the form when arriving from the sales-invoice «المدفوعات» tab.
+  // Mirrors the purchaseInvoiceId prefill on the payment-voucher side.
+  // Captured once on mount; applied by an effect below after customers resolve.
+  const prefill = useMemo(() => {
+    if (!isNew) return null;
+    const q = new URLSearchParams(window.location.search);
+    const si = q.get("salesInvoiceId");
+    if (!si || !/^\d+$/.test(si)) return null;
+    const num = (v: string | null) => (v && /^\d+$/.test(v) ? v : "");
+    const amt = q.get("amount");
+    return {
+      salesInvoiceId: si,
+      entityId:      num(q.get("entityId")),
+      entityName:    q.get("entityName") ?? "",
+      amount:        amt && !Number.isNaN(Number(amt)) && Number(amt) > 0 ? amt : "",
+      paymentType:   (q.get("paymentType") === "bank" ? "bank" : "cash") as "cash" | "bank",
+      cashBoxId:     num(q.get("cashBoxId")),
+      bankAccountId: num(q.get("bankAccountId")),
+    };
+  }, [isNew]);
+
   const NS = "receiptVouchers";
   const cid = user?.companyId;
   const h = { Authorization: `Bearer ${token}` };
@@ -146,6 +168,33 @@ export default function ReceiptVoucherFormSimple() {
     queryFn: () => fetch(`${API}/api/customers?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
+
+  // Apply the sales-invoice prefill exactly once, after customers resolve
+  // so the picked customer's cached name lands in entityName for the JE
+  // preview. Never re-runs (ref-gated) so later manual edits stick.
+  const prefillDone = useRef(false);
+  useEffect(() => {
+    if (!prefill || prefillDone.current) return;
+    // Wait for the customer list only when we actually need to resolve one.
+    if (prefill.entityId && (customers as any[]).length === 0) return;
+    const cust = prefill.entityId
+      ? (customers as any[]).find((c: any) => String(c.id) === prefill.entityId)
+      : null;
+    prefillDone.current = true;
+    setEntityMode("party");
+    setLinkInvoice(true);
+    setForm(p => ({
+      ...p,
+      paymentType:   prefill.paymentType,
+      cashBoxId:     prefill.paymentType === "cash" ? prefill.cashBoxId : "",
+      bankAccountId: prefill.paymentType === "bank" ? prefill.bankAccountId : "",
+      entityId:      prefill.entityId,
+      entityName:    prefill.entityName || cust?.nameAr || cust?.nameEn || p.entityName,
+      amount:        prefill.amount || "",
+      salesInvoiceId: prefill.salesInvoiceId,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, customers]);
   // Chart of accounts — feeds the general-account cascade picker.
   const { data: accounts = [] } = useQuery<any[]>({
     queryKey: ["accounts", cid],
