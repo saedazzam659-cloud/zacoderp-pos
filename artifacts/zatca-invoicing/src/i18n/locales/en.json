@@ -1645,7 +1645,6 @@
       "lastBackupAt": "Last backup: {{date}}",
       "triggerManual": "Manual",
       "triggerScheduled": "Scheduled",
-      "saveFailed": "Save failed",
       "emailDestTitle": "Cloud destination (Email)",
       "emailDestDesc": "Link an email to receive a copy of every backup as an attachment. Linking requires verifying the address with a code sent to it for security.",
       "emailTransportMissing": "Email service is not configured on the server — contact your system administrator to enable delivery.",
@@ -1857,7 +1856,7 @@
       "nameAr": "Arabic Name",
       "nameEn": "English Name",
       "barcode": "Barcode",
-      "group": "Group",
+      "group": "Item Categories",
       "unit": "Unit",
       "reorderLevel": "Reorder Level",
       "stock": "Stock",
@@ -2166,7 +2165,8 @@
         "successBody": "{{created}} new notifications created. {{alreadyNotified}} already notified today. {{aboveThreshold}} above threshold.",
         "failed": "Inventory scan failed"
       },
-      "itemLabel": "Item"
+      "itemLabel": "Item",
+      "fixedAsset": "Fixed Asset"
     },
     "alerts": {
       "title": "Smart Inventory Alerts",

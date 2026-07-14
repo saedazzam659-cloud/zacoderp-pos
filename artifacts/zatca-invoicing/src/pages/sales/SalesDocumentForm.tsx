@@ -1440,7 +1440,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           title: "💾 حُفظت كمسودة",
           description: "لم يتم ترحيل الفاتورة لعدم تحديد المستودع. اختر المستودع ثم احفظ الفاتورة مرة أخرى لترحيلها.",
         });
-        navigate(basePath);
+        // ابقَ داخل الفاتورة (المسودة) بدل الرجوع للقائمة — الجديدة تُفتح
+        // في وضع التعديل حتى يكمل المستخدم المستودع ويحفظ مرة أخرى.
+        if (saved?.id && matchNew) navigate(`${basePath}/${saved.id}`);
         return;
       }
       const didPost   = isInvoice && autoPostingEnabled;
@@ -1460,6 +1462,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             JSON.stringify({ id: saved.id, template: salesTemplate, ts: Date.now() }),
           );
         } catch { /* ignore storage failures */ }
+        // The auto-print hint is read by the LIST page on mount — keep the
+        // navigation in this mode so the print modal fires.
+        navigate(basePath);
+        return;
+      }
+      // فواتير المبيعات: ابقَ داخل الفاتورة بعد الحفظ (بدل الرجوع للقائمة)
+      // حتى يقدر المستخدم يستخدم تبويب «السداد» مباشرة. الجديدة تُفتح في
+      // وضع التعديل بالمعرّف المحفوظ. عروض الأسعار وأوامر البيع تحتفظ
+      // بالسلوك القديم (رجوع للقائمة).
+      if (isInvoice && saved?.id) {
+        if (matchNew) navigate(`${basePath}/${saved.id}`);
+        return;
       }
       navigate(basePath);
     },

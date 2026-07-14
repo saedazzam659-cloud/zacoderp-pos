@@ -1,15 +1,16 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useFormatters } from "@/lib/format";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  Wallet, Plus, ExternalLink, CircleCheck, CircleAlert, CircleX, Info,
+  Wallet, Plus, ExternalLink, CircleCheck, CircleAlert, CircleX, Info, Link2, Unlink,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -46,6 +47,8 @@ export default function InvoicePaymentsTab({
 }: InvoicePaymentsTabProps) {
   const { fmt } = useFormatters();
   const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const authH = { Authorization: `Bearer ${token}` };
 
   // Receipt vouchers linked to THIS invoice (header or line link).
@@ -69,6 +72,64 @@ export default function InvoicePaymentsTab({
     ),
     enabled: !!invoiceId && !!companyId,
     staleTime: 15_000,
+  });
+
+  // Manual JEs on the CUSTOMER's account not yet linked to any invoice —
+  // candidates the user can APPLY as settlement (no new JE is created).
+  const { data: candidates = [], isLoading: loadingCandidates } = useQuery<any[]>({
+    queryKey: ["je-settlement-candidates", "sales", invoiceId, companyId],
+    queryFn: () => fetchJsonArray(
+      `${API}/api/journal-entries/settlement-candidates?companyId=${companyId}&salesInvoiceId=${invoiceId}`,
+      authH,
+    ),
+    enabled: !!invoiceId && !!companyId,
+    staleTime: 15_000,
+  });
+
+  function invalidateSettleQueries() {
+    qc.invalidateQueries({ queryKey: ["invoice-settlement-jes", "sales", invoiceId, companyId] });
+    qc.invalidateQueries({ queryKey: ["je-settlement-candidates", "sales", invoiceId, companyId] });
+    qc.invalidateQueries({ queryKey: ["invoice-receipt-vouchers", invoiceId, companyId] });
+  }
+
+  // "إضافة" — link an existing JE as settlement (server clamps ≤ المتبقي).
+  const applyMut = useMutation({
+    mutationFn: async (jeId: number) => {
+      const res = await fetch(`${API}/api/journal-entries/${jeId}/apply-settlement`, {
+        method: "POST",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId, salesInvoiceId: invoiceId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "فشل إضافة القيد كسداد");
+      return j;
+    },
+    onSuccess: (r: any) => {
+      invalidateSettleQueries();
+      toast({
+        title: r?.partial ? "تم سداد جزء" : "تم السداد بالكامل",
+        description: r?.partial
+          ? `أُضيف ${fmt(Number(r.applied) || 0)} من القيد كسداد — المتبقّي ${fmt(Number(r.remainingAfter) || 0)}`
+          : `أُضيف ${fmt(Number(r.applied) || 0)} من القيد وسُدِّدت الفاتورة بالكامل`,
+      });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // فكّ ارتباط قيد سداد (يزيل احتسابه من المُحصَّل دون حذف القيد).
+  const unlinkMut = useMutation({
+    mutationFn: async (jeId: number) => {
+      const res = await fetch(`${API}/api/journal-entries/${jeId}/unlink-settlement`, {
+        method: "POST",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "فشل فكّ الارتباط");
+      return j;
+    },
+    onSuccess: () => { invalidateSettleQueries(); toast({ title: "تم فكّ ارتباط القيد بالفاتورة" }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   // Sales returns against this invoice reduce the amount due.
@@ -109,7 +170,7 @@ export default function InvoicePaymentsTab({
     // same rule): the CTA may only seed what's left AFTER posted + drafts.
     const available = Math.max(0, netDue - collected - pending);
     const percent = netDue > 0 ? Math.min(100, (collected / netDue) * 100) : 0;
-    return { total, collected, pending, returns, netDue, remaining, available, percent };
+    return { total, collected, pending, returns, netDue, remaining, available, percent, jePaid: jePosted + jePending };
   }, [vouchers, settleJes, allReturns, invoiceTotal, invoiceExchangeRate, invoiceId]);
 
   // Payment status pill.
@@ -120,8 +181,15 @@ export default function InvoicePaymentsTab({
     if (summary.remaining <= 0.005) {
       return { label: "مدفوعة بالكامل", tone: "green" as const, Icon: CircleCheck };
     }
-    if (summary.collected > 0.005) {
-      return { label: "مدفوعة جزئياً", tone: "amber" as const, Icon: CircleAlert };
+    if (summary.collected > 0.005 || summary.pending > 0.005) {
+      // Blue "تم سداد جزء" when part of the payment came from linked
+      // journal entries (طلب المستخدم: جزء مسدَّد بقيد ⇒ أزرق).
+      if (summary.jePaid > 0.005) {
+        return { label: "تم سداد جزء", tone: "blue" as const, Icon: CircleAlert };
+      }
+      if (summary.collected > 0.005) {
+        return { label: "مدفوعة جزئياً", tone: "amber" as const, Icon: CircleAlert };
+      }
     }
     return { label: "غير مدفوعة", tone: "red" as const, Icon: CircleX };
   }, [summary]);
@@ -170,6 +238,7 @@ export default function InvoicePaymentsTab({
   const toneClasses: Record<string, string> = {
     green: "bg-emerald-50 text-emerald-700 border-emerald-200",
     amber: "bg-amber-50 text-amber-700 border-amber-200",
+    blue:  "bg-blue-50 text-blue-700 border-blue-200",
     red:   "bg-red-50 text-red-700 border-red-200",
     muted: "bg-muted text-muted-foreground border-border",
   };
@@ -354,12 +423,79 @@ export default function InvoicePaymentsTab({
                       </Badge>
                     </TableCell>
                     <TableCell>
+                      <div className="flex items-center gap-0.5">
+                        <Button
+                          variant="ghost" size="icon" className="h-7 w-7"
+                          onClick={(e) => { e.stopPropagation(); navigate(`/accounting/journals/${j.id}`); }}
+                          title="فتح القيد"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600"
+                          disabled={unlinkMut.isPending}
+                          onClick={(e) => { e.stopPropagation(); unlinkMut.mutate(j.id); }}
+                          title="فكّ ارتباط القيد بالفاتورة (يزيل احتسابه من المُحصَّل دون حذف القيد)"
+                          data-testid={`btn-unlink-je-${j.id}`}
+                        >
+                          <Unlink className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {/* Unlinked manual JEs on the customer's account — apply as settlement */}
+      {paymentType !== "cash" && paymentType !== "bank" && (loadingCandidates || (candidates as any[]).length > 0) && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Link2 className="h-3.5 w-3.5" />
+            قيود محاسبية على العميل غير مرتبطة بأي فاتورة — اضغط «إضافة» لاحتسابها كسداد لهذه الفاتورة (بدون إنشاء قيد جديد)
+          </p>
+          <div className="rounded-lg border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">رقم القيد</TableHead>
+                  <TableHead className="text-xs">التاريخ</TableHead>
+                  <TableHead className="text-xs">البيان</TableHead>
+                  <TableHead className="text-xs text-left">المبلغ على العميل</TableHead>
+                  <TableHead className="text-xs">الحالة</TableHead>
+                  <TableHead className="text-xs w-24"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingCandidates && (
+                  <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">جارِ التحميل…</TableCell></TableRow>
+                )}
+                {(candidates as any[]).map((j: any) => (
+                  <TableRow key={j.id} data-testid={`je-candidate-row-${j.id}`}>
+                    <TableCell className="text-xs font-medium" dir="ltr">{j.docNumber ?? `#${j.id}`}</TableCell>
+                    <TableCell className="text-xs">{j.entryDate ?? "—"}</TableCell>
+                    <TableCell className="text-xs max-w-[220px] truncate">{j.description ?? "—"}</TableCell>
+                    <TableCell className="text-xs text-left" dir="ltr">{fmt(Number(j.amount) || 0)}</TableCell>
+                    <TableCell className="text-xs">
+                      <Badge variant={j.status === "posted" ? "default" : "secondary"} className="text-[10px]">
+                        {j.status === "posted" ? "مرحّل" : "مسودّة"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
                       <Button
-                        variant="ghost" size="icon" className="h-7 w-7"
-                        onClick={(e) => { e.stopPropagation(); navigate(`/accounting/journals/${j.id}`); }}
-                        title="فتح القيد"
+                        size="sm" variant="outline" className="h-7 px-2 text-xs"
+                        disabled={applyMut.isPending || summary.remaining <= 0.005}
+                        onClick={() => applyMut.mutate(j.id)}
+                        title={summary.remaining <= 0.005
+                          ? "الفاتورة مسدَّدة بالكامل"
+                          : "إضافة هذا القيد كسداد — يُحتسب حتى المتبقّي فقط ولا يُنشئ قيداً جديداً"}
+                        data-testid={`btn-apply-je-${j.id}`}
                       >
-                        <ExternalLink className="h-3.5 w-3.5" />
+                        <Plus className="h-3.5 w-3.5" />
+                        إضافة
                       </Button>
                     </TableCell>
                   </TableRow>

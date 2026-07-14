@@ -135,7 +135,7 @@ export type Item = {
   barcode?: string | null;
   groupId?: number | null;
   unitId?: number | null;
-  itemType: "stock" | "service";
+  itemType: "stock" | "service" | "fixed_asset";
   salePrice: string;
   costPrice: string;
   vatRate: string;

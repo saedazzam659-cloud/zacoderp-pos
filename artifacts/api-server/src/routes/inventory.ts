@@ -2936,7 +2936,7 @@ router.post("/import/items", async (req, res) => {
         companyId: cid, code, nameAr,
         nameEn:       r.nameEn       != null && r.nameEn   !== "" ? String(r.nameEn)   : null,
         barcode:      r.barcode      != null && r.barcode  !== "" ? String(r.barcode)  : null,
-        itemType:     (r.itemType === "service" ? "service" : "stock") as any,
+        itemType:     ((r.itemType === "service" || r.itemType === "fixed_asset") ? r.itemType : "stock") as any,
         groupId, unitId,
         costPrice:    String(Number(r.costPrice    ?? 0) || 0),
         salePrice:    String(Number(r.salePrice    ?? 0) || 0),

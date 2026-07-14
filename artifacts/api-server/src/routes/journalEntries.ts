@@ -18,7 +18,12 @@ import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodG
 import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAudit.js";
 import { describeDevice } from "../lib/deviceFingerprint.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
-import { assertJeSettlementAllowed, acquireSettlementLock, type SettlementKind } from "../lib/invoiceSettlement.js";
+import {
+  assertJeSettlementAllowed, acquireSettlementLock,
+  invoiceNetDueBase, sumVouchersForInvoice, sumSettlementJEs,
+  type SettlementKind,
+} from "../lib/invoiceSettlement.js";
+import { customersTable, suppliersTable } from "@workspace/db";
 
 // ── سداد فاتورة عن طريق القيد ─────────────────────────────────────────────
 // Parse + normalize the optional invoice-settlement link on a manual JE.
@@ -400,6 +405,229 @@ router.get("/for-invoice", async (req, res) => {
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
+
+// ─── Settlement candidates ────────────────────────────────────────────────
+// Manual (general) journal entries that touch the invoice's PARTY account
+// (customer credited / supplier debited) and are NOT yet linked to any
+// invoice. Surfaced on the invoice "السداد" tab with an "إضافة" button —
+// applying one links it (settlement) WITHOUT generating a new JE.
+// Literal sub-segment registered BEFORE /:id (Express 5 rule).
+router.get("/settlement-candidates", async (req, res) => {
+  try {
+    const cid = getCompanyId(req);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const sid = req.query.salesInvoiceId ? Number(req.query.salesInvoiceId) : null;
+    const pid = req.query.purchaseInvoiceId ? Number(req.query.purchaseInvoiceId) : null;
+    const invId = sid ?? pid;
+    if (!invId || !Number.isInteger(invId) || invId <= 0) {
+      res.status(400).json({ error: "salesInvoiceId أو purchaseInvoiceId مطلوب" });
+      return;
+    }
+    const kind: SettlementKind = sid ? "sales" : "purchase";
+
+    // Resolve the invoice's party account (customer AR / supplier AP).
+    let partyAccountId: number | null = null;
+    if (kind === "sales") {
+      const [inv] = await db.select({ customerId: salesInvoicesTable.customerId })
+        .from(salesInvoicesTable)
+        .where(and(eq(salesInvoicesTable.id, invId), eq(salesInvoicesTable.companyId, cid)));
+      if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+      if (inv.customerId != null) {
+        const [c] = await db.select({ accountId: customersTable.accountId })
+          .from(customersTable)
+          .where(and(eq(customersTable.id, inv.customerId), eq(customersTable.companyId, cid)));
+        partyAccountId = c?.accountId ?? null;
+      }
+    } else {
+      const [inv] = await db.select({ supplierId: purchaseInvoicesTable.supplierId })
+        .from(purchaseInvoicesTable)
+        .where(and(eq(purchaseInvoicesTable.id, invId), eq(purchaseInvoicesTable.companyId, cid)));
+      if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+      if (inv.supplierId != null) {
+        const [s] = await db.select({ accountId: suppliersTable.accountId })
+          .from(suppliersTable)
+          .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
+        partyAccountId = s?.accountId ?? null;
+      }
+    }
+    if (!partyAccountId) { res.json([]); return; }
+
+    // A payment DIRECTION line: customer account CREDITED (sales) /
+    // supplier account DEBITED (purchase). Net per entry must be > 0.
+    const amountExpr = kind === "sales"
+      ? sql<string>`SUM(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit})`
+      : sql<string>`SUM(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit})`;
+    const rows = await db.select({
+      id:           journalEntriesTable.id,
+      docNumber:    journalEntriesTable.docNumber,
+      entryDate:    journalEntriesTable.entryDate,
+      description:  journalEntriesTable.description,
+      status:       journalEntriesTable.status,
+      currency:     journalEntriesTable.currency,
+      exchangeRate: journalEntriesTable.exchangeRate,
+      amount:       amountExpr,
+    }).from(journalEntriesTable)
+      .innerJoin(journalEntryLinesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.entryType, "general"),
+        sql`${journalEntriesTable.salesInvoiceId} IS NULL`,
+        sql`${journalEntriesTable.purchaseInvoiceId} IS NULL`,
+        eq(journalEntryLinesTable.accountId, partyAccountId),
+      ))
+      .groupBy(
+        journalEntriesTable.id, journalEntriesTable.docNumber,
+        journalEntriesTable.entryDate, journalEntriesTable.description,
+        journalEntriesTable.status, journalEntriesTable.currency,
+        journalEntriesTable.exchangeRate,
+      )
+      .having(sql`${kind === "sales"
+        ? sql`SUM(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit})`
+        : sql`SUM(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit})`} > 0.005`)
+      .orderBy(desc(journalEntriesTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Apply an EXISTING JE as invoice settlement (no new JE produced) ─────────
+// Links the JE to the invoice + sets settlementAmount = min(JE party-line
+// amount, remaining due). Race-safe: advisory lock + re-check inside the tx.
+router.post("/:id/apply-settlement", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const jeId = Number(req.params.id);
+    if (!Number.isInteger(jeId) || jeId <= 0) { res.status(400).json({ error: "معرّف القيد غير صحيح" }); return; }
+    const sid = req.body?.salesInvoiceId != null ? Number(req.body.salesInvoiceId) : null;
+    const pid = req.body?.purchaseInvoiceId != null ? Number(req.body.purchaseInvoiceId) : null;
+    const invId = sid ?? pid;
+    if (!invId || !Number.isInteger(invId) || invId <= 0 || (sid != null && pid != null)) {
+      res.status(400).json({ error: "salesInvoiceId أو purchaseInvoiceId مطلوب (واحد فقط)" });
+      return;
+    }
+    const kind: SettlementKind = sid ? "sales" : "purchase";
+
+    const out = await db.transaction(async (tx) => {
+      await acquireSettlementLock(tx, cid, kind, invId);
+
+      const [je] = await tx.select().from(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.id, jeId), eq(journalEntriesTable.companyId, cid)));
+      if (!je) throw Object.assign(new Error("القيد غير موجود"), { httpStatus: 404 });
+      if (je.salesInvoiceId != null || je.purchaseInvoiceId != null) {
+        throw Object.assign(new Error("هذا القيد مرتبط بفاتورة بالفعل"), { httpStatus: 409 });
+      }
+      if ((je.entryType ?? "general") !== "general") {
+        throw Object.assign(new Error("لا يمكن استخدام قيد نظامي (مولَّد من مستند) كسداد — القيود اليدوية فقط"), { httpStatus: 400 });
+      }
+
+      // Invoice must exist, be CREDIT type; net due computed in base.
+      const { netDue, paymentType } = await invoiceNetDueBase(cid, kind, invId);
+      if (paymentType !== "credit") {
+        throw Object.assign(new Error("لا يمكن سداد إلا فاتورة آجلة — الفواتير النقدية/البنكية تُسدَّد تلقائياً عند الترحيل"), { httpStatus: 400 });
+      }
+      const vouchers = await sumVouchersForInvoice(cid, kind, invId);
+      const jes = await sumSettlementJEs(cid, kind, invId, jeId);
+      const remainingBase = netDue - vouchers - jes;
+      if (remainingBase <= 0.005) {
+        throw Object.assign(new Error("الفاتورة مسدَّدة بالكامل — لا يوجد متبقٍّ لإضافته من هذا القيد"), { httpStatus: 409 });
+      }
+
+      // JE's party-line amount (in the entry's currency).
+      const rate = parseFloat(String(je.exchangeRate ?? "1")) || 1;
+      const partyAccountId = await resolvePartyAccountForInvoice(tx, cid, kind, invId);
+      if (!partyAccountId) {
+        throw Object.assign(new Error("لا يمكن تحديد حساب العميل/المورد للفاتورة"), { httpStatus: 400 });
+      }
+      const lines = await tx.select({
+        debit:  journalEntryLinesTable.debit,
+        credit: journalEntryLinesTable.credit,
+      }).from(journalEntryLinesTable)
+        .where(and(
+          eq(journalEntryLinesTable.entryId, jeId),
+          eq(journalEntryLinesTable.accountId, partyAccountId),
+        ));
+      const jeAmountDoc = lines.reduce((s, l) => {
+        const d = parseFloat(String(l.debit)) || 0;
+        const c = parseFloat(String(l.credit)) || 0;
+        return s + (kind === "sales" ? c - d : d - c);
+      }, 0);
+      if (jeAmountDoc <= 0.005) {
+        throw Object.assign(new Error("هذا القيد لا يحتوي على مبلغ سداد على حساب العميل/المورد لهذه الفاتورة"), { httpStatus: 400 });
+      }
+      const jeAmountBase = jeAmountDoc * rate;
+
+      // Clamp to the remaining due — سداد أكبر من الفاتورة ممنوع.
+      const appliedBase = Math.min(jeAmountBase, remainingBase);
+      const appliedDoc = rate > 0 ? appliedBase / rate : appliedBase;
+
+      await tx.update(journalEntriesTable).set({
+        salesInvoiceId:    kind === "sales" ? invId : null,
+        purchaseInvoiceId: kind === "purchase" ? invId : null,
+        settlementAmount:  appliedDoc.toFixed(2),
+        updatedAt: new Date(),
+      }).where(eq(journalEntriesTable.id, jeId));
+
+      const remainingAfter = Math.max(0, remainingBase - appliedBase);
+      return {
+        applied: Number(appliedDoc.toFixed(2)),
+        appliedBase: Number(appliedBase.toFixed(2)),
+        remainingAfter: Number(remainingAfter.toFixed(2)),
+        partial: remainingAfter > 0.005,
+        clamped: jeAmountBase > remainingBase + 0.005,
+      };
+    });
+    res.json(out);
+  } catch (e: any) {
+    res.status(e?.httpStatus ?? 500).json({ error: e.message });
+  }
+});
+
+// ─── Unlink a JE from its invoice settlement ─────────────────────────────────
+router.post("/:id/unlink-settlement", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const jeId = Number(req.params.id);
+    if (!Number.isInteger(jeId) || jeId <= 0) { res.status(400).json({ error: "معرّف القيد غير صحيح" }); return; }
+    const [je] = await db.select({
+      id: journalEntriesTable.id,
+      sid: journalEntriesTable.salesInvoiceId,
+      pid: journalEntriesTable.purchaseInvoiceId,
+    }).from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, jeId), eq(journalEntriesTable.companyId, cid)));
+    if (!je) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+    if (je.sid == null && je.pid == null) { res.status(409).json({ error: "القيد غير مرتبط بأي فاتورة" }); return; }
+    await db.update(journalEntriesTable).set({
+      salesInvoiceId: null,
+      purchaseInvoiceId: null,
+      settlementAmount: null,
+      updatedAt: new Date(),
+    }).where(eq(journalEntriesTable.id, jeId));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Resolve the invoice's party (customer AR / supplier AP) leaf account id.
+async function resolvePartyAccountForInvoice(
+  dbx: any, cid: number, kind: SettlementKind, invId: number,
+): Promise<number | null> {
+  if (kind === "sales") {
+    const [inv] = await dbx.select({ customerId: salesInvoicesTable.customerId })
+      .from(salesInvoicesTable)
+      .where(and(eq(salesInvoicesTable.id, invId), eq(salesInvoicesTable.companyId, cid)));
+    if (!inv?.customerId) return null;
+    const [c] = await dbx.select({ accountId: customersTable.accountId })
+      .from(customersTable)
+      .where(and(eq(customersTable.id, inv.customerId), eq(customersTable.companyId, cid)));
+    return c?.accountId ?? null;
+  }
+  const [inv] = await dbx.select({ supplierId: purchaseInvoicesTable.supplierId })
+    .from(purchaseInvoicesTable)
+    .where(and(eq(purchaseInvoicesTable.id, invId), eq(purchaseInvoicesTable.companyId, cid)));
+  if (!inv?.supplierId) return null;
+  const [s] = await dbx.select({ accountId: suppliersTable.accountId })
+    .from(suppliersTable)
+    .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
+  return s?.accountId ?? null;
+}
 
 router.get("/:id", async (req, res) => {
   try {

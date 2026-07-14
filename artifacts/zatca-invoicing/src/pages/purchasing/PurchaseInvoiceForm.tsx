@@ -788,13 +788,18 @@ export default function PurchaseInvoiceForm() {
       }
       return j;
     },
-    onSuccess: () => {
+    onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
       toast({ title: autoPostingEnabled
         ? (isNew ? tr("createdAndPosted") : tr("savedAndPosted"))
         : (isNew ? tr("createdDraft") : tr("savedDraft"))
       });
-      navigate("/purchasing/invoices");
+      // ابقَ داخل الفاتورة بعد الحفظ (بدل الرجوع للقائمة) حتى يقدر
+      // المستخدم يستخدم تبويب «السداد» مباشرة. فاتورة جديدة → افتحها
+      // في وضع التعديل بالمعرّف المحفوظ.
+      if (isNew && saved?.id) {
+        navigate(`/purchasing/invoices/${saved.id}`);
+      }
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });

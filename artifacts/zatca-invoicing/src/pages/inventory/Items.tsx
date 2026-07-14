@@ -1125,7 +1125,7 @@ function AIAssistDialog({
             <Row keyName="vatRate"     label={t("pages.items.vatRate")}          current={form.vatRate}    suggested={draft.suggestedVatRate !== null ? `${draft.suggestedVatRate}%` : null} />
             <Row keyName="groupId"     label={t("pages.items.group")}            current={(groups as any[]).find((g: any) => String(g.id) === String(form.groupId))?.nameAr} suggested={draft.suggestedGroup} />
             <Row keyName="unitId"      label={t("pages.items.baseUnit")}         current={(units  as any[]).find((u: any) => String(u.id) === String(form.unitId))?.nameAr}  suggested={draft.suggestedUnit} />
-            <Row keyName="itemType"    label={t("pages.items.itemType")}         current={form.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service")}
+            <Row keyName="itemType"    label={t("pages.items.itemType")}         current={form.itemType === "stock" ? t("pages.items.stock") : form.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : t("pages.items.service")}
                  suggested={draft.suggestedItemType === "stock" ? t("pages.items.stock") : draft.suggestedItemType === "service" ? t("pages.items.service") : null} />
 
             {draft.tags && draft.tags.length > 0 && (
@@ -1171,7 +1171,7 @@ export default function Items() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
-  const [filterType, setFilterType] = useState<"all" | "stock" | "service">("all");
+  const [filterType, setFilterType] = useState<"all" | "stock" | "service" | "fixed_asset">("all");
   const [filterNature, setFilterNature] = useState<"all" | "raw" | "semi" | "finished" | "consumable" | "merchandise">("all");
   const [form, setForm] = useState<any>(EMPTY);
   const [editId, setEditId] = useState<number | null>(null);
@@ -1344,7 +1344,7 @@ export default function Items() {
     nameAr:       it.nameAr,
     nameEn:       it.nameEn ?? "",
     barcode:      it.barcode ?? "",
-    itemType:     it.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service"),
+    itemType:     it.itemType === "stock" ? t("pages.items.stock") : it.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : t("pages.items.service"),
     groupName:    pickName(it.group?.nameAr, it.group?.nameEn),
     unitName:     pickName(it.unit?.nameAr, it.unit?.nameEn),
     costPrice:    fmt(it.costPrice),
@@ -1453,7 +1453,7 @@ export default function Items() {
                 <Field label={t("pages.items.nameEn")}><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
                 <Field label={t("pages.items.barcode")}><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
                 <Field label={t("pages.items.itemType")} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceNoStockHint") : undefined}>
-                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" ? { itemNature: "merchandise", batchTrackingMode: "none", reorderLevel: "0", maxLevel: "", expiryDate: "", costMethod: "weighted_avg" } : {}) }))} placeholder={t("pages.items.itemType")} />
+                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }, { value: "fixed_asset", label: t("pages.items.fixedAsset") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" ? { itemNature: "merchandise", batchTrackingMode: "none", reorderLevel: "0", maxLevel: "", expiryDate: "", costMethod: "weighted_avg" } : {}) }))} placeholder={t("pages.items.itemType")} />
                 </Field>
                 {form.itemType !== "service" && (
                 <Field label={t("inventoryMaster.items.natureFieldLabel")} hint={t("inventoryMaster.items.natureFieldHint")}>
@@ -1724,9 +1724,9 @@ export default function Items() {
           <Input className="pr-9" placeholder={t("pages.items.searchPlaceholder")} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="flex gap-1 bg-muted/50 p-1 rounded-lg border">
-          {(["all", "stock", "service"] as const).map(ti => (
+          {(["all", "stock", "service", "fixed_asset"] as const).map(ti => (
             <button key={ti} onClick={() => setFilterType(ti)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium transition-all", filterType === ti ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}>
-              {ti === "all" ? t("pages.items.all") : ti === "stock" ? t("pages.items.stock") : t("pages.items.service")}
+              {ti === "all" ? t("pages.items.all") : ti === "stock" ? t("pages.items.stock") : ti === "service" ? t("pages.items.service") : t("pages.items.fixedAsset")}
             </button>
           ))}
         </div>
@@ -1876,8 +1876,8 @@ export default function Items() {
                       <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs font-medium">{fmt(it.salePrice)}</td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex flex-col items-center gap-1">
-                          <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700")}>
-                            {it.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service")}
+                          <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : it.itemType === "fixed_asset" ? "bg-amber-50 text-amber-700" : "bg-purple-50 text-purple-700")}>
+                            {it.itemType === "stock" ? t("pages.items.stock") : it.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : t("pages.items.service")}
                           </span>
                           {(() => {
                             const nat = (it.itemNature ?? "merchandise") as string;
