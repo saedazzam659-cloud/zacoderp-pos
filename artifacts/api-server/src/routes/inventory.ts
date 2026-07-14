@@ -32,7 +32,12 @@ import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { pathRbac, writeAudit } from "../middleware/permissions.js";
 import { getItemUsageControls, normalizeUsageMode, isValidScreenKey, DEFAULT_USAGE_MODE, getScreenRules, isUsagePrivileged, checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
-import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
+import {
+  ensureWarehouseAccount,
+  ensureItemGroupAccountUnderParent,
+  peekItemGroupNextAccountUnderParent,
+  type ItemGroupCategoryType,
+} from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { pickBatches, type BatchPick } from "../lib/stockHelpers.js";
@@ -341,10 +346,40 @@ router.get("/item-groups", async (req, res) => {
   res.json(rows);
 });
 
+// ── التوجيه المحاسبي: normalize + validate routing fields from the body ──
+const GROUP_CATEGORY_TYPES = new Set(["inventory", "fixed_asset", "expense"]);
+function parseGroupRouting(body: any): { categoryType: ItemGroupCategoryType | null; parentAccountId: number | null; error?: string } {
+  const rawType = body?.categoryType ? String(body.categoryType) : null;
+  if (!rawType) return { categoryType: null, parentAccountId: null };
+  if (!GROUP_CATEGORY_TYPES.has(rawType)) return { categoryType: null, parentAccountId: null, error: "نوع الفئة غير صالح" };
+  const parentAccountId = Number(body?.parentAccountId);
+  if (!Number.isInteger(parentAccountId) || parentAccountId <= 0) {
+    return { categoryType: null, parentAccountId: null, error: "لا يسمح بحفظ الفئة بدون تحديد الحساب الرئيسي للتوجيه المحاسبي" };
+  }
+  return { categoryType: rawType as ItemGroupCategoryType, parentAccountId };
+}
+
+// Preview (read-only) of the next auto-minted sub-account under a picked
+// parent — powers the "آخر حساب / الحساب التالي" hint on the category form.
+// NOTE: registered BEFORE /item-groups/:id (Express 5 literal-first rule).
+router.get("/item-groups/next-account", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const parentId = Number(req.query.parentId);
+  const categoryType = String(req.query.categoryType ?? "");
+  if (!Number.isInteger(parentId) || parentId <= 0 || !GROUP_CATEGORY_TYPES.has(categoryType)) {
+    res.status(400).json({ error: "بيانات غير صالحة" }); return;
+  }
+  const peek = await peekItemGroupNextAccountUnderParent(cid, parentId, categoryType as ItemGroupCategoryType);
+  if (!peek) { res.status(404).json({ error: "الحساب الرئيسي غير صالح لهذا النوع من الفئات" }); return; }
+  res.json(peek);
+});
+
 router.post("/item-groups", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { code, nameAr, nameEn } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المجموعة مطلوبان" }); return; }
+  const routing = parseGroupRouting(req.body);
+  if (routing.error) { res.status(400).json({ error: routing.error }); return; }
   const existing = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
   if (existing.some(g => g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
@@ -352,7 +387,17 @@ router.post("/item-groups", async (req, res) => {
   if (existing.some(g => g.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
     res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمجموعة أخرى` }); return;
   }
-  const [row] = await db.insert(itemGroupsTable).values({ companyId: cid, code, nameAr, nameEn }).returning();
+  // Mint the category's default sub-account (supplier-style) BEFORE the insert
+  // so a minting failure never leaves a half-routed category behind.
+  let accountId: number | null = null;
+  if (routing.categoryType && routing.parentAccountId) {
+    accountId = await ensureItemGroupAccountUnderParent(cid, String(nameAr).trim(), routing.parentAccountId, routing.categoryType);
+    if (!accountId) { res.status(400).json({ error: "تعذّر إنشاء الحساب الفرعي للفئة — تأكد من صلاحية الحساب الرئيسي المختار" }); return; }
+  }
+  const [row] = await db.insert(itemGroupsTable).values({
+    companyId: cid, code, nameAr, nameEn,
+    categoryType: routing.categoryType, parentAccountId: routing.parentAccountId, accountId,
+  }).returning();
   res.status(201).json(row);
 });
 
@@ -360,14 +405,37 @@ router.put("/item-groups/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const { code, nameAr, nameEn } = req.body;
+  const routing = parseGroupRouting(req.body);
+  if (routing.error) { res.status(400).json({ error: routing.error }); return; }
   const others = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  const current = others.find(g => g.id === id);
+  if (!current) { res.status(404).json({ error: "غير موجود" }); return; }
   if (code && others.some(g => g.id !== id && g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
   }
   if (nameAr && others.some(g => g.id !== id && g.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
     res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمجموعة أخرى` }); return;
   }
-  const [row] = await db.update(itemGroupsTable).set({ code, nameAr, nameEn }).where(and(eq(itemGroupsTable.id, id), eq(itemGroupsTable.companyId, cid))).returning();
+  // Keep-if-exists: re-mint ONLY when routing is newly set or the parent/type
+  // changed; never NULL an existing account link on an unrelated edit.
+  let accountId: number | null = current.accountId ?? null;
+  if (routing.categoryType && routing.parentAccountId) {
+    const changed = current.categoryType !== routing.categoryType
+      || current.parentAccountId !== routing.parentAccountId
+      || !current.accountId;
+    if (changed) {
+      const minted = await ensureItemGroupAccountUnderParent(cid, String(nameAr ?? current.nameAr).trim(), routing.parentAccountId, routing.categoryType);
+      if (!minted) { res.status(400).json({ error: "تعذّر إنشاء الحساب الفرعي للفئة — تأكد من صلاحية الحساب الرئيسي المختار" }); return; }
+      accountId = minted;
+    }
+  } else {
+    // Routing removed entirely → clear it (legacy behavior restored).
+    accountId = null;
+  }
+  const [row] = await db.update(itemGroupsTable).set({
+    code, nameAr, nameEn,
+    categoryType: routing.categoryType, parentAccountId: routing.parentAccountId, accountId,
+  }).where(and(eq(itemGroupsTable.id, id), eq(itemGroupsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
 });

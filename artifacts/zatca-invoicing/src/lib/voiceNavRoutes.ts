@@ -72,7 +72,7 @@ export const VOICE_ROUTES: VoiceRoute[] = [
   // ── Inventory ───────────────────────────────────────────────────────
   { id: "inventory.dashboard",    path: "/inventory",                  ar: "لوحة المخزون",          en: "Inventory Dashboard",  permKey: "items" },
   { id: "inventory.items",        path: "/inventory/items",            ar: "الأصناف",                en: "Items",                permKey: "items" },
-  { id: "inventory.itemGroups",   path: "/inventory/item-groups",      ar: "مجموعات الأصناف",       en: "Item Groups",          permKey: "items" },
+  { id: "inventory.itemGroups",   path: "/inventory/item-groups",      ar: "فئات الأصناف",       en: "Item Categories",          permKey: "items" },
   { id: "inventory.units",        path: "/inventory/units",            ar: "وحدات القياس",          en: "Units",                permKey: "items" },
   { id: "inventory.warehouses",   path: "/inventory/warehouses",       ar: "المستودعات",             en: "Warehouses",           permKey: "warehouses" },
   { id: "inventory.warehouseGroups", path: "/inventory/warehouse-groups", ar: "مجموعات المستودعات", en: "Warehouse Groups",     permKey: "warehouses" },

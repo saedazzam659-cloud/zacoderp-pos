@@ -421,6 +421,58 @@ async function buildSupplierPeek(companyId: number, parent: typeof accountsTable
   };
 }
 
+// ── Item-group (فئات الأصناف) accounting routing ────────────────────────────
+// The category's default account is auto-minted under an EXPLICIT user-picked
+// parent, supplier-style (last child 111002 → mint 111003). Allowed parent
+// account types depend on the category type.
+export type ItemGroupCategoryType = "inventory" | "fixed_asset" | "expense";
+
+export const ITEM_GROUP_PARENT_TYPES: Record<ItemGroupCategoryType, AccountType[]> = {
+  inventory:   ["asset"],
+  fixed_asset: ["asset"],
+  expense:     ["expense"],
+};
+
+async function resolveExplicitGroupParent(
+  companyId: number,
+  parentId: number,
+  categoryType: ItemGroupCategoryType,
+) {
+  const [parent] = await db.select().from(accountsTable).where(and(
+    eq(accountsTable.id, parentId),
+    eq(accountsTable.companyId, companyId), // tenant guard
+  ));
+  if (!parent) return null;
+  const allowed = ITEM_GROUP_PARENT_TYPES[categoryType];
+  if (!allowed.includes(parent.accountType as AccountType)) return null;
+  return parent;
+}
+
+/** Mint (or idempotently reuse) the category's default sub-account under the
+ *  explicit parent. Same minting path as suppliers → peek never diverges. */
+export async function ensureItemGroupAccountUnderParent(
+  companyId: number,
+  name: string,
+  parentId: number,
+  categoryType: ItemGroupCategoryType,
+): Promise<number | null> {
+  const parent = await resolveExplicitGroupParent(companyId, parentId, categoryType);
+  if (!parent) return null;
+  return mintChildUnderParent(companyId, parent, name, parent.accountType as AccountType);
+}
+
+/** Read-only preview of last/next child code under the picked parent —
+ *  mirrors ensureItemGroupAccountUnderParent so hint and save can't diverge. */
+export async function peekItemGroupNextAccountUnderParent(
+  companyId: number,
+  parentId: number,
+  categoryType: ItemGroupCategoryType,
+) {
+  const parent = await resolveExplicitGroupParent(companyId, parentId, categoryType);
+  if (!parent) return null;
+  return buildSupplierPeek(companyId, parent);
+}
+
 export const ensureWarehouseAccount = (companyId: number, name: string) =>
   ensureEntitySubAccount({
     companyId, roleKeys: ["warehouse_account_parent"], name,

@@ -14,7 +14,12 @@ import { Plus, Pencil, Trash2, Tag, Search, BookMarked } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
-const EMPTY = { code: "", nameAr: "", nameEn: "", costAccountId: "", revenueAccountId: "" };
+const EMPTY = { code: "", nameAr: "", nameEn: "", costAccountId: "", revenueAccountId: "", categoryType: "", parentAccountId: "" };
+
+// نوع الفئة → أنواع الحسابات المسموح اختيارها كحساب رئيسي (تُطابق قواعد السيرفر)
+const PARENT_FILTER: Record<string, ("asset" | "expense")[]> = {
+  inventory: ["asset"], fixed_asset: ["asset"], expense: ["expense"],
+};
 
 export default function ItemGroups() {
   const { t, i18n } = useTranslation();
@@ -22,7 +27,7 @@ export default function ItemGroups() {
   const tr = (k: string, opts?: any) => t(`inventoryMaster.itemGroups.${k}`, opts) as string;
   const pickName = (ar?: string | null, en?: string | null) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
 
-  const { user } = useAuth();
+  const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -36,6 +41,21 @@ export default function ItemGroups() {
     queryKey: ["item-groups", cid],
     queryFn: () => inventoryApi.getItemGroups(cid),
   });
+  // أسماء الحسابات لعرض عمود «الحساب» في الجدول (نفس مفتاح كاش الكومبوبوكس)
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ["accounts", cid],
+    queryFn: async () => {
+      const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const url = cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return [];
+      const b = await r.json().catch(() => []);
+      return Array.isArray(b) ? b : [];
+    },
+    enabled: !!user,
+    staleTime: 60_000,
+  });
+  const accById = new Map<number, any>((Array.isArray(accounts) ? accounts : []).map((a: any) => [a.id, a]));
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["item-groups"] });
   const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
@@ -49,20 +69,41 @@ export default function ItemGroups() {
       ...g,
       costAccountId:    g.costAccountId    ? String(g.costAccountId)    : "",
       revenueAccountId: g.revenueAccountId ? String(g.revenueAccountId) : "",
+      categoryType:     g.categoryType ?? "",
+      parentAccountId:  g.parentAccountId ? String(g.parentAccountId) : "",
     });
     setEditId(g.id);
     setShowForm(true);
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (form.categoryType && !form.parentAccountId) {
+      toast({ title: tr("typeRequiresParent"), variant: "destructive" });
+      setActiveTab("accounts");
+      return;
+    }
     const payload = {
       ...form,
       costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
       revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
+      categoryType:     form.categoryType || null,
+      parentAccountId:  form.categoryType && form.parentAccountId ? Number(form.parentAccountId) : null,
     };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate(payload);
   }
+
+  // معاينة الحساب الفرعي القادم (مثل الموردين: آخر حساب 111002 → القادم 111003)
+  const peekParentId = form.categoryType && form.parentAccountId ? Number(form.parentAccountId) : 0;
+  const { data: peek } = useQuery({
+    queryKey: ["item-group-next-account", peekParentId, form.categoryType],
+    queryFn: () => inventoryApi.getItemGroupNextAccount(peekParentId, form.categoryType),
+    enabled: peekParentId > 0 && !!form.categoryType,
+    retry: false,
+  });
+
+  const typeLabel = (ct?: string | null) =>
+    ct === "inventory" ? tr("typeInventory") : ct === "fixed_asset" ? tr("typeFixedAsset") : ct === "expense" ? tr("typeExpense") : "—";
 
   const filtered = data.filter((g: any) =>
     g.nameAr.includes(search) || g.code.includes(search) || (g.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
@@ -115,6 +156,39 @@ export default function ItemGroups() {
 
             <TabsContent value="accounts" className="mt-0">
               <FormGrid>
+                <Field label={tr("categoryType")}>
+                  <select
+                    className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                    value={form.categoryType}
+                    onChange={e => setForm((p: any) => ({ ...p, categoryType: e.target.value, parentAccountId: "" }))}
+                  >
+                    <option value="">{tr("categoryTypeNone")}</option>
+                    <option value="inventory">{tr("typeInventory")}</option>
+                    <option value="fixed_asset">{tr("typeFixedAsset")}</option>
+                    <option value="expense">{tr("typeExpense")}</option>
+                  </select>
+                </Field>
+                {form.categoryType && (
+                  <Field label={tr("parentAccount")} hint={tr("parentAccountHint")} required>
+                    <AccountCombobox
+                      value={form.parentAccountId}
+                      onValueChange={v => setForm((p: any) => ({ ...p, parentAccountId: v }))}
+                      placeholder={tr("selectParentAccount")}
+                      filterTypes={PARENT_FILTER[form.categoryType] ?? ["asset"]}
+                      grouped={false}
+                    />
+                  </Field>
+                )}
+                {form.categoryType && peekParentId > 0 && peek && (
+                  <div className="md:col-span-2 rounded-md border bg-muted/40 px-3 py-2 text-xs space-y-1">
+                    <div className="text-muted-foreground">
+                      {peek.lastCode ? tr("lastChild", { code: peek.lastCode }) : tr("noChildrenYet")}
+                    </div>
+                    <div className="font-medium text-primary">
+                      {tr("nextChild", { code: peek.nextCode, name: form.nameAr || "—" })}
+                    </div>
+                  </div>
+                )}
                 <Field label={tr("defaultCostAccount")} hint={tr("inheritedAccountHint")}>
                   <AccountCombobox
                     value={form.costAccountId}
@@ -151,19 +225,36 @@ export default function ItemGroups() {
               <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colCode")}</th>
               <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colName")}</th>
               <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{isRtl ? t("inventoryMaster.common.nameEn") as string : t("inventoryMaster.common.nameAr") as string}</th>
+              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colType")}</th>
+              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colAccount")}</th>
               <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground w-24`}>{t("inventoryMaster.common.actions") as string}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
             {isLoading
-              ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={4} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
+              ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
-              ? <tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground"><Tag className="h-8 w-8 mx-auto mb-2 opacity-30" />{tr("noGroups")}</td></tr>
+              ? <tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground"><Tag className="h-8 w-8 mx-auto mb-2 opacity-30" />{tr("noGroups")}</td></tr>
               : pager.pagedItems.map((g: any) => (
                   <tr key={g.id} className="hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono text-xs">{g.code}</td>
                     <td className="px-4 py-3 font-medium">{pickName(g.nameAr, g.nameEn)}</td>
                     <td className="px-4 py-3 text-muted-foreground">{isRtl ? (g.nameEn ?? "—") : (g.nameAr ?? "—")}</td>
+                    <td className="px-4 py-3">
+                      {g.categoryType
+                        ? <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                            g.categoryType === "inventory" ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                            : g.categoryType === "fixed_asset" ? "bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
+                            : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>
+                            {typeLabel(g.categoryType)}
+                          </span>
+                        : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {g.accountId && accById.get(g.accountId)
+                        ? <span><span className="font-mono">{accById.get(g.accountId)?.code}</span> — {pickName(accById.get(g.accountId)?.nameAr, accById.get(g.accountId)?.nameEn)}</span>
+                        : <span className="text-muted-foreground">—</span>}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(g)}><Pencil className="h-3.5 w-3.5" /></Button>

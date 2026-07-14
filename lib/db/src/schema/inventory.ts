@@ -66,6 +66,15 @@ export const itemGroupsTable = pgTable("item_groups", {
   nameEn:          text("name_en"),
   costAccountId:   integer("cost_account_id"),
   revenueAccountId:integer("revenue_account_id"),
+  // ── التوجيه المحاسبي (accounting routing) — additive/optional ──
+  // categoryType: "inventory" | "fixed_asset" | "expense" (NULL = legacy group,
+  // no routing → purchase posting keeps its current behavior).
+  categoryType:    text("category_type"),
+  // The COA parent the user picked; the category's own sub-account is
+  // auto-minted under it (supplier-style: last child 111002 → mint 111003).
+  parentAccountId: integer("parent_account_id"),
+  // The minted (or explicitly linked) default account for this category.
+  accountId:       integer("account_id"),
   createdAt:       timestamp("created_at").defaultNow().notNull(),
 });
 

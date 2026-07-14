@@ -14,6 +14,7 @@ import {
   receiptVouchersTable, paymentVouchersTable,
   currenciesTable,
   itemsTable,
+  itemGroupsTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
@@ -1308,8 +1309,42 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     for (const r of itemMetaRows) { itemTypeById.set(r.id, (r.type ?? "stock") as string); costAccById.set(r.id, r.costAcc ?? null); }
     const isServiceLine = (l: any) => !!l.itemId && itemTypeById.get(l.itemId) === "service";
 
+    // ── فئات الأصناف (item-group accounting routing) ─────────────────────
+    // A group with categoryType + accountId routes its items' purchase debit:
+    //   inventory   → debit the group's account (stock movement still happens)
+    //   fixed_asset → debit the group's asset account, NO stock movement
+    //   expense     → debit the group's expense account, NO stock movement
+    // Groups without routing (legacy) keep the current warehouse-derived path.
+    // Item-level SERVICE typing wins over group routing (checked first below).
+    const itemGroupIdRows = lineItemIds.length
+      ? await db.select({ id: itemsTable.id, groupId: itemsTable.groupId })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
+      : [];
+    const groupIdByItem = new Map<number, number | null>(itemGroupIdRows.map(r => [r.id, r.groupId ?? null]));
+    const groupIds = Array.from(new Set(itemGroupIdRows.map(r => r.groupId).filter((x): x is number => !!x)));
+    const groupRows = groupIds.length
+      ? await db.select().from(itemGroupsTable)
+          .where(and(eq(itemGroupsTable.companyId, cid), inArray(itemGroupsTable.id, groupIds)))
+      : [];
+    const groupById = new Map(groupRows.map(g => [g.id, g]));
+    const groupRoutingForItem = (itemId: number | null) => {
+      if (!itemId) return null;
+      const gid = groupIdByItem.get(itemId);
+      const g = gid ? groupById.get(gid) : null;
+      if (!g || !g.categoryType || !g.accountId) return null;
+      return { type: g.categoryType as "inventory" | "fixed_asset" | "expense", accountId: g.accountId, nameAr: g.nameAr };
+    };
+    // Non-stock routed line = group type asset/expense (and not item-level service).
+    const isGroupNoStockLine = (l: any) => {
+      if (!l.itemId || isServiceLine(l)) return false;
+      const r = groupRoutingForItem(l.itemId);
+      return !!r && (r.type === "fixed_asset" || r.type === "expense");
+    };
+
     // Stock items still require a warehouse; SERVICE items must NOT have one.
-    const noWh = lines.filter(l => l.itemId && !l.warehouseId && !isServiceLine(l));
+    // Asset/expense-routed group lines don't move stock → no warehouse needed.
+    const noWh = lines.filter(l => l.itemId && !l.warehouseId && !isServiceLine(l) && !isGroupNoStockLine(l));
     if (noWh.length) {
       res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
       return;
@@ -1338,6 +1373,14 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     const serviceCostByAccount: Record<number, number> = {}; // SERVICE: cost → item.costAccountId
     const serviceMissing: string[] = [];                     // SERVICE lines lacking a cost account
     let serviceCostTotal = 0;
+    // فئات الأصناف routing buckets:
+    //   groupNoStockByAccount — asset/expense categories: debit, NO stock move
+    //   groupInvByAccount     — inventory categories: debit the CATEGORY account
+    //                           (stock movement still happens per warehouse)
+    const groupNoStockByAccount: Record<number, number> = {};
+    let groupNoStockTotal = 0;
+    const groupInvByAccount: Record<number, number> = {};
+    let groupInvTotal = 0;
     const costRefreshItemIds = new Set<number>();
     for (const line of lines) {
       if (!line.itemId) continue;
@@ -1353,6 +1396,15 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         serviceCostTotal += svcCost;
         continue;
       }
+      // فئة أصل ثابت / مصروف: debit the category account, NO stock movement.
+      if (isGroupNoStockLine(line)) {
+        const r = groupRoutingForItem(line.itemId)!;
+        const cost = Number(line.finalCost || line.unitPrice);
+        if (cost <= 0) continue;
+        groupNoStockByAccount[r.accountId] = (groupNoStockByAccount[r.accountId] ?? 0) + cost;
+        groupNoStockTotal += cost;
+        continue;
+      }
       if (!line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
       // Stock receives paid qty + free qty (supplier bonus units), but the
@@ -1362,7 +1414,15 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       const qty      = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
       const cost     = Number(line.finalCost || line.unitPrice);
       const costUnit = qty > 0 ? cost / qty : Number(line.unitPrice) / factor;
-      inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + cost;
+      // فئة مخزون: debit the CATEGORY's own inventory account instead of the
+      // warehouse-derived one (stock movement below is identical either way).
+      const invRouting = groupRoutingForItem(line.itemId);
+      if (invRouting && invRouting.type === "inventory") {
+        groupInvByAccount[invRouting.accountId] = (groupInvByAccount[invRouting.accountId] ?? 0) + cost;
+        groupInvTotal += cost;
+      } else {
+        inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + cost;
+      }
 
       if (grnSourced) continue;
 
@@ -1477,9 +1537,11 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     // ratio is taken over the COMBINED (goods + service) cost basis. Goods get
     // warehouse-inventory debits; service gets per-item cost-account debits.
     const goodsCostTotal = Object.values(inventoryByWarehouse).reduce((s, v) => s + v, 0);
-    const allCostTotal   = goodsCostTotal + serviceCostTotal;
+    const allCostTotal   = goodsCostTotal + serviceCostTotal + groupNoStockTotal + groupInvTotal;
     const inventoryDebitByWh: Record<number, number> = {};
     const serviceDebitByAccount: Record<number, number> = {};
+    const groupNoStockDebitByAccount: Record<number, number> = {};
+    const groupInvDebitByAccount: Record<number, number> = {};
     if (allCostTotal > 0) {
       const ratio = inventoryDebit / allCostTotal;
       for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
@@ -1488,21 +1550,36 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       for (const [accStr, amt] of Object.entries(serviceCostByAccount)) {
         serviceDebitByAccount[Number(accStr)] = amt * ratio;
       }
-      // Fix rounding drift so ALL debits (goods + service) exactly sum to
-      // inventoryDebit — prefer the last service account, else last warehouse.
+      for (const [accStr, amt] of Object.entries(groupNoStockByAccount)) {
+        groupNoStockDebitByAccount[Number(accStr)] = amt * ratio;
+      }
+      for (const [accStr, amt] of Object.entries(groupInvByAccount)) {
+        groupInvDebitByAccount[Number(accStr)] = amt * ratio;
+      }
+      // Fix rounding drift so ALL debits (goods + service + category-routed)
+      // exactly sum to inventoryDebit — prefer the last group/service account,
+      // else the last warehouse.
       const sum = Object.values(inventoryDebitByWh).reduce((s, v) => s + v, 0)
-                + Object.values(serviceDebitByAccount).reduce((s, v) => s + v, 0);
+                + Object.values(serviceDebitByAccount).reduce((s, v) => s + v, 0)
+                + Object.values(groupNoStockDebitByAccount).reduce((s, v) => s + v, 0)
+                + Object.values(groupInvDebitByAccount).reduce((s, v) => s + v, 0);
       const drift = inventoryDebit - sum;
       if (Math.abs(drift) > 0.001) {
+        const grpNsKeys = Object.keys(groupNoStockDebitByAccount);
+        const grpInvKeys = Object.keys(groupInvDebitByAccount);
         const svcKeys = Object.keys(serviceDebitByAccount);
-        if (svcKeys.length) serviceDebitByAccount[Number(svcKeys[svcKeys.length - 1])] += drift;
+        if (grpNsKeys.length) groupNoStockDebitByAccount[Number(grpNsKeys[grpNsKeys.length - 1])] += drift;
+        else if (grpInvKeys.length) groupInvDebitByAccount[Number(grpInvKeys[grpInvKeys.length - 1])] += drift;
+        else if (svcKeys.length) serviceDebitByAccount[Number(svcKeys[svcKeys.length - 1])] += drift;
         else {
           const lastKey = Object.keys(inventoryDebitByWh).pop();
           if (lastKey) inventoryDebitByWh[Number(lastKey)] += drift;
         }
       }
     }
-    const servicePortionTotal = Object.values(serviceDebitByAccount).reduce((s, v) => s + v, 0);
+    const servicePortionTotal = Object.values(serviceDebitByAccount).reduce((s, v) => s + v, 0)
+                              + Object.values(groupNoStockDebitByAccount).reduce((s, v) => s + v, 0)
+                              + Object.values(groupInvDebitByAccount).reduce((s, v) => s + v, 0);
 
     const desc = `قيد فاتورة مشتريات رقم ${inv.docNumber || inv.id}`;
     // SERVICE cost debits (به: حساب تكلفة الصنف الخدمي) — appended to both the
@@ -1515,12 +1592,31 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         debit: amt,
         description: "تكلفة صنف خدمي",
       }));
+    // فئات الأصناف debit lines: asset/expense categories (no stock) + inventory
+    // categories (stock moved, debit hits the category's own account).
+    const groupDebitLines: JLine[] = [
+      ...Object.entries(groupNoStockDebitByAccount)
+        .filter(([, amt]) => amt > 0)
+        .map(([accStr, amt]) => ({
+          accountId: Number(accStr),
+          debit: amt,
+          description: "توجيه فئة الصنف (أصل/مصروف)",
+        })),
+      ...Object.entries(groupInvDebitByAccount)
+        .filter(([, amt]) => amt > 0)
+        .map(([accStr, amt]) => ({
+          accountId: Number(accStr),
+          debit: amt,
+          description: "قيمة البضاعة — حساب فئة الصنف",
+        })),
+    ];
     const debitLines: JLine[] = grnSourced
       ? [
           ...(inventoryDebit - servicePortionTotal > 0
             ? [{ accountId: clearingAccId!, debit: inventoryDebit - servicePortionTotal, description: "تسوية وسيط استلام البضاعة" }]
             : []),
           ...serviceDebitLines,
+          ...groupDebitLines,
         ]
       : [
           ...Object.entries(inventoryDebitByWh)
@@ -1534,6 +1630,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
               };
             }),
           ...serviceDebitLines,
+          ...groupDebitLines,
         ];
     // Build credit lines. For LC-linked invoices, split the credit:
     //   - Goods portion → LC settlement account (clears the LC asset)

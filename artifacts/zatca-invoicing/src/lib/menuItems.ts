@@ -315,7 +315,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
     screens: [
       { path: "/inventory", label: "لوحة المخازن" },
       { path: "/inventory/items", label: "الأصناف" },
-      { path: "/inventory/item-groups", label: "مجموعات الأصناف" },
+      { path: "/inventory/item-groups", label: "فئات الأصناف" },
       { path: "/inventory/units", label: "وحدات القياس" },
       { path: "/inventory/warehouses", label: "المخازن" },
       { path: "/inventory/warehouse-groups", label: "مجموعات المخازن" },

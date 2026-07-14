@@ -124,6 +124,8 @@ export const inventoryApi = {
   // as sugar so the UI doesn't have to construct the parent_item_id payload.
   // Item Groups
   getItemGroups:   (cid?: number) => get<any[]>(`/item-groups${cid ? `?companyId=${cid}` : ""}`),
+  getItemGroupNextAccount: (parentId: number, categoryType: string) =>
+    get<any>(`/item-groups/next-account?parentId=${parentId}&categoryType=${categoryType}`),
   createItemGroup: (data: any)    => post<any>("/item-groups", data),
   updateItemGroup: (id: number, data: any) => put<any>(`/item-groups/${id}`, data),
   deleteItemGroup: (id: number)   => del(`/item-groups/${id}`),

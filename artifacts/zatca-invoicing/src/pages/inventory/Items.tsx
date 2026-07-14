@@ -1473,6 +1473,17 @@ export default function Items() {
                 )}
                 <Field label={t("pages.items.group")}>
                   <SearchCombobox items={[{ value: "", label: t("pages.items.noGroup") }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))} placeholder={t("pages.items.chooseGroup")} />
+                  {(() => {
+                    const sg = (groups as any[]).find((g: any) => String(g.id) === String(form.groupId));
+                    if (!sg?.categoryType) return null;
+                    return (
+                      <div className="mt-1 rounded-md bg-muted/50 border px-2 py-1 text-[11px] text-muted-foreground">
+                        <span className="font-medium">{t("inventoryMaster.itemGroups.categoryType")}: </span>
+                        {t(`inventoryMaster.itemGroups.type${sg.categoryType === "inventory" ? "Inventory" : sg.categoryType === "fixed_asset" ? "FixedAsset" : "Expense"}`) as string}
+                        {sg.accountId ? <span> · {t("inventoryMaster.itemGroups.linkedAccount")} #{sg.accountId}</span> : null}
+                      </div>
+                    );
+                  })()}
                 </Field>
                 <Field label={t("pages.items.baseUnit")} hint={t("pages.items.baseUnitHint")}>
                   <SearchCombobox items={[{ value: "", label: t("pages.items.chooseUnit") }, ...(units as any[]).map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))]} value={form.unitId} onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))} placeholder={t("pages.items.chooseUnit")} />
