@@ -67,8 +67,23 @@ export function FormPanel({
   const _cancelLabel = cancelLabel ?? (t("common.cancel") as string);
   const _savingLabel = t("common.loading") as string;
   const _closeLabel = t("common.close") as string;
+  // Auto-scroll the panel into view when it mounts. Pages render this form
+  // inline (usually ABOVE the data table), so clicking "edit" on a row far
+  // down the list would otherwise open the form off-screen and the user sees
+  // nothing happen. Runs once on mount only — never on re-renders while the
+  // user is typing.
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    const id = window.requestAnimationFrame(() => {
+      const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+      el.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, []);
   return (
-    <div className={cn("mx-auto w-full", widthMap[width])}>
+    <div ref={panelRef} className={cn("mx-auto w-full scroll-mt-24", widthMap[width])}>
       <div className={cn("rounded-xl border bg-card shadow-sm overflow-hidden", className)}>
         <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
           <div className="flex items-center gap-2.5 min-w-0">
