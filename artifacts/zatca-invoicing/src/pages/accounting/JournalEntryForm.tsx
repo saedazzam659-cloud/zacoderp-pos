@@ -32,7 +32,7 @@ import { useFormatters, fmt2, fmtNum } from "@/lib/format";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
-import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check } from "lucide-react";
+import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check, Landmark } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -234,6 +234,19 @@ export default function JournalEntryForm() {
     queryKey: ["journal-entry", sourceId],
     queryFn:  () => journalEntriesApi.get(sourceId!, cid),
     enabled:  !!sourceId,
+  });
+
+  // Live fixed assets already created FROM this entry (sold/scrapped
+  // excluded server-side) — drives the "عرض الأصل المرتبط" buttons below.
+  const { data: jeLinkedAssets = [] } = useQuery<any[]>({
+    queryKey: ["je-fa-by-source", editId, cid],
+    enabled: editId != null,
+    queryFn: async () => {
+      const url = `${API}/api/fixed-assets/assets/by-source?sourceType=journal_entry&sourceDocumentId=${editId}${cid ? `&companyId=${cid}` : ""}`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const j = r.ok ? await r.json() : [];
+      return Array.isArray(j) ? j : [];
+    },
   });
 
   // ── Document navigation (سابق / تالي / بحث) ──────────────────────
@@ -2248,6 +2261,62 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
         </Card>
       </Tabs>
       </fieldset>
+
+      {/* ─── إنشاء أصل ثابت من هذا القيد (SAP-style) ──────────────
+          For a SAVED entry: list the debit lines whose account is an
+          asset-type POSTING account and offer a one-click "create fixed
+          asset" per line, prefilled from the entry. If an asset was already
+          created from this entry (live, not sold/scrapped), show a link to
+          it instead — the backend enforces one live asset per source line. */}
+      {editId != null && (() => {
+        const dbLines: any[] = Array.isArray((existing as any)?.lines) ? (existing as any).lines : [];
+        const candidates = dbLines.filter((l) => {
+          if (!(Number(l.debit ?? 0) > 0)) return false;
+          const a = acctMap.get(Number(l.accountId));
+          return a && a.accountType === "asset" && a.isPosting !== false;
+        });
+        if (!candidates.length) return null;
+        return (
+          <div className="rounded-xl border-2 border-teal-200 bg-teal-50/40 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Landmark className="h-4 w-4 text-teal-700" />
+              <span className="text-sm font-bold text-teal-800">الأصول الثابتة المرتبطة بالقيد</span>
+              <span className="text-[11px] text-teal-600">أنشئ بطاقة أصل ثابت من سطر مدين لحساب أصول — دون قيد اقتناء جديد.</span>
+            </div>
+            {candidates.map((l) => {
+              const a = acctMap.get(Number(l.accountId));
+              const linked = (jeLinkedAssets as any[]).find((x) => Number(x.sourceLineId) === Number(l.id))
+                ?? (jeLinkedAssets as any[]).find((x) => x.sourceLineId == null)
+                ?? null;
+              return (
+                <div key={`fa-${l.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-white px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-[10px] bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded">{a?.code}</span>
+                    <span className="font-medium">{a?.nameAr ?? a?.nameEn ?? `#${l.accountId}`}</span>
+                    <span className="text-muted-foreground">{l.description ?? ""}</span>
+                    <span dir="ltr" className="font-mono font-semibold">{fmt2(Number(l.debit ?? 0))}</span>
+                  </div>
+                  {linked ? (
+                    <Button type="button" variant="outline" size="sm"
+                      className="h-7 gap-1 border-teal-300 text-xs text-teal-700"
+                      onClick={() => navigate("/fixed-assets/assets")}
+                      data-testid={`button-view-linked-asset-${l.id}`}>
+                      عرض الأصل المرتبط ({linked.code ?? `#${linked.id}`})
+                    </Button>
+                  ) : (
+                    <Button type="button" size="sm"
+                      className="h-7 gap-1 bg-teal-600 text-xs hover:bg-teal-700"
+                      onClick={() => navigate(`/fixed-assets/assets?source=journal_entry&docId=${editId}&lineId=${l.id}`)}
+                      data-testid={`button-create-asset-${l.id}`}>
+                      إنشاء أصل ثابت
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* ─── Action buttons ─────────────────────────────────────── */}
       <div className="flex flex-wrap gap-3 justify-start items-center pb-4">

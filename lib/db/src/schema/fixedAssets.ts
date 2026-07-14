@@ -156,6 +156,17 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   qrPayload:           text("qr_payload"),
   notes:               text("notes"),
 
+  // ─── Source linkage (SAP-style): where the asset card was created FROM.
+  // NULL sourceType = manual entry. purchase_invoice → sourceDocumentId is
+  // purchase_invoices.id + sourceLineId the invoice line; journal_entry →
+  // sourceDocumentId is journal_entries.id + sourceLineId the JE line.
+  // A partial unique index (company_id, source_type, source_document_id,
+  // COALESCE(source_line_id,0)) WHERE source_type IS NOT NULL AND status NOT IN ('sold','scrapped')
+  // guarantees one live asset per source line (no double entry).
+  sourceType:          text("source_type"),          // purchase_invoice | journal_entry
+  sourceDocumentId:    integer("source_document_id"),
+  sourceLineId:        integer("source_line_id"),
+
   // ─── Phase-2: link to the acquisition JE (when posted). NULL = no JE
   // (opening-balance load, accounts not configured, or auto-post toggle off
   // and the user hasn't manually posted yet from the Posting Center).

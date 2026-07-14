@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -41,6 +42,7 @@ type Asset = {
   custodianEmployeeId: number | null; location: string | null;
   riskLevel: string | null; aiRecommendation: string | null;
   qrPayload: string | null; notes: string | null;
+  sourceType: string | null; sourceDocumentId: number | null; sourceLineId: number | null;
 };
 type Category = {
   id: number; nameAr: string;
@@ -105,6 +107,15 @@ export default function FixedAssets() {
   const [impJe, setImpJe] = useState<any|null>(null);
   function resetImport() { setImpNumber(""); setImpErr(""); setImpInvoice(null); setImpJe(null); }
 
+  // ── Create-from-source (زر «إنشاء أصل ثابت» في الفاتورة/القيد): the caller
+  // navigates here with ?source=purchase_invoice|journal_entry&docId=N[&lineId=N].
+  // We fetch the ORIGINAL document server-side (never trust caller-passed
+  // values), prefill the form, and stamp the source link onto the create
+  // payload so the backend's unique guard prevents a second card.
+  const [, navigate] = useLocation();
+  const [pendingSource, setPendingSource] = useState<{ sourceType:string; sourceDocumentId:number; sourceLineId:number|null }|null>(null);
+  const sourceBootRef = useRef(false);
+
   const { data: rows = [], isLoading } = useQuery<Asset[]>({
     queryKey:["fa/assets", cid],
     queryFn: async () => (await fetch(`${API}/api/fixed-assets/assets?companyId=${cid}`, { headers })).json(),
@@ -167,7 +178,7 @@ export default function FixedAssets() {
     a.serialNo?.toLowerCase().includes(search.toLowerCase()) ||
     a.plateNumber?.toLowerCase().includes(search.toLowerCase()));
 
-  function openNew() { setEditing(null); setForm(EMPTY); setDepTouched({ lifeYears:false, depreciationMethod:false, scrapValue:false }); resetImport(); setActiveTab("basic"); setShowForm(true); }
+  function openNew() { setEditing(null); setForm(EMPTY); setPendingSource(null); setDepTouched({ lifeYears:false, depreciationMethod:false, scrapValue:false }); resetImport(); setActiveTab("basic"); setShowForm(true); }
   function openEdit(a: Asset) {
     setEditing(a);
     setForm({
@@ -336,6 +347,58 @@ export default function FixedAssets() {
       description: opts.value != null ? "تم ضبط قيمة الأصل من السطر المختار — فُعّل «الأصل مُسجّل مسبقاً»" : "تم ضبط التاريخ والمرجع" });
   }
 
+  // ── Boot: honour ?source=…&docId=… from the invoice/JE screens. Runs once
+  // (guarded by ref) after auth is ready. Fetches the source document by ID,
+  // prefills the form (line-level when lineId given) and forces
+  // skipAcquisitionJe — the accounting entry already exists at the source.
+  useEffect(() => {
+    if (sourceBootRef.current || !cid || !token) return;
+    const qs = new URLSearchParams(window.location.search);
+    const source = qs.get("source");
+    const docId = Number(qs.get("docId"));
+    const lineId = qs.get("lineId") ? Number(qs.get("lineId")) : null;
+    if (!["purchase_invoice","journal_entry"].includes(source ?? "") || !Number.isInteger(docId) || docId <= 0) return;
+    sourceBootRef.current = true;
+    // Strip the params so refresh / back doesn't re-open the prefilled form.
+    window.history.replaceState(null, "", window.location.pathname);
+    (async () => {
+      try {
+        const getJson = async (url:string) => {
+          const r = await fetch(url, { headers });
+          const body = await r.json().catch(() => null);
+          if (!r.ok) throw new Error((body && (body.error || body.message)) || `HTTP ${r.status}`);
+          return body;
+        };
+        openNew();
+        if (source === "purchase_invoice") {
+          const inv = await getJson(`${API}/api/purchasing/purchase-invoices/${docId}?companyId=${cid}`);
+          applyInvoice(inv);
+          const line = lineId != null ? (inv.lines ?? []).find((l:any)=>Number(l.id)===lineId) : null;
+          if (line) {
+            // Line-level override: asset value = the LINE's net (qty×price −
+            // discount), name seeded from the line's item description.
+            const qty = Number(line.quantity ?? 0), price = Number(line.unitPrice ?? 0);
+            const lineNet = Number(line.lineTotal ?? (qty * price)) - Number(line.discountAmount ?? 0);
+            setForm(f => ({ ...f,
+              nameAr: f.nameAr || String(line.description ?? line.itemName ?? ""),
+              purchaseValue: lineNet > 0 ? String(+lineNet.toFixed(2)) : f.purchaseValue,
+            }));
+          }
+        } else {
+          const je = await getJson(`${API}/api/journal-entries/${docId}?companyId=${cid}`);
+          const line = lineId != null ? (je.lines ?? []).find((l:any)=>Number(l.id)===lineId) : null;
+          applyJe(je, { value: line ? Number(line.debit ?? 0) : undefined });
+          if (line) setForm(f => ({ ...f, nameAr: f.nameAr || String(line.description ?? "") }));
+          if (je.branchId) setForm(f => ({ ...f, branchId: String(je.branchId) }));
+        }
+        setPendingSource({ sourceType: source!, sourceDocumentId: docId, sourceLineId: lineId });
+      } catch (e:any) {
+        toast({ title:"تعذّر جلب بيانات المستند المصدر", description: e?.message, variant:"destructive" });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cid, token]);
+
   const TABS = [
     { id:"basic",        label:"البيانات الأساسية", icon: Info,          grad:"from-emerald-500 to-emerald-600", text:"text-emerald-700",  border:"border-emerald-200" },
     { id:"purchase",     label:"بيانات الشراء",      icon: ShoppingCart,  grad:"from-blue-500 to-blue-600",       text:"text-blue-700",     border:"border-blue-200" },
@@ -371,16 +434,31 @@ export default function FixedAssets() {
         cashBoxId:     form.paymentMethod === "cash" && form.cashBoxId    ? Number(form.cashBoxId)    : null,
         bankAccountId: form.paymentMethod === "bank" && form.bankAccountId ? Number(form.bankAccountId) : null,
       };
+      // Stamp the source linkage on CREATE only (backend forces
+      // skipAcquisitionJe and enforces one live asset per source line).
+      if (!editing && pendingSource) {
+        body.sourceType = pendingSource.sourceType;
+        body.sourceDocumentId = pendingSource.sourceDocumentId;
+        body.sourceLineId = pendingSource.sourceLineId;
+      }
       const url = editing ? `${API}/api/fixed-assets/assets/${editing.id}` : `${API}/api/fixed-assets/assets`;
       const r = await fetch(url, { method: editing ? "PUT" : "POST",
         headers: { ...headers, "Content-Type":"application/json" }, body: JSON.stringify(body) });
-      if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.error || "فشل الحفظ"); }
+      if (!r.ok) {
+        const j = await r.json().catch(()=>({}));
+        // Duplicate-source guard: the backend refuses a second live asset for
+        // the same source line and returns the existing asset id.
+        if (r.status === 409 && j.existingAssetId) {
+          throw new Error(`${j.error || "يوجد أصل مرتبط بهذا المستند بالفعل"} — كود الأصل الموجود: ${(rows.find(a=>a.id===Number(j.existingAssetId))?.code) ?? `#${j.existingAssetId}`}`);
+        }
+        throw new Error(j.error || "فشل الحفظ");
+      }
       return r.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey:["fa/assets", cid] });
       toast({ title: editing ? "تم التحديث" : "تم الإضافة" });
-      setShowForm(false); setEditing(null); setForm(EMPTY);
+      setShowForm(false); setEditing(null); setForm(EMPTY); setPendingSource(null);
     },
     onError: (e:any) => toast({ title:"خطأ", description: e?.message, variant:"destructive" }),
   });
@@ -470,6 +548,32 @@ export default function FixedAssets() {
                 );
               })}
             </div>
+
+            {/* ── Source-linkage banner: shown when creating FROM a document or
+                editing an asset that was created from one. Click opens the
+                original document. ── */}
+            {(pendingSource || (editing?.sourceType && editing?.sourceDocumentId)) && (() => {
+              const st  = pendingSource?.sourceType ?? editing?.sourceType;
+              const did = pendingSource?.sourceDocumentId ?? editing?.sourceDocumentId;
+              const isInv = st === "purchase_invoice";
+              return (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border-2 border-teal-200 bg-teal-50/50 px-3 py-2">
+                  <div className="flex items-center gap-2 text-sm text-teal-800">
+                    {isInv ? <Receipt className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                    <span className="font-semibold">
+                      {pendingSource ? "إنشاء أصل من " : "أصل مُنشأ من "}
+                      {isInv ? "فاتورة مشتريات" : "قيد محاسبي"}
+                    </span>
+                    <span className="text-[11px] text-teal-600">قيد التسجيل موجود بالمصدر — لن يُنشأ قيد اقتناء جديد.</span>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs border-teal-300 text-teal-700"
+                    onClick={()=>navigate(isInv ? `/purchasing/invoices/${did}` : `/accounting/journals/${did}`)}
+                    data-testid="button-open-source-doc">
+                    فتح المستند المصدر
+                  </Button>
+                </div>
+              );
+            })()}
 
             {activeTab === "basic" && (
             <fieldset className="border border-emerald-200 rounded-lg p-4 bg-emerald-50/20">

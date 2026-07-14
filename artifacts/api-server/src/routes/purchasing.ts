@@ -15,8 +15,9 @@ import {
   currenciesTable,
   itemsTable,
   itemGroupsTable,
+  fixedAssetsTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, notInArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
@@ -1740,6 +1741,23 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
+
+    // ── Fixed-asset linkage guard: an invoice that spawned a LIVE fixed-asset
+    // card cannot be unposted (the asset's cost basis would point at a void
+    // document). The user must dispose/delete the asset first. sold/scrapped
+    // assets no longer depend on the acquisition document.
+    const linkedAssets = await db.select({ id: fixedAssetsTable.id, code: fixedAssetsTable.code })
+      .from(fixedAssetsTable)
+      .where(and(
+        eq(fixedAssetsTable.companyId, cid),
+        eq(fixedAssetsTable.sourceType, "purchase_invoice"),
+        eq(fixedAssetsTable.sourceDocumentId, id),
+        notInArray(fixedAssetsTable.status, ["sold", "scrapped"]),
+      )).limit(1);
+    if (linkedAssets.length) {
+      res.status(409).json({ error: `لا يمكن إلغاء الترحيل: يوجد أصل ثابت مرتبط بهذه الفاتورة (${linkedAssets[0].code}) — قم باستبعاد الأصل أو حذفه أولاً` });
+      return;
+    }
 
     // GRN-sourced invoices never touched stock (the GRN did), so there's
     // nothing in the stock ledger under refType=purchase_invoice for them

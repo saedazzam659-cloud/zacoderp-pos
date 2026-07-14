@@ -21,6 +21,8 @@ import {
   ExternalLink,
   Loader2,
   Info,
+  Package,
+  Plus,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -155,6 +157,58 @@ export default function PurchaseInvoiceDetails({
       return r.ok ? r.json() : null;
     },
   });
+
+  // ── Fixed-asset lines: detect invoice lines whose item group is of
+  // categoryType "fixed_asset" (same routing rule the form uses) and offer
+  // a one-click "create fixed asset" per line — or a link to the already-
+  // created asset (resolved via /assets/by-source, sold/scrapped excluded).
+  const { data: allItems = [] } = useQuery<any[]>({
+    queryKey: ["pi-doc-details-items", cid],
+    enabled: !!docId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/inventory/items${qp || "?"}${qp ? "&" : ""}includeHidden=1`, { headers: authH });
+      const j = r.ok ? await r.json() : [];
+      return Array.isArray(j) ? j : [];
+    },
+  });
+  const { data: itemGroups = [] } = useQuery<any[]>({
+    queryKey: ["pi-doc-details-item-groups", cid],
+    enabled: !!docId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/inventory/item-groups${qp}`, { headers: authH });
+      const j = r.ok ? await r.json() : [];
+      return Array.isArray(j) ? j : [];
+    },
+  });
+  const faLines = useMemo(() => {
+    const lines = Array.isArray(doc?.lines) ? doc.lines : [];
+    if (!lines.length || !allItems.length || !itemGroups.length) return [];
+    const groupById = new Map((itemGroups as any[]).map((g) => [Number(g.id), g]));
+    const itemById = new Map((allItems as any[]).map((it) => [Number(it.id), it]));
+    return lines.filter((l: any) => {
+      const it = itemById.get(Number(l.itemId));
+      if (!it) return false;
+      const g = groupById.get(Number(it.groupId));
+      return g?.categoryType === "fixed_asset";
+    });
+  }, [doc, allItems, itemGroups]);
+
+  const { data: linkedAssets = [] } = useQuery<any[]>({
+    queryKey: ["pi-doc-details-fa-by-source", docId, cid],
+    enabled: !!docId && faLines.length > 0,
+    queryFn: async () => {
+      const r = await fetch(
+        `${API}/api/fixed-assets/assets/by-source${qp || "?"}${qp ? "&" : ""}sourceType=purchase_invoice&sourceDocumentId=${docId}`,
+        { headers: authH },
+      );
+      const j = r.ok ? await r.json() : [];
+      return Array.isArray(j) ? j : [];
+    },
+  });
+  const assetForLine = (lineId: number) =>
+    (linkedAssets as any[]).find((a) => Number(a.sourceLineId) === Number(lineId))
+      ?? (linkedAssets as any[]).find((a) => a.sourceLineId == null)
+      ?? null;
 
   // ── empty state: nothing to show yet ──────────────────────────────────
   if (!docId) {
@@ -336,8 +390,52 @@ export default function PurchaseInvoiceDetails({
             ))
           ) : null}
 
+          {/* أسطر الأصول الثابتة: إنشاء أصل / عرض الأصل المرتبط */}
+          {faLines.map((l: any) => {
+            const linked = assetForLine(Number(l.id));
+            const itemName = (allItems as any[]).find((it) => Number(it.id) === Number(l.itemId));
+            const label = l.description || itemName?.nameAr || itemName?.nameEn || `صنف #${l.itemId}`;
+            return (
+              <div
+                key={`fa-${l.id}`}
+                className="flex w-full flex-wrap items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50/40 p-3"
+                data-testid={`details-card-fa-line-${l.id}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Package className="h-4 w-4 text-teal-700" />
+                  <span className="text-sm">سطر أصل ثابت</span>
+                  <span className="text-[11px] text-muted-foreground">{label}</span>
+                  <span dir="ltr" className="font-mono text-[11px] text-muted-foreground">
+                    {fmt(Number(l.lineTotal ?? 0))}
+                  </span>
+                </div>
+                {linked ? (
+                  <Button
+                    type="button" variant="outline" size="sm"
+                    className="h-7 gap-1 border-teal-300 text-xs text-teal-700"
+                    onClick={() => navigate("/fixed-assets/assets")}
+                    data-testid={`button-view-linked-asset-${l.id}`}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    عرض الأصل المرتبط ({linked.code ?? `#${linked.id}`})
+                  </Button>
+                ) : (
+                  <Button
+                    type="button" size="sm"
+                    className="h-7 gap-1 bg-teal-600 text-xs hover:bg-teal-700"
+                    onClick={() => navigate(`/fixed-assets/assets?source=purchase_invoice&docId=${docId}&lineId=${l.id}`)}
+                    data-testid={`button-create-asset-${l.id}`}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    إنشاء أصل ثابت
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+
           {/* لا شيء */}
-          {!sourceOrderId && returns.length === 0 && !rLoading && (
+          {!sourceOrderId && returns.length === 0 && !rLoading && faLines.length === 0 && (
             <div className="rounded-xl border border-dashed bg-muted/20 px-4 py-6 text-center text-xs text-muted-foreground">
               لا توجد عمليات مرتبطة بهذه الفاتورة حتى الآن.
             </div>

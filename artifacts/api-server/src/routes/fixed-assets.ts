@@ -9,9 +9,10 @@ import {
   fixedAssetsTable, faCategoriesTable, faAssetGroupsTable, faMaintenanceTable, faTransfersTable,
   faDepreciationRunsTable, faDisposalsTable,
   journalEntriesTable, journalEntryLinesTable,
+  purchaseInvoicesTable, purchaseInvoiceLinesTable,
   companiesTable, accountsTable,
 } from "@workspace/db";
-import { and, desc, eq, isNull, inArray } from "drizzle-orm";
+import { and, desc, eq, isNull, inArray, notInArray } from "drizzle-orm";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
@@ -265,6 +266,35 @@ router.get("/assets", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /assets/by-source — resolve the LIVE asset created from a document.
+// Used by the purchase-invoice details / JE screens to flip their button from
+// "إنشاء أصل ثابت" to "عرض الأصل المرتبط". sold/scrapped assets don't count
+// (their source line may legitimately spawn a replacement card).
+router.get("/assets/by-source", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const sourceType = String(req.query.sourceType ?? "");
+    const docId = Number(req.query.sourceDocumentId);
+    if (!["purchase_invoice", "journal_entry"].includes(sourceType) || !Number.isInteger(docId) || docId <= 0) {
+      res.status(400).json({ error: "معاملات غير صالحة" }); return;
+    }
+    const rows = await db.select({
+      id: fixedAssetsTable.id,
+      code: fixedAssetsTable.code,
+      nameAr: fixedAssetsTable.nameAr,
+      status: fixedAssetsTable.status,
+      sourceLineId: fixedAssetsTable.sourceLineId,
+    }).from(fixedAssetsTable)
+      .where(and(
+        eq(fixedAssetsTable.companyId, cid),
+        eq(fixedAssetsTable.sourceType, sourceType),
+        eq(fixedAssetsTable.sourceDocumentId, docId),
+        notInArray(fixedAssetsTable.status, ["sold", "scrapped"]),
+      )).orderBy(desc(fixedAssetsTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // Run per-asset catch-up depreciation on save, gated on the company's
 // `autoPostFaDepreciation` flag (the same switch the auto-scheduler honours,
 // default ON). Fully non-fatal + best-effort: any error is swallowed so it can
@@ -310,6 +340,58 @@ router.post("/assets", async (req, res) => {
     if (b.groupId && !await ownsRow(faAssetGroupsTable, Number(b.groupId), cid)) {
       res.status(400).json({ error: "المجموعة غير موجودة" }); return;
     }
+    // ── Source linkage (create-from-purchase-invoice / create-from-JE).
+    // Validate the vocabulary, force skipAcquisitionJe (the cost is already
+    // posted by the source document — a second acquisition JE would double
+    // count), and pre-check duplicates for a friendly 409. The partial unique
+    // index uq_fixed_assets_source is the authoritative race-safe guard.
+    const SOURCE_TYPES = ["purchase_invoice", "journal_entry"] as const;
+    const sourceType = b.sourceType && (SOURCE_TYPES as readonly string[]).includes(String(b.sourceType))
+      ? String(b.sourceType) : null;
+    const sourceDocumentId = sourceType && b.sourceDocumentId ? Number(b.sourceDocumentId) : null;
+    const sourceLineId = sourceType && b.sourceLineId ? Number(b.sourceLineId) : null;
+    if (b.sourceType && !sourceType) { res.status(400).json({ error: "نوع مصدر غير صالح" }); return; }
+    if (sourceType && (!Number.isInteger(sourceDocumentId) || (sourceDocumentId as number) <= 0)) {
+      res.status(400).json({ error: "رقم المستند المصدر مطلوب" }); return;
+    }
+    if (sourceType && sourceDocumentId) {
+      // Ownership/existence validation: the source document must exist and
+      // belong to THIS company; a sourceLineId (if provided) must belong to
+      // that document. Without this a user could forge links to arbitrary
+      // document IDs and block unpost flows on documents they don't own.
+      if (sourceType === "purchase_invoice") {
+        const [doc] = await db.select({ id: purchaseInvoicesTable.id }).from(purchaseInvoicesTable)
+          .where(and(eq(purchaseInvoicesTable.id, sourceDocumentId), eq(purchaseInvoicesTable.companyId, cid)));
+        if (!doc) { res.status(400).json({ error: "فاتورة المشتريات المصدر غير موجودة" }); return; }
+        if (sourceLineId) {
+          const [ln] = await db.select({ id: purchaseInvoiceLinesTable.id }).from(purchaseInvoiceLinesTable)
+            .where(and(eq(purchaseInvoiceLinesTable.id, sourceLineId), eq(purchaseInvoiceLinesTable.invoiceId, sourceDocumentId)));
+          if (!ln) { res.status(400).json({ error: "سطر الفاتورة المصدر غير موجود في هذه الفاتورة" }); return; }
+        }
+      } else if (sourceType === "journal_entry") {
+        const [doc] = await db.select({ id: journalEntriesTable.id }).from(journalEntriesTable)
+          .where(and(eq(journalEntriesTable.id, sourceDocumentId), eq(journalEntriesTable.companyId, cid)));
+        if (!doc) { res.status(400).json({ error: "القيد المصدر غير موجود" }); return; }
+        if (sourceLineId) {
+          const [ln] = await db.select({ id: journalEntryLinesTable.id }).from(journalEntryLinesTable)
+            .where(and(eq(journalEntryLinesTable.id, sourceLineId), eq(journalEntryLinesTable.entryId, sourceDocumentId)));
+          if (!ln) { res.status(400).json({ error: "سطر القيد المصدر غير موجود في هذا القيد" }); return; }
+        }
+      }
+      const dup = await db.select({ id: fixedAssetsTable.id, code: fixedAssetsTable.code })
+        .from(fixedAssetsTable)
+        .where(and(
+          eq(fixedAssetsTable.companyId, cid),
+          eq(fixedAssetsTable.sourceType, sourceType),
+          eq(fixedAssetsTable.sourceDocumentId, sourceDocumentId),
+          sourceLineId ? eq(fixedAssetsTable.sourceLineId, sourceLineId) : isNull(fixedAssetsTable.sourceLineId),
+          notInArray(fixedAssetsTable.status, ["sold", "scrapped"]),
+        )).limit(1);
+      if (dup.length) {
+        res.status(409).json({ error: `تم إنشاء أصل من هذا المستند مسبقاً (${dup[0].code})`, existingAssetId: dup[0].id });
+        return;
+      }
+    }
     const [row] = await db.insert(fixedAssetsTable).values({
       companyId: cid,
       branchId: b.branchId ? Number(b.branchId) : null,
@@ -328,8 +410,11 @@ router.post("/assets", async (req, res) => {
       paymentMethod: b.paymentMethod || null,
       cashBoxId: b.cashBoxId ? Number(b.cashBoxId) : null,
       bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
-      skipAcquisitionJe: coerceBool(b.skipAcquisitionJe) || coerceBool(b.isOpeningBalance),
+      skipAcquisitionJe: coerceBool(b.skipAcquisitionJe) || coerceBool(b.isOpeningBalance) || !!sourceType,
       isOpeningBalance: coerceBool(b.isOpeningBalance),
+      sourceType,
+      sourceDocumentId,
+      sourceLineId,
       model: b.model || null,
       brand: b.brand || null,
       serialNo: b.serialNo || null,
@@ -379,7 +464,16 @@ router.post("/assets", async (req, res) => {
     // fully non-fatal — a failure here must never break asset creation.
     await runDepreciationCatchUp(cid, row.id, (req as any).authUser?.id ?? null);
     res.status(201).json(warning ? { ...row, warning } : row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    // Race-safe duplicate guard: two concurrent create-from-source requests
+    // both pass the pre-check; the partial unique index rejects the loser —
+    // map that to the same friendly 409 instead of a raw 500.
+    if (e?.code === "23505" && String(e?.constraint ?? "").includes("uq_fixed_assets_source")) {
+      res.status(409).json({ error: "تم إنشاء أصل من هذا المستند مسبقاً" });
+      return;
+    }
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.put("/assets/:id", async (req, res) => {

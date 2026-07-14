@@ -7,8 +7,9 @@ import {
   receiptVouchersTable, paymentVouchersTable,
   stockTransfersTable, stockAdjustmentsTable,
   payrollRunsTable, employeeLoansTable,
+  fixedAssetsTable,
 } from "@workspace/db";
-import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
@@ -724,6 +725,22 @@ router.post("/:id/unpost", async (req, res) => {
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
     if (existing.status !== "posted") { res.json({ ok: true, alreadyUnposted: true }); return; }
+
+    // ── Fixed-asset linkage guard: a JE that spawned a LIVE fixed-asset card
+    // cannot be unposted (the asset's cost basis would point at a draft).
+    // Dispose/delete the asset first; sold/scrapped assets don't block.
+    const linkedFa = await db.select({ code: fixedAssetsTable.code })
+      .from(fixedAssetsTable)
+      .where(and(
+        eq(fixedAssetsTable.companyId, cid),
+        eq(fixedAssetsTable.sourceType, "journal_entry"),
+        eq(fixedAssetsTable.sourceDocumentId, id),
+        notInArray(fixedAssetsTable.status, ["sold", "scrapped"]),
+      )).limit(1);
+    if (linkedFa.length) {
+      res.status(409).json({ error: `لا يمكن فك الترحيل: يوجد أصل ثابت مرتبط بهذا القيد (${linkedFa[0].code}) — قم باستبعاد الأصل أو حذفه أولاً` });
+      return;
+    }
 
     // Period guard — refuse to unpost from a closed period
     const unpGuard = await assertWritableForPeriodId(cid, existing.periodId);

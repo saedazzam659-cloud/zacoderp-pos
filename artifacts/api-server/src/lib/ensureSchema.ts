@@ -1291,6 +1291,13 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS price_includes_vat BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "fixed_assets add is_opening_balance",
       sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS is_opening_balance BOOLEAN NOT NULL DEFAULT FALSE` },
+    // Source linkage (create-asset-from-purchase-invoice / from-JE): one LIVE
+    // asset per (company, source doc, line). sold/scrapped excluded so a
+    // disposed asset can be re-created from the same source if needed.
+    { label: "fixed_assets source linkage unique index",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS uq_fixed_assets_source
+              ON fixed_assets (company_id, source_type, source_document_id, COALESCE(source_line_id, 0))
+              WHERE source_type IS NOT NULL AND status NOT IN ('sold','scrapped')` },
 
     // Phase 4 — webhooks + delivery log
     { label: "create gateway_webhooks",
