@@ -1316,7 +1316,9 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     //   fixed_asset → debit the group's asset account, NO stock movement
     //   expense     → debit the group's expense account, NO stock movement
     // Groups without routing (legacy) keep the current warehouse-derived path.
-    // Item-level SERVICE typing wins over group routing (checked first below).
+    // Group asset/expense routing WINS over item-level SERVICE typing: a user
+    // who links a category to an account expects that account to be debited
+    // even if the item was (mis)typed as service (e.g. مكيف في فئة أصل ثابت).
     const itemGroupIdRows = lineItemIds.length
       ? await db.select({ id: itemsTable.id, groupId: itemsTable.groupId })
           .from(itemsTable)
@@ -1336,9 +1338,10 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       if (!g || !g.categoryType || !g.accountId) return null;
       return { type: g.categoryType as "inventory" | "fixed_asset" | "expense", accountId: g.accountId, nameAr: g.nameAr };
     };
-    // Non-stock routed line = group type asset/expense (and not item-level service).
+    // Non-stock routed line = group type asset/expense. Applies to service-typed
+    // items too — the category's account routing takes precedence.
     const isGroupNoStockLine = (l: any) => {
-      if (!l.itemId || isServiceLine(l)) return false;
+      if (!l.itemId) return false;
       const r = groupRoutingForItem(l.itemId);
       return !!r && (r.type === "fixed_asset" || r.type === "expense");
     };
@@ -1353,7 +1356,9 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
 
     // Pre-validate SERVICE cost accounts BEFORE any stock mutation so a missing
     // account fails fast without leaving partial stock movements behind.
-    const svcNoCost = lines.filter(l => isServiceLine(l) && Number(l.finalCost || l.unitPrice) > 0 && !costAccById.get(l.itemId as number));
+    // Group-routed asset/expense lines don't need an item cost account —
+    // they debit the category's account instead.
+    const svcNoCost = lines.filter(l => isServiceLine(l) && !isGroupNoStockLine(l) && Number(l.finalCost || l.unitPrice) > 0 && !costAccById.get(l.itemId as number));
     if (svcNoCost.length) {
       res.status(400).json({ error: `يجب تحديد حساب التكلفة للأصناف الخدمية قبل الترحيل: ${svcNoCost.map(l => l.itemName ?? `صنف #${l.itemId}`).join("، ")}` });
       return;
@@ -1385,6 +1390,16 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     const costRefreshItemIds = new Set<number>();
     for (const line of lines) {
       if (!line.itemId) continue;
+      // فئة أصل ثابت / مصروف: debit the category account, NO stock movement.
+      // Checked BEFORE service typing — category routing takes precedence.
+      if (isGroupNoStockLine(line)) {
+        const r = groupRoutingForItem(line.itemId)!;
+        const cost = Number(line.finalCost || line.unitPrice);
+        if (cost <= 0) continue;
+        groupNoStockByAccount[r.accountId] = (groupNoStockByAccount[r.accountId] ?? 0) + cost;
+        groupNoStockTotal += cost;
+        continue;
+      }
       // SERVICE items: no stock movement; route their cost to the per-item
       // cost account (e.g. مشاريع تحت التنفيذ). Uses the SAME cost formula as
       // goods so the proportional inventory-debit split stays balanced.
@@ -1395,15 +1410,6 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         if (!acc) { serviceMissing.push(line.itemName ?? `صنف #${line.itemId}`); continue; }
         serviceCostByAccount[acc] = (serviceCostByAccount[acc] ?? 0) + svcCost;
         serviceCostTotal += svcCost;
-        continue;
-      }
-      // فئة أصل ثابت / مصروف: debit the category account, NO stock movement.
-      if (isGroupNoStockLine(line)) {
-        const r = groupRoutingForItem(line.itemId)!;
-        const cost = Number(line.finalCost || line.unitPrice);
-        if (cost <= 0) continue;
-        groupNoStockByAccount[r.accountId] = (groupNoStockByAccount[r.accountId] ?? 0) + cost;
-        groupNoStockTotal += cost;
         continue;
       }
       if (!line.warehouseId) continue;

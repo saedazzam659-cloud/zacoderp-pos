@@ -91,10 +91,12 @@ export default function ItemGroups() {
       setActiveTab("accounts");
       return;
     }
+    // فئة أصل ثابت: حقول التكلفة/الإيراد الافتراضية مخفية — لا نرسل قيماً قديمة.
+    const isFixedAsset = form.categoryType === "fixed_asset";
     const payload = {
       ...form,
-      costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
-      revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
+      costAccountId:    !isFixedAsset && form.costAccountId    ? Number(form.costAccountId)    : null,
+      revenueAccountId: !isFixedAsset && form.revenueAccountId ? Number(form.revenueAccountId) : null,
       categoryType:     form.categoryType || null,
       accountLinkMode:  form.categoryType ? (manual ? "manual" : "auto") : undefined,
       accountId:        form.categoryType && manual && form.accountId ? Number(form.accountId) : undefined,
@@ -259,24 +261,28 @@ export default function ItemGroups() {
                     )}
                   </div>
                 )}
-                <Field label={tr("defaultCostAccount")} hint={tr("inheritedAccountHint")}>
-                  <AccountCombobox
-                    value={form.costAccountId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))}
-                    placeholder={tr("selectCostAccount")}
-                    filterTypes={["expense", "asset"]}
-                    grouped={false}
-                  />
-                </Field>
-                <Field label={tr("defaultRevenueAccount")} hint={tr("inheritedAccountHint")}>
-                  <AccountCombobox
-                    value={form.revenueAccountId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))}
-                    placeholder={tr("selectRevenueAccount")}
-                    filterTypes={["revenue"]}
-                    grouped={false}
-                  />
-                </Field>
+                {form.categoryType !== "fixed_asset" && (
+                  <>
+                    <Field label={tr("defaultCostAccount")} hint={tr("inheritedAccountHint")}>
+                      <AccountCombobox
+                        value={form.costAccountId}
+                        onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))}
+                        placeholder={tr("selectCostAccount")}
+                        filterTypes={["expense", "asset"]}
+                        grouped={false}
+                      />
+                    </Field>
+                    <Field label={tr("defaultRevenueAccount")} hint={tr("inheritedAccountHint")}>
+                      <AccountCombobox
+                        value={form.revenueAccountId}
+                        onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))}
+                        placeholder={tr("selectRevenueAccount")}
+                        filterTypes={["revenue"]}
+                        grouped={false}
+                      />
+                    </Field>
+                  </>
+                )}
               </FormGrid>
             </TabsContent>
           </Tabs>
