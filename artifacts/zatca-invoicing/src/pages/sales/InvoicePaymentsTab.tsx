@@ -59,6 +59,18 @@ export default function InvoicePaymentsTab({
     staleTime: 15_000,
   });
 
+  // Manual journal entries that settle this invoice (سداد بقيد محاسبي).
+  // Same policy as vouchers: posted count as collected, drafts as pending.
+  const { data: settleJes = [], isLoading: loadingJes } = useQuery<any[]>({
+    queryKey: ["invoice-settlement-jes", "sales", invoiceId, companyId],
+    queryFn: () => fetchJsonArray(
+      `${API}/api/journal-entries/for-invoice?companyId=${companyId}&salesInvoiceId=${invoiceId}`,
+      authH,
+    ),
+    enabled: !!invoiceId && !!companyId,
+    staleTime: 15_000,
+  });
+
   // Sales returns against this invoice reduce the amount due.
   const { data: allReturns = [] } = useQuery<any[]>({
     queryKey: ["sales-returns-for-invoice", companyId],
@@ -79,8 +91,15 @@ export default function InvoicePaymentsTab({
     };
     const postedRows = (vouchers as any[]).filter(v => v.status === "posted");
     const draftRows = (vouchers as any[]).filter(v => v.status !== "posted");
-    const collected = postedRows.reduce((s, v) => s + toDoc(Number(v.amount) || 0, v.exchangeRate), 0);
-    const pending = draftRows.reduce((s, v) => s + toDoc(Number(v.amount) || 0, v.exchangeRate), 0);
+    // Settlement JEs count with the same posted/draft split as vouchers.
+    const jePosted = (settleJes as any[])
+      .filter(j => j.status === "posted")
+      .reduce((s, j) => s + toDoc(Number(j.settlementAmount) || 0, j.exchangeRate), 0);
+    const jePending = (settleJes as any[])
+      .filter(j => j.status !== "posted")
+      .reduce((s, j) => s + toDoc(Number(j.settlementAmount) || 0, j.exchangeRate), 0);
+    const collected = postedRows.reduce((s, v) => s + toDoc(Number(v.amount) || 0, v.exchangeRate), 0) + jePosted;
+    const pending = draftRows.reduce((s, v) => s + toDoc(Number(v.amount) || 0, v.exchangeRate), 0) + jePending;
     const returns = (allReturns as any[])
       .filter(r => String(r.invoiceId ?? r.salesInvoiceId) === String(invoiceId))
       .reduce((s, r) => s + toDoc(Number(r.totalAmount) || 0, r.exchangeRate), 0);
@@ -91,7 +110,7 @@ export default function InvoicePaymentsTab({
     const available = Math.max(0, netDue - collected - pending);
     const percent = netDue > 0 ? Math.min(100, (collected / netDue) * 100) : 0;
     return { total, collected, pending, returns, netDue, remaining, available, percent };
-  }, [vouchers, allReturns, invoiceTotal, invoiceExchangeRate, invoiceId]);
+  }, [vouchers, settleJes, allReturns, invoiceTotal, invoiceExchangeRate, invoiceId]);
 
   // Payment status pill.
   const status = useMemo(() => {
@@ -121,6 +140,18 @@ export default function InvoicePaymentsTab({
     if (pt === "cash" && cashBoxId) params.set("cashBoxId", cashBoxId);
     if (pt === "bank" && bankAccountId) params.set("bankAccountId", bankAccountId);
     navigate(`/cash/receipt-vouchers/new?${params.toString()}`);
+  }
+
+  // سداد بقيد محاسبي — opens the manual journal-entry form pre-linked to
+  // this credit invoice; the JE's settlementAmount counts here like a voucher.
+  function openNewSettlementJe() {
+    if (!invoiceId) return;
+    const params = new URLSearchParams();
+    params.set("salesInvoiceId", String(invoiceId));
+    if (customerName) params.set("entityName", customerName);
+    if (docNumber) params.set("invoiceNo", docNumber);
+    if (summary.available > 0) params.set("amount", summary.available.toFixed(2));
+    navigate(`/accounting/journals/new?${params.toString()}`);
   }
 
   // ── New / unsaved invoice: nothing to settle yet ──────────────────
@@ -181,6 +212,21 @@ export default function InvoicePaymentsTab({
           >
             <Plus className="h-4 w-4" />
             تسجيل دفعة (سند قبض)
+          </Button>
+        )}
+        {paymentType !== "cash" && paymentType !== "bank" && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={openNewSettlementJe}
+            disabled={summary.available <= 0.005}
+            title={summary.available <= 0.005
+              ? "لا يوجد مبلغ متبقٍّ لسداده بقيد محاسبي"
+              : "إنشاء قيد يومية يدوي مرتبط بهذه الفاتورة يُحتسب ضمن السداد"}
+            data-testid="btn-settle-by-je"
+          >
+            <Plus className="h-4 w-4" />
+            سداد بقيد محاسبي
           </Button>
         )}
       </div>
@@ -270,6 +316,59 @@ export default function InvoicePaymentsTab({
           </Table>
         </div>
       </div>
+
+      {/* Linked settlement journal entries */}
+      {(loadingJes || (settleJes as any[]).length > 0) && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">قيود السداد المرتبطة</p>
+          <div className="rounded-lg border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">رقم القيد</TableHead>
+                  <TableHead className="text-xs">التاريخ</TableHead>
+                  <TableHead className="text-xs">البيان</TableHead>
+                  <TableHead className="text-xs text-left">مبلغ السداد</TableHead>
+                  <TableHead className="text-xs">الحالة</TableHead>
+                  <TableHead className="text-xs w-10"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingJes && (
+                  <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">جارِ التحميل…</TableCell></TableRow>
+                )}
+                {(settleJes as any[]).map((j: any) => (
+                  <TableRow
+                    key={j.id}
+                    className="cursor-pointer hover:bg-muted/40"
+                    onDoubleClick={() => navigate(`/accounting/journals/${j.id}`)}
+                    data-testid={`settlement-je-row-${j.id}`}
+                  >
+                    <TableCell className="text-xs font-medium" dir="ltr">{j.docNumber ?? `#${j.id}`}</TableCell>
+                    <TableCell className="text-xs">{j.entryDate ?? "—"}</TableCell>
+                    <TableCell className="text-xs max-w-[220px] truncate">{j.description ?? "—"}</TableCell>
+                    <TableCell className="text-xs text-left" dir="ltr">{fmt(Number(j.settlementAmount) || 0)}</TableCell>
+                    <TableCell className="text-xs">
+                      <Badge variant={j.status === "posted" ? "default" : "secondary"} className="text-[10px]">
+                        {j.status === "posted" ? "مرحّل" : "مسودّة"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost" size="icon" className="h-7 w-7"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/accounting/journals/${j.id}`); }}
+                        title="فتح القيد"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

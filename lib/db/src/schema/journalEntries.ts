@@ -32,6 +32,14 @@ export const journalEntriesTable = pgTable("journal_entries", {
   postedAt:         timestamp("posted_at"),
   postedIp:         text("posted_ip"),
   postedUserAgent:  text("posted_user_agent"),
+  // ── سداد فاتورة عن طريق قيد محاسبي (اختياري، آجل فقط) ────────────────
+  // A MANUAL journal entry may settle a credit invoice, same policy as
+  // receipt/payment vouchers: settlementAmount (in entry currency) counts
+  // toward the invoice's paid total and may never exceed the remaining due
+  // (drafts count too). Exactly one of the two links may be set.
+  salesInvoiceId:    integer("sales_invoice_id"),
+  purchaseInvoiceId: integer("purchase_invoice_id"),
+  settlementAmount:  numeric("settlement_amount", { precision: 18, scale: 2 }),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 });

@@ -151,6 +151,31 @@ export default function JournalEntryForm() {
   const [entryType,    setEntryType]    = useState("general");
   const [branchId,     setBranchId]     = useState("");
   const [lines,        setLines]        = useState<JournalLine[]>([newLine(), newLine()]);
+  // ── سداد فاتورة آجلة عن طريق القيد ────────────────────────────────
+  // Seeded from query params when the user arrives from the invoice's
+  // "السداد" tab (سداد بقيد محاسبي), or restored from the loaded entry on
+  // edit. settlementAmount is in the ENTRY's currency; the server converts
+  // to base and enforces the same overpayment policy as the vouchers.
+  const settleSeed = (() => {
+    if (!isNew || typeof window === "undefined") return null;
+    const q = new URLSearchParams(window.location.search);
+    const sid = q.get("salesInvoiceId");
+    const pid = q.get("purchaseInvoiceId");
+    if (!sid && !pid) return null;
+    return {
+      salesInvoiceId:    sid && /^\d+$/.test(sid) ? Number(sid) : null,
+      purchaseInvoiceId: pid && /^\d+$/.test(pid) ? Number(pid) : null,
+      amount:     q.get("amount") ?? "",
+      entityName: q.get("entityName") ?? "",
+      invoiceNo:  q.get("invoiceNo") ?? "",
+    };
+  })();
+  const [settleSalesInvoiceId, setSettleSalesInvoiceId] =
+    useState<number | null>(settleSeed?.salesInvoiceId ?? null);
+  const [settlePurchaseInvoiceId, setSettlePurchaseInvoiceId] =
+    useState<number | null>(settleSeed?.purchaseInvoiceId ?? null);
+  const [settlementAmount, setSettlementAmount] = useState<string>(settleSeed?.amount ?? "");
+  const settleLinked = settleSalesInvoiceId != null || settlePurchaseInvoiceId != null;
   const [focusLineId, setFocusLineId] = useState<string>(() => "");
   // Which line's per-line tax popover is currently open (null = none).
   const [taxPopoverLine, setTaxPopoverLine] = useState<string | null>(null);
@@ -449,6 +474,15 @@ export default function JournalEntryForm() {
     setDescription(existing.description ?? "");
     setEntryType(existing.entryType ?? "general");
     setBranchId(existing.branchId ? String(existing.branchId) : "");
+    // Restore the invoice-settlement link on EDIT only — a duplicate must
+    // never silently re-settle the same invoice a second time.
+    if (editId) {
+      setSettleSalesInvoiceId(existing.salesInvoiceId ?? null);
+      setSettlePurchaseInvoiceId(existing.purchaseInvoiceId ?? null);
+      setSettlementAmount(
+        existing.settlementAmount != null ? String(Number(existing.settlementAmount)) : ""
+      );
+    }
     setLines(
       existing.lines?.length
         ? existing.lines.map((l: any) => ({
@@ -1033,6 +1067,11 @@ export default function JournalEntryForm() {
         setEntryDate(today());
         setExchangeRate("1");
         setEntryType("general");
+        // Clear the invoice-settlement link — the NEXT entry must never
+        // silently settle the same invoice again.
+        setSettleSalesInvoiceId(null);
+        setSettlePurchaseInvoiceId(null);
+        setSettlementAmount("");
         if (defaultCurrency?.code) setCurrency(defaultCurrency.code);
         setLines([newLine(), newLine()]);
         setActiveTab("header");
@@ -1085,9 +1124,16 @@ export default function JournalEntryForm() {
     if (!isNew && validLines.length < 2) {
       toast({ title: "يجب أن يحتوي القيد على سطرين على الأقل", variant: "destructive" }); return;
     }
+    if (settleLinked && !(parseFloat(settlementAmount) > 0)) {
+      toast({ title: "مبلغ السداد مطلوب", description: "القيد مرتبط بسداد فاتورة — أدخل مبلغ السداد أو أزل الربط.", variant: "destructive" });
+      return;
+    }
     saveMutation.mutate({
       companyId:    cid,
       docNumber:    docNumber || null,
+      salesInvoiceId:    settleSalesInvoiceId,
+      purchaseInvoiceId: settlePurchaseInvoiceId,
+      settlementAmount:  settleLinked ? settlementAmount : null,
       entryDate,
       currency,
       exchangeRate,
@@ -1575,6 +1621,56 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
         className="m-0 p-0 border-0 disabled:opacity-75"
         data-testid="journal-form-fieldset"
       >
+      {/* ── سداد فاتورة مرتبط ─────────────────────────────────────
+          Shown when this entry settles a credit invoice (arrived via
+          "سداد بقيد محاسبي" from the invoice's السداد tab, or loaded on
+          edit). The amount counts toward the invoice's paid total under
+          the same overpayment policy as the vouchers. */}
+      {settleLinked && (
+        <div
+          className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border-2 border-amber-300 bg-gradient-to-l from-amber-50 via-orange-50 to-yellow-50 px-4 py-3 dark:border-amber-800 dark:from-amber-950/40 dark:via-orange-950/40 dark:to-yellow-950/40"
+          data-testid="panel-invoice-settlement"
+        >
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300">
+            <Receipt className="h-5 w-5" />
+          </div>
+          <div className="flex flex-col leading-tight">
+            <span className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+              {settleSalesInvoiceId != null ? "سداد فاتورة مبيعات آجلة" : "سداد فاتورة مشتريات آجلة"}
+            </span>
+            <span className="text-sm font-bold">
+              {settleSeed?.invoiceNo ? `فاتورة ${settleSeed.invoiceNo}` : `فاتورة #${settleSalesInvoiceId ?? settlePurchaseInvoiceId}`}
+              {settleSeed?.entityName ? ` — ${settleSeed.entityName}` : ""}
+            </span>
+          </div>
+          <div className="ms-auto flex items-center gap-2">
+            <Label className="text-xs font-medium whitespace-nowrap">مبلغ السداد</Label>
+            <Input
+              inputMode="decimal"
+              dir="ltr"
+              className="h-8 w-36 text-sm font-bold tabular-nums"
+              value={settlementAmount}
+              onChange={(e) => setSettlementAmount(e.target.value.replace(/[^\d.]/g, ""))}
+              data-testid="input-settlement-amount"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-destructive hover:text-destructive"
+              onClick={() => {
+                setSettleSalesInvoiceId(null);
+                setSettlePurchaseInvoiceId(null);
+                setSettlementAmount("");
+              }}
+              title="إزالة ربط الفاتورة"
+              data-testid="btn-remove-settlement-link"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
       <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
 
         {/* Tab headers */}

@@ -18,6 +18,44 @@ import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodG
 import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAudit.js";
 import { describeDevice } from "../lib/deviceFingerprint.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { assertJeSettlementAllowed, acquireSettlementLock, type SettlementKind } from "../lib/invoiceSettlement.js";
+
+// ── سداد فاتورة عن طريق القيد ─────────────────────────────────────────────
+// Parse + normalize the optional invoice-settlement link on a manual JE.
+// Exactly ONE of salesInvoiceId / purchaseInvoiceId may be set, and then a
+// positive settlementAmount (in the entry's currency) is required.
+function parseJeSettlement(body: any): {
+  salesInvoiceId: number | null;
+  purchaseInvoiceId: number | null;
+  settlementAmount: string | null;
+} {
+  const sid = body?.salesInvoiceId != null && String(body.salesInvoiceId).trim() !== ""
+    ? Number(body.salesInvoiceId) : null;
+  const pid = body?.purchaseInvoiceId != null && String(body.purchaseInvoiceId).trim() !== ""
+    ? Number(body.purchaseInvoiceId) : null;
+  if (sid != null && (!Number.isInteger(sid) || sid <= 0)) throw new Error("معرّف فاتورة المبيعات غير صالح");
+  if (pid != null && (!Number.isInteger(pid) || pid <= 0)) throw new Error("معرّف فاتورة المشتريات غير صالح");
+  if (sid != null && pid != null) throw new Error("لا يمكن ربط القيد بفاتورة مبيعات وفاتورة مشتريات معاً");
+  if (sid == null && pid == null) return { salesInvoiceId: null, purchaseInvoiceId: null, settlementAmount: null };
+  const amt = parseFloat(String(body?.settlementAmount ?? "")) || 0;
+  if (!(amt > 0)) throw new Error("مبلغ السداد مطلوب عند ربط القيد بفاتورة");
+  return { salesInvoiceId: sid, purchaseInvoiceId: pid, settlementAmount: amt.toFixed(2) };
+}
+
+// Validate the settlement link against the tenant + overpayment policy.
+async function validateJeSettlement(
+  cid: number,
+  s: { salesInvoiceId: number | null; purchaseInvoiceId: number | null; settlementAmount: string | null },
+  exchangeRate: any,
+  excludeJeId: number | null,
+): Promise<void> {
+  if (!s.salesInvoiceId && !s.purchaseInvoiceId) return;
+  const kind: SettlementKind = s.salesInvoiceId ? "sales" : "purchase";
+  const invId = (s.salesInvoiceId ?? s.purchaseInvoiceId)!;
+  const rate = parseFloat(String(exchangeRate ?? "1")) || 1;
+  const amountBase = (parseFloat(String(s.settlementAmount)) || 0) * rate;
+  await assertJeSettlementAllowed(cid, kind, invId, amountBase, excludeJeId);
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -327,6 +365,42 @@ router.get("/", async (req, res) => {
 });
 
 // ─── GET ONE (with lines) ─────────────────────────────────────────────────────
+// ─── Settlement JEs linked to an invoice ─────────────────────────────────────
+// Lightweight list used by the invoice "السداد" tabs: manual journal entries
+// that settle the given sales/purchase invoice via the header link. Literal
+// sub-segment registered BEFORE /:id (Express 5 — no inline regex params).
+router.get("/for-invoice", async (req, res) => {
+  try {
+    const cid = getCompanyId(req);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const sid = req.query.salesInvoiceId ? Number(req.query.salesInvoiceId) : null;
+    const pid = req.query.purchaseInvoiceId ? Number(req.query.purchaseInvoiceId) : null;
+    const linkId = sid ?? pid;
+    if (!linkId || !Number.isInteger(linkId) || linkId <= 0) {
+      res.status(400).json({ error: "salesInvoiceId أو purchaseInvoiceId مطلوب" });
+      return;
+    }
+    const linkCol = sid ? journalEntriesTable.salesInvoiceId : journalEntriesTable.purchaseInvoiceId;
+    const rows = await db.select({
+      id:               journalEntriesTable.id,
+      docNumber:        journalEntriesTable.docNumber,
+      entryDate:        journalEntriesTable.entryDate,
+      description:      journalEntriesTable.description,
+      status:           journalEntriesTable.status,
+      currency:         journalEntriesTable.currency,
+      exchangeRate:     journalEntriesTable.exchangeRate,
+      settlementAmount: journalEntriesTable.settlementAmount,
+    }).from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(linkCol, linkId),
+        sql`${journalEntriesTable.settlementAmount} IS NOT NULL`,
+      ))
+      .orderBy(desc(journalEntriesTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const cid = getCompanyId(req);
@@ -357,6 +431,18 @@ router.post("/", async (req, res) => {
     const { docNumber, entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
 
     if (!entryDate) { res.status(400).json({ error: "التاريخ مطلوب" }); return; }
+
+    // Optional invoice-settlement link (سداد فاتورة آجلة عن طريق القيد).
+    // Parsed + validated BEFORE we burn a sequence number so a rejected
+    // link (overpayment / cash invoice / wrong tenant) leaves no gap.
+    let settlement: ReturnType<typeof parseJeSettlement>;
+    try {
+      settlement = parseJeSettlement(req.body);
+      await validateJeSettlement(cid, settlement, exchangeRate, null);
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "ربط الفاتورة غير صالح" });
+      return;
+    }
 
     if (Array.isArray(lines) && lines.length > 0) {
       try {
@@ -436,6 +522,22 @@ router.post("/", async (req, res) => {
     // serializes assignment per company while leaving other tenants
     // unaffected. Lock is held until COMMIT/ROLLBACK.
     const entry = await db.transaction(async (tx) => {
+      // Settlement race guard: serialize per-invoice under an advisory lock
+      // and RE-validate inside the transaction. Two concurrent saves against
+      // the same invoice would otherwise both read the same "remaining" and
+      // jointly exceed the cap. The pre-check above handles the common case
+      // (nice 400 before the sequence burns); this one is the hard guarantee.
+      if (settlement.salesInvoiceId != null || settlement.purchaseInvoiceId != null) {
+        const kind: SettlementKind = settlement.salesInvoiceId != null ? "sales" : "purchase";
+        const invId = (settlement.salesInvoiceId ?? settlement.purchaseInvoiceId)!;
+        await acquireSettlementLock(tx, cid, kind, invId);
+        try {
+          await validateJeSettlement(cid, settlement, exchangeRate, null);
+        } catch (err: any) {
+          (err ?? {}).settlementReject = true;
+          throw err;
+        }
+      }
       if (!resolvedDocNumber) {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, 1001)`);
       }
@@ -449,6 +551,9 @@ router.post("/", async (req, res) => {
         entryType:    entryType || "general",
         branchId:     resolvedBranchId,
         periodId:     writability.period?.id ?? null,
+        salesInvoiceId:    settlement.salesInvoiceId,
+        purchaseInvoiceId: settlement.purchaseInvoiceId,
+        settlementAmount:  settlement.settlementAmount,
         status:       canPost ? "posted" : "draft",
         // Audit trail — when the entry lands as "posted" on the same save,
         // we stamp BOTH the created* and posted* fields so the audit dialog
@@ -507,7 +612,7 @@ router.post("/", async (req, res) => {
       .orderBy(journalEntryLinesTable.sortOrder);
 
     res.status(201).json({ ...entry, lines: linesOut });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.settlementReject ? 400 : 500).json({ error: e.message }); }
 });
 
 // ─── UPDATE ───────────────────────────────────────────────────────────────────
@@ -560,6 +665,17 @@ router.put("/:id", async (req, res) => {
     // docNumber is intentionally not destructured — immutable on edit.
     const { entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
 
+    // Optional invoice-settlement link — re-validated on every edit with
+    // the entry itself excluded so its own old amount doesn't block it.
+    let settlement: ReturnType<typeof parseJeSettlement>;
+    try {
+      settlement = parseJeSettlement(req.body);
+      await validateJeSettlement(cid, settlement, exchangeRate, id);
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "ربط الفاتورة غير صالح" });
+      return;
+    }
+
     // Validate accounts BEFORE mutating the entry header so a bad
     // account doesn't leave the journal half-updated.
     if (Array.isArray(lines) && lines.length > 0) {
@@ -596,16 +712,36 @@ router.put("/:id", async (req, res) => {
     }
 
     // docNumber is intentionally omitted — once assigned, it is immutable.
-    const [entry] = await db.update(journalEntriesTable).set({
-      entryDate:    entryDate || undefined,
-      currency:     currency || "SAR",
-      exchangeRate: exchangeRate ?? "1",
-      description:  description || null,
-      entryType:    entryType || "general",
-      branchId:     resolvedBranchId,
-      ...(resolvedPeriodId !== undefined ? { periodId: resolvedPeriodId } : {}),
-      updatedAt:    new Date(),
-    }).where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid))).returning();
+    // The update runs inside a transaction so the per-invoice settlement
+    // advisory lock (when a link exists) serializes concurrent settlement
+    // writes and the cap is re-checked under the lock (hard guarantee; the
+    // earlier pre-check only covers the friendly-400 common case).
+    const [entry] = await db.transaction(async (tx) => {
+      if (settlement.salesInvoiceId != null || settlement.purchaseInvoiceId != null) {
+        const kind: SettlementKind = settlement.salesInvoiceId != null ? "sales" : "purchase";
+        const invId = (settlement.salesInvoiceId ?? settlement.purchaseInvoiceId)!;
+        await acquireSettlementLock(tx, cid, kind, invId);
+        try {
+          await validateJeSettlement(cid, settlement, exchangeRate, id);
+        } catch (err: any) {
+          (err ?? {}).settlementReject = true;
+          throw err;
+        }
+      }
+      return tx.update(journalEntriesTable).set({
+        entryDate:    entryDate || undefined,
+        currency:     currency || "SAR",
+        exchangeRate: exchangeRate ?? "1",
+        description:  description || null,
+        entryType:    entryType || "general",
+        branchId:     resolvedBranchId,
+        salesInvoiceId:    settlement.salesInvoiceId,
+        purchaseInvoiceId: settlement.purchaseInvoiceId,
+        settlementAmount:  settlement.settlementAmount,
+        ...(resolvedPeriodId !== undefined ? { periodId: resolvedPeriodId } : {}),
+        updatedAt:    new Date(),
+      }).where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid))).returning();
+    });
 
     if (!entry) { res.status(404).json({ error: "القيد غير موجود" }); return; }
 
@@ -635,7 +771,7 @@ router.put("/:id", async (req, res) => {
       .orderBy(journalEntryLinesTable.sortOrder);
 
     res.json({ ...entry, lines: linesOut });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.settlementReject ? 400 : 500).json({ error: e.message }); }
 });
 
 // ─── POST /:id/post — flip status from draft → posted ───────────────────────

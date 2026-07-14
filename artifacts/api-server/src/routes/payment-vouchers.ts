@@ -17,6 +17,7 @@ import { loadMappings, pickAccount, resolveVatInputAccountId } from "../lib/acco
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { sumSettlementJEs, acquireSettlementLock } from "../lib/invoiceSettlement.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -461,10 +462,13 @@ async function assertNoPurchaseOverpayment(
       existing += (parseFloat(String(v.amount)) || 0) * (parseFloat(String(v.vRate)) || 1);
     }
 
+    // Plus manual journal entries linked as settlements (draft + posted).
+    existing += await sumSettlementJEs(cid, "purchase", invId);
+
     const remaining = netDue - existing;
     if (addBase > remaining + 0.01) {
       throw new Error(
-        `لا يمكن حفظ السند: إجمالي السداد يتجاوز قيمة الفاتورة المرتبطة. المتبقي المسموح ${Math.max(0, remaining).toFixed(2)} فقط (تُحتسب السندات المسودة المرتبطة ضمن السداد)`
+        `لا يمكن حفظ السند: إجمالي السداد يتجاوز قيمة الفاتورة المرتبطة. المتبقي المسموح ${Math.max(0, remaining).toFixed(2)} فقط (تُحتسب السندات المسودة والقيود المحاسبية المرتبطة ضمن السداد)`
       );
     }
   }
@@ -529,7 +533,21 @@ router.post("/", async (req, res) => {
     }
   }
 
-  const [row] = await db.insert(paymentVouchersTable).values({
+  // Settlement race guard: serialize per-invoice + RE-check the cap under a
+  // transaction-scoped advisory lock (closes the concurrent-saves window).
+  const [row] = await db.transaction(async (tx) => {
+    if (purchaseInvoiceId) {
+      await acquireSettlementLock(tx, cid, "purchase", purchaseInvoiceId);
+      await assertNoPurchaseOverpayment(
+        cid,
+        parseFloat(d.exchangeRate || "1") || 1,
+        lines,
+        headerPurchaseInvoiceId,
+        lines ? null : (parseFloat(d.amount || "0") || 0),
+        null,
+      );
+    }
+    return tx.insert(paymentVouchersTable).values({
     companyId:     cid,
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
     code,
@@ -558,7 +576,9 @@ router.post("/", async (req, res) => {
     // Manual session (admin-created) the user is currently working under,
     // resolved by extractAuth from the trusted x-session-id header.
     sessionId:     (req as any).manualSessionId ?? null,
-  }).returning();
+    }).returning();
+  }).catch((e: any) => { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return [null as any]; });
+  if (!row) return;
   if (lines) await replacePaymentLines(row.id, lines);
   res.status(201).json(row);
 });
@@ -604,7 +624,21 @@ router.put("/:id", async (req, res) => {
   // caller (no `lines`) keeps sending its own `amount`.
   const headerAmount = lines ? paymentLinesTotal(lines).toFixed(2) : d.amount;
 
-  const [row] = await db.update(paymentVouchersTable).set({
+  // Settlement race guard — same advisory-lock re-check as on create,
+  // excluding THIS voucher's own old amounts.
+  const [row] = await db.transaction(async (tx) => {
+    if (purchaseInvoiceId) {
+      await acquireSettlementLock(tx, cid, "purchase", purchaseInvoiceId);
+      await assertNoPurchaseOverpayment(
+        cid,
+        parseFloat(d.exchangeRate || "1") || 1,
+        lines,
+        headerPurchaseInvoiceId,
+        lines ? null : (parseFloat(d.amount || "0") || 0),
+        id,
+      );
+    }
+    return tx.update(paymentVouchersTable).set({
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
     date:          d.date,
     paymentType:   d.paymentType,
@@ -625,7 +659,9 @@ router.put("/:id", async (req, res) => {
     description:   d.description   ?? null,
     notes:         d.notes         ?? null,
     costCenter:    d.costCenter ? String(d.costCenter).trim() || null : null,
-  }).where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+    }).where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+  }).catch((e: any) => { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return [null as any]; });
+  if (!row) return;
   // Replace lines only when the caller sent a `lines` array (undefined =
   // legacy update that shouldn't wipe existing allocations).
   if (lines) await replacePaymentLines(row.id, lines);
