@@ -10,11 +10,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { Plus, Pencil, Trash2, Tag, Search, BookMarked } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag, Search, BookMarked, Wand2, Link2, CheckCircle2 } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
-const EMPTY = { code: "", nameAr: "", nameEn: "", costAccountId: "", revenueAccountId: "", categoryType: "", parentAccountId: "" };
+const EMPTY = { code: "", nameAr: "", nameEn: "", costAccountId: "", revenueAccountId: "", categoryType: "", parentAccountId: "", accountLinkMode: "auto", accountId: "" };
 
 // نوع الفئة → أنواع الحسابات المسموح اختيارها كحساب رئيسي (تُطابق قواعد السيرفر)
 const PARENT_FILTER: Record<string, ("asset" | "expense")[]> = {
@@ -71,14 +71,23 @@ export default function ItemGroups() {
       revenueAccountId: g.revenueAccountId ? String(g.revenueAccountId) : "",
       categoryType:     g.categoryType ?? "",
       parentAccountId:  g.parentAccountId ? String(g.parentAccountId) : "",
+      // الوضع: لو الفئة مربوطة بحساب من غير حساب رئيسي → كانت مربوطة يدوياً
+      accountLinkMode:  g.categoryType && g.accountId && !g.parentAccountId ? "manual" : "auto",
+      accountId:        g.accountId ? String(g.accountId) : "",
     });
     setEditId(g.id);
     setShowForm(true);
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (form.categoryType && !form.parentAccountId) {
+    const manual = form.accountLinkMode === "manual";
+    if (form.categoryType && !manual && !form.parentAccountId) {
       toast({ title: tr("typeRequiresParent"), variant: "destructive" });
+      setActiveTab("accounts");
+      return;
+    }
+    if (form.categoryType && manual && !form.accountId) {
+      toast({ title: tr("manualRequiresAccount"), variant: "destructive" });
       setActiveTab("accounts");
       return;
     }
@@ -87,14 +96,16 @@ export default function ItemGroups() {
       costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
       revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
       categoryType:     form.categoryType || null,
-      parentAccountId:  form.categoryType && form.parentAccountId ? Number(form.parentAccountId) : null,
+      accountLinkMode:  form.categoryType ? (manual ? "manual" : "auto") : undefined,
+      accountId:        form.categoryType && manual && form.accountId ? Number(form.accountId) : undefined,
+      parentAccountId:  form.categoryType && !manual && form.parentAccountId ? Number(form.parentAccountId) : null,
     };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate(payload);
   }
 
   // معاينة الحساب الفرعي القادم (مثل الموردين: آخر حساب 111002 → القادم 111003)
-  const peekParentId = form.categoryType && form.parentAccountId ? Number(form.parentAccountId) : 0;
+  const peekParentId = form.categoryType && form.accountLinkMode !== "manual" && form.parentAccountId ? Number(form.parentAccountId) : 0;
   const { data: peek } = useQuery({
     queryKey: ["item-group-next-account", peekParentId, form.categoryType],
     queryFn: () => inventoryApi.getItemGroupNextAccount(peekParentId, form.categoryType),
@@ -160,7 +171,7 @@ export default function ItemGroups() {
                   <select
                     className="w-full h-9 rounded-md border bg-background px-3 text-sm"
                     value={form.categoryType}
-                    onChange={e => setForm((p: any) => ({ ...p, categoryType: e.target.value, parentAccountId: "" }))}
+                    onChange={e => setForm((p: any) => ({ ...p, categoryType: e.target.value, parentAccountId: "", accountId: "" }))}
                   >
                     <option value="">{tr("categoryTypeNone")}</option>
                     <option value="inventory">{tr("typeInventory")}</option>
@@ -169,24 +180,83 @@ export default function ItemGroups() {
                   </select>
                 </Field>
                 {form.categoryType && (
-                  <Field label={tr("parentAccount")} hint={tr("parentAccountHint")} required>
-                    <AccountCombobox
-                      value={form.parentAccountId}
-                      onValueChange={v => setForm((p: any) => ({ ...p, parentAccountId: v }))}
-                      placeholder={tr("selectParentAccount")}
-                      filterTypes={PARENT_FILTER[form.categoryType] ?? ["asset"]}
-                      grouped={false}
-                    />
-                  </Field>
-                )}
-                {form.categoryType && peekParentId > 0 && peek && (
-                  <div className="md:col-span-2 rounded-md border bg-muted/40 px-3 py-2 text-xs space-y-1">
-                    <div className="text-muted-foreground">
-                      {peek.lastCode ? tr("lastChild", { code: peek.lastCode }) : tr("noChildrenYet")}
+                  <div className="md:col-span-2 space-y-3">
+                    {/* ── اختيار طريقة الربط المحاسبي (مثل شاشة المستودعات) ── */}
+                    <div className="text-sm font-medium">{tr("linkModeTitle")}</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" role="radiogroup" aria-label={tr("linkModeTitle")}>
+                      {([
+                        { mode: "auto",   Icon: Wand2, title: tr("linkModeAuto"),   desc: tr("linkModeAutoDesc") },
+                        { mode: "manual", Icon: Link2, title: tr("linkModeManual"), desc: tr("linkModeManualDesc") },
+                      ] as const).map(({ mode, Icon, title, desc }) => {
+                        const active = (form.accountLinkMode ?? "auto") === mode;
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            onClick={() => setForm((p: any) => ({ ...p, accountLinkMode: mode }))}
+                            className={`relative rounded-lg border p-3 text-start transition-colors ${
+                              active
+                                ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                : "border-border bg-card hover:bg-muted/40"
+                            }`}
+                          >
+                            {active && <CheckCircle2 className="absolute top-2 end-2 h-4 w-4 text-primary" />}
+                            <div className="flex items-center gap-2 mb-1">
+                              <Icon className={`h-4 w-4 ${active ? "text-primary" : "text-muted-foreground"}`} />
+                              <span className="text-sm font-semibold">{title}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed">{desc}</p>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div className="font-medium text-primary">
-                      {tr("nextChild", { code: peek.nextCode, name: form.nameAr || "—" })}
-                    </div>
+
+                    {form.accountLinkMode === "manual" ? (
+                      <>
+                        <Field label={tr("manualAccount")} hint={tr("manualAccountHint")} required>
+                          <AccountCombobox
+                            value={form.accountId}
+                            onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
+                            placeholder={tr("selectManualAccount")}
+                            filterTypes={PARENT_FILTER[form.categoryType] ?? ["asset"]}
+                            grouped={false}
+                            allowEmpty={false}
+                          />
+                        </Field>
+                        {form.accountId && accById.get(Number(form.accountId)) && (
+                          <div className="rounded-md border border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+                            {tr("manualLinkedPreview", {
+                              code: accById.get(Number(form.accountId))?.code,
+                              name: pickName(accById.get(Number(form.accountId))?.nameAr, accById.get(Number(form.accountId))?.nameEn),
+                            })}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <Field label={tr("parentAccount")} hint={tr("parentAccountHint")} required>
+                          <AccountCombobox
+                            value={form.parentAccountId}
+                            onValueChange={v => setForm((p: any) => ({ ...p, parentAccountId: v }))}
+                            placeholder={tr("selectParentAccount")}
+                            filterTypes={PARENT_FILTER[form.categoryType] ?? ["asset"]}
+                            grouped={false}
+                          />
+                        </Field>
+                        {peekParentId > 0 && peek && (
+                          <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs space-y-1">
+                            <div className="text-muted-foreground">
+                              {peek.lastCode ? tr("lastChild", { code: peek.lastCode }) : tr("noChildrenYet")}
+                            </div>
+                            <div className="font-medium text-primary">
+                              {tr("nextChild", { code: peek.nextCode, name: form.nameAr || "—" })}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
                 <Field label={tr("defaultCostAccount")} hint={tr("inheritedAccountHint")}>

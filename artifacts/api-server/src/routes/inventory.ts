@@ -36,6 +36,9 @@ import {
   ensureWarehouseAccount,
   ensureItemGroupAccountUnderParent,
   peekItemGroupNextAccountUnderParent,
+  ensureItemGroupAccountAuto,
+  peekItemGroupNextAccountAuto,
+  ITEM_GROUP_PARENT_TYPES,
   type ItemGroupCategoryType,
 } from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
@@ -348,15 +351,51 @@ router.get("/item-groups", async (req, res) => {
 
 // ── التوجيه المحاسبي: normalize + validate routing fields from the body ──
 const GROUP_CATEGORY_TYPES = new Set(["inventory", "fixed_asset", "expense"]);
-function parseGroupRouting(body: any): { categoryType: ItemGroupCategoryType | null; parentAccountId: number | null; error?: string } {
+// سلوك الربط المحاسبي (خانة واحدة، مثل شاشة المستودعات):
+//  - المستخدم اختار حساباً من الشجرة (accountId) → تُربط الفئة عليه مباشرة، بدون إنشاء أي حساب.
+//  - لم يختر شيئاً → النظام يحلّ الحساب الأب الافتراضي حسب نوع الفئة ويُنشئ
+//    حساباً فرعياً جديداً بعد آخر حساب فرعي تحته (تلقائي).
+//  - (توافق قديم) لو وصل parentAccountId صراحة، يُستخدم كأب للإنشاء التلقائي.
+function parseGroupRouting(body: any): {
+  categoryType: ItemGroupCategoryType | null;
+  parentAccountId: number | null;
+  directAccountId: number | null;
+  error?: string;
+} {
+  const none = { categoryType: null, parentAccountId: null, directAccountId: null };
   const rawType = body?.categoryType ? String(body.categoryType) : null;
-  if (!rawType) return { categoryType: null, parentAccountId: null };
-  if (!GROUP_CATEGORY_TYPES.has(rawType)) return { categoryType: null, parentAccountId: null, error: "نوع الفئة غير صالح" };
-  const parentAccountId = Number(body?.parentAccountId);
-  if (!Number.isInteger(parentAccountId) || parentAccountId <= 0) {
-    return { categoryType: null, parentAccountId: null, error: "لا يسمح بحفظ الفئة بدون تحديد الحساب الرئيسي للتوجيه المحاسبي" };
+  if (!rawType) return none;
+  if (!GROUP_CATEGORY_TYPES.has(rawType)) return { ...none, error: "نوع الفئة غير صالح" };
+  const directAccountId = Number(body?.accountId);
+  if (Number.isInteger(directAccountId) && directAccountId > 0) {
+    return { categoryType: rawType as ItemGroupCategoryType, parentAccountId: null, directAccountId };
   }
-  return { categoryType: rawType as ItemGroupCategoryType, parentAccountId };
+  const parentAccountId = Number(body?.parentAccountId);
+  if (Number.isInteger(parentAccountId) && parentAccountId > 0) {
+    return { categoryType: rawType as ItemGroupCategoryType, parentAccountId, directAccountId: null };
+  }
+  // لا اختيار → auto بالكامل (الأب الافتراضي يُحلّ في المسار نفسه)
+  return { categoryType: rawType as ItemGroupCategoryType, parentAccountId: null, directAccountId: null };
+}
+
+/** Validate a MANUALLY-picked account: tenant-owned + type-compatible with the
+ *  category. Header (main) accounts ARE allowed here by explicit user request —
+ *  picking an account means "link to exactly this one". */
+async function validateGroupDirectAccount(
+  companyId: number,
+  accountId: number,
+  categoryType: ItemGroupCategoryType,
+): Promise<string | null> {
+  const [acc] = await db.select().from(accountsTable).where(and(
+    eq(accountsTable.id, accountId),
+    eq(accountsTable.companyId, companyId),
+  ));
+  if (!acc) return "الحساب المختار غير موجود";
+  const allowed = ITEM_GROUP_PARENT_TYPES[categoryType] as string[];
+  if (!allowed.includes(String(acc.accountType))) {
+    return "نوع الحساب المختار لا يتوافق مع نوع الفئة (مخزون/أصل ثابت → أصول، مصروف → مصروفات)";
+  }
+  return null;
 }
 
 // Preview (read-only) of the next auto-minted sub-account under a picked
@@ -371,6 +410,17 @@ router.get("/item-groups/next-account", async (req, res) => {
   }
   const peek = await peekItemGroupNextAccountUnderParent(cid, parentId, categoryType as ItemGroupCategoryType);
   if (!peek) { res.status(404).json({ error: "الحساب الرئيسي غير صالح لهذا النوع من الفئات" }); return; }
+  res.json(peek);
+});
+
+// معاينة الوضع التلقائي (بدون اختيار حساب): الأب الافتراضي + آخر/التالي.
+// NOTE: registered BEFORE /item-groups/:id (Express 5 literal-first rule).
+router.get("/item-groups/next-account-auto", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const categoryType = String(req.query.categoryType ?? "");
+  if (!GROUP_CATEGORY_TYPES.has(categoryType)) { res.status(400).json({ error: "بيانات غير صالحة" }); return; }
+  const peek = await peekItemGroupNextAccountAuto(cid, categoryType as ItemGroupCategoryType);
+  if (!peek) { res.status(404).json({ error: "تعذّر تحديد الحساب الأب الافتراضي لهذا النوع — اختر الحساب يدوياً" }); return; }
   res.json(peek);
 });
 
@@ -389,10 +439,19 @@ router.post("/item-groups", async (req, res) => {
   }
   // Mint the category's default sub-account (supplier-style) BEFORE the insert
   // so a minting failure never leaves a half-routed category behind.
+  // Manual mode: link the picked leaf account directly (no minting).
   let accountId: number | null = null;
-  if (routing.categoryType && routing.parentAccountId) {
+  if (routing.categoryType && routing.directAccountId) {
+    const err = await validateGroupDirectAccount(cid, routing.directAccountId, routing.categoryType);
+    if (err) { res.status(400).json({ error: err }); return; }
+    accountId = routing.directAccountId;
+  } else if (routing.categoryType && routing.parentAccountId) {
     accountId = await ensureItemGroupAccountUnderParent(cid, String(nameAr).trim(), routing.parentAccountId, routing.categoryType);
     if (!accountId) { res.status(400).json({ error: "تعذّر إنشاء الحساب الفرعي للفئة — تأكد من صلاحية الحساب الرئيسي المختار" }); return; }
+  } else if (routing.categoryType) {
+    // لا اختيار → auto: أنشئ الحساب تحت الأب الافتراضي لنوع الفئة
+    accountId = await ensureItemGroupAccountAuto(cid, String(nameAr).trim(), routing.categoryType);
+    if (!accountId) { res.status(400).json({ error: "تعذّر تحديد الحساب الأب الافتراضي لهذا النوع — اختر الحساب من شجرة الحسابات يدوياً" }); return; }
   }
   const [row] = await db.insert(itemGroupsTable).values({
     companyId: cid, code, nameAr, nameEn,
@@ -419,13 +478,26 @@ router.put("/item-groups/:id", async (req, res) => {
   // Keep-if-exists: re-mint ONLY when routing is newly set or the parent/type
   // changed; never NULL an existing account link on an unrelated edit.
   let accountId: number | null = current.accountId ?? null;
-  if (routing.categoryType && routing.parentAccountId) {
+  if (routing.categoryType && routing.directAccountId) {
+    // Manual pick: link the picked account directly (no minting).
+    const err = await validateGroupDirectAccount(cid, routing.directAccountId, routing.categoryType);
+    if (err) { res.status(400).json({ error: err }); return; }
+    accountId = routing.directAccountId;
+  } else if (routing.categoryType && routing.parentAccountId) {
     const changed = current.categoryType !== routing.categoryType
       || current.parentAccountId !== routing.parentAccountId
       || !current.accountId;
     if (changed) {
       const minted = await ensureItemGroupAccountUnderParent(cid, String(nameAr ?? current.nameAr).trim(), routing.parentAccountId, routing.categoryType);
       if (!minted) { res.status(400).json({ error: "تعذّر إنشاء الحساب الفرعي للفئة — تأكد من صلاحية الحساب الرئيسي المختار" }); return; }
+      accountId = minted;
+    }
+  } else if (routing.categoryType) {
+    // Keep-if-exists: لو الفئة عندها حساب بالفعل ونفس النوع، لا تُنشئ جديداً.
+    const changed = current.categoryType !== routing.categoryType || !current.accountId;
+    if (changed) {
+      const minted = await ensureItemGroupAccountAuto(cid, String(nameAr ?? current.nameAr).trim(), routing.categoryType);
+      if (!minted) { res.status(400).json({ error: "تعذّر تحديد الحساب الأب الافتراضي لهذا النوع — اختر الحساب من شجرة الحسابات يدوياً" }); return; }
       accountId = minted;
     }
   } else {

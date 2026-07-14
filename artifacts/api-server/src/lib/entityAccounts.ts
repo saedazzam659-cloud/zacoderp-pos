@@ -473,6 +473,55 @@ export async function peekItemGroupNextAccountUnderParent(
   return buildSupplierPeek(companyId, parent);
 }
 
+// ── وضع "بدون اختيار" (auto): حلّ الحساب الأب الافتراضي حسب نوع الفئة ──
+// mapping screen role key first, then standard code prefixes, then names.
+const GROUP_AUTO_PARENT_RULES: Record<ItemGroupCategoryType, {
+  roleKeys: string[]; prefixes: string[]; nameLikes: string[]; accountType: AccountType;
+}> = {
+  inventory: {
+    roleKeys: ["item_group_inventory_parent", "warehouse_account_parent"],
+    prefixes: ["1105", "1220", "112", "1300", "13"],
+    nameLikes: ["مخزون", "مخزن", "بضاعة", "inventory", "stock"],
+    accountType: "asset",
+  },
+  fixed_asset: {
+    roleKeys: ["item_group_fixed_asset_parent", "fixed_asset_account_parent"],
+    prefixes: ["1201", "121", "12"],
+    nameLikes: ["أصول ثابتة", "الأصول الثابتة", "اصول ثابتة", "fixed asset"],
+    accountType: "asset",
+  },
+  expense: {
+    roleKeys: ["item_group_expense_parent"],
+    prefixes: ["5100", "51", "5"],
+    nameLikes: ["مصروفات", "مصاريف", "expense"],
+    accountType: "expense",
+  },
+};
+
+async function resolveDefaultGroupParent(companyId: number, categoryType: ItemGroupCategoryType) {
+  const r = GROUP_AUTO_PARENT_RULES[categoryType];
+  return resolveEntityParent(companyId, r.roleKeys, r.prefixes, r.nameLikes, r.accountType);
+}
+
+/** Auto mode (no explicit pick): mint the category sub-account under the
+ *  default parent resolved for the category type. */
+export async function ensureItemGroupAccountAuto(
+  companyId: number,
+  name: string,
+  categoryType: ItemGroupCategoryType,
+): Promise<number | null> {
+  const parent = await resolveDefaultGroupParent(companyId, categoryType);
+  if (!parent) return null;
+  return mintChildUnderParent(companyId, parent, name, parent.accountType as AccountType);
+}
+
+/** Peek for the auto mode — mirrors ensureItemGroupAccountAuto. */
+export async function peekItemGroupNextAccountAuto(companyId: number, categoryType: ItemGroupCategoryType) {
+  const parent = await resolveDefaultGroupParent(companyId, categoryType);
+  if (!parent) return null;
+  return buildSupplierPeek(companyId, parent);
+}
+
 export const ensureWarehouseAccount = (companyId: number, name: string) =>
   ensureEntitySubAccount({
     companyId, roleKeys: ["warehouse_account_parent"], name,
