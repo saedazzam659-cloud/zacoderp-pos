@@ -46,6 +46,7 @@ import IntegrationsMarketplace from "@/pages/integrations/IntegrationsMarketplac
 import IntegrationGateway from "@/pages/integrations/IntegrationGateway";
 import IntegrationConnection from "@/pages/integrations/IntegrationConnection";
 import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
+import DeviceApproval from "@/pages/DeviceApproval";
 import ReportInvitationAccept from "@/pages/ReportInvitationAccept";
 import ReportsHub from "@/pages/admin/reports/ReportsHub";
 import CompanyPerformanceReport from "@/pages/admin/reports/CompanyPerformanceReport";
@@ -555,6 +556,7 @@ function AppRoutes() {
       location === "/pending-approval" ||
       location === "/recover-superadmin" ||
       location.startsWith("/recover-superadmin/") ||
+      location === "/device-approval" ||
       location.startsWith("/reports-invitation/") ||
       location.startsWith("/blog/") ||
       // Face-attendance kiosk: a paired tablet at the office entrance
@@ -634,6 +636,7 @@ function AppRoutes() {
       <Route path="/pending-approval" component={PendingApproval} />
       <Route path="/recover-superadmin" component={RecoverSuperAdmin} />
       <Route path="/recover-superadmin/:token" component={RecoverSuperAdmin} />
+      <Route path="/device-approval" component={DeviceApproval} />
       <Route path="/reports-invitation/:token" component={ReportInvitationAccept} />
 
       {/* Protected routes */}

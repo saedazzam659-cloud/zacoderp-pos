@@ -613,7 +613,7 @@ export async function sendDeviceApprovalRequest(
   ua: string | null,
   publicBaseUrl: string,
 ) {
-  const link = `${publicBaseUrl.replace(/\/$/, "")}/admin/security-superadmin?approve=${encodeURIComponent(approvalToken)}`;
+  const link = `${publicBaseUrl.replace(/\/$/, "")}/device-approval?token=${encodeURIComponent(approvalToken)}`;
   const body = `
     <p>هناك محاولة تسجيل دخول من <strong>جهاز جديد لم يُعتمد بعد</strong>.</p>
     <p style="color:#64748b; font-size:13px;">
@@ -621,7 +621,7 @@ export async function sendDeviceApprovalRequest(
       عنوان IP: ${ip ?? "غير معروف"}<br/>
       المتصفح: ${ua ?? "غير معروف"}
     </p>
-    <p>للموافقة على هذا الجهاز، افتح الرابط التالي من جهاز موثوق ومسجَّل الدخول مسبقًا:</p>
+    <p>للموافقة على هذا الجهاز، افتح الرابط التالي من أي جهاز وأدخل كلمة مرور حسابك للتأكيد:</p>
     <p><a href="${link}" style="display:inline-block; background:#10b981; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px;">مراجعة الطلب</a></p>
     <p style="font-size:12px; color:#94a3b8;">صالح لمدة 15 دقيقة. إذا لم تطلب هذا، تجاهل الرسالة وسيُمنع الجهاز تلقائيًا.</p>`;
   return sendEmail({ to, subject: "طلب اعتماد جهاز جديد", html: wrapHtml("جهاز جديد ينتظر الاعتماد", body), channel: "security" });

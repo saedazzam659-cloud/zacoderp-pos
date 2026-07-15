@@ -90,6 +90,11 @@ export const superAdminDeviceApprovalsTable = pgTable("sa_device_approvals", {
   id:                  serial("id").primaryKey(),
   userId:              integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
   approvalToken:       text("approval_token").notNull().unique(),
+  // sha256 of the SEPARATE secret sent ONLY in the approval email. The
+  // public (no-session) decide endpoint accepts this secret — never the
+  // polling approvalToken, which is returned to the untrusted requesting
+  // device by /login and must not be able to self-approve.
+  emailTokenHash:      text("email_token_hash"),
   requestingDeviceFp:  text("requesting_device_fp").notNull(),
   requestingIp:        text("requesting_ip"),
   requestingUserAgent: text("requesting_user_agent"),

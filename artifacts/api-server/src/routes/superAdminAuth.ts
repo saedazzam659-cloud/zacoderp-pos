@@ -236,9 +236,14 @@ router.post("/login", saLoginIpLimit, saLoginUsernameLimit, async (req, res) => 
   if (!trusted && !isBootstrap && !emergency) {
     // Create approval request, email link to user
     approvalToken = newToken(24);
+    // Separate secret for the emailed link: the polling approvalToken is
+    // returned to the UNTRUSTED requesting device, so it must never be
+    // usable to approve. Only the sha256 of the email secret is stored.
+    const emailToken = newToken(24);
     await db.insert(superAdminDeviceApprovalsTable).values({
       userId: user.id,
       approvalToken,
+      emailTokenHash: sha256(emailToken),
       requestingDeviceFp: fp,
       requestingIp: ip,
       requestingUserAgent: ua,
@@ -246,7 +251,7 @@ router.post("/login", saLoginIpLimit, saLoginUsernameLimit, async (req, res) => 
       expiresAt: new Date(Date.now() + APPROVAL_TTL_MS),
     });
     if (user.email) {
-      sendDeviceApprovalRequest(user.email, approvalToken, ip, ua, publicBaseUrlFromReq(req)).catch(() => {});
+      sendDeviceApprovalRequest(user.email, emailToken, ip, ua, publicBaseUrlFromReq(req)).catch(() => {});
     }
     needsApproval = true;
   }
@@ -721,6 +726,96 @@ router.get("/device-approvals/:token/status", async (req, res) => {
     return;
   }
   res.json({ status: a.status });
+});
+
+// ─── Public device-approval decide (password re-auth) ─────────────────────
+// Breaks the chicken-and-egg when the SuperAdmin has NO trusted device with
+// an active session: the emailed link opens a PUBLIC page that asks for the
+// account password. Possession of the email inbox + the password are the two
+// factors; no bearer session is required. Rate-limited per IP.
+// In-memory per-token password-attempt limiter (in addition to the IP
+// limiter): max 5 wrong passwords per emailed link, then the link is dead.
+const publicDecideAttempts = new Map<string, { count: number; firstAt: number }>();
+const PUBLIC_DECIDE_MAX_ATTEMPTS = 5;
+const PUBLIC_DECIDE_WINDOW_MS = APPROVAL_TTL_MS;
+
+// NOTE: :token here is the EMAIL secret (matched via emailTokenHash), NOT the
+// polling approvalToken — the polling token is handed to the untrusted
+// requesting device by /login and must never be able to self-approve.
+router.post("/device-approvals/:token/public-decide", saLoginIpLimit, async (req, res) => {
+  // Single generic error for missing/expired/decided/unknown so the endpoint
+  // is not an oracle for token state.
+  const generic = () => res.status(400).json({ error: "الرابط غير صالح أو انتهت صلاحيته. أعد محاولة تسجيل الدخول ليصلك رابط جديد." });
+  const { password, decision } = req.body ?? {};
+  if (decision !== "approve" && decision !== "reject") {
+    res.status(400).json({ error: "decision must be approve|reject" }); return;
+  }
+  if (typeof password !== "string" || !password) {
+    res.status(400).json({ error: "كلمة المرور مطلوبة" }); return;
+  }
+  const tokenHash = sha256(String(req.params.token));
+  const now = Date.now();
+  const att = publicDecideAttempts.get(tokenHash);
+  if (att && now - att.firstAt < PUBLIC_DECIDE_WINDOW_MS && att.count >= PUBLIC_DECIDE_MAX_ATTEMPTS) {
+    res.status(429).json({ error: "تجاوزت عدد المحاولات المسموح. أعد محاولة تسجيل الدخول ليصلك رابط جديد." }); return;
+  }
+  const [a] = await db.select().from(superAdminDeviceApprovalsTable)
+    .where(eq(superAdminDeviceApprovalsTable.emailTokenHash, tokenHash));
+  if (!a) { generic(); return; }
+  if (a.status !== "pending") { generic(); return; }
+  if (a.expiresAt.getTime() < Date.now()) {
+    await db.update(superAdminDeviceApprovalsTable).set({ status: "expired" })
+      .where(eq(superAdminDeviceApprovalsTable.id, a.id));
+    generic(); return;
+  }
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, a.userId));
+  if (!user || user.role !== "superadmin" || user.isActive === false) {
+    generic(); return;
+  }
+  const passOk = await bcrypt.compare(password, user.passwordHash);
+  if (!passOk) {
+    const cur = (att && now - att.firstAt < PUBLIC_DECIDE_WINDOW_MS) ? att : { count: 0, firstAt: now };
+    cur.count += 1;
+    publicDecideAttempts.set(tokenHash, cur);
+    if (publicDecideAttempts.size > 1000) {
+      for (const [k, v] of publicDecideAttempts) {
+        if (now - v.firstAt > PUBLIC_DECIDE_WINDOW_MS) publicDecideAttempts.delete(k);
+      }
+    }
+    await recordAttempt({
+      userId: user.id, username: user.username, ip: clientIpFrom(req),
+      userAgent: req.headers["user-agent"]?.toString() ?? null,
+      deviceFingerprint: computeFingerprint(req),
+      success: false, outcome: "device_approval_bad_password",
+      failureReason: "wrong password on public device-approval",
+    });
+    res.status(401).json({ error: "كلمة المرور غير صحيحة" }); return;
+  }
+  const ip = clientIpFrom(req);
+  if (decision === "approve") {
+    await db.insert(superAdminTrustedDevicesTable).values({
+      userId: user.id,
+      deviceFingerprint: a.requestingDeviceFp,
+      deviceName: a.requestingUserAgent ? describeDeviceFromUa(a.requestingUserAgent) : "Approved device",
+      userAgent: a.requestingUserAgent,
+      ip: a.requestingIp,
+      approvedFromIp: ip,
+    });
+    await db.update(superAdminDeviceApprovalsTable)
+      .set({ status: "approved", decidedAt: new Date(), decidedFromIp: ip })
+      .where(eq(superAdminDeviceApprovalsTable.id, a.id));
+  } else {
+    await db.update(superAdminDeviceApprovalsTable)
+      .set({ status: "rejected", decidedAt: new Date(), decidedFromIp: ip })
+      .where(eq(superAdminDeviceApprovalsTable.id, a.id));
+  }
+  await recordAttempt({
+    userId: user.id, username: user.username, ip,
+    userAgent: req.headers["user-agent"]?.toString() ?? null,
+    deviceFingerprint: computeFingerprint(req),
+    success: true, outcome: decision === "approve" ? "device_approved_via_email" : "device_rejected_via_email",
+  });
+  res.json({ ok: true, status: decision === "approve" ? "approved" : "rejected" });
 });
 
 // ─── Authenticated SuperAdmin endpoints ────────────────────────────────────
