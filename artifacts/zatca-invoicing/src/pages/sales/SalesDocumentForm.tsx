@@ -35,8 +35,9 @@ import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive, Wallet } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive, Wallet, Undo2 } from "lucide-react";
 import EmbeddedAccountNotesTab from "@/pages/account-notes/EmbeddedAccountNotesTab";
+import EmbeddedReturnsTab from "@/components/documents/EmbeddedReturnsTab";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import InvoicePaymentsTab from "@/pages/sales/InvoicePaymentsTab";
 import { offersApi } from "@/lib/offersApi";
@@ -3063,6 +3064,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </TabsTrigger>
                   )}
                   {isInvoice && editId && (
+                    <TabsTrigger value="returns" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Undo2 className="h-3.5 w-3.5" />الإرجاع
+                    </TabsTrigger>
+                  )}
+                  {isInvoice && editId && (
                     <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                       <Archive className="h-3.5 w-3.5" />أرشفة
                     </TabsTrigger>
@@ -3399,6 +3405,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               )}
               {isInvoice && editId && (
                 <>
+                <TabsContent value="returns" className="mt-0">
+                  <CardContent className="pt-5 pb-5">
+                    <EmbeddedReturnsTab
+                      kind="sales"
+                      invoiceId={editId}
+                      docNumber={(existing as any)?.docNumber ?? docNumber}
+                      companyId={user?.company?.id}
+                      token={token}
+                      invoiceTotal={totalAmount}
+                    />
+                  </CardContent>
+                </TabsContent>
                 <TabsContent value="debitNote" className="mt-0">
                   {(() => {
                     const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));

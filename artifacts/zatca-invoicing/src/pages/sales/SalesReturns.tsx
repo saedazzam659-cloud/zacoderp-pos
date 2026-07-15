@@ -437,8 +437,12 @@ export default function SalesReturns() {
     onSuccess: () => {
       invalidate();
       const wasEdit = editingId != null;
+      // «إرجاع كامل + مسودة فاتورة جديدة» — نلتقط القيمة قبل reset()
+      // (الـ reset يمسحها حتى لا تسرّب لتنقّل لاحق غير مرتبط).
+      const draftSrcId = !wasEdit ? newDraftInvoiceIdRef.current : null;
       reset();
       toast({ title: wasEdit ? t("salesReturns.toastReturnEdited") : t("salesReturns.toastReturnCreated") });
+      if (draftSrcId) navigate(`/sales/invoices/new?from=${draftSrcId}`);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -527,8 +531,13 @@ export default function SalesReturns() {
     setEditingId(null);
     setViewMode(false);
     setActiveTab("basic");
+    // إلغاء أي «مسودة فاتورة جديدة» معلّقة — الخروج من النموذج (حفظ/إلغاء)
+    // يجب ألا يترك توجيهًا قديمًا يعمل في حفظ لاحق غير مرتبط.
+    newDraftInvoiceIdRef.current = null;
     const url = new URL(window.location.href);
     url.searchParams.delete("fromInvoice");
+    url.searchParams.delete("full");
+    url.searchParams.delete("newDraft");
     window.history.replaceState({}, "", url.toString());
   }
 
@@ -643,7 +652,7 @@ export default function SalesReturns() {
   }
 
   // Load a sales invoice and populate the return form with its data
-  async function loadInvoiceIntoForm(invId: string | number, opts: { openForm?: boolean } = {}) {
+  async function loadInvoiceIntoForm(invId: string | number, opts: { openForm?: boolean; full?: boolean } = {}) {
     if (!invId) return;
     try {
       const res = await fetch(`${API}/api/sales/sales-invoices/${invId}?companyId=${cid}`, { headers: authH });
@@ -780,7 +789,22 @@ export default function SalesReturns() {
             breakdown,
           };
         });
-        setPicker({ open: true, invoice: inv, rows });
+        if (opts.full) {
+          // «إرجاع كامل» (تبويب الإرجاع بالفاتورة): طبّق كل الأصناف التي ما
+          // زالت قابلة للإرجاع تلقائيًا بكامل الكمية المتبقية — بدون فتح
+          // نافذة الاختيار. نمرّر priceIncludesVat من الفاتورة مباشرة لأن
+          // setForm أعلاه لم يُطبَّق بعد في نفس الدورة.
+          const chosen = rows
+            .filter((r: any) => r.maxQty > 0)
+            .map((r: any) => ({ ...r, selected: true, returnQty: String(r.maxQty) }));
+          if (!chosen.length) {
+            toast({ title: "لا توجد كميات متبقية قابلة للإرجاع في هذه الفاتورة", variant: "destructive" });
+            return;
+          }
+          setLines(buildReturnLinesFromPickerRows(chosen, !!inv.priceIncludesVat));
+        } else {
+          setPicker({ open: true, invoice: inv, rows });
+        }
       } else {
         toast({ title: "الفاتورة المختارة لا تحتوي على أصناف", variant: "destructive" });
       }
@@ -813,7 +837,15 @@ export default function SalesReturns() {
       });
       return;
     }
-    setLines(chosen.map(r => {
+    setLines(buildReturnLinesFromPickerRows(chosen, !!form.priceIncludesVat));
+    setPicker(null);
+  }
+
+  // Shared mapper: picker rows → return-form lines (Option B pricing intact).
+  // Used by BOTH the manual picker confirm and the auto "full return" flow
+  // (?fromInvoice=<id>&full=1) so the pricing logic exists exactly once.
+  function buildReturnLinesFromPickerRows(chosen: any[], priceIncludesVat: boolean): ReturnLine[] {
+    return chosen.map(r => {
       const l = r.srcLine;
       // ── Full vs partial return detection ─────────────────────────
       // "Full return" = returning ALL of the originally sold quantity
@@ -861,20 +893,26 @@ export default function SalesReturns() {
           ? `سعر معدّل تلقائياً: ${fmt(r.originalUnitPrice)} → ${fmt(r.effectiveUnitPrice)} — ${r.breakdown}`
           : undefined,
       };
-      return { ...base, lineTotal: calcLineTotal(base, !!form.priceIncludesVat).toFixed(2) };
-    }));
-    setPicker(null);
+      return { ...base, lineTotal: calcLineTotal(base, priceIncludesVat).toFixed(2) };
+    });
   }
 
-  // Pre-fill from sales invoice via ?fromInvoice URL param
+  // Pre-fill from sales invoice via ?fromInvoice URL param.
+  // &full=1  → auto-apply ALL remaining returnable lines (skip the picker).
+  // &newDraft=1 → after the return is saved, open a NEW draft copy of the
+  //               source invoice (/sales/invoices/new?from=<id>) — Odoo's
+  //               "full refund and new draft invoice" flow.
   const prefilledRef = useRef(false);
+  const newDraftInvoiceIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (prefilledRef.current) return;
     const params = new URLSearchParams(window.location.search);
     const invId = params.get("fromInvoice");
     if (!invId || !user || !currencies.length) return;
     prefilledRef.current = true;
-    loadInvoiceIntoForm(invId, { openForm: true });
+    const full = params.get("full") === "1";
+    if (params.get("newDraft") === "1") newDraftInvoiceIdRef.current = invId;
+    loadInvoiceIntoForm(invId, { openForm: true, full });
   }, [user, currencies.length]);
 
   // Company-wide preference; "after_discount" mirrors legacy behaviour.

@@ -27,8 +27,9 @@ import { currencySymbol } from "@/lib/format";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, ClipboardList, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock, Archive } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, ClipboardList, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock, Archive, Undo2 } from "lucide-react";
 import EmbeddedAccountNotesTab from "@/pages/account-notes/EmbeddedAccountNotesTab";
+import EmbeddedReturnsTab from "@/components/documents/EmbeddedReturnsTab";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import PurchaseInvoicePaymentsTab from "@/pages/purchasing/PurchaseInvoicePaymentsTab";
 import { DateField } from "@/components/ui/date-field";
@@ -128,7 +129,7 @@ export default function PurchaseInvoiceForm() {
   const viewMode = new URLSearchParams(search).get("view") === "1";
   const _co = (user as any)?.company;
   const useTabbedLayout = _co?.invoiceFormLayout !== "classic" || viewMode;
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "creditNote" | "payments" | "archive" | "details">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "creditNote" | "payments" | "returns" | "archive" | "details">("basic");
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
@@ -1164,6 +1165,11 @@ export default function PurchaseInvoiceForm() {
                     <Wallet className="h-3.5 w-3.5" />السداد
                   </TabsTrigger>
                   {editId && (
+                    <TabsTrigger value="returns" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <Undo2 className="h-3.5 w-3.5" />الإرجاع
+                    </TabsTrigger>
+                  )}
+                  {editId && (
                     <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                       <Archive className="h-3.5 w-3.5" />أرشفة
                     </TabsTrigger>
@@ -1875,6 +1881,20 @@ export default function PurchaseInvoiceForm() {
                 />
               </CardContent>
             </TabsContent>
+            {editId && (
+              <TabsContent value="returns" className="mt-0">
+                <CardContent className="pt-5 pb-5">
+                  <EmbeddedReturnsTab
+                    kind="purchase"
+                    invoiceId={editId}
+                    docNumber={(existing as any)?.docNumber ?? docNumber}
+                    companyId={user?.company?.id}
+                    token={token}
+                    invoiceTotal={totalAmount + totalExpLoaded}
+                  />
+                </CardContent>
+              </TabsContent>
+            )}
             {editId && (
               <TabsContent value="creditNote" className="mt-0">
                 {(() => {

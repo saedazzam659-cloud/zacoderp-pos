@@ -355,7 +355,15 @@ export default function PurchaseReturns() {
       }
       return j;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: editingId ? tr("toasts.edited") : tr("toasts.createdAndPosted") }); },
+    onSuccess: () => {
+      const wasEdit = !!editingId;
+      // «إرجاع كامل + مسودة فاتورة جديدة» — نلتقط القيمة قبل reset()
+      // (الـ reset يمسحها حتى لا تسرّب لتنقّل لاحق غير مرتبط).
+      const draftSrcId = !wasEdit ? newDraftInvoiceIdRef.current : null;
+      invalidate(); reset();
+      toast({ title: wasEdit ? tr("toasts.edited") : tr("toasts.createdAndPosted") });
+      if (draftSrcId) navigate(`/purchasing/invoices/new?from=${draftSrcId}`);
+    },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -518,8 +526,13 @@ export default function PurchaseReturns() {
     setViewMode(false);
     setActiveTab("basic");
     setShowForm(false);
+    // إلغاء أي «مسودة فاتورة جديدة» معلّقة — الخروج من النموذج (حفظ/إلغاء)
+    // يجب ألا يترك توجيهًا قديمًا يعمل في حفظ لاحق غير مرتبط.
+    newDraftInvoiceIdRef.current = null;
     const url = new URL(window.location.href);
     url.searchParams.delete("fromInvoice");
+    url.searchParams.delete("full");
+    url.searchParams.delete("newDraft");
     window.history.replaceState({}, "", url.toString());
   }
 
@@ -575,13 +588,18 @@ export default function PurchaseReturns() {
     } catch (_) { /* silent */ }
   }
 
+  // ?fromInvoice=<id> يملأ النموذج بكل بنود الفاتورة (سلوك المشتريات
+  // الافتراضي = إرجاع كامل قابل للتعديل). &newDraft=1 → بعد حفظ المرتجع
+  // افتح نسخة مسودة جديدة من الفاتورة (/purchasing/invoices/new?from=<id>).
   const prefilledRef = useRef(false);
+  const newDraftInvoiceIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (prefilledRef.current) return;
     const params = new URLSearchParams(window.location.search);
     const invId = params.get("fromInvoice");
     if (!invId || !user || !currencies.length) return;
     prefilledRef.current = true;
+    if (params.get("newDraft") === "1") newDraftInvoiceIdRef.current = invId;
     loadInvoiceIntoForm(invId, { openForm: true });
   }, [user, currencies.length]);
 
