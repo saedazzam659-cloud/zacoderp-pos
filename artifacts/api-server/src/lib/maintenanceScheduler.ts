@@ -310,8 +310,16 @@ export function shouldSkipForRateLimit(
 // Returning "" makes sendMaintenanceCriticalDigest emit a relative path, which
 // only makes sense when the email is opened from inside the app (rare).
 function resolvePublicBaseUrl(explicit?: string): string {
+  // In production prefer the deployed domains (custom domain first) — the
+  // dev-workspace domain is usually asleep and links there dead-end.
+  const domains = (process.env.REPLIT_DOMAINS ?? "")
+    .split(",").map(d => d.trim()).filter(Boolean);
+  const prodDomain = process.env.NODE_ENV === "production" && domains.length
+    ? `https://${domains.find(d => !/\.replit\.(app|dev)$/i.test(d)) ?? domains[0]}`
+    : "";
   const candidate = (explicit && explicit.trim())
     || process.env.PUBLIC_BASE_URL
+    || prodDomain
     || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "");
   return candidate ? candidate.replace(/\/+$/, "") : "";
 }

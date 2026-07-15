@@ -65,10 +65,20 @@ const newRecoveryCode = () => {
 function publicBaseUrlFromReq(req: any): string {
   const fixed = (process.env.PUBLIC_BASE_URL ?? "").trim();
   if (fixed) return fixed.replace(/\/+$/, "");
+  // Production: NEVER use REPLIT_DEV_DOMAIN — it points at the (usually
+  // sleeping) dev workspace, so emailed approval/recovery links land on a
+  // dead "Run this app" page and the login stays pending forever.
+  // Prefer the custom domain (e.g. zacoderp.com) over *.replit.app.
+  const domains = (process.env.REPLIT_DOMAINS ?? "")
+    .split(",").map(d => d.trim()).filter(Boolean);
+  const isProd = process.env.NODE_ENV === "production";
+  if (isProd && domains.length) {
+    const custom = domains.find(d => !/\.replit\.(app|dev)$/i.test(d));
+    return `https://${custom ?? domains[0]}`;
+  }
   const replitDev = (process.env.REPLIT_DEV_DOMAIN ?? "").trim();
   if (replitDev) return `https://${replitDev}`;
-  const replitDomains = (process.env.REPLIT_DOMAINS ?? "").split(",")[0]?.trim();
-  if (replitDomains) return `https://${replitDomains}`;
+  if (domains.length) return `https://${domains[0]}`;
   const proto = (req.headers["x-forwarded-proto"]?.toString() || "https").split(",")[0].trim();
   const host = (req.headers["x-forwarded-host"]?.toString() || req.headers.host?.toString() || "");
   return host ? `${proto}://${host}` : "";

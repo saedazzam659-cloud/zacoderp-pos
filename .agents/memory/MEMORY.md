@@ -154,4 +154,5 @@
 - [Invoice settlement cap lock](invoice-settlement-cap-lock.md) — every settlement write (vouchers + linked manual JEs) must re-check the overpayment cap inside a tx under a per-invoice advisory lock, never a pre-check.
 - [Pending-nav ref lifecycle](pending-nav-ref-lifecycle.md) — URL-param-armed post-save navigation refs must clear in reset() and be captured before reset in onSuccess, or cancels leak stale redirects.
 - [Opening balances edit-after-unpost](opening-balances-edit-after-unpost.md) — PUT rebuilds lines wholesale (carry non-rendered accounts forward), must send entryType:"opening", hard-fail if post-after-put fails.
+- [Email link base URL in prod](email-link-base-url-prod.md) — emailed absolute links must prefer PUBLIC_BASE_URL → prod REPLIT_DOMAINS (custom first), NEVER REPLIT_DEV_DOMAIN in production (dead "Run this app" page).
 - [Web local scan agent](web-local-scan-agent.md) — downloadable bat+embedded-PS WIA bridge on 127.0.0.1:27345; split marker must be built dynamically, origin allow-list (never ACAO:*), PNA header on preflight, base64 stays localhost-side.
