@@ -5,6 +5,7 @@ import {
   salesInvoicesTable, salesReturnsTable, customerSettlementsTable,
   purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
   receiptVouchersTable, paymentVouchersTable,
+  receiptVoucherLinesTable, paymentVoucherLinesTable,
   stockTransfersTable, stockAdjustmentsTable,
   payrollRunsTable, employeeLoansTable,
   fixedAssetsTable,
@@ -486,6 +487,120 @@ router.get("/settlement-candidates", async (req, res) => {
         : sql`SUM(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit})`} > 0.005`)
       .orderBy(desc(journalEntriesTable.id));
     res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Open credit invoices (for the JE form's "ربط بفاتورة" picker) ──────────
+// Posted CREDIT invoices with remaining due > 0, newest first. remaining =
+// netDue (total − returns) − vouchers − settlement JEs, all in BASE currency.
+// Literal sub-segment registered BEFORE /:id (Express 5 rule).
+router.get("/open-invoices", async (req, res) => {
+  try {
+    const cid = getCompanyId(req);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const kind: SettlementKind = req.query.kind === "purchase" ? "purchase" : "sales";
+
+    const invTable   = kind === "sales" ? salesInvoicesTable : purchaseInvoicesTable;
+    const retTable   = kind === "sales" ? salesReturnsTable  : purchaseReturnsTable;
+    const partyTable = kind === "sales" ? customersTable     : suppliersTable;
+    const partyCol   = kind === "sales" ? salesInvoicesTable.customerId : purchaseInvoicesTable.supplierId;
+    const partyName  = kind === "sales" ? customersTable.nameAr : suppliersTable.nameAr;
+
+    const invs = await db.select({
+      id:        (invTable as any).id,
+      docNumber: (invTable as any).docNumber,
+      invoiceDate: (invTable as any).invoiceDate,
+      total:     (invTable as any).totalAmount,
+      rate:      (invTable as any).exchangeRate,
+      partyName: partyName,
+    }).from(invTable as any)
+      .leftJoin(partyTable as any, eq(partyCol as any, (partyTable as any).id))
+      .where(and(
+        eq((invTable as any).companyId, cid),
+        eq((invTable as any).paymentType, "credit"),
+        eq((invTable as any).status, "posted"),
+      ))
+      .orderBy(desc((invTable as any).id))
+      .limit(300);
+    if (invs.length === 0) { res.json([]); return; }
+    const ids = invs.map((i: any) => Number(i.id));
+
+    // Grouped sums in ONE query each (BASE currency), keyed by invoice id.
+    const retRows = await db.select({
+      invoiceId: (retTable as any).invoiceId,
+      sum: sql<string>`SUM(${(retTable as any).totalAmount} * ${(retTable as any).exchangeRate})`,
+    }).from(retTable as any)
+      .where(and(eq((retTable as any).companyId, cid), inArray((retTable as any).invoiceId, ids)))
+      .groupBy((retTable as any).invoiceId);
+
+    const vTable   = kind === "sales" ? receiptVouchersTable     : paymentVouchersTable;
+    const lTable   = kind === "sales" ? receiptVoucherLinesTable : paymentVoucherLinesTable;
+    const lLink    = kind === "sales" ? receiptVoucherLinesTable.salesInvoiceId : paymentVoucherLinesTable.purchaseInvoiceId;
+    const hLink    = kind === "sales" ? receiptVouchersTable.salesInvoiceId     : paymentVouchersTable.purchaseInvoiceId;
+
+    const lineRows = await db.select({
+      invoiceId: lLink as any,
+      voucherId: (lTable as any).voucherId,
+      amount:    (lTable as any).amount,
+      vRate:     (vTable as any).exchangeRate,
+    }).from(lTable as any)
+      .innerJoin(vTable as any, eq((lTable as any).voucherId, (vTable as any).id))
+      .where(and(eq((vTable as any).companyId, cid), inArray(lLink as any, ids)));
+
+    const headerRows = await db.select({
+      invoiceId: hLink as any,
+      id:        (vTable as any).id,
+      amount:    (vTable as any).amount,
+      vRate:     (vTable as any).exchangeRate,
+    }).from(vTable as any)
+      .where(and(eq((vTable as any).companyId, cid), inArray(hLink as any, ids)));
+
+    const jeLink = kind === "sales" ? journalEntriesTable.salesInvoiceId : journalEntriesTable.purchaseInvoiceId;
+    const jeRows = await db.select({
+      invoiceId: jeLink as any,
+      sum: sql<string>`SUM(${journalEntriesTable.settlementAmount} * ${journalEntriesTable.exchangeRate})`,
+    }).from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.companyId, cid),
+        inArray(jeLink as any, ids),
+        sql`${journalEntriesTable.settlementAmount} IS NOT NULL`,
+      ))
+      .groupBy(jeLink as any);
+
+    const num = (v: any) => parseFloat(String(v)) || 0;
+    const retBy = new Map<number, number>(retRows.map((r: any) => [Number(r.invoiceId), num(r.sum)]));
+    const jeBy  = new Map<number, number>(jeRows.map((r: any) => [Number(r.invoiceId), num(r.sum)]));
+    // Vouchers: line rows authoritative; a header-linked voucher counts its
+    // full amount ONLY when it has no line rows for THAT SAME invoice
+    // (mirrors sumVouchersForInvoice — the skip is per (voucher, invoice)
+    // pair, never global per voucher).
+    const vBy = new Map<number, number>();
+    const linePairs = new Set<string>();
+    for (const r of lineRows as any[]) {
+      const k = Number(r.invoiceId);
+      linePairs.add(`${Number(r.voucherId)}:${k}`);
+      vBy.set(k, (vBy.get(k) ?? 0) + num(r.amount) * (num(r.vRate) || 1));
+    }
+    for (const v of headerRows as any[]) {
+      const k = Number(v.invoiceId);
+      if (linePairs.has(`${Number(v.id)}:${k}`)) continue;
+      vBy.set(k, (vBy.get(k) ?? 0) + num(v.amount) * (num(v.vRate) || 1));
+    }
+
+    const out = invs.map((inv: any) => {
+      const id = Number(inv.id);
+      const netDue = Math.max(0, num(inv.total) * (num(inv.rate) || 1) - (retBy.get(id) ?? 0));
+      const remaining = netDue - (vBy.get(id) ?? 0) - (jeBy.get(id) ?? 0);
+      return {
+        id,
+        docNumber:   inv.docNumber ?? null,
+        invoiceDate: inv.invoiceDate ?? null,
+        partyName:   inv.partyName ?? null,
+        total:       netDue,
+        remaining,
+      };
+    }).filter((r: any) => r.remaining > 0.005);
+    res.json(out);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

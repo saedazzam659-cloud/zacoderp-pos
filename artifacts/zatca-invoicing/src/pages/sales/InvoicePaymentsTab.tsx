@@ -210,18 +210,6 @@ export default function InvoicePaymentsTab({
     navigate(`/cash/receipt-vouchers/new?${params.toString()}`);
   }
 
-  // سداد بقيد محاسبي — opens the manual journal-entry form pre-linked to
-  // this credit invoice; the JE's settlementAmount counts here like a voucher.
-  function openNewSettlementJe() {
-    if (!invoiceId) return;
-    const params = new URLSearchParams();
-    params.set("salesInvoiceId", String(invoiceId));
-    if (customerName) params.set("entityName", customerName);
-    if (docNumber) params.set("invoiceNo", docNumber);
-    if (summary.available > 0) params.set("amount", summary.available.toFixed(2));
-    navigate(`/accounting/journals/new?${params.toString()}`);
-  }
-
   // ── New / unsaved invoice: nothing to settle yet ──────────────────
   if (!invoiceId) {
     return (
@@ -281,21 +269,6 @@ export default function InvoicePaymentsTab({
           >
             <Plus className="h-4 w-4" />
             تسجيل دفعة (سند قبض)
-          </Button>
-        )}
-        {paymentType !== "cash" && paymentType !== "bank" && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={openNewSettlementJe}
-            disabled={summary.available <= 0.005}
-            title={summary.available <= 0.005
-              ? "لا يوجد مبلغ متبقٍّ لسداده بقيد محاسبي"
-              : "إنشاء قيد يومية يدوي مرتبط بهذه الفاتورة يُحتسب ضمن السداد"}
-            data-testid="btn-settle-by-je"
-          >
-            <Plus className="h-4 w-4" />
-            سداد بقيد محاسبي
           </Button>
         )}
       </div>

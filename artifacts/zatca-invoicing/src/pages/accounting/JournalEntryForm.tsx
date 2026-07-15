@@ -176,6 +176,11 @@ export default function JournalEntryForm() {
     useState<number | null>(settleSeed?.purchaseInvoiceId ?? null);
   const [settlementAmount, setSettlementAmount] = useState<string>(settleSeed?.amount ?? "");
   const settleLinked = settleSalesInvoiceId != null || settlePurchaseInvoiceId != null;
+  // Display metadata when the link is picked from THIS screen (ربط بفاتورة)
+  // instead of arriving via query params.
+  const [settleMeta, setSettleMeta] = useState<{ invoiceNo: string; entityName: string } | null>(null);
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false);
+  const [linkKind, setLinkKind] = useState<"sales" | "purchase">("sales");
   const [focusLineId, setFocusLineId] = useState<string>(() => "");
   // Which line's per-line tax popover is currently open (null = none).
   const [taxPopoverLine, setTaxPopoverLine] = useState<string | null>(null);
@@ -385,6 +390,19 @@ export default function JournalEntryForm() {
     },
     enabled: !!user,
   });
+  // Open credit invoices with remaining due — for the "ربط بفاتورة" picker.
+  const { data: openInvoices = [], isLoading: loadingOpenInvoices } = useQuery<any[]>({
+    queryKey: ["je-open-invoices", cid, linkKind],
+    queryFn: async () => {
+      const url = `${API}/api/journal-entries/open-invoices?kind=${linkKind}${cid ? `&companyId=${cid}` : ""}`;
+      const res = await fetch(url, { headers: authHeaders });
+      if (!res.ok) return [];
+      const body = await res.json();
+      return Array.isArray(body) ? body : [];
+    },
+    enabled: !!user && linkPickerOpen,
+  });
+
   const costCenterOptions = [
     { value: "", label: "— بدون مركز تكلفة —" },
     ...costCentersList
@@ -1626,6 +1644,79 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
           "سداد بقيد محاسبي" from the invoice's السداد tab, or loaded on
           edit). The amount counts toward the invoice's paid total under
           the same overpayment policy as the vouchers. */}
+      {!settleLinked && !isLockedSourceEntry && entryType === "general" && (
+        <div className="mb-4" data-testid="panel-invoice-link-picker">
+          {!linkPickerOpen ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => setLinkPickerOpen(true)}
+              data-testid="btn-open-invoice-link"
+            >
+              <Receipt className="h-4 w-4" />
+              ربط بفاتورة (سداد)
+            </Button>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/50 px-4 py-3 dark:border-amber-800 dark:bg-amber-950/20">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                <Receipt className="h-5 w-5" />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium whitespace-nowrap">نوع الفاتورة</Label>
+                <Select value={linkKind} onValueChange={(v) => setLinkKind(v as any)}>
+                  <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-link-kind">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sales">مبيعات آجلة</SelectItem>
+                    <SelectItem value="purchase">مشتريات آجلة</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2 min-w-[280px] flex-1">
+                <Label className="text-xs font-medium whitespace-nowrap">الفاتورة</Label>
+                <SearchCombobox
+                  value=""
+                  onValueChange={(v: string) => {
+                    const inv = (openInvoices as any[]).find((i) => String(i.id) === v);
+                    if (!inv) return;
+                    if (linkKind === "sales") { setSettleSalesInvoiceId(inv.id); setSettlePurchaseInvoiceId(null); }
+                    else { setSettlePurchaseInvoiceId(inv.id); setSettleSalesInvoiceId(null); }
+                    // remaining is in BASE currency; settlementAmount is in
+                    // the ENTRY's currency (server multiplies by exchangeRate
+                    // on save) — convert before seeding.
+                    const rate = parseFloat(exchangeRate) || 1;
+                    setSettlementAmount((Number(inv.remaining) / rate).toFixed(2));
+                    setSettleMeta({
+                      invoiceNo: inv.docNumber ?? `#${inv.id}`,
+                      entityName: inv.partyName ?? "",
+                    });
+                    setLinkPickerOpen(false);
+                  }}
+                  items={(openInvoices as any[]).map((i) => ({
+                    value: String(i.id),
+                    label: `${i.docNumber ?? `#${i.id}`}${i.partyName ? ` — ${i.partyName}` : ""} (المتبقي ${fmt2(Number(i.remaining))})`,
+                  }))}
+                  placeholder={loadingOpenInvoices ? "جارٍ التحميل…" : "اختر فاتورة آجلة مفتوحة…"}
+                  data-testid="combobox-link-invoice"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2"
+                onClick={() => setLinkPickerOpen(false)}
+                data-testid="btn-cancel-invoice-link"
+              >
+                إلغاء
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
       {settleLinked && (
         <div
           className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border-2 border-amber-300 bg-gradient-to-l from-amber-50 via-orange-50 to-yellow-50 px-4 py-3 dark:border-amber-800 dark:from-amber-950/40 dark:via-orange-950/40 dark:to-yellow-950/40"
@@ -1639,8 +1730,10 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
               {settleSalesInvoiceId != null ? "سداد فاتورة مبيعات آجلة" : "سداد فاتورة مشتريات آجلة"}
             </span>
             <span className="text-sm font-bold">
-              {settleSeed?.invoiceNo ? `فاتورة ${settleSeed.invoiceNo}` : `فاتورة #${settleSalesInvoiceId ?? settlePurchaseInvoiceId}`}
-              {settleSeed?.entityName ? ` — ${settleSeed.entityName}` : ""}
+              {(settleMeta?.invoiceNo || settleSeed?.invoiceNo)
+                ? `فاتورة ${settleMeta?.invoiceNo || settleSeed?.invoiceNo}`
+                : `فاتورة #${settleSalesInvoiceId ?? settlePurchaseInvoiceId}`}
+              {(settleMeta?.entityName || settleSeed?.entityName) ? ` — ${settleMeta?.entityName || settleSeed?.entityName}` : ""}
             </span>
           </div>
           <div className="ms-auto flex items-center gap-2">
@@ -1662,6 +1755,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                 setSettleSalesInvoiceId(null);
                 setSettlePurchaseInvoiceId(null);
                 setSettlementAmount("");
+                setSettleMeta(null);
               }}
               title="إزالة ربط الفاتورة"
               data-testid="btn-remove-settlement-link"
