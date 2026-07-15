@@ -90,6 +90,52 @@ export default function OpeningBalances() {
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
+  // ── EXISTING OPENING JE (edit mode) ───────────────────────────────────────
+  // After the user unposts the opening JE (فك الترحيل), this screen must
+  // re-load ALL its balances into the inputs so they can be edited and
+  // re-posted — keeping the SAME docNumber (PUT never touches it).
+  const { data: openingEntry } = useQuery<any>({
+    queryKey: ["opening-entry", cid],
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/journal-entries/opening-entry${cid ? `?companyId=${cid}` : ""}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!user && !!cid,
+  });
+
+  // Seed the form ONCE from the loaded entry (date, branch, description and
+  // every line's debit/credit). A later manual "مسح الكل" is respected — we
+  // never re-seed after the first hydration for the same entry id.
+  const seededEntryIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!openingEntry?.id || seededEntryIdRef.current === openingEntry.id) return;
+    seededEntryIdRef.current = openingEntry.id;
+    if (openingEntry.entryDate) setEntryDate(String(openingEntry.entryDate).slice(0, 10));
+    if (openingEntry.description) setDescription(openingEntry.description);
+    if (openingEntry.branchId != null) {
+      setBranchId(String(openingEntry.branchId));
+      branchDefaultedRef.current = true;
+    }
+    const next: Record<number, Amount> = {};
+    for (const l of (openingEntry.lines ?? [])) {
+      if (!l.accountId) continue;
+      const d = num(l.debit), c = num(l.credit);
+      const prev = next[l.accountId] ?? { debit: "", credit: "" };
+      const pd = num(prev.debit) + d, pc = num(prev.credit) + c;
+      // Net multiple lines on the same account into a single row.
+      const netD = pd - pc;
+      next[l.accountId] = netD >= 0
+        ? { debit: netD > 0 ? String(Number(netD.toFixed(2))) : "", credit: "" }
+        : { debit: "", credit: String(Number((-netD).toFixed(2))) };
+    }
+    setAmounts(next);
+  }, [openingEntry]);
+
+  const editingPosted = openingEntry?.status === "posted";
+
   const { data: accounts = [], isLoading } = useQuery<Account[]>({
     queryKey: ["accounts", cid, "opening"],
     queryFn: async () => {
@@ -398,6 +444,31 @@ export default function OpeningBalances() {
           description: t("openingBalances.lineMemo", { code: a.code, name: a.nameAr }),
         });
       }
+      // EDIT MODE safety: the existing JE may hold lines on accounts that are
+      // now inactive/non-posting (not rendered above). PUT replaces lines
+      // WHOLESALE server-side, so we must carry those seeded amounts forward
+      // or they'd be silently dropped from the entry.
+      if (openingEntry?.id) {
+        const covered = new Set(postableAccounts.map(a => a.id));
+        const origDesc = new Map<number, string>(
+          (openingEntry.lines ?? []).map((l: any) => [l.accountId, l.description]),
+        );
+        for (const [idStr, row] of Object.entries(amounts)) {
+          const accId = Number(idStr);
+          if (covered.has(accId)) continue;
+          const d = num(row.debit), c = num(row.credit);
+          if (d <= 0 && c <= 0) continue;
+          const acc = accounts.find(a => a.id === accId);
+          lines.push({
+            accountId: accId,
+            debit:     d > 0 ? d.toFixed(2) : "0",
+            credit:    c > 0 ? c.toFixed(2) : "0",
+            description: acc
+              ? t("openingBalances.lineMemo", { code: acc.code, name: acc.nameAr })
+              : (origDesc.get(accId) || t("openingBalances.lineMemo", { code: String(accId), name: "" })),
+          });
+        }
+      }
       if (lines.length < 2) throw new Error(t("openingBalances.errAtLeastTwo"));
       // Allow saving even if not balanced — warn the user once.
       const totalD = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
@@ -416,6 +487,39 @@ export default function OpeningBalances() {
         branchId: branchId ? Number(branchId) : null,
         lines,
       };
+
+      // EDIT MODE — an opening JE already exists (loaded above). Update it
+      // in place via PUT: the docNumber is immutable server-side, so the
+      // entry keeps its ORIGINAL sequence number. Then re-post it (if
+      // balanced) so it lands back in all financial reports immediately.
+      if (openingEntry?.id) {
+        if (openingEntry.status === "posted") {
+          throw new Error(t("openingBalances.errPostedLocked"));
+        }
+        const res = await fetch(`${API}/api/journal-entries/${openingEntry.id}${cid ? `?companyId=${cid}` : ""}`, {
+          method: "PUT", headers, body: JSON.stringify(payload),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || t("openingBalances.saveFailed"));
+        let posted = false;
+        if (Math.abs(diff) <= 0.005) {
+          const postRes = await fetch(`${API}/api/journal-entries/${openingEntry.id}/post${cid ? `?companyId=${cid}` : ""}`, {
+            method: "POST", headers,
+          });
+          if (!postRes.ok) {
+            const pj = await postRes.json().catch(() => ({} as any));
+            // Edits ARE saved (PUT succeeded) but the entry is still a draft —
+            // surface this loudly instead of a soft success.
+            throw new Error(
+              t("openingBalances.errRepostFailed", { docNumber: json.docNumber ?? openingEntry.docNumber ?? "" })
+              + (pj.error ? ` — ${pj.error}` : ""),
+            );
+          }
+          posted = true;
+        }
+        return { ...json, _edited: true, _posted: posted };
+      }
+
       const res = await fetch(`${API}/api/journal-entries`, {
         method: "POST", headers, body: JSON.stringify(payload),
       });
@@ -425,12 +529,46 @@ export default function OpeningBalances() {
     },
     onSuccess: (entry) => {
       toast({
-        title: t("openingBalances.savedTitle"),
-        description: t("openingBalances.savedDesc", { docNumber: entry.docNumber ?? "—" }),
+        title: entry._edited ? t("openingBalances.editedTitle") : t("openingBalances.savedTitle"),
+        description: entry._edited
+          ? t(entry._posted ? "openingBalances.editedDescPosted" : "openingBalances.editedDescDraft", { docNumber: entry.docNumber ?? "—" })
+          : t("openingBalances.savedDesc", { docNumber: entry.docNumber ?? "—" }),
       });
       qc.invalidateQueries({ queryKey: ["accounts-balances"] });
       qc.invalidateQueries({ queryKey: ["journal-entries"] });
-      setAmounts({});
+      // Re-hydrate edit mode from the server (fresh status/lines). Allow the
+      // seed effect to run again for the same id so the inputs reflect what
+      // was actually saved.
+      seededEntryIdRef.current = null;
+      qc.invalidateQueries({ queryKey: ["opening-entry", cid] });
+      if (!entry._edited) setAmounts({});
+    },
+    onError: (e: any) => {
+      toast({ title: e.message, variant: "destructive" });
+      // A repost failure still means the PUT went through — re-hydrate so
+      // the banner/status reflect the server truth (draft with saved edits).
+      seededEntryIdRef.current = null;
+      qc.invalidateQueries({ queryKey: ["opening-entry", cid] });
+    },
+  });
+
+  // ── UNPOST (فك الترحيل) — directly from this screen for convenience ───────
+  const unpostMut = useMutation({
+    mutationFn: async () => {
+      if (!openingEntry?.id) throw new Error(t("openingBalances.unpostFailed"));
+      const res = await fetch(`${API}/api/journal-entries/${openingEntry.id}/unpost${cid ? `?companyId=${cid}` : ""}`, {
+        method: "POST", headers,
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || t("openingBalances.unpostFailed"));
+      return json;
+    },
+    onSuccess: () => {
+      toast({ title: t("openingBalances.unpostedToast") });
+      seededEntryIdRef.current = null;
+      qc.invalidateQueries({ queryKey: ["opening-entry", cid] });
+      qc.invalidateQueries({ queryKey: ["journal-entries"] });
+      qc.invalidateQueries({ queryKey: ["accounts-balances"] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -511,6 +649,36 @@ export default function OpeningBalances() {
           <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <span>{t("openingBalances.branchWarning")}</span>
+          </div>
+        )}
+
+        {/* Existing opening JE — edit mode banner */}
+        {openingEntry?.id && (
+          <div className={cn(
+            "mt-3 flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-xs flex-wrap",
+            editingPosted
+              ? "border-amber-200 bg-amber-50 text-amber-800"
+              : "border-emerald-200 bg-emerald-50 text-emerald-800",
+          )}>
+            <div className="flex items-start gap-2">
+              {editingPosted
+                ? <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                : <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />}
+              <span>
+                {t("openingBalances.existingBanner", { docNumber: openingEntry.docNumber ?? openingEntry.id })}{" "}
+                {editingPosted ? t("openingBalances.existingPosted") : t("openingBalances.existingDraft")}
+              </span>
+            </div>
+            {editingPosted && (
+              <Button
+                variant="outline" size="sm"
+                className="h-7 text-xs border-amber-300 bg-white hover:bg-amber-100"
+                onClick={() => unpostMut.mutate()}
+                disabled={unpostMut.isPending}
+              >
+                {unpostMut.isPending ? t("openingBalances.unposting") : t("openingBalances.unpostBtn")}
+              </Button>
+            )}
           </div>
         )}
       </div>

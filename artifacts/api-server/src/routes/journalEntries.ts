@@ -430,6 +430,33 @@ router.get("/for-invoice", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── Opening-balance entry (screen: الأرصدة الافتتاحية) ──────────────────────
+// Returns the LATEST manually-created opening JE (entryType="opening") with
+// its lines so the opening-balances screen can re-load it for editing after
+// an unpost. Party-import opening JEs (hidden "[ob:" marker in description)
+// are EXCLUDED — they are managed by the customers/suppliers bulk importer
+// and must never be overwritten from this screen.
+// Literal sub-segment registered BEFORE /:id (Express 5 rule).
+router.get("/opening-entry", async (req, res) => {
+  try {
+    const cid = getCompanyId(req);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const [entry] = await db.select().from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.entryType, "opening"),
+        sql`COALESCE(${journalEntriesTable.description}, '') NOT LIKE '%[ob:%'`,
+      ))
+      .orderBy(desc(journalEntriesTable.createdAt), desc(journalEntriesTable.id))
+      .limit(1);
+    if (!entry) { res.json(null); return; }
+    const lines = await db.select().from(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, entry.id))
+      .orderBy(journalEntryLinesTable.sortOrder);
+    res.json({ ...entry, lines });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── Settlement candidates ────────────────────────────────────────────────
 // Manual (general) journal entries that touch the invoice's PARTY account
 // (customer credited / supplier debited) and are NOT yet linked to any
