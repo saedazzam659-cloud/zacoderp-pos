@@ -328,7 +328,7 @@ export default function PurchaseInvoicePaymentsTab({
                 <TableHead className="text-xs">الرقم</TableHead>
                 <TableHead className="text-xs">التاريخ</TableHead>
                 <TableHead className="text-xs">الطريقة</TableHead>
-                <TableHead className="text-xs text-left">المبلغ</TableHead>
+                <TableHead className="text-xs text-end">المبلغ</TableHead>
                 <TableHead className="text-xs">الحالة</TableHead>
                 <TableHead className="text-xs w-10"></TableHead>
               </TableRow>
@@ -348,9 +348,9 @@ export default function PurchaseInvoicePaymentsTab({
                   data-testid={`payment-voucher-row-${v.id}`}
                 >
                   <TableCell className="text-xs font-medium" dir="ltr">{v.code ?? `#${v.id}`}</TableCell>
-                  <TableCell className="text-xs">{v.date ?? "—"}</TableCell>
+                  <TableCell className="text-xs whitespace-nowrap" dir="ltr">{v.date ? String(v.date).slice(0, 10) : "—"}</TableCell>
                   <TableCell className="text-xs">{paymentTypeLabel(v.paymentType)}</TableCell>
-                  <TableCell className="text-xs text-left" dir="ltr">{fmt(Number(v.amount) || 0)}</TableCell>
+                  <TableCell className="text-xs text-end" dir="ltr">{fmt(Number(v.amount) || 0)}</TableCell>
                   <TableCell className="text-xs">
                     <Badge variant={v.status === "posted" ? "default" : "secondary"} className="text-[10px]">
                       {v.status === "posted" ? "مرحّل" : "مسودّة"}
@@ -383,7 +383,7 @@ export default function PurchaseInvoicePaymentsTab({
                   <TableHead className="text-xs">رقم القيد</TableHead>
                   <TableHead className="text-xs">التاريخ</TableHead>
                   <TableHead className="text-xs">البيان</TableHead>
-                  <TableHead className="text-xs text-left">مبلغ السداد</TableHead>
+                  <TableHead className="text-xs text-end">مبلغ السداد</TableHead>
                   <TableHead className="text-xs">الحالة</TableHead>
                   <TableHead className="text-xs w-10"></TableHead>
                 </TableRow>
@@ -400,9 +400,9 @@ export default function PurchaseInvoicePaymentsTab({
                     data-testid={`settlement-je-row-${j.id}`}
                   >
                     <TableCell className="text-xs font-medium" dir="ltr">{j.docNumber ?? `#${j.id}`}</TableCell>
-                    <TableCell className="text-xs">{j.entryDate ?? "—"}</TableCell>
-                    <TableCell className="text-xs max-w-[220px] truncate">{j.description ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-left" dir="ltr">{fmt(Number(j.settlementAmount) || 0)}</TableCell>
+                    <TableCell className="text-xs whitespace-nowrap" dir="ltr">{j.entryDate ? String(j.entryDate).slice(0, 10) : "—"}</TableCell>
+                    <TableCell className="text-xs"><span className="block max-w-[280px] truncate" title={j.description ?? ""}>{j.description ?? "—"}</span></TableCell>
+                    <TableCell className="text-xs text-end" dir="ltr">{fmt(Number(j.settlementAmount) || 0)}</TableCell>
                     <TableCell className="text-xs">
                       <Badge variant={j.status === "posted" ? "default" : "secondary"} className="text-[10px]">
                         {j.status === "posted" ? "مرحّل" : "مسودّة"}
@@ -450,7 +450,7 @@ export default function PurchaseInvoicePaymentsTab({
                   <TableHead className="text-xs">رقم القيد</TableHead>
                   <TableHead className="text-xs">التاريخ</TableHead>
                   <TableHead className="text-xs">البيان</TableHead>
-                  <TableHead className="text-xs text-left">المبلغ على المورد</TableHead>
+                  <TableHead className="text-xs text-end">المبلغ على المورد</TableHead>
                   <TableHead className="text-xs">الحالة</TableHead>
                   <TableHead className="text-xs w-24"></TableHead>
                 </TableRow>
@@ -462,9 +462,9 @@ export default function PurchaseInvoicePaymentsTab({
                 {(candidates as any[]).map((j: any) => (
                   <TableRow key={j.id} data-testid={`je-candidate-row-${j.id}`}>
                     <TableCell className="text-xs font-medium" dir="ltr">{j.docNumber ?? `#${j.id}`}</TableCell>
-                    <TableCell className="text-xs">{j.entryDate ?? "—"}</TableCell>
-                    <TableCell className="text-xs max-w-[220px] truncate">{j.description ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-left" dir="ltr">{fmt(Number(j.amount) || 0)}</TableCell>
+                    <TableCell className="text-xs whitespace-nowrap" dir="ltr">{j.entryDate ? String(j.entryDate).slice(0, 10) : "—"}</TableCell>
+                    <TableCell className="text-xs"><span className="block max-w-[280px] truncate" title={j.description ?? ""}>{j.description ?? "—"}</span></TableCell>
+                    <TableCell className="text-xs text-end" dir="ltr">{fmt(Number(j.amount) || 0)}</TableCell>
                     <TableCell className="text-xs">
                       <Badge variant={j.status === "posted" ? "default" : "secondary"} className="text-[10px]">
                         {j.status === "posted" ? "مرحّل" : "مسودّة"}

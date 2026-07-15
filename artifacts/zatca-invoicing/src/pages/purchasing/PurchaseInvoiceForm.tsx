@@ -28,6 +28,7 @@ import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, ClipboardList, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock, Archive } from "lucide-react";
+import EmbeddedAccountNotesTab from "@/pages/account-notes/EmbeddedAccountNotesTab";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import PurchaseInvoicePaymentsTab from "@/pages/purchasing/PurchaseInvoicePaymentsTab";
 import { DateField } from "@/components/ui/date-field";
@@ -127,7 +128,7 @@ export default function PurchaseInvoiceForm() {
   const viewMode = new URLSearchParams(search).get("view") === "1";
   const _co = (user as any)?.company;
   const useTabbedLayout = _co?.invoiceFormLayout !== "classic" || viewMode;
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "payments" | "archive" | "details">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "creditNote" | "payments" | "archive" | "details">("basic");
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
@@ -1154,6 +1155,11 @@ export default function PurchaseInvoiceForm() {
                   <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
+                  {editId && (
+                    <TabsTrigger value="creditNote" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <FileText className="h-3.5 w-3.5" />إشعار دائن
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <Wallet className="h-3.5 w-3.5" />السداد
                   </TabsTrigger>
@@ -1869,6 +1875,26 @@ export default function PurchaseInvoiceForm() {
                 />
               </CardContent>
             </TabsContent>
+            {editId && (
+              <TabsContent value="creditNote" className="mt-0">
+                {(() => {
+                  const sup = (suppliers as any[]).find((s: any) => String(s.id) === String(supplierId));
+                  return (
+                    <EmbeddedAccountNotesTab
+                      partyType="supplier"
+                      noteType="credit"
+                      partyId={supplierId ? Number(supplierId) : null}
+                      partyName={sup ? (sup.nameAr ?? sup.nameEn ?? null) : null}
+                      partyVatNumber={sup?.vatNumber ?? null}
+                      partyAccountId={sup?.accountId ?? null}
+                      invoiceDocNumber={(existing as any)?.docNumber ?? docNumber ?? null}
+                      invoiceDate={invoiceDate}
+                      disabled={viewMode}
+                    />
+                  );
+                })()}
+              </TabsContent>
+            )}
             {editId && (
               <TabsContent value="archive" className="mt-0">
                 <CardContent className="pt-5 pb-5">

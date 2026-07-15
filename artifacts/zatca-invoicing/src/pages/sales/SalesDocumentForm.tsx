@@ -36,6 +36,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive, Wallet } from "lucide-react";
+import EmbeddedAccountNotesTab from "@/pages/account-notes/EmbeddedAccountNotesTab";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import InvoicePaymentsTab from "@/pages/sales/InvoicePaymentsTab";
 import { offersApi } from "@/lib/offersApi";
@@ -3051,6 +3052,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
+                  {isInvoice && editId && (
+                    <TabsTrigger value="debitNote" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <FileText className="h-3.5 w-3.5" />إشعار مدين
+                    </TabsTrigger>
+                  )}
                   {isInvoice && (
                     <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                       <Wallet className="h-3.5 w-3.5" />المدفوعات
@@ -3392,6 +3398,25 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 </TabsContent>
               )}
               {isInvoice && editId && (
+                <>
+                <TabsContent value="debitNote" className="mt-0">
+                  {(() => {
+                    const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
+                    return (
+                      <EmbeddedAccountNotesTab
+                        partyType="customer"
+                        noteType="debit"
+                        partyId={customerId ? Number(customerId) : null}
+                        partyName={cust ? (cust.nameAr ?? cust.nameEn ?? null) : null}
+                        partyVatNumber={cust?.vatNumber ?? null}
+                        partyAccountId={cust?.accountId ?? null}
+                        invoiceDocNumber={(existing as any)?.docNumber ?? docNumber ?? null}
+                        invoiceDate={docDate}
+                        disabled={viewMode}
+                      />
+                    );
+                  })()}
+                </TabsContent>
                 <TabsContent value="archive" className="mt-0">
                   <CardContent className="pt-5 pb-5">
                     <InvoiceArchiveTab
@@ -3414,6 +3439,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     />
                   </CardContent>
                 </TabsContent>
+                </>
               )}
               <TabsContent value="details" className="mt-0">
                 <CardContent className="pt-5 pb-5">
