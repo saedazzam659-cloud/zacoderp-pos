@@ -54,12 +54,35 @@ async function validateJeSettlement(
   s: { salesInvoiceId: number | null; purchaseInvoiceId: number | null; settlementAmount: string | null },
   exchangeRate: any,
   excludeJeId: number | null,
+  lines?: any[],
 ): Promise<void> {
   if (!s.salesInvoiceId && !s.purchaseInvoiceId) return;
   const kind: SettlementKind = s.salesInvoiceId ? "sales" : "purchase";
   const invId = (s.salesInvoiceId ?? s.purchaseInvoiceId)!;
   const rate = parseFloat(String(exchangeRate ?? "1")) || 1;
-  const amountBase = (parseFloat(String(s.settlementAmount)) || 0) * rate;
+  const amt = parseFloat(String(s.settlementAmount)) || 0;
+  // مبلغ السداد can never exceed the JE's own debit total (entry currency):
+  // the invoice can't be "paid" more than the entry actually posts. The cap
+  // is UNCONDITIONAL — when the payload has no lines (e.g. PUT that keeps
+  // the existing lines), fall back to the PERSISTED lines of this entry.
+  let totalDebit: number;
+  if (Array.isArray(lines)) {
+    totalDebit = lines.reduce(
+      (sum, l) => sum + (parseFloat(String(l?.debit ?? "0")) || 0), 0);
+  } else if (excludeJeId != null) {
+    const [row] = await db.select({
+      sum: sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
+    }).from(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, excludeJeId));
+    totalDebit = parseFloat(String(row?.sum ?? "0")) || 0;
+  } else {
+    totalDebit = 0;
+  }
+  if (amt > totalDebit + 0.01) {
+    throw new Error(
+      `مبلغ السداد (${amt.toFixed(2)}) يتجاوز إجمالي مدين القيد (${totalDebit.toFixed(2)}) — عدِّل مبلغ السداد أو سطور القيد`);
+  }
+  const amountBase = amt * rate;
   await assertJeSettlementAllowed(cid, kind, invId, amountBase, excludeJeId);
 }
 
@@ -781,7 +804,7 @@ router.post("/", async (req, res) => {
     let settlement: ReturnType<typeof parseJeSettlement>;
     try {
       settlement = parseJeSettlement(req.body);
-      await validateJeSettlement(cid, settlement, exchangeRate, null);
+      await validateJeSettlement(cid, settlement, exchangeRate, null, lines);
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "ربط الفاتورة غير صالح" });
       return;
@@ -875,7 +898,7 @@ router.post("/", async (req, res) => {
         const invId = (settlement.salesInvoiceId ?? settlement.purchaseInvoiceId)!;
         await acquireSettlementLock(tx, cid, kind, invId);
         try {
-          await validateJeSettlement(cid, settlement, exchangeRate, null);
+          await validateJeSettlement(cid, settlement, exchangeRate, null, lines);
         } catch (err: any) {
           (err ?? {}).settlementReject = true;
           throw err;
@@ -1013,7 +1036,7 @@ router.put("/:id", async (req, res) => {
     let settlement: ReturnType<typeof parseJeSettlement>;
     try {
       settlement = parseJeSettlement(req.body);
-      await validateJeSettlement(cid, settlement, exchangeRate, id);
+      await validateJeSettlement(cid, settlement, exchangeRate, id, lines);
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "ربط الفاتورة غير صالح" });
       return;
@@ -1065,7 +1088,7 @@ router.put("/:id", async (req, res) => {
         const invId = (settlement.salesInvoiceId ?? settlement.purchaseInvoiceId)!;
         await acquireSettlementLock(tx, cid, kind, invId);
         try {
-          await validateJeSettlement(cid, settlement, exchangeRate, id);
+          await validateJeSettlement(cid, settlement, exchangeRate, id, lines);
         } catch (err: any) {
           (err ?? {}).settlementReject = true;
           throw err;
