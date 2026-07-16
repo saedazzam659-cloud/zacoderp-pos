@@ -538,11 +538,26 @@ export async function exportToPDF(
     .map(c => `<th>${escape(c.header)}</th>`)
     .join("");
 
+  // RTL alignment for Arabic prose cells (البيان/الشرح etc.): default cell
+  // alignment is centered, which reads badly for Arabic sentences — the user
+  // expects them to start from the RIGHT edge like a normal Arabic line.
+  // Rule: a cell whose value contains Arabic letters AND does not start with
+  // a digit (so "4,852.38 مدين" stays centered as a number) gets class="ar"
+  // → text-align:right + direction:rtl. Numbers, dates and Latin text keep
+  // the centered layout.
+  const arClass = (col: ExportColumn, value: unknown): string => {
+    if (col.numFmt) return "";
+    const s = String(value ?? "");
+    return /[\u0600-\u06FF]/.test(s) && !/^\s*[\d\u0660-\u0669(-]/.test(s)
+      ? ` class="ar"`
+      : "";
+  };
+
   const tbodyRows = rows
     .map(
       (row, i) =>
         `<tr class="${i % 2 === 0 ? "even" : "odd"}">${columns
-          .map(c => `<td>${cell(c, row[c.key])}</td>`)
+          .map(c => `<td${arClass(c, row[c.key])}>${cell(c, row[c.key])}</td>`)
           .join("")}</tr>`,
     )
     .join("");
@@ -555,7 +570,7 @@ export async function exportToPDF(
   // where the data ends, satisfying that requirement.
   const totalsTbodyRow = totalsRow
     ? `<tr class="totals">${columns
-        .map(c => `<td>${cell(c, totalsRow[c.key])}</td>`)
+        .map(c => `<td${arClass(c, totalsRow[c.key])}>${cell(c, totalsRow[c.key])}</td>`)
         .join("")}</tr>`
     : "";
 
@@ -640,6 +655,9 @@ export async function exportToPDF(
       vertical-align: middle;
       ${tdNowrap}
     }
+    /* Arabic prose cells: start from the right edge like a normal Arabic
+       line instead of being centered (user-requested typographic fix). */
+    tbody td.ar { text-align: right; direction: rtl; }
     tr.even { background: #f8fafb; }
     tr.odd  { background: #ffffff; }
     tbody tr:hover { background: #f0fdf4; }
@@ -771,9 +789,9 @@ export async function exportToPDF(
         const th = s.columns.map(c => `<th>${escape(c.header)}</th>`).join("");
         const tb = s.rows.map((r, i) =>
           `<tr class="${i % 2 === 0 ? "even" : "odd"}">${s.columns
-            .map(c => `<td>${cell(c, r[c.key])}</td>`).join("")}</tr>`).join("");
+            .map(c => `<td${arClass(c, r[c.key])}>${cell(c, r[c.key])}</td>`).join("")}</tr>`).join("");
         const tot = s.totalsRow
-          ? `<tr class="totals">${s.columns.map(c => `<td>${cell(c, s.totalsRow![c.key])}</td>`).join("")}</tr>`
+          ? `<tr class="totals">${s.columns.map(c => `<td${arClass(c, s.totalsRow![c.key])}>${cell(c, s.totalsRow![c.key])}</td>`).join("")}</tr>`
           : "";
         return `<h2 style="margin:18px 0 8px;font-size:12pt;color:#14532d;border-bottom:2px solid #166534;padding-bottom:4px;page-break-before:auto;page-break-inside:avoid;">${escape(s.title)}</h2>
           <table><thead><tr>${th}</tr></thead><tbody>${tb}${tot}</tbody></table>`;
