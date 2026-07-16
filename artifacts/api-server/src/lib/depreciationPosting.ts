@@ -78,6 +78,8 @@ export async function postDepreciationForCompany(
       depreciationStart: a.depreciationStart as any,
       purchaseDate: a.purchaseDate as any,
       accumulatedDepreciation: accum,
+      accumAsOf: a.accumAsOf as any,
+      accumAsOfAmount: a.accumAsOfAmount != null ? Number(a.accumAsOfAmount) : null,
     }, month, year);
     const remaining = Math.max(0, purchase - scrap - accum);
     const apply    = Number(Math.min(monthly, remaining).toFixed(2));
@@ -176,6 +178,19 @@ export async function postDepreciationCatchUpForAsset(
     return { posted: 0, skipped: 0, jeFailed: 0 };
   }
 
+  // Resume mode ("المجمع حتى تاريخ"): the entered accum already covers the
+  // history up to accumAsOf, so fast-forward the loop to the resume month —
+  // never re-post the covered historical months. (The calc would return 0 for
+  // them anyway; this just skips the wasted per-month run lookups.)
+  if (a.accumAsOf && String(a.depreciationMethod || "straight_line") === "straight_line") {
+    const asOf = new Date(a.accumAsOf as any);
+    const ay = asOf.getFullYear();
+    const am = asOf.getMonth() + 1;
+    if (Number.isFinite(ay) && ay >= 2000 && (ay > y || (ay === y && am >= m))) {
+      y = ay; m = am; // the resume month itself (partially covered) still computes pro-rata days
+    }
+  }
+
   const target = lastCompletedMonth(opts.now);
   const purchase = Number(a.purchaseValue || 0);
   const scrap    = Number(a.scrapValue || 0);
@@ -205,6 +220,8 @@ export async function postDepreciationCatchUpForAsset(
         purchaseValue: purchase, scrapValue: scrap, lifeYears, depreciationMethod: method,
         depreciationStart: a.depreciationStart as any, purchaseDate: a.purchaseDate as any,
         accumulatedDepreciation: accum,
+        accumAsOf: a.accumAsOf as any,
+        accumAsOfAmount: a.accumAsOfAmount != null ? Number(a.accumAsOfAmount) : null,
       }, m, y);
       const remaining = Math.max(0, purchase - scrap - accum);
       const apply = Number(Math.min(monthly, remaining).toFixed(2));
@@ -393,6 +410,8 @@ export async function repostDepreciationRun(
       depreciationStart: a.depreciationStart as any,
       purchaseDate: a.purchaseDate as any,
       accumulatedDepreciation: accum,
+      accumAsOf: a.accumAsOf as any,
+      accumAsOfAmount: a.accumAsOfAmount != null ? Number(a.accumAsOfAmount) : null,
     }, run.periodMonth, run.periodYear);
     const remaining = Math.max(0, purchase - scrap - accum);
     const apply    = Number(Math.min(monthly, remaining).toFixed(2));

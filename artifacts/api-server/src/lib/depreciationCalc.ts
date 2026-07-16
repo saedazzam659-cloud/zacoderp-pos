@@ -26,6 +26,17 @@ export interface AssetCalcInput {
   depreciationStart?: string | null; // 'YYYY-MM-DD'
   purchaseDate?: string | null;      // fallback start when no depreciationStart
   accumulatedDepreciation?: number;
+  // "المجمع حتى تاريخ" — when set (straight-line only), the manually-entered
+  // accumulatedDepreciation is treated as covering the life up to this date
+  // (inclusive). Charging RESUMES the next day and the remaining base
+  // (purchase - scrap - accum) is spread over the REMAINING life days, so the
+  // asset still finishes exactly on its original last life day. NULL/absent =
+  // legacy full-life daily rate (behavior unchanged for existing assets).
+  accumAsOf?: string | null;         // 'YYYY-MM-DD'
+  // Frozen opening-accum snapshot paired with accumAsOf. The live rolling
+  // accumulatedDepreciation grows with every posted run — the resume rate must
+  // be derived from THIS frozen figure or the daily rate drifts every month.
+  accumAsOfAmount?: number | null;
 }
 
 const MS_DAY = 86_400_000;
@@ -86,6 +97,33 @@ export function lifeWindow(input: AssetCalcInput): LifeWindow | null {
   const months = Math.max(1, Math.round(years * 12));
   const endExclusive = addMonths(effStart, months);
   const lastLifeDay = addDays(endExclusive, -1);
+
+  // Resume mode ("المجمع حتى تاريخ"): the entered accumulated depreciation
+  // covers effStart..accumAsOf, so charging resumes at accumAsOf+1 and the
+  // REMAINING base is spread over the REMAINING days. Only honored when the
+  // date is valid, inside the life window, and only for straight_line (the
+  // declining_balance path never reads dailyRate/effStart from here for its
+  // charge — it uses the rolling book).
+  const method = String(input.depreciationMethod || "straight_line");
+  const asOf = method === "straight_line" ? parseDate(input.accumAsOf) : null;
+  if (asOf && asOf >= effStart && asOf < lastLifeDay) {
+    const resumeStart = addDays(asOf, 1);
+    // Prefer the frozen snapshot; fall back to the live accum only when no
+    // snapshot exists (first save, before any new run posts).
+    const accum = Math.max(0, Number(input.accumAsOfAmount ?? input.accumulatedDepreciation ?? 0));
+    const remainingBase = depreciableBase - accum;
+    if (!(remainingBase > 0)) return null; // fully depreciated already
+    const remainingDays = Math.max(1, dayDiffInclusive(resumeStart, lastLifeDay));
+    return {
+      effStart: resumeStart,
+      lastLifeDay,
+      totalLifeDays: remainingDays,
+      dailyRate: remainingBase / remainingDays,
+      depreciableBase: remainingBase,
+      months,
+    };
+  }
+
   const totalLifeDays = Math.max(1, dayDiffInclusive(effStart, lastLifeDay));
   const dailyRate = depreciableBase / totalLifeDays;
 

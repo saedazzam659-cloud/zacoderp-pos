@@ -430,6 +430,10 @@ router.post("/assets", async (req, res) => {
       scrapValue,
       depreciationStart: b.depreciationStart || null,
       accumulatedDepreciation: accumulated,
+      // "المجمع حتى تاريخ": freeze the opening-accum snapshot alongside the
+      // date so later monthly runs never drift the resume rate.
+      accumAsOf: b.accumAsOf || null,
+      accumAsOfAmount: b.accumAsOf ? accumulated : null,
       bookValue,
       insuranceCompany: b.insuranceCompany || null,
       insurancePolicyNo: b.insurancePolicyNo || null,
@@ -494,6 +498,25 @@ router.put("/assets/:id", async (req, res) => {
     for (const k of numStrFields) if (b[k] !== undefined) patch[k] = String(b[k] || "0");
     const dateFields = ["purchaseDate","depreciationStart","insuranceStart","insuranceEnd"];
     for (const k of dateFields) if (b[k] !== undefined) patch[k] = b[k] || null;
+    // "المجمع حتى تاريخ": when the date is (re)set, re-freeze the snapshot from
+    // the accum sent in the SAME payload (the form always sends both). Clearing
+    // the date clears the snapshot → full legacy behavior.
+    if (b.accumAsOf !== undefined) {
+      patch.accumAsOf = b.accumAsOf || null;
+      // Snapshot source: the accum sent in the SAME payload; a partial client
+      // that omits it falls back to the CURRENT stored accum (never force 0 —
+      // that would zero the snapshot and inflate the resume rate).
+      if (!b.accumAsOf) {
+        patch.accumAsOfAmount = null;
+      } else if (b.accumulatedDepreciation !== undefined) {
+        patch.accumAsOfAmount = String(b.accumulatedDepreciation || "0");
+      } else {
+        const [cur] = await db.select({ accum: fixedAssetsTable.accumulatedDepreciation })
+          .from(fixedAssetsTable)
+          .where(and(eq(fixedAssetsTable.id, id), eq(fixedAssetsTable.companyId, cid)));
+        patch.accumAsOfAmount = String(cur?.accum ?? "0");
+      }
+    }
     const intFields = ["branchId","costCenterId","categoryId","groupId","custodianEmployeeId","initialKm","currentKm","supplierId","cashBoxId","bankAccountId"];
     for (const k of intFields) if (b[k] !== undefined) patch[k] = b[k] ? Number(b[k]) : null;
     if (b.lifeYears !== undefined) patch.lifeYears = String(b.lifeYears || 5);
@@ -710,6 +733,8 @@ router.get("/depreciation/preview", async (req, res) => {
         lifeYears: Number(a.lifeYears || 1), depreciationMethod: method,
         depreciationStart: a.depreciationStart as any, purchaseDate: a.purchaseDate as any,
         accumulatedDepreciation: accum,
+        accumAsOf: a.accumAsOf as any,
+        accumAsOfAmount: a.accumAsOfAmount != null ? Number(a.accumAsOfAmount) : null,
       }, month, year);
       const remaining = Math.max(0, purchase - scrap - accum);
       const apply    = Math.min(monthly, remaining);
@@ -749,6 +774,9 @@ router.post("/depreciation/schedule", async (req, res) => {
         depreciationMethod: String(a.depreciationMethod || "straight_line"),
         depreciationStart: a.depreciationStart,
         purchaseDate: a.purchaseDate,
+        accumulatedDepreciation: Number(a.accumulatedDepreciation || 0),
+        accumAsOf: a.accumAsOf,
+        accumAsOfAmount: a.accumAsOfAmount != null ? Number(a.accumAsOfAmount) : null,
       };
     } else {
       input = {
@@ -758,6 +786,9 @@ router.post("/depreciation/schedule", async (req, res) => {
         depreciationMethod: String(b.depreciationMethod || "straight_line"),
         depreciationStart: b.depreciationStart ?? null,
         purchaseDate: b.purchaseDate ?? null,
+        accumulatedDepreciation: Number(b.accumulatedDepreciation || 0),
+        accumAsOf: b.accumAsOf ?? null,
+        accumAsOfAmount: b.accumAsOf ? Number(b.accumulatedDepreciation || 0) : null,
       };
     }
 

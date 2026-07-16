@@ -137,6 +137,17 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   scrapValue:          numeric("scrap_value", { precision: 15, scale: 2 }).notNull().default("0"),
   depreciationStart:   date("depreciation_start"),
   accumulatedDepreciation: numeric("accumulated_depreciation", { precision: 15, scale: 2 }).notNull().default("0"),
+  // "المجمع حتى تاريخ" — the date the manually-entered opening accumulated
+  // depreciation covers UP TO (inclusive). When set (straight-line only):
+  // catch-up/scheduler resume from the NEXT day and the remaining book value
+  // is spread over the REMAINING life days (accumAsOf+1 → last life day)
+  // instead of the full-life rate. NULL = legacy behavior, fully unchanged.
+  accumAsOf:           date("accum_as_of"),
+  // Snapshot of the OPENING accumulated depreciation as of accumAsOf. The
+  // live accumulatedDepreciation column keeps growing with every monthly run,
+  // so the resume-rate math must use this frozen figure, never the rolling
+  // one, or the daily rate would drift every month.
+  accumAsOfAmount:     numeric("accum_as_of_amount", { precision: 15, scale: 2 }),
   bookValue:           numeric("book_value", { precision: 15, scale: 2 }).notNull().default("0"),
 
   // ── Insurance ────────────────────────────────────────────────

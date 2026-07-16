@@ -37,6 +37,7 @@ type Asset = {
   vatRate: string; priceIncludesVat: boolean;
   scrapValue: string; depreciationStart: string | null;
   accumulatedDepreciation: string; bookValue: string;
+  accumAsOf: string | null;
   insuranceCompany: string | null; insurancePolicyNo: string | null;
   insuranceStart: string | null; insuranceEnd: string | null; insuranceValue: string;
   custodianEmployeeId: number | null; location: string | null;
@@ -69,7 +70,7 @@ const EMPTY = {
   lifeYears:"5", depreciationMethod:"straight_line",
   vatRate:"15", priceIncludesVat:false,
   scrapValue:"0", depreciationStart:"",
-  accumulatedDepreciation:"0", bookValue:"0",
+  accumulatedDepreciation:"0", bookValue:"0", accumAsOf:"",
   insuranceCompany:"", insurancePolicyNo:"",
   insuranceStart:"", insuranceEnd:"", insuranceValue:"0",
   custodianEmployeeId:"", location:"", notes:"",
@@ -197,6 +198,7 @@ export default function FixedAssets() {
       vatRate:String((a as any).vatRate??"15"), priceIncludesVat:!!(a as any).priceIncludesVat,
       scrapValue:String(a.scrapValue??"0"), depreciationStart:a.depreciationStart??"",
       accumulatedDepreciation:String(a.accumulatedDepreciation??"0"),
+      accumAsOf:a.accumAsOf??"",
       bookValue:String(a.bookValue??"0"),
       insuranceCompany:a.insuranceCompany??"", insurancePolicyNo:a.insurancePolicyNo??"",
       insuranceStart:a.insuranceStart??"", insuranceEnd:a.insuranceEnd??"",
@@ -426,6 +428,7 @@ export default function FixedAssets() {
         priceIncludesVat: !!form.priceIncludesVat,
         purchaseDate: form.purchaseDate || null,
         depreciationStart: form.depreciationStart || null,
+        accumAsOf: form.accumAsOf || null,
         insuranceStart: form.insuranceStart || null,
         insuranceEnd:   form.insuranceEnd   || null,
         supplierId:    form.supplierId    ? Number(form.supplierId)    : null,
@@ -1020,6 +1023,8 @@ export default function FixedAssets() {
                   <DateField value={form.depreciationStart} onChange={(e)=>setForm({...form,depreciationStart:e.target.value})} /></div>
                 <div><Label>الإهلاك المتراكم</Label>
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.accumulatedDepreciation} onChange={(e)=>setForm({...form,accumulatedDepreciation:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
+                <div><Label>المجمع حتى تاريخ <span className="text-xs text-muted-foreground">(اختياري — يُكمل الإهلاك من اليوم التالي)</span></Label>
+                  <DateField value={form.accumAsOf ?? ""} onChange={(e)=>setForm({...form,accumAsOf:e.target.value})} /></div>
                 <div><Label>القيمة الدفترية</Label>
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.bookValue} onChange={(e)=>setForm({...form,bookValue:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
               </div>
@@ -1035,6 +1040,8 @@ export default function FixedAssets() {
                   depreciationMethod={form.depreciationMethod}
                   depreciationStart={form.depreciationStart || form.purchaseDate}
                   purchaseDate={form.purchaseDate}
+                  accumulatedDepreciation={form.accumulatedDepreciation}
+                  accumAsOf={form.accumAsOf || null}
                 />
               </div>
             </fieldset>

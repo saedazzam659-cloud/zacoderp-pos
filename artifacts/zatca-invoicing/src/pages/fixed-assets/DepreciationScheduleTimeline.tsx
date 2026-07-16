@@ -29,6 +29,9 @@ export type TimelineProps = {
   depreciationMethod?: string;
   depreciationStart?: string | null;
   purchaseDate?: string | null;
+  /** "المجمع حتى تاريخ" resume mode (projection only; saved assets read from the row) */
+  accumulatedDepreciation?: number | string;
+  accumAsOf?: string | null;
   /** projection = no posted overlay even if some months already ran */
   projection?: boolean;
   title?: string;
@@ -49,6 +52,8 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
         depreciationMethod: props.depreciationMethod,
         depreciationStart: props.depreciationStart,
         purchaseDate: props.purchaseDate,
+        accumulatedDepreciation: props.accumulatedDepreciation,
+        accumAsOf: props.accumAsOf || null,
       };
 
   // A projection needs enough inputs to be meaningful.
