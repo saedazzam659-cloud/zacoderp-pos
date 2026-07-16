@@ -23,7 +23,7 @@ import {
   Library,
   Brain,
   Trophy,
-  CalendarClock,
+  CalendarClock, FolderTree, BellRing,
   Gauge,
   Handshake,
   Copy,
@@ -293,6 +293,8 @@ const maintenanceSubNav: NavDef[] = [
   { nameKey: "nav.maintenanceAssets",      href: "/maintenance/assets",      icon: Boxes,         permKey: "maintenance" },
   { nameKey: "nav.maintenanceTechnicians", href: "/maintenance/technicians", icon: HardHat,       permKey: "maintenance" },
   { nameKey: "nav.maintenanceOrders",      href: "/maintenance/orders",      icon: ClipboardList, permKey: "maintenance" },
+  // Mirrors the "الخدمة الميدانية والزيارات" hub tile (raw Arabic label, same as the hub).
+  { nameKey: "الخدمة الميدانية والزيارات", href: "/hr/field",                icon: MapPin,        permKey: "field_service_locations" },
 ];
 const MAINTENANCE_GROUP_PERMS = ["maintenance"];
 // Smart Installment Sales — gated by a single `installments` permission key.
@@ -333,11 +335,14 @@ const fixedAssetsSubNav: NavDef[] = [
   { nameKey: "nav.faHub",          href: "/fixed-assets",              icon: Boxes,         permKey: "fixed_assets", exact: true },
   { nameKey: "nav.faAssets",       href: "/fixed-assets/assets",       icon: Package,       permKey: "fixed_assets" },
   { nameKey: "nav.faCategories",   href: "/fixed-assets/categories",   icon: Tag,           permKey: "fixed_assets" },
+  { nameKey: "nav.faGroups",       href: "/fixed-assets/groups",       icon: FolderTree,    permKey: "fixed_assets" },
   { nameKey: "nav.faMaintenance",  href: "/fixed-assets/maintenance",  icon: Wrench,        permKey: "fixed_assets" },
   { nameKey: "nav.faTransfers",    href: "/fixed-assets/transfers",    icon: ArrowRightLeft,permKey: "fixed_assets" },
   { nameKey: "nav.faDepreciation", href: "/fixed-assets/depreciation", icon: TrendingUp,    permKey: "fixed_assets" },
+  { nameKey: "nav.faMovementSchedule", href: "/fixed-assets/movement-schedule", icon: CalendarRange, permKey: "fixed_assets" },
   { nameKey: "nav.faDisposals",    href: "/fixed-assets/disposals",    icon: Trash2,        permKey: "fixed_assets" },
   { nameKey: "nav.faReports",      href: "/fixed-assets/reports",      icon: BarChart3,     permKey: "fixed_assets" },
+  { nameKey: "nav.faSettings",     href: "/fixed-assets/settings",     icon: Settings2,     permKey: "fixed_assets" },
   { nameKey: "nav.faAI",           href: "/fixed-assets/ai",           icon: Sparkles,      permKey: "fixed_assets" },
 ];
 const FIXED_ASSETS_GROUP_PERMS = ["fixed_assets"];
@@ -382,6 +387,7 @@ const securitySubNav: NavDef[] = [
   { nameKey: "security.nav.cameras",  href: "/security/cameras",  icon: Camera,      permKey: "security_events" },
   { nameKey: "security.nav.liveView", href: "/security/live",     icon: Monitor,     permKey: "security_events" },
   { nameKey: "security.nav.ai",       href: "/security/ai",       icon: Sparkles,    permKey: "security_events" },
+  { nameKey: "security.tiles.notificationRules", href: "/security/notification-rules", icon: BellRing, permKey: "security_events" },
   { nameKey: "security.nav.reports",  href: "/security/reports",  icon: BarChart3,   permKey: "security_events" },
 ];
 const SECURITY_GROUP_PERMS = ["security_events"];
@@ -527,8 +533,10 @@ const accountingSubNav: NavDef[] = [
   { nameKey: "nav.costCenters",     href: "/accounting/cost-centers",   icon: Target,        permKey: "accounts" },
   { nameKey: "nav.taxes",           href: "/accounting/taxes",          icon: Percent,       permKey: "accounts" },
   { nameKey: "nav.fiscalPeriods",   href: "/accounting/fiscal-periods", icon: CalendarRange, permKey: "accounts" },
+  { nameKey: "nav.adjustments",     href: "/accounting/adjustments",    icon: CalendarClock, permKey: "journal_entries" },
   { nameKey: "nav.journals",        href: "/accounting/journals",       icon: BookOpen,      permKey: "journal_entries" },
   { nameKey: "nav.postingCenter",   href: "/accounting/posting-center", icon: Layers,        permKey: "journal_entries" },
+  { nameKey: "nav.openingBalancesEntry", href: "/accounting/opening-balances", icon: ScrollText, permKey: "journal_entries" },
   { nameKey: "nav.accountingMaintenance", href: "/accounting/maintenance", icon: Wrench,    permKey: "accounting_maintenance" },
   // New: bilingual library of IFRS / GAAP / ZATCA standards with a free AI Q&A panel.
   // Permission piggy-backs on accounts since everyone with accounting access should see it.

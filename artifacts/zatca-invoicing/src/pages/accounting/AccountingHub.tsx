@@ -1,18 +1,21 @@
 import { useTranslation } from "react-i18next";
 import {
   BookMarked, Target, CalendarRange, BookOpen, PieChart,
-  Calculator, ScrollText, Layers, CalendarClock,
+  Calculator, ScrollText, Layers, CalendarClock, Percent, Wrench, Library,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 
 const tiles: HubTile[] = [
   { nameKey: "nav.chartOfAccounts",      href: "/accounting/accounts",          icon: BookMarked,    tone: "indigo",  permKey: "accounts" },
   { nameKey: "nav.costCenters",          href: "/accounting/cost-centers",      icon: Target,        tone: "fuchsia", permKey: "accounts" },
+  { nameKey: "nav.taxes",                href: "/accounting/taxes",             icon: Percent,       tone: "lime",    permKey: "accounts" },
   { nameKey: "nav.fiscalPeriods",        href: "/accounting/fiscal-periods",    icon: CalendarRange, tone: "amber",   permKey: "accounts" },
   { nameKey: "nav.adjustments",          href: "/accounting/adjustments",       icon: CalendarClock, tone: "emerald", permKey: "journal_entries" },
   { nameKey: "nav.journals",             href: "/accounting/journals",          icon: BookOpen,      tone: "teal",    permKey: "journal_entries" },
   { nameKey: "nav.postingCenter",        href: "/accounting/posting-center",    icon: Layers,        tone: "rose",    permKey: "journal_entries" },
   { nameKey: "nav.openingBalancesEntry", href: "/accounting/opening-balances",  icon: ScrollText,    tone: "violet",  permKey: "journal_entries" },
+  { nameKey: "nav.accountingMaintenance", href: "/accounting/maintenance",      icon: Wrench,        tone: "orange",  permKey: "accounting_maintenance" },
+  { nameKey: "nav.accountingStandards",  href: "/accounting/standards",         icon: Library,       tone: "cyan",    permKey: "accounts" },
   { nameKey: "navExtra.accountingReports", href: "/accounting/reports",         icon: PieChart,      tone: "sky",     permKey: "accounting_reports" },
 ];
 

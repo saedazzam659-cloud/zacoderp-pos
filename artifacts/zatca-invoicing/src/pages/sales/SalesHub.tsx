@@ -2,16 +2,21 @@ import { useTranslation } from "react-i18next";
 import {
   Users, BadgeCheck, FileSignature, ClipboardList, ShoppingBag,
   RotateCcw, ArrowDownCircle, Link2, BarChart3, BarChart2, ShoppingCart,
+  Wallet, FileText,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 
 const tiles: HubTile[] = [
   { nameKey: "nav.customers",           href: "/customers",         icon: Users,           tone: "blue",    permKey: "customers" },
+  { nameKey: "nav.customerGroups",      href: "/sales/customer-groups", icon: Users,       tone: "cyan",    permKey: "customers" },
   { nameKey: "nav.salesReps",           href: "/sales/reps",        icon: BadgeCheck,      tone: "emerald", permKey: "sales_reps" },
+  { nameKey: "nav.salesRepCommissions", href: "/sales/reps/commissions", icon: Wallet,     tone: "lime",    permKey: "sales_reps" },
   { nameKey: "nav.quotations",          href: "/sales/quotations",  icon: FileSignature,   tone: "violet",  permKey: "sales_quotations" },
   { nameKey: "nav.salesOrders",         href: "/sales/orders",      icon: ClipboardList,   tone: "indigo",  permKey: "sales_invoices" },
   { nameKey: "nav.salesInvoices",       href: "/sales/invoices",    icon: ShoppingBag,     tone: "amber",   permKey: "sales_invoices" },
   { nameKey: "nav.salesReturns",        href: "/sales/returns",     icon: RotateCcw,       tone: "rose",    permKey: "sales_returns" },
+  { nameKey: "nav.customerCreditNotes", href: "/sales/customer-credit-notes", icon: FileText, tone: "orange", permKey: "customer_notes" },
+  { nameKey: "nav.customerDebitNotes",  href: "/sales/customer-debit-notes",  icon: FileText, tone: "fuchsia", permKey: "customer_notes" },
   { nameKey: "nav.customerSettlements", href: "/sales/settlements", icon: ArrowDownCircle, tone: "teal",    permKey: "sales_settlements" },
   { nameKey: "nav.zatcaBridge",         href: "/zatca-bridge",      icon: Link2,           tone: "cyan",    permKey: "zatca_bridge" },
   { nameKey: "nav.zatcaReport",         href: "/zatca-report",      icon: BarChart3,       tone: "sky",     permKey: "zatca_report" },

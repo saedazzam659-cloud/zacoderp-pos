@@ -121,7 +121,10 @@ export default function PurchaseInvoiceForm() {
   const [matchNew]  = useRoute("/purchasing/invoices/new");
   const [matchEdit, params] = useRoute("/purchasing/invoices/:id");
   const isNew  = !!matchNew;
-  const editId = matchEdit ? Number((params as any).id) : null;
+  // /new matches the /:id route too (id="new") → Number("new")=NaN, and JSX
+  // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
+  const _rawId = matchEdit ? String((params as any).id ?? "") : "";
+  const editId = !matchNew && /^\d+$/.test(_rawId) ? Number(_rawId) : null;
 
   // SAP-style tabbed layout (default) vs classic single-page (per-company
   // opt-out). `?view=1` forces tabbed+read-only and opens on the details tab.
@@ -1156,24 +1159,20 @@ export default function PurchaseInvoiceForm() {
                   <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
-                  {editId && (
-                    <TabsTrigger value="creditNote" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      <FileText className="h-3.5 w-3.5" />إشعار دائن
-                    </TabsTrigger>
-                  )}
+                  {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled
+                      until it is saved (they need a persisted invoice id). */}
+                  <TabsTrigger value="creditNote" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />إشعار دائن
+                  </TabsTrigger>
                   <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <Wallet className="h-3.5 w-3.5" />السداد
                   </TabsTrigger>
-                  {editId && (
-                    <TabsTrigger value="returns" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      <Undo2 className="h-3.5 w-3.5" />الإرجاع
-                    </TabsTrigger>
-                  )}
-                  {editId && (
-                    <TabsTrigger value="archive" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      <Archive className="h-3.5 w-3.5" />أرشفة
-                    </TabsTrigger>
-                  )}
+                  <TabsTrigger value="returns" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <Undo2 className="h-3.5 w-3.5" />الإرجاع
+                  </TabsTrigger>
+                  <TabsTrigger value="archive" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <Archive className="h-3.5 w-3.5" />أرشفة
+                  </TabsTrigger>
                   <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ClipboardList className="h-3.5 w-3.5" />التفاصيل
                   </TabsTrigger>

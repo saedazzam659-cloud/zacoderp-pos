@@ -496,8 +496,11 @@ export async function exportToPDF(
     : safeLogo
       ? `<img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;" />`
       : "";
+  // The logo sits ABSOLUTELY in the header's inline-start corner (right in
+  // RTL), enlarged, so the centered company block can rise to the very top
+  // of the page instead of being pushed down by a stacked logo row.
   const logoHtml = logoImgTag
-    ? `<div style="display:inline-block;margin-bottom:3px;">
+    ? `<div class="logo-corner">
          ${logoImgTag}
        </div>`
     : "";
@@ -584,12 +587,19 @@ export async function exportToPDF(
     .header {
       background: #ffffff;
       color: #111827;
-      padding: 6px 20px 5px;
+      padding: 2px 160px 3px;
       text-align: center;
       margin-bottom: 0;
       border-bottom: 2px solid #166534;
+      position: relative;
+      min-height: 56px;
     }
-    .header img { max-height: 30px !important; width: auto !important; height: auto !important; }
+    .header .logo-corner {
+      position: absolute;
+      inset-inline-start: 8px;
+      top: 2px;
+    }
+    .header img { max-height: 56px !important; max-width: 150px !important; width: auto !important; height: auto !important; }
     .header h1 { font-size: 12pt; font-weight: 700; margin-bottom: 1px; color: #14532d; }
     .header p  { font-size: 8pt; color: #6b7280; }
     .header .company-name    { font-size: 11pt; font-weight: 800; margin-bottom: 1px; color: #111827; }
@@ -604,12 +614,12 @@ export async function exportToPDF(
     .meta {
       background: #f0fdf4;
       border-bottom: 1px solid #bbf7d0;
-      padding: 8px 24px;
+      padding: 4px 24px;
       font-size: 9pt;
       color: #15803d;
       text-align: center;
     }
-    .content { padding: 18px 20px; }
+    .content { padding: 8px 10px; }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -724,7 +734,9 @@ export async function exportToPDF(
        generous bottom margin (22mm) reserves room for the page number
        so it never overlaps the table. */
     @page {
-      margin: 15mm 15mm 22mm 15mm;
+      /* Tight side/top margins (user request: raise the content and use the
+         full sheet width); bottom stays generous for the page-number box. */
+      margin: 8mm 6mm 18mm 6mm;
       size: A4 landscape;
       @bottom-center {
         content: "صفحة " counter(page) " من " counter(pages);
