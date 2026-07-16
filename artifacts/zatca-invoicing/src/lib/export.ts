@@ -545,12 +545,18 @@ export async function exportToPDF(
   // a digit (so "4,852.38 مدين" stays centered as a number) gets class="ar"
   // → text-align:right + direction:rtl. Numbers, dates and Latin text keep
   // the centered layout.
+  // A date-looking value (2026-01-01, 01/01/2026, optionally with time) must
+  // never wrap onto two lines → class="dt" forces white-space:nowrap even
+  // when the fit-mode global nowrap is off.
   const arClass = (col: ExportColumn, value: unknown): string => {
-    if (col.numFmt) return "";
     const s = String(value ?? "");
-    return /[\u0600-\u06FF]/.test(s) && !/^\s*[\d\u0660-\u0669(-]/.test(s)
-      ? ` class="ar"`
-      : "";
+    if (!col.numFmt && /[\u0600-\u06FF]/.test(s) && !/^\s*[\d\u0660-\u0669(-]/.test(s)) {
+      return ` class="ar"`;
+    }
+    if (/^\s*\d{4}-\d{2}-\d{2}(\s|T|$)/.test(s) || /^\s*\d{1,2}[/-]\d{1,2}[/-]\d{4}(\s|$)/.test(s)) {
+      return ` class="dt"`;
+    }
+    return "";
   };
 
   const tbodyRows = rows
@@ -658,6 +664,8 @@ export async function exportToPDF(
     /* Arabic prose cells: start from the right edge like a normal Arabic
        line instead of being centered (user-requested typographic fix). */
     tbody td.ar { text-align: right; direction: rtl; }
+    /* Date cells must stay on one line (e.g. 2026-01-01 was wrapping). */
+    tbody td.dt { white-space: nowrap; direction: ltr; }
     tr.even { background: #f8fafb; }
     tr.odd  { background: #ffffff; }
     tbody tr:hover { background: #f0fdf4; }
