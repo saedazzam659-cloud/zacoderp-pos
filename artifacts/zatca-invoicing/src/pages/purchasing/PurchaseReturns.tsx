@@ -891,6 +891,7 @@ export default function PurchaseReturns() {
     tr("lineCols.discount"),
     tr("lineCols.vat"),
     tr("lineCols.total"),
+    "مركز التكلفة",
     "",
   ];
 
@@ -1848,7 +1849,7 @@ ${sections}
               </div>
               {useTabbedLayout && !viewMode && quickAddBar}
               {(() => {
-                const GRID_COLS_PR = "38px 80px minmax(160px,1.3fr) 118px 100px 64px 64px 98px 74px 64px 108px 34px";
+                const GRID_COLS_PR = "38px 80px minmax(160px,1.3fr) 118px 100px 64px 64px 98px 74px 64px 108px 150px 34px";
                 const addGridLine = () => {
                   const nl = newLine();
                   const r = percentRateOf(headerTaxId);
@@ -1937,6 +1938,24 @@ ${sections}
                     <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
                       onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
+                    {/* OPTIONAL per-line cost center (توزيع تحليلي) — empty falls back to header */}
+                    {(costCentersList as any[]).length > 0 ? (
+                      <select
+                        className="h-8 text-[11px] rounded-md border bg-background px-1 w-full"
+                        value={l.costCenter}
+                        title="مركز التكلفة للسطر (اختياري) — الافتراضي: رأس المستند"
+                        onChange={e => updateLine(l._id, "costCenter", e.target.value)}
+                      >
+                        <option value="">رأس المستند</option>
+                        {(costCentersList as any[])
+                          .filter((c: any) => c.isActive !== false)
+                          .map((c: any) => (
+                            <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
+                          ))}
+                      </select>
+                    ) : (
+                      <Input className="h-8 text-xs bg-muted/30" placeholder="—" readOnly />
+                    )}
                     <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
                       onClick={() => setLines(p => p.filter(x => x._id !== l._id))}>
                       <Trash2 className="h-3.5 w-3.5" />
@@ -1950,22 +1969,6 @@ ${sections}
                         value={l.notes}
                         onChange={e => updateLine(l._id, "notes", e.target.value)}
                       />
-                      {/* OPTIONAL per-line cost center (توزيع تحليلي) — empty falls back to header */}
-                      {(costCentersList as any[]).length > 0 && (
-                        <select
-                          className="h-7 text-[11px] rounded-md border border-dashed bg-muted/20 px-1 max-w-[180px]"
-                          value={l.costCenter}
-                          title="مركز التكلفة للسطر (اختياري)"
-                          onChange={e => updateLine(l._id, "costCenter", e.target.value)}
-                        >
-                          <option value="">مركز التكلفة (رأس المستند)</option>
-                          {(costCentersList as any[])
-                            .filter((c: any) => c.isActive !== false)
-                            .map((c: any) => (
-                              <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
-                            ))}
-                        </select>
-                      )}
                     </div>
                   )}
                 </div>

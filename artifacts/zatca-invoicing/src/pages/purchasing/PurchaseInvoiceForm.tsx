@@ -930,6 +930,7 @@ export default function PurchaseInvoiceForm() {
     tr("lineCols.finalCost"),
     "رقم الدفعة",
     "تاريخ الانتهاء",
+    "مركز التكلفة",
     "",
   ];
 
@@ -1098,7 +1099,7 @@ export default function PurchaseInvoiceForm() {
   );
 
   return (
-    <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
+    <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 w-full" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center gap-3 flex-wrap">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/purchasing/invoices")}>
           {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
@@ -1606,7 +1607,7 @@ export default function PurchaseInvoiceForm() {
               </div>
               {useTabbedLayout && quickAddBar}
               {(() => {
-                const GRID_COLS = "38px 100px minmax(220px,1.3fr) 130px 100px 64px 64px 70px 95px 70px 64px 95px 105px 110px 125px 34px";
+                const GRID_COLS = "38px 100px minmax(220px,1.3fr) 130px 100px 64px 64px 70px 95px 70px 64px 95px 105px 110px 125px 150px 34px";
                 const addGridLine = () => {
                   const nl = newLine();
                   const r = percentRateOf(headerTaxId);
@@ -1738,6 +1739,24 @@ export default function PurchaseInvoiceForm() {
                         <DateField className="h-8 text-xs" value={l.expiryDate}
                           onChange={e => updateLine(l._id, "expiryDate", e.target.value)} />
                       )}
+                      {/* OPTIONAL per-line cost center (توزيع تحليلي) — empty falls back to header */}
+                      {(costCentersList as any[]).length > 0 ? (
+                        <select
+                          className="h-8 text-[11px] rounded-md border bg-background px-1 w-full"
+                          value={l.costCenter}
+                          title="مركز التكلفة للسطر (اختياري) — الافتراضي: رأس المستند"
+                          onChange={e => updateLine(l._id, "costCenter", e.target.value)}
+                        >
+                          <option value="">رأس المستند</option>
+                          {(costCentersList as any[])
+                            .filter((c: any) => c.isActive !== false)
+                            .map((c: any) => (
+                              <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
+                            ))}
+                        </select>
+                      ) : (
+                        <Input className="h-8 text-xs bg-muted/30" placeholder="—" readOnly />
+                      )}
                       <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
                         onClick={() => setLines(p => p.filter(x => x._id !== l._id))}>
                         <Trash2 className="h-3.5 w-3.5" />
@@ -1751,22 +1770,6 @@ export default function PurchaseInvoiceForm() {
                           value={l.notes}
                           onChange={e => updateLine(l._id, "notes", e.target.value)}
                         />
-                        {/* OPTIONAL per-line cost center (توزيع تحليلي) — empty falls back to header */}
-                        {(costCentersList as any[]).length > 0 && (
-                          <select
-                            className="h-7 text-[11px] rounded-md border border-dashed bg-muted/20 px-1 max-w-[180px]"
-                            value={l.costCenter}
-                            title="مركز التكلفة للسطر (اختياري)"
-                            onChange={e => updateLine(l._id, "costCenter", e.target.value)}
-                          >
-                            <option value="">مركز التكلفة (رأس المستند)</option>
-                            {(costCentersList as any[])
-                              .filter((c: any) => c.isActive !== false)
-                              .map((c: any) => (
-                                <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
-                              ))}
-                          </select>
-                        )}
                       </div>
                     )}
                   </div>

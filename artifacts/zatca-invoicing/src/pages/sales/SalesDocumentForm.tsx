@@ -1938,8 +1938,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // fine-tune committed rows. Scrolls INTERNALLY (bounded height) so the
   // browser page itself does not grow a scrollbar.
   const displayLinesGrid = (() => {
-    const gridCols = "38px 80px minmax(160px,1.3fr) 118px 110px 64px 64px 98px 122px 74px 108px 34px";
-    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), "الضريبة %", t("salesDocForm.colTotal"), ""];
+    // Invoice mode gets an extra in-row cost-center column (توزيع تحليلي).
+    const gridCols = `38px 80px minmax(160px,1.3fr) 118px 110px 64px 64px 98px 122px 74px 108px${isInvoice ? " 150px" : ""} 34px`;
+    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), "الضريبة %", t("salesDocForm.colTotal"), ...(isInvoice ? ["مركز التكلفة"] : []), ""];
     const whName = (id: string) => (warehouses as any[]).find((w: any) => String(w.id) === String(id))?.nameAr ?? "—";
     const filled = lines;
     // Tabbed grid: removing the last row leaves the grid EMPTY (the friendly
@@ -2040,6 +2041,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       title="نسبة ضريبة القيمة المضافة %"
                       onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <span className="font-mono tabular-nums font-semibold text-primary text-end" dir="ltr">{fmt(Number(l.lineTotal) || 0)}</span>
+                    {/* OPTIONAL per-line cost center (توزيع تحليلي) — invoice mode only.
+                        Empty = fall back to the HEADER costCenter. Never enters ZATCA XML/QR. */}
+                    {isInvoice && ((costCentersList as any[]).length > 0 ? (
+                      <select
+                        className="h-8 text-[11px] rounded-md border bg-background px-1 w-full"
+                        value={l.costCenter}
+                        title="مركز التكلفة للسطر (اختياري) — الافتراضي: رأس المستند"
+                        data-testid={`select-line-cost-center-${l._id}`}
+                        onChange={e => updateLine(l._id, "costCenter", e.target.value)}
+                      >
+                        <option value="">رأس المستند</option>
+                        {(costCentersList as any[])
+                          .filter((c: any) => c.isActive !== false)
+                          .map((c: any) => (
+                            <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
+                          ))}
+                      </select>
+                    ) : (
+                      <Input className="h-8 text-xs bg-muted/30" placeholder="—" readOnly />
+                    ))}
                     <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeLine(l._id)} data-testid={`button-remove-line-${l._id}`}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -2049,24 +2070,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <Input className="h-7 text-[11px]" placeholder={t("salesDocForm.notesPlaceholder") as string} value={l.notes}
                       onChange={e => updateLine(l._id, "notes", e.target.value)}
                       data-testid={`input-line-notes-${l._id}`} />
-                    {/* OPTIONAL per-line cost center (توزيع تحليلي) — invoice mode only.
-                        Empty = fall back to the HEADER costCenter. Never enters ZATCA XML/QR. */}
-                    {isInvoice && (costCentersList as any[]).length > 0 && (
-                      <select
-                        className="h-7 text-[11px] rounded-md border border-dashed bg-muted/20 px-1 max-w-[180px] shrink-0"
-                        value={l.costCenter}
-                        title="مركز التكلفة للسطر (اختياري)"
-                        data-testid={`select-line-cost-center-${l._id}`}
-                        onChange={e => updateLine(l._id, "costCenter", e.target.value)}
-                      >
-                        <option value="">مركز التكلفة (رأس المستند)</option>
-                        {(costCentersList as any[])
-                          .filter((c: any) => c.isActive !== false)
-                          .map((c: any) => (
-                            <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
-                          ))}
-                      </select>
-                    )}
                   </div>
                 </div>
                 );
@@ -2897,7 +2900,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   }
 
   return (
-    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">
+    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 w-full">
       <div className="flex items-center gap-3 flex-wrap">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
           <BackIcon className="h-4 w-4" />
