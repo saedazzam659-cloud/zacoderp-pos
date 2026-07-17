@@ -95,18 +95,29 @@ export function lifeWindow(input: AssetCalcInput): LifeWindow | null {
 
   const years = Math.max(1 / 12, Number(input.lifeYears || 1));
   const months = Math.max(1, Math.round(years * 12));
-  const endExclusive = addMonths(effStart, months);
-  const lastLifeDay = addDays(endExclusive, -1);
 
   // Resume mode ("المجمع حتى تاريخ"): the entered accumulated depreciation
-  // covers effStart..accumAsOf, so charging resumes at accumAsOf+1 and the
-  // REMAINING base is spread over the REMAINING days. Only honored when the
-  // date is valid, inside the life window, and only for straight_line (the
-  // declining_balance path never reads dailyRate/effStart from here for its
-  // charge — it uses the rolling book).
+  // covers the life up to accumAsOf, so charging resumes at accumAsOf+1 and
+  // the REMAINING base is spread over the REMAINING days. Only honored when
+  // the date is valid, inside the life window, and only for straight_line
+  // (the declining_balance path never reads dailyRate/effStart from here for
+  // its charge — it uses the rolling book).
   const method = String(input.depreciationMethod || "straight_line");
   const asOf = method === "straight_line" ? parseDate(input.accumAsOf) : null;
-  if (asOf && asOf >= effStart && asOf < lastLifeDay) {
+
+  // With "المجمع حتى تاريخ" the asset's LIFE is anchored at the PURCHASE
+  // date (the opening accum covers purchase..asOf) — even when the form's
+  // depreciationStart was set to asOf+1. Otherwise a 7y asset bought in
+  // 2022 with accum through 2025 would wrongly run 7 MORE years from 2025.
+  let lifeAnchor = effStart;
+  if (asOf) {
+    const pd = parseDate(input.purchaseDate);
+    if (pd && pd < lifeAnchor && asOf >= pd) lifeAnchor = pd;
+  }
+  const endExclusive = addMonths(lifeAnchor, months);
+  const lastLifeDay = addDays(endExclusive, -1);
+
+  if (asOf && asOf >= lifeAnchor && asOf < lastLifeDay) {
     const resumeStart = addDays(asOf, 1);
     // Prefer the frozen snapshot; fall back to the live accum only when no
     // snapshot exists (first save, before any new run posts).
@@ -123,6 +134,10 @@ export function lifeWindow(input: AssetCalcInput): LifeWindow | null {
       months,
     };
   }
+
+  // Life already over before charging would start (e.g. purchase-anchored
+  // life expired before the form's depreciationStart) → nothing to charge.
+  if (lastLifeDay < effStart) return null;
 
   const totalLifeDays = Math.max(1, dayDiffInclusive(effStart, lastLifeDay));
   const dailyRate = depreciableBase / totalLifeDays;
