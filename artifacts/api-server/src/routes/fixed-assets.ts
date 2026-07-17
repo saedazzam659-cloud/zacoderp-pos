@@ -12,7 +12,7 @@ import {
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   companiesTable, accountsTable,
 } from "@workspace/db";
-import { and, desc, eq, isNull, inArray, notInArray } from "drizzle-orm";
+import { and, desc, eq, isNull, isNotNull, inArray, notInArray } from "drizzle-orm";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
@@ -301,6 +301,44 @@ router.get("/assets/by-source", async (req, res) => {
 // never break an asset create/update. The catch-up helper is itself idempotent
 // (skips periods that already have a run row), so calling it on every save is
 // safe and never double-posts.
+// ── Data-heal: broken runs left by the old JE-grid bulk unpost ─────────────
+// Before the JE /unpost route learned to cascade, unposting a fa_depreciation
+// JE from the journal-entries grid flipped ONLY the JE to draft — the run row
+// stayed 'posted' and the asset kept the accumulated depreciation applied, so
+// the schedule kept showing "تم ترحيلها" and asset edits never recomputed
+// those months. This sweep detects that exact broken shape (run 'posted' but
+// its JE is a DRAFT) and unwinds each such run properly (newest-first, via
+// unpostDepreciationRun: reverses accum/book value, deletes the draft JE
+// reserving its number, flips the run to 'unposted'). Best-effort: a chain
+// guard failure stops the sweep without breaking the save.
+async function healDraftLinkedRuns(cid: number, assetId: number, userId: number | null): Promise<void> {
+  try {
+    const broken = await db.select({ runId: faDepreciationRunsTable.id })
+      .from(faDepreciationRunsTable)
+      .innerJoin(journalEntriesTable, eq(faDepreciationRunsTable.journalEntryId, journalEntriesTable.id))
+      .where(and(
+        eq(faDepreciationRunsTable.companyId, cid),
+        eq(faDepreciationRunsTable.assetId, assetId),
+        eq(faDepreciationRunsTable.status, "posted"),
+        eq(journalEntriesTable.status, "draft"),
+        // postedAt set = the JE WAS posted once then bare-flipped (broken).
+        // A NULL postedAt draft is a LEGITIMATE auto-post-OFF JE awaiting
+        // manual post — never unwind those.
+        isNotNull(journalEntriesTable.postedAt),
+      ))
+      .orderBy(desc(faDepreciationRunsTable.periodYear), desc(faDepreciationRunsTable.periodMonth));
+    for (const r of broken) {
+      try {
+        await unpostDepreciationRun(cid, r.runId, { userId });
+      } catch {
+        break; // chain guard (a later still-posted run) — stop, stay non-fatal
+      }
+    }
+  } catch {
+    // Best-effort repair; never break the asset save.
+  }
+}
+
 async function runDepreciationCatchUp(
   cid: number,
   assetId: number,
@@ -530,6 +568,9 @@ router.put("/assets/:id", async (req, res) => {
     }
     const [row] = await db.update(fixedAssetsTable).set(patch)
       .where(and(eq(fixedAssetsTable.id, id), eq(fixedAssetsTable.companyId, cid))).returning();
+    // Heal any runs broken by the old JE-grid bulk unpost BEFORE catch-up so
+    // the schedule + asset accum reflect the true unposted state on save.
+    await healDraftLinkedRuns(cid, id, (req as any).authUser?.id ?? null);
     // Auto catch-up depreciation on every save (idempotent, gated, non-fatal).
     await runDepreciationCatchUp(cid, id, (req as any).authUser?.id ?? null);
     res.json(row);
@@ -801,7 +842,13 @@ router.post("/depreciation/schedule", async (req, res) => {
         periodMonth: faDepreciationRunsTable.periodMonth,
         periodYear:  faDepreciationRunsTable.periodYear,
       }).from(faDepreciationRunsTable)
-        .where(and(eq(faDepreciationRunsTable.companyId, cid), eq(faDepreciationRunsTable.assetId, assetId)));
+        .where(and(
+          eq(faDepreciationRunsTable.companyId, cid),
+          eq(faDepreciationRunsTable.assetId, assetId),
+          // Only truly POSTED runs count — an unposted run row must show as
+          // "غير مرحلة" in the schedule tab, not "تم ترحيلها".
+          eq(faDepreciationRunsTable.status, "posted"),
+        ));
       for (const r of runs) postedSet.add(`${r.periodYear}-${r.periodMonth}`);
     }
 
