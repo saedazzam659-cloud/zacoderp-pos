@@ -22,7 +22,7 @@ import {
 import {
   Plus, Pencil, Trash2, BookOpen, ArrowUpDown, ArrowUp, ArrowDown, CheckCircle2, FileText, Printer, Copy,
   FileSpreadsheet, FileDown, X, Calendar, Loader2, ChevronDown, Receipt, LayoutGrid, Award, Eye,
-  ShieldAlert, Globe2, Monitor, MapPin, User as UserIcon, Clock,
+  ShieldAlert, Globe2, Monitor, MapPin, User as UserIcon, Clock, RotateCcw,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -368,6 +368,51 @@ export default function JournalEntries() {
       .filter((e: any) => idSet.has(e.id) && e.status === "draft")
       .map((e: any) => e.id as number);
   }, [selectedIds, entries]);
+
+  // Subset of selectedIds whose status is currently "posted" — only those rows
+  // can actually be UN-posted (فك الترحيل). Mirror of draftSelectedIds so the
+  // bulk-unpost button shows the real count it will operate on.
+  const postedSelectedIds = useMemo(() => {
+    const idSet = new Set(selectedIds);
+    return (entries as any[])
+      .filter((e: any) => idSet.has(e.id) && e.status === "posted")
+      .map((e: any) => e.id as number);
+  }, [selectedIds, entries]);
+
+  /* ── Bulk UNPOST handler — flips every selected POSTED entry back to draft.
+        Server-side guards stay authoritative: locked source-doc JEs
+        (LOCKED_ENTRY_TYPES), FA-linked entries and closed-period entries are
+        rejected per-row and surface in the failure summary. ────────────── */
+  async function handleBulkUnpost() {
+    if (postedSelectedIds.length === 0) return;
+    if (!window.confirm(
+      `سيتم فك ترحيل ${postedSelectedIds.length} قيد — ستتحول إلى مسودة ويُلغى أثرها من كل التقارير حتى يُعاد ترحيلها. متابعة؟`
+    )) return;
+    const { ok, failures } = await bulkRun(
+      postedSelectedIds,
+      async (id) => { await journalEntriesApi.unpost(id); },
+    );
+    if (failures.length > 0) {
+      const periodLocked = failures.filter((m) =>
+        m.includes("مقفلة") || m.includes("مغلقة")
+      );
+      if (periodLocked.length === failures.length) {
+        window.alert(
+          `لا يمكن فك الترحيل في فترة مقفلة\n\n` +
+          `تم فك ترحيل ${ok} من ${postedSelectedIds.length} قيد. ` +
+          `${failures.length} قيد بتاريخ يقع داخل فترة مالية مقفلة.\n\n` +
+          `افتح "الفترات المالية" وأعد فتح الفترة المعنيّة، ثم أعد المحاولة.`
+        );
+      } else {
+        window.alert(
+          `فك ترحيل القيود: ${ok}/${postedSelectedIds.length}\n` +
+          `${failures.length} قيد فشل (قيود مصدرها مستند أو مرتبطة بأصل ثابت تُفك من شاشتها الأصلية):\n• ${failures.slice(0, 5).join("\n• ")}`,
+        );
+      }
+    } else if (ok > 0) {
+      window.alert(`تم فك ترحيل ${ok} قيد بنجاح`);
+    }
+  }
 
   /* ── Bulk post handler — flips every selected DRAFT entry to "posted".
         Server enforces balance, auto-lock and period guards so failures
@@ -1341,6 +1386,24 @@ ${wrapWithLetterhead(letterhead, sections)}
           >
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
             ترحيل ({draftSelectedIds.length})
+          </Button>
+          {/* Unpost (فك الترحيل) — only enabled when at least one selected row
+              is posted. Server guards reject locked source-doc / FA-linked /
+              closed-period entries per-row. */}
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-amber-600 hover:bg-amber-500 text-white"
+            onClick={handleBulkUnpost}
+            disabled={bulkBusy || postedSelectedIds.length === 0}
+            title={
+              postedSelectedIds.length === 0
+                ? "لا توجد قيود مرحّلة في التحديد لفك ترحيلها"
+                : `فك الترحيل (${postedSelectedIds.length})`
+            }
+            data-testid="bulk-unpost"
+          >
+            {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+            فك الترحيل ({postedSelectedIds.length})
           </Button>
           {/* Edit / Duplicate — single-row actions promoted from the row "_act"
               column into the bulk bar. They route to the form page for the one

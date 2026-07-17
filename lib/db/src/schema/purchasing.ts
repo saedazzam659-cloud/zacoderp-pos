@@ -142,6 +142,10 @@ export const purchaseInvoiceLinesTable = pgTable("purchase_invoice_lines", {
   finalCost:       numeric("final_cost",    { precision: 15, scale: 2 }).default("0"),
   accountId:       integer("account_id").references(() => accountsTable.id),
   warehouseId:     integer("warehouse_id"),
+  // OPTIONAL per-line cost-center CODE (text, mirrors journal_entry_lines.cost_center).
+  // When set, the /post JE builder groups this line's goods/expense debit under
+  // this cost center; when NULL the header costCenter keeps applying (unchanged).
+  costCenter:      text("cost_center"),
   batchNumber:     text("batch_number"),
   expiryDate:      date("expiry_date"),
   notes:           text("notes"),
@@ -258,6 +262,9 @@ export const purchaseReturnLinesTable = pgTable("purchase_return_lines", {
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:   numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
+  // OPTIONAL per-line cost-center CODE (Odoo-style analytic distribution).
+  // JE/reporting only — never enters ZATCA XML/QR. Empty ⇒ header costCenter.
+  costCenter:  text("cost_center"),
   notes:       text("notes"),
 });
 

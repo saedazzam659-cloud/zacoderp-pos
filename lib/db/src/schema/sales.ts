@@ -115,6 +115,11 @@ export const salesInvoiceLinesTable = pgTable("sales_invoice_lines", {
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:   numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
+  // OPTIONAL per-line cost-center CODE (text, mirrors journal_entry_lines.cost_center).
+  // When set, the /post JE builder groups this line's revenue credit under this
+  // cost center; when NULL the header costCenter keeps applying (unchanged).
+  // NEVER enters the ZATCA UBL XML / hash / QR — JE + reports only.
+  costCenter:  text("cost_center"),
   notes:       text("notes"),
   // Per-line promotion that influenced this line's price/discount
   // (line_pricing or buy_x_get_y). NULL when no offer applied to this line.

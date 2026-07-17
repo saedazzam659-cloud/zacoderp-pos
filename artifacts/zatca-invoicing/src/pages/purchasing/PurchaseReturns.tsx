@@ -70,6 +70,9 @@ interface ReturnLine {
   vatRate: string;
   lineTotal: string;
   notes: string;
+  // OPTIONAL per-line cost-center CODE (Odoo-style analytic distribution).
+  // Empty ⇒ falls back to the HEADER costCenter at JE time (unchanged behavior).
+  costCenter: string;
 }
 
 function newLine(): ReturnLine {
@@ -77,7 +80,7 @@ function newLine(): ReturnLine {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
     qty: "1", freeQty: "0", unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0",
-    notes: "",
+    notes: "", costCenter: "",
   };
 }
 
@@ -183,6 +186,14 @@ export default function PurchaseReturns() {
     queryKey: ["suppliers", cid],
     queryFn: () => fetchJsonArray(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, authH),
     enabled: !!user,
+  });
+
+  // مراكز التكلفة — for the OPTIONAL per-line cost-center picker.
+  const { data: costCentersList = [] } = useQuery<any[]>({
+    queryKey: ["cost-centers", cid],
+    queryFn: () => fetchJsonArray(`${API}/api/cost-centers?companyId=${cid}`, authH),
+    enabled: !!user && !!cid,
+    staleTime: 60_000,
   });
 
   const { data: invoices = [] } = useQuery<any[]>({
@@ -438,6 +449,7 @@ export default function PurchaseReturns() {
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal ?? "0"),
         notes:       l.notes ?? "",
+        costCenter:  l.costCenter ?? "",
       })) : (useTabbedLayout ? [] : [newLine()]));
       setShowForm(true);
     } catch (e: any) {
@@ -486,6 +498,7 @@ export default function PurchaseReturns() {
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal ?? "0"),
         notes:       l.notes ?? "",
+        costCenter:  l.costCenter ?? "",
       })) : (useTabbedLayout ? [] : [newLine()]));
       setShowForm(true);
       toast({ title: tr("toasts.duplicated") });
@@ -582,6 +595,8 @@ export default function PurchaseReturns() {
           vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal ?? 0),
           notes:       l.notes ?? "",
+          // Carry the source invoice line's cost center onto the return line.
+          costCenter:  l.costCenter ?? "",
         })));
       }
       if (opts.openForm) setShowForm(true);
@@ -1928,13 +1943,29 @@ ${sections}
                     </Button>
                   </div>
                   {(l.itemId || l.itemName || l.notes) && (
-                    <div className="mt-1.5 pr-[38px]">
+                    <div className="mt-1.5 pr-[38px] flex items-center gap-1.5">
                       <Input
-                        className="h-7 text-[11px] bg-muted/20 border-dashed"
+                        className="h-7 text-[11px] bg-muted/20 border-dashed flex-1"
                         placeholder={t("salesDocForm.notesPlaceholder")}
                         value={l.notes}
                         onChange={e => updateLine(l._id, "notes", e.target.value)}
                       />
+                      {/* OPTIONAL per-line cost center (توزيع تحليلي) — empty falls back to header */}
+                      {(costCentersList as any[]).length > 0 && (
+                        <select
+                          className="h-7 text-[11px] rounded-md border border-dashed bg-muted/20 px-1 max-w-[180px]"
+                          value={l.costCenter}
+                          title="مركز التكلفة للسطر (اختياري)"
+                          onChange={e => updateLine(l._id, "costCenter", e.target.value)}
+                        >
+                          <option value="">مركز التكلفة (رأس المستند)</option>
+                          {(costCentersList as any[])
+                            .filter((c: any) => c.isActive !== false)
+                            .map((c: any) => (
+                              <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
+                            ))}
+                        </select>
+                      )}
                     </div>
                   )}
                 </div>

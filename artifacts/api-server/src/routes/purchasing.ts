@@ -1179,6 +1179,8 @@ router.post("/purchase-invoices", async (req, res) => {
           finalCost: String(l.finalCost || "0"),
           accountId: l.accountId ? Number(l.accountId) : null,
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+          // OPTIONAL per-line cost-center CODE — JE/reporting only.
+          costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
           batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
           expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
           notes: l.notes || null,
@@ -1263,6 +1265,8 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             finalCost: String(l.finalCost || "0"),
             accountId: l.accountId ? Number(l.accountId) : null,
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+            // OPTIONAL per-line cost-center CODE — JE/reporting only.
+            costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
             batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
             expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
             notes: l.notes || null,
@@ -1374,18 +1378,25 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     // that same clearing account.
     const grnSourced = !!(inv as any).sourceGrnId;
 
-    // Update stock balance for each stockable line (in base units), accumulate inventory debit per warehouse
-    const inventoryByWarehouse: Record<number, number> = {};
-    const serviceCostByAccount: Record<number, number> = {}; // SERVICE: cost → item.costAccountId
+    // Update stock balance for each stockable line (in base units), accumulate inventory debit per warehouse.
+    // Keyed by "warehouseId|costCenterCode" — the OPTIONAL per-line cost center
+    // (Odoo-style analytic distribution) splits the goods debit per cost center;
+    // lines without one use "" and fall back to the header costCenter (unchanged).
+    const inventoryByWarehouse: Record<string, number> = {};
+    const whCcKey = (line: any) => `${line.warehouseId}|${((line as any).costCenter ?? "").toString().trim()}`;
+    // Composite `accountId|costCenterCode` key so the OPTIONAL per-line cost
+    // center survives service/category aggregation too; "" cc ⇒ header fallback.
+    const accCcKey = (accountId: number, line: any) => `${accountId}|${((line as any).costCenter ?? "").toString().trim()}`;
+    const serviceCostByAccount: Record<string, number> = {}; // SERVICE: cost → item.costAccountId (keyed acc|cc)
     const serviceMissing: string[] = [];                     // SERVICE lines lacking a cost account
     let serviceCostTotal = 0;
     // فئات الأصناف routing buckets:
     //   groupNoStockByAccount — asset/expense categories: debit, NO stock move
     //   groupInvByAccount     — inventory categories: debit the CATEGORY account
     //                           (stock movement still happens per warehouse)
-    const groupNoStockByAccount: Record<number, number> = {};
+    const groupNoStockByAccount: Record<string, number> = {}; // keyed acc|cc
     let groupNoStockTotal = 0;
-    const groupInvByAccount: Record<number, number> = {};
+    const groupInvByAccount: Record<string, number> = {};     // keyed acc|cc
     let groupInvTotal = 0;
     const costRefreshItemIds = new Set<number>();
     for (const line of lines) {
@@ -1396,7 +1407,8 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         const r = groupRoutingForItem(line.itemId)!;
         const cost = Number(line.finalCost || line.unitPrice);
         if (cost <= 0) continue;
-        groupNoStockByAccount[r.accountId] = (groupNoStockByAccount[r.accountId] ?? 0) + cost;
+        const gk = accCcKey(r.accountId, line);
+        groupNoStockByAccount[gk] = (groupNoStockByAccount[gk] ?? 0) + cost;
         groupNoStockTotal += cost;
         continue;
       }
@@ -1408,7 +1420,8 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         if (svcCost <= 0) continue;
         const acc = costAccById.get(line.itemId) ?? null;
         if (!acc) { serviceMissing.push(line.itemName ?? `صنف #${line.itemId}`); continue; }
-        serviceCostByAccount[acc] = (serviceCostByAccount[acc] ?? 0) + svcCost;
+        const sk = accCcKey(acc, line);
+        serviceCostByAccount[sk] = (serviceCostByAccount[sk] ?? 0) + svcCost;
         serviceCostTotal += svcCost;
         continue;
       }
@@ -1425,10 +1438,11 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       // warehouse-derived one (stock movement below is identical either way).
       const invRouting = groupRoutingForItem(line.itemId);
       if (invRouting && invRouting.type === "inventory") {
-        groupInvByAccount[invRouting.accountId] = (groupInvByAccount[invRouting.accountId] ?? 0) + cost;
+        const ik = accCcKey(invRouting.accountId, line);
+        groupInvByAccount[ik] = (groupInvByAccount[ik] ?? 0) + cost;
         groupInvTotal += cost;
       } else {
-        inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + cost;
+        inventoryByWarehouse[whCcKey(line)] = (inventoryByWarehouse[whCcKey(line)] ?? 0) + cost;
       }
 
       if (grnSourced) continue;
@@ -1525,9 +1539,9 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       if (!clearingAccId) missing.push("حساب وسيط الاستلام");
     } else {
       const missingWh: string[] = [];
-      for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
+      for (const [key, amt] of Object.entries(inventoryByWarehouse)) {
         if (amt <= 0) continue;
-        const wid = Number(widStr);
+        const wid = Number(key.split("|")[0]);
         if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
       }
       if (missingWh.length) missing.push(`حساب المخزون لـ: ${missingWh.join("، ")}`);
@@ -1545,23 +1559,23 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     // warehouse-inventory debits; service gets per-item cost-account debits.
     const goodsCostTotal = Object.values(inventoryByWarehouse).reduce((s, v) => s + v, 0);
     const allCostTotal   = goodsCostTotal + serviceCostTotal + groupNoStockTotal + groupInvTotal;
-    const inventoryDebitByWh: Record<number, number> = {};
-    const serviceDebitByAccount: Record<number, number> = {};
-    const groupNoStockDebitByAccount: Record<number, number> = {};
-    const groupInvDebitByAccount: Record<number, number> = {};
+    const inventoryDebitByWh: Record<string, number> = {}; // keyed "warehouseId|costCenterCode"
+    const serviceDebitByAccount: Record<string, number> = {};      // keyed acc|cc
+    const groupNoStockDebitByAccount: Record<string, number> = {}; // keyed acc|cc
+    const groupInvDebitByAccount: Record<string, number> = {};     // keyed acc|cc
     if (allCostTotal > 0) {
       const ratio = inventoryDebit / allCostTotal;
-      for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
-        inventoryDebitByWh[Number(widStr)] = amt * ratio;
+      for (const [key, amt] of Object.entries(inventoryByWarehouse)) {
+        inventoryDebitByWh[key] = amt * ratio;
       }
-      for (const [accStr, amt] of Object.entries(serviceCostByAccount)) {
-        serviceDebitByAccount[Number(accStr)] = amt * ratio;
+      for (const [key, amt] of Object.entries(serviceCostByAccount)) {
+        serviceDebitByAccount[key] = amt * ratio;
       }
-      for (const [accStr, amt] of Object.entries(groupNoStockByAccount)) {
-        groupNoStockDebitByAccount[Number(accStr)] = amt * ratio;
+      for (const [key, amt] of Object.entries(groupNoStockByAccount)) {
+        groupNoStockDebitByAccount[key] = amt * ratio;
       }
-      for (const [accStr, amt] of Object.entries(groupInvByAccount)) {
-        groupInvDebitByAccount[Number(accStr)] = amt * ratio;
+      for (const [key, amt] of Object.entries(groupInvByAccount)) {
+        groupInvDebitByAccount[key] = amt * ratio;
       }
       // Fix rounding drift so ALL debits (goods + service + category-routed)
       // exactly sum to inventoryDebit — prefer the last group/service account,
@@ -1575,12 +1589,12 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         const grpNsKeys = Object.keys(groupNoStockDebitByAccount);
         const grpInvKeys = Object.keys(groupInvDebitByAccount);
         const svcKeys = Object.keys(serviceDebitByAccount);
-        if (grpNsKeys.length) groupNoStockDebitByAccount[Number(grpNsKeys[grpNsKeys.length - 1])] += drift;
-        else if (grpInvKeys.length) groupInvDebitByAccount[Number(grpInvKeys[grpInvKeys.length - 1])] += drift;
-        else if (svcKeys.length) serviceDebitByAccount[Number(svcKeys[svcKeys.length - 1])] += drift;
+        if (grpNsKeys.length) groupNoStockDebitByAccount[grpNsKeys[grpNsKeys.length - 1]] += drift;
+        else if (grpInvKeys.length) groupInvDebitByAccount[grpInvKeys[grpInvKeys.length - 1]] += drift;
+        else if (svcKeys.length) serviceDebitByAccount[svcKeys[svcKeys.length - 1]] += drift;
         else {
           const lastKey = Object.keys(inventoryDebitByWh).pop();
-          if (lastKey) inventoryDebitByWh[Number(lastKey)] += drift;
+          if (lastKey) inventoryDebitByWh[lastKey] += drift;
         }
       }
     }
@@ -1592,30 +1606,48 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     // SERVICE cost debits (به: حساب تكلفة الصنف الخدمي) — appended to both the
     // GRN and non-GRN debit sets. For GRN the clearing debit absorbs only the
     // GOODS slice (inventoryDebit − servicePortionTotal).
+    const splitAccCc = (key: string) => {
+      const sep = key.indexOf("|");
+      return sep === -1
+        ? { accountId: Number(key), cc: "" }
+        : { accountId: Number(key.slice(0, sep)), cc: key.slice(sep + 1) };
+    };
     const serviceDebitLines: JLine[] = Object.entries(serviceDebitByAccount)
       .filter(([, amt]) => amt > 0)
-      .map(([accStr, amt]) => ({
-        accountId: Number(accStr),
-        debit: amt,
-        description: "تكلفة صنف خدمي",
-      }));
+      .map(([key, amt]) => {
+        const { accountId, cc } = splitAccCc(key);
+        return {
+          accountId,
+          debit: amt,
+          description: "تكلفة صنف خدمي",
+          ...(cc ? { costCenter: cc } : {}),
+        };
+      });
     // فئات الأصناف debit lines: asset/expense categories (no stock) + inventory
     // categories (stock moved, debit hits the category's own account).
     const groupDebitLines: JLine[] = [
       ...Object.entries(groupNoStockDebitByAccount)
         .filter(([, amt]) => amt > 0)
-        .map(([accStr, amt]) => ({
-          accountId: Number(accStr),
-          debit: amt,
-          description: "توجيه فئة الصنف (أصل/مصروف)",
-        })),
+        .map(([key, amt]) => {
+          const { accountId, cc } = splitAccCc(key);
+          return {
+            accountId,
+            debit: amt,
+            description: "توجيه فئة الصنف (أصل/مصروف)",
+            ...(cc ? { costCenter: cc } : {}),
+          };
+        }),
       ...Object.entries(groupInvDebitByAccount)
         .filter(([, amt]) => amt > 0)
-        .map(([accStr, amt]) => ({
-          accountId: Number(accStr),
-          debit: amt,
-          description: "قيمة البضاعة — حساب فئة الصنف",
-        })),
+        .map(([key, amt]) => {
+          const { accountId, cc } = splitAccCc(key);
+          return {
+            accountId,
+            debit: amt,
+            description: "قيمة البضاعة — حساب فئة الصنف",
+            ...(cc ? { costCenter: cc } : {}),
+          };
+        }),
     ];
     const debitLines: JLine[] = grnSourced
       ? [
@@ -1628,12 +1660,15 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       : [
           ...Object.entries(inventoryDebitByWh)
             .filter(([, amt]) => amt > 0)
-            .map(([widStr, amt]) => {
+            .map(([key, amt]) => {
+              const [widStr, cc] = key.split("|");
               const wid = Number(widStr);
               return {
                 accountId: whInfo[wid]!.accountId!,
                 debit: amt,
                 description: `قيمة البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+                // Per-line cost center (optional) — "" falls back to header via createJournalEntry.
+                ...(cc ? { costCenter: cc } : {}),
               };
             }),
           ...serviceDebitLines,
@@ -2443,7 +2478,10 @@ router.post("/purchase-returns", async (req, res) => {
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           vatRate: String(l.vatRate || resolvedRate),
-          lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
+          lineTotal: String(l.lineTotal || "0"),
+          // OPTIONAL per-line cost-center CODE — JE/reporting only.
+          costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
+          notes: l.notes || null,
         }))
       );
     }
@@ -2508,7 +2546,10 @@ router.put("/purchase-returns/:id", async (req, res) => {
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
             vatRate: String(l.vatRate || resolvedRate),
-            lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
+            lineTotal: String(l.lineTotal || "0"),
+            // OPTIONAL per-line cost-center CODE — JE/reporting only.
+            costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
+            notes: l.notes || null,
           }))
         );
       }
@@ -2622,7 +2663,9 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       retModeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
     }
 
-    const inventoryByWarehouse: Record<number, number> = {};
+    // Keyed by "warehouseId|costCenterCode" — the OPTIONAL per-line cost center
+    // splits the inventory credit per cost center; "" falls back to header cc.
+    const inventoryByWarehouse: Record<string, number> = {};
     // Cross-line bucket consumption — duplicate (item, warehouse) lines in
     // the same return must share a batch's returnable headroom. Without
     // this, both lines would see the same `alreadyByBucket` snapshot and
@@ -2751,7 +2794,8 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       }
 
       const lineRemovedCost = parts.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
-      inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + lineRemovedCost;
+      const whCcKey = `${line.warehouseId}|${(((line as any).costCenter ?? "") as string).toString().trim()}`;
+      inventoryByWarehouse[whCcKey] = (inventoryByWarehouse[whCcKey] ?? 0) + lineRemovedCost;
 
       const wac = qty > 0 ? lineRemovedCost / qty : costUnit;
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, wac);
@@ -2804,9 +2848,9 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     if (!counterpartyAccountId) missing.push(ret.paymentType === "cash" ? "حساب الخزنة" : ret.paymentType === "bank" ? "الحساب البنكي" : "حساب المورد");
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
-    for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
+    for (const [key, amt] of Object.entries(inventoryByWarehouse)) {
       if (amt <= 0) continue;
-      const wid = Number(widStr);
+      const wid = Number(key.split("|")[0]);
       if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
     }
     if (missingWh.length) missing.push(`حساب المخزون لـ: ${missingWh.join("، ")}`);
@@ -2837,12 +2881,12 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     }
 
     // Build inventory credits at actual cost; nudge sub-cent drift only.
-    const inventoryCreditByWh: Record<number, number> = { ...inventoryByWarehouse };
+    const inventoryCreditByWh: Record<string, number> = { ...inventoryByWarehouse };
     if (!needsVarianceLine && Math.abs(varianceDelta) > 0) {
       // Sub-cent rounding — push the leftover into the last inventory line
       // so the JE still balances without needing a variance account.
       const lastKey = Object.keys(inventoryCreditByWh).pop();
-      if (lastKey) inventoryCreditByWh[Number(lastKey)] += varianceDelta;
+      if (lastKey) inventoryCreditByWh[lastKey] += varianceDelta;
     }
 
     const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
@@ -2868,12 +2912,15 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
         // exactly to the stock subledger.
         ...Object.entries(inventoryCreditByWh)
           .filter(([, amt]) => amt > 0)
-          .map(([widStr, amt]) => {
+          .map(([key, amt]) => {
+            const [widStr, cc] = key.split("|");
             const wid = Number(widStr);
             return {
               accountId: whInfo[wid]!.accountId!,
               credit: amt,
               description: `ارتجاع البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+              // Per-line cost center (optional) — "" falls back to header via createJournalEntry.
+              ...(cc ? { costCenter: cc } : {}),
             };
           }),
         { accountId: taxAccId,                        credit: vatAmount,      description: "إلغاء ضريبة القيمة المضافة" },

@@ -97,6 +97,10 @@ interface DocLine {
   // enters the ZATCA UBL XML, hash, QR, or ICV/PIH chain.
   brandId: number | null;
   brandName: string;
+  // OPTIONAL per-line cost-center CODE (Odoo-style analytic distribution).
+  // Empty ⇒ falls back to the HEADER costCenter at JE time. JE/reporting
+  // only — NEVER enters the ZATCA UBL XML, hash, QR, or ICV/PIH chain.
+  costCenter: string;
 }
 
 function newLine(): DocLine {
@@ -109,6 +113,7 @@ function newLine(): DocLine {
     engineUnitPrice: null, engineDiscount: null,
     baseUnitPrice: "0",
     brandId: null, brandName: "",
+    costCenter: "",
   };
 }
 
@@ -479,6 +484,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal),
         notes:       l.notes ?? "",
+        costCenter:  "",
         // Quotations don't carry offer-engine state — start with a clean
         // slate and let the invoice's own match cycle re-evaluate.
         appliedOfferId:   null,
@@ -841,6 +847,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
       lineTotal:   String(l.lineTotal),
       notes:       l.notes ?? "",
+      costCenter:  l.costCenter ?? "",
       // Carry forward the historical offer link so the badge shows on edit.
       // The auto-match effect may overwrite this with a fresh decision when
       // the cart still qualifies, or clear it when conditions changed.
@@ -919,6 +926,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal),
           notes:       l.notes ?? "",
+          costCenter:  l.costCenter ?? "",
           // Don't carry the historical offer onto a duplicate — the new
           // invoice will get a fresh match cycle.
           appliedOfferId:   null,
@@ -2041,6 +2049,24 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <Input className="h-7 text-[11px]" placeholder={t("salesDocForm.notesPlaceholder") as string} value={l.notes}
                       onChange={e => updateLine(l._id, "notes", e.target.value)}
                       data-testid={`input-line-notes-${l._id}`} />
+                    {/* OPTIONAL per-line cost center (توزيع تحليلي) — invoice mode only.
+                        Empty = fall back to the HEADER costCenter. Never enters ZATCA XML/QR. */}
+                    {isInvoice && (costCentersList as any[]).length > 0 && (
+                      <select
+                        className="h-7 text-[11px] rounded-md border border-dashed bg-muted/20 px-1 max-w-[180px] shrink-0"
+                        value={l.costCenter}
+                        title="مركز التكلفة للسطر (اختياري)"
+                        data-testid={`select-line-cost-center-${l._id}`}
+                        onChange={e => updateLine(l._id, "costCenter", e.target.value)}
+                      >
+                        <option value="">مركز التكلفة (رأس المستند)</option>
+                        {(costCentersList as any[])
+                          .filter((c: any) => c.isActive !== false)
+                          .map((c: any) => (
+                            <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
+                          ))}
+                      </select>
+                    )}
                   </div>
                 </div>
                 );
@@ -2407,6 +2433,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         vatRate: String(item.vatRate ?? "15"),
         lineTotal: "0",
         notes: "",
+        costCenter: "",
         appliedOfferId: null,
         appliedOfferName: null,
         engineUnitPrice: null,

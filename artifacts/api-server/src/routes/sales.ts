@@ -619,6 +619,8 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number, fallbackRate = "
     discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
     vatRate:     String(l.vatRate   || fallbackRate),
     lineTotal:   String(l.lineTotal || "0"),
+    // OPTIONAL per-line cost-center CODE — JE/reporting only, NEVER in ZATCA XML.
+    costCenter:  l.costCenter ? String(l.costCenter).trim() || null : null,
     notes:       l.notes || null,
     // Audit trail link to the line-level promotion that produced this
     // discount / unit-price (line_pricing or buy_x_get_y). NULL when the
@@ -1416,7 +1418,11 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     // account; the remainder of gross revenue stays on the main sales account.
     // Discount keeps flowing through the discount debit exactly as for goods,
     // so total revenue credits still sum to grossSubtotalAmt (JE stays balanced).
-    const serviceRevenueByAccount: Record<number, number> = {};
+    // Keyed by `accountId|costCenterCode` so a per-line cost center (Odoo-style
+    // analytic distribution) survives the aggregation. Empty cc ⇒ "acc|" bucket
+    // → emitted WITHOUT costCenter → falls back to the header cost center
+    // exactly as before (no behavior change when no line carries a cc).
+    const serviceRevenueByAccount: Record<string, number> = {};
     for (const ln of lines) {
       if (!isServiceLine(ln)) continue;
       const acc = revAccById.get(ln.itemId as number) ?? null;
@@ -1430,7 +1436,8 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       }
       gross = Math.round(gross * 100) / 100;
       if (gross <= 0) continue;
-      serviceRevenueByAccount[acc] = Math.round(((serviceRevenueByAccount[acc] ?? 0) + gross) * 100) / 100;
+      const svcKey = `${acc}|${typeof (ln as any).costCenter === "string" ? (ln as any).costCenter.trim() : ""}`;
+      serviceRevenueByAccount[svcKey] = Math.round(((serviceRevenueByAccount[svcKey] ?? 0) + gross) * 100) / 100;
     }
     // `serviceRevenueByAccount` is the SINGLE SOURCE OF TRUTH for the service
     // credit lines. Reconcile its sum against grossSubtotalAmt so that
@@ -1442,12 +1449,69 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     if (serviceRevenueTotal > grossSubtotalAmt) {
       const overflow = Math.round((serviceRevenueTotal - grossSubtotalAmt) * 100) / 100;
       const keys = Object.keys(serviceRevenueByAccount);
-      const lastK = Number(keys[keys.length - 1]);
+      const lastK = keys[keys.length - 1];
       serviceRevenueByAccount[lastK] = Math.round((serviceRevenueByAccount[lastK] - overflow) * 100) / 100;
       if (serviceRevenueByAccount[lastK] <= 0) delete serviceRevenueByAccount[lastK];
       serviceRevenueTotal = Math.round(Object.values(serviceRevenueByAccount).reduce((s, v) => s + v, 0) * 100) / 100;
     }
     const mainRevenueAmt = Math.round((grossSubtotalAmt - serviceRevenueTotal) * 100) / 100;
+
+    // ── OPTIONAL per-line cost-center split (Odoo-style analytic distribution) ──
+    // Group each NON-service line's gross revenue (qty × unitPrice, pre-discount,
+    // VAT-exclusive — same basis as the service split above) by the line's own
+    // costCenter code. Lines WITHOUT a cost center fall into the "" bucket, which
+    // is emitted with costCenter undefined → createJournalEntry falls back to the
+    // header costCenter exactly as before. When NO line carries a cost center the
+    // result is a single "" bucket = one revenue line — byte-identical behavior.
+    const mainRevenueByCc: Record<string, number> = {};
+    for (const ln of lines) {
+      if (isServiceLine(ln) && revAccById.get(ln.itemId as number)) continue; // routed to service revenue
+      const qty   = Number(ln.qty) || 0;
+      const price = Number(ln.unitPrice) || 0;
+      let gross = qty * price;
+      if (priceIncludesVat) {
+        const rate = (Number(ln.vatRate) || 0) / 100;
+        if (rate > -1) gross = gross / (1 + rate);
+      }
+      if (gross <= 0) continue;
+      const cc = ((ln as any).costCenter ?? "").toString().trim();
+      mainRevenueByCc[cc] = (mainRevenueByCc[cc] ?? 0) + gross;
+    }
+    // Scale the buckets so they sum EXACTLY to mainRevenueAmt (absorbs rounding
+    // and any drift vs the header subtotal); drift lands on the last bucket.
+    const mainRevenueLines: JLine[] = [];
+    {
+      const rawTotal = Object.values(mainRevenueByCc).reduce((s, v) => s + v, 0);
+      const ccKeys = Object.keys(mainRevenueByCc);
+      if (mainRevenueAmt > 0) {
+        if (rawTotal <= 0 || ccKeys.length <= 1) {
+          // No usable per-line breakdown (or a single bucket) → one line, as before.
+          const onlyCc = ccKeys.length === 1 ? ccKeys[0] : "";
+          mainRevenueLines.push({
+            accountId: salesAccId, credit: mainRevenueAmt, description: "إيراد المبيعات",
+            ...(onlyCc ? { costCenter: onlyCc } : {}),
+          });
+        } else {
+          let running = 0;
+          ccKeys.forEach((cc, idx) => {
+            let portion = Math.round((mainRevenueAmt * (mainRevenueByCc[cc] / rawTotal)) * 100) / 100;
+            if (idx === ccKeys.length - 1) portion = Math.round((mainRevenueAmt - running) * 100) / 100;
+            running = Math.round((running + portion) * 100) / 100;
+            if (portion <= 0) {
+              // Rounding pushed this bucket to ≤0 — fold the residual into the
+              // previous line so credits still sum EXACTLY to mainRevenueAmt.
+              const prev = mainRevenueLines[mainRevenueLines.length - 1];
+              if (prev && portion < 0) prev.credit = Math.round(((prev.credit ?? 0) + portion) * 100) / 100;
+              return;
+            }
+            mainRevenueLines.push({
+              accountId: salesAccId, credit: portion, description: "إيراد المبيعات",
+              ...(cc ? { costCenter: cc } : {}),
+            });
+          });
+        }
+      }
+    }
 
     const partyAccountId =
       inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
@@ -1503,12 +1567,24 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
             { accountId: discountAccId, debit: discountAmt, description: "خصم مسموح به" },
             // COGS only when there is cost (stock items); SERVICE-only invoices skip it.
             ...(totalCogs > 0 ? [{ accountId: cogsAccId, debit: totalCogs, description: "تكلفة البضاعة المباعة" }] : []),
-            // Credits — main sales revenue (excl. service-routed revenue)
-            ...(mainRevenueAmt > 0 ? [{ accountId: salesAccId, credit: mainRevenueAmt, description: "إيراد المبيعات" }] : []),
+            // Credits — main sales revenue (excl. service-routed revenue),
+            // split per line-level cost center when present (else one line).
+            ...mainRevenueLines,
             // Service revenue → each service item's own revenue account (e.g. مشاريع تحت التنفيذ)
             ...Object.entries(serviceRevenueByAccount)
               .filter(([, amt]) => amt > 0)
-              .map(([accStr, amt]) => ({ accountId: Number(accStr), credit: amt, description: "إيراد صنف خدمي" })),
+              .map(([key, amt]) => {
+                const sep = key.indexOf("|");
+                const accStr = sep === -1 ? key : key.slice(0, sep);
+                const cc = sep === -1 ? "" : key.slice(sep + 1);
+                return {
+                  accountId: Number(accStr),
+                  credit: amt,
+                  description: "إيراد صنف خدمي",
+                  // Per-line cost center wins; empty → header fallback downstream.
+                  ...(cc ? { costCenter: cc } : {}),
+                };
+              }),
             { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
             // Inventory: one credit line per warehouse using its own GL account
             ...Object.entries(cogsByWarehouse)

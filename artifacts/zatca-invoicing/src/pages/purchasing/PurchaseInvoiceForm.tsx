@@ -59,6 +59,9 @@ interface InvoiceLine {
   batchNumber: string;
   expiryDate: string;
   notes: string;
+  // OPTIONAL per-line cost-center CODE (Odoo-style analytic distribution).
+  // Empty ⇒ falls back to the HEADER costCenter at JE time (unchanged behavior).
+  costCenter: string;
 }
 
 function newLine(): InvoiceLine {
@@ -67,6 +70,7 @@ function newLine(): InvoiceLine {
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
     qty: "1", freeQty: "0", weight: "0", unitPrice: "0", discount: "0", vatRate: "15",
     lineTotal: "0", expenseShare: "0", finalCost: "0", batchNumber: "", expiryDate: "", notes: "",
+    costCenter: "",
   };
 }
 
@@ -474,6 +478,7 @@ export default function PurchaseInvoiceForm() {
       batchNumber: l.batchNumber ?? "",
       expiryDate:  l.expiryDate  ?? "",
       notes:       l.notes ?? "",
+      costCenter:  l.costCenter ?? "",
     })) : (useTabbedLayout ? [] : [newLine()]));
   }, [existing]);
 
@@ -530,6 +535,7 @@ export default function PurchaseInvoiceForm() {
           batchNumber: l.batchNumber ?? "",
           expiryDate:  l.expiryDate  ?? "",
           notes:       l.notes ?? "",
+          costCenter:  l.costCenter ?? "",
         })) : (useTabbedLayout ? [] : [newLine()]));
         toast({ title: tr("duplicated") });
         const url = new URL(window.location.href);
@@ -1738,13 +1744,29 @@ export default function PurchaseInvoiceForm() {
                       </Button>
                     </div>
                     {(l.itemId || l.itemName || l.notes) && (
-                      <div className="mt-1.5 pr-[38px]">
+                      <div className="mt-1.5 pr-[38px] flex items-center gap-1.5">
                         <Input
-                          className="h-7 text-[11px] bg-muted/20 border-dashed"
+                          className="h-7 text-[11px] bg-muted/20 border-dashed flex-1"
                           placeholder={t("salesDocForm.notesPlaceholder")}
                           value={l.notes}
                           onChange={e => updateLine(l._id, "notes", e.target.value)}
                         />
+                        {/* OPTIONAL per-line cost center (توزيع تحليلي) — empty falls back to header */}
+                        {(costCentersList as any[]).length > 0 && (
+                          <select
+                            className="h-7 text-[11px] rounded-md border border-dashed bg-muted/20 px-1 max-w-[180px]"
+                            value={l.costCenter}
+                            title="مركز التكلفة للسطر (اختياري)"
+                            onChange={e => updateLine(l._id, "costCenter", e.target.value)}
+                          >
+                            <option value="">مركز التكلفة (رأس المستند)</option>
+                            {(costCentersList as any[])
+                              .filter((c: any) => c.isActive !== false)
+                              .map((c: any) => (
+                                <option key={c.id} value={c.code}>{c.code} — {c.nameAr ?? c.nameEn ?? ""}</option>
+                              ))}
+                          </select>
+                        )}
                       </div>
                     )}
                   </div>
