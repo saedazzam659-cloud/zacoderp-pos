@@ -224,7 +224,14 @@ export default function FixedAssets() {
     // Compute "changed" from the CURRENT form state in the handler (not inside
     // the setForm updater) so the updater stays pure/StrictMode-safe.
     const changed = !!form.categoryId && String(catId) !== String(form.categoryId);
-    const force = changed; // deliberate switch ⇒ take the new category's data
+    // Force-apply the category defaults when:
+    //  • switching FROM one category TO another (create or edit), OR
+    //  • EDIT mode and picking ANY category while the asset had none
+    //    (openEdit marks all dep fields "touched", so without force a
+    //    no-category → category pick would silently change nothing — the
+    //    reported "picked the 5y category but the asset kept 10y" bug).
+    // Create-mode first pick keeps the gentle fill-untouched-only behavior.
+    const force = changed || (!!editing && !!catId && String(catId) !== String(form.categoryId));
     setForm(f => {
       const next: typeof f = { ...f, categoryId: catId };
       if (!cat) return next;
@@ -248,7 +255,7 @@ export default function FixedAssets() {
     });
     // After a switch, treat the dep fields as fresh category defaults so a
     // later purchase-value change can still recompute a percent-type scrap.
-    if (changed && cat) setDepTouched({ lifeYears:false, depreciationMethod:false, scrapValue:false });
+    if (force && cat) setDepTouched({ lifeYears:false, depreciationMethod:false, scrapValue:false });
   }
 
   // Percent-scrap categories compute scrap from purchase value; if the user
