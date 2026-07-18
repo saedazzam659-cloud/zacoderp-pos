@@ -12,7 +12,7 @@ import {
 import { eq, and, or, desc, inArray, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
-import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { loadMappings, pickAccount, resolveVatInputAccountId } from "../lib/accountingMappings.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -181,15 +181,19 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
   // Pre-resolve so audit posted_* fields are stamped only when the
   // tenant's auto-post setting actually puts the JE in "posted" status.
   const jeStatus = await resolvePostingStatus(cid, "payment");
-  // JE draws its own continuous "journal_entry" number; the voucher code
-  // stays in the description + source link. Falls back to the voucher code.
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-    userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
-    branchId: v.branchId ?? null, docDate: v.date as any,
-  })) ?? v.code;
   // Atomic: header + all lines commit together, so a mid-way failure never
   // strands an orphan (zero-balance) journal entry.
   const entryId = await db.transaction(async (tx) => {
+    // JE number: reuse the number reserved at unpost time (edit→repost keeps
+    // the SAME journal-entry number, e.g. 1727 stays 1727), else draw the next
+    // continuous "journal_entry" number. Falls back to the voucher code.
+    // Resolved INSIDE the tx (dx: tx) so a rollback restores the reservation.
+    const jeDocNumber = (await resolveJeNumber({
+      companyId: cid, sourceType: "payment_voucher", sourceId: v.id,
+      userId: (req as any).authUser?.id ?? null,
+      branchId: v.branchId ?? null, docDate: v.date as any,
+      dx: tx,
+    })) ?? v.code;
     const [entry] = await tx.insert(journalEntriesTable).values({
       companyId: cid, branchId: v.branchId ?? null,
       docNumber: jeDocNumber, entryDate: v.date,
@@ -702,6 +706,9 @@ router.post("/:id/unpost", requireAdminRole, async (req, res) => {
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status !== "posted") { res.status(400).json({ error: "السند ليس مرحّلاً" }); return; }
   if (existing.journalEntryId) {
+    // Stash the JE number BEFORE deleting so the next post (after an edit)
+    // reuses the SAME journal-entry number instead of burning a fresh one.
+    await reserveJeNumberFromEntry(cid, "payment_voucher", id, existing.journalEntryId);
     await db.delete(journalEntriesTable).where(and(
       eq(journalEntriesTable.id, existing.journalEntryId),
       eq(journalEntriesTable.companyId, cid),

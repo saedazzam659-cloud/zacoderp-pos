@@ -20,7 +20,7 @@ import {
 import { eq, and, desc, sql, inArray, gte, lte, lt } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -387,8 +387,9 @@ router.post("/transfers/:id/post", async (req, res) => {
 
   const desc = `تحويل لشركة شقيقة ${tr.transferNumber} - ${sister.nameAr}`;
   const jeStatus = await resolvePostingStatus(cid, "stockMovement");
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-    userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+  const jeDocNumber = (await resolveJeNumber({
+    companyId: cid, sourceType: "sister_transfer", sourceId: tr.id,
+    userId: (req as any).authUser?.id ?? null,
     branchId: tr.branchId ?? null, docDate: tr.transferDate as any,
   })) ?? tr.transferNumber;
   const [entry] = await db.insert(journalEntriesTable).values({
@@ -476,6 +477,8 @@ router.post("/transfers/:id/unpost", async (req, res) => {
 
       // Reverse JE.
       if (tr.journalEntryId) {
+        // Stash the JE number BEFORE deleting so a later repost reuses it.
+        await reserveJeNumberFromEntry(cid, "sister_transfer", id, tr.journalEntryId, tx);
         await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, tr.journalEntryId));
         await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, tr.journalEntryId), eq(journalEntriesTable.companyId, cid)));
       }
@@ -742,8 +745,9 @@ router.post("/returns/:id/post", async (req, res) => {
 
   const desc = `مرتجع تحويل شركة شقيقة ${ret.returnNumber} - ${sister.nameAr}`;
   const jeStatus = await resolvePostingStatus(cid, "stockMovement");
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-    userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+  const jeDocNumber = (await resolveJeNumber({
+    companyId: cid, sourceType: "sister_return", sourceId: ret.id,
+    userId: (req as any).authUser?.id ?? null,
     branchId: ret.branchId ?? null, docDate: ret.returnDate as any,
   })) ?? ret.returnNumber;
   const [entry] = await db.insert(journalEntriesTable).values({
@@ -819,6 +823,8 @@ router.post("/returns/:id/unpost", async (req, res) => {
       }
 
       if (ret.journalEntryId) {
+        // Stash the JE number BEFORE deleting so a later repost reuses it.
+        await reserveJeNumberFromEntry(cid, "sister_return", id, ret.journalEntryId, tx);
         await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
         await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
       }
@@ -993,8 +999,9 @@ router.post("/settlements/:id/post", async (req, res) => {
   const isReceive = v.direction === "receive";
   const desc = `${isReceive ? "تحصيل من" : "سداد إلى"} ${sister.nameAr} - ${v.code}`;
   const jeStatus = await resolvePostingStatus(cid, "receipt");
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-    userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+  const jeDocNumber = (await resolveJeNumber({
+    companyId: cid, sourceType: "sister_settlement", sourceId: v.id,
+    userId: (req as any).authUser?.id ?? null,
     branchId: v.branchId ?? null, docDate: v.date as any,
   })) ?? v.code;
   const [entry] = await db.insert(journalEntriesTable).values({
@@ -1046,6 +1053,8 @@ router.post("/settlements/:id/unpost", async (req, res) => {
       if (!claimed.length) throw new Error("تم تغيير حالة السند بواسطة عملية أخرى");
 
       if (v.journalEntryId) {
+        // Stash the JE number BEFORE deleting so a later repost reuses it.
+        await reserveJeNumberFromEntry(cid, "sister_settlement", id, v.journalEntryId, tx);
         await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, v.journalEntryId));
         await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
       }

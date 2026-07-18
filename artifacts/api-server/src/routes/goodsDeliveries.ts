@@ -15,7 +15,7 @@ import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { loadMappings } from "../lib/accountingMappings.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
-import { nextSequenceNumber, nextSequenceForPayment } from "../lib/sequences.js";
+import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
@@ -614,11 +614,14 @@ router.patch("/:id/post", async (req, res) => {
           throw err;
         }
         const gdStatus = await resolvePostingStatus(cid, "goodsDelivery");
-        // JE draws its own continuous "journal_entry" number; the GD number
-        // stays in the description + source link. Falls back to the GD number.
-        const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-          userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+        // JE number: reuse the number reserved at unpost time (edit→repost
+        // keeps the SAME journal-entry number), else draw the next continuous
+        // "journal_entry" number. Falls back to the GD number.
+        const jeDocNumber = (await resolveJeNumber({
+          companyId: cid, sourceType: "goods_delivery", sourceId: gd.id,
+          userId: (req as any).authUser?.id ?? null,
           branchId: gd.branchId ?? null, docDate: gd.deliveryDate as any,
+          dx: tx,
         })) ?? (gd.docNumber ?? null);
         const [entry] = await tx.insert(journalEntriesTable).values({
           companyId:    cid,
@@ -730,6 +733,9 @@ router.patch("/:id/unpost", requireAdminRole, async (req, res) => {
         ));
 
       if (gd.journalEntryId) {
+        // Stash the JE number BEFORE deleting so a later repost reuses the
+        // SAME journal-entry number instead of burning a fresh one.
+        await reserveJeNumberFromEntry(cid, "goods_delivery", id, gd.journalEntryId, tx);
         await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, gd.journalEntryId));
         await tx.delete(journalEntriesTable).where(and(
           eq(journalEntriesTable.id, gd.journalEntryId),

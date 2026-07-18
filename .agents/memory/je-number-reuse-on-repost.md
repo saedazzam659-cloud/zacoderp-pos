@@ -43,10 +43,15 @@ counter back or mint a duplicate.
   an orphaned reservation could be consumed by a different logical doc — low
   frequency, accepted.
 - Wired for `purchase_invoice`, `purchase_return`, `sales_invoice`,
-  `sales_return` (via the shared `createJournalEntry` in purchasing.ts/sales.ts).
-  Inline-mint JE paths (vouchers, GRN/GDN, sister, HR, FA, production multi-JE)
-  still mint fresh — extend with the same reserve+resolve pair when needed
-  (production needs DISTINCT source_type keys per JE: issue/receipt/complete).
+  `sales_return` (via the shared `createJournalEntry` in purchasing.ts/sales.ts),
+  `fa_depreciation`, and inline-mint paths: `payment_voucher`, `receipt_voucher`,
+  `account_note`, `goods_receipt`, `goods_delivery`, `sister_transfer`,
+  `sister_return`, `sister_settlement`. Remaining fresh-minters: HR (payroll/
+  loans/EOS) and production multi-JE (needs DISTINCT source_type keys per JE:
+  issue/receipt/complete).
+- When the builder already runs inside a tx (or opens one for JE insert),
+  resolveJeNumber must be called INSIDE with `dx: tx` so a rollback restores
+  the reservation (vouchers were initially resolved pre-tx — wrong).
 - The table is created in `ensureSchema.ts` custom-DDL block (declared drizzle
   tables are NOT auto-created); reaches prod only via Publish.
 - Additive + fail-safe: any mismatch degrades to the prior "draw a new number".

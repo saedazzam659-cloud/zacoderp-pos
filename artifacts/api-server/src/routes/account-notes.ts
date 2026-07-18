@@ -28,7 +28,7 @@ import {
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { requireModulePermission } from "../middleware/permissions.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -450,11 +450,14 @@ router.post("/:id/post", async (req, res) => {
       }
 
       const jeStatus = await resolvePostingStatus(cid, "financial");
-      // JE draws its own continuous "journal_entry" number; the note number
-      // stays in the description + source link. Falls back to the note number.
-      const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-        userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+      // JE number: reuse the number reserved at unpost time (edit→repost
+      // keeps the SAME journal-entry number), else draw the next continuous
+      // "journal_entry" number. Falls back to the note number.
+      const jeDocNumber = (await resolveJeNumber({
+        companyId: cid, sourceType: "account_note", sourceId: n.id,
+        userId: (req as any).authUser?.id ?? null,
         branchId: (n as any).branchId ?? null, docDate: n.noteDate as any,
+        dx: tx,
       })) ?? n.noteNumber;
       const [entry] = await tx.insert(journalEntriesTable).values({
         companyId: cid,
@@ -505,6 +508,9 @@ router.post("/:id/unpost", async (req, res) => {
   const writability = await assertWritableForDate(cid, n.noteDate as any);
   if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
   if (n.journalEntryId) {
+    // Stash the JE number BEFORE deleting so the next post (after an edit)
+    // reuses the SAME journal-entry number instead of burning a fresh one.
+    await reserveJeNumberFromEntry(cid, "account_note", id, n.journalEntryId);
     await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, n.journalEntryId));
     await db.delete(journalEntriesTable).where(eq(journalEntriesTable.id, n.journalEntryId));
   }

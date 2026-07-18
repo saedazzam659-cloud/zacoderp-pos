@@ -15,7 +15,7 @@ import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { loadMappings } from "../lib/accountingMappings.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { refreshItemCost } from "../lib/stockHelpers.js";
@@ -643,11 +643,14 @@ router.patch("/:id/post", async (req, res) => {
         throw err;
       }
       const grStatus = await resolvePostingStatus(cid, "goodsReceipt");
-      // JE draws its own continuous "journal_entry" number; the GRN number
-      // stays in the description + source link. Falls back to the GRN number.
-      const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-        userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+      // JE number: reuse the number reserved at unpost time (edit→repost
+      // keeps the SAME journal-entry number), else draw the next continuous
+      // "journal_entry" number. Falls back to the GRN number.
+      const jeDocNumber = (await resolveJeNumber({
+        companyId: cid, sourceType: "goods_receipt", sourceId: gr.id,
+        userId: (req as any).authUser?.id ?? null,
         branchId: gr.branchId ?? null, docDate: gr.receiptDate as any,
+        dx: tx,
       })) ?? (gr.docNumber ?? null);
       const [entry] = await tx.insert(journalEntriesTable).values({
         companyId:    cid,
@@ -760,6 +763,9 @@ router.patch("/:id/unpost", requireAdminRole, async (req, res) => {
 
       // 3. Reverse JE.
       if (gr.journalEntryId) {
+        // Stash the JE number BEFORE deleting so a later repost reuses the
+        // SAME journal-entry number instead of burning a fresh one.
+        await reserveJeNumberFromEntry(cid, "goods_receipt", id, gr.journalEntryId, tx);
         await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, gr.journalEntryId));
         await tx.delete(journalEntriesTable).where(and(
           eq(journalEntriesTable.id, gr.journalEntryId),
