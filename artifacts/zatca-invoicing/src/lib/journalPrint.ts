@@ -109,11 +109,10 @@ export function buildDetailedJournalPrintHtml(
   <header class="page-head">
     <div class="page-title">${escapeHtml(L.sheetTitle)}</div>
   </header>` : "";
-    const perPageTotals = oneEntryPerPage || entries.length === 1 ? `
-  <div class="page-totals">
-    <span>${escapeHtml(L.totalDebit)}: <b>${fmt2(subDebit)}</b></span>
-    <span>${escapeHtml(L.totalCredit)}: <b>${fmt2(subCredit)}</b></span>
-  </div>` : "";
+    // Per-user request (2026-07-19): the standalone "إجمالي المدين / إجمالي
+    // الدائن" strip under the table was removed — the tfoot الإجمالي row
+    // already carries the same numbers.
+    const perPageTotals = "";
 
     const sigRow = `
   <div class="sig-row">

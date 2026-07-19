@@ -879,15 +879,11 @@ ${sections}
               <td class="num end">${fmt2(ln.credit ?? 0)}</td>
             </tr>`;
           }).join("");
-      // One-per-page: the shared letterhead repeats natively on every printed
-      // page via the lh-shell <thead>, so each entry-page keeps the full
-      // company identity; a prominent per-entry totals banner is appended
-      // before the signature block.
-      const perPageTotals = oneEntryPerPage ? `
-        <div class="page-totals">
-          <span>إجمالي المدين: <b>${fmt2(subDebit)}</b></span>
-          <span>إجمالي الدائن: <b>${fmt2(subCredit)}</b></span>
-        </div>` : "";
+      // Per-user request (2026-07-19): the standalone "إجمالي المدين / إجمالي
+      // الدائن" strip under the table was removed here too (same as the
+      // shared lib/journalPrint.ts builder) — the tfoot الإجمالي row already
+      // carries the same numbers.
+      const perPageTotals = "";
       return `<section class="entry">
         <div class="banner">
           <div class="banner-l">

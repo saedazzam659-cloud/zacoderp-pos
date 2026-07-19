@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
+import { HijriDateField } from "@/components/ui/hijri-date-field";
 import { HrFormCheck } from "@/lib/hrFormValidate";
 
 const EMPTY: any = {
@@ -272,6 +273,20 @@ export default function Employees() {
                       />
                     </Field>
                     <Field label={tr("fBirthDate")}><DateField value={editing.birthDate || ""} onChange={e => setF("birthDate", e.target.value)} /></Field>
+                    {/* Saudi nationals know their birth date in Hijri — show a
+                        two-way Umm al-Qura companion field for هوية وطنية only.
+                        It converts to/from the SAME stored Gregorian birthDate
+                        (no schema change, no second source of truth). */}
+                    {editing.idType === "national" && (
+                      <Field label={tr("fBirthDateHijri")}>
+                        <HijriDateField
+                          isoValue={editing.birthDate || ""}
+                          onIsoChange={(iso) => setF("birthDate", iso)}
+                          placeholder={tr("fBirthDateHijriPh")}
+                          invalidText={tr("fBirthDateHijriInvalid")}
+                        />
+                      </Field>
+                    )}
                     <Field label={tr("fNotes")} className="md:col-span-2"><Textarea rows={2} value={editing.notes} onChange={e => setF("notes", e.target.value)} /></Field>
                   </FormGrid>
                 </TabsContent>
