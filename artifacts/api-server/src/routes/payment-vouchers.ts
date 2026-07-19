@@ -115,7 +115,9 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
         jeLines.push({
           accountId: taxAcc, debit: tax.toFixed(2), credit: "0.00",
           description: `ضريبة مدخلات - ${l.description || v.code}`,
-          sortOrder: so++, costCenter: lineCc,
+          // VAT lines are booked WITHOUT a cost center by design — the tax is
+          // not an operating cost of any cost center (user request 2026-07).
+          sortOrder: so++, costCenter: null,
           // Carry per-line supplier tax metadata onto the VAT-account JE line so
           // it surfaces in كشف حساب الضريبة (account-statement description suffix).
           supplierName:          l.supplierName ?? null,

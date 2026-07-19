@@ -123,7 +123,9 @@ async function createJournalEntry(opts: {
       sortOrder:   i,
       // Persist cost-center code (text) so cost-center reports pick it up.
       // Per-line override wins; header-level value applies otherwise.
-      costCenter:  l.costCenter ?? opts.costCenter ?? null,
+      // An EXPLICIT `costCenter: null` on a line (e.g. VAT lines) opts OUT of
+      // the header fallback — only `undefined` falls back.
+      costCenter:  l.costCenter !== undefined ? (l.costCenter || null) : (opts.costCenter ?? null),
     }))
   );
   return entry.id;
@@ -1747,7 +1749,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       costCenter:   (inv as any).costCenter ?? null,
       lines: [
         ...debitLines,
-        { accountId: taxAccId, debit: vatAmount, description: "ضريبة القيمة المضافة" },
+        { accountId: taxAccId, debit: vatAmount, description: "ضريبة القيمة المضافة", costCenter: null },
         ...creditLines,
       ],
     });
@@ -2923,7 +2925,7 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
               ...(cc ? { costCenter: cc } : {}),
             };
           }),
-        { accountId: taxAccId,                        credit: vatAmount,      description: "إلغاء ضريبة القيمة المضافة" },
+        { accountId: taxAccId,                        credit: vatAmount,      description: "إلغاء ضريبة القيمة المضافة", costCenter: null },
         // Variance: balances the JE when refund value ≠ actual stock cost.
         // delta > 0 → CR variance (refund exceeds cost = gain for buyer).
         // delta < 0 → DR variance (refund below cost = loss for buyer).

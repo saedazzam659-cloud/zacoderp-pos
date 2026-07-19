@@ -138,7 +138,9 @@ export async function createJournalEntry(opts: {
       description: l.description ?? opts.description, sortOrder: i,
       // Persist cost-center code (text) so cost-center reports pick it up.
       // Per-line override wins; header-level value applies otherwise.
-      costCenter: l.costCenter ?? opts.costCenter ?? null,
+      // An EXPLICIT `costCenter: null` on a line (e.g. VAT lines) opts OUT of
+      // the header fallback — only `undefined` falls back.
+      costCenter: l.costCenter !== undefined ? (l.costCenter || null) : (opts.costCenter ?? null),
     }))
   );
   return entry.id;
@@ -1557,7 +1559,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
             // Dr Customer/Cash/Bank @ total
             { accountId: partyAccountId,         debit: totalAmt,                              description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
             // Cr VAT Output (still booked separately — operator can claim it)
-            { accountId: taxAccId,               credit: vatAmt,                               description: "ضريبة القيمة المضافة (مخرجات)" },
+            { accountId: taxAccId,               credit: vatAmt,                               description: "ضريبة القيمة المضافة (مخرجات)", costCenter: null },
             // Cr Delivery Clearing (replaces revenue + inventory credits)
             { accountId: deliveryClearingAccId!, credit: totalAmt - vatAmt,                    description: "تسوية وسيط تسليم البضاعة" },
           ]
@@ -1585,7 +1587,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
                   ...(cc ? { costCenter: cc } : {}),
                 };
               }),
-            { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
+            { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)", costCenter: null },
             // Inventory: one credit line per warehouse using its own GL account
             ...Object.entries(cogsByWarehouse)
               .filter(([, amt]) => amt > 0)
@@ -2630,7 +2632,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       lines: [
         // Debits (reversed from the original sale)
         { accountId: salesAccId,     debit: subtotalAmt, description: "تخفيض إيراد المبيعات (مرتجع)" },
-        { accountId: taxAccId,       debit: vatAmt,      description: "تخفيض ضريبة المخرجات" },
+        { accountId: taxAccId,       debit: vatAmt,      description: "تخفيض ضريبة المخرجات", costCenter: null },
         // Inventory: one debit line per warehouse using its own GL account
         ...Object.entries(cogsByWarehouse)
           .filter(([, amt]) => amt > 0)
