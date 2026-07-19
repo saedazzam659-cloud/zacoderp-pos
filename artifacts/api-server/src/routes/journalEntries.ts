@@ -11,7 +11,7 @@ import {
   fixedAssetsTable, faDepreciationRunsTable,
 } from "@workspace/db";
 import { unpostDepreciationRun } from "../lib/depreciationPosting.js";
-import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, notInArray, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
@@ -795,6 +795,93 @@ async function resolvePartyAccountForInvoice(
   return s?.accountId ?? null;
 }
 
+// ─── GAP SCAN (فحص أرقام التسلسل الناقصة) ────────────────────────────────────
+// Given a date range, detects MISSING doc numbers in the company's journal
+// entries. Numbers are grouped by their non-numeric prefix (e.g. "QYD/06/"),
+// then for each group we list every integer between the observed min and max
+// that has no row — those are deleted/never-created numbers the user can
+// re-create as empty drafts via the gap-fill flow. Read-only.
+// MUST be registered BEFORE "/:id" (Express 5 route ordering).
+router.get("/gap-scan", async (req, res) => {
+  try {
+    // SuperAdmin-only governance tool: company admins/users never see it.
+    if (req.authUser?.role !== "superadmin") {
+      res.status(403).json({ error: "هذه الأداة متاحة للمشرف العام فقط" });
+      return;
+    }
+    const cid = getCompanyId(req);
+    if (!cid) { res.status(400).json({ error: "لا يمكن تحديد الشركة" }); return; }
+    const from = String(req.query.from ?? "").trim();
+    const to   = String(req.query.to   ?? "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      res.status(400).json({ error: "يجب تحديد فترة صحيحة (من / إلى)" });
+      return;
+    }
+    if (from > to) { res.status(400).json({ error: "تاريخ البداية بعد تاريخ النهاية" }); return; }
+
+    const rows = await db.select({
+      docNumber: journalEntriesTable.docNumber,
+      entryDate: journalEntriesTable.entryDate,
+    })
+      .from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.companyId, cid),
+        gte(journalEntriesTable.entryDate, from),
+        lte(journalEntriesTable.entryDate, to),
+        ...branchScopeSpread(req, journalEntriesTable.branchId, req.query.branchId),
+      ));
+
+    // Group by prefix: everything before the TRAILING digit run. Numbers
+    // without a trailing digit run (or blank) can't participate in a series.
+    type G = { pad: number; nums: Map<number, string> }; // num → entryDate (for date suggestion)
+    const groups = new Map<string, G>();
+    for (const r of rows) {
+      const dn = (r.docNumber ?? "").trim();
+      const m = /^(.*?)(\d+)$/.exec(dn);
+      if (!m) continue;
+      const prefix = m[1];
+      const numStr = m[2];
+      const n = parseInt(numStr, 10);
+      if (!Number.isFinite(n)) continue;
+      // Timestamp-suffixed numbers (e.g. TRF-1776880398900) are NOT serial
+      // sequences — including them floods the result with fake "gaps".
+      // Real doc serials never exceed 8 digits.
+      if (numStr.length > 8) continue;
+      let g = groups.get(prefix);
+      if (!g) { g = { pad: numStr.length, nums: new Map() }; groups.set(prefix, g); }
+      g.pad = Math.max(g.pad, 0); // keep dominant padding = longest observed WITH leading zero
+      if (numStr.startsWith("0")) g.pad = Math.max(g.pad, numStr.length);
+      const prev = g.nums.get(n);
+      // keep the EARLIEST date seen for that number (stable suggestion)
+      if (!prev || String(r.entryDate) < prev) g.nums.set(n, String(r.entryDate));
+    }
+
+    const CAP = 500;
+    const missing: { docNumber: string; prefix: string; number: number; suggestedDate: string | null }[] = [];
+    let truncated = false;
+    for (const [prefix, g] of Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0], "ar"))) {
+      const sorted = Array.from(g.nums.keys()).sort((a, b) => a - b);
+      if (sorted.length < 2) continue; // a single number defines no range
+      const min = sorted[0], max = sorted[sorted.length - 1];
+      for (let n = min + 1; n < max; n++) {
+        if (g.nums.has(n)) continue;
+        if (missing.length >= CAP) { truncated = true; break; }
+        // Suggest the date of the closest EXISTING lower number (same series).
+        let suggestedDate: string | null = null;
+        for (let p = n - 1; p >= min; p--) {
+          const d = g.nums.get(p);
+          if (d) { suggestedDate = d; break; }
+        }
+        const numStr = String(n).padStart(g.pad, "0");
+        missing.push({ docNumber: `${prefix}${numStr}`, prefix, number: n, suggestedDate });
+      }
+      if (truncated) break;
+    }
+
+    res.json({ missing, truncated, scanned: rows.length });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const cid = getCompanyId(req);
@@ -880,6 +967,12 @@ router.post("/", async (req, res) => {
       // Strict contract: gap-fill creates an EMPTY general draft — nothing
       // else. Reject malformed intent instead of silently falling through
       // to the normal create path (which would consume a sequence number).
+      // SuperAdmin-only governance action (same model as domains/dev-cloud):
+      // regular company admins can neither see the UI nor call this path.
+      if (req.authUser?.role !== "superadmin") {
+        res.status(403).json({ error: "استرجاع رقم محذوف متاح للمشرف العام فقط" });
+        return;
+      }
       if (!gapFillNumber) {
         res.status(400).json({ error: "رقم القيد مطلوب لاسترجاع رقم محذوف" });
         return;

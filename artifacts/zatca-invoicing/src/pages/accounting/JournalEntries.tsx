@@ -326,6 +326,26 @@ export default function JournalEntries() {
   const [gapFillOpen, setGapFillOpen] = useState(false);
   const [gapFillNumber, setGapFillNumber] = useState("");
   const [gapFillDate, setGapFillDate] = useState("");
+  // ── Gap-scan (فحص النواقص): pick a date range → server lists every missing
+  //    serial number in that range so the user can re-create them one by one.
+  const [gapScanFrom, setGapScanFrom] = useState("");
+  const [gapScanTo, setGapScanTo] = useState("");
+  const [gapScanResult, setGapScanResult] = useState<import("../../lib/journalEntriesApi").GapScanResponse | null>(null);
+  const [gapScanLoading, setGapScanLoading] = useState(false);
+  const [gapScanError, setGapScanError] = useState<string | null>(null);
+  const runGapScan = async () => {
+    if (!gapScanFrom || !gapScanTo) return;
+    setGapScanLoading(true);
+    setGapScanError(null);
+    setGapScanResult(null);
+    try {
+      setGapScanResult(await journalEntriesApi.gapScan(gapScanFrom, gapScanTo, cid ?? undefined));
+    } catch (e: any) {
+      setGapScanError(e?.message || "تعذّر فحص النواقص");
+    } finally {
+      setGapScanLoading(false);
+    }
+  };
   const gapFillMutation = useMutation({
     mutationFn: () => journalEntriesApi.create({
       gapFill:   true,
@@ -334,11 +354,24 @@ export default function JournalEntries() {
       entryType: "general",
       lines:     [],
     }),
-    onSuccess: () => {
+    onSuccess: (_data, _vars) => {
       qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
-      setGapFillOpen(false);
-      setGapFillNumber("");
-      setGapFillDate("");
+      const created = gapFillNumber.trim();
+      // If the user is working from a scan-result list, keep the dialog open
+      // and just drop the created number from the list so they can continue
+      // filling the remaining gaps one by one.
+      if (gapScanResult && gapScanResult.missing.some((m) => m.docNumber === created)) {
+        setGapScanResult({
+          ...gapScanResult,
+          missing: gapScanResult.missing.filter((m) => m.docNumber !== created),
+        });
+        setGapFillNumber("");
+        setGapFillDate("");
+      } else {
+        setGapFillOpen(false);
+        setGapFillNumber("");
+        setGapFillDate("");
+      }
     },
     onError: (e: any) => {
       alert(e?.message || "تعذّر إنشاء القيد");
@@ -1179,13 +1212,17 @@ ${wrapWithLetterhead(letterhead, sections)}
               <FileSpreadsheet className="h-3.5 w-3.5" />
               تصدير CSV
             </Button>
-            <Button type="button" size="sm" variant="ghost"
-              className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
-              onClick={() => setGapFillOpen(true)}
-              data-testid="button-gap-fill">
-              <RotateCcw className="h-3.5 w-3.5" />
-              استرجاع رقم محذوف
-            </Button>
+            {/* SuperAdmin-only governance tool — hidden from company admins/users.
+                Server enforces the same 403 guard, this is just UI gating. */}
+            {user?.role === "superadmin" && (
+              <Button type="button" size="sm" variant="ghost"
+                className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+                onClick={() => setGapFillOpen(true)}
+                data-testid="button-gap-fill">
+                <RotateCcw className="h-3.5 w-3.5" />
+                استرجاع رقم محذوف
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1791,7 +1828,7 @@ ${wrapWithLetterhead(letterhead, sections)}
           browser/OS device label. Older rows missing audit data show "—". */}
       {/* ── Gap-fill dialog: استرجاع رقم قيد محذوف كمسودة ─────────────── */}
       <Dialog open={gapFillOpen} onOpenChange={(o) => { if (!o) setGapFillOpen(false); }}>
-        <DialogContent dir={isRtl ? "rtl" : "ltr"} className="max-w-sm">
+        <DialogContent dir={isRtl ? "rtl" : "ltr"} className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               <RotateCcw className="h-4 w-4" />
@@ -1802,6 +1839,83 @@ ${wrapWithLetterhead(letterhead, sections)}
               لسدّ الفجوة في التسلسل، ويمكنك تعديل بنوده لاحقاً. لن يؤثر على التقارير حتى يتم ترحيله.
             </DialogDescription>
           </DialogHeader>
+
+          {/* ── فحص النواقص: حدد فترة → السيرفر يستخرج كل الأرقام المفقودة ── */}
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 space-y-2">
+            <div className="text-xs font-semibold text-slate-700">فحص النواقص في فترة</div>
+            <div className="flex items-end gap-2 flex-wrap">
+              <div>
+                <label className="text-[11px] text-slate-600 block mb-1">من</label>
+                <DateField
+                  value={gapScanFrom}
+                  onChange={(e) => setGapScanFrom(e.target.value)}
+                  className="h-8 text-sm w-36"
+                  data-testid="input-gap-scan-from"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-slate-600 block mb-1">إلى</label>
+                <DateField
+                  value={gapScanTo}
+                  onChange={(e) => setGapScanTo(e.target.value)}
+                  className="h-8 text-sm w-36"
+                  data-testid="input-gap-scan-to"
+                />
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8"
+                disabled={!gapScanFrom || !gapScanTo || gapScanLoading}
+                onClick={runGapScan}
+                data-testid="button-gap-scan"
+              >
+                {gapScanLoading && <Loader2 className="h-3.5 w-3.5 animate-spin me-1" />}
+                بحث عن النواقص
+              </Button>
+            </div>
+            {gapScanError && (
+              <div className="text-xs text-rose-700">{gapScanError}</div>
+            )}
+            {gapScanResult && (
+              gapScanResult.missing.length === 0 ? (
+                <div className="text-xs text-emerald-700">
+                  لا توجد أرقام ناقصة في هذه الفترة — التسلسل مكتمل ✓
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <div className="text-xs text-slate-600">
+                    عدد الأرقام الناقصة: <b>{gapScanResult.missing.length}</b>
+                    {gapScanResult.truncated && " (تم عرض أول 500 فقط — ضيّق الفترة)"}
+                  </div>
+                  <div className="max-h-48 overflow-y-auto rounded border border-slate-200 bg-white divide-y divide-slate-100">
+                    {gapScanResult.missing.map((m) => (
+                      <div key={m.docNumber} className="flex items-center justify-between px-2 py-1.5 text-xs">
+                        <span dir="ltr" className="font-mono">{m.docNumber}</span>
+                        <span className="text-slate-500">{m.suggestedDate ?? "—"}</span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[11px]"
+                          disabled={gapFillMutation.isPending}
+                          onClick={() => {
+                            setGapFillNumber(m.docNumber);
+                            if (m.suggestedDate) setGapFillDate(m.suggestedDate);
+                          }}
+                          data-testid={`button-gap-pick-${m.docNumber}`}
+                        >
+                          استرجاع
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+
           <div className="space-y-3 py-1">
             <div>
               <label className="text-xs font-medium text-slate-600 block mb-1">رقم القيد</label>

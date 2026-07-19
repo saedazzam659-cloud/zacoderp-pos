@@ -2,9 +2,14 @@ const API = import.meta.env.VITE_API_URL ?? "";
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("zatca_token");
-  return token
+  const h: Record<string, string> = token
     ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
     : { "Content-Type": "application/json" };
+  // SuperAdmin acting-company impersonation: the server honors this header
+  // ONLY for role==="superadmin" (resolveCompanyId), harmless for others.
+  const acting = localStorage.getItem("zatca_acting_company_id");
+  if (acting) h["x-acting-company-id"] = acting;
+  return h;
 }
 
 /**
@@ -100,7 +105,25 @@ export interface VatAccountSuggestion {
   source: "ai" | "rules";
 }
 
+export interface GapScanMissing {
+  docNumber: string;
+  prefix: string;
+  number: number;
+  suggestedDate: string | null;
+}
+export interface GapScanResponse {
+  missing: GapScanMissing[];
+  truncated: boolean;
+  scanned: number;
+}
+
 export const journalEntriesApi = {
+  // Scan a date range for MISSING serial numbers (deleted / never created)
+  // so the user can re-create them as empty drafts via gap-fill.
+  gapScan: (from: string, to: string, cid?: number) =>
+    get<GapScanResponse>(
+      `/journal-entries/gap-scan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${cid ? `&companyId=${cid}` : ""}`,
+    ),
   list:   (cid?: number) => get<any[]>(`/journal-entries${cid ? `?companyId=${cid}` : ""}`),
   get:    (id: number, cid?: number) => get<any>(`/journal-entries/${id}${cid ? `?companyId=${cid}` : ""}`),
   create: (data: any) => post<any>("/journal-entries", data),
