@@ -119,7 +119,7 @@ function supplierBlock(s: any) {
     </div>`;
 }
 
-function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
+function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "", inc = false) {
   // Discount column appears when ANY line has either a percentage discount
   // (`discount`) OR a value-based discount (`discountAmount`). Previously
   // only the % path was checked, so amount-only discounts were hidden in
@@ -131,23 +131,17 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
   // keeps the printed table clean for documents that don't use the feature.
   const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
   const rows = lines.map((l, i) => {
-    const qty   = Number(l.qty) || 0;
-    const price = Number(l.unitPrice) || 0;
-    const gross = qty * price;
+    // Honors the doc's tax mode: when `inc`, unit price already contains VAT
+    // and the VAT column shows the extracted portion (total stays qty×price−خصم).
+    // NOTE: `lineFigures` is declared later in this module — safe because
+    // linesTable only RUNS at print time, long after module evaluation.
+    const f = lineFigures(l, inc);
+    const { vat, tot } = f;
     const discPct = Math.max(0, Math.min(100, Number(l.discount) || 0));
-    const rawAmt  = Math.max(0, Number(l.discountAmount) || 0);
-    // The two discount fields are mirrors of one value (see
-    // `lib/lineDiscountSync.ts`). Use the SAR amount when present,
-    // otherwise derive it from %. Never subtract both — that would
-    // double-count post-sync.
-    const discAmtEff = rawAmt > 0 ? Math.min(rawAmt, gross) : (gross * discPct) / 100;
-    const sub  = Math.max(0, gross - discAmtEff);
-    const vat  = sub * ((Number(l.vatRate) || 0) / 100);
-    const tot  = sub + vat;
     const freeQ = Number(l.freeQty) || 0;
-    // % cell shows percentage; value cell shows the SAR amount.
+    // % cell shows percentage; value cell shows the SAR amount (as entered).
     const discPctCell = discPct > 0 ? `${discPct}%` : "—";
-    const discValCell = discAmtEff > 0 ? fmt(discAmtEff) : "—";
+    const discValCell = f.disc > 0 ? fmt(f.disc) : "—";
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
@@ -189,6 +183,10 @@ function totalsBlock(doc: any, align = "right") {
   return `
     <div style="display:flex;justify-content:${align === "right" ? "flex-start" : "flex-end"}">
       <div style="min-width:220px;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:12px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:9px;opacity:.7;">
+          <span>نوع التسعير</span>
+          <span>${vatModeLabel(!!doc.priceIncludesVat)}</span>
+        </div>
         <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
           <span style="color:#666">المجموع قبل الضريبة:</span>
           <span class="mono">${fmt(doc.subtotal)} ${currencySymbol(doc.currencyCode)}</span>
@@ -272,26 +270,48 @@ interface FullTotals {
   vatAmountBase: number;
   grandTotalBase: number;
   showSarEq: boolean;
+  // Tax mode stamped on the document header: true = "السعر شامل الضريبة"
+  // (stored unit prices already CONTAIN VAT), false = "ضريبة إضافية".
+  priceIncludesVat: boolean;
 }
+// ── Per-line figures honoring the document's tax mode ───────────────────────
+// `inc=false` (ضريبة إضافية): unitPrice is VAT-exclusive → net = gross − disc,
+// VAT = net × rate. `inc=true` (السعر شامل الضريبة): unitPrice already
+// CONTAINS VAT → line total IS (gross − disc); net = total / (1 + rate) —
+// mirrors the form's calcLine and the server's JE math (purchasing.ts).
+function lineFigures(l: any, inc: boolean) {
+  const qty   = Number(l.qty)       || 0;
+  const price = Number(l.unitPrice) || 0;
+  const rate  = (Number(l.vatRate)  || 0) / 100;
+  const gross = qty * price;
+  const dPct  = Math.max(0, Math.min(100, Number(l.discount) || 0));
+  const dAmt  = Math.max(0, Number(l.discountAmount) || 0);
+  const disc  = Math.min(gross, dAmt > 0 ? dAmt : (gross * dPct / 100));
+  const afterDisc = Math.max(0, gross - disc);
+  const div = inc && rate > -1 ? (1 + rate) : 1;
+  const grossEx = gross / div;
+  const discEx  = disc  / div;
+  const netEx   = afterDisc / div;
+  const vat     = inc ? afterDisc - netEx : netEx * rate;
+  const tot     = netEx + vat; // == afterDisc when inc
+  return { qty, price, gross, disc, grossEx, discEx, netEx, vat, tot };
+}
+// Printed tax-mode label — mirrors the form's toggle.
+const vatModeLabel = (inc: boolean) =>
+  inc ? "الأسعار شاملة الضريبة — Prices include VAT"
+      : "ضريبة إضافية — VAT added on top";
 function computeFullTotals(doc: any, lines: any[], printType?: "invoice" | "return"): FullTotals {
+  const inc = !!doc?.priceIncludesVat;
   let subtotalPreDiscount = 0, discountTotal = 0, netPreVat = 0, vatAmount = 0;
   let totalQty = 0, totalFreeQty = 0;
   for (const l of (lines ?? [])) {
-    const qty   = Number(l.qty)         || 0;
-    const free  = Number(l.freeQty)     || 0;
-    const price = Number(l.unitPrice)   || 0;
-    const dPct  = Math.max(0, Math.min(100, Number(l.discount) || 0));
-    const dAmt  = Math.max(0, Number(l.discountAmount) || 0);
-    const gross = qty * price;
-    const disc  = Math.min(gross, dAmt > 0 ? dAmt : (gross * dPct / 100));
-    const net   = gross - disc;
-    const vat   = net * ((Number(l.vatRate) || 0) / 100);
-    subtotalPreDiscount += gross;
-    discountTotal       += disc;
-    netPreVat           += net;
-    vatAmount           += vat;
-    totalQty            += qty;
-    totalFreeQty        += free;
+    const f = lineFigures(l, inc);
+    subtotalPreDiscount += f.grossEx;
+    discountTotal       += f.discEx;
+    netPreVat           += f.netEx;
+    vatAmount           += f.vat;
+    totalQty            += f.qty;
+    totalFreeQty        += Number(l.freeQty) || 0;
   }
   const grandTotal = netPreVat + vatAmount;
   const currency = doc?.currencyCode ?? "SAR";
@@ -310,6 +330,7 @@ function computeFullTotals(doc: any, lines: any[], printType?: "invoice" | "retu
     exchangeRate, baseCurrency, baseSym: currencySymbol(baseCurrency),
     isForeign, vatAmountBase, grandTotalBase,
     showSarEq: isForeign && isTaxDoc,
+    priceIncludesVat: inc,
   };
 }
 
@@ -333,6 +354,7 @@ function sarEqRowsHtml(
 // template keeps its native styling) plus an optional grand‑row class.
 function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "grand"): string {
   return `
+    <div class="${rowClass}" style="font-size:9px;opacity:.7;"><span>نوع التسعير</span><span>${vatModeLabel(t.priceIncludesVat)}</span></div>
     <div class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
@@ -508,7 +530,7 @@ function template1(d: PrintData): string {
   </div>
   <div class="section">
     <h4>بنود ${docTitle(d.type)}</h4>
-    ${linesTable(lines, "", "background:#eff6ff")}
+    ${linesTable(lines, "", "background:#eff6ff", !!doc.priceIncludesVat)}
   </div>
   <br>
   ${totalsBlock(doc)}
@@ -570,7 +592,7 @@ function template2(d: PrintData): string {
   </div>
   <div class="card">
     <h4>البنود</h4>
-    ${linesTable(lines, "", "")}
+    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
   </div>
   <br>
   ${totalsBlock(doc, "left")}
@@ -632,7 +654,7 @@ function template3(d: PrintData): string {
       <div class="party-box"><h4>المورد</h4>${supplierBlock(supplier)}</div>
       <div class="party-box"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
-    ${linesTable(lines, "", "")}
+    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:flex-start;margin-top:16px;">
       <div class="totals-box">
         <div class="totals-row"><span>المجموع:</span><span class="mono">${fmt(doc.subtotal)} ${currencySymbol(doc.currencyCode)}</span></div>
@@ -706,7 +728,7 @@ function template4(d: PrintData): string {
   </div>
   <div class="box">
     <div class="section-title">أصناف ${docTitle(d.type)}</div>
-    ${linesTable(lines, "", "")}
+    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
   </div>
   <div style="display:flex;justify-content:flex-start;margin-top:12px;">
     <div class="total-area">
@@ -790,7 +812,7 @@ function template5(d: PrintData): string {
     </div>
   </div>
 
-  ${linesTable(lines, "", "")}
+  ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
 
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:16px;">
     <div>
@@ -846,10 +868,8 @@ function template6(d: PrintData): string {
   const accent = isReturn ? "#b91c1c" : "#111";
   const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
   const itemsRows = lines.map((l) => {
-    const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
-    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
-    const vat = sub * ((Number(l.vatRate) || 0) / 100);
-    const tot = sub + vat;
+    // Honors the doc's tax mode (السعر شامل الضريبة vs ضريبة إضافية).
+    const { tot } = lineFigures(l, !!doc.priceIncludesVat);
     return `
       <tr>
         <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}</td>
@@ -965,9 +985,8 @@ function template7(d: PrintData): string {
 
   const itemsRows = lines.map((l, i) => {
     const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
-    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
-    const vat = sub * ((Number(l.vatRate) || 0) / 100);
-    const tot = sub + vat;
+    // Honors the doc's tax mode (السعر شامل الضريبة vs ضريبة إضافية).
+    const { tot } = lineFigures(l, !!doc.priceIncludesVat);
     return `
       <div class="line ${i % 2 === 0 ? "alt" : ""}">
         <div class="line-top">
@@ -1130,7 +1149,7 @@ function template8(d: PrintData): string {
     <div class="party"><h4>المورد</h4>${supplierBlock(supplier)}</div>
     <div class="party"><h4>المنشأة</h4>${companyBlock(company)}</div>
   </div>
-  ${linesTable(lines, "", "")}
+  ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
   <div class="totals" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
     <div style="text-align:center;">
       ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
@@ -1209,7 +1228,7 @@ function template9(d: PrintData): string {
         <div class="panel"><h4>المورد</h4>${supplierBlock(supplier)}</div>
         <div class="panel"><h4>المنشأة</h4>${companyBlock(company)}</div>
       </div>
-      ${linesTable(lines, "", "")}
+      ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
       <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
         <div style="text-align:center;">
           ${qrImgHtml(d, { size: 110, border: "1px solid #d4af37", bg: "#fff" })}
@@ -1289,7 +1308,7 @@ function template10(d: PrintData): string {
       <div class="card"><h4>المورد</h4>${supplierBlock(supplier)}</div>
       <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
-    ${linesTable(lines, "", "")}
+    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
       <div style="text-align:center;">
         ${qrImgHtml(d, { size: 110, bg: "#fff" })}
@@ -1367,7 +1386,7 @@ function template11(d: PrintData): string {
       <div class="card"><h4>المورد</h4>${supplierBlock(supplier)}</div>
       <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
-    ${linesTable(lines, "", "")}
+    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
       <div style="text-align:center;">
         ${qrImgHtml(d, { size: 110, bg: "#fff" })}
@@ -1465,7 +1484,7 @@ function template12(d: PrintData): string {
         <h4>المورد</h4>
         ${supplierBlock(supplier)}
       </div>
-      ${linesTable(lines, "", "")}
+      ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
       <div class="totals-area" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
         <div style="text-align:center;">
           ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
