@@ -319,6 +319,32 @@ export default function JournalEntries() {
     },
   });
 
+  /* ── Gap-fill (استرجاع رقم قيد محذوف) ────────────────────────────────
+     Re-creates a DELETED journal-entry number as an empty DRAFT, filling
+     the gap in the numbering. Server bypasses the sequence engine, rejects
+     numbers already in use (409), and always lands the entry as draft. */
+  const [gapFillOpen, setGapFillOpen] = useState(false);
+  const [gapFillNumber, setGapFillNumber] = useState("");
+  const [gapFillDate, setGapFillDate] = useState("");
+  const gapFillMutation = useMutation({
+    mutationFn: () => journalEntriesApi.create({
+      gapFill:   true,
+      docNumber: gapFillNumber.trim(),
+      entryDate: gapFillDate,
+      entryType: "general",
+      lines:     [],
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
+      setGapFillOpen(false);
+      setGapFillNumber("");
+      setGapFillDate("");
+    },
+    onError: (e: any) => {
+      alert(e?.message || "تعذّر إنشاء القيد");
+    },
+  });
+
   const convertMutation = useMutation({
     mutationFn: (id: number) => journalEntriesApi.convertToGeneral(id),
     onSuccess: () => {
@@ -1153,6 +1179,13 @@ ${wrapWithLetterhead(letterhead, sections)}
               <FileSpreadsheet className="h-3.5 w-3.5" />
               تصدير CSV
             </Button>
+            <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+              onClick={() => setGapFillOpen(true)}
+              data-testid="button-gap-fill">
+              <RotateCcw className="h-3.5 w-3.5" />
+              استرجاع رقم محذوف
+            </Button>
           </div>
         </div>
 
@@ -1756,6 +1789,59 @@ ${wrapWithLetterhead(letterhead, sections)}
           and posted each entry. Renders a tidy two-column layout (created vs
           posted) with username, timestamp, IP, country, and a friendly
           browser/OS device label. Older rows missing audit data show "—". */}
+      {/* ── Gap-fill dialog: استرجاع رقم قيد محذوف كمسودة ─────────────── */}
+      <Dialog open={gapFillOpen} onOpenChange={(o) => { if (!o) setGapFillOpen(false); }}>
+        <DialogContent dir={isRtl ? "rtl" : "ltr"} className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <RotateCcw className="h-4 w-4" />
+              استرجاع رقم قيد محذوف
+            </DialogTitle>
+            <DialogDescription>
+              أدخل رقم القيد المحذوف وتاريخه — سيتم إنشاؤه كقيد <b>مسودة</b> فارغ بنفس الرقم
+              لسدّ الفجوة في التسلسل، ويمكنك تعديل بنوده لاحقاً. لن يؤثر على التقارير حتى يتم ترحيله.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">رقم القيد</label>
+              <Input
+                value={gapFillNumber}
+                onChange={(e) => setGapFillNumber(e.target.value)}
+                placeholder="مثال: QYD/06/1727"
+                dir="ltr"
+                className="h-8 text-sm"
+                data-testid="input-gap-fill-number"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">تاريخ القيد</label>
+              <DateField
+                value={gapFillDate}
+                onChange={(e) => setGapFillDate(e.target.value)}
+                className="h-8 text-sm"
+                data-testid="input-gap-fill-date"
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex-row-reverse gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={!gapFillNumber.trim() || !gapFillDate || gapFillMutation.isPending}
+              onClick={() => gapFillMutation.mutate()}
+              data-testid="button-gap-fill-save"
+            >
+              {gapFillMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin me-1" />}
+              إنشاء كمسودة
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => setGapFillOpen(false)}>
+              إلغاء
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={auditId !== null} onOpenChange={(o) => !o && setAuditId(null)}>
         <DialogContent dir={isRtl ? "rtl" : "ltr"} className="max-w-2xl">
           <DialogHeader>

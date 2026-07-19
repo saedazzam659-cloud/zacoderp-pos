@@ -863,12 +863,56 @@ router.post("/", async (req, res) => {
       return;
     }
 
+    // ── Gap-fill mode (استرجاع رقم قيد محذوف) ──────────────────────────
+    // When the client explicitly sends { gapFill: true, docNumber }, we
+    // BYPASS the sequence engine and reuse the supplied number verbatim —
+    // this exists to re-create a DELETED doc number as a draft, filling a
+    // gap in the numbering. Safety rails:
+    //   1. number must be non-empty and NOT already used by this company
+    //      (checked here for a friendly 409, re-checked inside the insert
+    //      transaction under the per-company advisory lock — hard guarantee)
+    //   2. entry ALWAYS lands as "draft" (never auto-posts), so it has zero
+    //      report impact until someone deliberately posts it.
+    //   3. no sequence counter is consumed or advanced.
+    const gapFill = req.body?.gapFill === true;
+    const gapFillNumber = gapFill ? String(docNumber ?? "").trim() : null;
+    if (gapFill) {
+      // Strict contract: gap-fill creates an EMPTY general draft — nothing
+      // else. Reject malformed intent instead of silently falling through
+      // to the normal create path (which would consume a sequence number).
+      if (!gapFillNumber) {
+        res.status(400).json({ error: "رقم القيد مطلوب لاسترجاع رقم محذوف" });
+        return;
+      }
+      if (Array.isArray(lines) && lines.length > 0) {
+        res.status(400).json({ error: "استرجاع رقم محذوف ينشئ قيداً فارغاً — لا يمكن إرسال بنود" });
+        return;
+      }
+      if (settlement.salesInvoiceId != null || settlement.purchaseInvoiceId != null) {
+        res.status(400).json({ error: "لا يمكن ربط فاتورة بقيد استرجاع رقم محذوف" });
+        return;
+      }
+      const dup = await db.select({ id: journalEntriesTable.id })
+        .from(journalEntriesTable)
+        .where(and(
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.docNumber, gapFillNumber!),
+        ))
+        .limit(1);
+      if (dup.length > 0) {
+        res.status(409).json({ error: `رقم القيد ${gapFillNumber} مستخدم بالفعل` });
+        return;
+      }
+    }
+
     // Central sequence engine is authoritative when an active sequence
     // exists for "journal_entry"; otherwise fall back to client-supplied
     // value or null (legacy behavior). Server allocation is atomic so
     // concurrent submits can never persist the same number.
     let resolvedDocNumber: string | null;
-    try {
+    if (gapFill) {
+      resolvedDocNumber = gapFillNumber;
+    } else try {
       const fromSeq = await nextSequenceNumber(cid, "journal_entry", {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "journal_entries",
@@ -902,7 +946,7 @@ router.post("/", async (req, res) => {
     // in which case we honour their choice and save as draft regardless.
     // Per replit.md the draft will have ZERO impact on financial reports
     // until an admin posts it from مركز الترحيل.
-    const technicallyPostable = isBalanced && validLines.length >= 2;
+    const technicallyPostable = !gapFill && isBalanced && validLines.length >= 2;
     const desiredStatus = technicallyPostable
       ? await resolvePostingStatus(cid, "journalEntry")
       : "draft";
@@ -935,6 +979,24 @@ router.post("/", async (req, res) => {
       if (!resolvedDocNumber) {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, 1001)`);
       }
+      // Gap-fill hard guarantee: re-check uniqueness of the requested number
+      // INSIDE the transaction under the per-company advisory lock, so two
+      // concurrent gap-fill saves of the same number can never both win.
+      if (gapFill) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, 1001)`);
+        const dupTx = await tx.select({ id: journalEntriesTable.id })
+          .from(journalEntriesTable)
+          .where(and(
+            eq(journalEntriesTable.companyId, cid),
+            eq(journalEntriesTable.docNumber, gapFillNumber!),
+          ))
+          .limit(1);
+        if (dupTx.length > 0) {
+          const err: any = new Error(`رقم القيد ${gapFillNumber} مستخدم بالفعل`);
+          err.gapFillDup = true;
+          throw err;
+        }
+      }
       const [e] = await tx.insert(journalEntriesTable).values({
         companyId:    cid,
         docNumber:    resolvedDocNumber,
@@ -942,7 +1004,9 @@ router.post("/", async (req, res) => {
         currency:     currency || "SAR",
         exchangeRate: exchangeRate ?? "1",
         description:  description || null,
-        entryType:    entryType || "general",
+        // Gap-fill entries are always plain "general" — never allow a crafted
+        // payload to mint pseudo-source/system entry types via this path.
+        entryType:    gapFill ? "general" : (entryType || "general"),
         branchId:     resolvedBranchId,
         periodId:     writability.period?.id ?? null,
         salesInvoiceId:    settlement.salesInvoiceId,
@@ -1006,7 +1070,7 @@ router.post("/", async (req, res) => {
       .orderBy(journalEntryLinesTable.sortOrder);
 
     res.status(201).json({ ...entry, lines: linesOut });
-  } catch (e: any) { res.status(e?.settlementReject ? 400 : 500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.settlementReject ? 400 : e?.gapFillDup ? 409 : 500).json({ error: e.message }); }
 });
 
 // ─── UPDATE ───────────────────────────────────────────────────────────────────
