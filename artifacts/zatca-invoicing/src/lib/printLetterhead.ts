@@ -25,6 +25,8 @@ export interface LetterheadCompany {
   nameAr?: string | null;
   nameEn?: string | null;
   logo?: string | null;
+  /** Secondary brand-mark image (علامة تجارية) — split layout only. */
+  brandLogo?: string | null;
   crNumber?: string | null;
   vatNumber?: string | null;
   phone?: string | null;
@@ -69,6 +71,14 @@ export interface LetterheadOptions {
   size?: LetterheadSize;
   /** Extra pre-escaped HTML meta line(s), e.g. "تاريخ الطباعة: …". */
   extraMetaHtml?: string;
+  /**
+   * "center" (default) = the classic centered letterhead used everywhere.
+   * "split" = journal-entry layout: company block (logo + names + meta) sits
+   * at the START side, the brand-mark image (company.brandLogo) at the END
+   * side, and the main logo is rendered bigger (2× width / 1.5× height).
+   * Opt-in only — existing voucher/bulk templates keep "center".
+   */
+  layout?: "center" | "split";
 }
 
 const ACCENTS: Record<LetterheadAccent, { border: string; name: string }> = {
@@ -87,13 +97,24 @@ export function buildLetterheadHtml(
   const showEn = !!(c.nameEn && c.nameEn !== c.nameAr && c.nameAr);
   const meta = letterheadMetaLine(c);
   const addr = letterheadAddressLine(c);
-  return `<div class="co-letterhead">
+  const companyBlock = `
   ${safeLogo ? `<img class="lh-logo" src="${safeLogo}" alt="" />` : ""}
   ${nameAr ? `<div class="lh-name-ar">${esc(nameAr)}</div>` : ""}
   ${showEn ? `<div class="lh-name-en">${esc(c.nameEn)}</div>` : ""}
   ${meta ? `<div class="lh-meta">${meta}</div>` : ""}
   ${addr ? `<div class="lh-meta">${esc(addr)}</div>` : ""}
-  ${opts?.extraMetaHtml ? `<div class="lh-meta">${opts.extraMetaHtml}</div>` : ""}
+  ${opts?.extraMetaHtml ? `<div class="lh-meta">${opts.extraMetaHtml}</div>` : ""}`;
+
+  if (opts?.layout === "split") {
+    const safeBrand = safeLogoSrc(c.brandLogo);
+    return `<div class="co-letterhead lh-split">
+  <div class="lh-co">${companyBlock}
+  </div>
+  <div class="lh-brand">${safeBrand ? `<img class="lh-brand-img" src="${safeBrand}" alt="" />` : ""}</div>
+</div>`;
+  }
+
+  return `<div class="co-letterhead">${companyBlock}
 </div>`;
 }
 
@@ -109,6 +130,15 @@ export function letterheadCss(opts?: LetterheadOptions): string {
 .co-letterhead .lh-name-ar { font-size:${lg ? 20 : 15}px; font-weight:800; color:${a.name}; line-height:1.25; }
 .co-letterhead .lh-name-en { font-size:${lg ? 11 : 10}px; font-weight:500; color:#6b7280; }
 .co-letterhead .lh-meta { font-size:${lg ? 11 : 10.5}px; color:#475569; margin-top:1px; }
+/* ── Split layout (journal-entry print) ─────────────────────────────────
+   Company block at the START side (right in RTL), brand mark at the END
+   side. The main logo doubles its width and grows 50% in height vs the
+   centered "md" letterhead (44×150 → 66×300). */
+.co-letterhead.lh-split { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; text-align:start; }
+.co-letterhead.lh-split .lh-co { text-align:start; }
+.co-letterhead.lh-split .lh-logo { margin:0 0 ${lg ? 4 : 3}px; max-height:${lg ? 96 : 66}px; max-width:${lg ? 340 : 300}px; }
+.co-letterhead.lh-split .lh-brand { flex-shrink:0; display:flex; align-items:center; }
+.co-letterhead.lh-split .lh-brand-img { max-height:${lg ? 96 : 66}px; max-width:${lg ? 340 : 300}px; object-fit:contain; }
 table.lh-shell { width:100%; border-collapse:collapse; }
 table.lh-shell > thead { display:table-header-group; }
 table.lh-shell > thead > tr > td, table.lh-shell > tbody > tr > td { padding:0 !important; border:none !important; background:#fff !important; }

@@ -129,11 +129,15 @@ export default function GeneralSettings() {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<HTMLDivElement>(null);
+  const brandFileRef = useRef<HTMLInputElement>(null);
 
   const [logo, setLogo]         = useState<string | null>(user?.company?.logo ?? null);
+  const [brandLogo, setBrandLogo] = useState<string | null>(user?.company?.brandLogo ?? null);
   const [decimals, setDecimals] = useState<number>(user?.company?.decimalPlaces ?? 2);
   const [dragging, setDragging] = useState(false);
+  const [brandDragging, setBrandDragging] = useState(false);
   const [logoError, setLogoError] = useState("");
+  const [brandLogoError, setBrandLogoError] = useState("");
   const autoPostingEnabled = user?.company?.autoPostingEnabled !== false;
   const [postingSaving, setPostingSaving] = useState(false);
   // Per-doc-type auto-posting flags. We treat `undefined` (legacy rows
@@ -177,7 +181,7 @@ export default function GeneralSettings() {
   };
 
   const saveMutation = useMutation({
-    mutationFn: async (payload: { logo?: string | null; decimalPlaces?: number }) => {
+    mutationFn: async (payload: { logo?: string | null; brandLogo?: string | null; decimalPlaces?: number }) => {
       const cid = user?.company?.id ?? user?.companyId;
       // Send the logo as raw base64 (+ mime) rather than a "data:" URL so the
       // production edge WAF doesn't reject the request with a 403 HTML page.
@@ -193,6 +197,18 @@ export default function GeneralSettings() {
           // Unexpected non-data-URL value — preserve it via the legacy `logo`
           // field rather than silently clearing the logo.
           body.logo = payload.logo;
+        }
+      }
+      // Brand mark (العلامة التجارية) — same WAF-safe raw-base64 transport.
+      if (payload.brandLogo === null) {
+        body.brandLogoBase64 = null;
+      } else if (typeof payload.brandLogo === "string") {
+        const parts = splitDataUrl(payload.brandLogo);
+        if (parts) {
+          body.brandLogoBase64 = parts.b64;
+          body.brandLogoMime = parts.mime;
+        } else {
+          body.brandLogo = payload.brandLogo;
         }
       }
       const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
@@ -219,7 +235,7 @@ export default function GeneralSettings() {
     },
     onSuccess: (data) => {
       if (setUser) {
-        setUser((u: any) => ({ ...u, company: { ...u.company, logo: data.logo, decimalPlaces: data.decimalPlaces } }));
+        setUser((u: any) => ({ ...u, company: { ...u.company, logo: data.logo, brandLogo: data.brandLogo, decimalPlaces: data.decimalPlaces } }));
       }
       qc.invalidateQueries({ queryKey: ["auth-me"] });
       toast({ title: t("pages.generalSettings.saveSuccess") });
@@ -259,6 +275,37 @@ export default function GeneralSettings() {
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setDragging(true); };
   const handleDragLeave = () => setDragging(false);
 
+  // ─── Brand-mark (علامة تجارية) upload handling — mirrors the logo flow ────
+  const processBrandFile = useCallback(async (file: File) => {
+    setBrandLogoError("");
+    if (!file.type.startsWith("image/")) {
+      setBrandLogoError(t("pages.generalSettings.invalidFileType")); return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setBrandLogoError(t("pages.generalSettings.fileTooLarge")); return;
+    }
+    try {
+      setBrandLogo(await downscaleLogo(file));
+    } catch {
+      setBrandLogoError(t("pages.generalSettings.invalidFileType"));
+    }
+  }, [t]);
+
+  const handleBrandFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processBrandFile(file);
+    e.target.value = "";
+  };
+
+  const handleBrandDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setBrandDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processBrandFile(file);
+  };
+
+  const handleBrandDragOver = (e: React.DragEvent) => { e.preventDefault(); setBrandDragging(true); };
+  const handleBrandDragLeave = () => setBrandDragging(false);
+
   const handleSave = () => {
     // Final guard regardless of how the logo was produced (downscale fallback,
     // raw SVG passthrough, restored value). Keeps the saved base64 well under
@@ -268,7 +315,12 @@ export default function GeneralSettings() {
       toast({ title: t("pages.generalSettings.fileTooLarge"), variant: "destructive" });
       return;
     }
-    saveMutation.mutate({ logo: logo ?? null, decimalPlaces: decimals });
+    if (brandLogo && brandLogo.length > 700_000) {
+      setBrandLogoError(t("pages.generalSettings.fileTooLarge"));
+      toast({ title: t("pages.generalSettings.fileTooLarge"), variant: "destructive" });
+      return;
+    }
+    saveMutation.mutate({ logo: logo ?? null, brandLogo: brandLogo ?? null, decimalPlaces: decimals });
   };
 
   // ─── Auto-posting toggle (saves immediately on toggle) ────────────────────
@@ -311,6 +363,7 @@ export default function GeneralSettings() {
 
   const isDirty =
     logo !== (user?.company?.logo ?? null) ||
+    brandLogo !== (user?.company?.brandLogo ?? null) ||
     decimals !== (user?.company?.decimalPlaces ?? 2);
 
   // ─── Document-archiving control center state ──────────────────────────────
@@ -1227,6 +1280,78 @@ export default function GeneralSettings() {
 
         {logoError && (
           <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{logoError}</p>
+        )}
+      </div>
+
+      {/* ─── Brand Mark Section (علامة تجارية) — mirrors the logo UX ─────── */}
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <ImageIcon className="h-4 w-4 text-muted-foreground" />
+          {t("pages.generalSettings.brandMark", { defaultValue: "العلامة التجارية" })}
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          {t("pages.generalSettings.brandMarkDescription", { defaultValue: "صورة إضافية تُطبع في الجهة المقابلة لبيانات الشركة على مطبوعات القيود المحاسبية." })}
+        </p>
+
+        <div className="flex flex-col sm:flex-row gap-4">
+          {/* Drop zone */}
+          <div
+            onDrop={handleBrandDrop}
+            onDragOver={handleBrandDragOver}
+            onDragLeave={handleBrandDragLeave}
+            onClick={() => brandFileRef.current?.click()}
+            className={cn(
+              "flex-1 flex flex-col items-center justify-center rounded-xl border-2 border-dashed cursor-pointer transition-all py-8 px-4 text-center min-h-[140px]",
+              brandDragging
+                ? "border-primary bg-primary/5 scale-[1.01]"
+                : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/40"
+            )}
+          >
+            <Upload className={cn("h-8 w-8 mb-2 transition-colors", brandDragging ? "text-primary" : "text-muted-foreground/50")} />
+            <p className="text-sm font-medium text-muted-foreground">
+              {brandDragging ? t("pages.generalSettings.dropImageHere") : t("pages.generalSettings.dragAndDrop")}
+            </p>
+            <p className="text-xs text-muted-foreground/60 mt-1">PNG, JPG, SVG, WebP</p>
+            <input
+              ref={brandFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleBrandFileChange}
+            />
+          </div>
+
+          {/* Preview */}
+          {brandLogo ? (
+            <div className="relative flex-shrink-0 w-full sm:w-48">
+              <div className="rounded-xl border bg-muted/20 p-3 flex items-center justify-center h-full min-h-[140px]">
+                <img
+                  src={brandLogo}
+                  alt={t("pages.generalSettings.brandMark", { defaultValue: "العلامة التجارية" })}
+                  className="max-h-28 max-w-full object-contain"
+                />
+              </div>
+              <button
+                onClick={() => setBrandLogo(null)}
+                className="absolute -top-2 -left-2 h-6 w-6 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow hover:scale-110 transition-transform"
+                title={t("common.delete")}
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+              <p className="text-center text-[10px] text-muted-foreground mt-2">{t("pages.generalSettings.logoPreview")}</p>
+            </div>
+          ) : (
+            <div className="flex-shrink-0 w-full sm:w-48 rounded-xl border border-dashed bg-muted/10 flex flex-col items-center justify-center h-full min-h-[140px] gap-2">
+              <div className="h-12 w-12 rounded-full bg-muted/40 flex items-center justify-center">
+                <ImageIcon className="h-6 w-6 text-muted-foreground/40" />
+              </div>
+              <p className="text-xs text-muted-foreground/50">{t("pages.generalSettings.noBrandMark", { defaultValue: "لا توجد علامة تجارية" })}</p>
+            </div>
+          )}
+        </div>
+
+        {brandLogoError && (
+          <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{brandLogoError}</p>
         )}
       </div>
 

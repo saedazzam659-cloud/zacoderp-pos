@@ -39,6 +39,10 @@ export const companiesTable = pgTable("companies", {
   invoiceCounter: integer("invoice_counter").notNull().default(0),
   // General settings
   logo: text("logo"),                          // base64 data URL
+  // Secondary "brand mark" image (علامة تجارية) uploaded next to the logo in
+  // General Settings — shown on the opposite side of the letterhead in the
+  // journal-entry print. Same storage format as `logo` (base64 data URL).
+  brandLogo: text("brand_logo"),
   decimalPlaces: integer("decimal_places").notNull().default(2),
   // Display-only preference: when false (default), numeric INPUT fields across
   // the web app hide a value of 0 (blank field + faint "0" placeholder) instead

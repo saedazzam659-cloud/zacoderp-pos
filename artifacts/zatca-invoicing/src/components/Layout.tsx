@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIdleLogout } from "@/hooks/useIdleLogout";
 import {
@@ -3215,6 +3215,7 @@ function SidebarInner({
           <DropdownMenuTrigger asChild>
             <button className="flex w-full items-center gap-3 rounded-lg px-2 py-2 hover:bg-sidebar-accent transition-colors text-start">
               <Avatar className="h-8 w-8 shrink-0">
+                {user?.company?.logo ? <AvatarImage src={user.company.logo} className="object-contain bg-white" /> : null}
                 <AvatarFallback className={cn(
                   "text-xs font-bold",
                   isSuperAdmin ? "bg-purple-100 text-purple-700" : "bg-primary text-primary-foreground"
@@ -3225,20 +3226,37 @@ function SidebarInner({
               <div className="flex-1 min-w-0 text-start">
                 <p className="text-sm font-medium text-sidebar-foreground truncate">{user?.username ?? t("topbar.user")}</p>
                 <p className="text-xs text-sidebar-foreground/50 truncate">
-                  {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.manager") : t("topbar.user")}
+                  {user?.company?.nameAr
+                    ? user.company.nameAr
+                    : isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.manager") : t("topbar.user")}
                 </p>
               </div>
               <ChevronDown className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="top" className="w-52">
+          <DropdownMenuContent align="end" side="top" className="w-60">
             <DropdownMenuLabel className="font-normal">
-              <div>
-                <p className="text-sm font-medium">{user?.username}</p>
-                <p className="text-xs text-muted-foreground">
-                  {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.companyManager") : t("topbar.user")}
-                </p>
+              <div className="flex items-center gap-2.5">
+                {user?.company?.logo ? (
+                  <img
+                    src={user.company.logo}
+                    alt=""
+                    className="h-9 w-9 rounded-lg object-contain border bg-white p-0.5 shrink-0"
+                  />
+                ) : null}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{user?.username}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.companyManager") : t("topbar.user")}
+                  </p>
+                </div>
               </div>
+              {user?.company?.nameAr ? (
+                <div className="mt-2 flex items-center gap-1.5 rounded-md bg-primary/5 border border-primary/10 px-2 py-1">
+                  <Building2 className="h-3 w-3 text-primary/70 shrink-0" />
+                  <p className="text-[11px] font-medium text-primary/90 truncate">{user.company.nameAr}</p>
+                </div>
+              ) : null}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild className="gap-2 cursor-pointer">
@@ -3512,6 +3530,7 @@ function TopBar({
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-accent transition-colors">
                 <Avatar className="h-7 w-7">
+                  {user?.company?.logo ? <AvatarImage src={user.company.logo} className="object-contain bg-white" /> : null}
                   <AvatarFallback className={cn(
                     "text-[11px] font-bold",
                     isSuperAdmin ? "bg-purple-100 text-purple-700" : "bg-primary text-primary-foreground"
@@ -3521,21 +3540,38 @@ function TopBar({
                 </Avatar>
                 <div className="hidden lg:block text-start">
                   <p className="text-xs font-medium leading-tight">{user?.username ?? t("topbar.user")}</p>
-                  <p className="text-[10px] text-muted-foreground leading-tight">
-                    {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.manager") : t("topbar.user")}
+                  <p className="text-[10px] text-muted-foreground leading-tight max-w-[140px] truncate">
+                    {user?.company?.nameAr
+                      ? user.company.nameAr
+                      : isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.manager") : t("topbar.user")}
                   </p>
                 </div>
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground hidden lg:block" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuContent align="end" className="w-60">
               <DropdownMenuLabel className="font-normal">
-                <div>
-                  <p className="text-sm font-medium">{user?.username}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.companyManager") : t("topbar.user")}
-                  </p>
+                <div className="flex items-center gap-2.5">
+                  {user?.company?.logo ? (
+                    <img
+                      src={user.company.logo}
+                      alt=""
+                      className="h-9 w-9 rounded-lg object-contain border bg-white p-0.5 shrink-0"
+                    />
+                  ) : null}
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{user?.username}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.companyManager") : t("topbar.user")}
+                    </p>
+                  </div>
                 </div>
+                {user?.company?.nameAr ? (
+                  <div className="mt-2 flex items-center gap-1.5 rounded-md bg-primary/5 border border-primary/10 px-2 py-1">
+                    <Building2 className="h-3 w-3 text-primary/70 shrink-0" />
+                    <p className="text-[11px] font-medium text-primary/90 truncate">{user.company.nameAr}</p>
+                  </div>
+                ) : null}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild className="gap-2 cursor-pointer">

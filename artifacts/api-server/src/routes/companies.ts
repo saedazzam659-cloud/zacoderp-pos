@@ -131,7 +131,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     return;
   }
   const {
-    logo, logoBase64, logoMime, decimalPlaces, showZeros, autoPostingEnabled,
+    logo, logoBase64, logoMime,
+    brandLogo, brandLogoBase64, brandLogoMime,
+    decimalPlaces, showZeros, autoPostingEnabled,
     // Per-doc-type auto-posting toggles. Each one independently decides
     // whether saving that document immediately posts the resulting journal
     // entry. Validated as plain booleans below.
@@ -179,6 +181,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     archiveSettings,
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
+    brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
     decimalPlaces?: number; showZeros?: boolean; autoPostingEnabled?: boolean;
     autoPostJournalEntry?: boolean;
     autoPostSales?: boolean; autoPostPurchase?: boolean;
@@ -240,6 +243,22 @@ router.patch("/:id/general-settings", async (req, res) => {
     }
   } else if (logo !== undefined) {
     updates.logo = logo;
+  }
+  // Brand mark (العلامة التجارية) — same WAF-safe raw-base64 transport and the
+  // same stored data-URL format as the main logo.
+  if (brandLogoBase64 !== undefined) {
+    if (brandLogoBase64 === null || brandLogoBase64 === "") {
+      updates.brandLogo = null;
+    } else {
+      if (brandLogoBase64.length > 5 * 1024 * 1024) {
+        res.status(400).json({ error: "حجم العلامة التجارية كبير جداً" }); return;
+      }
+      const mime = typeof brandLogoMime === "string" && /^image\/[\w.+-]+$/.test(brandLogoMime)
+        ? brandLogoMime : "image/png";
+      updates.brandLogo = `data:${mime};base64,${brandLogoBase64}`;
+    }
+  } else if (brandLogo !== undefined) {
+    updates.brandLogo = brandLogo;
   }
   if (decimalPlaces !== undefined) {
     const dp = Number(decimalPlaces);

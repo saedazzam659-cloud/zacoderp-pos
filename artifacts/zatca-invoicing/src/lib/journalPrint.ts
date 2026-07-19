@@ -73,7 +73,10 @@ export function buildDetailedJournalPrintHtml(
   const dir = isRtl ? "rtl" : "ltr";
   const lang = isRtl ? "ar" : "en";
   const align = isRtl ? "right" : "left";
-  const letterhead = buildLetterheadHtml(company, { accent: "navy", size: "md" });
+  // Per-user request (2026-07-19): journal prints use the SPLIT letterhead —
+  // company block at the start side, brand mark (علامة تجارية) at the end
+  // side, with a bigger logo (2× width / 1.5× height).
+  const letterhead = buildLetterheadHtml(company, { accent: "navy", size: "md", layout: "split" });
 
   // Grand totals across every printed entry (footer banner — shown only when
   // more than one entry is printed; a single entry's subtotal row already
@@ -175,7 +178,7 @@ export function buildDetailedJournalPrintHtml(
 @media print { thead { display: table-header-group; } .entry { page-break-inside: avoid; } ${oneEntryPerPage ? ".entry { page-break-after: always; } .entry:last-of-type { page-break-after: auto; }" : ""} }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; direction:${dir}; }
-${letterheadCss({ accent: "navy", size: "md" })}
+${letterheadCss({ accent: "navy", size: "md", layout: "split" })}
 .entry { margin: 0 0 14px; border:1px solid #cbd5e1; border-radius:6px; padding:6px 8px; background:#fff; }
 .entry-head { margin-bottom:6px; }
 .entry-title { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px; }
