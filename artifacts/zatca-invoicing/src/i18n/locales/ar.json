@@ -7206,6 +7206,7 @@
       "idTypeNational": "هوية وطنية",
       "fIdNumber": "رقم الهوية / الإقامة",
       "fIqamaExpiry": "تاريخ انتهاء الإقامة",
+      "fIqamaExpiryHijri": "تاريخ انتهاء الإقامة (هجري)",
       "fNationality": "الجنسية",
       "fNationalityPh": "السعودية / مصر / …",
       "fPassportNumber": "رقم جواز السفر",

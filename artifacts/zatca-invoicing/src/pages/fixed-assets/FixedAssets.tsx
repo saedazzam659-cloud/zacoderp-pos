@@ -16,6 +16,8 @@ import { Plus, Pencil, Trash2, Search, Package, QrCode,
   Info, ShoppingCart, Cog, TrendingDown, Shield, FileText, Receipt, Calculator } from "lucide-react";
 import { YearMonthInput } from "@/components/YearMonthInput";
 import { DateField } from "@/components/ui/date-field";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { employeesApi } from "@/lib/employeesApi";
 import DepreciationScheduleTimeline from "./DepreciationScheduleTimeline";
 import { fmt2 } from "@/lib/format";
 
@@ -158,6 +160,13 @@ export default function FixedAssets() {
   const { data: branches = [] } = useQuery<any[]>({
     queryKey:["branches", cid],
     queryFn: async () => { const j = await (await fetch(`${API}/api/branches?companyId=${cid}`, { headers })).json(); return Array.isArray(j) ? j : []; },
+    enabled: !!cid,
+  });
+  // HR employees — feeds the "المسؤول عن الأصل" picker so the custodian is a
+  // real employee record instead of a hand-typed number.
+  const { data: employees = [] } = useQuery<any[]>({
+    queryKey:["employees"],
+    queryFn: () => employeesApi.list(),
     enabled: !!cid,
   });
   // Chart of accounts — used only to label the debit lines of a fetched
@@ -1080,8 +1089,21 @@ export default function FixedAssets() {
                 <FileText className="h-4 w-4" /> بيانات إضافية / ملاحظات
               </legend>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div><Label>المسؤول عن الأصل (رقم الموظف)</Label>
-                  <Input type="text" inputMode="numeric" dir="ltr" value={form.custodianEmployeeId} onChange={(e)=>setForm({...form,custodianEmployeeId:e.target.value.replace(/[^0-9]/g,"")})} /></div>
+                <div><Label>المسؤول عن الأصل (موظف)</Label>
+                  <SearchCombobox
+                    items={[
+                      { value: "", label: "بدون مسؤول" },
+                      ...employees.map((e:any)=>({
+                        value: String(e.id), code: e.code,
+                        label: e.nameAr || e.nameEn || `موظف #${e.id}`,
+                        description: [e.jobTitle, e.department].filter(Boolean).join(" — ") || undefined,
+                      })),
+                    ]}
+                    value={form.custodianEmployeeId ? String(form.custodianEmployeeId) : ""}
+                    onValueChange={(v)=>setForm({...form,custodianEmployeeId:v})}
+                    placeholder="ابحث بالاسم أو الكود…"
+                    className="w-full"
+                  /></div>
                 <div><Label>ملاحظات</Label>
                   <Input value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})} /></div>
               </div>

@@ -255,6 +255,19 @@ export default function Employees() {
                     </Field>
                     <Field label={tr("fIdNumber")}><Input value={editing.idNumber} onChange={e => setF("idNumber", e.target.value)} /></Field>
                     <Field label={tr("fIqamaExpiry")}><DateField value={editing.iqamaExpiry || ""} onChange={e => setF("iqamaExpiry", e.target.value)} /></Field>
+                    {/* National-ID holders track expiry in Hijri — two-way
+                        Umm al-Qura companion bound to the SAME stored
+                        Gregorian iqamaExpiry (no schema change). */}
+                    {editing.idType === "national" && (
+                      <Field label={tr("fIqamaExpiryHijri")}>
+                        <HijriDateField
+                          isoValue={editing.iqamaExpiry || ""}
+                          onIsoChange={(iso) => setF("iqamaExpiry", iso)}
+                          placeholder={tr("fBirthDateHijriPh")}
+                          invalidText={tr("fBirthDateHijriInvalid")}
+                        />
+                      </Field>
+                    )}
                     <Field label={tr("fNationality")}><Input value={editing.nationality} onChange={e => setF("nationality", e.target.value)} placeholder={tr("fNationalityPh")} /></Field>
                     <Field label={tr("fPassportNumber")}><Input value={editing.passportNumber} onChange={e => setF("passportNumber", e.target.value)} /></Field>
                     <Field label={tr("fPassportExpiry")}><DateField value={editing.passportExpiry || ""} onChange={e => setF("passportExpiry", e.target.value)} /></Field>

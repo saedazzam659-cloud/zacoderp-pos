@@ -7128,6 +7128,7 @@
       "idTypeNational": "National ID",
       "fIdNumber": "ID / Iqama Number",
       "fIqamaExpiry": "Iqama Expiry Date",
+      "fIqamaExpiryHijri": "Iqama/ID Expiry (Hijri)",
       "fNationality": "Nationality",
       "fNationalityPh": "Saudi / Egyptian / …",
       "fPassportNumber": "Passport Number",
