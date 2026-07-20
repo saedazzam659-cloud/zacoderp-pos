@@ -14,6 +14,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   CheckCircle2, XCircle, Clock, Search, RefreshCw, GraduationCap, Loader2, Mail,
+  Pencil, Trash2, Send,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -90,6 +91,14 @@ export default function TraineeRequests() {
   const [rejectDialog, setRejectDialog] = useState<TraineeRow | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
+  // Edit dialog state (approved rows only)
+  const [editDialog, setEditDialog] = useState<TraineeRow | null>(null);
+  const [editDuration, setEditDuration] = useState("30");
+  const [editModules, setEditModules] = useState<string[]>([]);
+
+  // Delete confirm state
+  const [deleteDialog, setDeleteDialog] = useState<TraineeRow | null>(null);
+
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const { data: requests = [], isLoading, refetch, isFetching } = useQuery<TraineeRow[]>({
@@ -158,6 +167,71 @@ export default function TraineeRequests() {
     },
     onError: (e: any) => toast({ title: e?.message || "فشل رفض الطلب", variant: "destructive" as any }),
   });
+
+  const editMutation = useMutation({
+    mutationFn: async () => {
+      if (!editDialog) return;
+      const r = await fetch(`${API}/api/admin/trainee-requests/${editDialog.id}`, {
+        method: "PATCH", headers,
+        body: JSON.stringify({ durationDays: Number(editDuration), allowedModules: editModules }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "فشل حفظ التعديلات");
+      return j;
+    },
+    onSuccess: () => {
+      toast({ title: "تم حفظ التعديلات", description: "تم تحديث صلاحيات المتدرب مباشرة." });
+      setEditDialog(null);
+      qc.invalidateQueries({ queryKey: ["trainee-requests"] });
+    },
+    onError: (e: any) => toast({ title: e?.message || "فشل حفظ التعديلات", variant: "destructive" as any }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!deleteDialog) return;
+      const r = await fetch(`${API}/api/admin/trainee-requests/${deleteDialog.id}`, {
+        method: "DELETE", headers,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "فشل حذف الطلب");
+      return j;
+    },
+    onSuccess: (j: any) => {
+      toast({
+        title: "تم حذف الطلب",
+        description: j?.userDeleted
+          ? "تم حذف حساب المتدرب أيضاً."
+          : j?.userDeactivated ? "تم إيقاف حساب المتدرب." : undefined,
+      });
+      setDeleteDialog(null);
+      qc.invalidateQueries({ queryKey: ["trainee-requests"] });
+    },
+    onError: (e: any) => toast({ title: e?.message || "فشل حذف الطلب", variant: "destructive" as any }),
+  });
+
+  const resendMutation = useMutation({
+    mutationFn: async (row: TraineeRow) => {
+      const r = await fetch(`${API}/api/admin/trainee-requests/${row.id}/resend-email`, {
+        method: "POST", headers,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "فشل إعادة الإرسال");
+      if (j?.emailSent === false) throw new Error("تعذّر إرسال البريد — تحقق من إعدادات البريد.");
+      return j;
+    },
+    onSuccess: () => {
+      toast({ title: "تمت إعادة إرسال رسالة التفعيل", description: "اطلب من المتدرب فحص صندوق الوارد والرسائل غير المرغوبة (Spam)." });
+      qc.invalidateQueries({ queryKey: ["trainee-requests"] });
+    },
+    onError: (e: any) => toast({ title: e?.message || "فشل إعادة الإرسال", variant: "destructive" as any }),
+  });
+
+  const openEdit = (row: TraineeRow) => {
+    setEditDuration(String(row.durationDays ?? 30));
+    setEditModules(Array.isArray(row.allowedModules) ? row.allowedModules : []);
+    setEditDialog(row);
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -290,19 +364,39 @@ export default function TraineeRequests() {
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </td>
                       <td className="px-4 py-3">
-                        {row.status === "pending" && (
-                          <div className="flex gap-1.5">
-                            <Button size="sm" className="h-7 gap-1 bg-emerald-600 hover:bg-emerald-700"
-                                    onClick={() => openApprove(row)} data-testid={`trainee-approve-${row.id}`}>
-                              <CheckCircle2 className="h-3.5 w-3.5" /> اعتماد
-                            </Button>
-                            <Button size="sm" variant="outline" className="h-7 gap-1 text-destructive border-destructive/40 hover:bg-destructive/10"
-                                    onClick={() => { setRejectReason(""); setRejectDialog(row); }}
-                                    data-testid={`trainee-reject-${row.id}`}>
-                              <XCircle className="h-3.5 w-3.5" /> رفض
-                            </Button>
-                          </div>
-                        )}
+                        <div className="flex flex-wrap gap-1.5">
+                          {row.status === "pending" && (
+                            <>
+                              <Button size="sm" className="h-7 gap-1 bg-emerald-600 hover:bg-emerald-700"
+                                      onClick={() => openApprove(row)} data-testid={`trainee-approve-${row.id}`}>
+                                <CheckCircle2 className="h-3.5 w-3.5" /> اعتماد
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-7 gap-1 text-destructive border-destructive/40 hover:bg-destructive/10"
+                                      onClick={() => { setRejectReason(""); setRejectDialog(row); }}
+                                      data-testid={`trainee-reject-${row.id}`}>
+                                <XCircle className="h-3.5 w-3.5" /> رفض
+                              </Button>
+                            </>
+                          )}
+                          {row.status === "approved" && (
+                            <>
+                              <Button size="sm" variant="outline" className="h-7 gap-1"
+                                      onClick={() => openEdit(row)} data-testid={`trainee-edit-${row.id}`}>
+                                <Pencil className="h-3.5 w-3.5" /> تعديل
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-7 gap-1"
+                                      disabled={resendMutation.isPending}
+                                      onClick={() => resendMutation.mutate(row)}
+                                      data-testid={`trainee-resend-${row.id}`}>
+                                <Send className="h-3.5 w-3.5" /> إعادة إرسال
+                              </Button>
+                            </>
+                          )}
+                          <Button size="sm" variant="outline" className="h-7 gap-1 text-destructive border-destructive/40 hover:bg-destructive/10"
+                                  onClick={() => setDeleteDialog(row)} data-testid={`trainee-delete-${row.id}`}>
+                            <Trash2 className="h-3.5 w-3.5" /> حذف
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -411,6 +505,81 @@ export default function TraineeRequests() {
                     data-testid="trainee-reject-confirm">
               {rejectMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
               رفض الطلب
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* ── Edit dialog (approved rows) ── */}
+      <Dialog open={!!editDialog} onOpenChange={o => { if (!o) setEditDialog(null); }}>
+        <DialogContent className="max-w-lg" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>تعديل إعدادات التدريب — {editDialog?.fullName}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">مدة التدريب (بالأيام)</label>
+              <Input type="text" inputMode="numeric" dir="ltr" className="text-left"
+                     value={editDuration}
+                     onChange={e => setEditDuration(e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
+                     data-testid="trainee-edit-duration" />
+              <p className="text-xs text-muted-foreground">من 1 إلى 730 يوماً — تُحسب من تاريخ الاعتماد.</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">الموديولات المتاحة</label>
+              <div className="grid grid-cols-2 gap-1.5 rounded-lg border p-3 max-h-48 overflow-y-auto">
+                {MODULE_OPTIONS.map(m => (
+                  <label key={m.key} className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                    <Checkbox
+                      checked={editModules.includes(m.key)}
+                      onCheckedChange={v => setEditModules(prev =>
+                        v === true ? [...prev, m.key] : prev.filter(k => k !== m.key))}
+                      data-testid={`trainee-edit-module-${m.key}`}
+                    />
+                    {m.label}
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                التعديل يُطبَّق فوراً على حساب المتدرب (يحتاج إعادة تسجيل دخول لظهور القوائم الجديدة).
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setEditDialog(null)}>إلغاء</Button>
+            <Button className="gap-1.5"
+                    disabled={editMutation.isPending || !editDuration}
+                    onClick={() => editMutation.mutate()}
+                    data-testid="trainee-edit-confirm">
+              {editMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+              حفظ التعديلات
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete confirm dialog ── */}
+      <Dialog open={!!deleteDialog} onOpenChange={o => { if (!o) setDeleteDialog(null); }}>
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>حذف طلب — {deleteDialog?.fullName}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            سيتم حذف الطلب نهائياً.
+            {deleteDialog?.status === "approved" && (
+              <> كما سيتم حذف/إيقاف حساب المتدرب المرتبط
+                {deleteDialog?.envMode === "separate" ? " وتعليق شركة التدريب المستقلة" : ""}.
+              </>
+            )}
+            {" "}هذا الإجراء لا يمكن التراجع عنه.
+          </p>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteDialog(null)}>إلغاء</Button>
+            <Button variant="destructive" className="gap-1.5"
+                    disabled={deleteMutation.isPending}
+                    onClick={() => deleteMutation.mutate()}
+                    data-testid="trainee-delete-confirm">
+              {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              حذف نهائي
             </Button>
           </DialogFooter>
         </DialogContent>

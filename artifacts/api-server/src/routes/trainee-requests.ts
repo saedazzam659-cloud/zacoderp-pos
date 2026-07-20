@@ -139,6 +139,48 @@ async function buildTraineeMenuPermissions(allowedModules: string[]): Promise<st
   return JSON.stringify(out);
 }
 
+// ── Per-user RBAC permission map for SHARED-mode trainees ────────────────
+// users.permissions is shaped { key: { view, create, edit, delete, post,
+// export } } (see zatca-invoicing lib/permissions.ts + usePermission). The
+// first release stored a FLAT boolean map here, which the frontend reads as
+// "no view permission on anything" → empty sidebar. This maps each high-level
+// trainee module to the granular per-user permission keys of its screens.
+const TRAINEE_USER_PERM_KEYS: Record<string, string[]> = {
+  sales:        ["customers", "sales_quotations", "sales_invoices", "sales_returns", "sales_settlements", "sales_reps", "sales_reports"],
+  purchasing:   ["suppliers", "purchase_invoices", "purchase_returns", "supplier_settlements"],
+  inventory:    ["items", "warehouses", "stock_transfers", "stock_adjustments", "stock_counts", "inventory_reports", "brands"],
+  pos:          ["pos"],
+  cash:         ["cash_boxes", "bank_accounts", "receipt_vouchers", "payment_vouchers"],
+  accounting:   ["accounts", "journal_entries", "accounting_reports", "accounting_maintenance", "vat_declaration"],
+  hr:           ["hr_employees", "hr_attendance", "hr_loans", "hr_payroll", "hr_eos", "hr_calculators", "hr_settings", "hr_face_attendance"],
+  zatca:        ["zatca_setup", "zatca_bridge", "zatca_report"],
+  contracting:  ["contracting"],
+  production:   ["production"],
+  security:     ["security_events"],
+  maintenance:  ["maintenance"],
+  installments: ["installments"],
+  hotel:        ["hotel"],
+};
+
+const TRAINEE_BASE_PERM_KEYS = [
+  "dashboard", "dashboard_kpis", "dashboard_charts", "dashboard_alerts",
+  "dashboard_recent_invoices", "customers", "sales_invoices",
+];
+
+type UserPermMap = Record<string, Record<string, boolean>>;
+
+function buildTraineeUserPermissions(allowedModules: string[]): UserPermMap {
+  const ACTIONS = ["view", "create", "edit", "delete", "post", "export"] as const;
+  const keys = new Set<string>(TRAINEE_BASE_PERM_KEYS);
+  for (const m of allowedModules) for (const k of TRAINEE_USER_PERM_KEYS[m] ?? []) keys.add(k);
+  const out: UserPermMap = {};
+  for (const k of keys) {
+    out[k] = {};
+    for (const a of ACTIONS) out[k][a] = true;
+  }
+  return out;
+}
+
 // POST /api/admin/trainee-requests/:id/approve
 // Body: { durationDays, envMode: "shared"|"separate", allowedModules: string[],
 //         companyId? (required for shared mode) }
@@ -260,9 +302,9 @@ router.post("/:id/approve", async (req, res) => {
         role,
         isActive: true,
         isTrainee: true,
-        // Shared-mode trainees get a personal permission map limited to the
-        // allowed modules; separate-mode relies on the company-level map.
-        ...(envMode === "shared" ? { permissions: JSON.parse(menuPermissions) } : {}),
+        // Shared-mode trainees get a personal RBAC permission map limited to
+        // the allowed modules; separate-mode relies on the company-level map.
+        ...(envMode === "shared" ? { permissions: buildTraineeUserPermissions(allowedModules) } : {}),
       };
       const [newUser] = await tx.insert(usersTable).values(userValues).returning();
 
@@ -401,6 +443,178 @@ router.post("/:id/reject", async (req, res) => {
   });
 
   res.json({ ok: true, emailSent: sent.ok });
+});
+
+// PATCH /api/admin/trainee-requests/:id — edit an APPROVED trainee's
+// training settings. Body: { durationDays?, allowedModules? }
+// Applies the change to the live account too:
+//   shared   → rewrites the trainee user's personal RBAC permission map.
+//   separate → rewrites the sandbox company's menuPermissions + the
+//              subscription endDate (duration counted from the approval day).
+router.patch("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [reqRow] = await db.select().from(traineeRequestsTable)
+    .where(eq(traineeRequestsTable.id, id));
+  if (!reqRow) { res.status(404).json({ error: "الطلب غير موجود" }); return; }
+  if (reqRow.status !== "approved") {
+    res.status(409).json({ error: "التعديل متاح للطلبات المعتمدة فقط" });
+    return;
+  }
+
+  const hasDuration = req.body?.durationDays !== undefined;
+  const hasModules = req.body?.allowedModules !== undefined;
+  if (!hasDuration && !hasModules) {
+    res.status(400).json({ error: "لا يوجد ما يتم تعديله" });
+    return;
+  }
+
+  let durationDays = reqRow.durationDays ?? 30;
+  if (hasDuration) {
+    durationDays = Math.floor(Number(req.body.durationDays));
+    if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > 730) {
+      res.status(400).json({ error: "مدة التدريب غير صالحة (1 - 730 يوم)" });
+      return;
+    }
+  }
+  let allowedModules: string[] = Array.isArray(reqRow.allowedModules) ? reqRow.allowedModules : [];
+  if (hasModules) {
+    allowedModules = (Array.isArray(req.body.allowedModules) ? req.body.allowedModules : [])
+      .filter((m: unknown): m is string => typeof m === "string" && m in REGISTRATION_MODULE_PERMISSIONS);
+  }
+
+  try {
+    if (hasModules) {
+      if (reqRow.envMode === "shared" && reqRow.userId) {
+        await db.update(usersTable)
+          .set({ permissions: buildTraineeUserPermissions(allowedModules) })
+          .where(eq(usersTable.id, reqRow.userId));
+      } else if (reqRow.envMode === "separate" && reqRow.companyId) {
+        const menuPermissions = await buildTraineeMenuPermissions(allowedModules);
+        await db.update(companiesTable)
+          .set({ menuPermissions })
+          .where(eq(companiesTable.id, reqRow.companyId));
+      }
+    }
+
+    if (hasDuration && reqRow.envMode === "separate" && reqRow.companyId) {
+      const baseMs = reqRow.decidedAt ? new Date(reqRow.decidedAt).getTime() : Date.now();
+      const endDate = new Date(baseMs + durationDays * 86400000).toISOString().split("T")[0];
+      await db.update(subscriptionsTable)
+        .set({ endDate })
+        .where(eq(subscriptionsTable.companyId, reqRow.companyId));
+    }
+
+    await db.update(traineeRequestsTable).set({
+      durationDays,
+      allowedModules,
+      updatedAt: new Date(),
+    }).where(eq(traineeRequestsTable.id, id));
+
+    await writeAudit({
+      userId: req.adminUser!.id, username: req.adminUser!.username, role: "superadmin",
+      companyId: reqRow.companyId ?? null, module: "admin", action: "update",
+      method: "PATCH", path: `/api/admin/trainee-requests/${id}`, statusCode: 200,
+      ip: null, userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
+      metadata: { traineeRequestId: id, durationDays, allowedModules },
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    req.log?.error?.({ err, traineeRequestId: id }, "trainee edit failed");
+    res.status(500).json({ error: "تعذّر حفظ التعديلات. حاول مرة أخرى." });
+  }
+});
+
+// POST /api/admin/trainee-requests/:id/resend-email — re-send the activation
+// email for an approved request (e.g. it landed in spam or never arrived).
+router.post("/:id/resend-email", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [reqRow] = await db.select().from(traineeRequestsTable)
+    .where(eq(traineeRequestsTable.id, id));
+  if (!reqRow) { res.status(404).json({ error: "الطلب غير موجود" }); return; }
+  if (reqRow.status !== "approved") {
+    res.status(409).json({ error: "إعادة الإرسال متاحة للطلبات المعتمدة فقط" });
+    return;
+  }
+
+  const trainingUrl = `${publicBaseUrlFromReq(req)}/login`;
+  const mail = activationEmail(reqRow.fullName, reqRow.email.toLowerCase(), trainingUrl);
+  const sent = await sendEmail({
+    to: reqRow.email.toLowerCase(),
+    subject: mail.subject,
+    html: mail.html,
+    text: mail.text,
+    channel: "training",
+  });
+  if (sent.ok) {
+    await db.update(traineeRequestsTable)
+      .set({ activationEmailSentAt: new Date(), updatedAt: new Date() })
+      .where(eq(traineeRequestsTable.id, id));
+  }
+  res.json({ ok: sent.ok, emailSent: sent.ok, ...(sent.ok ? {} : { emailError: sent.reason ?? "unknown" }) });
+});
+
+// DELETE /api/admin/trainee-requests/:id — remove a request entirely.
+// For approved requests this also removes the trainee's user account
+// (fallback: deactivate if the row is referenced elsewhere) and, in
+// separate mode, suspends the sandbox training company (never a hard
+// cascade delete of a whole company).
+router.delete("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [reqRow] = await db.select().from(traineeRequestsTable)
+    .where(eq(traineeRequestsTable.id, id));
+  if (!reqRow) { res.status(404).json({ error: "الطلب غير موجود" }); return; }
+
+  try {
+    let userDeleted = false;
+    let userDeactivated = false;
+    if (reqRow.userId) {
+      try {
+        const deleted = await db.delete(usersTable).where(and(
+          eq(usersTable.id, reqRow.userId),
+          eq(usersTable.isTrainee, true), // never touch a non-trainee account
+        )).returning({ id: usersTable.id });
+        userDeleted = deleted.length > 0;
+      } catch {
+        // FK references (audit rows etc.) — deactivate instead.
+        const updated = await db.update(usersTable)
+          .set({ isActive: false, sessionToken: null })
+          .where(and(eq(usersTable.id, reqRow.userId), eq(usersTable.isTrainee, true)))
+          .returning({ id: usersTable.id });
+        userDeactivated = updated.length > 0;
+      }
+    }
+
+    let companySuspended = false;
+    if (reqRow.envMode === "separate" && reqRow.companyId) {
+      const suspended = await db.update(companiesTable)
+        .set({ status: "suspended" })
+        .where(and(eq(companiesTable.id, reqRow.companyId), eq(companiesTable.isSandbox, true)))
+        .returning({ id: companiesTable.id });
+      companySuspended = suspended.length > 0;
+    }
+
+    await db.delete(traineeRequestsTable).where(eq(traineeRequestsTable.id, id));
+
+    await writeAudit({
+      userId: req.adminUser!.id, username: req.adminUser!.username, role: "superadmin",
+      companyId: reqRow.companyId ?? null, module: "admin", action: "delete",
+      method: "DELETE", path: `/api/admin/trainee-requests/${id}`, statusCode: 200,
+      ip: null, userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
+      metadata: { traineeRequestId: id, userId: reqRow.userId, userDeleted, userDeactivated, companySuspended },
+    });
+
+    res.json({ ok: true, userDeleted, userDeactivated, companySuspended });
+  } catch (err) {
+    req.log?.error?.({ err, traineeRequestId: id }, "trainee delete failed");
+    res.status(500).json({ error: "تعذّر حذف الطلب. حاول مرة أخرى." });
+  }
 });
 
 export default router;
