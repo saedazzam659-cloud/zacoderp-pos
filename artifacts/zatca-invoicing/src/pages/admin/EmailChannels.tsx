@@ -14,12 +14,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
   Mail, GraduationCap, ShieldCheck, FileText, Loader2, Send, Trash2,
-  Save, HelpCircle, Info,
+  Save, HelpCircle, Info, Link2, ShieldAlert,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -28,10 +29,14 @@ type ChannelKey = "training" | "security" | "documents";
 
 type ChannelStatus = {
   channel: ChannelKey;
-  configured: { email: string; host: string; port: number; hasPassword: boolean } | null;
+  configured: { email: string; host: string; port: number; hasPassword: boolean; strictNoFallback: boolean } | null;
   effectiveSender: string | null;
   effectiveSource: "channel_smtp" | "outlook" | "system_smtp" | "none";
 };
+
+type ConnectorInfo = { enabled: boolean; address: string | null };
+
+type ChannelsResponse = { channels: ChannelStatus[]; connector?: ConnectorInfo };
 
 const CHANNEL_META: Record<ChannelKey, {
   title: string; desc: string; icon: any; accent: string;
@@ -83,7 +88,7 @@ function ChannelCard({
 }: {
   status: ChannelStatus;
   headers: Record<string, string>;
-  onSaved: (channels: ChannelStatus[]) => void;
+  onSaved: (resp: ChannelsResponse) => void;
 }) {
   const { toast } = useToast();
   const meta = CHANNEL_META[status.channel];
@@ -94,6 +99,7 @@ function ChannelCard({
   const [port, setPort] = useState(String(status.configured?.port ?? 587));
   const [password, setPassword] = useState("");
   const [testTo, setTestTo] = useState("");
+  const [strict, setStrict] = useState(status.configured?.strictNoFallback ?? false);
 
   // Re-seed local fields whenever the server state changes (save/delete).
   useEffect(() => {
@@ -101,19 +107,23 @@ function ChannelCard({
     setHost(status.configured?.host ?? "");
     setPort(String(status.configured?.port ?? 587));
     setPassword("");
-  }, [status.configured?.email, status.configured?.host, status.configured?.port]);
+    setStrict(status.configured?.strictNoFallback ?? false);
+  }, [status.configured?.email, status.configured?.host, status.configured?.port, status.configured?.strictNoFallback]);
 
   const save = useMutation({
     mutationFn: async () => {
       const r = await fetch(`${API}/api/admin/email-channels/${status.channel}`, {
         method: "PUT", headers,
-        body: JSON.stringify({ email: email.trim(), host: host.trim(), port: Number(port), password }),
+        body: JSON.stringify({
+          email: email.trim(), host: host.trim(), port: Number(port), password,
+          strictNoFallback: strict,
+        }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "فشل حفظ إعدادات القناة");
-      return j.channels as ChannelStatus[];
+      return j as ChannelsResponse;
     },
-    onSuccess: (channels) => { toast({ title: "تم حفظ إعدادات القناة" }); onSaved(channels); },
+    onSuccess: (resp) => { toast({ title: "تم حفظ إعدادات القناة" }); onSaved(resp); },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
 
@@ -124,9 +134,9 @@ function ChannelCard({
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "فشل حذف إعدادات القناة");
-      return j.channels as ChannelStatus[];
+      return j as ChannelsResponse;
     },
-    onSuccess: (channels) => { toast({ title: "تم الحذف — القناة رجعت للإعداد الافتراضي" }); onSaved(channels); },
+    onSuccess: (resp) => { toast({ title: "تم الحذف — القناة رجعت للإعداد الافتراضي" }); onSaved(resp); },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
 
@@ -221,6 +231,27 @@ function ChannelCard({
           </div>
         </div>
 
+        <div className="flex items-start gap-2 pt-2 border-t border-slate-200/70">
+          <ShieldAlert className={`h-4 w-4 mt-0.5 shrink-0 ${strict ? "text-red-600" : "text-slate-400"}`} />
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Label className="text-xs font-semibold cursor-pointer" htmlFor={`strict-${status.channel}`}>
+                منع الإرسال من أي بريد بديل (وضع صارم)
+              </Label>
+              <Switch id={`strict-${status.channel}`} checked={strict} onCheckedChange={setStrict}
+                data-testid={`switch-strict-${status.channel}`} />
+              {status.configured?.strictNoFallback !== undefined &&
+                strict !== status.configured.strictNoFallback && (
+                <span className="text-[11px] text-amber-600">— اضغط «حفظ» لتطبيق التغيير</span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+              لو بريد القناة ده فشل في الإرسال، الرسالة <strong>مش هتتبعت نهائياً</strong> من حساب
+              Outlook المرتبط أو بريد النظام — وهيظهر سبب الفشل الحقيقي بدل ما الرسالة تطلع من إيميل غلط.
+            </p>
+          </div>
+        </div>
+
         <div className="flex items-center gap-2 pt-1 border-t border-slate-200/70 flex-wrap">
           <Label className="text-xs whitespace-nowrap">إرسال اختبار إلى:</Label>
           <Input dir="ltr" type="email" placeholder="you@example.com" className="h-8 w-64"
@@ -243,7 +274,7 @@ export default function EmailChannels() {
   const qc = useQueryClient();
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-  const listQ = useQuery<{ channels: ChannelStatus[] }>({
+  const listQ = useQuery<ChannelsResponse>({
     queryKey: ["admin-email-channels"],
     queryFn: async () => {
       const r = await fetch(`${API}/api/admin/email-channels`, { headers });
@@ -252,8 +283,10 @@ export default function EmailChannels() {
     },
   });
 
-  const onSaved = (channels: ChannelStatus[]) =>
-    qc.setQueryData(["admin-email-channels"], { channels });
+  const onSaved = (resp: ChannelsResponse) =>
+    qc.setQueryData(["admin-email-channels"], resp);
+
+  const connector = listQ.data?.connector;
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -279,6 +312,30 @@ export default function EmailChannels() {
             قنوات المتدربين والأمان منصّية بالكامل ولا تتأثر بإعدادات الشركات.
           </div>
         </div>
+
+        {connector && (
+          <div className="rounded-lg border border-slate-300 bg-slate-50 p-3 flex items-start gap-2 text-sm leading-relaxed"
+            data-testid="connector-banner">
+            <Link2 className="h-4 w-4 mt-0.5 shrink-0 text-slate-600" />
+            <div className="text-slate-700">
+              <strong>حساب Outlook المرتبط بالمنصة (الاحتياطي):</strong>{" "}
+              {connector.enabled ? (
+                connector.address ? (
+                  <span className="font-mono" dir="ltr" data-testid="connector-address">{connector.address}</span>
+                ) : (
+                  <span className="text-amber-600">مفعّل لكن تعذّر قراءة عنوان البريد حالياً</span>
+                )
+              ) : (
+                <span className="text-red-600">غير مرتبط</span>
+              )}
+              <p className="text-xs text-slate-500 mt-1">
+                ده الحساب اللي بيُستخدم كاحتياطي لو بريد القناة فشل. تغييره بيتم من لوحة Integrations في Replit
+                (فصل الربط الحالي ثم الربط بالحساب الجديد) — ولو مش عايز أي إرسال منه لقناة معيّنة فعّل
+                «الوضع الصارم» في كارت القناة تحت.
+              </p>
+            </div>
+          </div>
+        )}
 
         {listQ.isLoading && (
           <div className="flex items-center gap-2 text-slate-500 py-10 justify-center">

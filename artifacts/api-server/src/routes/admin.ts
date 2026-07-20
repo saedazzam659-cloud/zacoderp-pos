@@ -34,6 +34,7 @@ import {
   REPORT_SENDER_KEY,
   SMTP_KEYS,
   getChannelSenderStatuses,
+  getOutlookConnectorInfo,
   invalidateChannelSenderCache,
   channelSettingKey,
   EMAIL_CHANNEL_KEYS,
@@ -4780,8 +4781,11 @@ function parseChannelParam(raw: string): EmailChannelKey | null {
 // GET /api/admin/email-channels — all channels + effective sender provenance.
 router.get("/email-channels", requireSuperAdmin, async (_req, res) => {
   try {
-    const channels = await getChannelSenderStatuses();
-    res.json({ channels });
+    const [channels, connector] = await Promise.all([
+      getChannelSenderStatuses(),
+      getOutlookConnectorInfo(),
+    ]);
+    res.json({ channels, connector });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر تحميل إعدادات القنوات";
     res.status(500).json({ error: msg });
@@ -4819,7 +4823,18 @@ router.put("/email-channels/:channel", requireSuperAdmin, async (req, res) => {
         res.status(400).json({ error: "كلمة مرور البريد (App Password) مطلوبة في أول إعداد" }); return;
       }
     }
-    const value = JSON.stringify({ email, host, port, passEnc });
+    // Back-compat: when the flag is omitted (older/other API clients), keep
+    // the currently stored value instead of silently resetting it to false.
+    let strictNoFallback: boolean;
+    if (typeof body.strictNoFallback === "boolean") {
+      strictNoFallback = body.strictNoFallback;
+    } else {
+      const [row] = await db.select().from(systemSettingsTable)
+        .where(eq(systemSettingsTable.key, channelSettingKey(ch))).limit(1);
+      try { strictNoFallback = JSON.parse(row?.value ?? "{}")?.strictNoFallback === true; }
+      catch { strictNoFallback = false; }
+    }
+    const value = JSON.stringify({ email, host, port, passEnc, strictNoFallback });
     await db.execute(sql`
       INSERT INTO system_settings (key, value, updated_at)
       VALUES (${channelSettingKey(ch)}, ${value}, NOW())
@@ -4835,10 +4850,13 @@ router.put("/email-channels/:channel", requireSuperAdmin, async (req, res) => {
       action: "update",
       entityType: "email_channel_sender",
       entityId: ch,
-      metadata: { email, host, port, passwordChanged: !!password },
+      metadata: { email, host, port, passwordChanged: !!password, strictNoFallback },
     });
-    const channels = await getChannelSenderStatuses();
-    res.json({ channels });
+    const [channels, connector] = await Promise.all([
+      getChannelSenderStatuses(),
+      getOutlookConnectorInfo(),
+    ]);
+    res.json({ channels, connector });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر حفظ إعدادات القناة";
     res.status(500).json({ error: msg });
@@ -4865,8 +4883,11 @@ router.delete("/email-channels/:channel", requireSuperAdmin, async (req, res) =>
       entityId: ch,
       metadata: { cleared: true },
     });
-    const channels = await getChannelSenderStatuses();
-    res.json({ channels });
+    const [channels, connector] = await Promise.all([
+      getChannelSenderStatuses(),
+      getOutlookConnectorInfo(),
+    ]);
+    res.json({ channels, connector });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر حذف إعدادات القناة";
     res.status(500).json({ error: msg });

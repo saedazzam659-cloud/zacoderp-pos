@@ -310,19 +310,25 @@ interface ChannelSenderStored {
   host: string;
   port: number;
   passEnc: string;
+  // When true: if this channel's pinned mailbox fails, DO NOT fall back to the
+  // Outlook connector / system SMTP — fail loudly instead. Gives the SuperAdmin
+  // full control so mail never silently goes out from an unintended mailbox.
+  strictNoFallback?: boolean;
 }
 
+type ChannelSenderResolved = CompanySenderConfig & { strict: boolean };
+
 const CHANNEL_CACHE_TTL_MS = 30_000;
-const channelCache = new Map<EmailChannelKey, { value: CompanySenderConfig | null; expiresAt: number }>();
+const channelCache = new Map<EmailChannelKey, { value: ChannelSenderResolved | null; expiresAt: number }>();
 
 export function invalidateChannelSenderCache(): void {
   channelCache.clear();
 }
 
-async function getChannelSender(ch: EmailChannelKey): Promise<CompanySenderConfig | null> {
+async function getChannelSender(ch: EmailChannelKey): Promise<ChannelSenderResolved | null> {
   const hit = channelCache.get(ch);
   if (hit && hit.expiresAt > Date.now()) return hit.value;
-  let value: CompanySenderConfig | null = null;
+  let value: ChannelSenderResolved | null = null;
   try {
     const [row] = await db.select().from(systemSettingsTable)
       .where(eq(systemSettingsTable.key, channelSettingKey(ch))).limit(1);
@@ -334,7 +340,10 @@ async function getChannelSender(ch: EmailChannelKey): Promise<CompanySenderConfi
       const passEnc = (parsed.passEnc ?? "").trim();
       const pass = passEnc ? decryptSecret(passEnc) : null;
       if (email && host && pass) {
-        value = { email, host, port: Number(parsed.port) || 587, pass };
+        value = {
+          email, host, port: Number(parsed.port) || 587, pass,
+          strict: parsed.strictNoFallback === true,
+        };
       }
     }
   } catch (err: any) {
@@ -348,9 +357,16 @@ async function getChannelSender(ch: EmailChannelKey): Promise<CompanySenderConfi
 // (without the password) per channel + what would actually be used right now.
 export interface ChannelSenderStatus {
   channel: EmailChannelKey;
-  configured: { email: string; host: string; port: number; hasPassword: boolean } | null;
+  configured: { email: string; host: string; port: number; hasPassword: boolean; strictNoFallback: boolean } | null;
   effectiveSender: string | null;
   effectiveSource: "channel_smtp" | "outlook" | "system_smtp" | "none";
+}
+
+// Live connector visibility for the إدارة إيميلات الإرسال screen: which
+// mailbox the Outlook-connector fallback would send from RIGHT NOW.
+export async function getOutlookConnectorInfo(): Promise<{ enabled: boolean; address: string | null }> {
+  const enabled = outlookEnabled();
+  return { enabled, address: enabled ? await getOutlookAddress() : null };
 }
 
 export async function getChannelSenderStatuses(): Promise<ChannelSenderStatus[]> {
@@ -377,6 +393,7 @@ export async function getChannelSenderStatuses(): Promise<ChannelSenderStatus[]>
             host: (p.host ?? "").trim(),
             port: Number(p.port) || 587,
             hasPassword: Boolean((p.passEnc ?? "").trim()),
+            strictNoFallback: p.strictNoFallback === true,
           };
         }
       }
@@ -615,6 +632,12 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
     if (chCfg) {
       const r = await sendViaCompanySender(chCfg, opts);
       if (r.ok) return r;
+      if (chCfg.strict) {
+        // SuperAdmin opted OUT of fallbacks for this channel: never send from
+        // an unintended mailbox — surface the real failure instead.
+        console.error(`[email] ${opts.channel}-channel pinned sender failed; STRICT mode — no fallback`, r.reason);
+        return { ok: false, reason: `strict_no_fallback|${r.reason ?? "send_failed"}` };
+      }
       console.error(`[email] ${opts.channel}-channel pinned sender failed; falling back`, r.reason);
     }
     if (outlookEnabled()) {
@@ -646,6 +669,10 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
     if (docCfg) {
       const r = await sendViaCompanySender(docCfg, opts);
       if (r.ok) return r;
+      if (docCfg.strict) {
+        console.error("[email] documents-channel pinned sender failed; STRICT mode — no fallback", r.reason);
+        return { ok: false, reason: `strict_no_fallback|${r.reason ?? "send_failed"}` };
+      }
       console.error("[email] documents-channel pinned sender failed; falling back", r.reason);
     }
   }

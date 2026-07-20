@@ -9,6 +9,7 @@ Rule: `sendEmail` in the api-server email lib takes `channel` + optional `compan
 - SuperAdmin can pin a mailbox PER CHANNEL (training / security / documents) via إدارة إيميلات الإرسال (`system_settings` key `channel_sender:<ch>`, JSON with AES-encrypted pass, 30s cache + invalidate on save).
 - `channel:"security"`/`"training"` → pinned channel SMTP FIRST → Outlook connector → system SMTP.
 - General (default channel) resolves sender in order: company sender (ضبط المرسلات — ALWAYS wins for tenant mail, per explicit owner requirement) → `documents` channel mailbox → system SMTP env (`SMTP_HOST/PORT/USER/PASS/FROM`) → connector last resort.
+- Each channel config carries `strictNoFallback` (وضع صارم): if the pinned channel SMTP fails, `sendEmail` returns `{ok:false, reason:"strict_no_fallback|<real reason>"}` and NEVER falls back to connector/system SMTP. PUT preserves the stored flag when omitted. GET/PUT/DELETE responses include `connector:{enabled,address}` (live Graph /v1.0/me, cached) so the screen always shows which mailbox the fallback would use.
 - `skipChannelSenders:true` bypasses ALL pinned channel mailboxes — used by the reports SMTP-config `/test` endpoint so it validates the GLOBAL SMTP path only. Any new "test global SMTP" diagnostics must pass it too.
 
 **Why:** general system mail must NOT come from the personal connector mailbox; the connector is reserved for SuperAdmin security self-sends. Per-company senders let tenants brand their own outgoing mail.
