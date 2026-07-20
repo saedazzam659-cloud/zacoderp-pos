@@ -395,11 +395,10 @@ export interface SendOpts {
   // "general" (default) → business emails. Sender resolution order:
   //   company sender (per-company SMTP, ضبط المرسلات) → system SMTP (default
   //   sender, e.g. zacoderp@outlook.com) → Outlook connector fallback.
-  // "training" → trainee (متدرب) activation/rejection emails. Pinned to the
-  //   Outlook connector mailbox (zacoderp@outlook.com) FIRST — per explicit
-  //   owner request all trainee correspondence goes out from that address —
-  //   with system SMTP only as a last-resort fallback so approvals are never
-  //   silently dropped.
+  // "training" → trainee (متدرب) activation/rejection emails. Sent through
+  //   the system SMTP transport FIRST (best inbox deliverability — the
+  //   Outlook Graph mailbox was accepted-but-dropped by Gmail), with the
+  //   Outlook connector as fallback so approvals are never silently lost.
   channel?: "security" | "general" | "training";
   // Tenant whose "ضبط المرسلات" (sender settings) should be used, if set.
   companyId?: number;
@@ -495,7 +494,7 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
   // Security channel: Outlook connector FIRST (SuperAdmin mailbox self-send),
   // system SMTP only as a fallback. This keeps OTP/security emails pinned to
   // the security mailbox even after a general default sender is configured.
-  if ((opts.channel === "security" || opts.channel === "training") && outlookEnabled()) {
+  if (opts.channel === "security" && outlookEnabled()) {
     const r = await sendViaOutlook(opts);
     if (r.ok) return r;
     console.error(`[email] ${opts.channel}-channel Outlook send failed; falling back to SMTP`, r.reason);
@@ -505,6 +504,7 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
   // configured; on failure we fall through to the system default transport so
   // business emails are never silently dropped because of a bad tenant config.
   if (opts.channel !== "security" && opts.channel !== "training" && opts.companyId != null) {
+    // (training never uses per-company senders — it's a platform-level email)
     const cfg = await getCompanySender(opts.companyId);
     if (cfg) {
       const r = await sendViaCompanySender(cfg, opts);
@@ -538,7 +538,7 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
       console.error("[email] SMTP send failed; will try Outlook fallback if available", smtpReason);
     }
   }
-  if (outlookEnabled() && opts.channel !== "security" && opts.channel !== "training") {
+  if (outlookEnabled() && opts.channel !== "security") {
     const r = await sendViaOutlook(opts);
     if (r.ok) {
       console.info("[email] sent via Outlook connector", { to: opts.to, subject: opts.subject });
