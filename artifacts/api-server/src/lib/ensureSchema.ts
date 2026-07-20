@@ -306,6 +306,54 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // Backfill: any legacy company without a code gets ZTC-{id}.
     { label: "backfill companies.code",
       sql:   `UPDATE companies SET code = 'ZTC-' || id WHERE code IS NULL` },
+    // ─── Trainee registration (طلبات المتدربين). Additive module: public
+    // trainee sign-up requests reviewed/approved by SuperAdmin. Drizzle's
+    // ensureColumns only ALTERs existing tables, never CREATEs, so the
+    // table is materialised here. Idempotent — safe on every boot.
+    { label: "create trainee_requests table",
+      sql:   `CREATE TABLE IF NOT EXISTS trainee_requests (
+        id                SERIAL PRIMARY KEY,
+        full_name         TEXT    NOT NULL,
+        email             TEXT    NOT NULL,
+        phone             TEXT    NOT NULL,
+        phone_country_key TEXT    NOT NULL,
+        country           TEXT    NOT NULL,
+        city              TEXT,
+        company_name      TEXT,
+        job_title         TEXT    NOT NULL,
+        industry          TEXT    NOT NULL,
+        experience_years  INTEGER NOT NULL DEFAULT 0,
+        password_hash     TEXT    NOT NULL,
+        terms_accepted    BOOLEAN NOT NULL DEFAULT FALSE,
+        status            TEXT    NOT NULL DEFAULT 'pending',
+        decided_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        decided_at        TIMESTAMP,
+        reject_reason     TEXT,
+        duration_days     INTEGER,
+        env_mode          TEXT,
+        company_id        INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        allowed_modules   JSONB,
+        user_id           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        activation_email_sent_at TIMESTAMP,
+        created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at        TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    // One live (pending/approved) request per email — rejected requests may
+    // re-apply, so the guard is partial.
+    { label: "trainee_requests_email_live_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS trainee_requests_email_live_uniq
+              ON trainee_requests (lower(email)) WHERE status IN ('pending','approved')` },
+    // users.is_trainee — flag consumed by the /auth/login no-companyCode
+    // fallback. ensureColumns would add it too (users already exists), but
+    // the explicit ALTER keeps the boot deterministic even if that pass is
+    // budget-skipped.
+    { label: "users.is_trainee column",
+      sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trainee BOOLEAN NOT NULL DEFAULT FALSE` },
+    // Trainee usernames (emails) must be globally unique so the code-less
+    // login can resolve the tenant unambiguously.
+    { label: "users_trainee_username_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS users_trainee_username_uniq
+              ON users (lower(username)) WHERE is_trainee = TRUE` },
     // ─── approval_log: append-only audit trail for the document approval
     // workflow (see lib/db/src/schema/approvalLog.ts). Drizzle's ensureColumns
     // only ALTERs existing tables, never CREATEs new ones, so we materialise

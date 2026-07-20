@@ -85,3 +85,4 @@ export * from "./companyTemplates";
 export * from "./extensions";
 export * from "./devCloud";
 export * from "./devStudio";
+export * from "./trainees";

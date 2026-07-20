@@ -70,6 +70,8 @@ import Suppliers from "@/pages/Suppliers";
 import SupplierNew from "@/pages/SupplierNew";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import TraineeRegister from "@/pages/TraineeRegister";
+import TraineeRequests from "@/pages/TraineeRequests";
 import Pricing from "@/pages/Pricing";
 import CompareSystems from "@/pages/CompareSystems";
 import WhyZacod from "@/pages/WhyZacod";
@@ -453,7 +455,7 @@ function LoadingScreen() {
 // + FAQ), added per the SEO AI medium-impact recommendation. Note we use
 // "/pos-system" rather than "/pos" because "/pos" is owned by the
 // standalone POS artifact at the path-router level.
-const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/compare", "/why-zacod", "/blog", "/pos-system", "/"];
+const PUBLIC_PATHS = ["/login", "/register", "/trainee-register", "/pending-approval", "/pricing", "/compare", "/why-zacod", "/blog", "/pos-system", "/"];
 
 // Top-level URL prefixes that belong to the authenticated app. When an
 // unauthenticated visitor lands on one of these (e.g. they middle-click
@@ -626,6 +628,7 @@ function AppRoutes() {
           working after login. */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
+      <Route path="/trainee-register" component={TraineeRegister} />
       <Route path="/pricing" component={Pricing} />
       <Route path="/compare" component={CompareSystems} />
       <Route path="/why-zacod" component={WhyZacod} />
@@ -646,6 +649,7 @@ function AppRoutes() {
             {/* Superadmin routes */}
             {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
             {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
+            {isSuperAdmin && <Route path="/admin/trainee-requests" component={TraineeRequests} />}
             {/* These four stay on rawIsSuperAdmin so the SA can switch
                 tenants or exit impersonation without logging out. */}
             {rawIsSuperAdmin && <Route path="/admin/enter-company" component={EnterCompany} />}

@@ -166,6 +166,10 @@ export default function Register() {
     };
   }, []);
   const [step, setStep] = useState(0);
+  // Account-type gate: company registration wizard vs trainee (متدرب)
+  // request form. The trainee path lives on its own page (/trainee-register)
+  // — we only show the choice here and navigate.
+  const [accountType, setAccountType] = useState<"company" | "trainee" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -687,6 +691,63 @@ export default function Register() {
               </Button>
             </CardContent>
           </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Account-type chooser (شركة أم متدرب؟) ──────────────────────────
+  if (!accountType) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4" dir="rtl">
+        <div className="w-full max-w-2xl">
+          <div className="text-center mb-6">
+            <img
+              src={`${import.meta.env.BASE_URL}favicon.svg`}
+              alt="زاكود Zacode"
+              width={48}
+              height={48}
+              className="inline-block h-12 w-12 rounded-xl mb-3 shadow-lg"
+            />
+            <h1 className="text-2xl font-bold text-foreground">إنشاء حساب جديد</h1>
+            <p className="text-muted-foreground mt-1 text-sm">اختر نوع الحساب الذي تريد إنشاءه</p>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={() => setAccountType("company")}
+              className="group rounded-2xl border-2 border-border bg-card p-6 text-right shadow hover:border-primary hover:shadow-lg transition"
+              data-testid="register-choice-company"
+            >
+              <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary mb-3">
+                <Building2 className="h-6 w-6" />
+              </div>
+              <h3 className="font-bold text-foreground text-lg">حساب شركة</h3>
+              <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                سجّل شركتك وابدأ إصدار فواتير متوافقة مع ZATCA مع نظام محاسبي متكامل.
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLocation("/trainee-register")}
+              className="group rounded-2xl border-2 border-border bg-card p-6 text-right shadow hover:border-emerald-500 hover:shadow-lg transition"
+              data-testid="register-choice-trainee"
+            >
+              <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 mb-3">
+                <User className="h-6 w-6" />
+              </div>
+              <h3 className="font-bold text-foreground text-lg">حساب متدرب</h3>
+              <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                اطلب حساباً تدريبياً للتعلّم على النظام — متاح لجميع الدول العربية، بدون كود شركة.
+              </p>
+            </button>
+          </div>
+          <p className="text-center text-sm text-muted-foreground mt-6">
+            لديك حساب بالفعل؟{" "}
+            <button className="text-primary font-medium hover:underline" onClick={() => setLocation("/login")}>
+              تسجيل الدخول
+            </button>
+          </p>
         </div>
       </div>
     );

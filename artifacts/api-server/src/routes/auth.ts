@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -65,7 +65,8 @@ async function getSubscriptionNotice(): Promise<{ warningDays: number; graceDays
 //     useSuperAdminFlow hint so the UI can redirect them to the
 //     correct flow with one click — preserving the legacy UX.
 router.post("/login", async (req, res) => {
-  const { username, password, companyCode } = req.body;
+  let { username } = req.body;
+  const { password, companyCode } = req.body;
   if (!username || !password) {
     res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" });
     return;
@@ -114,9 +115,28 @@ router.post("/login", async (req, res) => {
       });
       return;
     }
-    // Otherwise the tenant has to identify their company.
-    res.status(400).json({ error: "كود الشركة مطلوب" });
-    return;
+    // ── Trainee fallback (حساب تدريبي) ──────────────────────────────
+    // Trainees log in with email+password only — no company code. Their
+    // usernames (emails) are globally unique among trainees (enforced by
+    // the partial unique index users_trainee_username_uniq at approval
+    // time), so a code-less lookup is unambiguous. Purely additive: when
+    // no trainee matches we fall through to the exact same 400 as before.
+    const [trainee] = await db.select({ companyId: usersTable.companyId, username: usersTable.username })
+      .from(usersTable)
+      .where(and(
+        sql`lower(${usersTable.username}) = lower(${String(username)})`,
+        eq(usersTable.isTrainee, true),
+      ));
+    if (trainee?.companyId) {
+      tenantCompanyId = trainee.companyId;
+      // Normalize to the stored casing so the exact-match user select below
+      // finds the row regardless of how the trainee typed their email.
+      username = trainee.username;
+    } else {
+      // Otherwise the tenant has to identify their company.
+      res.status(400).json({ error: "كود الشركة مطلوب" });
+      return;
+    }
   }
 
   const [user] = await db.select().from(usersTable)
@@ -857,7 +877,38 @@ const COUNTRY_CURRENCY: Record<string, { code: string; nameAr: string; nameEn: s
   GLOBAL: { code: "USD", nameAr: "دولار أمريكي", nameEn: "US Dollar", symbol: "$" },
 };
 
-function resolveDefaultCurrency(country: string, currencyOverride?: string | null) {
+// Authoritative high-level-module → permission-keys mapping used by both the
+// company registration wizard and the trainee-approval flow (trainee-requests
+// router). Mirrors systemModules.ts on the frontend; kept server-side so a
+// tampered request can never grant arbitrary permissions.
+export const REGISTRATION_MODULE_PERMISSIONS: Record<string, string[]> = {
+  sales:      ["sales_module", "sales_reports", "customers"],
+  purchasing: ["purchases_module", "purchases_reports", "suppliers"],
+  inventory:  ["inventory_mobile", "inventory_reports"],
+  pos:        ["pos"],
+  cash:       ["cash_module", "cash_reports"],
+  accounting: ["accounts", "accounting_reports", "accounting_maintenance"],
+  hr:         ["hr_module"],
+  zatca:      ["zatca", "reports"],
+  // Contracting/Construction ERP — single permission key matching the
+  // requirePermission("contracting") guard in routes/contracting{,-ai}.ts.
+  contracting: ["contracting"],
+  // Manufacturing/Production — single permission key matching the
+  // requirePermission("production") guard in production routes.
+  production: ["production"],
+  // Security & Surveillance — backend uses the `security_events` permission
+  // key (see routes/ai.ts security/* handlers and Layout.tsx securitySubNav).
+  security: ["security_events"],
+  // Maintenance / Asset Management — single permission key matching the
+  // requirePermission("maintenance") guard in routes/maintenance.ts.
+  maintenance: ["maintenance"],
+  installments: ["installments"],
+  // Hotel ERP — single permission key matching the
+  // requireModulePermission("hotel") guard in routes/hotel.ts + hotel-ai.ts.
+  hotel: ["hotel"],
+};
+
+export function resolveDefaultCurrency(country: string, currencyOverride?: string | null) {
   const fromCountry = COUNTRY_CURRENCY[country] ?? COUNTRY_CURRENCY.SA;
   if (!currencyOverride || currencyOverride === fromCountry.code) return fromCountry;
   // Honor an explicit override even if it's not in our catalog: fall back
@@ -1058,32 +1109,9 @@ router.post("/register", async (req, res) => {
   // modules. The mapping mirrors systemModules.ts on the frontend; we keep
   // the backend authoritative so a tampered request can't grant arbitrary
   // permissions. Core dashboard/invoices/customers are always granted.
-  const MODULE_PERMISSIONS: Record<string, string[]> = {
-    sales:      ["sales_module", "sales_reports", "customers"],
-    purchasing: ["purchases_module", "purchases_reports", "suppliers"],
-    inventory:  ["inventory_mobile", "inventory_reports"],
-    pos:        ["pos"],
-    cash:       ["cash_module", "cash_reports"],
-    accounting: ["accounts", "accounting_reports", "accounting_maintenance"],
-    hr:         ["hr_module"],
-    zatca:      ["zatca", "reports"],
-    // Contracting/Construction ERP — single permission key matching the
-    // requirePermission("contracting") guard in routes/contracting{,-ai}.ts.
-    contracting: ["contracting"],
-    // Manufacturing/Production — single permission key matching the
-    // requirePermission("production") guard in production routes.
-    production: ["production"],
-    // Security & Surveillance — backend uses the `security_events` permission
-    // key (see routes/ai.ts security/* handlers and Layout.tsx securitySubNav).
-    security: ["security_events"],
-    // Maintenance / Asset Management — single permission key matching the
-    // requirePermission("maintenance") guard in routes/maintenance.ts.
-    maintenance: ["maintenance"],
-    installments: ["installments"],
-    // Hotel ERP — single permission key matching the
-    // requireModulePermission("hotel") guard in routes/hotel.ts + hotel-ai.ts.
-    hotel: ["hotel"],
-  };
+  // (Hoisted to module scope + exported so the trainee-approval flow can
+  // reuse the exact same authoritative mapping — see trainee-requests.ts.)
+  const MODULE_PERMISSIONS = REGISTRATION_MODULE_PERMISSIONS;
   // Permissions are derived from the ACTIVE module set we computed above for
   // pricing — this guarantees that a module deactivated in /admin/modules can
   // never grant access (even when injected via an industry template) and can
@@ -1384,6 +1412,122 @@ router.post("/register", async (req, res) => {
       companyCode: generatedCompanyCode,
       username: newUser.username,
     });
+  }
+});
+
+// POST /api/auth/trainee-register — public trainee sign-up (طلب حساب تدريبي).
+// Creates ONLY a trainee_requests row (status=pending). No company, no user,
+// no session — everything real happens at SuperAdmin approval time in
+// routes/trainee-requests.ts. The password is hashed immediately and never
+// stored in plaintext.
+router.post("/trainee-register", async (req, res) => {
+  const {
+    fullName, email, phone, phoneCountryKey, country, city, companyName,
+    jobTitle, industry, experienceYears, password, confirmPassword, termsAccepted,
+  } = req.body ?? {};
+
+  const cleanStr = (v: unknown, max = 200): string =>
+    typeof v === "string" ? v.trim().slice(0, max) : "";
+
+  const fFullName  = cleanStr(fullName, 120);
+  const fEmail     = cleanStr(email, 160).toLowerCase();
+  const fPhone     = cleanStr(phone, 30);
+  const fPhoneKey  = cleanStr(phoneCountryKey, 8);
+  const fCountry   = cleanStr(country, 8).toUpperCase();
+  const fCity      = cleanStr(city, 120) || null;
+  const fCompany   = cleanStr(companyName, 160) || null;
+  const fJobTitle  = cleanStr(jobTitle, 120);
+  const fIndustry  = cleanStr(industry, 120);
+  const fExpYears  = Number(experienceYears);
+
+  if (!fFullName || !fEmail || !fPhone || !fPhoneKey || !fCountry || !fJobTitle || !fIndustry) {
+    res.status(400).json({ error: "جميع الحقول الإلزامية مطلوبة" });
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(fEmail)) {
+    res.status(400).json({ error: "البريد الإلكتروني غير صالح" });
+    return;
+  }
+  if (!Number.isFinite(fExpYears) || fExpYears < 0 || fExpYears > 60) {
+    res.status(400).json({ error: "سنوات الخبرة غير صالحة" });
+    return;
+  }
+  if (typeof password !== "string" || password.length < 8) {
+    res.status(400).json({ error: "كلمة المرور يجب أن تكون 8 أحرف على الأقل" });
+    return;
+  }
+  if (password !== confirmPassword) {
+    res.status(400).json({ error: "كلمتا المرور غير متطابقتين" });
+    return;
+  }
+  if (termsAccepted !== true) {
+    res.status(400).json({ error: "يجب الموافقة على الشروط والأحكام" });
+    return;
+  }
+
+  // Duplicate guards: an existing live request OR an existing trainee user
+  // with the same email. (The partial unique index is the racproof backstop;
+  // these checks just produce a friendly message.)
+  const [dupReq] = await db.select({ id: traineeRequestsTable.id })
+    .from(traineeRequestsTable)
+    .where(and(
+      sql`lower(${traineeRequestsTable.email}) = ${fEmail}`,
+      inArray(traineeRequestsTable.status, ["pending", "approved"]),
+    ));
+  if (dupReq) {
+    res.status(409).json({ error: "يوجد طلب تدريب مسجّل بهذا البريد الإلكتروني بالفعل" });
+    return;
+  }
+  const [dupUser] = await db.select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(
+      sql`lower(${usersTable.username}) = ${fEmail}`,
+      eq(usersTable.isTrainee, true),
+    ));
+  if (dupUser) {
+    res.status(409).json({ error: "يوجد حساب تدريبي مفعّل بهذا البريد الإلكتروني بالفعل" });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  try {
+    const [row] = await db.insert(traineeRequestsTable).values({
+      fullName: fFullName,
+      email: fEmail,
+      phone: fPhone,
+      phoneCountryKey: fPhoneKey,
+      country: fCountry,
+      city: fCity,
+      companyName: fCompany,
+      jobTitle: fJobTitle,
+      industry: fIndustry,
+      experienceYears: Math.floor(fExpYears),
+      passwordHash,
+      termsAccepted: true,
+      status: "pending",
+    }).returning({ id: traineeRequestsTable.id });
+
+    await writeAudit({
+      userId: null, username: fEmail, role: null, companyId: null,
+      module: "auth", action: "create",
+      method: "POST", path: "/api/auth/trainee-register", statusCode: 201,
+      ip: loginClientIp(req), userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
+      metadata: { traineeRequestId: row.id, country: fCountry },
+    });
+
+    res.status(201).json({
+      pending: true,
+      requestId: row.id,
+      message: "🎉 تم استلام طلبك بنجاح!\n\nشكراً لاختيار ZacoERP.\n\nيسعدنا انضمامك إلى مجتمع مستخدمي ZacoERP. يقوم فريقنا حالياً بمراجعة طلبك، وسيتم تفعيل حسابك خلال أقرب وقت.\n\n📩 ستصلك رسالة على بريدك الإلكتروني فور اعتماد الحساب، تحتوي على بيانات الدخول وروابط بدء التدريب.\n\nنتطلع لأن تكون هذه بداية رحلة ناجحة مع ZacoERP.",
+    });
+  } catch (err: any) {
+    // Unique-index race: a concurrent identical request slipped in.
+    if (String(err?.code) === "23505") {
+      res.status(409).json({ error: "يوجد طلب تدريب مسجّل بهذا البريد الإلكتروني بالفعل" });
+      return;
+    }
+    req.log?.error?.({ err }, "trainee-register failed");
+    res.status(500).json({ error: "تعذّر إرسال الطلب. حاول مرة أخرى." });
   }
 });
 

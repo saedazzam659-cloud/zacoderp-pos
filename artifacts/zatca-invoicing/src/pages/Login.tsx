@@ -93,6 +93,10 @@ export default function Login() {
     try { return localStorage.getItem(LAST_COMPANY_CODE_KEY) ?? ""; }
     catch { return ""; }
   });
+  // Login mode: regular tenant (company code + username) vs trainee
+  // (متدرب) — trainees log in with email + password ONLY, no company code;
+  // the server resolves them via the is_trainee username lookup.
+  const [loginMode, setLoginMode] = useState<"company" | "trainee">("company");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -267,7 +271,7 @@ export default function Login() {
       // companyCode the user typed; on success we remember it for the
       // next visit so returning users only have to type it once.
       try {
-        const trimmedCode = companyCode.trim().toUpperCase();
+        const trimmedCode = loginMode === "trainee" ? "" : companyCode.trim().toUpperCase();
         await login(username.trim(), password, trimmedCode);
         if (trimmedCode) {
           try { localStorage.setItem(LAST_COMPANY_CODE_KEY, trimmedCode); }
@@ -605,10 +609,33 @@ export default function Login() {
           {/* ── STEP: creds ─────────────────────────────────────────── */}
           {(step === "creds" || step === "blocked") && (
             <form onSubmit={submitCreds} className="space-y-4">
+              {/* Login-mode switch: شركة vs تدريب. Trainees authenticate by
+                  email + password only (no company code). Hidden in SA flow. */}
+              {!isSuperAdminFlow && (
+                <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" data-testid="login-mode-switch">
+                  <button
+                    type="button"
+                    onClick={() => setLoginMode("company")}
+                    className={`rounded-md py-1.5 text-sm font-semibold transition ${loginMode === "company" ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    data-testid="login-mode-company"
+                  >
+                    حساب شركة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoginMode("trainee")}
+                    className={`rounded-md py-1.5 text-sm font-semibold transition ${loginMode === "trainee" ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    data-testid="login-mode-trainee"
+                  >
+                    تدريب
+                  </button>
+                </div>
+              )}
+
               {/* Company code identifies the tenant. Only shown for the
                   regular tenant flow — SuperAdmin pivots to its own UI
-                  and doesn't need a company code. */}
-              {!isSuperAdminFlow && (
+                  and doesn't need a company code; trainees don't have one. */}
+              {!isSuperAdminFlow && loginMode === "company" && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">
                     كود الشركة <span className="text-destructive">*</span>
@@ -630,17 +657,24 @@ export default function Login() {
               )}
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">{t("auth.username")}</label>
+                <label className="text-sm font-medium text-foreground">
+                  {!isSuperAdminFlow && loginMode === "trainee" ? "البريد الإلكتروني" : t("auth.username")}
+                </label>
                 <Input
                   value={username}
                   onChange={e => setUsername(e.target.value)}
-                  placeholder="admin"
+                  placeholder={!isSuperAdminFlow && loginMode === "trainee" ? "you@example.com" : "admin"}
                   dir="ltr"
                   className="text-left"
                   autoComplete="username"
                   required
                   disabled={step === "blocked"}
                 />
+                {!isSuperAdminFlow && loginMode === "trainee" && (
+                  <p className="text-xs text-muted-foreground">
+                    سجّل دخولك ببريدك الإلكتروني وكلمة المرور — لا حاجة لكود شركة.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">

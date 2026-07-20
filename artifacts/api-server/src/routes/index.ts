@@ -126,6 +126,7 @@ import publicDownloadRouter from "./public-download";
 import publicOfflineRouter from "./public-offline";
 import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
+import traineeRequestsRouter from "./trainee-requests";
 import domainsRouter from "./domains";
 import devCloudAdminRouter from "./dev-cloud-admin";
 import { devStudioRouter, devStudioAdminRouter } from "./dev-studio";
@@ -185,6 +186,8 @@ router.use("/admin/publish", publishRouter);
 router.use("/partner", partnerRouter);
 // Phase 4 Marketplace Control Center. Same mount-before-zatcaRouter rationale; SuperAdmin self-guarded.
 router.use("/admin/marketplace", marketplaceAdminRouter);
+// طلبات المتدربين — trainee registration requests (SuperAdmin self-guarded).
+router.use("/admin/trainee-requests", traineeRequestsRouter);
 router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);
