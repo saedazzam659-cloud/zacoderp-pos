@@ -341,6 +341,10 @@ async function sendViaOutlook(opts: SendOpts): Promise<{ ok: boolean; reason?: s
     subject: opts.subject,
     body: { contentType: "HTML", content: opts.html },
     toRecipients: recipients,
+    // Business address for replies: Graph /me/sendMail always stamps the
+    // authenticated mailbox as From (cannot be overridden without SendAs),
+    // so we at least route replies to the official Zacode address.
+    replyTo: [{ emailAddress: { address: "zacoderp@outlook.com", name: "Zacode ERP" } }],
   };
   if (opts.attachments?.length) {
     message.attachments = opts.attachments.map((a) => ({
