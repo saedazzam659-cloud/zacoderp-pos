@@ -701,6 +701,7 @@
     "offlineLicenses": "POS Standalone Licenses",
     "downloadCodes": "POS Install Codes",
     "domains": "Domain Management",
+    "emailChannels": "Sender Emails",
     "backupOperations": "Backup Operations",
     "securityCenter": "Security Center",
     "superAdminSecurity": "SuperAdmin Security",

@@ -5,9 +5,11 @@ description: Two-channel email routing — security via Outlook connector, gener
 
 # Email sender channel routing
 
-Rule: `sendEmail` in the api-server email lib takes `channel` + optional `companyId`.
-- `channel:"security"` (SuperAdmin OTP/new-device/failed-login/password-change/device-approval/recovery) → Outlook connector mailbox FIRST (asilkarmazzam@outlook.com), SMTP only as fallback.
-- General (default channel) resolves sender in order: company sender (per-company SMTP columns on `companies`, password AES-256-GCM encrypted keyed by SESSION_SECRET) → system SMTP env (`SMTP_HOST/PORT/USER/PASS/FROM`, defaults to zacoderp@outlook.com) → connector last resort.
+Rule: `sendEmail` in the api-server email lib takes `channel` + optional `companyId` (+ `skipChannelSenders` for diagnostics).
+- SuperAdmin can pin a mailbox PER CHANNEL (training / security / documents) via إدارة إيميلات الإرسال (`system_settings` key `channel_sender:<ch>`, JSON with AES-encrypted pass, 30s cache + invalidate on save).
+- `channel:"security"`/`"training"` → pinned channel SMTP FIRST → Outlook connector → system SMTP.
+- General (default channel) resolves sender in order: company sender (ضبط المرسلات — ALWAYS wins for tenant mail, per explicit owner requirement) → `documents` channel mailbox → system SMTP env (`SMTP_HOST/PORT/USER/PASS/FROM`) → connector last resort.
+- `skipChannelSenders:true` bypasses ALL pinned channel mailboxes — used by the reports SMTP-config `/test` endpoint so it validates the GLOBAL SMTP path only. Any new "test global SMTP" diagnostics must pass it too.
 
 **Why:** general system mail must NOT come from the personal connector mailbox; the connector is reserved for SuperAdmin security self-sends. Per-company senders let tenants brand their own outgoing mail.
 

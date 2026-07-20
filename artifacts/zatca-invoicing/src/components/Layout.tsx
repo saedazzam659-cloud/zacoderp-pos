@@ -28,6 +28,7 @@ import {
   Handshake,
   Copy,
   Bookmark,
+  Mail,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -156,6 +157,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.offlineLicenses",      href: "/admin/offline-licenses",   icon: KeyRound },
   { nameKey: "nav.downloadCodes",        href: "/admin/download-codes",     icon: KeyRound },
   { nameKey: "nav.domains",              href: "/admin/domains",            icon: Globe },
+  { nameKey: "nav.emailChannels",        href: "/admin/email-channels",     icon: Mail },
   { nameKey: "nav.backupOperations",     href: "/admin/backups",            icon: HardDrive },
   { nameKey: "nav.securityCenter",       href: "/admin/security",           icon: ShieldCheck },
   { nameKey: "nav.superAdminSecurity",   href: "/admin/security-superadmin", icon: ShieldCheck },

@@ -33,6 +33,11 @@ import {
   sendEmail,
   REPORT_SENDER_KEY,
   SMTP_KEYS,
+  getChannelSenderStatuses,
+  invalidateChannelSenderCache,
+  channelSettingKey,
+  EMAIL_CHANNEL_KEYS,
+  type EmailChannelKey,
 } from "../lib/email.js";
 import { eq, and, or, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -4721,6 +4726,9 @@ router.post("/reports/smtp-config/test", requireSuperAdmin, async (req, res) => 
     const senderInfo = await resolveActiveSender();
     const result = await sendEmail({
       to,
+      // This test must validate the GLOBAL SMTP settings themselves — never a
+      // channel-pinned mailbox from إدارة إيميلات الإرسال.
+      skipChannelSenders: true,
       subject: "اختبار إرسال — نظام الفاتورة الإلكترونية السعودية",
       html: `
 <div dir="rtl" lang="ar" style="font-family: 'Tahoma', Arial, sans-serif; background:#f4f6f8; padding:32px;">
@@ -4753,6 +4761,167 @@ router.post("/reports/smtp-config/test", requireSuperAdmin, async (req, res) => 
       metadata: { to, sender: senderInfo.willActuallySendFrom },
     });
     res.json({ ok: true, sentTo: to, from: senderInfo.willActuallySendFrom });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر إرسال رسالة الاختبار";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ─── Per-channel sender accounts (شاشة إدارة إيميلات الإرسال) ────────────────
+// SuperAdmin CRUD over the platform-level sender mailbox of each email
+// channel (training / security / documents). Stored as one JSON row per
+// channel in system_settings; password AES-encrypted. The per-company sender
+// (ضبط المرسلات) always outranks the documents channel for company emails —
+// these endpoints only manage the PLATFORM defaults.
+function parseChannelParam(raw: string): EmailChannelKey | null {
+  return (EMAIL_CHANNEL_KEYS as string[]).includes(raw) ? (raw as EmailChannelKey) : null;
+}
+
+// GET /api/admin/email-channels — all channels + effective sender provenance.
+router.get("/email-channels", requireSuperAdmin, async (_req, res) => {
+  try {
+    const channels = await getChannelSenderStatuses();
+    res.json({ channels });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر تحميل إعدادات القنوات";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// PUT /api/admin/email-channels/:channel — save/update the channel mailbox.
+//   body: { email, host, port, password } — empty password = keep existing.
+router.put("/email-channels/:channel", requireSuperAdmin, async (req, res) => {
+  try {
+    const ch = parseChannelParam(req.params.channel);
+    if (!ch) { res.status(400).json({ error: "قناة غير معروفة" }); return; }
+    const body = req.body ?? {};
+    const email = typeof body.email === "string" ? body.email.trim() : "";
+    const host = typeof body.host === "string" ? body.host.trim() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    const port = Number(body.port);
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      res.status(400).json({ error: "صيغة البريد الإلكتروني غير صحيحة" }); return;
+    }
+    if (!host) { res.status(400).json({ error: "خادم SMTP مطلوب" }); return; }
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      res.status(400).json({ error: "المنفذ (Port) غير صحيح" }); return;
+    }
+    // Keep the existing encrypted password when the field is left blank so
+    // SuperAdmins can edit host/port without retyping the credential.
+    let passEnc = "";
+    if (password) {
+      passEnc = encryptSecret(password);
+    } else {
+      const [row] = await db.select().from(systemSettingsTable)
+        .where(eq(systemSettingsTable.key, channelSettingKey(ch))).limit(1);
+      try { passEnc = (JSON.parse(row?.value ?? "{}")?.passEnc ?? "").trim(); } catch {}
+      if (!passEnc) {
+        res.status(400).json({ error: "كلمة مرور البريد (App Password) مطلوبة في أول إعداد" }); return;
+      }
+    }
+    const value = JSON.stringify({ email, host, port, passEnc });
+    await db.execute(sql`
+      INSERT INTO system_settings (key, value, updated_at)
+      VALUES (${channelSettingKey(ch)}, ${value}, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    `);
+    invalidateChannelSenderCache();
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: null,
+      module: "reports",
+      action: "update",
+      entityType: "email_channel_sender",
+      entityId: ch,
+      metadata: { email, host, port, passwordChanged: !!password },
+    });
+    const channels = await getChannelSenderStatuses();
+    res.json({ channels });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر حفظ إعدادات القناة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// DELETE /api/admin/email-channels/:channel — remove the pinned mailbox
+// (channel reverts to its built-in fallback: Outlook / system SMTP).
+router.delete("/email-channels/:channel", requireSuperAdmin, async (req, res) => {
+  try {
+    const ch = parseChannelParam(req.params.channel);
+    if (!ch) { res.status(400).json({ error: "قناة غير معروفة" }); return; }
+    await db.delete(systemSettingsTable)
+      .where(eq(systemSettingsTable.key, channelSettingKey(ch)));
+    invalidateChannelSenderCache();
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: null,
+      module: "reports",
+      action: "delete",
+      entityType: "email_channel_sender",
+      entityId: ch,
+      metadata: { cleared: true },
+    });
+    const channels = await getChannelSenderStatuses();
+    res.json({ channels });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر حذف إعدادات القناة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/admin/email-channels/:channel/test — one-off test send through the
+// channel's CURRENT resolution (pinned mailbox → Outlook/system fallbacks).
+router.post("/email-channels/:channel/test", requireSuperAdmin, async (req, res) => {
+  try {
+    const ch = parseChannelParam(req.params.channel);
+    if (!ch) { res.status(400).json({ error: "قناة غير معروفة" }); return; }
+    const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      res.status(400).json({ error: "عنوان بريد المستلم غير صحيح" }); return;
+    }
+    const channelLabel: Record<EmailChannelKey, string> = {
+      training: "إيميلات المتدربين",
+      security: "رموز التحقق والأمان",
+      documents: "مستندات الشركات",
+    };
+    const sendChannel: "training" | "security" | "general" =
+      ch === "documents" ? "general" : ch;
+    const result = await sendEmail({
+      to,
+      channel: sendChannel,
+      subject: `اختبار قناة ${channelLabel[ch]} — نظام الفاتورة الإلكترونية`,
+      html: `
+<div dir="rtl" lang="ar" style="font-family:'Tahoma',Arial,sans-serif; background:#f4f6f8; padding:32px;">
+  <div style="max-width:520px; margin:auto; background:#fff; border-radius:12px; padding:28px; box-shadow:0 2px 6px rgba(0,0,0,.06);">
+    <h2 style="margin:0 0 12px; color:#0f172a; font-size:20px;">رسالة اختبار — ${channelLabel[ch]}</h2>
+    <p style="color:#334155; line-height:1.7; font-size:14px;">
+      هذه رسالة اختبار من شاشة «إدارة إيميلات الإرسال».<br/>
+      وصولها يعني أن إعدادات هذه القناة تعمل بنجاح.
+    </p>
+    <p style="color:#64748b; font-size:13px;">الوقت: ${new Date().toLocaleString("ar-SA")}</p>
+  </div>
+</div>`,
+    });
+    if (!result.ok) {
+      res.status(502).json({ error: "فشل الإرسال", reason: result.reason ?? "unknown" });
+      return;
+    }
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: null,
+      module: "reports",
+      action: "update",
+      entityType: "email_channel_sender",
+      entityId: `${ch}_test`,
+      metadata: { to },
+    });
+    res.json({ ok: true, sentTo: to });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر إرسال رسالة الاختبار";
     res.status(500).json({ error: msg });

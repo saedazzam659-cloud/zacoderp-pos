@@ -291,6 +291,110 @@ async function getOutlookAddress(): Promise<string | null> {
   }
 }
 
+// ─── Per-channel sender accounts (شاشة إدارة إيميلات الإرسال) ─────────────
+// SuperAdmin can pin a dedicated SMTP mailbox per email CHANNEL:
+//   • training  → trainee (متدرب) activation/rejection emails
+//   • security  → SuperAdmin OTP / security alerts
+//   • documents → company documents / general business emails (platform default)
+// Stored as ONE system_settings row per channel (key channel_sender:<ch>)
+// carrying JSON {email, host, port, passEnc}. Password AES-encrypted at rest.
+// PRIORITY GUARANTEE: a company's own "ضبط المرسلات" (per-company sender)
+// always wins for general/company emails — the documents channel is only the
+// platform-level default used when the company has no sender configured.
+export type EmailChannelKey = "training" | "security" | "documents";
+export const EMAIL_CHANNEL_KEYS: EmailChannelKey[] = ["training", "security", "documents"];
+export const channelSettingKey = (ch: EmailChannelKey) => `channel_sender:${ch}`;
+
+interface ChannelSenderStored {
+  email: string;
+  host: string;
+  port: number;
+  passEnc: string;
+}
+
+const CHANNEL_CACHE_TTL_MS = 30_000;
+const channelCache = new Map<EmailChannelKey, { value: CompanySenderConfig | null; expiresAt: number }>();
+
+export function invalidateChannelSenderCache(): void {
+  channelCache.clear();
+}
+
+async function getChannelSender(ch: EmailChannelKey): Promise<CompanySenderConfig | null> {
+  const hit = channelCache.get(ch);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  let value: CompanySenderConfig | null = null;
+  try {
+    const [row] = await db.select().from(systemSettingsTable)
+      .where(eq(systemSettingsTable.key, channelSettingKey(ch))).limit(1);
+    const raw = (row?.value ?? "").trim();
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<ChannelSenderStored>;
+      const email = (parsed.email ?? "").trim();
+      const host = (parsed.host ?? "").trim();
+      const passEnc = (parsed.passEnc ?? "").trim();
+      const pass = passEnc ? decryptSecret(passEnc) : null;
+      if (email && host && pass) {
+        value = { email, host, port: Number(parsed.port) || 587, pass };
+      }
+    }
+  } catch (err: any) {
+    console.warn("[email] could not read channel sender config", ch, err?.message ?? err);
+  }
+  channelCache.set(ch, { value, expiresAt: Date.now() + CHANNEL_CACHE_TTL_MS });
+  return value;
+}
+
+// Surfaced to the SuperAdmin "إدارة إيميلات الإرسال" screen: the stored config
+// (without the password) per channel + what would actually be used right now.
+export interface ChannelSenderStatus {
+  channel: EmailChannelKey;
+  configured: { email: string; host: string; port: number; hasPassword: boolean } | null;
+  effectiveSender: string | null;
+  effectiveSource: "channel_smtp" | "outlook" | "system_smtp" | "none";
+}
+
+export async function getChannelSenderStatuses(): Promise<ChannelSenderStatus[]> {
+  const outlookOn = outlookEnabled();
+  const outlookAddr = outlookOn ? await getOutlookAddress() : null;
+  const sysInfo = await resolveActiveSender();
+  const sysSmtpReady = Boolean(
+    (await getDbSmtp()) ?? (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
+  );
+  const out: ChannelSenderStatus[] = [];
+  for (const ch of EMAIL_CHANNEL_KEYS) {
+    // Read the RAW stored row (not the validated cfg) so a half-configured
+    // entry still shows up in the UI instead of silently looking empty.
+    let configured: ChannelSenderStatus["configured"] = null;
+    try {
+      const [row] = await db.select().from(systemSettingsTable)
+        .where(eq(systemSettingsTable.key, channelSettingKey(ch))).limit(1);
+      const raw = (row?.value ?? "").trim();
+      if (raw) {
+        const p = JSON.parse(raw) as Partial<ChannelSenderStored>;
+        if ((p.email ?? "").trim()) {
+          configured = {
+            email: (p.email ?? "").trim(),
+            host: (p.host ?? "").trim(),
+            port: Number(p.port) || 587,
+            hasPassword: Boolean((p.passEnc ?? "").trim()),
+          };
+        }
+      }
+    } catch { /* surfaced as unconfigured */ }
+    const cfg = await getChannelSender(ch);
+    let effectiveSender: string | null;
+    let effectiveSource: ChannelSenderStatus["effectiveSource"];
+    if (cfg) { effectiveSender = cfg.email; effectiveSource = "channel_smtp"; }
+    else if ((ch === "training" || ch === "security") && outlookOn) {
+      effectiveSender = outlookAddr; effectiveSource = "outlook";
+    } else if (sysSmtpReady) { effectiveSender = sysInfo.active; effectiveSource = "system_smtp"; }
+    else if (outlookOn) { effectiveSender = outlookAddr; effectiveSource = "outlook"; }
+    else { effectiveSender = null; effectiveSource = "none"; }
+    out.push({ channel: ch, configured, effectiveSender, effectiveSource });
+  }
+  return out;
+}
+
 // Test-only seam. The maintenance test suite stubs `nodemailer.createTransport`
 // per-test to capture rendered emails, but `getTransporter()` memoises the
 // first transporter it builds — so a stub installed by test #2 is silently
@@ -407,6 +511,11 @@ export interface SendOpts {
   channel?: "security" | "general" | "training";
   // Tenant whose "ضبط المرسلات" (sender settings) should be used, if set.
   companyId?: number;
+  // Diagnostics only: bypass the per-channel pinned mailboxes so the send
+  // exercises the SYSTEM transport path (DB/env SMTP → Outlook fallback).
+  // Used by the reports SMTP-config test endpoint, which must validate the
+  // global SMTP settings themselves — not a channel mailbox.
+  skipChannelSenders?: boolean;
 }
 
 // ─── Per-company sender (ضبط المرسلات) ────────────────────────────────────
@@ -496,28 +605,48 @@ export async function testCompanySender(
 }
 
 export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?: string }> {
-  // Security channel: Outlook connector FIRST (SuperAdmin mailbox self-send),
-  // system SMTP only as a fallback. This keeps OTP/security emails pinned to
-  // the security mailbox even after a general default sender is configured.
-  if ((opts.channel === "security" || opts.channel === "training") && outlookEnabled()) {
-    const r = await sendViaOutlook(opts);
-    if (r.ok) return r;
-    console.error(`[email] ${opts.channel}-channel Outlook send failed; falling back to SMTP`, r.reason);
+  // Security / training channels: a SuperAdmin-pinned channel mailbox (شاشة
+  // إدارة إيميلات الإرسال) takes precedence when configured; otherwise the
+  // Outlook connector mailbox; system SMTP only as a last fallback. This
+  // keeps OTP/security + trainee emails pinned to their dedicated mailboxes
+  // even after a general default sender is configured.
+  if (opts.channel === "security" || opts.channel === "training") {
+    const chCfg = opts.skipChannelSenders ? null : await getChannelSender(opts.channel);
+    if (chCfg) {
+      const r = await sendViaCompanySender(chCfg, opts);
+      if (r.ok) return r;
+      console.error(`[email] ${opts.channel}-channel pinned sender failed; falling back`, r.reason);
+    }
+    if (outlookEnabled()) {
+      const r = await sendViaOutlook(opts);
+      if (r.ok) return r;
+      console.error(`[email] ${opts.channel}-channel Outlook send failed; falling back to SMTP`, r.reason);
+    }
   }
 
   // General channel: per-company sender (ضبط المرسلات) takes precedence when
   // configured; on failure we fall through to the system default transport so
   // business emails are never silently dropped because of a bad tenant config.
-  if (opts.channel !== "security" && opts.channel !== "training" && opts.companyId != null) {
-    // (training never uses per-company senders — it's a platform-level email)
-    const cfg = await getCompanySender(opts.companyId);
-    if (cfg) {
-      const r = await sendViaCompanySender(cfg, opts);
+  if (opts.channel !== "security" && opts.channel !== "training") {
+    if (opts.companyId != null) {
+      // (training never uses per-company senders — it's a platform-level email)
+      const cfg = await getCompanySender(opts.companyId);
+      if (cfg) {
+        const r = await sendViaCompanySender(cfg, opts);
+        if (r.ok) return r;
+        console.error(
+          `[email] company sender failed for company ${opts.companyId}; falling back to default`,
+          r.reason,
+        );
+      }
+    }
+    // Platform-level "documents" channel mailbox: used ONLY when the company
+    // has no working sender of its own (or there is no companyId at all).
+    const docCfg = opts.skipChannelSenders ? null : await getChannelSender("documents");
+    if (docCfg) {
+      const r = await sendViaCompanySender(docCfg, opts);
       if (r.ok) return r;
-      console.error(
-        `[email] company sender failed for company ${opts.companyId}; falling back to default`,
-        r.reason,
-      );
+      console.error("[email] documents-channel pinned sender failed; falling back", r.reason);
     }
   }
 
