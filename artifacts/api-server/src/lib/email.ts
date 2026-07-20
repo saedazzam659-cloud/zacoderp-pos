@@ -395,10 +395,11 @@ export interface SendOpts {
   // "general" (default) → business emails. Sender resolution order:
   //   company sender (per-company SMTP, ضبط المرسلات) → system SMTP (default
   //   sender, e.g. zacoderp@outlook.com) → Outlook connector fallback.
-  // "training" → trainee (متدرب) activation/rejection emails. Sent through
-  //   the system SMTP transport FIRST (best inbox deliverability — the
-  //   Outlook Graph mailbox was accepted-but-dropped by Gmail), with the
-  //   Outlook connector as fallback so approvals are never silently lost.
+  // "training" → trainee (متدرب) activation/rejection emails. Per explicit
+  //   owner request these go out through the Outlook connector mailbox
+  //   (zacoderp@outlook.com — same mailbox already used for archive emails)
+  //   FIRST, with system SMTP only as a fallback so approvals are never
+  //   silently dropped.
   channel?: "security" | "general" | "training";
   // Tenant whose "ضبط المرسلات" (sender settings) should be used, if set.
   companyId?: number;
@@ -494,7 +495,7 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
   // Security channel: Outlook connector FIRST (SuperAdmin mailbox self-send),
   // system SMTP only as a fallback. This keeps OTP/security emails pinned to
   // the security mailbox even after a general default sender is configured.
-  if (opts.channel === "security" && outlookEnabled()) {
+  if ((opts.channel === "security" || opts.channel === "training") && outlookEnabled()) {
     const r = await sendViaOutlook(opts);
     if (r.ok) return r;
     console.error(`[email] ${opts.channel}-channel Outlook send failed; falling back to SMTP`, r.reason);
