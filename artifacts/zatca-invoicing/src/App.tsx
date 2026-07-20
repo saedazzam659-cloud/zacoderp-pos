@@ -550,6 +550,7 @@ function AppRoutes() {
     const knownPublicRoute =
       location === "/login" ||
       location === "/register" ||
+      location === "/trainee-register" ||
       location === "/pricing" ||
       location === "/compare" ||
       location === "/why-zacod" ||
