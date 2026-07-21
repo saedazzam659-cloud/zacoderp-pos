@@ -72,12 +72,14 @@ export interface RunDueResult {
 export async function runDueAdjustmentsForCompany(
   cid: number,
   req?: Request | null,
+  onlyAdjustmentId?: number,
 ): Promise<RunDueResult> {
   const candidates = await db.select({ id: accountingAdjustmentsTable.id })
     .from(accountingAdjustmentsTable).where(and(
       eq(accountingAdjustmentsTable.companyId, cid),
       eq(accountingAdjustmentsTable.status, "active"),
       eq(accountingAdjustmentsTable.autoGenerate, true),
+      ...(onlyAdjustmentId ? [eq(accountingAdjustmentsTable.id, onlyAdjustmentId)] : []),
     ));
 
   const summary: AdjustmentRunSummaryItem[] = [];

@@ -11,7 +11,7 @@ import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
-import { runDueAdjustmentsForCompany, ADJ_LOCK_CLASS } from "../lib/adjustmentPosting.js";
+import { runDueAdjustmentsForCompany, ADJ_LOCK_CLASS, type RunDueResult } from "../lib/adjustmentPosting.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -209,7 +209,17 @@ router.post("/", async (req, res) => {
       notes:            notes || null,
     }).returning();
 
-    res.status(201).json(created);
+    // Catch-up posting (FA-depreciation pattern): immediately generate every
+    // already-due month (isoDate <= today) for THIS adjustment so backdated
+    // schedules don't sit with zero JEs until the next scheduler tick.
+    // Best-effort — a posting failure never rolls back the created row.
+    let catchUp: RunDueResult | null = null;
+    if (created.autoGenerate) {
+      try { catchUp = await runDueAdjustmentsForCompany(cid, req, created.id); }
+      catch { /* scheduler/manual generate will retry */ }
+    }
+
+    res.status(201).json({ ...created, catchUpRuns: catchUp?.total ?? 0, catchUpSummary: catchUp?.summary?.[0] ?? null });
   } catch (e: any) { res.status(500).json({ error: "فشل إنشاء التسوية: " + (e.message ?? "خطأ") }); }
 });
 

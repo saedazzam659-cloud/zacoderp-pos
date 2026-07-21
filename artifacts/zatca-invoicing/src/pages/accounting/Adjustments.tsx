@@ -311,8 +311,12 @@ export default function Adjustments() {
       const r = await fetch(url, { method: editing ? "PUT" : "POST", headers, body: JSON.stringify(body) });
       return safeJson(r, "تعذر حفظ التسوية");
     },
-    onSuccess: () => {
-      toast({ title: editing ? "تم تحديث التسوية" : "تم إنشاء التسوية" });
+    onSuccess: (d: any) => {
+      const n = Number(d?.catchUpRuns ?? 0);
+      toast({
+        title: editing ? "تم تحديث التسوية" : "تم إنشاء التسوية",
+        description: !editing && n > 0 ? `تم توليد وترحيل ${n} قيد للأشهر المستحقة تلقائياً` : undefined,
+      });
       qc.invalidateQueries({ queryKey: ["adjustments", cid] });
       setShowForm(false); setEditing(null); setForm(EMPTY_FORM);
     },
