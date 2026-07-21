@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,10 +13,11 @@ import {
 } from "@/components/ui/dialog";
 import {
   GraduationCap, Plus, Radio, Copy, Users, PlayCircle, StopCircle,
-  LogIn, ListChecks, Link2, RefreshCw, Loader2,
+  LogIn, ListChecks, Link2, RefreshCw, Loader2, Share2, Hand, Mic, Send,
 } from "lucide-react";
 import LiveRoom from "@/components/livekit/LiveRoom";
 import { trainingApi, type JoinInfo } from "@/lib/liveRoomApi";
+import { P2PBroadcaster, type P2PChatMsg, type P2PHand } from "@/lib/p2pTree";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // قاعة التدريب المباشر — trainer console + trainee join (module: training_room)
@@ -53,6 +54,14 @@ export default function TrainingRoom() {
 
   // غرفة نشطة (مدرب أو متدرب)
   const [live, setLive] = useState<(JoinInfo & { session: SessionRow; asTrainer: boolean }) | null>(null);
+
+  // البث الموزّع P2P (يعمل تلقائيًا عندما تكون الجلسة برابط عام)
+  const p2pRef = useRef<P2PBroadcaster | null>(null);
+  const [p2pCount, setP2pCount] = useState(0);
+  const [p2pChat, setP2pChat] = useState<P2PChatMsg[]>([]);
+  const [p2pHands, setP2pHands] = useState<P2PHand[]>([]);
+  const [p2pInput, setP2pInput] = useState("");
+  const p2pChatBoxRef = useRef<HTMLDivElement>(null);
 
   // سجل الحضور
   const [attFor, setAttFor] = useState<SessionRow | null>(null);
@@ -132,6 +141,37 @@ export default function TrainingRoom() {
     catch (e: any) { toast({ title: "تعذّر تحديث المايك", description: e.message, variant: "destructive" }); }
   }, [live, toast]);
 
+  // ── تشغيل/إيقاف البث الموزّع P2P مع دخول/خروج المدرب من الغرفة ──
+  useEffect(() => {
+    if (!live?.asTrainer || !live.session.allowPublic) return;
+    const eng = new P2PBroadcaster();
+    eng.onViewerCount = setP2pCount;
+    eng.onChat = (m) => setP2pChat(prev => [...prev.slice(-199), m]);
+    eng.onHand = (h, up) => setP2pHands(prev => up
+      ? (prev.some(x => x.peerId === h.peerId) ? prev : [...prev, h])
+      : prev.filter(x => x.peerId !== h.peerId));
+    eng.onError = (m) => toast({ title: m, variant: "destructive" });
+    eng.start(live.session.id);
+    p2pRef.current = eng;
+    return () => {
+      eng.stop();
+      if (p2pRef.current === eng) p2pRef.current = null;
+      setP2pCount(0); setP2pChat([]); setP2pHands([]);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live?.session.id, live?.asTrainer]);
+
+  useEffect(() => {
+    p2pChatBoxRef.current?.scrollTo({ top: p2pChatBoxRef.current.scrollHeight });
+  }, [p2pChat]);
+
+  const sendP2pChat = () => {
+    const text = p2pInput.trim();
+    if (!text || !p2pRef.current) return;
+    p2pRef.current.sendChat(text);
+    setP2pInput("");
+  };
+
   const canManage = (s: SessionRow) =>
     s.trainerUserId === user?.id || user?.role === "admin" || user?.role === "superadmin";
 
@@ -140,20 +180,62 @@ export default function TrainingRoom() {
 
   // ── داخل الغرفة ──
   if (live) {
+    const p2pActive = live.asTrainer && live.session.allowPublic;
     return (
-      <div className="p-4 md:p-6 h-[calc(100vh-6rem)]">
-        <LiveRoom
-          token={live.token} wsUrl={live.wsUrl}
-          role={live.asTrainer ? "publisher" : "subscriber"}
-          title={live.session.title}
-          myName={user?.username ?? "مشارك"}
-          canGrantMic={live.asTrainer}
-          onGrantMic={grantMic}
-          autoPublishAv={live.asTrainer}
-          onLeave={() => { setLive(null); void refresh(); }}
-        />
+      <div className="p-4 md:p-6 h-[calc(100vh-6rem)] flex flex-col gap-2">
+        <div className="flex-1 min-h-0">
+          <LiveRoom
+            token={live.token} wsUrl={live.wsUrl}
+            role={live.asTrainer ? "publisher" : "subscriber"}
+            title={live.session.title}
+            myName={user?.username ?? "مشارك"}
+            canGrantMic={live.asTrainer}
+            onGrantMic={grantMic}
+            autoPublishAv={live.asTrainer}
+            onLocalTracksChanged={p2pActive ? (tracks) => { void p2pRef.current?.setStream(tracks); } : undefined}
+            onLeave={() => { setLive(null); void refresh(); }}
+          />
+        </div>
+        {p2pActive && (
+          <div className="rounded-lg border bg-card p-2 shrink-0">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                <Share2 className="h-3.5 w-3.5 text-emerald-600" />
+                البث الموزّع (الرابط العام)
+                <Badge variant="outline" className="gap-1"><Users className="h-3 w-3" /> {p2pCount} مشاهد</Badge>
+              </div>
+              {p2pHands.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] text-amber-700 font-medium flex items-center gap-1">
+                    <Hand className="h-3 w-3" /> أيدي مرفوعة:
+                  </span>
+                  {p2pHands.map(h => (
+                    <Button key={h.peerId} size="sm" variant="outline" className="h-6 px-2 text-[11px] gap-1"
+                      onClick={() => { p2pRef.current?.grantMic(h.peerId); setP2pHands(prev => prev.filter(x => x.peerId !== h.peerId)); }}
+                      data-testid={`btn-p2p-grant-${h.peerId}`}>
+                      <Mic className="h-3 w-3" /> {h.name}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div ref={p2pChatBoxRef} className="mt-1.5 max-h-24 overflow-y-auto space-y-1">
+              {p2pChat.map((m, i) => (
+                <div key={i} className={`text-[11px] rounded px-2 py-0.5 ${m.fromTrainer ? "bg-emerald-50" : "bg-muted/60"}`}>
+                  <span className="font-semibold">{m.name}: </span>{m.text}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-1 mt-1.5">
+              <Input value={p2pInput} onChange={e => setP2pInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); sendP2pChat(); } }}
+                placeholder="رسالة لمشاهدي الرابط العام..." className="h-7 text-xs" data-testid="input-p2p-chat" />
+              <Button size="sm" className="h-7 px-2" onClick={sendP2pChat} data-testid="btn-p2p-send"><Send className="h-3 w-3" /></Button>
+            </div>
+          </div>
+        )}
         {live.asTrainer && (
-          <div className="mt-2 flex justify-end">
+          <div className="flex justify-end shrink-0">
             <Button variant="destructive" size="sm" className="gap-1" onClick={() => endSession(live.session)}>
               <StopCircle className="h-4 w-4" /> إنهاء الجلسة للجميع
             </Button>

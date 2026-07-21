@@ -3,6 +3,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { ensureSchemaUpToDate } from "./lib/ensureSchema";
 import { attachCobrowseHub } from "./lib/cobrowseHub";
+import { attachTrainingP2PHub } from "./lib/trainingP2PHub";
 import { db } from "@workspace/db";
 import { usersTable, planConfigsTable, subscriptionsTable, companiesTable, systemSettingsTable, auditLogTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -352,6 +353,9 @@ async function bootstrap() {
   // Attach the WebSocket signaling hub for the Co-browse feature. It hooks
   // into the http upgrade event for path "/api/cobrowse/ws".
   attachCobrowseHub(httpServer);
+  // Attach the P2P relay-tree signaling hub for the free mass training
+  // broadcast. Hooks the upgrade event for "/api/training-room/p2p/ws".
+  attachTrainingP2PHub(httpServer);
 
   httpServer.listen(port, (err?: Error) => {
     if (err) {

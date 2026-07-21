@@ -154,4 +154,5 @@
 - [VAT JE lines no cost center](vat-lines-no-cost-center.md) — auto-JE VAT lines book costCenter:null; in createJournalEntry helpers explicit null opts OUT of header fallback (only undefined falls back).
 - [Trainee module permissions](trainee-module-permissions.md) — shared-mode trainee users.permissions must be RBAC-shaped ({key:{view,…}}) over granular keys; flat boolean map blanks the whole sidebar.
 - [LiveKit live-room engine](livekit-live-room-engine.md) — public join needs App.tsx early-return AND mount-before-zatcaRouter; SA agent authz must bind to call owner, never bare role.
+- [Training P2P relay tree](training-p2p-relay-tree.md) — broadcaster is "__root__" on viewer side (hub must translate from/to); viewer signals only parent/children; reparent with subtree-exclusion; 12s no-stream → LiveKit fallback.
 - [Web local scan agent](web-local-scan-agent.md) — downloadable bat+embedded-PS WIA bridge on 127.0.0.1:27345; split marker must be built dynamically, origin allow-list (never ACAO:*), PNA header on preflight, base64 stays localhost-side.

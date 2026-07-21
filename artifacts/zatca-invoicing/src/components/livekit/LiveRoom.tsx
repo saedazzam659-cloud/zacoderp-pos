@@ -45,6 +45,8 @@ export interface LiveRoomProps {
   autoPublishAv?: boolean;
   /** إخفاء الدردشة (اختياري) */
   hideChat?: boolean;
+  /** يُستدعى كلما تغيّرت مسارات النشر المحلية (للبث الموزّع P2P) */
+  onLocalTracksChanged?: (tracks: MediaStreamTrack[]) => void;
 }
 
 function decodeData(payload: Uint8Array): any | null {
@@ -53,7 +55,9 @@ function decodeData(payload: Uint8Array): any | null {
 const enc = new TextEncoder();
 
 export default function LiveRoom(props: LiveRoomProps) {
-  const { token, wsUrl, role, title, myName, canGrantMic, onGrantMic, onLeave, autoPublishAv, hideChat } = props;
+  const { token, wsUrl, role, title, myName, canGrantMic, onGrantMic, onLeave, autoPublishAv, hideChat, onLocalTracksChanged } = props;
+  const localTracksCbRef = useRef(onLocalTracksChanged);
+  localTracksCbRef.current = onLocalTracksChanged;
 
   const roomRef = useRef<Room | null>(null);
   const [connState, setConnState] = useState<"connecting" | "connected" | "reconnecting" | "failed">("connecting");
@@ -125,6 +129,8 @@ export default function LiveRoom(props: LiveRoomProps) {
           }
         }
       })
+      .on(RoomEvent.LocalTrackPublished, () => emitLocalTracks(room))
+      .on(RoomEvent.LocalTrackUnpublished, () => emitLocalTracks(room))
       .on(RoomEvent.DataReceived, (payload, p) => {
         const msg = decodeData(payload);
         if (!msg) return;
@@ -172,6 +178,17 @@ export default function LiveRoom(props: LiveRoomProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, wsUrl]);
+
+  const emitLocalTracks = (room: Room) => {
+    const cb = localTracksCbRef.current;
+    if (!cb) return;
+    const tracks: MediaStreamTrack[] = [];
+    for (const pub of room.localParticipant.trackPublications.values()) {
+      const mst = pub.track?.mediaStreamTrack;
+      if (mst && mst.readyState === "live") tracks.push(mst);
+    }
+    cb(tracks);
+  };
 
   const attachLocalCamera = (lp: LocalParticipant) => {
     const pub = lp.getTrackPublication(Track.Source.Camera);
