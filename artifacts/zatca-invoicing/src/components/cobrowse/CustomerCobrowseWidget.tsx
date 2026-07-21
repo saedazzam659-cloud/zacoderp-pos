@@ -158,6 +158,9 @@ export default function CustomerCobrowseWidget() {
         // No "logout" / "delete" lookalikes (Arabic + English).
         const txt = (el.innerText || el.textContent || "").trim().toLowerCase();
         if (/(logout|sign\s*out|تسجيل\s*الخروج|خروج)/.test(txt)) return;
+        // Guard against navigation races: the element may have been unmounted
+        // between elementFromPoint and the click (white-screen root cause #3).
+        if (!el.isConnected) return;
         el.click();
       } else if (kind === "scroll" && typeof evt.dy === "number") {
         const dy = Math.max(-2000, Math.min(2000, Number(evt.dy) || 0));
@@ -175,8 +178,22 @@ export default function CustomerCobrowseWidget() {
         const isText = ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement;
         if (!isText && !ae.isContentEditable) return;
         if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
-          if (k === "Backspace") ae.value = ae.value.slice(0, -1);
-          else if (isPrintable) ae.value = ae.value + k;
+          let next = ae.value;
+          if (k === "Backspace") next = next.slice(0, -1);
+          else if (isPrintable) next = next + k;
+          else return;
+          // WHITE-SCREEN FIX: writing `ae.value = …` directly bypasses
+          // React's internal value tracker, so controlled inputs diverge
+          // from React state and the next reconciliation can crash the
+          // whole tree. Use the NATIVE prototype setter (which React's
+          // tracker intercepts) and then dispatch the input event — this
+          // is the React-sanctioned way to simulate typing.
+          const proto = ae instanceof HTMLTextAreaElement
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          if (setter) setter.call(ae, next);
+          else ae.value = next;
           ae.dispatchEvent(new Event("input", { bubbles: true }));
         }
       }
@@ -192,20 +209,28 @@ export default function CustomerCobrowseWidget() {
     ws.onopen = () => {
       // rrweb full-snapshot is sent on the first emit; agent player
       // will buffer until it arrives.
-      const stop = record({
-        emit(event: any) {
-          if (ws.readyState === ws.OPEN) {
-            try { ws.send(JSON.stringify({ type: "rrweb_event", event })); } catch { /* ignore */ }
-          }
-        },
-        recordCanvas: false,
-        collectFonts: false,
-        maskInputOptions: { password: true },
-        maskTextSelector: "[data-cobrowse-secret]",
-        // Sample mousemoves heavily to keep bandwidth low.
-        sampling: { mousemove: 100, scroll: 80, input: "last" },
-      });
-      stopRecordRef.current = typeof stop === "function" ? stop : null;
+      // WHITE-SCREEN HARDENING: rrweb serialization can throw on exotic
+      // DOM nodes — never let that take down the customer's app.
+      try {
+        const stop = record({
+          emit(event: any) {
+            if (ws.readyState === ws.OPEN) {
+              try { ws.send(JSON.stringify({ type: "rrweb_event", event })); } catch { /* ignore */ }
+            }
+          },
+          recordCanvas: false,
+          collectFonts: false,
+          maskInputOptions: { password: true },
+          maskTextSelector: "[data-cobrowse-secret]",
+          // Sample mousemoves heavily to keep bandwidth low.
+          sampling: { mousemove: 100, scroll: 80, input: "last" },
+        });
+        stopRecordRef.current = typeof stop === "function" ? stop : null;
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[cobrowse] rrweb record failed to start", e);
+        stopRecordRef.current = null;
+      }
       setPhase("active");
     };
 

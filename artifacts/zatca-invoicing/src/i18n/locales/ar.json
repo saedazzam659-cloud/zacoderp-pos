@@ -857,6 +857,7 @@
     "officeExcel": "محرر الجداول (Excel)",
     "deliveryDocsModule": "سندات الاستلام والتسليم",
     "deliveryDocsGroup": "سندات الاستلام والتسليم",
+    "trainingRoom": "قاعة التدريب المباشر",
     "stockAdjustments": "التسوية المخزنية",
     "stockCounts": "الجرد المخزني",
     "offers": "العروض",
@@ -2592,6 +2593,7 @@
       "fieldService": "الخدمة الميدانية",
       "multiLink": "ربط متعدد",
       "office": "أوفيس زاكود",
+      "trainingRoom": "قاعة التدريب المباشر",
       "deliveryDocs": "سندات الاستلام والتسليم"
     },
     "actions": {
@@ -2624,6 +2626,7 @@
       "extensions": "الإضافات",
       "office": "أوفيس زاكود (Word + Excel)",
       "delivery_receipt_docs": "سندات الاستلام والتسليم",
+      "training_room": "قاعة التدريب المباشر",
       "customers": "العملاء",
       "sales_quotations": "عروض الأسعار",
       "sales_invoices": "فواتير المبيعات",

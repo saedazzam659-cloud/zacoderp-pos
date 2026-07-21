@@ -111,6 +111,8 @@ import chatAiRouter from "./chat-ai";
 import supportAiRouter from "./support-ai";
 import accountingAiRouter from "./accounting-ai";
 import cobrowseRouter from "./cobrowse";
+import trainingRoomRouter from "./training-room";
+import supportRoomRouter from "./support-room";
 import posOperationsAiRouter from "./pos-operations-ai";
 import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
@@ -283,6 +285,11 @@ router.use("/admin/download-codes", adminDownloadCodesRouter);
 router.use("/ext", extensionsRouter);
 // Phase 4 Marketplace — tenant storefront (module-gated; self-guards auth).
 router.use("/marketplace", marketplaceRouter);
+// قاعة التدريب المباشر — MUST be mounted BEFORE the path-less zatcaRouter:
+// the public join endpoints (/training-room/public/:token[/join]) are
+// reachable WITHOUT any session (name-only join from the shared link); the
+// authed endpoints self-guard via req.authUser inside the router.
+router.use("/training-room", trainingRoomRouter);
 router.use(zatcaRouter);
 router.use("/contracting", contractingRouter);
 router.use("/contracting-ai", contractingAiRouter);
@@ -305,6 +312,7 @@ router.use("/chat-ai", chatAiRouter);
 router.use("/support-ai", supportAiRouter);
 router.use("/accounting-ai", accountingAiRouter);
 router.use("/cobrowse", cobrowseRouter);
+router.use("/support-room", supportRoomRouter);
 router.use("/print-designer", printDesignerRouter);
 router.use("/sister-companies", sisterCompaniesRouter);
 router.use("/account-notes", accountNotesRouter);

@@ -145,6 +145,9 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // group + every /api/delivery-receipt-documents/* call. Mirror in frontend
   // companyModuleGate.ts + Layout.tsx.
   delivery_receipt_docs: "delivery_receipt_docs",
+  // قاعة التدريب المباشر (LiveKit training room) — standalone company toggle.
+  // Mirror in frontend companyModuleGate.ts + Layout.tsx + MenuPermissions.tsx.
+  training_room: "training_room",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be

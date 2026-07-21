@@ -58,6 +58,7 @@ const GROUP_TO_MENU_KEYS: Record<string, string[]> = {
   "perms.groups.multiLink":             ["multi_link"],
   "perms.groups.office":                ["office"],
   "perms.groups.deliveryDocs":          ["delivery_receipt_docs"],
+  "perms.groups.trainingRoom":          ["training_room"],
   "perms.groups.safety":                ["safety"],
   "perms.groups.voiceAssistant":        ["voice_assistant"],
   "perms.groups.sessions":              ["sessions"],

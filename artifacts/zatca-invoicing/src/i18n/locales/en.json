@@ -855,6 +855,7 @@
     "officeExcel": "Spreadsheet Editor (Excel)",
     "deliveryDocsModule": "Goods Receipt & Delivery Notes",
     "deliveryDocsGroup": "Goods Receipt & Delivery Notes",
+    "trainingRoom": "Live Training Hall",
     "stockAdjustments": "Stock Adjustments",
     "stockCounts": "Stock Counts",
     "offers": "Offers",
@@ -2589,6 +2590,7 @@
       "fieldService": "Field Service",
       "multiLink": "Multi-Link Gateway",
       "office": "Zacode Office",
+      "trainingRoom": "Live Training Hall",
       "deliveryDocs": "Goods Receipt / Delivery"
     },
     "actions": {
@@ -2621,6 +2623,7 @@
       "extensions": "Extensions",
       "office": "Zacode Office (Word + Excel)",
       "delivery_receipt_docs": "Goods Receipt / Delivery Notes",
+      "training_room": "Live Training Hall",
       "customers": "Customers",
       "sales_quotations": "Sales Quotations",
       "sales_invoices": "Sales Invoices",

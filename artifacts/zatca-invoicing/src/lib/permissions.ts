@@ -44,6 +44,7 @@ const G = {
   multiLink:    "perms.groups.multiLink",
   office:       "perms.groups.office",
   deliveryDocs: "perms.groups.deliveryDocs",
+  trainingRoom: "perms.groups.trainingRoom",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -68,6 +69,10 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // linked to invoices; single company gate `delivery_receipt_docs`. `post`
   // is required by the backend for the /:id/approve (lock) endpoint.
   { key: "delivery_receipt_docs", label: "perms.modules.delivery_receipt_docs", group: G.deliveryDocs, actions: ["view", "create", "edit", "delete", "post"] },
+
+  // قاعة التدريب المباشر — LiveKit training hall. `create`/`edit`/`delete`
+  // gate session management (trainer side); `view` gates joining as trainee.
+  { key: "training_room",        label: "perms.modules.training_room",        group: G.trainingRoom, actions: ["view", "create", "edit", "delete"] },
 
   { key: "customers",            label: "perms.modules.customers",            group: G.sales,      actions: VC },
   { key: "sales_quotations",     label: "perms.modules.sales_quotations",     group: G.sales,      actions: ALL },

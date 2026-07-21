@@ -104,6 +104,11 @@ export const MENU_ITEMS: MenuItem[] = [
   // linked to invoices. Default ON; single key gates the sidebar group + every
   // /api/delivery-receipt-documents/* call.
   { key: "delivery_receipt_docs", label: "سندات الاستلام والتسليم", section: "سندات الاستلام والتسليم" },
+
+  // قاعة التدريب المباشر (LiveKit) — trainer broadcasts screen/cam/audio to
+  // trainees (view-only) with raise-hand + chat + attendance log. Default ON;
+  // single key gates the sidebar group + every /api/training-room/* call.
+  { key: "training_room",      label: "قاعة التدريب المباشر",       section: "قاعة التدريب المباشر" },
 ];
 
 export const SECTIONS: string[] = Array.from(new Set(MENU_ITEMS.map(m => m.section)));
@@ -176,6 +181,9 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   // Goods Receipt / Delivery archive — permission key is the on/off switch,
   // no separate billable parent module.
   delivery_receipt_docs: null,
+  // قاعة التدريب المباشر — permission key is the on/off switch, no separate
+  // billable parent module.
+  training_room:      null,
 };
 
 // Resolve the unique set of high-level module keys implied by a list of
@@ -360,6 +368,12 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
     screens: [
       { path: "/goods-receipts", label: "سندات الاستلام" },
       { path: "/goods-deliveries", label: "سندات التسليم" },
+    ],
+  },
+  {
+    key: "training_room", label: "قاعة التدريب المباشر", emoji: "🎓", moduleKeys: ["training_room"],
+    screens: [
+      { path: "/training-room", label: "قاعة التدريب المباشر" },
     ],
   },
   {

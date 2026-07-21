@@ -137,6 +137,9 @@ const OFFICE_GROUP_PERMS        = ["office"];
 // سندات الاستلام والتسليم (goods receipt / delivery archive) — its own
 // top-level sidebar group, single permission key `delivery_receipt_docs`.
 const DELIVERY_DOCS_GROUP_PERMS = ["delivery_receipt_docs"];
+// قاعة التدريب المباشر (LiveKit training hall) — single-screen top-level
+// entry gated by the `training_room` permission key.
+const TRAINING_ROOM_GROUP_PERMS = ["training_room"];
 // All inventory report routes are gated as module="items" in App.tsx, so the
 // group should mirror that exactly — a user with only `warehouses.view` has
 // nothing accessible inside this group.
@@ -888,6 +891,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   sister:      ["sister_companies"],
   office:      ["office"],
   deliveryDocs:["delivery_receipt_docs"],
+  trainingRoom:["training_room"],
   sales:       ["sales", "sales_module", "sales_reports", "customers"],
   purchasing:  ["purchasing", "purchases_module", "purchases_reports", "suppliers"],
   cash:        ["cash", "cash_module", "cash_reports"],
@@ -1448,6 +1452,25 @@ function DeliveryDocsNavGroup({
         </div>
       )}
     </div>
+  );
+}
+
+// ─── TrainingRoomNavGroup (single-screen top-level entry) ────────────────────
+// قاعة التدريب المباشر — LiveKit training hall. One screen, no accordion.
+function TrainingRoomNavGroup({
+  location, onNavigate,
+}: {
+  location: string;
+  onNavigate: () => void;
+}) {
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, TRAINING_ROOM_GROUP_PERMS)) return null;
+  return (
+    <NavItem
+      item={{ nameKey: "nav.trainingRoom", href: "/training-room", icon: GraduationCap, permKey: "training_room" }}
+      location={location}
+      onClick={onNavigate}
+    />
   );
 }
 
@@ -2436,6 +2459,11 @@ function TopNavBar(props: any) {
       node: close => <DeliveryDocsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
+      key: "trainingRoom",
+      label: t("nav.trainingRoom", { defaultValue: "قاعة التدريب المباشر" }),
+      node: close => <TrainingRoomNavGroup location={location} onNavigate={nav(close)} />,
+    },
+    {
       key: "sales",
       label: t("nav.salesGroup", { defaultValue: "المبيعات" }),
       node: close => (
@@ -2912,6 +2940,12 @@ function SidebarInner({
                   open={deliveryDocsOpen}
                   onToggle={onDeliveryDocsToggle}
                 />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "trainingRoom", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <TrainingRoomNavGroup location={location} onNavigate={onNavigate} />
               </div>
             )}
 

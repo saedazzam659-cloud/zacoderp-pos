@@ -1,201 +1,108 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
-  Video, Copy, ExternalLink, RefreshCw, Mic, Camera,
-  MonitorUp, Users, ShieldCheck, MessageSquare, Phone,
-  PhoneOff, Radio, StickyNote, Send, MousePointer2,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Video, Copy, RefreshCw, Users, ShieldCheck, Phone,
+  Radio, StickyNote, MousePointer2, History, Loader2, PhoneCall,
 } from "lucide-react";
 import AgentCobrowseViewer from "@/components/cobrowse/AgentCobrowseViewer";
+import LiveRoom from "@/components/livekit/LiveRoom";
+import { supportRoomApi, type JoinInfo } from "@/lib/liveRoomApi";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SupportCall — live audio/video/screen-share room for tech support.
+// SupportCall — غرفة الدعم الفني المباشرة (LiveKit داخل النظام).
 //
-// IMPORTANT design decision: Jitsi runs in a SEPARATE top-level browser
-// window opened via window.open(), NOT inside an embedded iframe. The
-// reason is that browsers block camera + microphone permission requests
-// from nested iframes (our app may itself be loaded inside the Replit
-// preview iframe, and Permissions-Policy delegation only chains one level
-// deep). A real top-level window is the only reliable way to get the
-// permission prompt across all browsers and embedding contexts.
-//
-// Inside this page we keep a control-panel UI: meeting timer, "live" dot,
-// re-open button if the user closed the popup, an invite link that the
-// agent can paste to the customer, and a notes textarea so the agent can
-// jot down what they did during the call.
+// استُبدل Jitsi (نافذة منبثقة خارجية) بغرفة LiveKit عربية مدمجة داخل الصفحة:
+//   • السوبر أدمن يبدأ مكالمة ويختار المستخدم المستهدف → يرن عنده فورًا
+//     عبر SSE (support_call_invite) ويرد من داخل النظام.
+//   • الطرفان ينشران الكاميرا/المايك/الشاشة.
+//   • سجل مكالمات كامل (support_call_logs) أسفل الصفحة.
+// لوحة «التحكم بشاشة العميل» (co-browse) بقيت كما هي بجانب المكالمة.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function makeRoomName(prefix = "zacoderp-support"): string {
-  // 10-char base36 random — ~52 bits of entropy, enough to prevent room squatting.
-  const rand = Math.random().toString(36).slice(2, 12);
-  return `${prefix}-${rand}`;
+interface CallRow {
+  id: number; agentUsername: string | null; targetUserId: number | null;
+  targetLabel: string | null; status: string; createdAt: string;
+  joinedAt: string | null; endedAt: string | null; endReason: string | null;
 }
 
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+interface EligibleUser { id: number; username: string; nameAr?: string | null; role?: string }
+
+function fmt(v: string | null): string {
+  if (!v) return "—";
+  try { return new Date(v).toLocaleString("ar-SA-u-nu-latn", { dateStyle: "short", timeStyle: "short" }); } catch { return v; }
+}
+
+function durationOf(c: CallRow): string {
+  if (!c.joinedAt || !c.endedAt) return "—";
+  const s = Math.max(0, Math.floor((new Date(c.endedAt).getTime() - new Date(c.joinedAt).getTime()) / 1000));
+  const m = Math.floor(s / 60), r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")} د`;
 }
 
 export default function SupportCall() {
   const { user } = useAuth();
   const { toast } = useToast();
 
-  const [room, setRoom]               = useState<string>(() => makeRoomName());
-  const [displayName, setDisplayName] = useState<string>(user?.username ?? "الدعم الفني");
-  const [callActive, setCallActive]   = useState(false);
-  const [startedAt, setStartedAt]     = useState<number | null>(null);
-  const [elapsed, setElapsed]         = useState(0);
-  const [notes, setNotes]             = useState("");
+  const [users, setUsers] = useState<EligibleUser[]>([]);
+  const [targetId, setTargetId] = useState<string>("none");
+  const [starting, setStarting] = useState(false);
+  const [active, setActive] = useState<(JoinInfo & { callId: number; targetLabel: string | null }) | null>(null);
+  const [notes, setNotes] = useState("");
+  const [logs, setLogs] = useState<CallRow[]>([]);
+  const [logsLoading, setLogsLoading] = useState(true);
 
-  // Reference to the popup window so we can re-focus it or detect that
-  // the user closed it externally.
-  const winRef = useRef<Window | null>(null);
-
-  // Host URL — pre-fills the agent's display name and drops them straight
-  // into the room (no pre-join screen). The pre-join screen was causing
-  // hosts to get stuck on the "click Join" button without realising they
-  // hadn't entered the room yet, leaving the customer alone with a "1
-  // participant" counter. Skipping pre-join is safe because Jitsi will
-  // still ask the browser for camera + microphone permission the moment
-  // it tries to attach the local media tracks. We also disable the lobby
-  // on the host side: Jitsi's lobby setting is decided by whoever creates
-  // the room first, so the HOST must declare it off — otherwise customers
-  // who open the share link land in a "waiting for moderator approval"
-  // screen.
-  const hostUrl = useMemo(() => {
-    // We pass BOTH the legacy `prejoinPageEnabled` flag and the new
-    // `prejoinConfig.enabled` flag — recent meet.jit.si releases renamed the
-    // option and the old one is ignored. We also set `requireDisplayName=false`
-    // so Jitsi doesn't show its own name-prompt overlay.
-    const hash = [
-      `config.prejoinPageEnabled=false`,
-      `config.prejoinConfig.enabled=false`,
-      `config.requireDisplayName=false`,
-      `config.lobby.enabled=false`,
-      `config.startWithAudioMuted=false`,
-      `config.startWithVideoMuted=false`,
-      `userInfo.displayName=%22${encodeURIComponent(displayName)}%22`,
-    ].join("&");
-    return `https://meet.jit.si/${encodeURIComponent(room)}#${hash}`;
-  }, [room, displayName]);
-
-  // Customer share URL — no lobby, no pre-join screen, drops them straight
-  // into the room. Browser will still ask for cam/mic once.
-  const shareUrl = useMemo(() => {
-    const hash = [
-      `config.prejoinPageEnabled=false`,
-      `config.prejoinConfig.enabled=false`,
-      `config.requireDisplayName=false`,
-      `config.lobby.enabled=false`,
-      `config.startWithAudioMuted=false`,
-      `config.startWithVideoMuted=false`,
-    ].join("&");
-    return `https://meet.jit.si/${encodeURIComponent(room)}#${hash}`;
-  }, [room]);
-
-  // Meeting timer: tick every second while the call is active, and poll
-  // whether the popup window was closed externally so we can flip the UI
-  // back to "not active" without the agent having to click "End meeting".
+  // قائمة المستخدمين للاستدعاء المباشر — نعيد استخدام endpoint الكوبراوز
   useEffect(() => {
-    if (!callActive || startedAt == null) return;
-    const tick = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
-      if (winRef.current && winRef.current.closed) {
-        winRef.current = null;
-      }
-    }, 1000);
-    return () => clearInterval(tick);
-  }, [callActive, startedAt]);
+    const tok = localStorage.getItem("zatca_token");
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    fetch(`${base}/api/cobrowse/eligible-users`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} })
+      .then(r => (r.ok ? r.json() : []))
+      .then((rows: EligibleUser[]) => setUsers(Array.isArray(rows) ? rows : []))
+      .catch(() => setUsers([]));
+  }, []);
 
-  const openCallWindow = () => {
-    // Use a named window so that calling open() twice with the same name
-    // re-focuses the existing tab instead of opening a duplicate.
-    const win = window.open(
-      hostUrl,
-      `zacoderp-support-${room}`,
-      "width=1200,height=800,noopener=no",
-    );
-    if (!win) {
-      toast({
-        title: "تعذّر فتح نافذة الاجتماع",
-        description: "المتصفح منع النوافذ المنبثقة. اسمح بالنوافذ المنبثقة لهذا الموقع وحاول مرة أخرى.",
-        variant: "destructive",
-      });
-      return;
-    }
-    winRef.current = win;
-    win.focus();
-    if (!callActive) {
-      setCallActive(true);
-      setStartedAt(Date.now());
-      setElapsed(0);
-    }
+  const refreshLogs = useCallback(async () => {
+    try { setLogs(await supportRoomApi.listCalls()); }
+    catch { /* السجل اختياري — لا نعطّل الصفحة */ }
+    finally { setLogsLoading(false); }
+  }, []);
+  useEffect(() => { void refreshLogs(); }, [refreshLogs]);
+
+  const startCall = async () => {
+    setStarting(true);
+    try {
+      const tid = targetId !== "none" ? Number(targetId) : null;
+      const res = await supportRoomApi.createCall(tid);
+      const label = tid ? (users.find(u => u.id === tid)?.username ?? null) : null;
+      setActive({ ...res, callId: res.call.id, targetLabel: label });
+      if (tid) toast({ title: "جارٍ رنّ المستخدم...", description: "سيظهر له إشعار المكالمة فور فتحه النظام." });
+      void refreshLogs();
+    } catch (e: any) {
+      toast({ title: "تعذّر بدء المكالمة", description: e.message, variant: "destructive" });
+    } finally { setStarting(false); }
   };
 
-  const reopenCallWindow = () => openCallWindow();
-
-  const endCall = () => {
-    if (winRef.current && !winRef.current.closed) {
-      try { winRef.current.close(); } catch { /* cross-origin close may fail silently */ }
-    }
-    winRef.current = null;
-    setCallActive(false);
-    setStartedAt(null);
-    setElapsed(0);
-    toast({ title: "تم إنهاء الاجتماع" });
-  };
-
-  const newRoom = () => {
-    if (callActive) {
-      toast({ title: "أنهِ الاجتماع الحالي أولًا قبل إنشاء غرفة جديدة", variant: "destructive" });
-      return;
-    }
-    setRoom(makeRoomName());
-    toast({ title: "تم إنشاء غرفة جديدة", description: "أرسل الرابط للعميل ليتمكن من الانضمام." });
+  const endCall = async () => {
+    if (!active) return;
+    try { await supportRoomApi.endCall(active.callId); } catch { /* ignore */ }
+    setActive(null);
+    toast({ title: "تم إنهاء المكالمة" });
+    void refreshLogs();
   };
 
   const copy = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast({ title: `تم نسخ ${label}` });
-    } catch {
-      toast({ title: "تعذّر النسخ", variant: "destructive" });
-    }
+    try { await navigator.clipboard.writeText(text); toast({ title: `تم نسخ ${label}` }); }
+    catch { toast({ title: "تعذّر النسخ", variant: "destructive" }); }
   };
-
-  const sendWhatsapp = () => {
-    const text = `رابط دعوتك للاجتماع المباشر مع الدعم الفني:\n${shareUrl}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
-  };
-
-  // Smart share — guarantees the host has entered the room BEFORE the
-  // customer's link is shared. This eliminates the lobby/wait problem at
-  // its root: the customer can never reach the room before the host now.
-  // Flow: if no call yet, open the host window, wait ~3s for Jitsi to
-  // bootstrap, then copy the link (or hand off to WhatsApp).
-  const smartShare = async (mode: "copy" | "whatsapp") => {
-    if (!callActive) {
-      openCallWindow();
-      toast({
-        title: "جاري فتح الاجتماع أولًا...",
-        description: "سيتم نسخ الرابط بعد لحظات لضمان دخولك قبل العميل.",
-      });
-      await new Promise(r => setTimeout(r, 3000));
-    }
-    if (mode === "copy") await copy(shareUrl, "الرابط");
-    else sendWhatsapp();
-  };
-
-  const winIsClosed = callActive && (!winRef.current || winRef.current.closed);
 
   return (
     <div className="space-y-4 p-4 md:p-6">
@@ -203,239 +110,156 @@ export default function SupportCall() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Video className="h-6 w-6 text-emerald-600" />
-            غرفة الدعم الفني المباشرة
+            <Video className="h-6 w-6 text-emerald-600" /> غرفة الدعم الفني المباشرة
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            مكالمة فيديو وصوت ومشاركة شاشة مباشرة مع العميل لمساعدته في حل المشاكل — بدون تثبيت أي برنامج خارجي.
+            مكالمة فيديو وصوت ومشاركة شاشة مع العميل — داخل النظام مباشرة وبدون أي برنامج خارجي.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-emerald-700 border-emerald-300 bg-emerald-50 gap-1">
-            <ShieldCheck className="h-3.5 w-3.5" /> اتصال مشفّر (E2E)
-          </Badge>
-          {callActive && (
-            <Badge className="bg-red-600 hover:bg-red-600 text-white gap-1.5">
-              <Radio className="h-3.5 w-3.5 animate-pulse" /> مباشر · {formatDuration(elapsed)}
-            </Badge>
-          )}
-        </div>
+        <Badge variant="outline" className="text-emerald-700 border-emerald-300 bg-emerald-50 gap-1">
+          <ShieldCheck className="h-3.5 w-3.5" /> اتصال مشفّر
+        </Badge>
       </div>
 
-      {/* Why a separate window? — short banner */}
-      <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-        <strong>لماذا تفتح نافذة منفصلة؟</strong> المتصفح يمنع منح إذن الكاميرا والميكروفون لإطار مدمج داخل إطار آخر. لذلك يفتح النظام الاجتماع في نافذة مستقلة تستطيع طلب الإذن بشكل صحيح، بينما تبقى لوحة التحكم هنا داخل النظام.
-      </div>
-
-      {/* Big call-to-action panel */}
-      <Card className={callActive ? "border-emerald-300" : ""}>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Phone className="h-4 w-4" /> {callActive ? "الاجتماع نشط" : "بدء اجتماع جديد"}
-          </CardTitle>
-          <CardDescription>
-            {callActive
-              ? winIsClosed
-                ? "نافذة الاجتماع مغلقة. اضغط «إعادة فتح النافذة» للعودة للمكالمة."
-                : "نافذة الاجتماع مفتوحة في تبويب منفصل. لا تغلق هذه الصفحة لتحتفظ بلوحة التحكم وملاحظاتك."
-              : "اضغط الزر أدناه لفتح غرفة الدعم في نافذة منفصلة. سيُطلب إذن الكاميرا والميكروفون."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            {!callActive ? (
-              <Button onClick={openCallWindow} size="lg" className="gap-2 bg-emerald-600 hover:bg-emerald-500" data-testid="btn-start-call">
-                <Video className="h-5 w-5" /> فتح الاجتماع في نافذة منفصلة
-              </Button>
-            ) : (
-              <>
-                <Button onClick={reopenCallWindow} variant={winIsClosed ? "default" : "outline"} className="gap-2" data-testid="btn-reopen-call">
-                  <ExternalLink className="h-4 w-4" /> {winIsClosed ? "إعادة فتح النافذة" : "إحضار النافذة للأمام"}
-                </Button>
-                <Button onClick={endCall} variant="destructive" className="gap-2" data-testid="btn-end-call">
-                  <PhoneOff className="h-4 w-4" /> إنهاء الاجتماع
-                </Button>
-              </>
-            )}
-          </div>
-
-          {/* Smart step-by-step join guide — shown only before the call is
-              active. This visually walks the host through exactly what
-              they'll see in the Jitsi popup and what to click, so they
-              don't get stuck on the pre-join screen and leave the customer
-              alone. Each step has an explicit tip in case meet.jit.si
-              ignores our config flags and shows extra prompts. */}
-          {!callActive && (
-            <div className="rounded-lg border bg-muted/30 p-4">
-              <div className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-1.5">
-                <Radio className="h-3.5 w-3.5 text-emerald-600" /> ماذا يحدث بعد ضغط الزر؟
-              </div>
-              <ol className="space-y-2.5">
-                <JoinStep
-                  num={1}
-                  title="تفتح نافذة جديدة لـ Jitsi"
-                  hint="إذا منع المتصفح النافذة المنبثقة، اسمح بها من أيقونة العنوان."
-                />
-                <JoinStep
-                  num={2}
-                  title="المتصفح سيطلب إذن الكاميرا والميكروفون"
-                  hint="اضغط «السماح» (Allow) — هذا الإذن مطلوب مرة واحدة فقط."
-                  highlight
-                />
-                <JoinStep
-                  num={3}
-                  title="قد تظهر شاشة «Join meeting» باللون الأزرق"
-                  hint="إذا ظهرت، اضغط الزر الأزرق «Join meeting» مباشرة لدخول الغرفة."
-                  highlight
-                />
-                <JoinStep
-                  num={4}
-                  title="ستدخل الغرفة وستصبح المضيف"
-                  hint="ارجع لهذه الصفحة وانسخ رابط الدعوة من قسم «دعوة العميل» وأرسله."
-                />
-              </ol>
-            </div>
-          )}
-
-          {callActive && (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-              <div className="font-semibold flex items-center gap-1.5">
-                <Radio className="h-4 w-4 animate-pulse" /> أنت في الغرفة الآن
-              </div>
-              <div className="text-xs mt-1">
-                انسخ رابط الدعوة من الأسفل وأرسله للعميل عبر الواتساب أو أي وسيلة أخرى. سينضم مباشرة بمجرد فتح الرابط.
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Room + invite link */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Users className="h-4 w-4" /> دعوة العميل
-          </CardTitle>
-          <CardDescription>
-            انسخ الرابط وأرسله للعميل. يمكنه الانضمام مباشرة من المتصفح بدون تسجيل دخول.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <Label className="text-xs">اسم الغرفة</Label>
-            <div className="flex gap-2 mt-1">
-              <Input
-                value={room}
-                onChange={(e) => setRoom(e.target.value.replace(/[^A-Za-z0-9-]/g, ""))}
-                dir="ltr"
-                className="font-mono text-xs"
-                disabled={callActive}
-                data-testid="input-support-room"
-              />
-              <Button variant="outline" size="icon" onClick={newRoom} title="غرفة جديدة" disabled={callActive} data-testid="btn-new-room">
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs">الاسم الظاهر لك في المكالمة</Label>
-            <Input
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              className="mt-1"
-              disabled={callActive}
-              data-testid="input-display-name"
+      {/* المكالمة النشطة */}
+      {active ? (
+        <Card className="border-emerald-300">
+          <CardContent className="pt-4">
+            <LiveRoom
+              token={active.token} wsUrl={active.wsUrl}
+              role="publisher"
+              title={active.targetLabel ? `مكالمة مع ${active.targetLabel}` : "مكالمة دعم فني"}
+              myName={user?.username ?? "الدعم الفني"}
+              autoPublishAv
+              hideChat={false}
+              onLeave={endCall}
             />
-          </div>
-
-          <div className="md:col-span-2">
-            <Label className="text-xs">رابط دعوة العميل</Label>
-            <div className="flex gap-2 mt-1 flex-wrap">
-              <Input value={shareUrl} readOnly dir="ltr" className="font-mono text-xs flex-1 min-w-[260px]" data-testid="input-share-url" />
-              <Button onClick={() => smartShare("copy")} className="gap-1 bg-emerald-600 hover:bg-emerald-500" data-testid="btn-copy-link">
-                <Copy className="h-4 w-4" /> {callActive ? "نسخ" : "افتح ثم انسخ"}
-              </Button>
-              <Button variant="outline" onClick={() => smartShare("whatsapp")} className="gap-1" data-testid="btn-send-whatsapp">
-                <Send className="h-4 w-4" /> واتساب
-              </Button>
-              <Button variant="outline" asChild disabled={!callActive} className="gap-1">
-                <a href={shareUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink className="h-4 w-4" /> فتح
-                </a>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><Phone className="h-4 w-4" /> بدء مكالمة جديدة</CardTitle>
+            <CardDescription>
+              اختر مستخدمًا ليرن عنده إشعار المكالمة داخل النظام فورًا، أو ابدأ غرفة مفتوحة بدون استدعاء.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+              <div>
+                <Label className="text-xs">استدعاء مستخدم (اختياري)</Label>
+                <Select value={targetId} onValueChange={setTargetId}>
+                  <SelectTrigger className="mt-1" data-testid="select-target-user">
+                    <SelectValue placeholder="بدون استدعاء" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">بدون استدعاء — غرفة مفتوحة</SelectItem>
+                    {users.map(u => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.nameAr || u.username}{u.role ? ` · ${u.role}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button size="lg" className="gap-2 bg-emerald-600 hover:bg-emerald-500" onClick={startCall} disabled={starting} data-testid="btn-start-call">
+                {starting ? <Loader2 className="h-5 w-5 animate-spin" /> : <PhoneCall className="h-5 w-5" />}
+                بدء المكالمة {targetId !== "none" ? "ورنّ المستخدم" : ""}
               </Button>
             </div>
-            {!callActive ? (
-              <div className="mt-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-                <strong>نسخ ذكي:</strong> عند الضغط على «افتح ثم انسخ» أو «واتساب»، سيفتح النظام الاجتماع تلقائيًا من جانبك أولًا، ثم بعد 3 ثوانٍ ينسخ/يرسل الرابط — هذا يضمن أن العميل لن يعلق أبدًا في شاشة الانتظار.
-              </div>
-            ) : (
-              <div className="text-[11px] text-emerald-700 mt-1">
-                ✓ أنت داخل الغرفة الآن — العميل سيدخل مباشرة بدون انتظار موافقة.
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+              عند اختيار مستخدم، سيظهر له إشعار «مكالمة دعم واردة» داخل النظام مباشرة (يجب أن يكون مسجّل الدخول). المكالمة تعمل بالكامل داخل هذه الصفحة.
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Features grid — Co-browse trigger sits directly next to the camera
-          chip so the agent can start screen-sharing without scrolling. */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <FeatureChip icon={Camera}        label="كاميرا" />
-        <FeatureChip
-          icon={MousePointer2}
-          label="تحكم بشاشة العميل"
-          highlight
-          onClick={() => {
-            const card = document.getElementById("cobrowse-card");
-            card?.scrollIntoView({ behavior: "smooth", block: "start" });
-            // Defer the click until after scrollIntoView begins so the
-            // Start button is on screen when the dialog logic fires.
-            setTimeout(() => {
-              const btn = document.getElementById("cobrowse-start-btn") as HTMLButtonElement | null;
-              btn?.click();
-            }, 250);
-          }}
-        />
-        <FeatureChip icon={Mic}           label="صوت ثنائي الاتجاه" />
-        <FeatureChip icon={MonitorUp}     label="مشاركة الشاشة" />
-        <FeatureChip icon={MessageSquare} label="دردشة نصية" />
+      {/* Co-browse — التحكم بشاشة العميل */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <FeatureChip icon={MousePointer2} label="تحكم بشاشة العميل" highlight onClick={() => {
+          const card = document.getElementById("cobrowse-card");
+          card?.scrollIntoView({ behavior: "smooth", block: "start" });
+          setTimeout(() => (document.getElementById("cobrowse-start-btn") as HTMLButtonElement | null)?.click(), 250);
+        }} />
+        <FeatureChip icon={Video} label="فيديو + صوت" />
+        <FeatureChip icon={Radio} label="مشاركة الشاشة" />
+        <FeatureChip icon={Users} label="داخل النظام — بدون نوافذ خارجية" />
       </div>
 
-      {/* Co-browse panel — DOM mirror + optional control */}
-      <div id="cobrowse-card">
-        <AgentCobrowseViewer />
-      </div>
+      <div id="cobrowse-card"><AgentCobrowseViewer /></div>
 
-      {/* Meeting notes */}
+      {/* ملاحظات */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <StickyNote className="h-4 w-4" /> ملاحظات الاجتماع
-          </CardTitle>
-          <CardDescription>
-            دوّن ما تم خلال المكالمة (المشكلة، الحل، الخطوات التالية). الملاحظات محفوظة محليًا في هذه الجلسة.
-          </CardDescription>
+          <CardTitle className="text-base flex items-center gap-2"><StickyNote className="h-4 w-4" /> ملاحظات المكالمة</CardTitle>
+          <CardDescription>دوّن ما تم خلال المكالمة. الملاحظات محفوظة محليًا في هذه الجلسة.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="مثال: العميل لم يستطع طباعة الفاتورة — أعدنا تثبيت تعريف الطابعة الحرارية وتم الحل."
-            rows={6}
-            data-testid="textarea-call-notes"
-          />
+          <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={5}
+            placeholder="مثال: العميل لم يستطع طباعة الفاتورة — أعدنا تثبيت تعريف الطابعة وتم الحل."
+            data-testid="textarea-call-notes" />
           <div className="flex justify-end mt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => copy(notes, "الملاحظات")}
-              disabled={!notes.trim()}
-              className="gap-1"
-              data-testid="btn-copy-notes"
-            >
+            <Button variant="outline" size="sm" onClick={() => copy(notes, "الملاحظات")} disabled={!notes.trim()} className="gap-1">
               <Copy className="h-4 w-4" /> نسخ الملاحظات
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* سجل المكالمات */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2"><History className="h-4 w-4" /> سجل المكالمات</CardTitle>
+              <CardDescription>آخر مكالمات الدعم الفني (حتى 300).</CardDescription>
+            </div>
+            <Button variant="outline" size="icon" onClick={() => { setLogsLoading(true); void refreshLogs(); }} title="تحديث">
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {logsLoading ? (
+            <div className="grid place-items-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : logs.length === 0 ? (
+            <div className="text-sm text-muted-foreground text-center py-4">لا توجد مكالمات مسجّلة بعد.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs" data-testid="table-call-logs">
+                <thead>
+                  <tr className="border-b text-muted-foreground">
+                    <th className="text-start py-1.5 px-2">#</th>
+                    <th className="text-start py-1.5 px-2">الوكيل</th>
+                    <th className="text-start py-1.5 px-2">المستخدم</th>
+                    <th className="text-start py-1.5 px-2">الحالة</th>
+                    <th className="text-start py-1.5 px-2">البداية</th>
+                    <th className="text-start py-1.5 px-2">المدة</th>
+                    <th className="text-start py-1.5 px-2">سبب الإنهاء</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map(c => (
+                    <tr key={c.id} className="border-b last:border-0">
+                      <td className="py-1.5 px-2 text-muted-foreground">{c.id}</td>
+                      <td className="py-1.5 px-2 font-medium">{c.agentUsername ?? "—"}</td>
+                      <td className="py-1.5 px-2">{c.targetLabel ?? "غرفة مفتوحة"}</td>
+                      <td className="py-1.5 px-2">
+                        {c.status === "active" ? <Badge className="bg-emerald-600 text-white text-[10px]">نشطة</Badge>
+                          : c.status === "pending" ? <Badge variant="outline" className="text-[10px]">بانتظار الرد</Badge>
+                          : <Badge variant="secondary" className="text-[10px]">منتهية</Badge>}
+                      </td>
+                      <td className="py-1.5 px-2 text-muted-foreground">{fmt(c.createdAt)}</td>
+                      <td className="py-1.5 px-2">{durationOf(c)}</td>
+                      <td className="py-1.5 px-2 text-muted-foreground">
+                        {c.endReason === "agent_ended" ? "أنهاها الوكيل" : c.endReason === "user_ended" ? "أنهاها المستخدم" : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -446,17 +270,10 @@ function FeatureChip({
   icon: Icon, label, onClick, highlight = false,
 }: { icon: any; label: string; onClick?: () => void; highlight?: boolean }) {
   const base = "flex items-center gap-2 rounded-md border px-3 py-2 text-sm";
-  // Clickable chip (e.g. Co-browse trigger) gets a button look + hover state.
   if (onClick) {
     return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={`${base} ${highlight
-          ? "bg-amber-500 hover:bg-amber-400 border-amber-600 text-white font-medium"
-          : "bg-card hover:bg-accent"
-        } transition-colors text-right`}
-      >
+      <button type="button" onClick={onClick}
+        className={`${base} ${highlight ? "bg-amber-500 hover:bg-amber-400 border-amber-600 text-white font-medium" : "bg-card hover:bg-accent"} transition-colors text-right`}>
         <Icon className={`h-4 w-4 ${highlight ? "text-white" : "text-emerald-600"}`} />
         <span>{label}</span>
       </button>
@@ -467,27 +284,5 @@ function FeatureChip({
       <Icon className="h-4 w-4 text-emerald-600" />
       <span>{label}</span>
     </div>
-  );
-}
-
-function JoinStep({
-  num, title, hint, highlight = false,
-}: { num: number; title: string; hint: string; highlight?: boolean }) {
-  return (
-    <li className="flex items-start gap-3">
-      <span
-        className={`shrink-0 inline-grid place-items-center h-6 w-6 rounded-full text-xs font-bold ${
-          highlight ? "bg-amber-500 text-white" : "bg-emerald-600 text-white"
-        }`}
-      >
-        {num}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium">{title}</div>
-        <div className={`text-xs mt-0.5 ${highlight ? "text-amber-700" : "text-muted-foreground"}`}>
-          {hint}
-        </div>
-      </div>
-    </li>
   );
 }

@@ -396,6 +396,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch { /* ignore */ }
       });
 
+      // Support-room (LiveKit) ring: SuperAdmin opened a call targeting THIS
+      // user → re-broadcast as window events so the global IncomingSupportCall
+      // dialog can ring and answer without a page reload.
+      es.addEventListener("support_call_invite", (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent("support-call:invite", { detail: payload?.meta ?? payload }));
+        } catch { /* ignore malformed event */ }
+      });
+      es.addEventListener("support_call_cancelled", (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent("support-call:cancelled", { detail: payload?.meta ?? payload }));
+        } catch { /* ignore */ }
+      });
+
       // WebRTC chat-call signaling: forward to the in-process call bus so the
       // global CallProvider can react (ring, exchange offer/answer/ICE, hang
       // up) without opening a second SSE connection.

@@ -68,6 +68,9 @@ export default function TraineeRegister() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    // فحص فوري لصيغة الإيميل قبل إرسال أي شيء للخادم — يمنع أخطاء مثل gmail.com6
+    const emailOk = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,24}$/.test(email.trim());
+    if (!emailOk) { setError("⚠️ الرجاء إدخال البريد الإلكتروني بشكل صحيح — تأكد من كتابة العنوان مثل: name@gmail.com"); return; }
     if (password !== confirmPassword) { setError("كلمتا المرور غير متطابقتين"); return; }
     if (!termsAccepted) { setError("يجب الموافقة على الشروط والأحكام"); return; }
     setLoading(true);

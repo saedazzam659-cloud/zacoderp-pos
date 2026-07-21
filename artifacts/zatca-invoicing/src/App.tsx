@@ -90,6 +90,9 @@ import ResellersAdmin from "@/pages/ResellersAdmin";
 import PartnersAdmin from "@/pages/PartnersAdmin";
 import DevCloudAdmin from "@/pages/DevCloudAdmin";
 import DevStudioRegister from "@/pages/DevStudioRegister";
+import TrainingRoom from "@/pages/TrainingRoom";
+import TrainingJoinPublic from "@/pages/TrainingJoinPublic";
+import IncomingSupportCall from "@/components/livekit/IncomingSupportCall";
 import DevStudio from "@/pages/DevStudio";
 import DevStudioAdmin from "@/pages/DevStudioAdmin";
 import MarketplaceAdmin from "@/pages/MarketplaceAdmin";
@@ -510,6 +513,10 @@ function AppRoutes() {
   if (location === "/dev-studio/register") return <DevStudioRegister />;
   if (location === "/dev-studio") return <DevStudio />;
 
+  // قاعة التدريب المباشر — رابط الانضمام العام: يعمل بدون أي تسجيل دخول
+  // (الاسم فقط)، لذلك يُعرَض قبل بوابات المصادقة تمامًا مثل DevStudio.
+  if (location.startsWith("/training/join/")) return <TrainingJoinPublic />;
+
   // For "/" we MUST distinguish authenticated (dashboard) vs guest (Home
   // landing). Treat "/" as public only when the visitor is unauthenticated;
   // otherwise the route table renders the dashboard normally.
@@ -720,6 +727,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/user-tracking/live" module="user_tracking" component={UserTrackingLive} />}
             {!isSuperAdmin && <PermRoute path="/user-tracking/attendance" module="user_tracking" component={UserAttendanceReport} />}
             {!isSuperAdmin && <PermRoute path="/user-tracking/movement-report" module="user_tracking" component={UserMovementReport} />}
+            {/* قاعة التدريب المباشر — كونسول المدرب (بث + رفع يد + حضور) */}
+            {!isSuperAdmin && <PermRoute path="/training-room" module="training_room" component={TrainingRoom} />}
             {!isSuperAdmin && user?.role === "admin" && <Route path="/ai-reports" component={AiReports} />}
 
             {/* Company user routes */}
@@ -1160,6 +1169,8 @@ function App() {
               <CallProvider>
               <AppRoutes />
               <CustomerCobrowseWidget />
+              {/* نافذة "مكالمة دعم واردة" — تستمع لأحداث SSE من AuthContext */}
+              <IncomingSupportCall />
               {/* Floating WhatsApp CTA — visible to unauthenticated
                   visitors only (the component self-gates via useAuth).
                   Mounted at the App root so it persists across every

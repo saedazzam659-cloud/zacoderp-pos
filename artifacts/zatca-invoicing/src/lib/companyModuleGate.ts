@@ -119,6 +119,9 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   // every /api/delivery-receipt-documents/* call. Mirror of the backend
   // COMPANY_MODULE_GATE.
   delivery_receipt_docs: "delivery_receipt_docs",
+  // قاعة التدريب المباشر (LiveKit) — standalone company toggle. Mirror of the
+  // backend COMPANY_MODULE_GATE in permissions.ts.
+  training_room: "training_room",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse

@@ -4,6 +4,7 @@ import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, supe
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
+import dnsPromises from "node:dns/promises";
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { runEndOfSessionHooks, loadSessionSettings } from "../lib/workSessionReport.js";
@@ -13,6 +14,44 @@ const router = Router();
 
 function generateToken(): string {
   return randomUUID() + "-" + randomUUID();
+}
+
+// ── فحص حقيقي لنطاق البريد الإلكتروني ────────────────────────────────────
+// "valid"   → النطاق يملك سجلات MX (أو A/AAAA كاحتياط RFC 5321) = يستقبل بريدًا
+// "invalid" → النطاق غير موجود إطلاقًا (NXDOMAIN/NODATA) = بريد وهمي
+// "unknown" → خطأ شبكة/مهلة من جهتنا — لا نعاقب المستخدم عليه (fail-open)
+// نتيجة صالحة تُخزَّن مؤقتًا 10 دقائق لتفادي ضرب DNS مع كل محاولة.
+const emailDomainCache = new Map<string, { verdict: "valid" | "invalid"; at: number }>();
+
+export async function verifyEmailDomain(domain: string): Promise<"valid" | "invalid" | "unknown"> {
+  const key = domain.toLowerCase();
+  const hit = emailDomainCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.verdict;
+
+  const timeout = new Promise<"unknown">(r => setTimeout(() => r("unknown"), 4000));
+  const lookup = (async (): Promise<"valid" | "invalid" | "unknown"> => {
+    try {
+      const mx = await dnsPromises.resolveMx(key);
+      if (mx.length > 0) return "valid";
+    } catch (e: any) {
+      const code = String(e?.code ?? "");
+      // NXDOMAIN/NODATA على MX → جرّب A/AAAA (بعض النطاقات الحقيقية بلا MX صريح)
+      if (code !== "ENOTFOUND" && code !== "ENODATA") return "unknown";
+    }
+    try {
+      const a = await dnsPromises.resolve4(key).catch(() => [] as string[]);
+      if (a.length > 0) return "valid";
+      const aaaa = await dnsPromises.resolve6(key).catch(() => [] as string[]);
+      if (aaaa.length > 0) return "valid";
+      return "invalid";
+    } catch {
+      return "unknown";
+    }
+  })();
+
+  const verdict = await Promise.race([lookup, timeout]);
+  if (verdict !== "unknown") emailDomainCache.set(key, { verdict, at: Date.now() });
+  return verdict;
 }
 
 // Pull a usable client IP out of the request, mirroring the helper inside
@@ -1444,9 +1483,25 @@ router.post("/trainee-register", async (req, res) => {
     res.status(400).json({ error: "جميع الحقول الإلزامية مطلوبة" });
     return;
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(fEmail)) {
-    res.status(400).json({ error: "البريد الإلكتروني غير صالح" });
+  // صيغة صارمة: الجزء المحلي + نطاق حروف/أرقام/شرطات + TLD حروف فقط (2-24)
+  // يمنع أخطاء شائعة مثل gmail.com6 أو gmail,com من أول خطوة.
+  if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,24}$/.test(fEmail)) {
+    res.status(400).json({ error: "⚠️ الرجاء إدخال البريد الإلكتروني بشكل صحيح — تأكد من كتابة العنوان مثل: name@gmail.com" });
     return;
+  }
+  // فحص حقيقي للنطاق: هل يملك سجلات MX (خادم بريد) فعلًا؟
+  // نطاق وهمي مثل gmail.com6 لا يملك أي MX → نرفض قبل الحفظ.
+  // خطأ الشبكة/المهلة لا يمنع التسجيل (fail-open) حتى لا نعاقب بريدًا حقيقيًا
+  // على عطل DNS مؤقت من جهتنا.
+  {
+    const domain = fEmail.split("@")[1]!;
+    const verdict = await verifyEmailDomain(domain);
+    if (verdict === "invalid") {
+      res.status(400).json({
+        error: `⚠️ الرجاء إدخال البريد الإلكتروني بشكل صحيح — النطاق "${domain}" غير موجود ولا يستقبل رسائل بريد. تأكد من الإملاء (مثال: gmail.com وليس gmail.com6).`,
+      });
+      return;
+    }
   }
   if (!Number.isFinite(fExpYears) || fExpYears < 0 || fExpYears > 60) {
     res.status(400).json({ error: "سنوات الخبرة غير صالحة" });

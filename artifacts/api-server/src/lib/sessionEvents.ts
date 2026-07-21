@@ -15,7 +15,11 @@ export type SessionEventType =
   // `call_signal` carries offer/answer/ICE/accept/reject, `call_end` hangs up.
   | "call_invite"
   | "call_signal"
-  | "call_end";
+  | "call_end"
+  // LiveKit support-room: SuperAdmin support agent invites a specific user
+  // into an in-app support call room. Meta carries callId + agent identity.
+  | "support_call_invite"
+  | "support_call_cancelled";
 
 export interface SessionEvent {
   type: SessionEventType;
