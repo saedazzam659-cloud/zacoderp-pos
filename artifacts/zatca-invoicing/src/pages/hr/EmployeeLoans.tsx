@@ -226,6 +226,7 @@ export default function EmployeeLoans() {
       installmentStartDate: fmtDmy(l.installmentStartDate),
       installmentEndDate: fmtDmy(l.installmentEndDate),
       reason: l.reason,
+      notes: l.notes,
       statusLabel: st.label,
       paidAmount: l.paidAmount,
       bankName: l.empBankName,

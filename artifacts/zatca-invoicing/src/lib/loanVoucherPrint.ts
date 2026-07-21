@@ -94,6 +94,7 @@ export interface LoanVoucherDoc {
   installmentStartDate?: string | null;
   installmentEndDate?: string | null;
   reason?: string | null;
+  notes?: string | null;
   statusLabel?: string | null;
   paidAmount?: number | string | null;
   bankName?: string | null;
@@ -135,6 +136,7 @@ export function buildLoanVoucherHtml(args: LoanVoucherArgs): string {
     ["الحالة", esc(doc.statusLabel || "—")],
   ];
   if (doc.reason) dataRows.push(["السبب", esc(doc.reason)]);
+  if (doc.notes) dataRows.push(["الملاحظات", esc(doc.notes)]);
   if (doc.bankName) dataRows.push(["اسم البنك", esc(doc.bankName)]);
   if (doc.bankAccountIban) dataRows.push(["الآيبان (IBAN)", `<span dir="ltr" style="unicode-bidi:embed">${esc(doc.bankAccountIban)}</span>`]);
 
@@ -149,20 +151,21 @@ export function buildLoanVoucherHtml(args: LoanVoucherArgs): string {
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; font-size:13px; }
 ${letterheadCss({ accent: "green", size: "lg" })}
-.sheet { min-height: 218mm; display:flex; flex-direction:column; }
-.title-bar { background:#166534; color:#fff; font-size:17px; font-weight:800; text-align:center; padding:8px 12px; margin:6px auto 0; border-radius:6px; width:60%; }
-.data-wrap { flex:1; display:flex; flex-direction:column; justify-content:center; padding:10px 0; }
-.section-label { font-size:14px; font-weight:700; color:#166534; margin:0 0 10px; text-align:center; }
-table.data { width:80%; margin:0 auto; border-collapse:collapse; font-size:13.5px; }
-table.data td { border:1px solid #cbd5e1; padding:9px 14px; }
+.sheet { display:flex; flex-direction:column; }
+.title-bar { background:#166534; color:#fff; font-size:16px; font-weight:800; text-align:center; padding:6px 12px; margin:4px auto 0; border-radius:6px; width:60%; }
+.data-wrap { padding:8px 0 0; }
+.section-label { font-size:13.5px; font-weight:700; color:#166534; margin:0 0 6px; text-align:center; }
+table.data { width:82%; margin:0 auto; border-collapse:collapse; font-size:12.5px; }
+table.data td { border:1px solid #cbd5e1; padding:5px 12px; }
 table.data td.k { background:#f0fdf4; color:#166534; font-weight:700; width:40%; }
 table.data td.v { font-weight:600; }
-.tafqeet { text-align:center; font-size:14px; font-weight:700; color:#14532d; margin:18px auto 0; padding:8px; width:80%; border-top:1px dashed #a7f3d0; }
-.recipient { display:grid; grid-template-columns:repeat(2,1fr); gap:40px; margin:32px auto 0; width:80%; font-size:12.5px; text-align:center; }
-.sigs { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; margin-top:34px; font-size:13px; text-align:center; }
-.sig .role { font-weight:700; margin-bottom:34px; }
-.sig .line { border-top:1px solid #111; padding-top:6px; color:#475569; font-size:11px; }
-.footer { display:flex; justify-content:space-between; font-size:10px; color:#64748b; border-top:1px solid #e2e8f0; padding-top:6px; margin-top:18px; }
+.tafqeet { text-align:center; font-size:13px; font-weight:700; color:#14532d; margin:8px auto 0; padding:6px; width:82%; border-top:1px dashed #a7f3d0; }
+.bottom-block { break-inside:avoid; page-break-inside:avoid; }
+.recipient { display:grid; grid-template-columns:repeat(2,1fr); gap:40px; margin:14px auto 0; width:82%; font-size:12px; text-align:center; }
+.sigs { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; margin-top:12px; font-size:12.5px; text-align:center; }
+.sig .role { font-weight:700; margin-bottom:22px; }
+.sig .line { border-top:1px solid #111; padding-top:5px; color:#475569; font-size:10.5px; }
+.footer { display:flex; justify-content:space-between; font-size:10px; color:#64748b; border-top:1px solid #e2e8f0; padding-top:5px; margin-top:8px; }
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#166534; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
 @media print { .print-btn { display:none; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 </style></head><body>
@@ -174,6 +177,7 @@ ${wrapWithLetterhead(letterhead, `<div class="sheet">
     <table class="data">${dataHtml}</table>
     <div class="tafqeet">${esc(tafqeet)}</div>
   </div>
+  <div class="bottom-block">
   <div class="recipient">
     <div class="sig">
       <div class="role">توقيع الموظف (المستلم)</div>
@@ -201,6 +205,7 @@ ${wrapWithLetterhead(letterhead, `<div class="sheet">
   <div class="footer">
     <span>تاريخ الطباعة : ${esc(printedAt)}</span>
     <span></span>
+  </div>
   </div>
 </div>`)}
 <script>setTimeout(function(){window.print()},300);</script>
