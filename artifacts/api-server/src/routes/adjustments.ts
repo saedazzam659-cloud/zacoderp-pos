@@ -11,7 +11,7 @@ import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
-import { runDueAdjustmentsForCompany, ADJ_LOCK_CLASS, type RunDueResult } from "../lib/adjustmentPosting.js";
+import { runDueAdjustmentsForCompany, resolveJeIssuingBranch, ADJ_LOCK_CLASS, type RunDueResult } from "../lib/adjustmentPosting.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -388,6 +388,14 @@ router.post("/:id/generate", async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
 
+    // Continue the company's REAL JE numbering series (see resolveJeIssuingBranch).
+    // Date-aware + memoized: months can span fiscal years on different buckets.
+    const branchCache = new Map<string, number | null>();
+    const issuingBranchFor = async (isoDate: string): Promise<number | null> => {
+      if (!branchCache.has(isoDate)) branchCache.set(isoDate, await resolveJeIssuingBranch(cid, isoDate));
+      return branchCache.get(isoDate) ?? null;
+    };
+
     const result = await db.transaction(async (tx) => {
       // Serialize against the financial-edit PUT and the run-due scheduler.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${ADJ_LOCK_CLASS}, ${id})`);
@@ -422,7 +430,7 @@ router.post("/:id/generate", async (req, res) => {
         // sequence — preserves prior numberless behavior).
         const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
           userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
-          branchId: null, docDate: isoDate,
+          branchId: await issuingBranchFor(isoDate), docDate: isoDate,
         })) ?? null;
         const [entry] = await tx.insert(journalEntriesTable).values({
           companyId:   cid,

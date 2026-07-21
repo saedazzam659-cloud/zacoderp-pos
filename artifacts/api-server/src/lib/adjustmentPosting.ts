@@ -58,6 +58,58 @@ export function* monthsBetween(startISO: string, endISO: string): Generator<{ ym
   }
 }
 
+/**
+ * Resolve the sequence-counter BRANCH bucket the company's manual JEs
+ * actually run on. Passing branchId:null to nextSequenceNumber issues from
+ * the branch-0 sentinel bucket — a FRESH counter starting at 0001 — while
+ * the real JE stream lives on the user's branch counter (e.g. QYD-1258 /
+ * QYD/07/2027). Adjustment JEs must CONTINUE the existing series, so pick
+ * the real-branch bucket with the highest running number for any active
+ * journal_entry sequence; fall back to the sentinel only when the company
+ * has never issued a branch-scoped JE number.
+ */
+export async function resolveJeIssuingBranch(
+  cid: number,
+  docDate: string,
+): Promise<number | null> {
+  // 1. Resolve the SAME sequence nextSequenceNumber will pick for this date
+  //    (period-scoped sequence for the doc's fiscal period wins, else the
+  //    universal one; ties break by lowest id — mirrors sequences.ts).
+  const periodRows = await db.execute<{ id: number }>(sql`
+    SELECT id FROM fiscal_periods
+    WHERE company_id = ${cid} AND start_date <= ${docDate} AND end_date >= ${docDate}
+    ORDER BY id ASC LIMIT 1
+  `);
+  const periodId = periodRows.rows?.[0]?.id ?? null;
+  const periodMatchSql = periodId != null
+    ? sql`OR fiscal_period_ids @> ${JSON.stringify([periodId])}::jsonb`
+    : sql``;
+  const seqRows = await db.execute<{ id: number }>(sql`
+    SELECT id FROM sequences
+    WHERE company_id = ${cid}
+      AND is_active = true
+      AND transaction_types ? 'journal_entry'
+      AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
+    ORDER BY
+      CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
+      id ASC
+    LIMIT 1
+  `);
+  const seqId = seqRows.rows?.[0]?.id;
+  if (!seqId) return null;
+
+  // 2. Within THAT sequence, pick the real-branch bucket with the highest
+  //    running number — the stream the company's manual JEs actually use.
+  const rows = await db.execute<{ branch_id: number }>(sql`
+    SELECT branch_id
+    FROM sequence_counters
+    WHERE sequence_id = ${seqId} AND branch_id > 0
+    ORDER BY current_number DESC
+    LIMIT 1
+  `);
+  return rows.rows?.[0]?.branch_id ?? null;
+}
+
 export interface AdjustmentRunSummaryItem {
   adjustmentId: number;
   name: string;
@@ -92,6 +144,13 @@ export async function runDueAdjustmentsForCompany(
 
   const summary: AdjustmentRunSummaryItem[] = [];
   const today = new Date().toISOString().slice(0, 10);
+  // Date-aware branch resolution, memoized per docDate (one adjustment can
+  // span fiscal years whose sequences live on different branch buckets).
+  const branchCache = new Map<string, number | null>();
+  const issuingBranchFor = async (isoDate: string): Promise<number | null> => {
+    if (!branchCache.has(isoDate)) branchCache.set(isoDate, await resolveJeIssuingBranch(cid, isoDate));
+    return branchCache.get(isoDate) ?? null;
+  };
 
   for (const { id: adjId } of candidates) {
     const item = await db.transaction(async (tx): Promise<AdjustmentRunSummaryItem | null> => {
@@ -132,7 +191,7 @@ export async function runDueAdjustmentsForCompany(
         // FA depreciation (null preserves prior numberless behavior).
         const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
           userId: (req as any)?.authUser?.id ?? null, refTable: "journal_entries",
-          branchId: null, docDate: isoDate,
+          branchId: await issuingBranchFor(isoDate), docDate: isoDate,
         })) ?? null;
         const [entry] = await tx.insert(journalEntriesTable).values({
           companyId: cid, docNumber: jeDocNumber, entryDate: isoDate,
@@ -177,4 +236,49 @@ export async function runDueAdjustmentsForCompany(
   }
 
   return { summary, total: summary.reduce((s, x) => s + x.created.length, 0) };
+}
+
+/**
+ * Unwind ONE generated adjustment month starting from its JE id — used by
+ * the JE unpost cascade (mirrors the fa_depreciation cascade). Inside one
+ * transaction under the shared advisory lock it:
+ *   1. deletes the run row (the month becomes "not generated" again),
+ *   2. deletes the JE lines + JE itself (a leftover draft would be re-created
+ *      as a DUPLICATE by the next scheduler tick),
+ *   3. flips a "completed" adjustment back to "active" so the month can be
+ *      regenerated after the user edits the schedule.
+ * Returns null when the JE is not referenced by any adjustment run.
+ */
+export async function unwindAdjustmentRunByJe(
+  cid: number,
+  jeId: number,
+): Promise<{ adjustmentId: number; ym: string } | null> {
+  return db.transaction(async (tx) => {
+    const [run] = await tx.select().from(accountingAdjustmentRunsTable).where(and(
+      eq(accountingAdjustmentRunsTable.companyId, cid),
+      eq(accountingAdjustmentRunsTable.journalEntryId, jeId),
+    )).limit(1);
+    if (!run) return null;
+
+    // Same lock class/id as generation + financial edit — no interleaving.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${ADJ_LOCK_CLASS}, ${run.adjustmentId})`);
+
+    await tx.delete(accountingAdjustmentRunsTable)
+      .where(eq(accountingAdjustmentRunsTable.id, run.id));
+    await tx.delete(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, jeId));
+    await tx.delete(journalEntriesTable).where(and(
+      eq(journalEntriesTable.id, jeId),
+      eq(journalEntriesTable.companyId, cid),
+    ));
+    await tx.update(accountingAdjustmentsTable)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(and(
+        eq(accountingAdjustmentsTable.id, run.adjustmentId),
+        eq(accountingAdjustmentsTable.companyId, cid),
+        eq(accountingAdjustmentsTable.status, "completed"),
+      ));
+
+    return { adjustmentId: run.adjustmentId, ym: run.periodMonth };
+  });
 }
