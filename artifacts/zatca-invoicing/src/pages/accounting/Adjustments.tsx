@@ -69,6 +69,14 @@ const plusYear = () => {
   const d = new Date(); d.setFullYear(d.getFullYear() + 1); d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
 };
+// End date = one year minus a day after a given ISO start date
+const plusYearFrom = (iso: string) => {
+  const [y, m, dd] = iso.slice(0, 10).split("-").map(Number);
+  const d = new Date(Date.UTC(y, (m ?? 1) - 1, dd ?? 1));
+  d.setUTCFullYear(d.getUTCFullYear() + 1);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
 
 const EMPTY_FORM = {
   type: "prepaid" as Adjustment["type"],
@@ -89,6 +97,13 @@ export default function Adjustments() {
   const qc = useQueryClient();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  // GET headers incl. superadmin acting-company scope (mirrors journalEntriesApi)
+  const getHeaders = (): Record<string, string> => {
+    const h: Record<string, string> = { Authorization: `Bearer ${token}` };
+    const acting = localStorage.getItem("zatca_acting_company_id");
+    if (acting) h["x-acting-company-id"] = acting;
+    return h;
+  };
 
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Adjustment | null>(null);
@@ -96,6 +111,13 @@ export default function Adjustments() {
   const [confirmDelId, setConfirmDelId] = useState<number | null>(null);
   const [carryFor, setCarryFor] = useState<Adjustment | null>(null);
   const [carryForm, setCarryForm] = useState({ start: "", end: "" });
+
+  // ── "تعبئة من مستند" — prefill the create form from a purchase invoice
+  //    or a manual journal entry. READ-ONLY: nothing about posting changes.
+  const [importKind, setImportKind] = useState<null | "invoice" | "je">(null);
+  const [importSearch, setImportSearch] = useState("");
+  const [pickedJe, setPickedJe] = useState<any | null>(null); // JE detail (with lines) for the line-pick step
+  const [pickedJeLoading, setPickedJeLoading] = useState(false);
 
   const { data: adjustments = [], isLoading } = useQuery<Adjustment[]>({
     queryKey: ["adjustments", cid],
@@ -105,6 +127,117 @@ export default function Adjustments() {
       return r.ok ? r.json() : [];
     },
   });
+
+  // Candidate documents for "تعبئة من مستند" — fetched lazily only when a picker is open
+  const { data: srcInvoices = [], isLoading: invLoading } = useQuery<any[]>({
+    queryKey: ["adj-src-invoices", cid],
+    enabled: showForm && importKind === "invoice",
+    queryFn: async () => {
+      const url = cid
+        ? `${API}/api/purchasing/purchase-invoices?companyId=${cid}`
+        : `${API}/api/purchasing/purchase-invoices`;
+      const r = await fetch(url, { headers: getHeaders() });
+      const d = r.ok ? await r.json() : [];
+      return Array.isArray(d) ? d : [];
+    },
+  });
+  const { data: srcEntries = [], isLoading: jeLoading } = useQuery<any[]>({
+    queryKey: ["adj-src-jes", cid],
+    enabled: showForm && importKind === "je",
+    queryFn: async () => {
+      const url = cid ? `${API}/api/journal-entries?companyId=${cid}` : `${API}/api/journal-entries`;
+      const r = await fetch(url, { headers: getHeaders() });
+      const d = r.ok ? await r.json() : [];
+      return Array.isArray(d) ? d : [];
+    },
+  });
+  const { data: accountsList = [] } = useQuery<any[]>({
+    queryKey: ["adj-src-accounts", cid],
+    enabled: showForm && importKind !== null,
+    queryFn: async () => {
+      const url = cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`;
+      const r = await fetch(url, { headers: getHeaders() });
+      const d = r.ok ? await r.json() : [];
+      return Array.isArray(d) ? d : [];
+    },
+  });
+  const accLabel = (id: number | null | undefined) => {
+    if (!id) return "—";
+    const a = accountsList.find((x: any) => x.id === id);
+    return a ? `${a.code} — ${a.nameAr}` : `#${id}`;
+  };
+
+  const closeImport = () => { setImportKind(null); setImportSearch(""); setPickedJe(null); };
+
+  // Apply a JE debit line: the debited account on the source doc IS the prepaid
+  // (asset) account → becomes the adjustment's CONTRA (credit) side.
+  const applyFromJeLine = (entry: any, line: any) => {
+    const amt = Number(line.debit) || 0;
+    const start = String(entry.entryDate ?? "").slice(0, 10) || today();
+    setForm(p => ({
+      ...p,
+      type: "prepaid",
+      contraAccountId: String(line.accountId),
+      totalAmount: amt > 0 ? String(amt) : p.totalAmount,
+      name: p.name || (entry.description ? String(entry.description) : `مصروف مقدم — قيد ${entry.docNumber ?? entry.id}`),
+      startDate: start,
+      endDate: plusYearFrom(start),
+      notes: [p.notes, `المصدر: قيد يومية رقم ${entry.docNumber ?? entry.id}`].filter(Boolean).join("\n"),
+    }));
+    closeImport();
+    toast({
+      title: "تمت التعبئة من القيد",
+      description: "راجع تاريخي البداية والنهاية واختر حساب المصروف (المدين) ثم احفظ",
+    });
+  };
+
+  // Pick a purchase invoice: prefill amount/name/dates; if it's posted with a
+  // linked JE we load its lines so the user can also pick the prepaid account.
+  const applyFromInvoice = async (inv: any) => {
+    const start = String(inv.invoiceDate ?? "").slice(0, 10) || today();
+    const amt = Number(inv.subtotal) || Number(inv.totalAmount) || 0;
+    setForm(p => ({
+      ...p,
+      type: "prepaid",
+      totalAmount: amt > 0 ? String(amt) : p.totalAmount,
+      name: p.name || `مصروف مقدم — فاتورة مشتريات ${inv.docNumber ?? inv.id}`,
+      startDate: start,
+      endDate: plusYearFrom(start),
+      notes: [p.notes, `المصدر: فاتورة مشتريات رقم ${inv.docNumber ?? inv.id}${inv.supplierInvoiceNumber ? ` (فاتورة المورد ${inv.supplierInvoiceNumber})` : ""}`]
+        .filter(Boolean).join("\n"),
+    }));
+    if (inv.journalEntryId) {
+      // second step: pick the prepaid (debit) line from the invoice's JE
+      setPickedJeLoading(true);
+      try {
+        const r = await fetch(`${API}/api/journal-entries/${inv.journalEntryId}${cid ? `?companyId=${cid}` : ""}`, {
+          headers: getHeaders(),
+        });
+        const d = r.ok ? await r.json() : null;
+        if (d && Array.isArray(d.lines)) { setPickedJe(d); setImportKind("je"); return; }
+      } catch { /* fall through — amounts/dates are already applied */ }
+      finally { setPickedJeLoading(false); }
+    }
+    closeImport();
+    toast({
+      title: "تمت التعبئة من الفاتورة",
+      description: "اختر حساب المصروف وحساب المدفوع مقدمًا ثم احفظ",
+    });
+  };
+
+  const openJeLines = async (entry: any) => {
+    setPickedJeLoading(true);
+    try {
+      const r = await fetch(`${API}/api/journal-entries/${entry.id}${cid ? `?companyId=${cid}` : ""}`, {
+        headers: getHeaders(),
+      });
+      const d = r.ok ? await r.json() : null;
+      if (d && Array.isArray(d.lines)) setPickedJe(d);
+      else toast({ title: "خطأ", description: "تعذر تحميل بنود القيد", variant: "destructive" });
+    } catch {
+      toast({ title: "خطأ", description: "تعذر تحميل بنود القيد", variant: "destructive" });
+    } finally { setPickedJeLoading(false); }
+  };
 
   const safeJson = async (r: Response, fallback: string) => {
     const ct = r.headers.get("content-type") || "";
@@ -139,6 +272,7 @@ export default function Adjustments() {
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
+    closeImport();
     setShowForm(true);
   };
 
@@ -298,12 +432,136 @@ export default function Adjustments() {
           title={editing ? "تعديل التسوية" : "تسوية جديدة"}
           subtitle="ستُولّد قيود الاستهلاك تلقائياً كل شهر بقيمة موزّعة بالتساوي"
           width="2xl"
-          onClose={() => setShowForm(false)}
+          onClose={() => { setShowForm(false); closeImport(); }}
           onSave={() => saveMut.mutate()}
           saving={saveMut.isPending}
           saveDisabled={!formValid}
           saveLabel={editing ? "حفظ التغييرات" : "إنشاء"}
         >
+          {!editing && (
+            <div className="mb-4 rounded-lg border border-dashed border-emerald-300 bg-emerald-50/40 p-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2 text-sm font-medium text-emerald-900">
+                  <Link2 className="h-4 w-4" />
+                  تعبئة من مستند موجود (اختياري)
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button" size="sm" variant={importKind === "invoice" && !pickedJe ? "default" : "outline"}
+                    onClick={() => { setPickedJe(null); setImportSearch(""); setImportKind(k => k === "invoice" ? null : "invoice"); }}
+                  >
+                    <FileText className="h-4 w-4 ms-0 me-1" />
+                    من فاتورة مشتريات
+                  </Button>
+                  <Button
+                    type="button" size="sm" variant={importKind === "je" ? "default" : "outline"}
+                    onClick={() => { setPickedJe(null); setImportSearch(""); setImportKind(k => k === "je" ? null : "je"); }}
+                  >
+                    <ArrowRightCircle className="h-4 w-4 ms-0 me-1" />
+                    من قيد يومية
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                اختر الفاتورة أو القيد اللي فيه المصروف المدفوع مقدمًا وسيتم تعبئة المبلغ والحساب والتواريخ تلقائيًا — بعدها راجع تاريخ البداية والنهاية واحفظ.
+              </p>
+
+              {importKind && !pickedJe && (
+                <div className="mt-3 space-y-2">
+                  <Input
+                    placeholder={importKind === "invoice" ? "ابحث برقم الفاتورة أو رقم فاتورة المورد…" : "ابحث برقم القيد أو الوصف…"}
+                    value={importSearch}
+                    onChange={(e) => setImportSearch(e.target.value)}
+                    className="h-9"
+                  />
+                  <div className="max-h-56 overflow-y-auto rounded-md border bg-background divide-y">
+                    {(importKind === "invoice" ? invLoading : jeLoading) || pickedJeLoading ? (
+                      <div className="p-3 text-sm text-muted-foreground">جارٍ التحميل…</div>
+                    ) : importKind === "invoice" ? (
+                      (() => {
+                        const q = importSearch.trim().toLowerCase();
+                        const list = srcInvoices
+                          .filter((inv: any) => !q
+                            || String(inv.docNumber ?? "").toLowerCase().includes(q)
+                            || String(inv.supplierInvoiceNumber ?? "").toLowerCase().includes(q))
+                          .slice(0, 30);
+                        if (list.length === 0) return <div className="p-3 text-sm text-muted-foreground">لا توجد فواتير مطابقة</div>;
+                        return list.map((inv: any) => (
+                          <button
+                            key={inv.id} type="button"
+                            className="w-full text-start p-2.5 hover:bg-emerald-50 flex items-center justify-between gap-2 text-sm"
+                            onClick={() => applyFromInvoice(inv)}
+                          >
+                            <span className="flex flex-col">
+                              <span className="font-medium">فاتورة {inv.docNumber ?? inv.id}{inv.supplierInvoiceNumber ? ` — مورد ${inv.supplierInvoiceNumber}` : ""}</span>
+                              <span className="text-xs text-muted-foreground">{inv.invoiceDate} · {inv.status === "posted" ? "مرحّلة" : "مسودة"}</span>
+                            </span>
+                            <span className="font-mono">{fmt2(Number(inv.totalAmount) || 0)}</span>
+                          </button>
+                        ));
+                      })()
+                    ) : (
+                      (() => {
+                        const q = importSearch.trim().toLowerCase();
+                        const list = srcEntries
+                          // Manual/general JEs only — auto-generated postings (sales,
+                          // purchases, system…) are not valid prefill sources here.
+                          .filter((en: any) => (en.entryType ?? "general") === "general")
+                          .filter((en: any) => !q
+                            || String(en.docNumber ?? "").toLowerCase().includes(q)
+                            || String(en.description ?? "").toLowerCase().includes(q))
+                          .slice(0, 30);
+                        if (list.length === 0) return <div className="p-3 text-sm text-muted-foreground">لا توجد قيود مطابقة</div>;
+                        return list.map((en: any) => (
+                          <button
+                            key={en.id} type="button"
+                            className="w-full text-start p-2.5 hover:bg-emerald-50 flex items-center justify-between gap-2 text-sm"
+                            onClick={() => openJeLines(en)}
+                          >
+                            <span className="flex flex-col">
+                              <span className="font-medium">قيد {en.docNumber ?? en.id}</span>
+                              <span className="text-xs text-muted-foreground truncate max-w-[340px]">{String(en.entryDate ?? "").slice(0, 10)}{en.description ? ` · ${en.description}` : ""}</span>
+                            </span>
+                            <span className="font-mono">{fmt2(Number(en.totalDebit) || 0)}</span>
+                          </button>
+                        ));
+                      })()
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {pickedJe && (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs text-muted-foreground">
+                    اختر البند المدين الذي يمثل المصروف المدفوع مقدمًا في قيد {pickedJe.docNumber ?? pickedJe.id}:
+                  </div>
+                  <div className="max-h-56 overflow-y-auto rounded-md border bg-background divide-y">
+                    {(pickedJe.lines ?? []).filter((l: any) => Number(l.debit) > 0).length === 0 ? (
+                      <div className="p-3 text-sm text-muted-foreground">لا توجد بنود مدينة في هذا القيد</div>
+                    ) : (
+                      (pickedJe.lines ?? [])
+                        .filter((l: any) => Number(l.debit) > 0)
+                        .map((l: any) => (
+                          <button
+                            key={l.id} type="button"
+                            className="w-full text-start p-2.5 hover:bg-emerald-50 flex items-center justify-between gap-2 text-sm"
+                            onClick={() => applyFromJeLine(pickedJe, l)}
+                          >
+                            <span className="flex flex-col">
+                              <span className="font-medium">{accLabel(l.accountId)}</span>
+                              {l.description ? <span className="text-xs text-muted-foreground">{l.description}</span> : null}
+                            </span>
+                            <span className="font-mono">{fmt2(Number(l.debit) || 0)}</span>
+                          </button>
+                        ))
+                    )}
+                  </div>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setPickedJe(null)}>رجوع</Button>
+                </div>
+              )}
+            </div>
+          )}
           <FormGrid>
             <Field label="نوع التسوية" required>
               <select
