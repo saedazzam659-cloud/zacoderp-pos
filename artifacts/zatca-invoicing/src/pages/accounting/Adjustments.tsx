@@ -249,9 +249,12 @@ export default function Adjustments() {
   const monthlyPreview = useMemo(() => {
     const total = parseFloat(form.totalAmount || "0");
     if (!form.startDate || !form.endDate || !total) return null;
-    const [sy, sm] = form.startDate.split("-").map(Number);
-    const [ey, em] = form.endDate.split("-").map(Number);
-    const months = (ey - sy) * 12 + (em - sm) + 1;
+    const [sy, sm, sd] = form.startDate.split("-").map(Number);
+    const [ey, em, ed] = form.endDate.split("-").map(Number);
+    // Day-aware count (mirrors the server's monthsBetween): the end month is
+    // dropped when its day is before the start day — 04/11/2025 → 03/05/2026
+    // is exactly 6 months, not 7.
+    const months = (ey - sy) * 12 + (em - sm) + (ed >= sd ? 1 : 0);
     if (months <= 0) return null;
     // While editing an adjustment that already has generated months, the
     // server re-spreads (newTotal − recognized) over the REMAINING months —

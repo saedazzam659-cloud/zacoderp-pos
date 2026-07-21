@@ -37,8 +37,16 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const lastDayUTC = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
 
 export function* monthsBetween(startISO: string, endISO: string): Generator<{ ym: string; isoDate: string }> {
-  const [sy, sm] = startISO.split("-").map(Number);
-  const [ey, em] = endISO.split("-").map(Number);
+  const [sy, sm, sd] = startISO.split("-").map(Number);
+  let [ey, em, ed] = endISO.split("-").map(Number);
+  // Day-aware month count: an installment month only counts if the period
+  // actually covers it. 2025-11-04 → 2026-05-03 is EXACTLY 6 months
+  // (Nov..Apr), not 7 — when the end day is before the start day, the end
+  // month is partial and is dropped from the schedule.
+  if (ed < sd) {
+    em -= 1;
+    if (em < 1) { em = 12; ey -= 1; }
+  }
   let y = sy, m = sm;
   while (y < ey || (y === ey && m <= em)) {
     const ym = `${y}-${pad(m)}`;
