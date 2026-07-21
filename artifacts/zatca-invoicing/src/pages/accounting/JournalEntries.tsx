@@ -1734,6 +1734,32 @@ ${wrapWithLetterhead(letterhead, sections)}
                                   <Eye className="h-3.5 w-3.5" />
                                 </Button>
                               )}
+                              {entry.status === "posted" && !sourceUrlFor(entry.entryType, null) && (
+                                <Button
+                                  variant="ghost" size="icon"
+                                  className="h-6 w-6 text-amber-600 hover:bg-amber-50 hover:text-amber-700"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (!window.confirm(
+                                      `فك ترحيل القيد ${entry.docNumber ?? `#${entry.id}`} وتحويله إلى مسودة؟\n` +
+                                      `سيُلغى أثره من كل التقارير حتى يُعاد ترحيله.` +
+                                      (String(entry.entryType ?? "").startsWith("adjustment")
+                                        ? `\nقيد تسوية شهرية: سيتم حذف القيد وإعادة تفعيل شهر التسوية.`
+                                        : "")
+                                    )) return;
+                                    try {
+                                      await journalEntriesApi.unpost(entry.id);
+                                      qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
+                                    } catch (err: any) {
+                                      window.alert(err?.message ?? "فشل فك الترحيل — قد يكون القيد مصدره مستند أو داخل فترة مقفلة");
+                                    }
+                                  }}
+                                  title="فك وتحويل إلى مسودة"
+                                  data-testid={`button-unpost-${entry.id}`}
+                                >
+                                  <RotateCcw className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                               {entry.isOrphanLocked && (
                                 <Button
                                   variant="ghost" size="icon"

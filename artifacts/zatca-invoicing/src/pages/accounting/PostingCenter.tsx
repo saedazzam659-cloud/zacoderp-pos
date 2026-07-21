@@ -60,7 +60,7 @@ type ModuleKey =
   | "sales_invoices"   | "pos_sales"          | "sales_returns"
   | "purchase_invoices" | "purchase_returns"
   | "receipt_vouchers"  | "payment_vouchers"
-  | "journal_entries"
+  | "journal_entries"   | "monthly_adjustments"
   | "goods_receipts"    | "goods_deliveries"
   | "cash_transfers"
   | "stock_transfers"   | "stock_adjustments" | "stock_counts"
@@ -99,6 +99,10 @@ const MODULES: ModuleDef[] = [
   { key: "cash_transfers",    label: "التحويلات النقدية",  group: "النقدية",   endpoint: (id, a) => `/api/cash-transfers/${id}/${a}`,             method: "POST",  supportsUnpost: false },
   // ── Accounting ──
   { key: "journal_entries",   label: "القيود المحاسبية",   group: "المحاسبة",  endpoint: (id, a) => `/api/journal-entries/${id}/${a}`,            method: "POST",  supportsUnpost: true },
+  // Monthly accounting adjustments (مصروف مقدم/مستحق) — the row id IS the JE
+  // id, so post/unpost go through the journal-entries endpoints. Unpost
+  // cascades server-side: deletes the run + JE and reactivates the month.
+  { key: "monthly_adjustments", label: "التسويات الشهرية", group: "المحاسبة",  endpoint: (id, a) => `/api/journal-entries/${id}/${a}`,            method: "POST",  supportsUnpost: true },
   // ── Inventory documents ──
   { key: "goods_receipts",    label: "إيصالات الاستلام",   group: "المخازن",   endpoint: (id, a) => `/api/goods-receipts/${id}/${a}`,             method: "PATCH", supportsUnpost: true },
   { key: "goods_deliveries",  label: "إذونات التسليم",     group: "المخازن",   endpoint: (id, a) => `/api/goods-deliveries/${id}/${a}`,           method: "PATCH", supportsUnpost: true },
@@ -149,6 +153,7 @@ const SOURCE_ROUTE: Record<ModuleKey, (id: number) => string> = {
   receipt_vouchers:   (id) => `/cash/receipt-vouchers/${id}`,
   payment_vouchers:   (id) => `/cash/payment-vouchers/${id}`,
   journal_entries:    (id) => `/accounting/journals/${id}`,
+  monthly_adjustments:(id) => `/accounting/journals/${id}`,
   goods_receipts:     ()   => `/inventory/goods-receipts`,
   goods_deliveries:   ()   => `/inventory/goods-deliveries`,
   cash_transfers:     ()   => `/cash/transfers`,

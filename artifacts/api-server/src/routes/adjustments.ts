@@ -254,7 +254,16 @@ router.put("/:id", async (req, res) => {
         .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)))
         .returning();
       if (!updated) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
-      res.json(updated);
+      // Catch-up when the edit (re-)enables generation — flipping autoGenerate
+      // on or re-activating the adjustment must post the already-due months
+      // immediately, not on the next scheduler tick. Best-effort.
+      let catchUp: RunDueResult | null = null;
+      if (updated.autoGenerate && updated.status === "active" &&
+          (typeof autoGenerate === "boolean" || typeof status === "string")) {
+        try { catchUp = await runDueAdjustmentsForCompany(cid, req, id); }
+        catch { /* scheduler/manual generate will retry */ }
+      }
+      res.json({ ...updated, catchUpRuns: catchUp?.total ?? 0, catchUpSummary: catchUp?.summary?.[0] ?? null });
       return;
     }
 
@@ -339,7 +348,19 @@ router.put("/:id", async (req, res) => {
           .returning();
         return row;
       });
-      res.json(updated);
+
+      // Catch-up posting after a financial edit (same FA-depreciation pattern
+      // as the create route): the user just re-spread the schedule — any month
+      // that is already DUE (isoDate <= today) must get its JE immediately,
+      // without waiting for the next scheduler tick. Best-effort: a posting
+      // failure never rolls back the saved edit.
+      let catchUp: RunDueResult | null = null;
+      if (updated && updated.autoGenerate && updated.status === "active") {
+        try { catchUp = await runDueAdjustmentsForCompany(cid, req, id); }
+        catch { /* scheduler/manual generate will retry */ }
+      }
+
+      res.json({ ...updated, catchUpRuns: catchUp?.total ?? 0, catchUpSummary: catchUp?.summary?.[0] ?? null });
     } catch (e: any) {
       res.status(e.status ?? 500).json({ error: e.message ?? "خطأ" });
     }
