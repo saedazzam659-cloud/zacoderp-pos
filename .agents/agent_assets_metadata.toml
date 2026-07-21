@@ -329,3 +329,15 @@ id = "Gw45Athmh-A0hKfpV037s"
 uri = "file://delivery/INSTALL-VPS-GoDaddy.md"
 type = "text"
 title = "دليل التركيب على VPS GoDaddy"
+
+[[outputs]]
+id = "vZ3IvOZvbof35BnoNLJ3x"
+uri = "file://exports/zacode-source-code.zip"
+type = "unspecified"
+title = "السورس كود الكامل (ZIP)"
+
+[[outputs]]
+id = "hh2hVdUy7NhUWXCArMh6O"
+uri = "file://exports/zacode-database.sql.gz"
+type = "unspecified"
+title = "قاعدة بيانات التطوير (SQL مضغوط)"
