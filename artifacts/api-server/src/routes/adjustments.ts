@@ -11,6 +11,7 @@ import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
+import { runDueAdjustmentsForCompany, ADJ_LOCK_CLASS } from "../lib/adjustmentPosting.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -218,9 +219,11 @@ router.put("/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
-    const { name, autoGenerate, status, notes } = req.body ?? {};
+    const {
+      name, autoGenerate, status, notes, carryForwardEnabled,
+      totalAmount, startDate, endDate, expenseAccountId, contraAccountId,
+    } = req.body ?? {};
 
-    const { carryForwardEnabled } = req.body ?? {};
     const patch: any = { updatedAt: new Date() };
     if (typeof name === "string" && name.trim()) patch.name = name.trim();
     if (typeof autoGenerate === "boolean") patch.autoGenerate = autoGenerate;
@@ -228,11 +231,108 @@ router.put("/:id", async (req, res) => {
     if (status && ["active", "completed", "cancelled"].includes(status)) patch.status = status;
     if (typeof notes === "string" || notes === null) patch.notes = notes;
 
-    const [updated] = await db.update(accountingAdjustmentsTable).set(patch)
-      .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)))
-      .returning();
-    if (!updated) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
-    res.json(updated);
+    // ── Financial fields (amount / dates / accounts) ────────────────────
+    // Editable with automatic re-spread: months already generated keep their
+    // booked runs untouched; the NEW monthly installment for the REMAINING
+    // (un-generated) months = (newTotal − recognized) / remainingMonths.
+    const wantsFinancial =
+      totalAmount !== undefined || startDate !== undefined || endDate !== undefined ||
+      expenseAccountId !== undefined || contraAccountId !== undefined;
+
+    if (!wantsFinancial) {
+      const [updated] = await db.update(accountingAdjustmentsTable).set(patch)
+        .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)))
+        .returning();
+      if (!updated) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+      res.json(updated);
+      return;
+    }
+
+    try {
+      const updated = await db.transaction(async (tx) => {
+        // Advisory lock (same class+id as /generate and run-due/scheduler):
+        // blocks concurrent month posting between our SUM and the
+        // monthly-amount rewrite. Row FOR UPDATE alone is NOT enough because
+        // generation writes runs without touching this row.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${ADJ_LOCK_CLASS}, ${id})`);
+        const [adj] = await tx.execute(sql`
+          SELECT * FROM accounting_adjustments
+          WHERE id = ${id} AND company_id = ${cid}
+          FOR UPDATE
+        `).then((r: any) => r.rows ?? r);
+        if (!adj) throw Object.assign(new Error("التسوية غير موجودة"), { status: 404 });
+        if (!["active", "completed"].includes(adj.status))
+          throw Object.assign(new Error(`لا يمكن تعديل البيانات المالية لتسوية بحالة ${adj.status}`), { status: 400 });
+
+        const runs = await tx.select({
+          ym: accountingAdjustmentRunsTable.periodMonth,
+          amount: accountingAdjustmentRunsTable.amount,
+        }).from(accountingAdjustmentRunsTable)
+          .where(eq(accountingAdjustmentRunsTable.adjustmentId, id));
+        const generated = new Set(runs.map(r => r.ym));
+        const recognized = runs.reduce((s, r) => s + Number(r.amount), 0);
+        const lastGeneratedYm = runs.reduce((mx, r) => (r.ym > mx ? r.ym : mx), "");
+
+        // Dates
+        const newStart = startDate !== undefined ? startDate : adj.start_date;
+        const newEnd   = endDate   !== undefined ? endDate   : adj.end_date;
+        if (!isISO(newStart) || !isISO(newEnd))
+          throw Object.assign(new Error("تواريخ غير صالحة (YYYY-MM-DD)"), { status: 400 });
+        if (newEnd < newStart)
+          throw Object.assign(new Error("تاريخ النهاية يجب أن يكون بعد البداية"), { status: 400 });
+        if (runs.length > 0 && newStart !== adj.start_date)
+          throw Object.assign(new Error("لا يمكن تغيير تاريخ البداية بعد توليد أول قيد — عدّل تاريخ النهاية أو المبلغ فقط"), { status: 400 });
+        if (runs.length > 0 && ymOf(newEnd) < lastGeneratedYm)
+          throw Object.assign(new Error(`تاريخ النهاية الجديد يسبق آخر شهر مولَّد (${lastGeneratedYm}) — ألغِ قيود الأشهر الزائدة أولاً`), { status: 400 });
+
+        // Amount
+        const newTotal = totalAmount !== undefined ? Number(totalAmount) : Number(adj.total_amount);
+        if (!Number.isFinite(newTotal) || newTotal <= 0)
+          throw Object.assign(new Error("المبلغ الإجمالي يجب أن يكون رقم موجب"), { status: 400 });
+        if (newTotal < recognized - 0.005)
+          throw Object.assign(new Error(
+            `المبلغ الجديد (${newTotal.toFixed(2)}) أقل من المُحقّق بالفعل (${recognized.toFixed(2)})`,
+          ), { status: 400 });
+
+        // Accounts (affect FUTURE JEs only — booked JEs keep their accounts)
+        const newExp = expenseAccountId !== undefined ? Number(expenseAccountId) : adj.expense_account_id;
+        const newCtr = contraAccountId  !== undefined ? Number(contraAccountId)  : adj.contra_account_id;
+        if (!Number.isFinite(newExp) || !Number.isFinite(newCtr) || newExp === newCtr)
+          throw Object.assign(new Error("حسابا المصروف والمقابل مطلوبان ويجب أن يكونا مختلفين"), { status: 400 });
+        try { await validateAccounts(cid, newExp, newCtr); }
+        catch (e: any) { throw Object.assign(new Error(e.message), { status: 400 }); }
+
+        // Re-spread the un-recognized remainder over remaining months
+        let remainingMonths = 0;
+        for (const { ym } of monthsBetween(newStart, newEnd)) {
+          if (!generated.has(ym)) remainingMonths++;
+        }
+        const remainder = newTotal - recognized;
+        if (remainingMonths === 0 && remainder > 0.01)
+          throw Object.assign(new Error("لا توجد أشهر متبقية لتوزيع الرصيد الجديد — مدّد تاريخ النهاية"), { status: 400 });
+        const newMonthly = remainingMonths > 0
+          ? (remainder / remainingMonths).toFixed(2)
+          : adj.monthly_amount;
+
+        patch.totalAmount      = newTotal.toFixed(2);
+        patch.startDate        = newStart;
+        patch.endDate          = newEnd;
+        patch.expenseAccountId = newExp;
+        patch.contraAccountId  = newCtr;
+        patch.monthlyAmount    = newMonthly;
+        // Extending a completed adjustment re-opens it (unless caller set an
+        // explicit status in the same request).
+        if (adj.status === "completed" && remainder > 0.01 && !patch.status) patch.status = "active";
+
+        const [row] = await tx.update(accountingAdjustmentsTable).set(patch)
+          .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)))
+          .returning();
+        return row;
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message ?? "خطأ" });
+    }
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -278,88 +378,99 @@ router.post("/:id/generate", async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
 
-    const [adj] = await db.select().from(accountingAdjustmentsTable)
-      .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)));
-    if (!adj) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
-    if (adj.status !== "active") {
-      res.status(400).json({ error: `لا يمكن توليد قيود لتسوية بحالة ${adj.status}` });
+    const result = await db.transaction(async (tx) => {
+      // Serialize against the financial-edit PUT and the run-due scheduler.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${ADJ_LOCK_CLASS}, ${id})`);
+
+      // Re-read UNDER the lock — a concurrent edit may have just re-spread
+      // the monthly amount / extended the end date / changed the status.
+      const [adj] = await tx.select().from(accountingAdjustmentsTable)
+        .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)));
+      if (!adj) return { error: 404 as const };
+      if (adj.status !== "active") return { error: 400 as const, status: adj.status };
+
+      // Pull existing runs to skip already-generated months
+      const existingRuns = await tx.select({ ym: accountingAdjustmentRunsTable.periodMonth })
+        .from(accountingAdjustmentRunsTable).where(eq(accountingAdjustmentRunsTable.adjustmentId, id));
+      const generated = new Set(existingRuns.map(r => r.ym));
+
+      const skipped: { ym: string; reason: string }[] = [];
+      const created: { ym: string; entryId: number }[] = [];
+      const monthly = adj.monthlyAmount;
+
+      for (const { ym, isoDate } of monthsBetween(adj.startDate, adj.endDate)) {
+        if (generated.has(ym)) continue;
+
+        const writability = await assertWritableForDate(cid, isoDate);
+        if (!writability.ok) {
+          skipped.push({ ym, reason: writability.reason });
+          continue;
+        }
+
+        const jeStatus = await resolvePostingStatus(cid, "adjustment");
+        // JE draws its own continuous "journal_entry" number (null when no active
+        // sequence — preserves prior numberless behavior).
+        const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+          userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
+          branchId: null, docDate: isoDate,
+        })) ?? null;
+        const [entry] = await tx.insert(journalEntriesTable).values({
+          companyId:   cid,
+          docNumber:   jeDocNumber,
+          entryDate:   isoDate,
+          description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
+          entryType:   adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
+          status:      jeStatus,
+          periodId:    writability.period?.id ?? null,
+          ...fullAuditFor(req, jeStatus),
+        }).returning();
+
+        await tx.insert(journalEntryLinesTable).values([
+          { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0,
+            description: `قسط ${ym} لـ ${adj.name}` },
+          { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: monthly, sortOrder: 1,
+            description: `قسط ${ym} لـ ${adj.name}` },
+        ]);
+
+        // onConflictDoNothing protects against the rare case where two requests
+        // race past the in-memory `generated` set check — the DB-level unique
+        // index (adjustment_id, period_month) is the final arbiter.
+        const inserted = await tx.insert(accountingAdjustmentRunsTable).values({
+          adjustmentId: adj.id, companyId: cid, periodMonth: ym,
+          journalEntryId: entry.id, amount: monthly,
+        }).onConflictDoNothing().returning();
+
+        if (inserted.length === 0) {
+          // Another concurrent caller already booked this month — roll back the
+          // orphan JE we just created so we don't double-post.
+          await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, entry.id));
+          await tx.delete(journalEntriesTable).where(eq(journalEntriesTable.id, entry.id));
+          skipped.push({ ym, reason: "تم توليده من جلسة متزامنة" });
+          continue;
+        }
+
+        created.push({ ym, entryId: entry.id });
+        generated.add(ym);
+      }
+
+      // Mark adjustment completed when every month has a run
+      let totalMonths = 0;
+      for (const _ of monthsBetween(adj.startDate, adj.endDate)) totalMonths++;
+      if (generated.size >= totalMonths && totalMonths > 0) {
+        await tx.update(accountingAdjustmentsTable).set({ status: "completed", updatedAt: new Date() })
+          .where(eq(accountingAdjustmentsTable.id, id));
+      }
+
+      return { error: null, created, skipped, totalMonths, alreadyGenerated: existingRuns.length };
+    });
+
+    if (result.error === 404) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+    if (result.error === 400) {
+      res.status(400).json({ error: `لا يمكن توليد قيود لتسوية بحالة ${result.status}` });
       return;
     }
-
-    // Pull existing runs to skip already-generated months
-    const existingRuns = await db.select({ ym: accountingAdjustmentRunsTable.periodMonth })
-      .from(accountingAdjustmentRunsTable).where(eq(accountingAdjustmentRunsTable.adjustmentId, id));
-    const generated = new Set(existingRuns.map(r => r.ym));
-
-    const skipped: { ym: string; reason: string }[] = [];
-    const created: { ym: string; entryId: number }[] = [];
-    const monthly = adj.monthlyAmount;
-
-    for (const { ym, isoDate } of monthsBetween(adj.startDate, adj.endDate)) {
-      if (generated.has(ym)) continue;
-
-      const writability = await assertWritableForDate(cid, isoDate);
-      if (!writability.ok) {
-        skipped.push({ ym, reason: writability.reason });
-        continue;
-      }
-
-      const jeStatus = await resolvePostingStatus(cid, "adjustment");
-      // JE draws its own continuous "journal_entry" number (null when no active
-      // sequence — preserves prior numberless behavior).
-      const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-        userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
-        branchId: null, docDate: isoDate,
-      })) ?? null;
-      const [entry] = await db.insert(journalEntriesTable).values({
-        companyId:   cid,
-        docNumber:   jeDocNumber,
-        entryDate:   isoDate,
-        description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
-        entryType:   adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
-        status:      jeStatus,
-        periodId:    writability.period?.id ?? null,
-        ...fullAuditFor(req, jeStatus),
-      }).returning();
-
-      await db.insert(journalEntryLinesTable).values([
-        { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0,
-          description: `قسط ${ym} لـ ${adj.name}` },
-        { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: monthly, sortOrder: 1,
-          description: `قسط ${ym} لـ ${adj.name}` },
-      ]);
-
-      // onConflictDoNothing protects against the rare case where two requests
-      // race past the in-memory `generated` set check — the DB-level unique
-      // index (adjustment_id, period_month) is the final arbiter.
-      const inserted = await db.insert(accountingAdjustmentRunsTable).values({
-        adjustmentId: adj.id, companyId: cid, periodMonth: ym,
-        journalEntryId: entry.id, amount: monthly,
-      }).onConflictDoNothing().returning();
-
-      if (inserted.length === 0) {
-        // Another concurrent caller already booked this month — roll back the
-        // orphan JE we just created so we don't double-post.
-        await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, entry.id));
-        await db.delete(journalEntriesTable).where(eq(journalEntriesTable.id, entry.id));
-        skipped.push({ ym, reason: "تم توليده من جلسة متزامنة" });
-        continue;
-      }
-
-      created.push({ ym, entryId: entry.id });
-    }
-
-    // Mark adjustment completed when every month has a run
-    let totalMonths = 0;
-    for (const _ of monthsBetween(adj.startDate, adj.endDate)) totalMonths++;
-    const finalRuns = await db.select({ id: accountingAdjustmentRunsTable.id })
-      .from(accountingAdjustmentRunsTable).where(eq(accountingAdjustmentRunsTable.adjustmentId, id));
-    if (finalRuns.length >= totalMonths) {
-      await db.update(accountingAdjustmentsTable).set({ status: "completed", updatedAt: new Date() })
-        .where(eq(accountingAdjustmentsTable.id, id));
-    }
-
-    res.json({ ok: true, created, skipped, totalMonths, alreadyGenerated: generated.size });
+    res.json({ ok: true, created: result.created, skipped: result.skipped,
+      totalMonths: result.totalMonths, alreadyGenerated: result.alreadyGenerated });
   } catch (e: any) { res.status(500).json({ error: "فشل التوليد: " + (e.message ?? "خطأ") }); }
 });
 
@@ -371,66 +482,10 @@ router.post("/:id/generate", async (req, res) => {
 router.post("/run-due", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const adjustments = await db.select().from(accountingAdjustmentsTable).where(and(
-      eq(accountingAdjustmentsTable.companyId, cid),
-      eq(accountingAdjustmentsTable.status, "active"),
-      eq(accountingAdjustmentsTable.autoGenerate, true),
-    ));
-
-    const summary: any[] = [];
-    for (const adj of adjustments) {
-      const existingRuns = await db.select({ ym: accountingAdjustmentRunsTable.periodMonth })
-        .from(accountingAdjustmentRunsTable).where(eq(accountingAdjustmentRunsTable.adjustmentId, adj.id));
-      const generated = new Set(existingRuns.map(r => r.ym));
-      const monthly = adj.monthlyAmount;
-      const today = new Date().toISOString().slice(0, 10);
-      const created: string[] = [];
-      const skipped: { ym: string; reason: string }[] = [];
-
-      for (const { ym, isoDate } of monthsBetween(adj.startDate, adj.endDate)) {
-        if (generated.has(ym)) continue;
-        // Only generate months whose end-date is <= today (don't pre-book future months)
-        if (isoDate > today) break;
-
-        const writability = await assertWritableForDate(cid, isoDate);
-        if (!writability.ok) { skipped.push({ ym, reason: writability.reason }); continue; }
-
-        const jeStatus = await resolvePostingStatus(cid, "adjustment");
-        // JE draws its own continuous "journal_entry" number (null when no
-        // active sequence — preserves prior numberless behavior).
-        const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
-          userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
-          branchId: null, docDate: isoDate,
-        })) ?? null;
-        const [entry] = await db.insert(journalEntriesTable).values({
-          companyId: cid, docNumber: jeDocNumber, entryDate: isoDate,
-          description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
-          entryType: adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
-          status: jeStatus,
-          periodId: writability.period?.id ?? null,
-          ...fullAuditFor(req, jeStatus),
-        }).returning();
-        await db.insert(journalEntryLinesTable).values([
-          { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0 },
-          { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: monthly, sortOrder: 1 },
-        ]);
-        const inserted = await db.insert(accountingAdjustmentRunsTable).values({
-          adjustmentId: adj.id, companyId: cid, periodMonth: ym,
-          journalEntryId: entry.id, amount: monthly,
-        }).onConflictDoNothing().returning();
-        if (inserted.length === 0) {
-          // Concurrent caller already created this month — undo the orphan JE.
-          await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, entry.id));
-          await db.delete(journalEntriesTable).where(eq(journalEntriesTable.id, entry.id));
-          skipped.push({ ym, reason: "race" });
-          continue;
-        }
-        created.push(ym);
-      }
-      summary.push({ adjustmentId: adj.id, name: adj.name, type: adj.type, created, skipped });
-    }
-
-    res.json({ ok: true, summary, total: summary.reduce((s, x) => s + x.created.length, 0) });
+    // Same helper the auto scheduler runs hourly — manual button stays as a
+    // "run it now" lever with identical behaviour.
+    const out = await runDueAdjustmentsForCompany(cid, req);
+    res.json({ ok: true, summary: out.summary, total: out.total });
   } catch (e: any) { res.status(500).json({ error: "فشل التشغيل: " + (e.message ?? "خطأ") }); }
 });
 

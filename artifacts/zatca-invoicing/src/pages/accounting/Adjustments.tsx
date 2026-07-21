@@ -120,8 +120,21 @@ export default function Adjustments() {
     const [ey, em] = form.endDate.split("-").map(Number);
     const months = (ey - sy) * 12 + (em - sm) + 1;
     if (months <= 0) return null;
-    return { months, monthly: total / months };
-  }, [form.totalAmount, form.startDate, form.endDate]);
+    // While editing an adjustment that already has generated months, the
+    // server re-spreads (newTotal − recognized) over the REMAINING months —
+    // mirror that here so the preview matches what will be saved.
+    if (editing && (editing.runCount ?? 0) > 0) {
+      const recognized = parseFloat(editing.recognizedAmount ?? "0");
+      const remMonths = months - (editing.runCount ?? 0);
+      if (remMonths <= 0) return null;
+      const remainder = total - recognized;
+      if (remainder < 0) return null;
+      return { months: remMonths, monthly: remainder / remMonths, respread: true };
+    }
+    return { months, monthly: total / months, respread: false };
+  }, [form.totalAmount, form.startDate, form.endDate, editing]);
+
+  const editLocked = !!editing && (editing.runCount ?? 0) > 0;
 
   const openCreate = () => {
     setEditing(null);
@@ -296,7 +309,8 @@ export default function Adjustments() {
               <select
                 value={form.type}
                 onChange={(e) => setForm(p => ({ ...p, type: e.target.value as Adjustment["type"] }))}
-                className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+                className="w-full h-10 rounded-md border bg-background px-3 text-sm disabled:opacity-60"
+                disabled={!!editing}
               >
                 <option value="prepaid">مصروف مدفوع مقدمًا (إيجار، تأمين…)</option>
                 <option value="accrued">مصروف مستحق (رواتب، فوائد…)</option>
@@ -338,13 +352,17 @@ export default function Adjustments() {
                 placeholder="0.00"
               />
             </Field>
-            <Field label="القسط الشهري المحسوب">
+            <Field label={editLocked ? "القسط الشهري الجديد (للأشهر المتبقية)" : "القسط الشهري المحسوب"}>
               <div className="h-10 rounded-md border bg-muted/30 px-3 flex items-center text-sm font-mono">
-                {monthlyPreview ? `${fmt2(monthlyPreview.monthly)} × ${monthlyPreview.months} شهر` : "—"}
+                {monthlyPreview ? `${fmt2(monthlyPreview.monthly)} × ${monthlyPreview.months} شهر${monthlyPreview.respread ? " متبقٍ" : ""}` : "—"}
               </div>
             </Field>
             <Field label="تاريخ البداية" required>
-              <DateField value={form.startDate} onChange={(e) => setForm(p => ({ ...p, startDate: e.target.value }))} />
+              <DateField
+                value={form.startDate}
+                onChange={(e) => setForm(p => ({ ...p, startDate: e.target.value }))}
+                disabled={editLocked}
+              />
             </Field>
             <Field label="تاريخ النهاية" required>
               <DateField value={form.endDate} onChange={(e) => setForm(p => ({ ...p, endDate: e.target.value }))} />

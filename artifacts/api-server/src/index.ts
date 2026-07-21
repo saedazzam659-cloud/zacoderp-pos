@@ -388,6 +388,9 @@ async function bootstrap() {
     // Auto-post fixed-assets monthly depreciation per company on its
     // configured day-of-month (companies.faAutoDepDay).
     import("./lib/depreciationScheduler.js").then(m => m.startFaDepreciationScheduler?.()).catch(() => {});
+    // Auto-generate monthly accounting-adjustment JEs (prepaid/accrued) at
+    // month end for adjustments flagged auto_generate=true.
+    import("./lib/adjustmentScheduler.js").then(m => m.startAdjustmentScheduler?.()).catch(() => {});
     import("./lib/posSessionJanitor.js").then(m => m.startPosSessionAutoCloseScheduler?.()).catch(() => {});
     import("./lib/githubReleaseSync.js").then(m => m.startGithubReleaseSyncScheduler?.()).catch(() => {});
   });
