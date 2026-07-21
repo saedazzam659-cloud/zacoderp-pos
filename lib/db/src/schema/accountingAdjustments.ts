@@ -4,6 +4,7 @@ import {
 import { companiesTable } from "./companies";
 import { accountsTable } from "./accounts";
 import { journalEntriesTable } from "./journalEntries";
+import { costCentersTable } from "./costCenters";
 
 export const adjustmentTypeEnum = pgEnum("adjustment_type", [
   "prepaid",
@@ -24,6 +25,10 @@ export const accountingAdjustmentsTable = pgTable("accounting_adjustments", {
   name:                text("name").notNull(),
   expenseAccountId:    integer("expense_account_id").notNull().references(() => accountsTable.id),
   contraAccountId:     integer("contra_account_id").notNull().references(() => accountsTable.id),
+  // Optional cost-center dimension. Rides ONLY the EXPENSE (debit) line of
+  // each generated monthly JE — the prepaid/accrued contra line stays
+  // cost-center-free (BS accounts carry no cost dimension).
+  costCenterId:        integer("cost_center_id").references(() => costCentersTable.id, { onDelete: "set null" }),
   totalAmount:         numeric("total_amount", { precision: 18, scale: 2 }).notNull(),
   startDate:           text("start_date").notNull(),
   endDate:             text("end_date").notNull(),

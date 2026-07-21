@@ -39,7 +39,7 @@ import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
   FileText, Printer, FileSpreadsheet, FileDown, Lock,
-  ChevronRight, ChevronLeft, Search, Wand2,
+  ChevronRight, ChevronLeft, Search, Wand2, RotateCcw,
 } from "lucide-react";
 import {
   SupplierTaxDetailsMenu,
@@ -1055,6 +1055,27 @@ export default function JournalEntryForm() {
   // Same-tick double-submit guard (Enter + click can both fire before the
   // isPending re-render lands). Reset in onSettled.
   const savingRef = useRef(false);
+  // ── فك الترحيل والتحويل إلى مسودة — flips the posted JE back to draft
+  //    KEEPING the same document number (unpost→edit→re-post cycle). The
+  //    server cascades adjustment-run bookkeeping etc.; source-document JEs
+  //    are rejected there with a clear Arabic message.
+  const unpostMutation = useMutation({
+    mutationFn: () => journalEntriesApi.unpost(editId!),
+    onSuccess: () => {
+      toast({
+        title: "تم فك الترحيل",
+        description: "تحوّل القيد إلى مسودة بنفس الرقم — عدّله ثم أعد ترحيله وسيحتفظ بنفس رقم التسلسل.",
+      });
+      qc.invalidateQueries({ queryKey: ["journal-entry", sourceId] });
+      qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
+    },
+    onError: (e: any) => toast({
+      title: "فشل فك الترحيل",
+      description: e?.message ?? "قد يكون القيد مصدره مستند أو داخل فترة مقفلة",
+      variant: "destructive",
+    }),
+  });
+
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
       // Single-shot create on Save for new entries. The server consumes the
@@ -2602,6 +2623,24 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
             ? "جارٍ الحفظ..."
             : (isNew && !isBalanced ? "حفظ كمسودة" : "حفظ")}
         </Button>
+        {!isNew && existing?.status === "posted" && !isLockedSourceEntry && (
+          <Button
+            type="button"
+            onClick={() => {
+              if (!window.confirm(
+                `فك ترحيل القيد ${existing?.docNumber ?? `#${editId}`} وتحويله إلى مسودة؟\n` +
+                `سيُلغى أثره من كل التقارير حتى يُعاد ترحيله — وسيحتفظ بنفس رقم التسلسل عند إعادة الترحيل.`
+              )) return;
+              unpostMutation.mutate();
+            }}
+            disabled={unpostMutation.isPending}
+            className="min-w-[120px] gap-1.5 bg-amber-600 text-white hover:bg-amber-700"
+            data-testid="button-unpost"
+          >
+            <RotateCcw className="h-4 w-4" />
+            {unpostMutation.isPending ? "جارٍ فك الترحيل..." : "فك الترحيل"}
+          </Button>
+        )}
         <Button
           type="button"
           variant="outline"

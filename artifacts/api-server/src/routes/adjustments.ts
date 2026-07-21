@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import {
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
   accountsTable, journalEntriesTable, journalEntryLinesTable,
+  costCentersTable,
 } from "@workspace/db";
 import { and, eq, asc, desc, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -159,11 +160,30 @@ async function validateAccounts(cid: number, expenseId: number, contraId: number
   return { exp, ctr };
 }
 
+/**
+ * Validate an OPTIONAL cost-center id: must exist in this company, be
+ * active and a posting node. Returns the normalized value (number | null).
+ * The cost center rides ONLY the expense (debit) line of generated JEs.
+ */
+async function validateCostCenter(cid: number, raw: unknown): Promise<number | null> {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const ccId = Number(raw);
+  if (!Number.isInteger(ccId) || ccId <= 0) throw new Error("مركز التكلفة غير صالح");
+  const [cc] = await db.select({
+    id: costCentersTable.id, isActive: costCentersTable.isActive, isPosting: costCentersTable.isPosting,
+  }).from(costCentersTable)
+    .where(and(eq(costCentersTable.id, ccId), eq(costCentersTable.companyId, cid)));
+  if (!cc) throw new Error("مركز التكلفة غير موجود في هذه الشركة");
+  if (!cc.isActive) throw new Error("مركز التكلفة غير نشط");
+  if (!cc.isPosting) throw new Error("مركز التكلفة يجب أن يكون مركز ترحيل (ليس رئيسي)");
+  return ccId;
+}
+
 // ─── POST /api/adjustments — create a new adjustment ─────────────────────
 router.post("/", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { type, name, expenseAccountId, contraAccountId, totalAmount, startDate, endDate, autoGenerate, notes } = req.body ?? {};
+    const { type, name, expenseAccountId, contraAccountId, totalAmount, startDate, endDate, autoGenerate, notes, costCenterId } = req.body ?? {};
 
     if (!["prepaid", "accrued"].includes(type)) {
       res.status(400).json({ error: "نوع التسوية غير صالح (prepaid/accrued فقط)" }); return;
@@ -189,6 +209,10 @@ router.post("/", async (req, res) => {
     try { await validateAccounts(cid, expId, ctrId); }
     catch (e: any) { res.status(400).json({ error: e.message }); return; }
 
+    let ccId: number | null = null;
+    try { ccId = await validateCostCenter(cid, costCenterId); }
+    catch (e: any) { res.status(400).json({ error: e.message }); return; }
+
     // monthly amount = total / number of full months in [start, end]
     let months = 0;
     for (const _ of monthsBetween(startDate, endDate)) months++;
@@ -201,6 +225,7 @@ router.post("/", async (req, res) => {
       name:             name.trim(),
       expenseAccountId: expId,
       contraAccountId:  ctrId,
+      costCenterId:     ccId,
       totalAmount:      String(total),
       startDate, endDate,
       monthlyAmount,
@@ -232,10 +257,18 @@ router.put("/:id", async (req, res) => {
     const {
       name, autoGenerate, status, notes, carryForwardEnabled,
       totalAmount, startDate, endDate, expenseAccountId, contraAccountId,
+      costCenterId,
     } = req.body ?? {};
 
     const patch: any = { updatedAt: new Date() };
     if (typeof name === "string" && name.trim()) patch.name = name.trim();
+    // Cost center is editable at any time (affects FUTURE generated JEs only —
+    // booked JEs keep whatever cost center they were posted with). Explicit
+    // null/"" clears it; absent key leaves it untouched.
+    if (costCenterId !== undefined) {
+      try { patch.costCenterId = await validateCostCenter(cid, costCenterId); }
+      catch (e: any) { res.status(400).json({ error: e.message }); return; }
+    }
     if (typeof autoGenerate === "boolean") patch.autoGenerate = autoGenerate;
     if (typeof carryForwardEnabled === "boolean") patch.carryForwardEnabled = carryForwardEnabled;
     if (status && ["active", "completed", "cancelled"].includes(status)) patch.status = status;
@@ -437,6 +470,15 @@ router.post("/:id/generate", async (req, res) => {
       const created: { ym: string; entryId: number }[] = [];
       const monthly = adj.monthlyAmount;
 
+      // Resolve the adjustment's cost-center CODE once (JE lines store the
+      // CODE, not the id — manual-JE convention). Missing/inactive → null.
+      let ccCode: string | null = null;
+      if (adj.costCenterId != null) {
+        const [cc] = await tx.select({ code: costCentersTable.code }).from(costCentersTable)
+          .where(and(eq(costCentersTable.id, adj.costCenterId), eq(costCentersTable.companyId, cid)));
+        ccCode = cc?.code ?? null;
+      }
+
       for (const { ym, isoDate } of monthsBetween(adj.startDate, adj.endDate)) {
         if (generated.has(ym)) continue;
 
@@ -465,8 +507,10 @@ router.post("/:id/generate", async (req, res) => {
         }).returning();
 
         await tx.insert(journalEntryLinesTable).values([
+          // Cost center rides the EXPENSE (debit) line only — stored as the
+          // cost-center CODE (manual-JE convention, see picker id-vs-code).
           { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0,
-            description: `قسط ${ym} لـ ${adj.name}` },
+            costCenter: ccCode, description: `قسط ${ym} لـ ${adj.name}` },
           { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: monthly, sortOrder: 1,
             description: `قسط ${ym} لـ ${adj.name}` },
         ]);
@@ -627,6 +671,7 @@ router.post("/:id/carry-forward", async (req, res) => {
           name:                `${parent.name} — ترحيل ${newStartDate.slice(0, 4)}`,
           expenseAccountId:    parent.expense_account_id,
           contraAccountId:     parent.contra_account_id,
+          costCenterId:        parent.cost_center_id ?? null,
           totalAmount:         remaining.toFixed(2),
           startDate:           newStartDate,
           endDate:             newEndDate,

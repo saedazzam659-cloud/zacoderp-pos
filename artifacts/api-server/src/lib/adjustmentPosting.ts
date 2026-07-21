@@ -23,6 +23,7 @@ import { db } from "@workspace/db";
 import {
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
   journalEntriesTable, journalEntryLinesTable,
+  costCentersTable,
 } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { assertWritableForDate } from "./periodGuard.js";
@@ -175,6 +176,15 @@ export async function runDueAdjustmentsForCompany(
       const created: string[] = [];
       const skipped: { ym: string; reason: string }[] = [];
 
+      // Resolve the adjustment's cost-center CODE once (JE lines store the
+      // CODE, not the id). Missing → null (line simply carries no CC).
+      let ccCode: string | null = null;
+      if (adj.costCenterId != null) {
+        const [cc] = await tx.select({ code: costCentersTable.code }).from(costCentersTable)
+          .where(and(eq(costCentersTable.id, adj.costCenterId), eq(costCentersTable.companyId, cid)));
+        ccCode = cc?.code ?? null;
+      }
+
       let totalMonths = 0;
       for (const _ of monthsBetween(adj.startDate, adj.endDate)) totalMonths++;
 
@@ -202,8 +212,10 @@ export async function runDueAdjustmentsForCompany(
           ...fullAuditFor(req ?? null, jeStatus),
         }).returning();
         await tx.insert(journalEntryLinesTable).values([
+          // Cost center rides the EXPENSE (debit) line only — stored as the
+          // cost-center CODE (manual-JE convention).
           { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0,
-            description: `قسط ${ym} لـ ${adj.name}` },
+            costCenter: ccCode, description: `قسط ${ym} لـ ${adj.name}` },
           { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: monthly, sortOrder: 1,
             description: `قسط ${ym} لـ ${adj.name}` },
         ]);
@@ -239,17 +251,18 @@ export async function runDueAdjustmentsForCompany(
 }
 
 /**
- * Unwind ONE generated adjustment month starting from its JE id — used by
- * the JE unpost cascade (mirrors the fa_depreciation cascade). Inside one
- * transaction under the shared advisory lock it:
- *   1. deletes the run row (the month becomes "not generated" again),
- *   2. deletes the JE lines + JE itself (a leftover draft would be re-created
- *      as a DUPLICATE by the next scheduler tick),
- *   3. flips a "completed" adjustment back to "active" so the month can be
- *      regenerated after the user edits the schedule.
+ * Unpost ONE generated adjustment month starting from its JE id — used by
+ * the JE unpost cascade. Per explicit user requirement, unposting must NOT
+ * delete the JE or burn its document number: the JE flips to a DRAFT that
+ * KEEPS its docNumber, so the user can edit it and re-post it onto the very
+ * same sequence number (plain POST /:id/post status flip).
+ *
+ * The run row is KEPT on purpose: the month still counts as "generated", so
+ * neither the hourly scheduler nor /:id/generate will mint a duplicate JE
+ * (they skip months that already have a run row regardless of JE status).
  * Returns null when the JE is not referenced by any adjustment run.
  */
-export async function unwindAdjustmentRunByJe(
+export async function unpostAdjustmentRunJe(
   cid: number,
   jeId: number,
 ): Promise<{ adjustmentId: number; ym: string } | null> {
@@ -263,22 +276,31 @@ export async function unwindAdjustmentRunByJe(
     // Same lock class/id as generation + financial edit — no interleaving.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${ADJ_LOCK_CLASS}, ${run.adjustmentId})`);
 
-    await tx.delete(accountingAdjustmentRunsTable)
-      .where(eq(accountingAdjustmentRunsTable.id, run.id));
-    await tx.delete(journalEntryLinesTable)
-      .where(eq(journalEntryLinesTable.entryId, jeId));
-    await tx.delete(journalEntriesTable).where(and(
-      eq(journalEntriesTable.id, jeId),
-      eq(journalEntriesTable.companyId, cid),
-    ));
-    await tx.update(accountingAdjustmentsTable)
-      .set({ status: "active", updatedAt: new Date() })
+    await tx.update(journalEntriesTable)
+      .set({ status: "draft", updatedAt: new Date() })
       .where(and(
-        eq(accountingAdjustmentsTable.id, run.adjustmentId),
-        eq(accountingAdjustmentsTable.companyId, cid),
-        eq(accountingAdjustmentsTable.status, "completed"),
+        eq(journalEntriesTable.id, jeId),
+        eq(journalEntriesTable.companyId, cid),
       ));
 
     return { adjustmentId: run.adjustmentId, ym: run.periodMonth };
   });
+}
+
+/**
+ * Re-sync the run row after a manual edit of its draft JE: the recognized
+ * amount reported by the adjustments screen comes from run.amount, so it
+ * must follow the (possibly changed) expense-side total of the JE lines.
+ */
+export async function syncAdjustmentRunAmountForJe(
+  cid: number,
+  jeId: number,
+  newAmount: string,
+): Promise<void> {
+  await db.update(accountingAdjustmentRunsTable)
+    .set({ amount: newAmount })
+    .where(and(
+      eq(accountingAdjustmentRunsTable.companyId, cid),
+      eq(accountingAdjustmentRunsTable.journalEntryId, jeId),
+    ));
 }

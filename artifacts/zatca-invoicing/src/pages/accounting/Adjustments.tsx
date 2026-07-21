@@ -28,6 +28,7 @@ type Adjustment = {
   name: string;
   expenseAccountId: number;
   contraAccountId: number;
+  costCenterId: number | null;
   totalAmount: string;
   startDate: string;
   endDate: string;
@@ -83,6 +84,7 @@ const EMPTY_FORM = {
   name: "",
   expenseAccountId: "",
   contraAccountId: "",
+  costCenterId: "",
   totalAmount: "",
   startDate: today(),
   endDate: plusYear(),
@@ -118,6 +120,20 @@ export default function Adjustments() {
   const [importSearch, setImportSearch] = useState("");
   const [pickedJe, setPickedJe] = useState<any | null>(null); // JE detail (with lines) for the line-pick step
   const [pickedJeLoading, setPickedJeLoading] = useState(false);
+
+  // Cost centers for the optional picker (posting + active only) — the picked
+  // centre rides the expense (debit) line of every generated JE.
+  const { data: costCentersList = [] } = useQuery<any[]>({
+    queryKey: ["cost-centers", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/cost-centers?companyId=${cid}` : `${API}/api/cost-centers`;
+      const r = await fetch(url, { headers: getHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return Array.isArray(d) ? d : [];
+    },
+    enabled: !!user,
+  });
 
   const { data: adjustments = [], isLoading } = useQuery<Adjustment[]>({
     queryKey: ["adjustments", cid],
@@ -286,6 +302,7 @@ export default function Adjustments() {
       name: a.name,
       expenseAccountId: String(a.expenseAccountId),
       contraAccountId:  String(a.contraAccountId),
+      costCenterId:     a.costCenterId != null ? String(a.costCenterId) : "",
       totalAmount:      a.totalAmount,
       startDate:        a.startDate,
       endDate:          a.endDate,
@@ -309,6 +326,9 @@ export default function Adjustments() {
         companyId: cid,
         expenseAccountId: Number(form.expenseAccountId),
         contraAccountId:  Number(form.contraAccountId),
+        // Optional cost center — applied to the EXPENSE (debit) line of every
+        // generated JE. Empty string → explicit null (clears it on edit).
+        costCenterId:     form.costCenterId ? Number(form.costCenterId) : null,
       };
       const url = editing ? `${API}/api/adjustments/${editing.id}` : `${API}/api/adjustments`;
       const r = await fetch(url, { method: editing ? "PUT" : "POST", headers, body: JSON.stringify(body) });
@@ -608,6 +628,21 @@ export default function Adjustments() {
                 allowEmpty={false}
                 placeholder={form.type === "prepaid" ? "— حساب أصل (مدفوع مقدمًا) —" : "— حساب التزام (مستحق) —"}
               />
+            </Field>
+            <Field label="مركز التكلفة (اختياري — على حساب المصروف)">
+              <select
+                value={form.costCenterId}
+                onChange={(e) => setForm(p => ({ ...p, costCenterId: e.target.value }))}
+                className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+                data-testid="select-adjustment-cost-center"
+              >
+                <option value="">— بدون مركز تكلفة —</option>
+                {costCentersList
+                  .filter((c: any) => (c.isPosting ?? true) && (c.isActive ?? true))
+                  .map((c: any) => (
+                    <option key={c.id} value={String(c.id)}>{c.code} — {c.nameAr ?? c.name}</option>
+                  ))}
+              </select>
             </Field>
             <Field label="المبلغ الإجمالي" required>
               <Input
