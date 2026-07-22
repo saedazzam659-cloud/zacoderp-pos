@@ -376,6 +376,27 @@ export default function Adjustments() {
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
 
+  // Realign DRAFT (unposted) run JEs onto the current anniversary schedule —
+  // fixes legacy end-of-month dates after فك الترحيل without new JE numbers.
+  const rescheduleMut = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`${API}/api/adjustments/${id}/reschedule-draft-runs`, { method: "POST", headers });
+      return safeJson(r, "تعذرت إعادة الجدولة");
+    },
+    onSuccess: (d: any) => {
+      const updated = d?.updated?.length ?? 0;
+      const skipped: any[] = Array.isArray(d?.skipped) ? d.skipped : [];
+      toast({
+        title: updated > 0 ? "تمت إعادة جدولة القيود" : "لا توجد قيود مسودة لإعادة جدولتها",
+        description: `عُدِّل ${updated} قيد${skipped.length > 0
+          ? ` — ${skipped.length} متخطّى (${skipped[0]?.reason ?? ""})` : ""}`,
+        variant: updated > 0 ? undefined : "destructive",
+      });
+      qc.invalidateQueries({ queryKey: ["adjustments", cid] });
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
   const carryMut = useMutation({
     mutationFn: async () => {
       if (!carryFor) throw new Error("لا توجد تسوية محددة");
@@ -811,6 +832,16 @@ export default function Adjustments() {
                       >
                         <Play className="h-3 w-3" />
                         توليد
+                      </Button>
+                      <Button
+                        size="sm" variant="outline"
+                        onClick={() => rescheduleMut.mutate(a.id)}
+                        disabled={rescheduleMut.isPending}
+                        className="h-8 gap-1 text-amber-700 border-amber-300 hover:bg-amber-50"
+                        title="إعادة جدولة القيود غير المرحّلة على تواريخ الاستحقاق الجديدة (يوم بداية التسوية من كل شهر)"
+                      >
+                        <CalendarClock className="h-3 w-3" />
+                        إعادة جدولة المسودات
                       </Button>
                       {a.status === "active" && a.carryForwardEnabled && parseFloat(a.remainingAmount ?? "0") > 0.01 && (
                         <Button

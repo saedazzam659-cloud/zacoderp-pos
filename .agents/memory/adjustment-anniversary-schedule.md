@@ -10,4 +10,5 @@ Rule: `monthsBetween` (duplicated in lib/adjustmentPosting.ts AND routes/adjustm
 **How to apply / compat traps:**
 - Legacy runs carry `period_month` keys shifted ONE MONTH EARLIER than the new schedule. Any loop over the schedule must cap at total installment count (`generated.size >= totalMonths → break`) or a partially/fully posted legacy adjustment mints one extra run.
 - Re-spread on edit must be COUNT-based (`scheduled − booked runs`), never YM-name intersection, or legacy keys inflate remainingMonths and corrupt monthlyAmount.
-- Already-posted legacy JEs keep their old dates; correcting them requires unpost/delete of the runs and regeneration.
+- Already-posted legacy JEs keep their old dates; unpost keeps the run row AND the draft JE (same docNumber, OLD date) — re-posting alone restores old dates.
+- Fix path: `POST /:id/reschedule-draft-runs` maps runs (sorted by period_month, index k) → schedule slot k and rewrites DRAFT runs only: run.period_month + JE entryDate/periodId + month label in JE & line descriptions. Two-phase `tmp-<runId>` keys dodge the (adjustment_id, period_month) unique index; targets colliding with an immovable (posted/skipped) run's key are skipped with an explicit reason, never 500. docNumbers untouched.

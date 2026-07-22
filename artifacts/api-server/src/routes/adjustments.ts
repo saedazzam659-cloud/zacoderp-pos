@@ -741,6 +741,112 @@ router.post("/:id/generate", async (req, res) => {
 });
 
 /**
+ * POST /api/adjustments/:id/reschedule-draft-runs — realign DRAFT (unposted)
+ * run JEs onto the current anniversary schedule.
+ *
+ * Why: runs generated under the old end-of-month scheme carry period keys and
+ * JE dates one month EARLIER than the anniversary schedule. Unposting keeps
+ * both the run row and the draft JE (same docNumber, old date) — so a plain
+ * re-post would restore the OLD dates. This endpoint maps each run
+ * (chronological order, slot k) to schedule slot k and, for runs whose JE is
+ * still a DRAFT, rewrites: run.period_month, JE entry_date/period_id and the
+ * month label inside the JE + line descriptions. Posted-JE runs are left
+ * untouched (unpost them first). docNumbers are never changed.
+ */
+router.post("/:id/reschedule-draft-runs", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${ADJ_LOCK_CLASS}, ${id})`);
+
+      const [adj] = await tx.select().from(accountingAdjustmentsTable)
+        .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)));
+      if (!adj) return { error: 404 as const };
+
+      const runs = await tx.select({
+        runId:       accountingAdjustmentRunsTable.id,
+        periodMonth: accountingAdjustmentRunsTable.periodMonth,
+        jeId:        accountingAdjustmentRunsTable.journalEntryId,
+        jeStatus:    journalEntriesTable.status,
+      }).from(accountingAdjustmentRunsTable)
+        .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, accountingAdjustmentRunsTable.journalEntryId))
+        .where(eq(accountingAdjustmentRunsTable.adjustmentId, id))
+        .orderBy(asc(accountingAdjustmentRunsTable.periodMonth));
+
+      const schedule = [...monthsBetween(adj.startDate, adj.endDate)];
+
+      type Plan = { runId: number; jeId: number; newYm: string; newIso: string; periodId: number | null };
+      const plan: Plan[] = [];
+      const skipped: { ym: string; reason: string }[] = [];
+
+      for (let k = 0; k < runs.length; k++) {
+        const run = runs[k];
+        if (k >= schedule.length) { skipped.push({ ym: run.periodMonth, reason: "خارج نطاق الجدول الحالي" }); continue; }
+        const slot = schedule[k];
+        if (run.jeId == null) { skipped.push({ ym: run.periodMonth, reason: "لا يوجد قيد مرتبط" }); continue; }
+        if (run.jeStatus !== "draft") { skipped.push({ ym: run.periodMonth, reason: "القيد مرحّل — فك ترحيله أولاً" }); continue; }
+        const writability = await assertWritableForDate(cid, slot.isoDate);
+        if (!writability.ok) { skipped.push({ ym: run.periodMonth, reason: writability.reason }); continue; }
+        plan.push({ runId: run.runId, jeId: run.jeId, newYm: slot.ym, newIso: slot.isoDate,
+          periodId: writability.period?.id ?? null });
+      }
+
+      // Runs NOT in the plan (posted JEs, missing JEs, closed-period skips)
+      // keep their old period_month keys. A draft's target month colliding
+      // with one of those would blow the unique index and 500 the whole tx —
+      // drop those plans with an explicit reason instead.
+      const movableIds = new Set(plan.map(p => p.runId));
+      const occupied = new Set(runs.filter(r => !movableIds.has(r.runId)).map(r => r.periodMonth));
+      const applicable: Plan[] = [];
+      for (const p of plan) {
+        if (occupied.has(p.newYm)) {
+          skipped.push({ ym: p.newYm, reason: "الشهر المستهدف مشغول بقيد مرحّل — فك ترحيله أولاً" });
+        } else {
+          applicable.push(p);
+        }
+      }
+
+      // Two-phase period_month rewrite: the (adjustment_id, period_month)
+      // unique index would collide mid-flight (each new key is typically the
+      // NEXT run's old key). Park all changing rows on temp keys first.
+      for (const p of applicable) {
+        await tx.update(accountingAdjustmentRunsTable)
+          .set({ periodMonth: `tmp-${p.runId}` })
+          .where(eq(accountingAdjustmentRunsTable.id, p.runId));
+      }
+
+      const label = adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق";
+      const updated: { ym: string; jeId: number }[] = [];
+      for (const p of applicable) {
+        await tx.update(accountingAdjustmentRunsTable)
+          .set({ periodMonth: p.newYm })
+          .where(eq(accountingAdjustmentRunsTable.id, p.runId));
+        await tx.update(journalEntriesTable)
+          .set({
+            entryDate:   p.newIso,
+            periodId:    p.periodId,
+            description: `${label} — ${adj.name} (${p.newYm})`,
+            updatedAt:   new Date(),
+          })
+          .where(and(eq(journalEntriesTable.id, p.jeId), eq(journalEntriesTable.companyId, cid)));
+        await tx.update(journalEntryLinesTable)
+          .set({ description: `قسط ${p.newYm} لـ ${adj.name}` })
+          .where(eq(journalEntryLinesTable.entryId, p.jeId));
+        updated.push({ ym: p.newYm, jeId: p.jeId });
+      }
+
+      return { error: null, updated, skipped };
+    });
+
+    if (result.error === 404) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+    res.json({ ok: true, updated: result.updated, skipped: result.skipped });
+  } catch (e: any) { res.status(500).json({ error: "فشلت إعادة الجدولة: " + (e.message ?? "خطأ") }); }
+});
+
+/**
  * POST /api/adjustments/run-due — bulk-generate for every active adjustment
  * with `auto_generate=true`. Used by a "Run all due adjustments" button or
  * a cron-like trigger. Returns a summary per adjustment.
