@@ -51,7 +51,7 @@ import {
 import { resolvePostingStatus } from "./postingStatus.js";
 import { loadMappings } from "./accountingMappings.js";
 import { assertWritableForDate } from "./periodGuard.js";
-import { nextSequenceNumber } from "./sequences.js";
+import { nextJeSubSequence } from "./sequences.js";
 
 type DbOrTx = typeof db;
 
@@ -123,7 +123,7 @@ export async function buildOutgoingBillJournal(
   const desc = `مستخلص مالك معتمد رقم ${b.billNumber} — مشروع #${b.projectId}`;
   // JE draws its own continuous "journal_entry" number; bill number stays in
   // the description + source link. Falls back to the bill number.
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "contracting_bill_je", {
     userId: null, refTable: "journal_entries", branchId: null, docDate: b.billDate,
   })) ?? b.billNumber;
   const [entry] = await dx.insert(journalEntriesTable).values({
@@ -217,7 +217,7 @@ export async function buildIncomingBillJournal(
   const desc = `مستخلص باطن معتمد رقم ${b.billNumber} — مشروع #${b.projectId}`;
   // JE draws its own continuous "journal_entry" number; bill number stays in
   // the description + source link. Falls back to the bill number.
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "contracting_bill_je", {
     userId: null, refTable: "journal_entries", branchId: null, docDate: b.billDate,
   })) ?? b.billNumber;
   const [entry] = await dx.insert(journalEntriesTable).values({

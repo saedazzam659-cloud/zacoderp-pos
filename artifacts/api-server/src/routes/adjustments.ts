@@ -11,7 +11,7 @@ import { moduleAudit, requireModulePermission } from "../middleware/permissions.
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextJeSubSequence } from "../lib/sequences.js";
 import { runDueAdjustmentsForCompany, resolveJeIssuingBranch, ADJ_LOCK_CLASS, type RunDueResult } from "../lib/adjustmentPosting.js";
 
 const router = Router();
@@ -446,7 +446,7 @@ router.post("/:id/generate", async (req, res) => {
     // Date-aware + memoized: months can span fiscal years on different buckets.
     const branchCache = new Map<string, number | null>();
     const issuingBranchFor = async (isoDate: string): Promise<number | null> => {
-      if (!branchCache.has(isoDate)) branchCache.set(isoDate, await resolveJeIssuingBranch(cid, isoDate));
+      if (!branchCache.has(isoDate)) branchCache.set(isoDate, await resolveJeIssuingBranch(cid, isoDate, "adjustment_entry"));
       return branchCache.get(isoDate) ?? null;
     };
 
@@ -491,7 +491,7 @@ router.post("/:id/generate", async (req, res) => {
         const jeStatus = await resolvePostingStatus(cid, "adjustment");
         // JE draws its own continuous "journal_entry" number (null when no active
         // sequence — preserves prior numberless behavior).
-        const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+        const jeDocNumber = (await nextJeSubSequence(cid, "adjustment_entry", {
           userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
           branchId: await issuingBranchFor(isoDate), docDate: isoDate,
         })) ?? null;

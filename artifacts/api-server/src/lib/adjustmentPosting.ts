@@ -29,7 +29,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { assertWritableForDate } from "./periodGuard.js";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { fullAuditFor } from "./journalAudit.js";
-import { nextSequenceNumber } from "./sequences.js";
+import { nextJeSubSequence } from "./sequences.js";
 
 /** Advisory-lock class shared by ALL accounting-adjustment mutators. */
 export const ADJ_LOCK_CLASS = 74001;
@@ -72,6 +72,10 @@ export function* monthsBetween(startISO: string, endISO: string): Generator<{ ym
 export async function resolveJeIssuingBranch(
   cid: number,
   docDate: string,
+  // When the company binds a sequence to the adjustment sub-type series
+  // ("adjustment_entry"), the number will DRAW from that sequence — so the
+  // branch bucket must be resolved against it, not the journal_entry one.
+  subType: string | null = null,
 ): Promise<number | null> {
   // 1. Resolve the SAME sequence nextSequenceNumber will pick for this date
   //    (period-scoped sequence for the doc's fiscal period wins, else the
@@ -85,18 +89,22 @@ export async function resolveJeIssuingBranch(
   const periodMatchSql = periodId != null
     ? sql`OR fiscal_period_ids @> ${JSON.stringify([periodId])}::jsonb`
     : sql``;
-  const seqRows = await db.execute<{ id: number }>(sql`
-    SELECT id FROM sequences
-    WHERE company_id = ${cid}
-      AND is_active = true
-      AND transaction_types ? 'journal_entry'
-      AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
-    ORDER BY
-      CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
-      id ASC
-    LIMIT 1
-  `);
-  const seqId = seqRows.rows?.[0]?.id;
+  const pickSeq = async (txType: string): Promise<number | undefined> => {
+    const seqRows = await db.execute<{ id: number }>(sql`
+      SELECT id FROM sequences
+      WHERE company_id = ${cid}
+        AND is_active = true
+        AND transaction_types ? ${txType}
+        AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
+      ORDER BY
+        CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
+        id ASC
+      LIMIT 1
+    `);
+    return seqRows.rows?.[0]?.id;
+  };
+  // Sub-type series wins when bound (mirrors nextJeSubSequence resolution).
+  const seqId = (subType ? await pickSeq(subType) : undefined) ?? await pickSeq("journal_entry");
   if (!seqId) return null;
 
   // 2. Within THAT sequence, pick the real-branch bucket with the highest
@@ -149,7 +157,7 @@ export async function runDueAdjustmentsForCompany(
   // span fiscal years whose sequences live on different branch buckets).
   const branchCache = new Map<string, number | null>();
   const issuingBranchFor = async (isoDate: string): Promise<number | null> => {
-    if (!branchCache.has(isoDate)) branchCache.set(isoDate, await resolveJeIssuingBranch(cid, isoDate));
+    if (!branchCache.has(isoDate)) branchCache.set(isoDate, await resolveJeIssuingBranch(cid, isoDate, "adjustment_entry"));
     return branchCache.get(isoDate) ?? null;
   };
 
@@ -199,7 +207,7 @@ export async function runDueAdjustmentsForCompany(
         const jeStatus = await resolvePostingStatus(cid, "adjustment");
         // Continuous "journal_entry" sequence — same series as manual JEs and
         // FA depreciation (null preserves prior numberless behavior).
-        const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+        const jeDocNumber = (await nextJeSubSequence(cid, "adjustment_entry", {
           userId: (req as any)?.authUser?.id ?? null, refTable: "journal_entries",
           branchId: await issuingBranchFor(isoDate), docDate: isoDate,
         })) ?? null;

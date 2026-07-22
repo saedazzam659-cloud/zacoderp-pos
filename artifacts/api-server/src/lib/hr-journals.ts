@@ -16,7 +16,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { assertWritableForDate } from "./periodGuard.js";
-import { nextSequenceNumber } from "./sequences.js";
+import { nextJeSubSequence } from "./sequences.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -190,7 +190,7 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   if (!prW.ok) throw new Error(prW.reason);
   // JE draws its own continuous "journal_entry" number; run code stays in the
   // description + source link. Falls back to the run code.
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "hr_payroll", {
     userId: null, refTable: "journal_entries", branchId: run.branchId ?? null, docDate: payrollDate,
   })) ?? run.code;
   const [entry] = await dx.insert(journalEntriesTable).values({
@@ -272,7 +272,7 @@ export async function buildLoanDisbursementJournal(
   const loanW = await assertWritableForDate(cid, loan.loanDate);
   if (!loanW.ok) throw new Error(loanW.reason);
   // JE draws its own continuous "journal_entry" number; falls back to LOAN-*.
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "hr_loan", {
     userId: null, refTable: "journal_entries", branchId: emp?.branchId ?? null, docDate: loan.loanDate,
   })) ?? `LOAN-${loan.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
@@ -323,7 +323,7 @@ export async function buildEosPaymentJournal(
   const eosW = await assertWritableForDate(cid, payDate);
   if (!eosW.ok) throw new Error(eosW.reason);
   // JE draws its own continuous "journal_entry" number; falls back to EOS-*.
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "hr_eos", {
     userId: null, refTable: "journal_entries", branchId: emp.branchId ?? null, docDate: payDate,
   })) ?? `EOS-${employeeId}-${payDate.replace(/-/g, "")}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
@@ -379,7 +379,7 @@ export async function buildCustodyDisbursementJournal(
 
   const w = await assertWritableForDate(cid, cust.custodyDate);
   if (!w.ok) throw new Error(w.reason);
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "hr_custody", {
     userId: null, refTable: "journal_entries", branchId: cust.branchId ?? emp?.branchId ?? null, docDate: cust.custodyDate,
   })) ?? `CUST-${cust.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
@@ -427,7 +427,7 @@ export async function buildCustodySettlementJournal(
 
   const w = await assertWritableForDate(cid, stl.settleDate);
   if (!w.ok) throw new Error(w.reason);
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "hr_custody", {
     userId: null, refTable: "journal_entries", branchId: cust.branchId ?? emp?.branchId ?? null, docDate: stl.settleDate,
   })) ?? `CUST-STL-${stl.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
@@ -471,7 +471,7 @@ export async function buildCustodyReturnJournal(
 
   const w = await assertWritableForDate(cid, returnDate);
   if (!w.ok) throw new Error(w.reason);
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "hr_custody", {
     userId: null, refTable: "journal_entries", branchId: cust.branchId ?? emp?.branchId ?? null, docDate: returnDate,
   })) ?? `CUST-RET-${cust.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({

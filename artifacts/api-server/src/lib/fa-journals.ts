@@ -42,7 +42,7 @@ import {
 import { resolvePostingStatus } from "./postingStatus.js";
 import { resolveCashAccount } from "./hr-journals.js";
 import { assertWritableForDate } from "./periodGuard.js";
-import { nextSequenceNumber, resolveJeNumber } from "./sequences.js";
+import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
 
 type DbOrTx = typeof db;
 
@@ -183,7 +183,7 @@ export async function buildAcquisitionJournal(
   // JE draws its own continuous "journal_entry" number; asset code stays in the
   // description + source link. Falls back to the asset code.
   const acqNumBranch = await resolveNumberingBranch(cid, a.branchId, dx);
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "fa_acquisition", {
     userId: null, refTable: "journal_entries", branchId: acqNumBranch, docDate: acqDate,
   })) ?? a.code;
   const [entry] = await dx.insert(journalEntriesTable).values({
@@ -254,7 +254,7 @@ export async function buildDepreciationRunJournal(
   // its original JE number instead of leaving a gap. Falls back to DEP-*.
   const depNumBranch = await resolveNumberingBranch(cid, a.branchId, dx);
   const jeDocNumber = (await resolveJeNumber({
-    companyId: cid, sourceType: "fa_depreciation", sourceId: runId,
+    companyId: cid, sourceType: "fa_depreciation", sourceId: runId, subType: "fa_depreciation",
     branchId: depNumBranch, docDate: entryDate, userId: null, dx,
   })) ?? `DEP-${a.code}-${run.periodYear}${String(run.periodMonth).padStart(2, "0")}`;
   // Auto-run respects the company's faDepreciation auto-post toggle. A manual
@@ -353,7 +353,7 @@ export async function buildDisposalJournal(
   // JE draws its own continuous "journal_entry" number; disposal code stays in
   // the description + source link. Falls back to the disposal code.
   const dispNumBranch = await resolveNumberingBranch(cid, a.branchId, dx);
-  const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+  const jeDocNumber = (await nextJeSubSequence(cid, "fa_disposal", {
     userId: null, refTable: "journal_entries", branchId: dispNumBranch, docDate: d.disposalDate,
   })) ?? d.code;
   const [entry] = await dx.insert(journalEntriesTable).values({

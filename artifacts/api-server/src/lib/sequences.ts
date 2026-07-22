@@ -492,6 +492,30 @@ export async function nextSequenceForPaymentOrFallback(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Auto-generated journal-entry SUB-SERIES (opt-in)
+//
+// Screens that auto-generate journal entries (FA depreciation, monthly
+// adjustments, payroll, …) may draw the JE's document number from a DEDICATED
+// sub-type series when the company has bound an active sequence to it — see
+// the "journal-entry SUB-SERIES" block in SEQUENCE_TX_TYPES (lib/db schema).
+// Otherwise the JE transparently falls back to the unified "journal_entry"
+// series, exactly like before. Each attempt is its own short transaction and
+// consumes nothing when it returns null — no gap on fallback.
+// ──────────────────────────────────────────────────────────────────────────
+
+export async function nextJeSubSequence(
+  companyId: number,
+  subType: string | null | undefined,
+  ctx: NextSequenceCtx = {},
+): Promise<string | null> {
+  if (subType) {
+    const fromSub = await nextSequenceNumber(companyId, subType, ctx);
+    if (fromSub != null) return fromSub;
+  }
+  return await nextSequenceNumber(companyId, "journal_entry", ctx);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Per-station POS invoice numbering
 //
 // POS-screen sales (invoices that carry a posSessionId) draw their human
@@ -657,6 +681,13 @@ export async function resolveJeNumber(opts: {
   companyId: number;
   sourceType?: string;
   sourceId?: number;
+  /**
+   * Optional JE sub-series transaction type (e.g. "fa_depreciation"). When the
+   * company has an active sequence bound to it, a fresh draw comes from that
+   * series; otherwise falls back to the unified "journal_entry" series.
+   * Reserved-number reuse (unpost→repost) always wins regardless of series.
+   */
+  subType?: string | null;
   branchId?: number | null;
   docDate?: string | Date | null;
   userId?: number | null;
@@ -672,7 +703,7 @@ export async function resolveJeNumber(opts: {
     const reserved = await takeReservedJeNumber(opts.companyId, opts.sourceType, opts.sourceId, opts.dx ?? db);
     if (reserved) return reserved;
   }
-  return await nextSequenceNumber(opts.companyId, "journal_entry", {
+  return await nextJeSubSequence(opts.companyId, opts.subType ?? null, {
     userId:   opts.userId ?? null,
     refTable: "journal_entries",
     branchId: opts.branchId ?? null,

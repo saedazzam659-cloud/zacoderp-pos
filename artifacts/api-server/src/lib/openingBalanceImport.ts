@@ -6,7 +6,7 @@ import {
 import { and, eq, like, inArray, sql } from "drizzle-orm";
 import { ensureCustomerLedger, ensureSupplierLedger } from "./entityAccounts.js";
 import { loadMappings } from "./accountingMappings.js";
-import { nextSequenceNumber } from "./sequences.js";
+import { nextJeSubSequence } from "./sequences.js";
 import { assertWritableForDate, assertWritableForPeriodId } from "./periodGuard.js";
 import { createdAuditFor } from "./journalAudit.js";
 
@@ -178,7 +178,7 @@ export async function importPartyOpeningBalances(opts: {
   let docNumber: string | null = null;
   if (appliedCount > 0) {
     try {
-      docNumber = await nextSequenceNumber(cid, "journal_entry", {
+      docNumber = await nextJeSubSequence(cid, "opening_balance_je", {
         userId: req?.authUser?.id ?? null,
         refTable: "journal_entries",
         docDate: date,

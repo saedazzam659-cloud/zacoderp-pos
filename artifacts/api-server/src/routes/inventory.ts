@@ -41,7 +41,7 @@ import {
   ITEM_GROUP_PARENT_TYPES,
   type ItemGroupCategoryType,
 } from "../lib/entityAccounts.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextJeSubSequence, nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { pickBatches, type BatchPick } from "../lib/stockHelpers.js";
 
@@ -1575,7 +1575,7 @@ router.post("/stock-transfers/:id/post", async (req, res) => {
         const jeStatus = await resolvePostingStatus(cid, "stockMovement");
         // JE draws its own continuous "journal_entry" number; the transfer
         // number stays in the description + source link. Falls back to it.
-        const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+        const jeDocNumber = (await nextJeSubSequence(cid, "stock_transfer_je", {
           userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
           branchId: (tr as any).branchId ?? null, docDate: tr.transferDate as any,
         })) ?? tr.transferNumber;
@@ -1766,7 +1766,7 @@ router.post("/stock-adjustments/:id/post", async (req, res) => {
     const jeStatus = await resolvePostingStatus(cid, "stockMovement");
     // JE draws its own continuous "journal_entry" number; the adjustment
     // number stays in the description + source link. Falls back to ADJ-JE-*.
-    const jeDocNumber = (await nextSequenceNumber(cid, "journal_entry", {
+    const jeDocNumber = (await nextJeSubSequence(cid, "stock_adjustment_je", {
       userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
       branchId: (adj as any).branchId ?? null, docDate: adj.adjustmentDate as any,
     })) ?? `ADJ-JE-${adj.adjustmentNumber}`;

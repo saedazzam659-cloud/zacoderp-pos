@@ -3852,6 +3852,18 @@
       "offer": "عرض",
       "employee": "موظف",
       "hr_contract": "عقد موظف",
+      "adjustment_entry": "قيد تسوية (مصروف مقدم/مستحق)",
+      "fa_depreciation": "قيد إهلاك الأصول",
+      "fa_acquisition": "قيد اقتناء أصل ثابت",
+      "fa_disposal": "قيد استبعاد أصل ثابت",
+      "hr_payroll": "قيد مسير الرواتب",
+      "hr_loan": "قيد سلفة موظف",
+      "hr_eos": "قيد نهاية الخدمة",
+      "hr_custody": "قيد عهدة موظف",
+      "contracting_bill_je": "قيد مستخلص مقاولات",
+      "opening_balance_je": "قيد أرصدة افتتاحية",
+      "stock_transfer_je": "قيد تحويل مخزني",
+      "stock_adjustment_je": "قيد تسوية مخزنية",
       "__reset__": "إعادة تصفير"
     }
   },

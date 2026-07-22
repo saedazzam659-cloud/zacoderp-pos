@@ -3849,6 +3849,18 @@
       "offer": "Offer",
       "employee": "Employee",
       "hr_contract": "HR Contract",
+      "adjustment_entry": "Adjustment JE (Prepaid/Accrued)",
+      "fa_depreciation": "FA Depreciation JE",
+      "fa_acquisition": "FA Acquisition JE",
+      "fa_disposal": "FA Disposal JE",
+      "hr_payroll": "Payroll JE",
+      "hr_loan": "Employee Loan JE",
+      "hr_eos": "End-of-Service JE",
+      "hr_custody": "Employee Custody JE",
+      "contracting_bill_je": "Contracting Bill JE",
+      "opening_balance_je": "Opening Balance JE",
+      "stock_transfer_je": "Stock Transfer JE",
+      "stock_adjustment_je": "Stock Adjustment JE",
       "__reset__": "Reset"
     }
   },
