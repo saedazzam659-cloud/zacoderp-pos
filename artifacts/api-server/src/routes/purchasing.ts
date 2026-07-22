@@ -1141,8 +1141,22 @@ router.get("/purchase-invoices/:id/deferred", async (req, res) => {
         eq(accountingAdjustmentsTable.sourceId, id),
       ));
     const adjIds = adjs.map(a => a.id);
+    // Runs enriched with their JE's real status + docNumber: the run row
+    // itself has no status column — the periodic JE is the source of truth
+    // (unpost flips those JEs to draft while keeping the run rows).
     const runs = adjIds.length
-      ? await db.select().from(accountingAdjustmentRunsTable)
+      ? await db.select({
+          id:             accountingAdjustmentRunsTable.id,
+          adjustmentId:   accountingAdjustmentRunsTable.adjustmentId,
+          periodMonth:    accountingAdjustmentRunsTable.periodMonth,
+          amount:         accountingAdjustmentRunsTable.amount,
+          journalEntryId: accountingAdjustmentRunsTable.journalEntryId,
+          generatedAt:    accountingAdjustmentRunsTable.generatedAt,
+          jeStatus:       journalEntriesTable.status,
+          jeDocNumber:    journalEntriesTable.docNumber,
+          jeDate:         journalEntriesTable.entryDate,
+        }).from(accountingAdjustmentRunsTable)
+          .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, accountingAdjustmentRunsTable.journalEntryId))
           .where(inArray(accountingAdjustmentRunsTable.adjustmentId, adjIds))
           .orderBy(asc(accountingAdjustmentRunsTable.id))
       : [];

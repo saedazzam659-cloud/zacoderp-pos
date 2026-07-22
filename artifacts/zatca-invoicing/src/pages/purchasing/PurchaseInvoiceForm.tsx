@@ -2321,23 +2321,26 @@ function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
                 </tr>
               </thead>
               <tbody>
-                {runs.map((r: any) => (
+                {runs.map((r: any) => {
+                  const st = r.jeStatus ?? r.status ?? null;
+                  return (
                   <tr key={r.id} className="border-t">
-                    <td className="px-3 py-2 font-mono" dir="ltr">{r.periodDate ?? r.runDate ?? "—"}</td>
+                    <td className="px-3 py-2 font-mono" dir="ltr">{r.jeDate ?? r.periodMonth ?? r.periodDate ?? "—"}</td>
                     <td className="px-3 py-2 text-end font-mono">{fmt(r.amount)}</td>
                     <td className="px-3 py-2">
                       <span className={cn(
                         "inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium",
-                        r.status === "posted"
+                        st === "posted"
                           ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
                           : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
                       )}>
-                        {r.status === "posted" ? "مرحّل" : r.status ?? "—"}
+                        {st === "posted" ? "مرحّل" : st === "draft" ? "مسودة" : st ?? "—"}
                       </span>
                     </td>
-                    <td className="px-3 py-2 font-mono" dir="ltr">{r.journalEntryId ?? "—"}</td>
+                    <td className="px-3 py-2 font-mono" dir="ltr">{r.jeDocNumber ?? r.journalEntryId ?? "—"}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
