@@ -425,12 +425,15 @@ async function buildSupplierPeek(companyId: number, parent: typeof accountsTable
 // The category's default account is auto-minted under an EXPLICIT user-picked
 // parent, supplier-style (last child 111002 → mint 111003). Allowed parent
 // account types depend on the category type.
-export type ItemGroupCategoryType = "inventory" | "fixed_asset" | "expense";
+export type ItemGroupCategoryType = "inventory" | "fixed_asset" | "expense" | "deferred_expense";
 
 export const ITEM_GROUP_PARENT_TYPES: Record<ItemGroupCategoryType, AccountType[]> = {
-  inventory:   ["asset"],
-  fixed_asset: ["asset"],
-  expense:     ["expense"],
+  inventory:        ["asset"],
+  fixed_asset:      ["asset"],
+  expense:          ["expense"],
+  // مصروف يوزع على فترات: the group account is a PREPAID (asset) account —
+  // the purchase debits it, then the adjustments engine amortises it to expense.
+  deferred_expense: ["asset"],
 };
 
 async function resolveExplicitGroupParent(
@@ -495,6 +498,13 @@ const GROUP_AUTO_PARENT_RULES: Record<ItemGroupCategoryType, {
     prefixes: ["5100", "51", "5"],
     nameLikes: ["مصروفات", "مصاريف", "expense"],
     accountType: "expense",
+  },
+  deferred_expense: {
+    roleKeys: ["item_group_deferred_expense_parent"],
+    // Prepaid-expense parents first (SAP-style 1108x), then generic current assets.
+    prefixes: ["1108", "1107", "114", "11"],
+    nameLikes: ["مقدم", "مصروفات مقدمة", "مصاريف مقدمة", "prepaid"],
+    accountType: "asset",
   },
 };
 

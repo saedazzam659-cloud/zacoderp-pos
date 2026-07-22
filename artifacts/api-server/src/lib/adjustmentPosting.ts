@@ -62,6 +62,130 @@ export function* monthsBetween(startISO: string, endISO: string): Generator<{ ym
   }
 }
 
+// ─── Periodicity extension (ADDITIVE — 'monthly' keeps legacy behavior) ───
+export type AdjPeriodicity = "monthly" | "quarterly" | "semiannual" | "annual";
+export const PERIODICITY_MONTHS: Record<AdjPeriodicity, number> = {
+  monthly: 1, quarterly: 3, semiannual: 6, annual: 12,
+};
+export const normalizePeriodicity = (raw: unknown): AdjPeriodicity =>
+  raw === "quarterly" || raw === "semiannual" || raw === "annual" ? raw : "monthly";
+
+export interface AdjInstallment { ym: string; isoDate: string; monthsCovered: number }
+
+/**
+ * Group the anniversary month schedule into installments of `P` months.
+ * Each installment falls on the FIRST month of its group (start of the
+ * quarter / half / year relative to startDate) and covers up to P monthly
+ * slices — the final installment may cover fewer when the span is not an
+ * exact multiple. For 'monthly' this degenerates to monthsBetween 1:1.
+ */
+export function installmentsBetween(
+  startISO: string, endISO: string, periodicity: AdjPeriodicity,
+): AdjInstallment[] {
+  const months = [...monthsBetween(startISO, endISO)];
+  const p = PERIODICITY_MONTHS[periodicity] ?? 1;
+  if (p <= 1) return months.map(m => ({ ...m, monthsCovered: 1 }));
+  const out: AdjInstallment[] = [];
+  for (let i = 0; i < months.length; i += p) {
+    const covered = Math.min(p, months.length - i);
+    out.push({ ym: months[i].ym, isoDate: months[i].isoDate, monthsCovered: covered });
+  }
+  return out;
+}
+
+const r2n = (x: number) => Math.round(x * 100) / 100;
+
+/**
+ * Amount of installment at `slotIndex` within `schedule`.
+ * 'monthly' keeps the LEGACY rule verbatim (every run = monthlyAmount, no
+ * closure absorb — the reschedule endpoint remains the corrective lever).
+ * Grouped periodicities: amount = monthly × monthsCovered, and the FINAL
+ * scheduled installment closes the balance exactly against totalAmount
+ * (total − Σ previously recognized), so no residue is stranded.
+ */
+export function installmentAmount(
+  adj: { monthlyAmount: string; totalAmount: string; periodicity?: string | null },
+  schedule: AdjInstallment[],
+  slotIndex: number,
+  recognizedSoFar: number,
+): string {
+  const periodicity = normalizePeriodicity(adj.periodicity);
+  const monthly = Number(adj.monthlyAmount) || 0;
+  if (periodicity === "monthly") return adj.monthlyAmount;
+  const slot = schedule[slotIndex];
+  if (slotIndex === schedule.length - 1) {
+    const closing = r2n((Number(adj.totalAmount) || 0) - recognizedSoFar);
+    if (closing > 0) return closing.toFixed(2);
+  }
+  return r2n(monthly * slot.monthsCovered).toFixed(2);
+}
+
+export interface CcSplitEntry { costCenterId: number; pct: number }
+
+/** Parse + sanity-check a stored costCenterSplit jsonb value. */
+export function parseCcSplit(raw: unknown): CcSplitEntry[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const entries: CcSplitEntry[] = [];
+  for (const e of raw) {
+    const ccId = Number((e as any)?.costCenterId);
+    const pct = Number((e as any)?.pct);
+    if (!Number.isInteger(ccId) || ccId <= 0 || !Number.isFinite(pct) || pct <= 0) return null;
+    entries.push({ costCenterId: ccId, pct });
+  }
+  const sum = entries.reduce((s, e) => s + e.pct, 0);
+  if (Math.abs(sum - 100) > 0.01) return null;
+  return entries;
+}
+
+/**
+ * Build the EXPENSE (debit) side lines of a periodic adjustment JE.
+ * With a valid costCenterSplit the installment is split pro-rata across the
+ * given cost centers (codes resolved by the caller); the LAST split line
+ * absorbs the rounding delta so Σdebits === amount exactly. Otherwise one
+ * line carrying the single ccCode (legacy behavior).
+ */
+export function buildExpenseDebitLines(
+  entryId: number,
+  expenseAccountId: number,
+  amountStr: string,
+  desc: string,
+  singleCcCode: string | null,
+  split: { code: string | null; pct: number }[] | null,
+): { entryId: number; accountId: number; debit: string; credit: string; sortOrder: number; costCenter: string | null; description: string }[] {
+  if (!split || split.length === 0) {
+    return [{ entryId, accountId: expenseAccountId, debit: amountStr, credit: "0",
+      sortOrder: 0, costCenter: singleCcCode, description: desc }];
+  }
+  const amount = Number(amountStr) || 0;
+  const lines: ReturnType<typeof buildExpenseDebitLines> = [];
+  let allocated = 0;
+  for (let i = 0; i < split.length; i++) {
+    const part = i === split.length - 1
+      ? r2n(amount - allocated)
+      : r2n(amount * split[i].pct / 100);
+    allocated = r2n(allocated + part);
+    lines.push({ entryId, accountId: expenseAccountId, debit: part.toFixed(2), credit: "0",
+      sortOrder: i, costCenter: split[i].code, description: desc });
+  }
+  return lines;
+}
+
+/**
+ * Resolve cost-center CODES for a stored costCenterSplit (id → code).
+ * Any unknown id degrades that entry to a code-less line rather than
+ * failing the whole posting run.
+ */
+export async function resolveCcSplitCodes(
+  tx: any, cid: number, raw: unknown,
+): Promise<{ code: string | null; pct: number }[] | null> {
+  const split = parseCcSplit(raw);
+  if (!split) return null;
+  const rows = await tx.select({ id: costCentersTable.id, code: costCentersTable.code })
+    .from(costCentersTable).where(eq(costCentersTable.companyId, cid));
+  const byId = new Map<number, string>(rows.map((r: any) => [r.id, r.code]));
+  return split.map(s => ({ code: byId.get(s.costCenterId) ?? null, pct: s.pct }));
+}
+
 /**
  * Resolve the sequence-counter BRANCH bucket the company's manual JEs
  * actually run on. Passing branchId:null to nextSequenceNumber issues from
@@ -179,11 +303,16 @@ export async function runDueAdjustmentsForCompany(
       ));
       if (!adj) return null;
 
-      const existingRuns = await tx.select({ ym: accountingAdjustmentRunsTable.periodMonth })
+      const existingRuns = await tx.select({
+        ym: accountingAdjustmentRunsTable.periodMonth,
+        amount: accountingAdjustmentRunsTable.amount,
+      })
         .from(accountingAdjustmentRunsTable)
         .where(eq(accountingAdjustmentRunsTable.adjustmentId, adj.id));
       const generated = new Set(existingRuns.map(r => r.ym));
-      const monthly = adj.monthlyAmount;
+      // Recognized-so-far tracker: only consulted by NON-monthly schedules
+      // (final installment closes the balance exactly against totalAmount).
+      let recognizedSoFar = existingRuns.reduce((s, r) => s + (Number(r.amount) || 0), 0);
       const created: string[] = [];
       const skipped: { ym: string; reason: string }[] = [];
 
@@ -195,11 +324,17 @@ export async function runDueAdjustmentsForCompany(
           .where(and(eq(costCentersTable.id, adj.costCenterId), eq(costCentersTable.companyId, cid)));
         ccCode = cc?.code ?? null;
       }
+      // Optional multi-cost-center split (deferred-expense lines) — resolved
+      // to CODES once; overrides the single ccCode when present.
+      const ccSplit = await resolveCcSplitCodes(tx, cid, (adj as any).costCenterSplit);
 
-      let totalMonths = 0;
-      for (const _ of monthsBetween(adj.startDate, adj.endDate)) totalMonths++;
+      // Periodicity-aware installment schedule ('monthly' == legacy months).
+      const schedule = installmentsBetween(
+        adj.startDate, adj.endDate, normalizePeriodicity((adj as any).periodicity));
+      const totalMonths = schedule.length;
 
-      for (const { ym, isoDate } of monthsBetween(adj.startDate, adj.endDate)) {
+      for (let slot = 0; slot < schedule.length; slot++) {
+        const { ym, isoDate } = schedule[slot];
         // NEVER exceed the scheduled installment count — legacy runs booked
         // under the old end-of-month scheme carry shifted period keys, so
         // without this cap the anniversary schedule would mint one extra run.
@@ -210,6 +345,8 @@ export async function runDueAdjustmentsForCompany(
 
         const writability = await assertWritableForDate(cid, isoDate);
         if (!writability.ok) { skipped.push({ ym, reason: writability.reason }); continue; }
+
+        const amount = installmentAmount(adj as any, schedule, slot, recognizedSoFar);
 
         const jeStatus = await resolvePostingStatus(cid, "adjustment");
         // Continuous "journal_entry" sequence — same series as manual JEs and
@@ -226,17 +363,18 @@ export async function runDueAdjustmentsForCompany(
           periodId: writability.period?.id ?? null,
           ...fullAuditFor(req ?? null, jeStatus),
         }).returning();
+        // Cost center rides the EXPENSE (debit) side only — either one line
+        // (single ccCode) or a pro-rata split across several cost centers.
+        const debitLines = buildExpenseDebitLines(
+          entry.id, adj.expenseAccountId, amount, `قسط ${ym} لـ ${adj.name}`, ccCode, ccSplit);
         await tx.insert(journalEntryLinesTable).values([
-          // Cost center rides the EXPENSE (debit) line only — stored as the
-          // cost-center CODE (manual-JE convention).
-          { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0,
-            costCenter: ccCode, description: `قسط ${ym} لـ ${adj.name}` },
-          { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: monthly, sortOrder: 1,
-            description: `قسط ${ym} لـ ${adj.name}` },
+          ...debitLines,
+          { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: amount,
+            sortOrder: debitLines.length, description: `قسط ${ym} لـ ${adj.name}` },
         ]);
         const inserted = await tx.insert(accountingAdjustmentRunsTable).values({
           adjustmentId: adj.id, companyId: cid, periodMonth: ym,
-          journalEntryId: entry.id, amount: monthly,
+          journalEntryId: entry.id, amount,
         }).onConflictDoNothing().returning();
         if (inserted.length === 0) {
           // Concurrent caller already created this month — undo the orphan JE.
@@ -247,6 +385,7 @@ export async function runDueAdjustmentsForCompany(
         }
         created.push(ym);
         generated.add(ym);
+        recognizedSoFar = r2n(recognizedSoFar + (Number(amount) || 0));
       }
 
       // Flip to "completed" once every scheduled month has a run — mirrors

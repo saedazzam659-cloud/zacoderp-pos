@@ -12,7 +12,11 @@ import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { nextJeSubSequence } from "../lib/sequences.js";
-import { runDueAdjustmentsForCompany, resolveJeIssuingBranch, ADJ_LOCK_CLASS, type RunDueResult } from "../lib/adjustmentPosting.js";
+import {
+  runDueAdjustmentsForCompany, resolveJeIssuingBranch, ADJ_LOCK_CLASS, type RunDueResult,
+  installmentsBetween, installmentAmount, normalizePeriodicity, parseCcSplit,
+  resolveCcSplitCodes, buildExpenseDebitLines,
+} from "../lib/adjustmentPosting.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -359,7 +363,7 @@ async function validateCostCenter(cid: number, raw: unknown): Promise<number | n
 router.post("/", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { type, name, expenseAccountId, contraAccountId, totalAmount, startDate, endDate, autoGenerate, notes, costCenterId } = req.body ?? {};
+    const { type, name, expenseAccountId, contraAccountId, totalAmount, startDate, endDate, autoGenerate, notes, costCenterId, periodicity, costCenterSplit } = req.body ?? {};
 
     if (!["prepaid", "accrued"].includes(type)) {
       res.status(400).json({ error: "نوع التسوية غير صالح (prepaid/accrued فقط)" }); return;
@@ -389,6 +393,21 @@ router.post("/", async (req, res) => {
     try { ccId = await validateCostCenter(cid, costCenterId); }
     catch (e: any) { res.status(400).json({ error: e.message }); return; }
 
+    // Optional periodicity (ADDITIVE — absent/invalid → 'monthly' = legacy).
+    const per = normalizePeriodicity(periodicity);
+    if (periodicity !== undefined && periodicity !== null && periodicity !== per) {
+      res.status(400).json({ error: "دورية التوزيع غير صالحة (monthly/quarterly/semiannual/annual)" }); return;
+    }
+
+    // Optional multi-cost-center split — validate ids + Σpct = 100.
+    let split: { costCenterId: number; pct: number }[] | null = null;
+    if (costCenterSplit !== undefined && costCenterSplit !== null) {
+      split = parseCcSplit(costCenterSplit);
+      if (!split) { res.status(400).json({ error: "توزيع مراكز التكلفة غير صالح — مجموع النسب يجب أن يساوي 100%" }); return; }
+      try { for (const s of split) await validateCostCenter(cid, s.costCenterId); }
+      catch (e: any) { res.status(400).json({ error: e.message }); return; }
+    }
+
     // monthly amount = total / number of full months in [start, end]
     let months = 0;
     for (const _ of monthsBetween(startDate, endDate)) months++;
@@ -405,6 +424,8 @@ router.post("/", async (req, res) => {
       totalAmount:      String(total),
       startDate, endDate,
       monthlyAmount,
+      periodicity:      per,
+      costCenterSplit:  split,
       autoGenerate:     autoGenerate !== false,
       status:           "active",
       notes:            notes || null,
@@ -535,9 +556,20 @@ router.put("/:id", async (req, res) => {
         // old end-of-month scheme carry period keys shifted one month EARLIER
         // than the anniversary schedule, so name-matching would inflate the
         // remaining count. remaining = scheduled installments − booked runs.
-        let scheduledMonths = 0;
-        for (const _ of monthsBetween(newStart, newEnd)) scheduledMonths++;
-        const remainingMonths = Math.max(0, scheduledMonths - generated.size);
+        // Periodicity-aware: the schedule counts INSTALLMENTS (monthly ⇒ 1:1
+        // with months, legacy behavior byte-identical); monthlyAmount stays a
+        // PER-MONTH slice, so the remainder spreads over the months COVERED
+        // by the remaining installments.
+        const per = normalizePeriodicity(adj.periodicity);
+        const schedule = installmentsBetween(newStart, newEnd, per);
+        const scheduledMonths = schedule.length;
+        const remainingInstallments = Math.max(0, scheduledMonths - generated.size);
+        // Months covered by the remaining (last N) installments.
+        const remainingMonthsCovered = remainingInstallments > 0
+          ? schedule.slice(schedule.length - remainingInstallments)
+              .reduce((s, x) => s + x.monthsCovered, 0)
+          : 0;
+        const remainingMonths = per === "monthly" ? remainingInstallments : remainingMonthsCovered;
         const remainder = newTotal - recognized;
         if (remainingMonths === 0 && remainder > 0.01)
           throw Object.assign(new Error("لا توجد أشهر متبقية لتوزيع الرصيد الجديد — مدّد تاريخ النهاية"), { status: 400 });
@@ -641,13 +673,18 @@ router.post("/:id/generate", async (req, res) => {
       if (adj.status !== "active") return { error: 400 as const, status: adj.status };
 
       // Pull existing runs to skip already-generated months
-      const existingRuns = await tx.select({ ym: accountingAdjustmentRunsTable.periodMonth })
+      const existingRuns = await tx.select({
+        ym: accountingAdjustmentRunsTable.periodMonth,
+        amount: accountingAdjustmentRunsTable.amount,
+      })
         .from(accountingAdjustmentRunsTable).where(eq(accountingAdjustmentRunsTable.adjustmentId, id));
       const generated = new Set(existingRuns.map(r => r.ym));
+      // Recognized-so-far tracker — only consulted by NON-monthly schedules
+      // (final installment closes the balance exactly against totalAmount).
+      let recognizedSoFar = existingRuns.reduce((s, r) => s + (Number(r.amount) || 0), 0);
 
       const skipped: { ym: string; reason: string }[] = [];
       const created: { ym: string; entryId: number }[] = [];
-      const monthly = adj.monthlyAmount;
 
       // Resolve the adjustment's cost-center CODE once (JE lines store the
       // CODE, not the id — manual-JE convention). Missing/inactive → null.
@@ -657,11 +694,16 @@ router.post("/:id/generate", async (req, res) => {
           .where(and(eq(costCentersTable.id, adj.costCenterId), eq(costCentersTable.companyId, cid)));
         ccCode = cc?.code ?? null;
       }
+      // Optional multi-cost-center split (overrides the single ccCode).
+      const ccSplit = await resolveCcSplitCodes(tx, cid, adj.costCenterSplit);
 
-      let totalMonths = 0;
-      for (const _ of monthsBetween(adj.startDate, adj.endDate)) totalMonths++;
+      // Periodicity-aware installment schedule ('monthly' == legacy months).
+      const schedule = installmentsBetween(
+        adj.startDate, adj.endDate, normalizePeriodicity(adj.periodicity));
+      const totalMonths = schedule.length;
 
-      for (const { ym, isoDate } of monthsBetween(adj.startDate, adj.endDate)) {
+      for (let slot = 0; slot < schedule.length; slot++) {
+        const { ym, isoDate } = schedule[slot];
         // Cap at the scheduled installment count — legacy end-of-month runs
         // carry shifted period keys vs the anniversary schedule.
         if (generated.size >= totalMonths) break;
@@ -672,6 +714,8 @@ router.post("/:id/generate", async (req, res) => {
           skipped.push({ ym, reason: writability.reason });
           continue;
         }
+
+        const monthly = installmentAmount(adj, schedule, slot, recognizedSoFar);
 
         const jeStatus = await resolvePostingStatus(cid, "adjustment");
         // JE draws its own continuous "journal_entry" number (null when no active
@@ -691,13 +735,14 @@ router.post("/:id/generate", async (req, res) => {
           ...fullAuditFor(req, jeStatus),
         }).returning();
 
+        // Cost center rides the EXPENSE (debit) side only — one line (single
+        // ccCode) or a pro-rata split across several cost centers.
+        const debitLines = buildExpenseDebitLines(
+          entry.id, adj.expenseAccountId, monthly, `قسط ${ym} لـ ${adj.name}`, ccCode, ccSplit);
         await tx.insert(journalEntryLinesTable).values([
-          // Cost center rides the EXPENSE (debit) line only — stored as the
-          // cost-center CODE (manual-JE convention, see picker id-vs-code).
-          { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0,
-            costCenter: ccCode, description: `قسط ${ym} لـ ${adj.name}` },
-          { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: monthly, sortOrder: 1,
-            description: `قسط ${ym} لـ ${adj.name}` },
+          ...debitLines,
+          { entryId: entry.id, accountId: adj.contraAccountId,  debit: "0", credit: monthly,
+            sortOrder: debitLines.length, description: `قسط ${ym} لـ ${adj.name}` },
         ]);
 
         // onConflictDoNothing protects against the rare case where two requests
@@ -719,6 +764,7 @@ router.post("/:id/generate", async (req, res) => {
 
         created.push({ ym, entryId: entry.id });
         generated.add(ym);
+        recognizedSoFar = Math.round((recognizedSoFar + (Number(monthly) || 0)) * 100) / 100;
       }
 
       // Mark adjustment completed when every month has a run
@@ -777,9 +823,11 @@ router.post("/:id/reschedule-draft-runs", async (req, res) => {
         .where(eq(accountingAdjustmentRunsTable.adjustmentId, id))
         .orderBy(asc(accountingAdjustmentRunsTable.periodMonth));
 
-      const schedule = [...monthsBetween(adj.startDate, adj.endDate)];
+      // Periodicity-aware installment schedule ('monthly' == legacy months).
+      const schedule = installmentsBetween(
+        adj.startDate, adj.endDate, normalizePeriodicity(adj.periodicity));
 
-      type Plan = { runId: number; jeId: number; newYm: string; newIso: string; periodId: number | null };
+      type Plan = { runId: number; jeId: number; newYm: string; newIso: string; periodId: number | null; monthsCovered: number };
       const plan: Plan[] = [];
       const skipped: { ym: string; reason: string }[] = [];
 
@@ -792,7 +840,7 @@ router.post("/:id/reschedule-draft-runs", async (req, res) => {
         const writability = await assertWritableForDate(cid, slot.isoDate);
         if (!writability.ok) { skipped.push({ ym: run.periodMonth, reason: writability.reason }); continue; }
         plan.push({ runId: run.runId, jeId: run.jeId, newYm: slot.ym, newIso: slot.isoDate,
-          periodId: writability.period?.id ?? null });
+          periodId: writability.period?.id ?? null, monthsCovered: slot.monthsCovered });
       }
 
       // Runs NOT in the plan (posted JEs, missing JEs, closed-period skips)
@@ -841,14 +889,25 @@ router.post("/:id/reschedule-draft-runs", async (req, res) => {
           message: "مجموع الأقساط المرحّلة يتجاوز إجمالي التسوية — راجع مبالغ القيود المرحّلة أولاً" };
       }
       const n = applicable.length;
-      const baseAmt = n > 0 ? r2(remaining / n) : 0;
-      const lastAmt = n > 0 ? r2(remaining - baseAmt * (n - 1)) : 0;
+      // Weight each movable installment by the months it covers (monthly ⇒
+      // all weights 1 → identical to the legacy equal split). The LAST one
+      // still absorbs the rounding delta so the balance closes to 0.
+      const coveredSum = applicable.reduce((s, p) => s + (p.monthsCovered || 1), 0);
+      const perMonthUnit = coveredSum > 0 ? remaining / coveredSum : 0;
+      const amts: number[] = [];
+      let alloc = 0;
+      for (let i = 0; i < n; i++) {
+        const a = i === n - 1 ? r2(remaining - alloc) : r2(perMonthUnit * (applicable[i].monthsCovered || 1));
+        alloc = r2(alloc + a);
+        amts.push(a);
+      }
+      const baseAmt = n > 0 ? r2(remaining / coveredSum) : 0;
 
       const label = adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق";
       const updated: { ym: string; jeId: number; amount: string }[] = [];
       for (let i = 0; i < applicable.length; i++) {
         const p = applicable[i];
-        const amt = (i === applicable.length - 1 ? lastAmt : baseAmt).toFixed(2);
+        const amt = amts[i].toFixed(2);
         await tx.update(accountingAdjustmentRunsTable)
           .set({ periodMonth: p.newYm, amount: amt })
           .where(eq(accountingAdjustmentRunsTable.id, p.runId));
@@ -1015,6 +1074,10 @@ router.post("/:id/carry-forward", async (req, res) => {
           startDate:           newStartDate,
           endDate:             newEndDate,
           monthlyAmount:       newMonthly,
+          // Inherit the recognition pattern — the child keeps amortising on
+          // the same periodicity and cost-center split as the parent.
+          periodicity:         normalizePeriodicity(parent.periodicity),
+          costCenterSplit:     parent.cost_center_split ?? null,
           autoGenerate:        parent.auto_generate,
           carryForwardEnabled: parent.carry_forward_enabled,
           parentAdjustmentId:  parent.id,

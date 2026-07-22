@@ -5854,6 +5854,7 @@
       "typeInventory": "Inventory",
       "typeFixedAsset": "Fixed Asset",
       "typeExpense": "Expense",
+      "typeDeferredExpense": "Deferred Expense",
       "parentAccount": "Parent Account",
       "selectParentAccount": "— Select parent account —",
       "parentAccountHint": "A sub-account will be created automatically for this category under the selected parent",

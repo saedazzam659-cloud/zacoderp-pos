@@ -152,4 +152,5 @@
 - [Training P2P relay tree](training-p2p-relay-tree.md) — broadcaster is "__root__" on viewer side (hub must translate from/to); viewer signals only parent/children; reparent with subtree-exclusion; 12s no-stream → LiveKit fallback.
 - [JE sub-series sequences](je-sub-series-sequences.md) — auto-JEs draw via nextJeSubSequence (sub-type series wins, fallback unified journal_entry, no double-draw); branch bucket must resolve against the SAME sequence.
 - [Report route perm scope](report-route-perm-scope.md) — report endpoint inside another module's router must register BEFORE the router-level gate with its own accounting_reports gate.
+- [Deferred-expense invoice plan](deferred-expense-invoice-plan.md) — ccSplit canonical {costCenterId,pct} end-to-end + tenant-validate at /post; process-local single-flight post lock; amount = finalCost||lineTotal||qty×unitPrice.
 - [Web local scan agent](web-local-scan-agent.md) — downloadable bat+embedded-PS WIA bridge on 127.0.0.1:27345; split marker must be built dynamically, origin allow-list (never ACAO:*), PNA header on preflight, base64 stays localhost-side.

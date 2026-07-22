@@ -16,6 +16,8 @@ import {
   itemsTable,
   itemGroupsTable,
   fixedAssetsTable,
+  accountingAdjustmentsTable, accountingAdjustmentRunsTable,
+  costCentersTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql, inArray, notInArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
@@ -30,6 +32,7 @@ import { getReceivingClearingAccountId } from "./goodsReceipts.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { normalizePeriodicity, parseCcSplit, installmentsBetween } from "../lib/adjustmentPosting.js";
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
@@ -161,6 +164,30 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
     out[wid] = { accountId: w?.accountId ?? null, allowNegative: !!w?.allowNegative, nameAr: w?.nameAr ?? null };
   }
   return out;
+}
+
+// ── مصروف يوزع على فترات (deferred expense) — per-line recognition plan ──
+// ADDITIVE: lines of a deferred_expense category may carry a recognition
+// window + periodicity + optional multi-cost-center split. Stored verbatim on
+// the line; the linked accounting_adjustment is created at POST time.
+const DEF_ISO = /^\d{4}-\d{2}-\d{2}$/;
+function deferredLineFields(l: any) {
+  const start = typeof l?.deferredStartDate === "string" && DEF_ISO.test(l.deferredStartDate) ? l.deferredStartDate : null;
+  const end   = typeof l?.deferredEndDate   === "string" && DEF_ISO.test(l.deferredEndDate)   ? l.deferredEndDate   : null;
+  if (!start || !end || end < start) {
+    return { deferredStartDate: null, deferredEndDate: null, deferredPeriodicity: null, deferredCostCenters: null };
+  }
+  let ccs: any = null;
+  if (Array.isArray(l?.deferredCostCenters) && l.deferredCostCenters.length) {
+    const parsed = parseCcSplit(l.deferredCostCenters);
+    ccs = parsed ?? null;
+  }
+  return {
+    deferredStartDate:   start,
+    deferredEndDate:     end,
+    deferredPeriodicity: normalizePeriodicity(l?.deferredPeriodicity),
+    deferredCostCenters: ccs,
+  };
 }
 
 const router = Router();
@@ -1091,6 +1118,38 @@ router.get("/purchase-invoices/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+// ── مصروف مرحّل tab: deferred lines of an invoice + their linked adjustments
+// and generated periodic runs. Read-only aggregation for the invoice form.
+router.get("/purchase-invoices/:id/deferred", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const [inv] = await db.select({ id: purchaseInvoicesTable.id })
+      .from(purchaseInvoicesTable)
+      .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
+    if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    const defLines = (await db.select().from(purchaseInvoiceLinesTable)
+      .where(eq(purchaseInvoiceLinesTable.invoiceId, id))
+      .orderBy(asc(purchaseInvoiceLinesTable.id)))
+      .filter(l => (l as any).deferredStartDate || (l as any).deferredAdjustmentId);
+    const adjs = await db.select().from(accountingAdjustmentsTable)
+      .where(and(
+        eq(accountingAdjustmentsTable.companyId, cid),
+        eq(accountingAdjustmentsTable.sourceType, "purchase_invoice"),
+        eq(accountingAdjustmentsTable.sourceId, id),
+      ));
+    const adjIds = adjs.map(a => a.id);
+    const runs = adjIds.length
+      ? await db.select().from(accountingAdjustmentRunsTable)
+          .where(inArray(accountingAdjustmentRunsTable.adjustmentId, adjIds))
+          .orderBy(asc(accountingAdjustmentRunsTable.id))
+      : [];
+    res.json({ lines: defLines, adjustments: adjs, runs });
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
 router.post("/purchase-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -1186,6 +1245,7 @@ router.post("/purchase-invoices", async (req, res) => {
           batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
           expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
           notes: l.notes || null,
+          ...deferredLineFields(l),
         }))
       );
     }
@@ -1272,6 +1332,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
             expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
             notes: l.notes || null,
+            ...deferredLineFields(l),
           }))
         );
       }
@@ -1280,10 +1341,24 @@ router.put("/purchase-invoices/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+// In-process single-flight guard: the /post flow performs many sequential DB
+// writes (stock, JE, deferred adjustments) without one wrapping transaction —
+// two concurrent posts of the SAME invoice could otherwise both pass the
+// status check and duplicate side effects. api-server is a single process,
+// so a process-local lock fully serializes concurrent requests.
+const __postingLocks = new Set<string>();
 router.patch("/purchase-invoices/:id/post", async (req, res) => {
+  let __lockKey: string | null = null;
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    __lockKey = `pi-post:${cid}:${id}`;
+    if (__postingLocks.has(__lockKey)) {
+      __lockKey = null;
+      res.status(409).json({ error: "جارٍ ترحيل هذه الفاتورة بالفعل — انتظر انتهاء العملية" });
+      return;
+    }
+    __postingLocks.add(__lockKey);
 
     const [inv] = await db.select().from(purchaseInvoicesTable)
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
@@ -1342,15 +1417,77 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       const gid = groupIdByItem.get(itemId);
       const g = gid ? groupById.get(gid) : null;
       if (!g || !g.categoryType || !g.accountId) return null;
-      return { type: g.categoryType as "inventory" | "fixed_asset" | "expense", accountId: g.accountId, nameAr: g.nameAr };
+      return { type: g.categoryType as "inventory" | "fixed_asset" | "expense" | "deferred_expense", accountId: g.accountId, costAccountId: g.costAccountId ?? null, nameAr: g.nameAr };
     };
-    // Non-stock routed line = group type asset/expense. Applies to service-typed
-    // items too — the category's account routing takes precedence.
+    // Non-stock routed line = group type asset/expense/deferred_expense.
+    // Applies to service-typed items too — category routing takes precedence.
+    // deferred_expense debits the category's PREPAID asset account; the
+    // amortization to expense happens via the linked accounting adjustment.
     const isGroupNoStockLine = (l: any) => {
       if (!l.itemId) return false;
       const r = groupRoutingForItem(l.itemId);
-      return !!r && (r.type === "fixed_asset" || r.type === "expense");
+      return !!r && (r.type === "fixed_asset" || r.type === "expense" || r.type === "deferred_expense");
     };
+
+    // ── مصروف يوزع على فترات: pre-validate deferred lines BEFORE any stock
+    // mutation. A line in a deferred_expense category MUST carry a valid
+    // recognition window, and an EXPENSE account must be resolvable
+    // (item.costAccountId → group.costAccountId) for the amortization JEs.
+    const deferredPlans: {
+      line: any; total: number; expenseAccountId: number; contraAccountId: number;
+      start: string; end: string; periodicity: string; ccSplit: any; itemName: string;
+    }[] = [];
+    {
+      const problems: string[] = [];
+      // Tenant-scoped cost-center id set for split validation (lazy-loaded once).
+      let ccIdSet: Set<number> | null = null;
+      const loadCcIds = async () => {
+        if (ccIdSet) return ccIdSet;
+        const rows = await db.select({ id: costCentersTable.id }).from(costCentersTable)
+          .where(eq(costCentersTable.companyId, cid));
+        ccIdSet = new Set(rows.map(r => r.id));
+        return ccIdSet;
+      };
+      for (const l of lines) {
+        if (!l.itemId) continue;
+        const r = groupRoutingForItem(l.itemId);
+        if (!r || r.type !== "deferred_expense") continue;
+        const nm = l.itemName ?? `صنف #${l.itemId}`;
+        const start = (l as any).deferredStartDate as string | null;
+        const end   = (l as any).deferredEndDate   as string | null;
+        if (!start || !end || end < start) { problems.push(`${nm}: فترة التوزيع (من/إلى) مطلوبة`); continue; }
+        const expAcc = costAccById.get(l.itemId) ?? r.costAccountId ?? null;
+        if (!expAcc) { problems.push(`${nm}: حساب المصروف مطلوب (حساب تكلفة الصنف أو حساب مصروف الفئة)`); continue; }
+        // Qty-aware amount basis: persisted landed cost first, then the line
+        // total, then qty×unitPrice — bare unitPrice would ignore quantity.
+        const total = (Number(l.finalCost) || Number((l as any).lineTotal)
+          || (Number(l.qty) || 1) * (Number(l.unitPrice) || 0)) || 0;
+        if (total <= 0) continue;
+        const monthsCount = installmentsBetween(start, end, "monthly").length;
+        if (monthsCount <= 0) { problems.push(`${nm}: لا توجد أشهر صالحة بين تاريخي التوزيع`); continue; }
+        // Optional multi-CC split: parse canonical {costCenterId,pct} and
+        // verify every id belongs to THIS tenant. A present-but-invalid split
+        // blocks posting explicitly (silent null would surprise the user).
+        let ccSplit: { costCenterId: number; pct: number }[] | null = null;
+        const rawSplit = (l as any).deferredCostCenters;
+        if (Array.isArray(rawSplit) && rawSplit.length) {
+          ccSplit = parseCcSplit(rawSplit);
+          if (!ccSplit) { problems.push(`${nm}: توزيع مراكز التكلفة غير صالح — مجموع النسب يجب أن يساوي 100%`); continue; }
+          const ids = await loadCcIds();
+          const bad = ccSplit.filter(s => !ids.has(s.costCenterId));
+          if (bad.length) { problems.push(`${nm}: مركز تكلفة غير موجود في توزيع النسب`); continue; }
+        }
+        deferredPlans.push({
+          line: l, total, expenseAccountId: expAcc, contraAccountId: r.accountId,
+          start, end, periodicity: normalizePeriodicity((l as any).deferredPeriodicity),
+          ccSplit, itemName: nm,
+        });
+      }
+      if (problems.length) {
+        res.status(400).json({ error: `لا يمكن الترحيل — مصروفات موزعة على فترات: ${problems.join("، ")}` });
+        return;
+      }
+    }
 
     // Stock items still require a warehouse; SERVICE items must NOT have one.
     // Asset/expense-routed group lines don't move stock → no warehouse needed.
@@ -1768,8 +1905,45 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     // Auto-update LC usedAmount + status based on this newly-posted invoice
     if (inv.lcId) await recomputeLcUsage(cid, inv.lcId);
 
+    // ── مصروف يوزع على فترات: create ONE linked accounting adjustment per
+    // deferred line. The prepaid asset was already debited above (category
+    // account); the adjustment amortizes it: DR expense / CR prepaid on the
+    // anniversary schedule (periodicity-aware, optional multi-CC split).
+    for (const p of deferredPlans) {
+      // Idempotency belt-and-braces (in addition to the process-local post
+      // lock): a line that already carries a linked adjustment is skipped so
+      // a retried/duplicated post can never mint a second adjustment.
+      if (p.line?.deferredAdjustmentId) continue;
+      const monthsCount = installmentsBetween(p.start, p.end, "monthly").length;
+      const monthly = +(p.total / monthsCount).toFixed(2);
+      const [adj] = await db.insert(accountingAdjustmentsTable).values({
+        companyId:        cid,
+        type:             "prepaid",
+        name:             `مصروف مرحّل — ${p.itemName} (فاتورة ${inv.docNumber || inv.id})`,
+        expenseAccountId: p.expenseAccountId,
+        contraAccountId:  p.contraAccountId,
+        totalAmount:      String(p.total.toFixed(2)),
+        startDate:        p.start,
+        endDate:          p.end,
+        monthlyAmount:    String(monthly),
+        periodicity:      p.periodicity,
+        sourceType:       "purchase_invoice",
+        sourceId:         inv.id,
+        costCenterSplit:  p.ccSplit ?? null,
+        autoGenerate:     true,
+        status:           "active",
+        notes:            `مُنشأ تلقائياً من ترحيل فاتورة المشتريات #${inv.id}`,
+      }).returning();
+      if (p.line?.id && adj) {
+        await db.update(purchaseInvoiceLinesTable)
+          .set({ deferredAdjustmentId: adj.id })
+          .where(and(eq(purchaseInvoiceLinesTable.id, p.line.id), eq(purchaseInvoiceLinesTable.companyId, cid)));
+      }
+    }
+
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  finally { if (__lockKey) __postingLocks.delete(__lockKey); }
 });
 
 // ─── UNPOST purchase invoice (فك الترحيل) ───────────────────────────────────
@@ -1800,6 +1974,34 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
     if (linkedAssets.length) {
       res.status(409).json({ error: `لا يمكن إلغاء الترحيل: يوجد أصل ثابت مرتبط بهذه الفاتورة (${linkedAssets[0].code}) — قم باستبعاد الأصل أو حذفه أولاً` });
       return;
+    }
+
+    // ── مصروف يوزع على فترات guard: adjustments spawned by this invoice.
+    // If ANY linked adjustment already generated periodic JEs (runs exist),
+    // unposting would orphan real GL entries → block with 409. Otherwise the
+    // run-less adjustments are deleted (re-posting recreates them fresh).
+    const linkedAdjs = await db.select({ id: accountingAdjustmentsTable.id, name: accountingAdjustmentsTable.name })
+      .from(accountingAdjustmentsTable)
+      .where(and(
+        eq(accountingAdjustmentsTable.companyId, cid),
+        eq(accountingAdjustmentsTable.sourceType, "purchase_invoice"),
+        eq(accountingAdjustmentsTable.sourceId, id),
+      ));
+    if (linkedAdjs.length) {
+      const adjIds = linkedAdjs.map(a => a.id);
+      const runRows = await db.select({ adjustmentId: accountingAdjustmentRunsTable.adjustmentId })
+        .from(accountingAdjustmentRunsTable)
+        .where(inArray(accountingAdjustmentRunsTable.adjustmentId, adjIds))
+        .limit(1);
+      if (runRows.length) {
+        res.status(409).json({ error: "لا يمكن إلغاء الترحيل: توجد قيود دورية مُنشأة من المصروفات الموزعة على فترات المرتبطة بهذه الفاتورة — احذف/ألغِ قيود التسوية الدورية أولاً من شاشة قيود التسوية." });
+        return;
+      }
+      await db.update(purchaseInvoiceLinesTable)
+        .set({ deferredAdjustmentId: null })
+        .where(and(eq(purchaseInvoiceLinesTable.invoiceId, id), inArray(purchaseInvoiceLinesTable.deferredAdjustmentId, adjIds)));
+      await db.delete(accountingAdjustmentsTable)
+        .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, adjIds)));
     }
 
     // GRN-sourced invoices never touched stock (the GRN did), so there's

@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, numeric, boolean, timestamp, pgEnum, uniqueIndex,
+  pgTable, serial, text, integer, numeric, boolean, timestamp, pgEnum, uniqueIndex, jsonb,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { accountsTable } from "./accounts";
@@ -33,6 +33,20 @@ export const accountingAdjustmentsTable = pgTable("accounting_adjustments", {
   startDate:           text("start_date").notNull(),
   endDate:             text("end_date").notNull(),
   monthlyAmount:       numeric("monthly_amount", { precision: 18, scale: 2 }).notNull(),
+  // ── Deferred-expense extensions (ADDITIVE — default behavior unchanged) ──
+  // periodicity: how installments are grouped along the anniversary schedule.
+  //   'monthly' (default) = one installment per month (legacy behavior)
+  //   'quarterly' = every 3 months, amount = 3 monthly slices summed
+  //   'semiannual' = every 6 months, 'annual' = every 12 months.
+  periodicity:         text("periodicity").notNull().default("monthly"),
+  // Optional link back to the originating document (e.g. a purchase-invoice
+  // line whose item group is "مصروف يوزع على فترات"). NULL = manual adjustment.
+  sourceType:          text("source_type"),
+  sourceId:            integer("source_id"),
+  // Optional multi-cost-center split for the EXPENSE (debit) side of each
+  // periodic JE: [{ costCenterId: number, pct: number }] — pcts sum to 100.
+  // When set it overrides costCenterId; the contra line stays dimension-free.
+  costCenterSplit:     jsonb("cost_center_split"),
   autoGenerate:        boolean("auto_generate").notNull().default(true),
   carryForwardEnabled: boolean("carry_forward_enabled").notNull().default(true),
   parentAdjustmentId:  integer("parent_adjustment_id"),

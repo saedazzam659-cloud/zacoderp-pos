@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
@@ -62,6 +63,12 @@ interface InvoiceLine {
   // OPTIONAL per-line cost-center CODE (Odoo-style analytic distribution).
   // Empty ⇒ falls back to the HEADER costCenter at JE time (unchanged behavior).
   costCenter: string;
+  // ── مصروف يوزع على فترات (deferred expense) — recognition plan ──
+  // Present only on lines whose item group categoryType === "deferred_expense".
+  deferredStartDate: string;
+  deferredEndDate: string;
+  deferredPeriodicity: string; // monthly | quarterly | semiannual | annual
+  deferredCostCenters: { costCenterId: string; pct: string }[];
 }
 
 function newLine(): InvoiceLine {
@@ -71,6 +78,7 @@ function newLine(): InvoiceLine {
     qty: "1", freeQty: "0", weight: "0", unitPrice: "0", discount: "0", vatRate: "15",
     lineTotal: "0", expenseShare: "0", finalCost: "0", batchNumber: "", expiryDate: "", notes: "",
     costCenter: "",
+    deferredStartDate: "", deferredEndDate: "", deferredPeriodicity: "monthly", deferredCostCenters: [],
   };
 }
 
@@ -136,7 +144,9 @@ export default function PurchaseInvoiceForm() {
   const viewMode = new URLSearchParams(search).get("view") === "1";
   const _co = (user as any)?.company;
   const useTabbedLayout = _co?.invoiceFormLayout !== "classic" || viewMode;
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "creditNote" | "payments" | "returns" | "archive" | "details">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred">("basic");
+  // مصروف يوزع على فترات — سطر الحوار المفتوح لتحرير خطة التوزيع
+  const [deferredDialogLineId, setDeferredDialogLineId] = useState<string | null>(null);
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
@@ -313,8 +323,9 @@ export default function PurchaseInvoiceForm() {
   };
   const isGroupNoStockLine = (l: { itemId: string }) => {
     const g = lineGroup(l);
-    return g?.categoryType === "fixed_asset" || g?.categoryType === "expense";
+    return g?.categoryType === "fixed_asset" || g?.categoryType === "expense" || g?.categoryType === "deferred_expense";
   };
+  const isDeferredLine = (l: { itemId: string }) => lineGroup(l)?.categoryType === "deferred_expense";
   const isNoStockLine = (l: { itemId: string }) => isServiceLine(l) || isGroupNoStockLine(l);
   const hasEmptyWarehouse = lines.some(l => !l.warehouseId && !isNoStockLine(l));
   useEffect(() => {
@@ -479,6 +490,12 @@ export default function PurchaseInvoiceForm() {
       expiryDate:  l.expiryDate  ?? "",
       notes:       l.notes ?? "",
       costCenter:  l.costCenter ?? "",
+      deferredStartDate:   l.deferredStartDate ?? "",
+      deferredEndDate:     l.deferredEndDate ?? "",
+      deferredPeriodicity: l.deferredPeriodicity ?? "monthly",
+      deferredCostCenters: Array.isArray(l.deferredCostCenters)
+        ? l.deferredCostCenters.map((c: any) => ({ costCenterId: String(c.costCenterId ?? ""), pct: String(c.pct ?? "") }))
+        : [],
     })) : (useTabbedLayout ? [] : [newLine()]));
   }, [existing]);
 
@@ -536,6 +553,12 @@ export default function PurchaseInvoiceForm() {
           expiryDate:  l.expiryDate  ?? "",
           notes:       l.notes ?? "",
           costCenter:  l.costCenter ?? "",
+          deferredStartDate:   l.deferredStartDate ?? "",
+          deferredEndDate:     l.deferredEndDate ?? "",
+          deferredPeriodicity: l.deferredPeriodicity ?? "monthly",
+          deferredCostCenters: Array.isArray(l.deferredCostCenters)
+            ? l.deferredCostCenters.map((c: any) => ({ costCenterId: String(c.costCenterId ?? ""), pct: String(c.pct ?? "") }))
+            : [],
         })) : (useTabbedLayout ? [] : [newLine()]));
         toast({ title: tr("duplicated") });
         const url = new URL(window.location.href);
@@ -857,7 +880,20 @@ export default function PurchaseInvoiceForm() {
       // Header-level cost center — when set, the /post handler tags every
       // generated JE line with this code so cost-center reports pick it up.
       costCenter: costCenter || null,
-      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
+      lines: lines.filter(l => l.itemName).map(l => ({
+        ...l, _id: undefined,
+        // خطة توزيع المصروف — تُرسل فقط لو السطر مؤجّل ومكتمل التواريخ
+        deferredStartDate:   isDeferredLine(l) && l.deferredStartDate ? l.deferredStartDate : null,
+        deferredEndDate:     isDeferredLine(l) && l.deferredEndDate   ? l.deferredEndDate   : null,
+        deferredPeriodicity: isDeferredLine(l) ? (l.deferredPeriodicity || "monthly") : null,
+        // Canonical split shape {costCenterId:int, pct:number} — matches the
+        // backend parseCcSplit contract exactly (validated again at /post).
+        deferredCostCenters: isDeferredLine(l) && l.deferredCostCenters.length
+          ? l.deferredCostCenters
+              .filter(c => Number(c.costCenterId) > 0 && Number(c.pct) > 0)
+              .map(c => ({ costCenterId: Number(c.costCenterId), pct: Number(c.pct) }))
+          : null,
+      })),
     });
   }
 
@@ -1177,6 +1213,11 @@ export default function PurchaseInvoiceForm() {
                   <TabsTrigger value="returns" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <Undo2 className="h-3.5 w-3.5" />الإرجاع
                   </TabsTrigger>
+                  {lines.some(l => isDeferredLine(l)) && (
+                    <TabsTrigger value="deferred" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <ClipboardList className="h-3.5 w-3.5" />مصروف مرحّل
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="archive" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <Archive className="h-3.5 w-3.5" />أرشفة
                   </TabsTrigger>
@@ -1671,10 +1712,14 @@ export default function PurchaseInvoiceForm() {
                           "h-8 flex items-center justify-center rounded-md text-[11px] font-medium",
                           lineGroup(l)?.categoryType === "fixed_asset"
                             ? "bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
+                            : lineGroup(l)?.categoryType === "deferred_expense"
+                            ? "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300"
                             : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
                         )}>
                           {lineGroup(l)?.categoryType === "fixed_asset"
                             ? (t("inventoryMaster.itemGroups.typeFixedAsset") as string)
+                            : lineGroup(l)?.categoryType === "deferred_expense"
+                            ? (t("inventoryMaster.itemGroups.typeDeferredExpense") as string)
                             : (t("inventoryMaster.itemGroups.typeExpense") as string)}
                         </div>
                       ) : warehouses.length > 0 ? (
@@ -1770,6 +1815,23 @@ export default function PurchaseInvoiceForm() {
                           value={l.notes}
                           onChange={e => updateLine(l._id, "notes", e.target.value)}
                         />
+                        {isDeferredLine(l) && (
+                          <Button
+                            type="button" variant="outline" size="sm"
+                            className={cn(
+                              "h-7 px-2.5 text-[11px] gap-1.5 shrink-0",
+                              l.deferredStartDate && l.deferredEndDate
+                                ? "border-teal-300 text-teal-700 bg-teal-50 dark:bg-teal-950 dark:text-teal-300"
+                                : "border-amber-400 text-amber-700 bg-amber-50 dark:bg-amber-950 dark:text-amber-300 ring-1 ring-amber-400",
+                            )}
+                            onClick={() => setDeferredDialogLineId(l._id)}
+                          >
+                            <ClipboardList className="h-3 w-3" />
+                            {l.deferredStartDate && l.deferredEndDate
+                              ? `خطة التوزيع: ${l.deferredStartDate} ← ${l.deferredEndDate}`
+                              : "⚠ حدد خطة توزيع المصروف (مطلوبة للترحيل)"}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1962,6 +2024,13 @@ export default function PurchaseInvoiceForm() {
                 </CardContent>
               </TabsContent>
             )}
+            {editId && (
+              <TabsContent value="deferred" className="mt-0">
+                <CardContent className="pt-5 pb-5">
+                  <DeferredExpenseTab invoiceId={editId} api={API} authH={authH} cid={cid} fmt={fmt} ccs={costCentersList as any[]} />
+                </CardContent>
+              </TabsContent>
+            )}
             <TabsContent value="details" className="mt-0">
               <CardContent className="pt-5 pb-5">
                 {detailsSection}
@@ -1971,6 +2040,105 @@ export default function PurchaseInvoiceForm() {
           )}
         </Card>
       </Tabs>
+
+      {/* ── حوار خطة توزيع المصروف (مصروف يوزع على فترات) ── */}
+      <Dialog open={!!deferredDialogLineId} onOpenChange={o => { if (!o) setDeferredDialogLineId(null); }}>
+        <DialogContent className="max-w-lg" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>خطة توزيع المصروف على الفترات</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const dl = lines.find(l => l._id === deferredDialogLineId);
+            if (!dl) return null;
+            const patch = (p: Partial<InvoiceLine>) =>
+              setLines(prev => prev.map(l => l._id === dl._id ? { ...l, ...p } : l));
+            const ccSum = dl.deferredCostCenters.reduce((s, c) => s + (Number(c.pct) || 0), 0);
+            const activeCcs = (costCentersList as any[]).filter((c: any) => c.isActive !== false);
+            return (
+              <div className="space-y-4">
+                <div className="text-sm text-muted-foreground">
+                  الصنف: <span className="font-medium text-foreground">{dl.itemName || "—"}</span>
+                  {" — "}قيمة السطر: <span className="font-mono">{fmt(dl.finalCost || dl.lineTotal)}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">تاريخ بداية التوزيع <span className="text-destructive">*</span></Label>
+                    <DateField className="h-9 text-sm" value={dl.deferredStartDate}
+                      onChange={e => patch({ deferredStartDate: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">تاريخ نهاية التوزيع <span className="text-destructive">*</span></Label>
+                    <DateField className="h-9 text-sm" value={dl.deferredEndDate}
+                      onChange={e => patch({ deferredEndDate: e.target.value })} />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">دورية التحميل</Label>
+                  <Select value={dl.deferredPeriodicity || "monthly"} onValueChange={v => patch({ deferredPeriodicity: v })}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="monthly">شهري</SelectItem>
+                      <SelectItem value="quarterly">ربع سنوي</SelectItem>
+                      <SelectItem value="semiannual">نصف سنوي</SelectItem>
+                      <SelectItem value="annual">سنوي</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">توزيع مراكز التكلفة (اختياري — نسب %)</Label>
+                    <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs gap-1"
+                      disabled={activeCcs.length === 0}
+                      onClick={() => patch({ deferredCostCenters: [...dl.deferredCostCenters, { costCenterId: "", pct: "" }] })}>
+                      <Plus className="h-3 w-3" />إضافة مركز
+                    </Button>
+                  </div>
+                  {dl.deferredCostCenters.map((c, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <select
+                        className="h-8 text-xs rounded-md border bg-background px-2 flex-1"
+                        value={c.costCenterId}
+                        onChange={e => {
+                          const next = dl.deferredCostCenters.map((x, j) => j === i ? { ...x, costCenterId: e.target.value } : x);
+                          patch({ deferredCostCenters: next });
+                        }}
+                      >
+                        <option value="">— اختر مركز التكلفة —</option>
+                        {activeCcs.map((cc: any) => (
+                          <option key={cc.id} value={String(cc.id)}>{cc.code} — {cc.nameAr ?? cc.nameEn ?? ""}</option>
+                        ))}
+                      </select>
+                      <Input className="h-8 text-xs w-24 font-mono" dir="ltr" type="text" inputMode="decimal"
+                        placeholder="%" value={c.pct}
+                        onChange={e => {
+                          const v = e.target.value.replace(/[^0-9.]/g, "");
+                          const next = dl.deferredCostCenters.map((x, j) => j === i ? { ...x, pct: v } : x);
+                          patch({ deferredCostCenters: next });
+                        }} />
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                        onClick={() => patch({ deferredCostCenters: dl.deferredCostCenters.filter((_, j) => j !== i) })}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                  {dl.deferredCostCenters.length > 0 && (
+                    <div className={cn("text-xs font-medium", Math.abs(ccSum - 100) < 0.01 ? "text-emerald-600" : "text-amber-600")}>
+                      مجموع النسب: {ccSum}% {Math.abs(ccSum - 100) >= 0.01 && "— يجب أن يساوي 100% عند الترحيل"}
+                    </div>
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  عند ترحيل الفاتورة سيتم إنشاء قيد تسوية دورية مرتبطة تلقائياً تحمّل المصروف على الفترات المحددة
+                  (من حساب المصروف المقدم إلى حساب المصروف)؛ يظهر التنفيذ في تبويب «مصروف مرحّل» وفي جدولة التسويات.
+                </p>
+                <DialogFooter>
+                  <Button type="button" onClick={() => setDeferredDialogLineId(null)}>تم</Button>
+                </DialogFooter>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {!useTabbedLayout && (
       <div className="flex justify-end gap-2">
@@ -1983,6 +2151,159 @@ export default function PurchaseInvoiceForm() {
           </Button>
         )}
       </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// تبويب «مصروف مرحّل» — يعرض سطور المصروف المؤجل وقيود التسوية المرتبطة
+// والتنفيذات الدورية المتولدة (قراءة فقط؛ الإدارة من شاشة التسويات).
+// ─────────────────────────────────────────────────────────────────────────────
+function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
+  invoiceId: number; api: string; authH: Record<string, string>;
+  cid: number | undefined; fmt: (n: any) => string; ccs: any[];
+}) {
+  // Resolve canonical split ids → cost-center codes for display.
+  const ccLabel = (id: any) => {
+    const cc = (ccs ?? []).find((c: any) => Number(c.id) === Number(id));
+    return cc ? String(cc.code ?? cc.id) : `#${id}`;
+  };
+  const { data, isLoading, error } = useQuery<any>({
+    queryKey: ["/purchase-invoice-deferred", invoiceId],
+    queryFn: async () => {
+      const url = cid
+        ? `${api}/api/purchasing/purchase-invoices/${invoiceId}/deferred?companyId=${cid}`
+        : `${api}/api/purchasing/purchase-invoices/${invoiceId}/deferred`;
+      const r = await fetch(url, { headers: authH });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? "فشل التحميل");
+      return r.json();
+    },
+  });
+  if (isLoading) return <div className="text-sm text-muted-foreground py-6 text-center">جارٍ التحميل…</div>;
+  if (error) return <div className="text-sm text-destructive py-6 text-center">{(error as any)?.message ?? "خطأ"}</div>;
+  const lines: any[] = Array.isArray(data?.lines) ? data.lines : [];
+  const adjustments: any[] = Array.isArray(data?.adjustments) ? data.adjustments : [];
+  const runs: any[] = Array.isArray(data?.runs) ? data.runs : [];
+  const periodicityLabel = (p: any) =>
+    p === "quarterly" ? "ربع سنوي" : p === "semiannual" ? "نصف سنوي" : p === "annual" ? "سنوي" : "شهري";
+  if (!lines.length && !adjustments.length) {
+    return (
+      <div className="text-sm text-muted-foreground py-8 text-center">
+        لا توجد سطور مصروف مؤجل في هذه الفاتورة — تُنشأ قيود التوزيع تلقائياً عند ترحيل فاتورة تحتوي أصنافاً من مجموعة «مصروف يوزع على فترات».
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-sm font-semibold mb-2">سطور المصروف المؤجل</h3>
+        <div className="rounded-md border overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="px-3 py-2 text-start">الصنف</th>
+                <th className="px-3 py-2 text-start">من</th>
+                <th className="px-3 py-2 text-start">إلى</th>
+                <th className="px-3 py-2 text-start">الدورية</th>
+                <th className="px-3 py-2 text-end">القيمة</th>
+                <th className="px-3 py-2 text-start">مراكز التكلفة</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l: any) => (
+                <tr key={l.id} className="border-t">
+                  <td className="px-3 py-2">{l.itemName ?? "—"}</td>
+                  <td className="px-3 py-2 font-mono" dir="ltr">{l.deferredStartDate ?? "—"}</td>
+                  <td className="px-3 py-2 font-mono" dir="ltr">{l.deferredEndDate ?? "—"}</td>
+                  <td className="px-3 py-2">{periodicityLabel(l.deferredPeriodicity)}</td>
+                  <td className="px-3 py-2 text-end font-mono">{fmt(l.finalCost ?? l.lineTotal)}</td>
+                  <td className="px-3 py-2">
+                    {Array.isArray(l.deferredCostCenters) && l.deferredCostCenters.length
+                      ? l.deferredCostCenters.map((c: any) => `${ccLabel(c.costCenterId)} (${c.pct}%)`).join("، ")
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {adjustments.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold mb-2">قيود التسوية المرتبطة</h3>
+          <div className="rounded-md border overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="px-3 py-2 text-start">الوصف</th>
+                  <th className="px-3 py-2 text-start">من</th>
+                  <th className="px-3 py-2 text-start">إلى</th>
+                  <th className="px-3 py-2 text-start">الدورية</th>
+                  <th className="px-3 py-2 text-end">الإجمالي</th>
+                  <th className="px-3 py-2 text-start">الحالة</th>
+                </tr>
+              </thead>
+              <tbody>
+                {adjustments.map((a: any) => (
+                  <tr key={a.id} className="border-t">
+                    <td className="px-3 py-2">{a.description ?? a.nameAr ?? `تسوية #${a.id}`}</td>
+                    <td className="px-3 py-2 font-mono" dir="ltr">{a.startDate ?? "—"}</td>
+                    <td className="px-3 py-2 font-mono" dir="ltr">{a.endDate ?? "—"}</td>
+                    <td className="px-3 py-2">{periodicityLabel(a.periodicity)}</td>
+                    <td className="px-3 py-2 text-end font-mono">{fmt(a.totalAmount)}</td>
+                    <td className="px-3 py-2">
+                      <span className={cn(
+                        "inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium",
+                        a.status === "active"
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                          : "bg-muted text-muted-foreground",
+                      )}>
+                        {a.status === "active" ? "نشطة" : a.status === "completed" ? "مكتملة" : a.status ?? "—"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {runs.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold mb-2">التنفيذات الدورية ({runs.length})</h3>
+          <div className="rounded-md border overflow-x-auto max-h-64 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-start">تاريخ الفترة</th>
+                  <th className="px-3 py-2 text-end">المبلغ</th>
+                  <th className="px-3 py-2 text-start">الحالة</th>
+                  <th className="px-3 py-2 text-start">قيد اليومية</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((r: any) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-3 py-2 font-mono" dir="ltr">{r.periodDate ?? r.runDate ?? "—"}</td>
+                    <td className="px-3 py-2 text-end font-mono">{fmt(r.amount)}</td>
+                    <td className="px-3 py-2">
+                      <span className={cn(
+                        "inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium",
+                        r.status === "posted"
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                          : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+                      )}>
+                        {r.status === "posted" ? "مرحّل" : r.status ?? "—"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono" dir="ltr">{r.journalEntryId ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );

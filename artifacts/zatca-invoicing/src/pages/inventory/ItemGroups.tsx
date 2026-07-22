@@ -19,6 +19,8 @@ const EMPTY = { code: "", nameAr: "", nameEn: "", costAccountId: "", revenueAcco
 // نوع الفئة → أنواع الحسابات المسموح اختيارها كحساب رئيسي (تُطابق قواعد السيرفر)
 const PARENT_FILTER: Record<string, ("asset" | "expense")[]> = {
   inventory: ["asset"], fixed_asset: ["asset"], expense: ["expense"],
+  // مصروف يوزع على فترات: الحساب الرئيسي أصل (مصروفات مقدمة/مدفوعة مقدماً)
+  deferred_expense: ["asset"],
 };
 
 export default function ItemGroups() {
@@ -116,7 +118,7 @@ export default function ItemGroups() {
   });
 
   const typeLabel = (ct?: string | null) =>
-    ct === "inventory" ? tr("typeInventory") : ct === "fixed_asset" ? tr("typeFixedAsset") : ct === "expense" ? tr("typeExpense") : "—";
+    ct === "inventory" ? tr("typeInventory") : ct === "fixed_asset" ? tr("typeFixedAsset") : ct === "expense" ? tr("typeExpense") : ct === "deferred_expense" ? tr("typeDeferredExpense") : "—";
 
   const filtered = data.filter((g: any) =>
     g.nameAr.includes(search) || g.code.includes(search) || (g.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
@@ -179,6 +181,7 @@ export default function ItemGroups() {
                     <option value="inventory">{tr("typeInventory")}</option>
                     <option value="fixed_asset">{tr("typeFixedAsset")}</option>
                     <option value="expense">{tr("typeExpense")}</option>
+                    <option value="deferred_expense">{tr("typeDeferredExpense")}</option>
                   </select>
                 </Field>
                 {form.categoryType && (
@@ -321,6 +324,7 @@ export default function ItemGroups() {
                         ? <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
                             g.categoryType === "inventory" ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
                             : g.categoryType === "fixed_asset" ? "bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
+                            : g.categoryType === "deferred_expense" ? "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300"
                             : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>
                             {typeLabel(g.categoryType)}
                           </span>

@@ -5932,6 +5932,7 @@
       "typeInventory": "مخزون",
       "typeFixedAsset": "أصل ثابت",
       "typeExpense": "مصروف",
+      "typeDeferredExpense": "مصروف يوزع على فترات",
       "parentAccount": "الحساب الرئيسي",
       "selectParentAccount": "— اختر الحساب الرئيسي —",
       "parentAccountHint": "سيتم إنشاء حساب فرعي تلقائياً لهذه الفئة تحت الحساب الرئيسي المحدد",

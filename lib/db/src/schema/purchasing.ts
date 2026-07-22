@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, date,
+  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, date, jsonb,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { suppliersTable } from "./suppliers";
@@ -149,6 +149,19 @@ export const purchaseInvoiceLinesTable = pgTable("purchase_invoice_lines", {
   batchNumber:     text("batch_number"),
   expiryDate:      date("expiry_date"),
   notes:           text("notes"),
+  // ── Deferred-expense line metadata (ADDITIVE — NULL on all normal lines) ──
+  // Set only when the line's item belongs to an item group whose
+  // category_type = 'deferred_expense' (مصروف يوزع على فترات).
+  // Dates are ISO YYYY-MM-DD; the amortization schedule mirrors the
+  // adjustments-engine anniversary logic (monthsBetween).
+  deferredStartDate:    text("deferred_start_date"),
+  deferredEndDate:      text("deferred_end_date"),
+  // 'monthly' | 'quarterly' | 'semiannual' | 'annual'
+  deferredPeriodicity:  text("deferred_periodicity"),
+  // Optional expense-side cost-center split: [{ costCenterId, pct }] (Σpct=100).
+  deferredCostCenters:  jsonb("deferred_cost_centers"),
+  // Back-link to the auto-created accounting_adjustments row (set on /post).
+  deferredAdjustmentId: integer("deferred_adjustment_id"),
 });
 
 // ─── Purchase Orders (operational only — NO finance side-effects) ──────────

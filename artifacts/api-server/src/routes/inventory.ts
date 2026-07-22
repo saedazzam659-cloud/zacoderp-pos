@@ -350,7 +350,7 @@ router.get("/item-groups", async (req, res) => {
 });
 
 // ── التوجيه المحاسبي: normalize + validate routing fields from the body ──
-const GROUP_CATEGORY_TYPES = new Set(["inventory", "fixed_asset", "expense"]);
+const GROUP_CATEGORY_TYPES = new Set(["inventory", "fixed_asset", "expense", "deferred_expense"]);
 // سلوك الربط المحاسبي (خانة واحدة، مثل شاشة المستودعات):
 //  - المستخدم اختار حساباً من الشجرة (accountId) → تُربط الفئة عليه مباشرة، بدون إنشاء أي حساب.
 //  - لم يختر شيئاً → النظام يحلّ الحساب الأب الافتراضي حسب نوع الفئة ويُنشئ
@@ -393,7 +393,7 @@ async function validateGroupDirectAccount(
   if (!acc) return "الحساب المختار غير موجود";
   const allowed = ITEM_GROUP_PARENT_TYPES[categoryType] as string[];
   if (!allowed.includes(String(acc.accountType))) {
-    return "نوع الحساب المختار لا يتوافق مع نوع الفئة (مخزون/أصل ثابت → أصول، مصروف → مصروفات)";
+    return "نوع الحساب المختار لا يتوافق مع نوع الفئة (مخزون/أصل ثابت/مصروف مؤجل → أصول، مصروف → مصروفات)";
   }
   return null;
 }
