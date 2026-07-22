@@ -1962,20 +1962,29 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     // deferred line. The prepaid asset was already debited above (category
     // account); the adjustment amortizes it: DR expense / CR prepaid on the
     // anniversary schedule (periodicity-aware, optional multi-CC split).
+    // Net-of-VAT/discount basis: the adjustment must amortize EXACTLY what was
+    // debited to the prepaid account in the JE above — i.e. the line's share
+    // of inventoryDebit (totalAmount − VAT + doc discount, LC expenses
+    // included). p.total is the GROSS line figure (finalCost/lineTotal is
+    // VAT-inclusive when priceIncludesVat, and ignores the document
+    // discount), so we scale it by the SAME ratio the JE debit used.
+    const deferredNetRatio = allCostTotal > 0 ? inventoryDebit / allCostTotal : 1;
     for (const p of deferredPlans) {
       // Idempotency belt-and-braces (in addition to the process-local post
       // lock): a line that already carries a linked adjustment is skipped so
       // a retried/duplicated post can never mint a second adjustment.
       if (p.line?.deferredAdjustmentId) continue;
+      const netTotal = +(p.total * deferredNetRatio).toFixed(2);
+      if (netTotal <= 0) continue;
       const monthsCount = installmentsBetween(p.start, p.end, "monthly").length;
-      const monthly = +(p.total / monthsCount).toFixed(2);
+      const monthly = +(netTotal / monthsCount).toFixed(2);
       const [adj] = await db.insert(accountingAdjustmentsTable).values({
         companyId:        cid,
         type:             "prepaid",
         name:             `مصروف مرحّل — ${p.itemName} (فاتورة ${inv.docNumber || inv.id})`,
         expenseAccountId: p.expenseAccountId,
         contraAccountId:  p.contraAccountId,
-        totalAmount:      String(p.total.toFixed(2)),
+        totalAmount:      String(netTotal.toFixed(2)),
         startDate:        p.start,
         endDate:          p.end,
         monthlyAmount:    String(monthly),

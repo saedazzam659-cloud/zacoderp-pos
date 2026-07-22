@@ -2196,12 +2196,15 @@ export default function PurchaseInvoiceForm() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // تبويب «مصروف مرحّل» — يعرض سطور المصروف المؤجل وقيود التسوية المرتبطة
-// والتنفيذات الدورية المتولدة (قراءة فقط؛ الإدارة من شاشة التسويات).
+// والتنفيذات الدورية المتولدة، مع تعديل التسوية وعرض القيد داخل الفاتورة.
 // ─────────────────────────────────────────────────────────────────────────────
 function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
   invoiceId: number; api: string; authH: Record<string, string>;
   cid: number | undefined; fmt: (n: any) => string; ccs: any[];
 }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const withCid = (path: string) => cid ? `${api}${path}${path.includes("?") ? "&" : "?"}companyId=${cid}` : `${api}${path}`;
   // Resolve canonical split ids → cost-center codes for display.
   const ccLabel = (id: any) => {
     const cc = (ccs ?? []).find((c: any) => Number(c.id) === Number(id));
@@ -2210,19 +2213,78 @@ function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/purchase-invoice-deferred", invoiceId],
     queryFn: async () => {
-      const url = cid
-        ? `${api}/api/purchasing/purchase-invoices/${invoiceId}/deferred?companyId=${cid}`
-        : `${api}/api/purchasing/purchase-invoices/${invoiceId}/deferred`;
-      const r = await fetch(url, { headers: authH });
+      const r = await fetch(withCid(`/api/purchasing/purchase-invoices/${invoiceId}/deferred`), { headers: authH });
       if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? "فشل التحميل");
       return r.json();
     },
   });
+
+  // ── تعديل التسوية (المبلغ / تاريخ النهاية) — PUT /api/adjustments/:id ──
+  const [editAdj, setEditAdj] = useState<any | null>(null);
+  const [editTotal, setEditTotal] = useState("");
+  const [editStart, setEditStart] = useState("");
+  const [editEnd, setEditEnd] = useState("");
+  const openEdit = (a: any, hasRuns: boolean) => {
+    setEditAdj({ ...a, _hasRuns: hasRuns });
+    setEditTotal(String(a.totalAmount ?? ""));
+    setEditStart(a.startDate ?? "");
+    setEditEnd(a.endDate ?? "");
+  };
+  const saveEdit = useMutation({
+    mutationFn: async () => {
+      const body: any = { totalAmount: Number(editTotal), endDate: editEnd };
+      if (!editAdj?._hasRuns) body.startDate = editStart;
+      const r = await fetch(withCid(`/api/adjustments/${editAdj.id}`), {
+        method: "PUT",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error ?? "فشل حفظ التعديل");
+      return j;
+    },
+    onSuccess: (j: any) => {
+      toast({
+        title: "تم تعديل التسوية وإعادة توزيع الأقساط",
+        description: j?.catchUpRuns ? `تم توليد ${j.catchUpRuns} قيد مستحق فوراً` : undefined,
+      });
+      setEditAdj(null);
+      qc.invalidateQueries({ queryKey: ["/purchase-invoice-deferred", invoiceId] });
+    },
+    onError: (e: any) => toast({ title: e?.message ?? "فشل حفظ التعديل", variant: "destructive" }),
+  });
+
+  // ── عرض قيد اليومية داخل الفاتورة (نقرة على رقم القيد) ──
+  const [viewJeId, setViewJeId] = useState<number | null>(null);
+  const jeQ = useQuery<any>({
+    queryKey: ["/deferred-je-view", viewJeId, cid],
+    enabled: viewJeId != null,
+    queryFn: async () => {
+      const r = await fetch(withCid(`/api/journal-entries/${viewJeId}`), { headers: authH });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? "فشل تحميل القيد");
+      return r.json();
+    },
+  });
+  const accountsQ = useQuery<any[]>({
+    queryKey: ["/deferred-je-accounts", cid],
+    enabled: viewJeId != null,
+    queryFn: async () => {
+      const r = await fetch(withCid(`/api/accounts`), { headers: authH });
+      const j = await r.json().catch(() => null);
+      return Array.isArray(j) ? j : [];
+    },
+  });
+  const accLabel = (id: any) => {
+    const a = (accountsQ.data ?? []).find((x: any) => Number(x.id) === Number(id));
+    return a ? `${a.code ?? a.id} — ${a.nameAr ?? a.nameEn ?? ""}` : `#${id ?? "—"}`;
+  };
+
   if (isLoading) return <div className="text-sm text-muted-foreground py-6 text-center">جارٍ التحميل…</div>;
   if (error) return <div className="text-sm text-destructive py-6 text-center">{(error as any)?.message ?? "خطأ"}</div>;
   const lines: any[] = Array.isArray(data?.lines) ? data.lines : [];
   const adjustments: any[] = Array.isArray(data?.adjustments) ? data.adjustments : [];
   const runs: any[] = Array.isArray(data?.runs) ? data.runs : [];
+  const runsByAdj = (adjId: number) => runs.filter((r: any) => Number(r.adjustmentId) === Number(adjId));
   const periodicityLabel = (p: any) =>
     p === "quarterly" ? "ربع سنوي" : p === "semiannual" ? "نصف سنوي" : p === "annual" ? "سنوي" : "شهري";
   if (!lines.length && !adjustments.length) {
@@ -2280,12 +2342,13 @@ function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
                   <th className="px-3 py-2 text-start">الدورية</th>
                   <th className="px-3 py-2 text-end">الإجمالي</th>
                   <th className="px-3 py-2 text-start">الحالة</th>
+                  <th className="px-3 py-2 text-start">تعديل</th>
                 </tr>
               </thead>
               <tbody>
                 {adjustments.map((a: any) => (
                   <tr key={a.id} className="border-t">
-                    <td className="px-3 py-2">{a.description ?? a.nameAr ?? `تسوية #${a.id}`}</td>
+                    <td className="px-3 py-2">{a.description ?? a.nameAr ?? a.name ?? `تسوية #${a.id}`}</td>
                     <td className="px-3 py-2 font-mono" dir="ltr">{a.startDate ?? "—"}</td>
                     <td className="px-3 py-2 font-mono" dir="ltr">{a.endDate ?? "—"}</td>
                     <td className="px-3 py-2">{periodicityLabel(a.periodicity)}</td>
@@ -2299,6 +2362,14 @@ function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
                       )}>
                         {a.status === "active" ? "نشطة" : a.status === "completed" ? "مكتملة" : a.status ?? "—"}
                       </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      {["active", "completed"].includes(a.status) ? (
+                        <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]"
+                          onClick={() => openEdit(a, runsByAdj(a.id).length > 0)} data-testid={`button-edit-deferred-adj-${a.id}`}>
+                          تعديل
+                        </Button>
+                      ) : "—"}
                     </td>
                   </tr>
                 ))}
@@ -2337,7 +2408,16 @@ function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
                         {st === "posted" ? "مرحّل" : st === "draft" ? "مسودة" : st ?? "—"}
                       </span>
                     </td>
-                    <td className="px-3 py-2 font-mono" dir="ltr">{r.jeDocNumber ?? (r.journalEntryId != null ? "بدون رقم" : "—")}</td>
+                    <td className="px-3 py-2 font-mono" dir="ltr">
+                      {r.journalEntryId != null ? (
+                        <button type="button"
+                          className="text-primary underline underline-offset-2 hover:opacity-80 font-mono"
+                          onClick={() => setViewJeId(Number(r.journalEntryId))}
+                          data-testid={`link-deferred-je-${r.id}`}>
+                          {r.jeDocNumber ?? `QYD-${String(r.journalEntryId).padStart(4, "0")}`}
+                        </button>
+                      ) : "—"}
+                    </td>
                   </tr>
                   );
                 })}
@@ -2346,6 +2426,113 @@ function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
           </div>
         </div>
       )}
+
+      {/* ── حوار تعديل التسوية (المبلغ / التواريخ) مع إعادة التوزيع التلقائي ── */}
+      <Dialog open={!!editAdj} onOpenChange={o => { if (!o) setEditAdj(null); }}>
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>تعديل تسوية المصروف المرحّل</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">المبلغ الإجمالي (صافي بدون ضريبة)</Label>
+              <Input type="text" inputMode="decimal" dir="ltr" value={editTotal}
+                onChange={e => setEditTotal(e.target.value)}
+                data-testid="input-deferred-edit-total" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">تاريخ البداية</Label>
+                <DateField value={editStart} onChange={e => setEditStart(e.target.value)} disabled={!!editAdj?._hasRuns} />
+                {editAdj?._hasRuns && (
+                  <p className="text-[10px] text-muted-foreground mt-1">مقفول بعد توليد أول قيد</p>
+                )}
+              </div>
+              <div>
+                <Label className="text-xs">تاريخ النهاية</Label>
+                <DateField value={editEnd} onChange={e => setEditEnd(e.target.value)} />
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-5">
+              الأشهر المولَّدة بالفعل تبقى كما هي — المتبقي (المبلغ الجديد − المُحقَّق) يُعاد توزيعه تلقائياً على الأشهر المتبقية، وأي شهر مستحق يُولَّد قيده فوراً.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditAdj(null)}>إلغاء</Button>
+            <Button type="button" onClick={() => saveEdit.mutate()} disabled={saveEdit.isPending}
+              data-testid="button-save-deferred-edit">
+              {saveEdit.isPending ? "جارٍ الحفظ…" : "حفظ التعديل"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── حوار عرض قيد اليومية داخل الفاتورة ── */}
+      <Dialog open={viewJeId != null} onOpenChange={o => { if (!o) setViewJeId(null); }}>
+        <DialogContent className="max-w-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>
+              قيد اليومية {jeQ.data?.docNumber ?? (viewJeId != null ? `QYD-${String(viewJeId).padStart(4, "0")}` : "")}
+            </DialogTitle>
+          </DialogHeader>
+          {jeQ.isLoading ? (
+            <div className="text-sm text-muted-foreground py-6 text-center">جارٍ التحميل…</div>
+          ) : jeQ.error ? (
+            <div className="text-sm text-destructive py-6 text-center">{(jeQ.error as any)?.message ?? "خطأ"}</div>
+          ) : jeQ.data ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div><span className="text-muted-foreground">التاريخ: </span><span className="font-mono" dir="ltr">{jeQ.data.entryDate ?? "—"}</span></div>
+                <div>
+                  <span className="text-muted-foreground">الحالة: </span>
+                  <span className={cn(
+                    "inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium",
+                    jeQ.data.status === "posted"
+                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                      : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+                  )}>
+                    {jeQ.data.status === "posted" ? "مرحّل" : "مسودة"}
+                  </span>
+                </div>
+                <div className="col-span-3"><span className="text-muted-foreground">الوصف: </span>{jeQ.data.description ?? "—"}</div>
+              </div>
+              <div className="rounded-md border overflow-x-auto max-h-80 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-start">الحساب</th>
+                      <th className="px-3 py-2 text-start">البيان</th>
+                      <th className="px-3 py-2 text-end">مدين</th>
+                      <th className="px-3 py-2 text-end">دائن</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(Array.isArray(jeQ.data.lines) ? jeQ.data.lines : []).map((l: any) => (
+                      <tr key={l.id} className="border-t">
+                        <td className="px-3 py-2">{accLabel(l.accountId)}</td>
+                        <td className="px-3 py-2">{l.description ?? "—"}</td>
+                        <td className="px-3 py-2 text-end font-mono">{Number(l.debit) > 0 ? fmt(l.debit) : "—"}</td>
+                        <td className="px-3 py-2 text-end font-mono">{Number(l.credit) > 0 ? fmt(l.credit) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-muted/30 font-semibold">
+                    <tr className="border-t">
+                      <td className="px-3 py-2" colSpan={2}>الإجمالي</td>
+                      <td className="px-3 py-2 text-end font-mono">
+                        {fmt((Array.isArray(jeQ.data.lines) ? jeQ.data.lines : []).reduce((s: number, l: any) => s + (Number(l.debit) || 0), 0))}
+                      </td>
+                      <td className="px-3 py-2 text-end font-mono">
+                        {fmt((Array.isArray(jeQ.data.lines) ? jeQ.data.lines : []).reduce((s: number, l: any) => s + (Number(l.credit) || 0), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

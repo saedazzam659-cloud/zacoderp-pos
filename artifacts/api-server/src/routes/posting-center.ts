@@ -37,6 +37,7 @@ import {
   sisterTransfersTable, sisterReturnsTable, sisterSettlementsTable,
   sisterCompaniesTable,
   fixedAssetsTable, faDepreciationRunsTable,
+  accountingAdjustmentsTable, accountingAdjustmentRunsTable,
 } from "@workspace/db";
 import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -68,6 +69,7 @@ const MODULE_PERM_KEY: Record<string, string> = {
   payment_vouchers:  "payment_vouchers",
   journal_entries:   "journal_entries",
   monthly_adjustments: "journal_entries", // adjustment JEs gated under accounting
+  deferred_expenses:   "journal_entries", // invoice-sourced deferred-expense JEs
   goods_receipts:    "purchase_invoices", // GRNs gated under purchases module
   goods_deliveries:  "sales_invoices",    // delivery notes gated under sales module
   cash_transfers:    "cash_boxes",
@@ -100,6 +102,7 @@ const MODULES = [
   "payment_vouchers",
   "journal_entries",
   "monthly_adjustments",
+  "deferred_expenses",
   "goods_receipts",
   "goods_deliveries",
   "cash_transfers",
@@ -123,6 +126,7 @@ const MODULE_LABELS_AR: Record<ModuleKey, string> = {
   payment_vouchers:  "سندات الصرف",
   journal_entries:   "القيود المحاسبية",
   monthly_adjustments: "التسويات الشهرية",
+  deferred_expenses:   "المصروفات المرحلة (من الفواتير)",
   goods_receipts:    "إيصالات الاستلام",
   goods_deliveries:  "إذونات التسليم",
   cash_transfers:    "التحويلات النقدية",
@@ -193,7 +197,8 @@ async function listForModule(
     case "receipt_vouchers":  return listReceiptVouchers(req, cid, dateFrom, dateTo, branchIdRaw);
     case "payment_vouchers":  return listPaymentVouchers(req, cid, dateFrom, dateTo, branchIdRaw);
     case "journal_entries":   return listJournalEntries(req, cid, dateFrom, dateTo, branchIdRaw);
-    case "monthly_adjustments": return listMonthlyAdjustments(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "monthly_adjustments": return listAdjustmentJes("monthly_adjustments", req, cid, dateFrom, dateTo, branchIdRaw);
+    case "deferred_expenses":   return listAdjustmentJes("deferred_expenses",   req, cid, dateFrom, dateTo, branchIdRaw);
     case "goods_receipts":    return listGoodsReceipts(req, cid, dateFrom, dateTo, branchIdRaw);
     case "goods_deliveries":  return listGoodsDeliveries(req, cid, dateFrom, dateTo, branchIdRaw);
     case "cash_transfers":    return listCashTransfers(req, cid, dateFrom, dateTo, branchIdRaw);
@@ -362,7 +367,8 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
       case "receipt_vouchers":  rows = await listReceiptVouchers(req, cid, undefined, undefined, branchIdRaw);  break;
       case "payment_vouchers":  rows = await listPaymentVouchers(req, cid, undefined, undefined, branchIdRaw);  break;
       case "journal_entries":   rows = await listJournalEntries(req, cid, undefined, undefined, branchIdRaw);   break;
-      case "monthly_adjustments": rows = await listMonthlyAdjustments(req, cid, undefined, undefined, branchIdRaw); break;
+      case "monthly_adjustments": rows = await listAdjustmentJes("monthly_adjustments", req, cid, undefined, undefined, branchIdRaw); break;
+      case "deferred_expenses":   rows = await listAdjustmentJes("deferred_expenses",   req, cid, undefined, undefined, branchIdRaw); break;
       case "goods_receipts":    rows = await listGoodsReceipts(req, cid, undefined, undefined, branchIdRaw);    break;
       case "goods_deliveries":  rows = await listGoodsDeliveries(req, cid, undefined, undefined, branchIdRaw);  break;
       case "cash_transfers":    rows = await listCashTransfers(req, cid, undefined, undefined, branchIdRaw);    break;
@@ -838,12 +844,31 @@ async function listJournalEntries(
 // Same row shape as journal_entries — the id IS the JE id, so the frontend
 // posts/unposts through the journal-entries endpoints (unpost cascades:
 // deletes the run + JE and reactivates the adjustment month).
-async function listMonthlyAdjustments(
+// The engine serves TWO posting-center modules from the same JE pool:
+//   - "monthly_adjustments": manually-created adjustments (شاشة التسويات)
+//   - "deferred_expenses":   adjustments auto-minted by POSTING a purchase
+//     invoice containing «مصروف يوزع على فترات» lines (sourceType =
+//     'purchase_invoice' on the parent adjustment, linked via
+//     accounting_adjustment_runs.journal_entry_id).
+// Each JE appears in exactly ONE of the two (EXISTS split below) so the
+// "عرض الكل" aggregate never double-lists a row.
+const INVOICE_SOURCED_ADJ_JE = sql`EXISTS (
+  SELECT 1 FROM accounting_adjustment_runs r
+  JOIN accounting_adjustments a ON a.id = r.adjustment_id
+  WHERE r.journal_entry_id = ${journalEntriesTable.id}
+    AND a.source_type = 'purchase_invoice'
+)`;
+
+async function listAdjustmentJes(
+  module: "monthly_adjustments" | "deferred_expenses",
   req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
   const conds = [
     eq(journalEntriesTable.companyId, cid),
     inArray(journalEntriesTable.entryType, ADJUSTMENT_JE_TYPES),
+    module === "deferred_expenses"
+      ? INVOICE_SOURCED_ADJ_JE
+      : sql`NOT ${INVOICE_SOURCED_ADJ_JE}`,
     ...branchScopeSpread(req, journalEntriesTable.branchId, branchIdRaw),
   ];
   if (dateFrom) conds.push(gte(journalEntriesTable.entryDate, dateFrom));
@@ -869,10 +894,10 @@ async function listMonthlyAdjustments(
 
   return docs.map(d => ({
     id: d.id,
-    module: "monthly_adjustments",
+    module,
     docNumber: synthesizeDoc(d.id, d.docNumber),
     date: d.entryDate,
-    type: MODULE_LABELS_AR.monthly_adjustments,
+    type: MODULE_LABELS_AR[module],
     description: d.description,
     party: null,
     amount: totalMap.get(d.id) ?? 0,
