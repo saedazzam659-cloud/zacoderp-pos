@@ -2235,7 +2235,14 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                       // for a moment AFTER an account is picked — it ignores the
                       // mouse entirely (pointer-events-none) and fades out on
                       // its own, so it never interrupts data entry.
-                      return (
+                      // Two complementary hints, neither blocks data entry:
+                      //  1. post-pick flash (auto-fades, ignores the mouse)
+                      //  2. delayed HOVER tooltip — renders ONLY when an
+                      //     account is already selected, after a 500ms rest
+                      //     on the field, so it never pops up while the user
+                      //     is still searching/typing inside the combobox
+                      //     (Radix dismisses it on click/focus anyway).
+                      const picker = (
                         <div className="relative w-full">
                           {accountFlash?.lineId === line.id && accountFlash.field === "account" && a && (
                             <div
@@ -2265,6 +2272,17 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                             autoFocus={line.id === focusLineId}
                           />
                         </div>
+                      );
+                      if (!a) return picker;
+                      return (
+                        <TooltipProvider delayDuration={500}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>{picker}</TooltipTrigger>
+                            <TooltipContent side="top" align="end" className="max-w-xs p-3">
+                              {tip}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       );
                     })()}
 
@@ -2345,7 +2363,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                         <div className="text-xs text-muted-foreground">بدون مركز تكلفة</div>
                       );
                       // Same non-blocking flash treatment as the account picker.
-                      return (
+                      const ccPicker = (
                         <div className="relative w-full">
                           {accountFlash?.lineId === line.id && accountFlash.field === "cc" && c && (
                             <div
@@ -2371,6 +2389,17 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                             placeholder="— مركز التكلفة —"
                           />
                         </div>
+                      );
+                      if (!c) return ccPicker;
+                      return (
+                        <TooltipProvider delayDuration={500}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>{ccPicker}</TooltipTrigger>
+                            <TooltipContent side="top" align="end" className="max-w-xs p-3">
+                              {tip}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       );
                     })()}
 
