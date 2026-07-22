@@ -769,6 +769,7 @@ router.post("/:id/reschedule-draft-runs", async (req, res) => {
       const runs = await tx.select({
         runId:       accountingAdjustmentRunsTable.id,
         periodMonth: accountingAdjustmentRunsTable.periodMonth,
+        amount:      accountingAdjustmentRunsTable.amount,
         jeId:        accountingAdjustmentRunsTable.journalEntryId,
         jeStatus:    journalEntriesTable.status,
       }).from(accountingAdjustmentRunsTable)
@@ -818,11 +819,38 @@ router.post("/:id/reschedule-draft-runs", async (req, res) => {
           .where(eq(accountingAdjustmentRunsTable.id, p.runId));
       }
 
+      // AMOUNT CORRECTION: adjustments created under the old end-of-month
+      // scheme stored monthlyAmount = total / (schedule + 1) — e.g. 69,000
+      // over 6 anniversary installments was split by 7 → 9,857.14 with a
+      // dangling remainder. Re-spread the un-touchable remainder over the
+      // movable draft runs: remaining = totalAmount − Σ(immovable run
+      // amounts); each movable installment gets round2(remaining / n) and
+      // the LAST one absorbs the rounding delta so the balance closes to 0.
+      const r2 = (x: number) => Math.round(x * 100) / 100;
+      const totalAmt = Number(adj.totalAmount) || 0;
+      const applicableIds = new Set(applicable.map(p => p.runId));
+      const immovableSum = runs
+        .filter(r => !applicableIds.has(r.runId))
+        .reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const remaining = r2(totalAmt - immovableSum);
+      // Hard guard: never spread a negative remainder (historical drift /
+      // manual edits could push Σ(immovable) past the total) — that would
+      // write negative run amounts and negative JE lines.
+      if (applicable.length > 0 && remaining < 0) {
+        return { error: 409 as const,
+          message: "مجموع الأقساط المرحّلة يتجاوز إجمالي التسوية — راجع مبالغ القيود المرحّلة أولاً" };
+      }
+      const n = applicable.length;
+      const baseAmt = n > 0 ? r2(remaining / n) : 0;
+      const lastAmt = n > 0 ? r2(remaining - baseAmt * (n - 1)) : 0;
+
       const label = adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق";
-      const updated: { ym: string; jeId: number }[] = [];
-      for (const p of applicable) {
+      const updated: { ym: string; jeId: number; amount: string }[] = [];
+      for (let i = 0; i < applicable.length; i++) {
+        const p = applicable[i];
+        const amt = (i === applicable.length - 1 ? lastAmt : baseAmt).toFixed(2);
         await tx.update(accountingAdjustmentRunsTable)
-          .set({ periodMonth: p.newYm })
+          .set({ periodMonth: p.newYm, amount: amt })
           .where(eq(accountingAdjustmentRunsTable.id, p.runId));
         await tx.update(journalEntriesTable)
           .set({
@@ -832,17 +860,39 @@ router.post("/:id/reschedule-draft-runs", async (req, res) => {
             updatedAt:   new Date(),
           })
           .where(and(eq(journalEntriesTable.id, p.jeId), eq(journalEntriesTable.companyId, cid)));
+        // Rewrite both line amounts to the corrected installment. Target by
+        // the adjustment's OWN accounts (expense = debit line, contra =
+        // credit line) so a hand-edited draft with extra lines is never
+        // blanket-rewritten by a bare debit>0/credit>0 predicate.
         await tx.update(journalEntryLinesTable)
-          .set({ description: `قسط ${p.newYm} لـ ${adj.name}` })
-          .where(eq(journalEntryLinesTable.entryId, p.jeId));
-        updated.push({ ym: p.newYm, jeId: p.jeId });
+          .set({ description: `قسط ${p.newYm} لـ ${adj.name}`, debit: amt })
+          .where(and(
+            eq(journalEntryLinesTable.entryId, p.jeId),
+            eq(journalEntryLinesTable.accountId, adj.expenseAccountId),
+            sql`${journalEntryLinesTable.debit}::numeric > 0`));
+        await tx.update(journalEntryLinesTable)
+          .set({ description: `قسط ${p.newYm} لـ ${adj.name}`, credit: amt })
+          .where(and(
+            eq(journalEntryLinesTable.entryId, p.jeId),
+            eq(journalEntryLinesTable.accountId, adj.contraAccountId),
+            sql`${journalEntryLinesTable.credit}::numeric > 0`));
+        updated.push({ ym: p.newYm, jeId: p.jeId, amount: amt });
       }
 
-      return { error: null, updated, skipped };
+      // Keep the stored monthly installment in sync with the corrected
+      // spread so the list card + future generation show the right figure.
+      if (n > 0 && r2(Number(adj.monthlyAmount) || 0) !== baseAmt) {
+        await tx.update(accountingAdjustmentsTable)
+          .set({ monthlyAmount: baseAmt.toFixed(2), updatedAt: new Date() })
+          .where(eq(accountingAdjustmentsTable.id, id));
+      }
+
+      return { error: null, updated, skipped, monthly: n > 0 ? baseAmt.toFixed(2) : null };
     });
 
     if (result.error === 404) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
-    res.json({ ok: true, updated: result.updated, skipped: result.skipped });
+    if (result.error === 409) { res.status(409).json({ error: result.message }); return; }
+    res.json({ ok: true, updated: result.updated, skipped: result.skipped, monthly: result.monthly });
   } catch (e: any) { res.status(500).json({ error: "فشلت إعادة الجدولة: " + (e.message ?? "خطأ") }); }
 });
 

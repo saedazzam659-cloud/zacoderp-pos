@@ -387,9 +387,11 @@ export default function Adjustments() {
       const updated = d?.updated?.length ?? 0;
       const skipped: any[] = Array.isArray(d?.skipped) ? d.skipped : [];
       toast({
-        title: updated > 0 ? "تمت إعادة جدولة القيود" : "لا توجد قيود مسودة لإعادة جدولتها",
-        description: `عُدِّل ${updated} قيد${skipped.length > 0
-          ? ` — ${skipped.length} متخطّى (${skipped[0]?.reason ?? ""})` : ""}`,
+        title: updated > 0 ? "تمت إعادة جدولة القيود وتصحيح الأقساط" : "لا توجد قيود مسودة لإعادة جدولتها",
+        description: updated > 0
+          ? `عُدِّل ${updated} قيد${d?.monthly ? ` — القسط الشهري الجديد ${d.monthly}` : ""}${skipped.length > 0
+              ? ` — ${skipped.length} متخطّى (${skipped[0]?.reason ?? ""})` : ""}`
+          : `فك ترحيل القيود أولاً ثم أعد المحاولة${skipped.length > 0 ? ` (${skipped[0]?.reason ?? ""})` : ""}`,
         variant: updated > 0 ? undefined : "destructive",
       });
       qc.invalidateQueries({ queryKey: ["adjustments", cid] });
