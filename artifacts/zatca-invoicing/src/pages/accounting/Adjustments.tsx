@@ -645,11 +645,21 @@ export default function Adjustments() {
               </select>
             </Field>
             <Field label="المبلغ الإجمالي" required>
+              {/* type="text" + sanitizer (not type="number"): the native number
+                  input renders Arabic-Indic digits on Saudi-locale devices.
+                  This keeps Latin digits + the mobile decimal keypad. */}
               <Input
-                type="number" inputMode="decimal" step="0.01" min="0"
+                type="text" inputMode="decimal" dir="ltr"
                 value={form.totalAmount}
-                onChange={(e) => setForm(p => ({ ...p, totalAmount: e.target.value }))}
+                onChange={(e) => {
+                  const v = e.target.value
+                    .replace(/[٠-٩]/g, d => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+                    .replace(/[^0-9.]/g, "")
+                    .replace(/^(\d*\.?\d*).*/, "$1");
+                  setForm(p => ({ ...p, totalAmount: v }));
+                }}
                 placeholder="0.00"
+                className="text-left font-mono"
               />
             </Field>
             <Field label={editLocked ? "القسط الشهري الجديد (للأشهر المتبقية)" : "القسط الشهري المحسوب"}>
