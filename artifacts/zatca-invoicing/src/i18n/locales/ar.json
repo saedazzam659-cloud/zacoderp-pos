@@ -821,6 +821,7 @@
     "balanceSheet": "المركز المالي",
     "incomeStatement": "قائمة الدخل",
     "bankCashFlow": "تحليل حركة البنك (دفترياً)",
+    "cashFlowReport": "تقرير التدفقات النقدية",
     "forecastIncomeStatement": "قائمة دخل تقديرية (AI)",
     "taxDeclaration": "الإقرار الضريبي",
     "cashGroup": "النقد والبنوك",

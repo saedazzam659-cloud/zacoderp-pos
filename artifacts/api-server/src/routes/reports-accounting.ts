@@ -1447,4 +1447,210 @@ ${JSON.stringify(historical, null, 2)}
   }
 });
 
+// ─── Cash Flow Report (تقرير التدفقات النقدية) ────────────────────────────────
+// JE-based cash flow over the treasury accounts (cash boxes + bank accounts):
+// opening balance before the period, every posted JE line that touched a
+// treasury account inside the period (debit = inflow, credit = outflow), the
+// counter-account(s) on the other side of each entry, and the running balance.
+// Invoices are deliberately NOT read directly — only actual cash movements
+// recorded in journal entries count.
+router.get("/cash-flow", async (req: Request, res: Response) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const bid = getBid(req);
+    const { fromDate, toDate, accountId, currencyId, costCenterId } = req.query as Record<string, string | undefined>;
+
+    // 1) Treasury GL account set (cash boxes + bank accounts), optionally
+    //    narrowed to one picked GL account and/or one currency.
+    const curId = currencyId && Number(currencyId) > 0 ? Number(currencyId) : undefined;
+    const [boxes, banks] = await Promise.all([
+      db.select({
+        accountId: cashBoxesTable.accountId,
+        nameAr: cashBoxesTable.nameAr,
+        nameEn: cashBoxesTable.nameEn,
+        currencyId: cashBoxesTable.currencyId,
+      }).from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid)),
+      db.select({
+        accountId: bankAccountsTable.accountId,
+        nameAr: bankAccountsTable.nameAr,
+        nameEn: bankAccountsTable.nameEn,
+        currencyId: bankAccountsTable.currencyId,
+      }).from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid)),
+    ]);
+    type Treas = { kind: "cashbox" | "bank"; nameAr: string; nameEn: string | null };
+    const treasury = new Map<number, Treas>();
+    for (const b of boxes) {
+      if (typeof b.accountId !== "number") continue;
+      if (curId && b.currencyId !== curId) continue;
+      treasury.set(b.accountId, { kind: "cashbox", nameAr: b.nameAr, nameEn: b.nameEn });
+    }
+    for (const b of banks) {
+      if (typeof b.accountId !== "number") continue;
+      if (curId && b.currencyId !== curId) continue;
+      if (!treasury.has(b.accountId)) treasury.set(b.accountId, { kind: "bank", nameAr: b.nameAr, nameEn: b.nameEn });
+    }
+    // Full treasury set (ALL cash/bank GL accounts regardless of the picker /
+    // currency filter) — used ONLY to exclude treasury accounts from the
+    // counter-account column, so an internal transfer shows the other
+    // treasury side as its counterpart correctly.
+    const allTreasuryIds = new Set<number>();
+    for (const r of [...boxes, ...banks]) if (typeof r.accountId === "number") allTreasuryIds.add(r.accountId);
+
+    let scopedIds = Array.from(treasury.keys());
+    if (accountId && Number(accountId) > 0) {
+      scopedIds = scopedIds.filter(id => id === Number(accountId));
+    }
+    if (!scopedIds.length) {
+      res.json({ opening: 0, lines: [], totals: { inflows: 0, outflows: 0, net: 0, closing: 0 }, accounts: [] });
+      return;
+    }
+
+    // Optional cost-center scope (same token resolution as account-statement).
+    const ccIds = parseCostCenterIds(costCenterId);
+    const ccTokens = await resolveCostCenterTokens(cid, ccIds);
+    const ccLineFilter = ccTokens.length === 1
+      ? [eq(journalEntryLinesTable.costCenter, ccTokens[0])]
+      : ccTokens.length > 1
+      ? [inArray(journalEntryLinesTable.costCenter, ccTokens)]
+      : [];
+
+    // 2) Opening balance = Σ(debit − credit) strictly BEFORE fromDate.
+    let opening = 0;
+    if (fromDate) {
+      const prevFilters: any[] = [
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "posted"),
+        sql`${journalEntriesTable.entryDate} < ${fromDate}`,
+      ];
+      pushBranchScope(req, prevFilters, journalEntriesTable.branchId, bid);
+      const [prev] = await db
+        .select({
+          debit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
+          credit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`,
+        })
+        .from(journalEntryLinesTable)
+        .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+        .where(and(inArray(journalEntryLinesTable.accountId, scopedIds), ...prevFilters, ...ccLineFilter));
+      opening = Number(prev?.debit || 0) - Number(prev?.credit || 0);
+    }
+
+    // 3) Period movements on the treasury accounts.
+    const entryFilters: any[] = [
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
+    ];
+    pushBranchScope(req, entryFilters, journalEntriesTable.branchId, bid);
+    if (fromDate) entryFilters.push(gte(journalEntriesTable.entryDate, fromDate));
+    if (toDate)   entryFilters.push(lte(journalEntriesTable.entryDate, toDate));
+
+    const rows = await db
+      .select({
+        lineId:      journalEntryLinesTable.id,
+        entryId:     journalEntriesTable.id,
+        entryType:   journalEntriesTable.entryType,
+        docNumber:   journalEntriesTable.docNumber,
+        entryDate:   journalEntriesTable.entryDate,
+        description: sql<string>`COALESCE(${journalEntryLinesTable.description}, ${journalEntriesTable.description}, '')`,
+        debit:       journalEntryLinesTable.debit,
+        credit:      journalEntryLinesTable.credit,
+        accountId:   journalEntryLinesTable.accountId,
+      })
+      .from(journalEntryLinesTable)
+      .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .where(and(inArray(journalEntryLinesTable.accountId, scopedIds), ...entryFilters, ...ccLineFilter))
+      .orderBy(asc(journalEntriesTable.entryDate), asc(journalEntriesTable.id), asc(journalEntryLinesTable.id));
+
+    // 4) Counter-account(s) per entry: every OTHER account on the entries we
+    //    touched, split by side, excluding ALL treasury accounts so the
+    //    counterpart is the real economic account (revenue/expense/AR/AP…).
+    //    For internal treasury transfers the other side IS a treasury account,
+    //    so we fall back to it when nothing else exists.
+    const entryIds = Array.from(new Set(rows.map(r => r.entryId)));
+    type CounterLine = { accountId: number; label: string; debit: number; credit: number; isTreasury: boolean };
+    const entryLines = new Map<number, CounterLine[]>(); // entryId → all its account lines
+    if (entryIds.length) {
+      const others = await db
+        .select({
+          entryId:   journalEntryLinesTable.entryId,
+          accountId: journalEntryLinesTable.accountId,
+          debit:     journalEntryLinesTable.debit,
+          credit:    journalEntryLinesTable.credit,
+          code:      accountsTable.code,
+          nameAr:    accountsTable.nameAr,
+          nameEn:    accountsTable.nameEn,
+        })
+        .from(journalEntryLinesTable)
+        .innerJoin(accountsTable, eq(accountsTable.id, journalEntryLinesTable.accountId))
+        .where(inArray(journalEntryLinesTable.entryId, entryIds));
+      for (const o of others) {
+        if (o.accountId == null || o.entryId == null) continue;
+        const arr = entryLines.get(o.entryId) ?? [];
+        arr.push({
+          accountId: o.accountId,
+          label: `${o.code} — ${o.nameAr}`,
+          debit: Number(o.debit || 0),
+          credit: Number(o.credit || 0),
+          isTreasury: allTreasuryIds.has(o.accountId),
+        });
+        entryLines.set(o.entryId, arr);
+      }
+    }
+    /** Row-aware counterpart resolution: prefer OPPOSITE-side non-treasury
+     *  accounts; if none exist (internal treasury transfer), fall back to the
+     *  opposite-side treasury account(s); the current row's own account is
+     *  never its own counterpart. */
+    const countersFor = (entryId: number, selfAccountId: number, isInflow: boolean): string[] => {
+      const all = (entryLines.get(entryId) ?? []).filter(l => l.accountId !== selfAccountId);
+      const opposite = all.filter(l => (isInflow ? l.credit > 0 : l.debit > 0));
+      const pick = (list: CounterLine[]) => {
+        const seen = new Set<string>(); const out: string[] = [];
+        for (const l of list) if (!seen.has(l.label)) { seen.add(l.label); out.push(l.label); }
+        return out;
+      };
+      const nonTreasuryOpp = opposite.filter(l => !l.isTreasury);
+      if (nonTreasuryOpp.length) return pick(nonTreasuryOpp);
+      if (opposite.length)       return pick(opposite);          // internal transfer → other treasury side
+      const nonTreasuryAny = all.filter(l => !l.isTreasury);
+      return pick(nonTreasuryAny.length ? nonTreasuryAny : all); // degenerate single-sided entries
+    };
+
+    // 5) Assemble: debit on a treasury account = inflow (وارد), credit = outflow.
+    let inflows = 0, outflows = 0;
+    const lines = rows.map(r => {
+      const debit  = Number(r.debit  || 0);
+      const credit = Number(r.credit || 0);
+      inflows  += debit;
+      outflows += credit;
+      const acc = treasury.get(r.accountId as number);
+      return {
+        lineId: r.lineId,
+        entryId: r.entryId,
+        entryType: r.entryType,
+        docNumber: r.docNumber,
+        date: r.entryDate,
+        description: r.description,
+        accountId: r.accountId,
+        accountKind: acc?.kind ?? "cashbox",
+        accountName: acc?.nameAr ?? "",
+        accountNameEn: acc?.nameEn ?? null,
+        counterAccounts: countersFor(r.entryId, r.accountId as number, debit > 0).slice(0, 4),
+        inflow: debit,
+        outflow: credit,
+      };
+    });
+
+    const net = inflows - outflows;
+    res.json({
+      opening,
+      lines,
+      totals: { inflows, outflows, net, closing: opening + net },
+      accounts: scopedIds.map(id => ({ accountId: id, ...treasury.get(id)! })),
+    });
+  } catch (e: any) {
+    (req as any).log?.error?.({ err: e?.message }, "cash-flow report failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

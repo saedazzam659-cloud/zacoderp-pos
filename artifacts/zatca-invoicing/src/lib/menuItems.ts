@@ -412,6 +412,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/accounting/reports/balance-sheet", label: "المركز المالي", report: true },
       { path: "/accounting/reports/income-statement", label: "قائمة الدخل", report: true },
       { path: "/accounting/reports/bank-cash-flow", label: "تحليل حركة البنك (دفترياً)", report: true },
+      { path: "/accounting/reports/cash-flow", label: "تقرير التدفقات النقدية", report: true },
       { path: "/accounting/reports/forecast-income-statement", label: "قائمة دخل تقديرية (AI)", report: true },
       { path: "/accounting/reports/tax-declaration", label: "الإقرار الضريبي", report: true },
     ],
