@@ -1055,6 +1055,10 @@ export default function JournalEntryForm() {
   // Same-tick double-submit guard (Enter + click can both fire before the
   // isPending re-render lands). Reset in onSettled.
   const savingRef = useRef(false);
+  // Transient per-line account-info flash (replaces the old blocking hover
+  // tooltip on the account picker) — cleared automatically after ~2.6s.
+  const [accountFlash, setAccountFlash] = useState<{ lineId: string; field: "account" | "cc" } | null>(null);
+  const accountFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // ── فك الترحيل والتحويل إلى مسودة — flips the posted JE back to draft
   //    KEEPING the same document number (unpost→edit→re-post cycle). The
   //    server cascades adjustment-run bookkeeping etc.; source-document JEs
@@ -2225,27 +2229,42 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                       ) : (
                         <div className="text-xs text-muted-foreground">لم يتم اختيار حساب بعد</div>
                       );
+                      // Non-blocking hint: the old hover Tooltip opened OVER the
+                      // picker while the user was still choosing and got in the
+                      // way. Instead we flash a small info card above the field
+                      // for a moment AFTER an account is picked — it ignores the
+                      // mouse entirely (pointer-events-none) and fades out on
+                      // its own, so it never interrupts data entry.
                       return (
-                        <TooltipProvider delayDuration={250}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className="w-full">
-                                <AccountCombobox
-                                  value={line.accountId}
-                                  onValueChange={v => updateLine(line.id, "accountId", v)}
-                                  placeholder="بحث بالكود أو الاسم..."
-                                  grouped={false}
-                                  allowEmpty
-                                  emptyLabel="— اختر الحساب —"
-                                  autoFocus={line.id === focusLineId}
-                                />
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" align="start" className="max-w-xs p-3">
+                        <div className="relative w-full">
+                          {accountFlash?.lineId === line.id && accountFlash.field === "account" && a && (
+                            <div
+                              className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 max-w-xs rounded-lg border border-primary/20 bg-popover/95 p-3 shadow-lg backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-200"
+                              data-testid={`account-flash-${line.id}`}
+                            >
                               {tip}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
+                            </div>
+                          )}
+                          <AccountCombobox
+                            value={line.accountId}
+                            onValueChange={v => {
+                              updateLine(line.id, "accountId", v);
+                              // Flash the picked account's details briefly.
+                              if (accountFlashTimer.current) clearTimeout(accountFlashTimer.current);
+                              if (v) {
+                                setAccountFlash({ lineId: line.id, field: "account" });
+                                accountFlashTimer.current = setTimeout(() => setAccountFlash(null), 2600);
+                              } else {
+                                setAccountFlash(null);
+                              }
+                            }}
+                            placeholder="بحث بالكود أو الاسم..."
+                            grouped={false}
+                            allowEmpty
+                            emptyLabel="— اختر الحساب —"
+                            autoFocus={line.id === focusLineId}
+                          />
+                        </div>
                       );
                     })()}
 
@@ -2325,24 +2344,33 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                       ) : (
                         <div className="text-xs text-muted-foreground">بدون مركز تكلفة</div>
                       );
+                      // Same non-blocking flash treatment as the account picker.
                       return (
-                        <TooltipProvider delayDuration={250}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className="w-full">
-                                <SearchCombobox
-                                  items={costCenterOptions}
-                                  value={ccCode(line.costCenter)}
-                                  onValueChange={(v) => updateLine(line.id, "costCenter", v)}
-                                  placeholder="— مركز التكلفة —"
-                                />
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" align="start" className="max-w-xs p-3">
+                        <div className="relative w-full">
+                          {accountFlash?.lineId === line.id && accountFlash.field === "cc" && c && (
+                            <div
+                              className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 max-w-xs rounded-lg border border-primary/20 bg-popover/95 p-3 shadow-lg backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-200"
+                              data-testid={`cc-flash-${line.id}`}
+                            >
                               {tip}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
+                            </div>
+                          )}
+                          <SearchCombobox
+                            items={costCenterOptions}
+                            value={ccCode(line.costCenter)}
+                            onValueChange={(v) => {
+                              updateLine(line.id, "costCenter", v);
+                              if (accountFlashTimer.current) clearTimeout(accountFlashTimer.current);
+                              if (v) {
+                                setAccountFlash({ lineId: line.id, field: "cc" });
+                                accountFlashTimer.current = setTimeout(() => setAccountFlash(null), 2600);
+                              } else {
+                                setAccountFlash(null);
+                              }
+                            }}
+                            placeholder="— مركز التكلفة —"
+                          />
+                        </div>
                       );
                     })()}
 
