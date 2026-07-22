@@ -1917,9 +1917,31 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         creditLines.push(...expCredits);
       }
       creditLines.push({ accountId: discountAccId, credit: discountAmount, description: "خصم مكتسب" });
+    } else if (inv.paymentType === "cash" || inv.paymentType === "bank") {
+      // CASH/BANK invoices pass through the supplier's AP account so كشف حساب
+      // المورد shows BOTH legs (الاستحقاق ثم السداد) instead of nothing:
+      //   Cr supplier AP  (استحقاق الفاتورة)
+      //   Dr supplier AP  (سدادها فوراً)
+      //   Cr cash box / bank (خروج النقدية)
+      // The two AP legs net to zero, so supplier balances are unaffected.
+      // If the supplier has no ledger account, fall back to the old direct credit.
+      const supplierApAccId = await getSupplierAccountId(cid, inv.supplierId);
+      if (supplierApAccId) {
+        creditLines.push(
+          { accountId: supplierApAccId, credit: totalAmount, description: "مستحقات المورد" },
+          { accountId: supplierApAccId, debit:  totalAmount, description: inv.paymentType === "cash" ? "سداد نقدي للمورد" : "سداد بنكي للمورد" } as JLine,
+          { accountId: counterpartyAccountId, credit: totalAmount, description: inv.paymentType === "cash" ? "صرف نقدي" : "صرف بنكي" },
+          { accountId: discountAccId, credit: discountAmount, description: "خصم مكتسب" },
+        );
+      } else {
+        creditLines.push(
+          { accountId: counterpartyAccountId, credit: totalAmount, description: inv.paymentType === "cash" ? "صرف نقدي" : "صرف بنكي" },
+          { accountId: discountAccId, credit: discountAmount, description: "خصم مكتسب" },
+        );
+      }
     } else {
       creditLines.push(
-        { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : inv.paymentType === "bank" ? "صرف بنكي" : "مستحقات المورد" },
+        { accountId: counterpartyAccountId,  credit: totalAmount,    description: "مستحقات المورد" },
         { accountId: discountAccId,          credit: discountAmount, description: "خصم مكتسب" },
       );
     }

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { bankAccountsTable, branchesTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
+import { bankAccountsTable, branchesTable, receiptVouchersTable, paymentVouchersTable, journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import { eq, and, sql, or, isNull, inArray, arrayOverlaps } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -104,34 +104,64 @@ router.get("/balances", async (req, res) => {
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
   const branchCond = branchOrNullScope(req);
-  const banks = await db.select({ id: bankAccountsTable.id })
+  const banks = await db.select({ id: bankAccountsTable.id, accountId: bankAccountsTable.accountId })
     .from(bankAccountsTable)
     .where(branchCond
       ? and(eq(bankAccountsTable.companyId, cid), branchCond)
       : eq(bankAccountsTable.companyId, cid));
 
-  const [recv, paid] = await Promise.all([
-    db.select({
-      bankAccountId: receiptVouchersTable.bankAccountId,
-      total: sql<string>`coalesce(sum(${receiptVouchersTable.amount}),0)`,
-    }).from(receiptVouchersTable)
-      .where(and(eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")))
-      .groupBy(receiptVouchersTable.bankAccountId),
+  // GL-BASED balance (the source of truth): sum(debit - credit) over POSTED
+  // journal-entry lines on each bank's ledger account. This matches كشف حساب
+  // البنك exactly — it captures openings, manual JEs, bank-paid invoices and
+  // vouchers alike. Banks are ASSET accounts, so debit increases the balance
+  // (the previous receipts-minus-payments voucher math missed everything that
+  // wasn't a voucher and could even show the balance reversed/negative).
+  const glAccIds = banks.map(b => b.accountId).filter((a): a is number => a != null);
+  const glRows = glAccIds.length === 0 ? [] : await db
+    .select({
+      accountId: journalEntryLinesTable.accountId,
+      net: sql<string>`coalesce(sum(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}),0)`,
+    })
+    .from(journalEntryLinesTable)
+    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+    .where(and(
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
+      inArray(journalEntryLinesTable.accountId, glAccIds),
+    ))
+    .groupBy(journalEntryLinesTable.accountId);
+  const glMap = new Map<number, number>(glRows.map(r => [r.accountId!, parseFloat(r.net)]));
 
-    db.select({
-      bankAccountId: paymentVouchersTable.bankAccountId,
-      total: sql<string>`coalesce(sum(${paymentVouchersTable.amount}),0)`,
-    }).from(paymentVouchersTable)
-      .where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")))
-      .groupBy(paymentVouchersTable.bankAccountId),
-  ]);
+  // Fallback for banks with NO ledger account yet: legacy voucher math
+  // (posted receipt vouchers − posted payment vouchers).
+  const needFallback = banks.some(b => b.accountId == null);
+  let recvMap: Record<number, number> = {};
+  let paidMap: Record<number, number> = {};
+  if (needFallback) {
+    const [recv, paid] = await Promise.all([
+      db.select({
+        bankAccountId: receiptVouchersTable.bankAccountId,
+        total: sql<string>`coalesce(sum(${receiptVouchersTable.amount}),0)`,
+      }).from(receiptVouchersTable)
+        .where(and(eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")))
+        .groupBy(receiptVouchersTable.bankAccountId),
 
-  const recvMap = Object.fromEntries(recv.map(r => [r.bankAccountId!, parseFloat(r.total)]));
-  const paidMap = Object.fromEntries(paid.map(r => [r.bankAccountId!, parseFloat(r.total)]));
+      db.select({
+        bankAccountId: paymentVouchersTable.bankAccountId,
+        total: sql<string>`coalesce(sum(${paymentVouchersTable.amount}),0)`,
+      }).from(paymentVouchersTable)
+        .where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")))
+        .groupBy(paymentVouchersTable.bankAccountId),
+    ]);
+    recvMap = Object.fromEntries(recv.map(r => [r.bankAccountId!, parseFloat(r.total)]));
+    paidMap = Object.fromEntries(paid.map(r => [r.bankAccountId!, parseFloat(r.total)]));
+  }
 
   res.json(banks.map(b => ({
     bankAccountId: b.id,
-    balance: (recvMap[b.id] ?? 0) - (paidMap[b.id] ?? 0),
+    balance: b.accountId != null
+      ? (glMap.get(b.accountId) ?? 0)
+      : (recvMap[b.id] ?? 0) - (paidMap[b.id] ?? 0),
   })));
 });
 

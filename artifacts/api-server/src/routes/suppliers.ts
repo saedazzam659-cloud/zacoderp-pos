@@ -73,6 +73,10 @@ router.get("/balances", async (req, res) => {
         eq(purchaseInvoicesTable.companyId, companyId),
         eq(purchaseInvoicesTable.status, "posted"),
         sql`${purchaseInvoicesTable.lcId} IS NULL`,
+        // Cash/bank invoices are paid on the spot (the JE credits the cash box
+        // or bank, and the AP pass-through legs net to zero) — they must NOT
+        // inflate the supplier's payable balance. Only CREDIT invoices accrue.
+        sql`coalesce(${purchaseInvoicesTable.paymentType}, 'credit') NOT IN ('cash','bank')`,
       ))
       .groupBy(purchaseInvoicesTable.supplierId),
 

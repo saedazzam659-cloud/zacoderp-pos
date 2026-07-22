@@ -155,3 +155,4 @@
 - [Report route perm scope](report-route-perm-scope.md) — report endpoint inside another module's router must register BEFORE the router-level gate with its own accounting_reports gate.
 - [Deferred-expense invoice plan](deferred-expense-invoice-plan.md) — ccSplit canonical {costCenterId,pct} end-to-end + tenant-validate at /post; process-local single-flight post lock; amount = finalCost||lineTotal||qty×unitPrice.
 - [Web local scan agent](web-local-scan-agent.md) — downloadable bat+embedded-PS WIA bridge on 127.0.0.1:27345; split marker must be built dynamically, origin allow-list (never ACAO:*), PNA header on preflight, base64 stays localhost-side.
+- [Cash/bank invoice AP pass-through](cash-bank-invoice-ap-passthrough.md) — cash/bank purchase JE must CR+DR supplier AP (paired statement lines net zero); bank widget = GL-based; exclude cash/bank from /suppliers/balances accrual; repost old docs.

@@ -43,6 +43,7 @@ export default function SupplierStatement() {
 
   const TYPE_LABEL: Record<string, string> = {
     invoice: t("purchasingReports.supplierStatement.type.invoice"),
+    invoice_payment: "سداد فاتورة",
     return:  t("purchasingReports.supplierStatement.type.return"),
     payment: t("purchasingReports.supplierStatement.type.payment"),
   };
@@ -51,6 +52,7 @@ export default function SupplierStatement() {
    *  Distinct from TYPE_LABEL (which is just the generic word). */
   const DOC_TYPE_LABEL: Record<string, string> = {
     invoice: "فاتورة مشتريات",
+    invoice_payment: "سداد فاتورة",
     return:  "مرتجع مشتريات",
     payment: "سند صرف",
   };
@@ -62,7 +64,12 @@ export default function SupplierStatement() {
   const docTypeLabelFor = (l: any): string => {
     const base = DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type);
     if (l.type === "invoice" || l.type === "return") {
-      return `${base} - ${l.paymentType === "cash" ? "نقدًا" : "أجل"}`;
+      return `${base} - ${l.paymentType === "cash" ? "نقدًا" : l.paymentType === "bank" ? "بنكيًا" : "أجل"}`;
+    }
+    if (l.type === "invoice_payment") {
+      if (l.channel === "cashbox") return `${base} - نقدي`;
+      if (l.channel === "bank")    return `${base} - بنكي`;
+      return base;
     }
     if (l.type === "payment") {
       if (l.channel === "cashbox") return `${base} - نقدي`;

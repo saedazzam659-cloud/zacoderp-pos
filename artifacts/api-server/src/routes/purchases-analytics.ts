@@ -396,7 +396,9 @@ router.get("/supplier-statement", async (req, res) => {
       eq(purchaseInvoicesTable.companyId, cid),
       eq(purchaseInvoicesTable.supplierId, sid),
       eq(purchaseInvoicesTable.status, "posted"),
-      eq(purchaseInvoicesTable.paymentType, "credit"),
+      // Credit invoices accrue; CASH/BANK invoices are shown as TWO paired
+      // lines (invoice credit + immediate payment debit) so the statement
+      // documents the paid-on-the-spot purchase without changing the balance.
       // LC-linked invoices excluded from supplier statement (paid via LC).
       sql`${purchaseInvoicesTable.lcId} IS NULL`,
     ];
@@ -417,6 +419,7 @@ router.get("/supplier-statement", async (req, res) => {
       journalEntryNumber: journalEntriesTable.docNumber,
       total: purchaseInvoicesTable.totalAmount,
       notes: purchaseInvoicesTable.notes,
+      paymentType: purchaseInvoicesTable.paymentType,
     }).from(purchaseInvoicesTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, purchaseInvoicesTable.journalEntryId))
       .where(and(...invConds));
@@ -539,7 +542,23 @@ router.get("/supplier-statement", async (req, res) => {
     const lines: Line[] = [
       // Invoice "الشرح" loads from the purchase invoice itself: the user-typed
       // header note when present, otherwise the item name(s) on the invoice.
-      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: (i.supplierInvoiceNumber && String(i.supplierInvoiceNumber).trim()) ? String(i.supplierInvoiceNumber).trim() : i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—"), paymentType: "credit" })),
+      ...invs.flatMap(i => {
+        const docNo = (i.supplierInvoiceNumber && String(i.supplierInvoiceNumber).trim()) ? String(i.supplierInvoiceNumber).trim() : i.docNumber;
+        const desc  = (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—");
+        const base  = { id: i.id, docNumber: docNo, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, date: i.date };
+        const invoiceLine = { ...base, type: "invoice", debit: 0, credit: Number(i.total), description: desc, paymentType: i.paymentType ?? "credit" };
+        if (i.paymentType === "cash" || i.paymentType === "bank") {
+          // Paid-on-the-spot invoice → paired settlement line (net zero).
+          const payLine = {
+            ...base, type: "invoice_payment", debit: Number(i.total), credit: 0,
+            description: i.paymentType === "cash" ? "سداد نقدي — فاتورة مشتريات" : "سداد بنكي — فاتورة مشتريات",
+            paymentType: i.paymentType,
+            channel: (i.paymentType === "cash" ? "cashbox" : "bank") as "cashbox" | "bank",
+          };
+          return [invoiceLine, payLine];
+        }
+        return [invoiceLine];
+      }),
       ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes), paymentType: "credit" })),
       ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: voucherDesc(p.description, p.notes), channel: voucherChannel(p.cashBoxId, p.bankAccountId) })),
       // Manual / direct JE rows: show the actual journal-line text the user
