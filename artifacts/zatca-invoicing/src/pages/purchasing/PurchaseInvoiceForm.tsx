@@ -309,7 +309,7 @@ export default function PurchaseInvoiceForm() {
   // lets the warehouse auto-fill / broadcast effects skip service lines and lets
   // the line grid hide the warehouse + batch + expiry inputs for them.
   const isServiceLine = (l: { itemId: string }) =>
-    (inventoryItems as any[]).some((i: any) => String(i.id) === l.itemId && i.itemType === "service");
+    (inventoryItems as any[]).some((i: any) => String(i.id) === l.itemId && (i.itemType === "service" || i.itemType === "prepaid_expense"));
   // فئات الأصناف — line routing per group categoryType (asset/expense = no stock move)
   const { data: itemGroupsList = [] } = useQuery<any[]>({
     queryKey: ["item-groups", cid],
@@ -639,7 +639,7 @@ export default function PurchaseInvoiceForm() {
     }
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
-      const isService = item.itemType === "service";
+      const isService = item.itemType === "service" || item.itemType === "prepaid_expense";
       const updated: InvoiceLine = {
         ...l,
         itemId:    String(item.id),

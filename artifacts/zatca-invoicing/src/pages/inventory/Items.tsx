@@ -1125,7 +1125,7 @@ function AIAssistDialog({
             <Row keyName="vatRate"     label={t("pages.items.vatRate")}          current={form.vatRate}    suggested={draft.suggestedVatRate !== null ? `${draft.suggestedVatRate}%` : null} />
             <Row keyName="groupId"     label={t("pages.items.group")}            current={(groups as any[]).find((g: any) => String(g.id) === String(form.groupId))?.nameAr} suggested={draft.suggestedGroup} />
             <Row keyName="unitId"      label={t("pages.items.baseUnit")}         current={(units  as any[]).find((u: any) => String(u.id) === String(form.unitId))?.nameAr}  suggested={draft.suggestedUnit} />
-            <Row keyName="itemType"    label={t("pages.items.itemType")}         current={form.itemType === "stock" ? t("pages.items.stock") : form.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : t("pages.items.service")}
+            <Row keyName="itemType"    label={t("pages.items.itemType")}         current={form.itemType === "stock" ? t("pages.items.stock") : form.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : form.itemType === "prepaid_expense" ? t("pages.items.prepaidExpense") : t("pages.items.service")}
                  suggested={draft.suggestedItemType === "stock" ? t("pages.items.stock") : draft.suggestedItemType === "service" ? t("pages.items.service") : null} />
 
             {draft.tags && draft.tags.length > 0 && (
@@ -1265,7 +1265,11 @@ export default function Items() {
   function handleEdit(item: any) {
     setForm({
       ...item,
-      groupId: item.groupId ?? "", unitId: item.unitId ?? "",
+      // String coercion is REQUIRED: SearchCombobox option values are strings
+      // (String(g.id)), so a numeric groupId never matches → picker shows the
+      // placeholder on reopen even though the group IS saved.
+      groupId: item.groupId != null ? String(item.groupId) : "",
+      unitId:  item.unitId  != null ? String(item.unitId)  : "",
       costPrice: item.costPrice ?? "0", salePrice: item.salePrice ?? "0",
       vatRate: item.vatRate ?? "15", reorderLevel: item.reorderLevel ?? "0",
       maxLevel: item.maxLevel ?? "",
@@ -1289,6 +1293,16 @@ export default function Items() {
       setActiveItemTab("accounts");
       toast({ title: t("inventoryMaster.items.serviceAccountsRequired"), variant: "destructive" });
       return;
+    }
+    // Prepaid-expense items (مصروف مقدم): no stock; expense routing needs the
+    // item's cost account UNLESS the linked group carries a default cost account.
+    if (form.itemType === "prepaid_expense" && !form.costAccountId) {
+      const g = (groups as any[]).find((x: any) => String(x.id) === String(form.groupId));
+      if (!g?.costAccountId) {
+        setActiveItemTab("accounts");
+        toast({ title: t("inventoryMaster.items.prepaidCostAccountRequired"), variant: "destructive" });
+        return;
+      }
     }
     const payload = {
       ...form,
@@ -1344,7 +1358,7 @@ export default function Items() {
     nameAr:       it.nameAr,
     nameEn:       it.nameEn ?? "",
     barcode:      it.barcode ?? "",
-    itemType:     it.itemType === "stock" ? t("pages.items.stock") : it.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : t("pages.items.service"),
+    itemType:     it.itemType === "stock" ? t("pages.items.stock") : it.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : it.itemType === "prepaid_expense" ? t("pages.items.prepaidExpense") : t("pages.items.service"),
     groupName:    pickName(it.group?.nameAr, it.group?.nameEn),
     unitName:     pickName(it.unit?.nameAr, it.unit?.nameEn),
     costPrice:    fmt(it.costPrice),
@@ -1452,10 +1466,10 @@ export default function Items() {
                 <Field label={t("pages.items.nameAr")} required><Input placeholder={t("pages.items.nameAr")} value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} /></Field>
                 <Field label={t("pages.items.nameEn")}><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
                 <Field label={t("pages.items.barcode")}><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
-                <Field label={t("pages.items.itemType")} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceNoStockHint") : undefined}>
-                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }, { value: "fixed_asset", label: t("pages.items.fixedAsset") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" ? { itemNature: "merchandise", batchTrackingMode: "none", reorderLevel: "0", maxLevel: "", expiryDate: "", costMethod: "weighted_avg" } : {}) }))} placeholder={t("pages.items.itemType")} />
+                <Field label={t("pages.items.itemType")} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceNoStockHint") : form.itemType === "prepaid_expense" ? t("inventoryMaster.items.prepaidNoStockHint") : undefined}>
+                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }, { value: "fixed_asset", label: t("pages.items.fixedAsset") }, { value: "prepaid_expense", label: t("pages.items.prepaidExpense") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" || v === "prepaid_expense" ? { itemNature: "merchandise", batchTrackingMode: "none", reorderLevel: "0", maxLevel: "", expiryDate: "", costMethod: "weighted_avg" } : {}) }))} placeholder={t("pages.items.itemType")} />
                 </Field>
-                {form.itemType !== "service" && (
+                {form.itemType !== "service" && form.itemType !== "prepaid_expense" && (
                 <Field label={t("inventoryMaster.items.natureFieldLabel")} hint={t("inventoryMaster.items.natureFieldHint")}>
                   <SearchCombobox
                     items={[
@@ -1479,7 +1493,7 @@ export default function Items() {
                     return (
                       <div className="mt-1 rounded-md bg-muted/50 border px-2 py-1 text-[11px] text-muted-foreground">
                         <span className="font-medium">{t("inventoryMaster.itemGroups.categoryType")}: </span>
-                        {t(`inventoryMaster.itemGroups.type${sg.categoryType === "inventory" ? "Inventory" : sg.categoryType === "fixed_asset" ? "FixedAsset" : "Expense"}`) as string}
+                        {t(`inventoryMaster.itemGroups.type${sg.categoryType === "inventory" ? "Inventory" : sg.categoryType === "fixed_asset" ? "FixedAsset" : sg.categoryType === "deferred_expense" ? "DeferredExpense" : "Expense"}`) as string}
                         {sg.accountId ? <span> · {t("inventoryMaster.itemGroups.linkedAccount")} #{sg.accountId}</span> : null}
                       </div>
                     );
@@ -1515,7 +1529,7 @@ export default function Items() {
                   <Field label={t("pages.items.salePriceLabel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></Field>
                   <Field label={t("pages.items.vatRate")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></Field>
                   {/* Costing method is inventory valuation only — irrelevant for SERVICE items (no stock). */}
-                  {form.itemType !== "service" && (
+                  {form.itemType !== "service" && form.itemType !== "prepaid_expense" && (
                   <Field label={t("pages.items.costMethod")}>
                     <SearchCombobox items={[{ value: "weighted_avg", label: t("pages.items.weightedAvg") }, { value: "last_cost", label: t("pages.items.lastCost") }]} value={form.costMethod} onValueChange={v => setForm((p: any) => ({ ...p, costMethod: v }))} placeholder={t("pages.items.costMethodPlaceholder")} />
                   </Field>
@@ -1558,7 +1572,7 @@ export default function Items() {
                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("pages.items.controlData")}</p>
                 <FormGrid cols={3}>
                   {/* Reorder / max-stock are stock-planning fields — hidden for SERVICE items. */}
-                  {form.itemType !== "service" && (<>
+                  {form.itemType !== "service" && form.itemType !== "prepaid_expense" && (<>
                   <Field label={t("pages.items.reorderLevel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></Field>
                   <Field label={t("pages.items.maxStockLevel")}><Input type="number" step="any" placeholder={t("pages.items.optional")} dir="ltr" className="text-left" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></Field>
                   </>)}
@@ -1585,7 +1599,7 @@ export default function Items() {
                 </div>
               </div>
               {/* Expiry + batch tracking are inventory-only — hidden for SERVICE items (SAP parity). */}
-              {form.itemType !== "service" && (<>
+              {form.itemType !== "service" && form.itemType !== "prepaid_expense" && (<>
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("inventoryMaster.items.expiryDateSectionTitle")}</p>
                 <FormGrid>
@@ -1625,7 +1639,7 @@ export default function Items() {
             </TabsContent>
             <TabsContent value="accounts" className="mt-0">
               <FormGrid cols={3}>
-                <Field label={t("pages.items.costAccount")} required={form.itemType === "service"} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceAccountsRequired") : undefined}>
+                <Field label={t("pages.items.costAccount")} required={form.itemType === "service" || form.itemType === "prepaid_expense"} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceAccountsRequired") : form.itemType === "prepaid_expense" ? t("inventoryMaster.items.prepaidCostAccountRequired") : undefined}>
                   <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder={t("pages.items.chooseCostAccount")} filterTypes={["expense", "asset"]} grouped={false} />
                 </Field>
                 <Field label={t("pages.items.revenueAccount")} required={form.itemType === "service"} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceAccountsRequired") : undefined}>
@@ -1877,7 +1891,7 @@ export default function Items() {
                       <td className="px-4 py-3 text-center">
                         <div className="flex flex-col items-center gap-1">
                           <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : it.itemType === "fixed_asset" ? "bg-amber-50 text-amber-700" : "bg-purple-50 text-purple-700")}>
-                            {it.itemType === "stock" ? t("pages.items.stock") : it.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : t("pages.items.service")}
+                            {it.itemType === "stock" ? t("pages.items.stock") : it.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : it.itemType === "prepaid_expense" ? t("pages.items.prepaidExpense") : t("pages.items.service")}
                           </span>
                           {(() => {
                             const nat = (it.itemNature ?? "merchandise") as string;

@@ -642,7 +642,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // helper lets the warehouse auto-fill / broadcast effects skip service lines
   // and lets the line grid hide the warehouse picker for them.
   const isServiceLine = (l: { itemId: string }) =>
-    (inventoryItems as any[]).some((i: any) => String(i.id) === l.itemId && i.itemType === "service");
+    (inventoryItems as any[]).some((i: any) => String(i.id) === l.itemId && (i.itemType === "service" || i.itemType === "prepaid_expense"));
   useEffect(() => {
     if (isNew || headerWarehouseId) return;
     const firstWh = lines.find(l => l.warehouseId)?.warehouseId;
@@ -1081,7 +1081,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         itemName:  item.nameAr ?? "",
         itemCode:  item.code   ?? "",
         // Service items never hit inventory → never inherit a warehouse.
-        warehouseId: item.itemType === "service" ? "" : l.warehouseId,
+        warehouseId: (item.itemType === "service" || item.itemType === "prepaid_expense") ? "" : l.warehouseId,
         unitId:    chosenUnitId ? String(chosenUnitId) : "",
         unit:      chosenUnitName,
         conversionFactor: String(chosenFactor),

@@ -351,6 +351,22 @@ router.get("/item-groups", async (req, res) => {
 
 // ── التوجيه المحاسبي: normalize + validate routing fields from the body ──
 const GROUP_CATEGORY_TYPES = new Set(["inventory", "fixed_asset", "expense", "deferred_expense"]);
+
+// Default cost/revenue accounts (حساب التكلفة/الإيراد الافتراضي) on a group:
+// optional, but when provided the account must exist within THIS tenant.
+async function parseGroupDefaultAccounts(cid: number, body: any): Promise<{ costAccountId: number | null; revenueAccountId: number | null; error?: string }> {
+  const parse = (v: any) => (v != null && v !== "" ? Number(v) : null);
+  const costAccountId    = parse(body?.costAccountId);
+  const revenueAccountId = parse(body?.revenueAccountId);
+  for (const [label, accId] of [["حساب التكلفة الافتراضي", costAccountId], ["حساب الإيراد الافتراضي", revenueAccountId]] as const) {
+    if (accId == null) continue;
+    if (!Number.isInteger(accId) || accId <= 0) return { costAccountId: null, revenueAccountId: null, error: `${label} غير صالح` };
+    const [acc] = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, accId), eq(accountsTable.companyId, cid)));
+    if (!acc) return { costAccountId: null, revenueAccountId: null, error: `${label} غير موجود ضمن شجرة حسابات الشركة` };
+  }
+  return { costAccountId, revenueAccountId };
+}
 // سلوك الربط المحاسبي (خانة واحدة، مثل شاشة المستودعات):
 //  - المستخدم اختار حساباً من الشجرة (accountId) → تُربط الفئة عليه مباشرة، بدون إنشاء أي حساب.
 //  - لم يختر شيئاً → النظام يحلّ الحساب الأب الافتراضي حسب نوع الفئة ويُنشئ
@@ -453,9 +469,12 @@ router.post("/item-groups", async (req, res) => {
     accountId = await ensureItemGroupAccountAuto(cid, String(nameAr).trim(), routing.categoryType);
     if (!accountId) { res.status(400).json({ error: "تعذّر تحديد الحساب الأب الافتراضي لهذا النوع — اختر الحساب من شجرة الحسابات يدوياً" }); return; }
   }
+  const defAccounts = await parseGroupDefaultAccounts(cid, req.body);
+  if (defAccounts.error) { res.status(400).json({ error: defAccounts.error }); return; }
   const [row] = await db.insert(itemGroupsTable).values({
     companyId: cid, code, nameAr, nameEn,
     categoryType: routing.categoryType, parentAccountId: routing.parentAccountId, accountId,
+    costAccountId: defAccounts.costAccountId, revenueAccountId: defAccounts.revenueAccountId,
   }).returning();
   res.status(201).json(row);
 });
@@ -504,9 +523,12 @@ router.put("/item-groups/:id", async (req, res) => {
     // Routing removed entirely → clear it (legacy behavior restored).
     accountId = null;
   }
+  const defAccounts = await parseGroupDefaultAccounts(cid, req.body);
+  if (defAccounts.error) { res.status(400).json({ error: defAccounts.error }); return; }
   const [row] = await db.update(itemGroupsTable).set({
     code, nameAr, nameEn,
     categoryType: routing.categoryType, parentAccountId: routing.parentAccountId, accountId,
+    costAccountId: defAccounts.costAccountId, revenueAccountId: defAccounts.revenueAccountId,
   }).where(and(eq(itemGroupsTable.id, id), eq(itemGroupsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
@@ -2833,7 +2855,7 @@ router.get("/alerts", async (req, res) => {
     .groupBy(itemsTable.id, itemsTable.code, itemsTable.nameAr, itemsTable.nameEn, itemsTable.reorderLevel, itemsTable.itemType);
 
   const lowStock = balRows
-    .filter(r => r.itemType !== "service")
+    .filter(r => r.itemType !== "service" && r.itemType !== "prepaid_expense")
     .map(r => ({
       itemId:       Number(r.itemId),
       code:         r.code,
@@ -2936,7 +2958,7 @@ router.post("/import/items", async (req, res) => {
         companyId: cid, code, nameAr,
         nameEn:       r.nameEn       != null && r.nameEn   !== "" ? String(r.nameEn)   : null,
         barcode:      r.barcode      != null && r.barcode  !== "" ? String(r.barcode)  : null,
-        itemType:     ((r.itemType === "service" || r.itemType === "fixed_asset") ? r.itemType : "stock") as any,
+        itemType:     ((r.itemType === "service" || r.itemType === "fixed_asset" || r.itemType === "prepaid_expense") ? r.itemType : "stock") as any,
         groupId, unitId,
         costPrice:    String(Number(r.costPrice    ?? 0) || 0),
         salePrice:    String(Number(r.salePrice    ?? 0) || 0),

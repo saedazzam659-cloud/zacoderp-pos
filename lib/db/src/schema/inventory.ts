@@ -9,7 +9,7 @@ import { suppliersTable } from "./suppliers";
 import { branchesTable } from "./branches";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
-export const itemTypeEnum       = pgEnum("item_type",        ["stock", "service", "fixed_asset"]);
+export const itemTypeEnum       = pgEnum("item_type",        ["stock", "service", "fixed_asset", "prepaid_expense"]);
 // "طبيعة الصنف" — distinguishes raw materials / semi-finished / finished
 // goods / consumables / merchandise so manufacturing screens can filter
 // the inventory item picker (e.g. show only raw materials when picking

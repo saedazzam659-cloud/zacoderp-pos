@@ -11,3 +11,6 @@ Rules:
 - /post pre-validation must parseCcSplit + verify every id belongs to the tenant (present-but-invalid split blocks posting with an explicit message, no silent null).
 - **Post race**: /post has many sequential writes without one tx — guarded by a process-local `Set` single-flight lock (api-server is single-process) + per-line skip when `deferredAdjustmentId` already set. Unpost deletes the adjustment and nulls the link, so repost re-creates cleanly.
 - **Amount basis is qty-aware**: `finalCost || lineTotal || qty*unitPrice` — bare `unitPrice` ignores quantity.
+- **itemType `prepaid_expense` (مصروف مقدم)** exists in the `item_type` pg enum; it must be treated as NON-STOCK everywhere `itemType === "service"` is checked — backend purchase post, sales invoice post, sales return post, and the purchase/sales form line helpers. Adding another non-stock type means touching ALL of those spots (grep `=== "service"` in routes + forms).
+- **Item-group default cost/revenue accounts** are persisted by the group POST/PUT via `parseGroupDefaultAccounts` (tenant-validated); the deferred posting expense fallback is `item.costAccountId ?? group.costAccountId`.
+- **Combobox id trap**: SearchCombobox option values are strings — edit-loaders must `String()` numeric ids (groupId/unitId) or the picker shows the placeholder even though the value IS saved.

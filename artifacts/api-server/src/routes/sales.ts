@@ -1210,7 +1210,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       typeById.set(r.id, (r.type ?? "stock") as string);
       revAccById.set(r.id, r.revAcc ?? null);
     }
-    const isServiceLine = (l: any) => !!l.itemId && typeById.get(l.itemId) === "service";
+    const isServiceLine = (l: any) => { if (!l.itemId) return false; const t = typeById.get(l.itemId); return t === "service" || t === "prepaid_expense"; };
 
     // Guard: every stock-affecting (item-bearing) line must specify a warehouse.
     // SERVICE items (خدمي) never touch stock, so they are EXEMPT — a pure
@@ -2329,7 +2329,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       retModeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
       retTypeById.set(r.id, (r.type ?? "stock") as string);
     }
-    const isServiceLine = (l: any) => !!l.itemId && retTypeById.get(l.itemId) === "service";
+    const isServiceLine = (l: any) => { if (!l.itemId) return false; const t = retTypeById.get(l.itemId); return t === "service" || t === "prepaid_expense"; };
 
     const noWh = lines.filter(l => l.itemId && !l.warehouseId && !isServiceLine(l));
     if (noWh.length) {

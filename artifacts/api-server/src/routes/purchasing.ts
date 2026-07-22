@@ -1389,7 +1389,13 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     const itemTypeById = new Map<number, string>();
     const costAccById  = new Map<number, number | null>();
     for (const r of itemMetaRows) { itemTypeById.set(r.id, (r.type ?? "stock") as string); costAccById.set(r.id, r.costAcc ?? null); }
-    const isServiceLine = (l: any) => !!l.itemId && itemTypeById.get(l.itemId) === "service";
+    // prepaid_expense (مصروف مقدم) items behave like services here: no stock
+    // movement, cost routed to item.costAccountId (unless group routing wins).
+    const isServiceLine = (l: any) => {
+      if (!l.itemId) return false;
+      const t = itemTypeById.get(l.itemId);
+      return t === "service" || t === "prepaid_expense";
+    };
 
     // ── فئات الأصناف (item-group accounting routing) ─────────────────────
     // A group with categoryType + accountId routes its items' purchase debit:
