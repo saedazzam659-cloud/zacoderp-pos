@@ -32,7 +32,7 @@ import { getReceivingClearingAccountId } from "./goodsReceipts.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { normalizePeriodicity, parseCcSplit, installmentsBetween } from "../lib/adjustmentPosting.js";
+import { normalizePeriodicity, parseCcSplit, installmentsBetween, runDueAdjustmentsForCompany } from "../lib/adjustmentPosting.js";
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
@@ -1306,6 +1306,17 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     }).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (lines !== undefined) {
+      // Capture existing deferred-adjustment links BEFORE the wholesale line
+      // rebuild — an unpost→edit cycle keeps the linked adjustments alive
+      // (their periodic JEs are drafts holding their docNumbers), so the
+      // link must survive the delete+reinsert or re-posting would mint a
+      // duplicate adjustment. Matched back by itemId (first unclaimed).
+      const oldDeferredLinks = (await db.select({
+        itemId: purchaseInvoiceLinesTable.itemId,
+        deferredAdjustmentId: purchaseInvoiceLinesTable.deferredAdjustmentId,
+      }).from(purchaseInvoiceLinesTable)
+        .where(and(eq(purchaseInvoiceLinesTable.invoiceId, id), sql`${purchaseInvoiceLinesTable.deferredAdjustmentId} IS NOT NULL`))
+      ).filter(r => r.deferredAdjustmentId != null);
       await db.delete(purchaseInvoiceLinesTable).where(eq(purchaseInvoiceLinesTable.invoiceId, id));
       if (lines.length) {
         const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
@@ -1335,6 +1346,28 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             ...deferredLineFields(l),
           }))
         );
+        // Re-attach the surviving deferred-adjustment links: for each old
+        // link, claim the FIRST re-inserted deferred line of the same item
+        // that has no link yet. Lines whose item was removed simply drop the
+        // link (the orphaned adjustment stays manageable from its screen).
+        for (const link of oldDeferredLinks) {
+          if (link.itemId == null) continue;
+          const [cand] = await db.select({ id: purchaseInvoiceLinesTable.id })
+            .from(purchaseInvoiceLinesTable)
+            .where(and(
+              eq(purchaseInvoiceLinesTable.invoiceId, id),
+              eq(purchaseInvoiceLinesTable.itemId, link.itemId),
+              sql`${purchaseInvoiceLinesTable.deferredAdjustmentId} IS NULL`,
+              sql`${purchaseInvoiceLinesTable.deferredStartDate} IS NOT NULL`,
+            ))
+            .orderBy(asc(purchaseInvoiceLinesTable.id))
+            .limit(1);
+          if (cand) {
+            await db.update(purchaseInvoiceLinesTable)
+              .set({ deferredAdjustmentId: link.deferredAdjustmentId })
+              .where(eq(purchaseInvoiceLinesTable.id, cand.id));
+          }
+        }
       }
     }
     res.json(inv);
@@ -1947,7 +1980,76 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       }
     }
 
-    res.json(updated);
+    // ── Auto-run the deferred adjustments right after posting (نفس شغل
+    // "تشغيل التسويات المستحقة"): the user must NOT need to visit the
+    // adjustments screen to generate/post the due monthly entries.
+    // Repost case first: an unpost→edit→repost cycle left the previously
+    // generated periodic JEs as DRAFTS that KEPT their docNumbers — flip
+    // them back to posted BEFORE running the engine so only those legacy
+    // drafts are flipped (newly generated months keep honoring the
+    // company's auto-post setting inside runDueAdjustmentsForCompany).
+    const adjustmentRunWarnings: string[] = [];
+    {
+      const sourceLinkedAdjs = await db.select({ id: accountingAdjustmentsTable.id, name: accountingAdjustmentsTable.name, status: accountingAdjustmentsTable.status })
+        .from(accountingAdjustmentsTable)
+        .where(and(
+          eq(accountingAdjustmentsTable.companyId, cid),
+          eq(accountingAdjustmentsTable.sourceType, "purchase_invoice"),
+          eq(accountingAdjustmentsTable.sourceId, inv.id),
+        ));
+      if (sourceLinkedAdjs.length) {
+        // Only adjustments STILL referenced by a current invoice line are
+        // reactivated/run. An unpost→edit cycle that removed a deferred line
+        // leaves its adjustment source-linked but line-orphaned — running it
+        // would keep posting a plan the user deleted, so orphans get
+        // CANCELLED instead (rows + their draft run JEs stay for audit).
+        const lineLinked = await db.select({ adjId: purchaseInvoiceLinesTable.deferredAdjustmentId })
+          .from(purchaseInvoiceLinesTable)
+          .where(and(
+            eq(purchaseInvoiceLinesTable.invoiceId, inv.id),
+            sql`${purchaseInvoiceLinesTable.deferredAdjustmentId} IS NOT NULL`,
+          ));
+        const lineLinkedIds = new Set(lineLinked.map(r => r.adjId).filter((x): x is number => typeof x === "number"));
+        const activeIds = sourceLinkedAdjs.filter(a => lineLinkedIds.has(a.id)).map(a => a.id);
+        const orphanIds = sourceLinkedAdjs.filter(a => !lineLinkedIds.has(a.id) && a.status !== "cancelled").map(a => a.id);
+        if (orphanIds.length) {
+          await db.update(accountingAdjustmentsTable)
+            .set({ status: "cancelled", autoGenerate: false, updatedAt: new Date() })
+            .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, orphanIds)));
+          req.log?.warn({ invoiceId: inv.id, orphanIds }, "post-invoice: cancelled line-orphaned deferred adjustments");
+        }
+        if (activeIds.length) {
+          // Unfreeze: unpost set autoGenerate=false to keep the hourly
+          // scheduler away while the invoice was a draft — restore it now.
+          await db.update(accountingAdjustmentsTable)
+            .set({ autoGenerate: true, updatedAt: new Date() })
+            .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, activeIds)));
+          const runRows = await db.select({ jeId: accountingAdjustmentRunsTable.journalEntryId })
+            .from(accountingAdjustmentRunsTable)
+            .where(inArray(accountingAdjustmentRunsTable.adjustmentId, activeIds));
+          const runJeIds = runRows.map(r => r.jeId).filter((x): x is number => typeof x === "number");
+          if (runJeIds.length) {
+            await db.update(journalEntriesTable)
+              .set({ status: "posted", updatedAt: new Date() })
+              .where(and(
+                eq(journalEntriesTable.companyId, cid),
+                inArray(journalEntriesTable.id, runJeIds),
+                eq(journalEntriesTable.status, "draft"),
+              ));
+          }
+          for (const adjId of activeIds) {
+            try { await runDueAdjustmentsForCompany(cid, req as any, adjId); }
+            catch (err: any) {
+              req.log?.warn({ adjId, err: err?.message }, "post-invoice: auto-run adjustment failed");
+              const nm = sourceLinkedAdjs.find(a => a.id === adjId)?.name || `#${adjId}`;
+              adjustmentRunWarnings.push(`تعذّر توليد/ترحيل قيود التسوية «${nm}»: ${err?.message || "خطأ غير معروف"}`);
+            }
+          }
+        }
+      }
+    }
+
+    res.json(adjustmentRunWarnings.length ? { ...updated, adjustmentRunWarnings } : updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
   finally { if (__lockKey) __postingLocks.delete(__lockKey); }
 });
@@ -2000,14 +2102,40 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
         .where(inArray(accountingAdjustmentRunsTable.adjustmentId, adjIds))
         .limit(1);
       if (runRows.length) {
-        res.status(409).json({ error: "لا يمكن إلغاء الترحيل: توجد قيود دورية مُنشأة من المصروفات الموزعة على فترات المرتبطة بهذه الفاتورة — احذف/ألغِ قيود التسوية الدورية أولاً من شاشة قيود التسوية." });
-        return;
+        // Runs exist → do NOT block and do NOT delete anything. Flip every
+        // generated periodic JE to DRAFT while KEEPING its docNumber and its
+        // run row (per explicit user requirement: the JE sequence must be
+        // preserved across an unpost→edit→repost cycle). The adjustments and
+        // the line links are kept too, so re-posting the invoice never mints
+        // duplicates — it just flips these drafts back to posted.
+        const allRuns = await db.select({ jeId: accountingAdjustmentRunsTable.journalEntryId })
+          .from(accountingAdjustmentRunsTable)
+          .where(inArray(accountingAdjustmentRunsTable.adjustmentId, adjIds));
+        const runJeIds = allRuns.map(r => r.jeId).filter((x): x is number => typeof x === "number");
+        if (runJeIds.length) {
+          await db.update(journalEntriesTable)
+            .set({ status: "draft", updatedAt: new Date() })
+            .where(and(
+              eq(journalEntriesTable.companyId, cid),
+              inArray(journalEntriesTable.id, runJeIds),
+            ));
+        }
+        // Freeze the engines while the invoice sits as a draft: the hourly
+        // adj-auto scheduler would otherwise keep generating+posting NEW
+        // months for these adjustments. Re-posting restores autoGenerate
+        // for the line-linked ones before it calls the run engine.
+        await db.update(accountingAdjustmentsTable)
+          .set({ autoGenerate: false, updatedAt: new Date() })
+          .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, adjIds)));
+      } else {
+        // Run-less adjustments are safe to delete — re-posting recreates
+        // them fresh from the (possibly edited) line plans.
+        await db.update(purchaseInvoiceLinesTable)
+          .set({ deferredAdjustmentId: null })
+          .where(and(eq(purchaseInvoiceLinesTable.invoiceId, id), inArray(purchaseInvoiceLinesTable.deferredAdjustmentId, adjIds)));
+        await db.delete(accountingAdjustmentsTable)
+          .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, adjIds)));
       }
-      await db.update(purchaseInvoiceLinesTable)
-        .set({ deferredAdjustmentId: null })
-        .where(and(eq(purchaseInvoiceLinesTable.invoiceId, id), inArray(purchaseInvoiceLinesTable.deferredAdjustmentId, adjIds)));
-      await db.delete(accountingAdjustmentsTable)
-        .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, adjIds)));
     }
 
     // GRN-sourced invoices never touched stock (the GRN did), so there's

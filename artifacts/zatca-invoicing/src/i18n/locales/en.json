@@ -4562,7 +4562,12 @@
     },
     "purchaseInvoiceForm": {
       "back": "Back",
-      "postedReadOnly": "This invoice is POSTED — read-only. To edit it, unpost it first from the invoice list (admin only).",
+      "postedReadOnly": "This invoice is POSTED — read-only. To edit it, unpost it first (admin only).",
+      "unpostButton": "Unpost — back to draft",
+      "unposting": "Unposting...",
+      "unpostConfirm": "Unpost this invoice? It will return to an editable draft, and any linked prepaid-expense periodic JEs will flip to drafts keeping their document numbers until it is re-posted.",
+      "unposted": "Unposted — the invoice is now an editable draft",
+      "unpostFailed": "Unpost failed",
       "newTitle": "New Purchase Invoice",
       "editTitle": "Edit Invoice #{{id}}",
       "subtitle": "Create a purchase invoice with LC expense loading",

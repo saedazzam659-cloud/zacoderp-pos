@@ -828,12 +828,37 @@ export default function PurchaseInvoiceForm() {
         ? (isNew ? tr("createdAndPosted") : tr("savedAndPosted"))
         : (isNew ? tr("createdDraft") : tr("savedDraft"))
       });
+      // الترحيل نجح لكن توليد قيود التسوية الدورية (المصروف المقدم) فشل —
+      // نبّه المستخدم بدل ما يفترض إن القيود الشهرية اتولّدت.
+      if (Array.isArray(saved?.adjustmentRunWarnings) && saved.adjustmentRunWarnings.length) {
+        for (const w of saved.adjustmentRunWarnings) {
+          toast({ title: String(w), variant: "destructive" });
+        }
+      }
       // ابقَ داخل الفاتورة بعد الحفظ (بدل الرجوع للقائمة) حتى يقدر
       // المستخدم يستخدم تبويب «السداد» مباشرة. فاتورة جديدة → افتحها
       // في وضع التعديل بالمعرّف المحفوظ.
       if (isNew && saved?.id) {
         navigate(`/purchasing/invoices/${saved.id}`);
       }
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // فك ترحيل الفاتورة من داخل الشاشة نفسها (بدل الرجوع لقائمة الفواتير):
+  // يعيدها إلى مسودة، ويحوّل القيود الدورية المرتبطة (المصروف المقدم) إلى
+  // مسودات محتفظة بأرقامها التسلسلية لحين إعادة الترحيل.
+  const unpostMut = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API}/api/purchasing/purchase-invoices/${editId}/unpost`, { method: "PATCH", headers });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || tr("unpostFailed"));
+      return j;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
+      qc.invalidateQueries({ queryKey: ["purchase-invoice", editId] });
+      toast({ title: tr("unposted") });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -1185,6 +1210,19 @@ export default function PurchaseInvoiceForm() {
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm flex items-center gap-2">
           <Lock className="h-4 w-4" />
           <span>{tr("postedReadOnly")}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ms-auto shrink-0 border-amber-400 text-amber-900 hover:bg-amber-100"
+            disabled={unpostMut.isPending}
+            onClick={() => {
+              if (window.confirm(tr("unpostConfirm"))) unpostMut.mutate();
+            }}
+            data-testid="button-unpost-invoice"
+          >
+            {unpostMut.isPending ? tr("unposting") : tr("unpostButton")}
+          </Button>
         </div>
       )}
       <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={(v) => setActiveTab(v as any)} dir={isRtl ? "rtl" : "ltr"}>
