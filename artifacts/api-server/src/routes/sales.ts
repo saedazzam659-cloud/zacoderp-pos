@@ -1519,6 +1519,15 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
       : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
       : await getCustomerAccountId(cid, inv.customerId);
+    // AR pass-through (mirrors the supplier AP pass-through on purchases):
+    // cash/bank invoices route the sale THROUGH the customer's receivable
+    // account (DR AR + CR AR collection leg + DR cash/bank) so the turnover
+    // and the immediate collection both show on the customer's ledger.
+    // Falls back to the old direct debit when the customer has no GL account.
+    const invCustomerArAccId =
+      (inv.paymentType === "cash" || inv.paymentType === "bank")
+        ? await getCustomerAccountId(cid, inv.customerId)
+        : null;
     if (!partyAccountId) {
       res.status(400).json({ error:
         inv.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
@@ -1533,6 +1542,22 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     if (vatAmt > 0 && !taxAccId) {
       res.status(400).json({ error: "لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)" }); return;
     }
+
+    // Debit-side lines shared by both JE shapes (GDN-sourced and normal):
+    // credit invoices → single DR customer AR; cash/bank WITH a customer GL
+    // account → AR pass-through trio; cash/bank WITHOUT one → legacy direct
+    // DR cash/bank (statement pairing still shows; GL AR untouched).
+    const collectionDesc = inv.paymentType === "cash" ? "تحصيل نقدي من العميل" : "تحصيل بنكي من العميل";
+    const partyDebitLines =
+      (inv.paymentType === "cash" || inv.paymentType === "bank") && invCustomerArAccId
+        ? [
+            { accountId: invCustomerArAccId, debit: totalAmt,  description: "ذمم العميل (فاتورة نقدية/بنكية)" },
+            { accountId: invCustomerArAccId, credit: totalAmt, description: collectionDesc },
+            { accountId: partyAccountId,     debit: totalAmt,  description: inv.paymentType === "cash" ? "تحصيل نقدي" : "تحصيل بنكي" },
+          ]
+        : [
+            { accountId: partyAccountId, debit: totalAmt, description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
+          ];
 
     let journalId: number | null = null;
     {
@@ -1556,16 +1581,16 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       description: `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`,
       lines: gdnSourced
         ? [
-            // Dr Customer/Cash/Bank @ total
-            { accountId: partyAccountId,         debit: totalAmt,                              description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
+            // Dr Customer/Cash/Bank @ total (AR pass-through for cash/bank)
+            ...partyDebitLines,
             // Cr VAT Output (still booked separately — operator can claim it)
             { accountId: taxAccId,               credit: vatAmt,                               description: "ضريبة القيمة المضافة (مخرجات)", costCenter: null },
             // Cr Delivery Clearing (replaces revenue + inventory credits)
             { accountId: deliveryClearingAccId!, credit: totalAmt - vatAmt,                    description: "تسوية وسيط تسليم البضاعة" },
           ]
         : [
-            // Debits
-            { accountId: partyAccountId,        debit: totalAmt,    description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
+            // Debits (AR pass-through for cash/bank invoices)
+            ...partyDebitLines,
             { accountId: discountAccId, debit: discountAmt, description: "خصم مسموح به" },
             // COGS only when there is cost (stock items); SERVICE-only invoices skip it.
             ...(totalCogs > 0 ? [{ accountId: cogsAccId, debit: totalCogs, description: "تكلفة البضاعة المباعة" }] : []),
@@ -2601,6 +2626,13 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
       : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId)
       : await getCustomerAccountId(cid, ret.customerId);
+    // AR pass-through (mirrors purchases): cash/bank returns route through
+    // the customer's receivable account (CR AR + DR AR refund leg + CR
+    // cash/bank) so the return AND the cash refund both show on the ledger.
+    const retCustomerArAccId =
+      (ret.paymentType === "cash" || ret.paymentType === "bank")
+        ? await getCustomerAccountId(cid, ret.customerId)
+        : null;
     if (!partyAccountId) {
       res.status(400).json({ error:
         ret.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
@@ -2644,8 +2676,19 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
               description: `زيادة المخزون (مرتجع) — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
             };
           }),
-        // Credits (reversed from the original sale)
-        { accountId: partyAccountId,    credit: totalAmt,    description: ret.paymentType === "cash" ? "رد نقدي" : ret.paymentType === "bank" ? "رد بنكي" : "تخفيض ذمم العميل" },
+        // Credits (reversed from the original sale) — AR pass-through for
+        // cash/bank returns: CR AR (reduce receivable) + DR AR (refund leg)
+        // + CR cash/bank; falls back to old direct credit when the customer
+        // has no GL account.
+        ...((ret.paymentType === "cash" || ret.paymentType === "bank") && retCustomerArAccId
+          ? [
+              { accountId: retCustomerArAccId, credit: totalAmt, description: "تخفيض رصيد العميل بالمرتجع" },
+              { accountId: retCustomerArAccId, debit: totalAmt,  description: ret.paymentType === "cash" ? "رد نقدي للعميل" : "رد بنكي للعميل" },
+              { accountId: partyAccountId,     credit: totalAmt, description: ret.paymentType === "cash" ? "رد نقدي" : "رد بنكي" },
+            ]
+          : [
+              { accountId: partyAccountId, credit: totalAmt, description: ret.paymentType === "cash" ? "رد نقدي" : ret.paymentType === "bank" ? "رد بنكي" : "تخفيض ذمم العميل" },
+            ]),
         { accountId: discountAccId,     credit: discountAmt, description: "عكس خصم مسموح به (مرتجع)" },
         { accountId: cogsAccId,         credit: totalCogs,   description: "عكس تكلفة البضاعة المباعة" },
       ],

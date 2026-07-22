@@ -94,7 +94,9 @@ export default function CustomerStatement() {
 
   const TYPE_LABEL: Record<string, string> = {
     invoice: tr("typeInvoice"),
+    invoice_receipt: "تحصيل فاتورة",
     return:  tr("typeReturn"),
+    return_refund: "رد مرتجع",
     receipt: tr("typeReceipt"),
   };
 
@@ -102,7 +104,9 @@ export default function CustomerStatement() {
    *  Distinct from TYPE_LABEL (which is just the generic word). */
   const DOC_TYPE_LABEL: Record<string, string> = {
     invoice: "فاتورة مبيعات",
+    invoice_receipt: "تحصيل فاتورة",
     return:  "مرتجع مبيعات",
+    return_refund: "رد مرتجع",
     receipt: "سند قبض",
   };
 
@@ -113,9 +117,9 @@ export default function CustomerStatement() {
   const docTypeLabelFor = (l: any): string => {
     const base = DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type);
     if (l.type === "invoice" || l.type === "return") {
-      return `${base} - ${l.paymentType === "cash" ? "نقدًا" : "أجل"}`;
+      return `${base} - ${l.paymentType === "cash" ? "نقدًا" : l.paymentType === "bank" ? "بنكيًا" : "أجل"}`;
     }
-    if (l.type === "receipt") {
+    if (l.type === "receipt" || l.type === "invoice_receipt" || l.type === "return_refund") {
       if (l.channel === "cashbox") return `${base} - نقدي`;
       if (l.channel === "bank")    return `${base} - بنكي`;
     }

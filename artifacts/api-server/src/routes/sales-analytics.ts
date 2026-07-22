@@ -360,7 +360,6 @@ router.get("/customer-statement", async (req, res) => {
       eq(salesInvoicesTable.companyId, cid),
       eq(salesInvoicesTable.customerId, ccid),
       eq(salesInvoicesTable.status, "posted"),
-      eq(salesInvoicesTable.paymentType, "credit"),
     ];
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
@@ -375,6 +374,7 @@ router.get("/customer-statement", async (req, res) => {
       journalEntryNumber: journalEntriesTable.docNumber,
       total: salesInvoicesTable.totalAmount,
       notes: salesInvoicesTable.notes,
+      paymentType: salesInvoicesTable.paymentType,
     }).from(salesInvoicesTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, salesInvoicesTable.journalEntryId))
       .where(and(...invConds));
@@ -410,7 +410,6 @@ router.get("/customer-statement", async (req, res) => {
       eq(salesReturnsTable.companyId, cid),
       eq(salesReturnsTable.customerId, ccid),
       eq(salesReturnsTable.status, "posted"),
-      eq(salesReturnsTable.paymentType, "credit"),
     ];
     pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
@@ -422,6 +421,7 @@ router.get("/customer-statement", async (req, res) => {
       journalEntryNumber: journalEntriesTable.docNumber,
       total: salesReturnsTable.totalAmount,
       notes: salesReturnsTable.notes,
+      paymentType: salesReturnsTable.paymentType,
     }).from(salesReturnsTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, salesReturnsTable.journalEntryId))
       .where(and(...retConds));
@@ -485,8 +485,36 @@ router.get("/customer-statement", async (req, res) => {
     const lines: Line[] = [
       // Invoice "الشرح" loads from the sales invoice: the user-typed header
       // note when present, otherwise the item name(s) on the invoice.
-      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—"), paymentType: "credit" })),
-      ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes), paymentType: "credit" })),
+      ...invs.flatMap(i => {
+        const base = { id: i.id, docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, date: i.date };
+        const invoiceLine = { ...base, type: "invoice", debit: Number(i.total), credit: 0, description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—"), paymentType: i.paymentType ?? "credit" };
+        if (i.paymentType === "cash" || i.paymentType === "bank") {
+          // Collected-on-the-spot invoice → paired collection line (net zero).
+          const receiptLine = {
+            ...base, type: "invoice_receipt", debit: 0, credit: Number(i.total),
+            description: i.paymentType === "cash" ? "تحصيل نقدي — فاتورة مبيعات" : "تحصيل بنكي — فاتورة مبيعات",
+            paymentType: i.paymentType,
+            channel: (i.paymentType === "cash" ? "cashbox" : "bank") as "cashbox" | "bank",
+          };
+          return [invoiceLine, receiptLine];
+        }
+        return [invoiceLine];
+      }),
+      ...rets.flatMap(r => {
+        const base = { id: r.id, docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, date: r.date };
+        const returnLine = { ...base, type: "return", debit: 0, credit: Number(r.total), description: withNote("مرتجع مبيعات", r.notes), paymentType: r.paymentType ?? "credit" };
+        if (r.paymentType === "cash" || r.paymentType === "bank") {
+          // Refunded-on-the-spot return → paired refund line (net zero).
+          const refundLine = {
+            ...base, type: "return_refund", debit: Number(r.total), credit: 0,
+            description: r.paymentType === "cash" ? "رد نقدي — مرتجع مبيعات" : "رد بنكي — مرتجع مبيعات",
+            paymentType: r.paymentType,
+            channel: (r.paymentType === "cash" ? "cashbox" : "bank") as "cashbox" | "bank",
+          };
+          return [returnLine, refundLine];
+        }
+        return [returnLine];
+      }),
       ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 

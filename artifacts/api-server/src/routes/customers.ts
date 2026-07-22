@@ -75,6 +75,9 @@ router.get("/balances", async (req, res) => {
       .where(and(
         eq(salesReturnsTable.companyId, companyId),
         eq(salesReturnsTable.status, "posted"),
+        // Cash/bank returns are refunded on the spot (AR pass-through legs
+        // net to zero) — they must NOT reduce the customer's receivable.
+        sql`coalesce(${salesReturnsTable.paymentType}, 'credit') NOT IN ('cash','bank')`,
         ...(from ? [gte(salesReturnsTable.returnDate, from)] : []),
         ...(to   ? [lte(salesReturnsTable.returnDate, to)]   : []),
         ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
