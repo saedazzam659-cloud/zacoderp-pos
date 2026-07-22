@@ -2337,7 +2337,7 @@ function DeferredExpenseTab({ invoiceId, api, authH, cid, fmt, ccs }: {
                         {st === "posted" ? "مرحّل" : st === "draft" ? "مسودة" : st ?? "—"}
                       </span>
                     </td>
-                    <td className="px-3 py-2 font-mono" dir="ltr">{r.jeDocNumber ?? r.journalEntryId ?? "—"}</td>
+                    <td className="px-3 py-2 font-mono" dir="ltr">{r.jeDocNumber ?? (r.journalEntryId != null ? "بدون رقم" : "—")}</td>
                   </tr>
                   );
                 })}

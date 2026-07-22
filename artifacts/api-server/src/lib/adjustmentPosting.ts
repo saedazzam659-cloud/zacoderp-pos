@@ -29,7 +29,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { assertWritableForDate } from "./periodGuard.js";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { fullAuditFor } from "./journalAudit.js";
-import { nextJeSubSequence } from "./sequences.js";
+import { nextJeSubSequence, resolveSequencePeriodMatch, periodMatchWhereSql, periodMatchRankSql } from "./sequences.js";
 
 /** Advisory-lock class shared by ALL accounting-adjustment mutators. */
 export const ADJ_LOCK_CLASS = 74001;
@@ -205,26 +205,18 @@ export async function resolveJeIssuingBranch(
   subType: string | null = null,
 ): Promise<number | null> {
   // 1. Resolve the SAME sequence nextSequenceNumber will pick for this date
-  //    (period-scoped sequence for the doc's fiscal period wins, else the
-  //    universal one; ties break by lowest id — mirrors sequences.ts).
-  const periodRows = await db.execute<{ id: number }>(sql`
-    SELECT id FROM fiscal_periods
-    WHERE company_id = ${cid} AND start_date <= ${docDate} AND end_date >= ${docDate}
-    ORDER BY id ASC LIMIT 1
-  `);
-  const periodId = periodRows.rows?.[0]?.id ?? null;
-  const periodMatchSql = periodId != null
-    ? sql`OR fiscal_period_ids @> ${JSON.stringify([periodId])}::jsonb`
-    : sql``;
+  //    (exact-period scoped sequence wins → same-year scoped → universal;
+  //    ties break by lowest id — shared helpers from sequences.ts).
+  const pm = await resolveSequencePeriodMatch(db, cid, docDate);
   const pickSeq = async (txType: string): Promise<number | undefined> => {
     const seqRows = await db.execute<{ id: number }>(sql`
       SELECT id FROM sequences
       WHERE company_id = ${cid}
         AND is_active = true
         AND transaction_types ? ${txType}
-        AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
+        AND ${periodMatchWhereSql(pm)}
       ORDER BY
-        CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
+        ${periodMatchRankSql(pm)},
         id ASC
       LIMIT 1
     `);

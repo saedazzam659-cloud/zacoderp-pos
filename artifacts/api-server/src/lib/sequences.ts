@@ -123,6 +123,83 @@ function escapeLike(s: string): string {
   return s.replace(/([\\%_])/g, "\\$1");
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Fiscal-period → sequence matching (shared by issuance, peek and the
+// adjustment branch-bucket resolver so all three ALWAYS pick the same row).
+//
+// Resolution tiers for a document dated D:
+//   0. sequence scoped to the EXACT fiscal period containing D
+//   1. sequence scoped to any fiscal period of the SAME CALENDAR YEAR as D
+//      (covers dates that fall in a gap between configured periods — e.g. a
+//      backdated 2025-12 entry when the tenant only defined May-2025: the
+//      2025-bound series continues instead of the number silently going NULL)
+//   2. universal sequence (empty fiscal_period_ids)
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface SequencePeriodMatch {
+  periodId: number | null;
+  yearPeriodIds: number[];
+}
+
+/** Resolve the exact period + all same-year period ids for `dateStr`
+ *  ("YYYY-MM-DD"). Works with either `db` or a transaction handle. */
+export async function resolveSequencePeriodMatch(
+  exec: { execute: (q: any) => Promise<{ rows?: Array<{ id: number }> }> },
+  companyId: number,
+  dateStr: string,
+): Promise<SequencePeriodMatch> {
+  const periodRows = await exec.execute(sql`
+    SELECT id FROM fiscal_periods
+    WHERE company_id = ${companyId}
+      AND start_date <= ${dateStr}
+      AND end_date   >= ${dateStr}
+    ORDER BY id ASC
+    LIMIT 1
+  `);
+  const periodId = periodRows.rows?.[0]?.id ?? null;
+  const year = String(dateStr).slice(0, 4);
+  const yearRows = /^\d{4}$/.test(year)
+    ? await exec.execute(sql`
+        SELECT id FROM fiscal_periods
+        WHERE company_id = ${companyId}
+          AND start_date >= ${`${year}-01-01`}
+          AND start_date <= ${`${year}-12-31`}
+        ORDER BY id ASC
+      `)
+    : { rows: [] as Array<{ id: number }> };
+  return {
+    periodId,
+    yearPeriodIds: (yearRows.rows ?? []).map(r => Number(r.id)).filter(n => Number.isInteger(n) && n > 0),
+  };
+}
+
+/** WHERE fragment: universal OR exact-period OR same-year-period sequences. */
+export function periodMatchWhereSql(m: SequencePeriodMatch) {
+  const exact = m.periodId != null
+    ? sql`OR fiscal_period_ids @> ${JSON.stringify([m.periodId])}::jsonb`
+    : sql``;
+  // ids come straight from fiscal_periods.id (integers) — safe to inline.
+  const year = m.yearPeriodIds.length
+    ? sql`OR EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text(fiscal_period_ids) e
+        WHERE e ~ '^[0-9]+$' AND e::int IN (${sql.raw(m.yearPeriodIds.join(","))})
+      )`
+    : sql``;
+  return sql`(jsonb_array_length(fiscal_period_ids) = 0 ${exact} ${year})`;
+}
+
+/** ORDER BY rank fragment matching the tiers above (0 exact, 1 year, 2 universal). */
+export function periodMatchRankSql(m: SequencePeriodMatch) {
+  const exactCond = m.periodId != null
+    ? sql`fiscal_period_ids @> ${JSON.stringify([m.periodId])}::jsonb`
+    : sql`false`;
+  return sql`CASE
+    WHEN ${exactCond} THEN 0
+    WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 1
+    ELSE 2
+  END ASC`;
+}
+
 /** Highest running number ALREADY issued for a given (sequence, rendered-month)
  *  bucket, read from the append-only `sequence_logs`. This is what lets a
  *  per-month counter self-heal: the first time a month is touched after the
@@ -204,24 +281,12 @@ export async function nextSequenceNumber(
       return effectiveDate;
     })();
     const periodDateStr = `${periodResolveDate.getUTCFullYear()}-${String(periodResolveDate.getUTCMonth() + 1).padStart(2, "0")}-${String(periodResolveDate.getUTCDate()).padStart(2, "0")}`;
-    const periodRows = await tx.execute<{ id: number }>(sql`
-      SELECT id FROM fiscal_periods
-      WHERE company_id = ${companyId}
-        AND start_date <= ${periodDateStr}
-        AND end_date   >= ${periodDateStr}
-      ORDER BY id ASC
-      LIMIT 1
-    `);
-    const periodId = periodRows.rows?.[0]?.id ?? null;
-    // When the date falls outside every configured period (early tenants,
-    // pre-fiscal-year data), only universal sequences may match.
-    const periodMatchSql = periodId != null
-      ? sql`OR fiscal_period_ids @> ${JSON.stringify([periodId])}::jsonb`
-      : sql``;
+    const pm = await resolveSequencePeriodMatch(tx, companyId, periodDateStr);
 
     // 1. Lock the candidate master sequence row.
     //    Resolution preference (mirrors /peek/:txType):
     //      • scoped sequence whose fiscal_period_ids includes this date's period → wins
+    //      • scoped sequence bound to any period of the SAME YEAR               → next
     //      • universal sequence (empty fiscal_period_ids)                        → fallback
     //    Ties within the same bucket break by lowest id (deterministic).
     const seqRows = await tx.execute<{
@@ -234,9 +299,9 @@ export async function nextSequenceNumber(
       WHERE company_id = ${companyId}
         AND is_active = true
         AND transaction_types ? ${transactionType}
-        AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
+        AND ${periodMatchWhereSql(pm)}
       ORDER BY
-        CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
+        ${periodMatchRankSql(pm)},
         id ASC
       LIMIT 1
       FOR UPDATE

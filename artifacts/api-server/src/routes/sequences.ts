@@ -10,7 +10,7 @@ import {
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requireAdminRole, audit } from "../middleware/permissions.js";
-import { subTypeFor, foreignSubTypeFor } from "../lib/sequences.js";
+import { subTypeFor, foreignSubTypeFor, resolveSequencePeriodMatch, periodMatchWhereSql, periodMatchRankSql } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -110,22 +110,10 @@ router.get("/peek/:txType", async (req: any, res) => {
   const previewDate = isNaN(dateInput.getTime()) ? new Date() : dateInput;
   const dateStr = `${previewDate.getUTCFullYear()}-${String(previewDate.getUTCMonth() + 1).padStart(2, "0")}-${String(previewDate.getUTCDate()).padStart(2, "0")}`;
 
-  // Find the fiscal period containing the preview date (if any). When the
-  // date falls outside every configured period (e.g. before the first
-  // fiscal year was created) we leave periodId as null — only universal
-  // (empty fiscalPeriodIds) sequences then match.
-  const periodRows = await db.execute<{ id: number }>(sql`
-    SELECT id FROM fiscal_periods
-    WHERE company_id = ${cid}
-      AND start_date <= ${dateStr}
-      AND end_date   >= ${dateStr}
-    ORDER BY id ASC
-    LIMIT 1
-  `);
-  const periodId = periodRows.rows?.[0]?.id ?? null;
-  const periodMatchSql = periodId != null
-    ? sql`OR fiscal_period_ids @> ${JSON.stringify([periodId])}::jsonb`
-    : sql``;
+  // Shared period-match resolution (exact period → same-year period →
+  // universal) — MUST mirror nextSequenceNumber so the previewed number
+  // matches the one issuance will actually draw.
+  const pm = await resolveSequencePeriodMatch(db, cid, dateStr);
 
   // Read the company-wide date-source setting (same column the issuance
   // helper consults). When the tenant has switched to "document", the
@@ -161,9 +149,9 @@ router.get("/peek/:txType", async (req: any, res) => {
       WHERE company_id = ${cid}
         AND is_active = true
         AND transaction_types ? ${qType}
-        AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
+        AND ${periodMatchWhereSql(pm)}
       ORDER BY
-        CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
+        ${periodMatchRankSql(pm)},
         id ASC
       LIMIT 1
     `);
