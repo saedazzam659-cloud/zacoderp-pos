@@ -964,7 +964,8 @@
     "devCloud": "Developer Cloud",
     "devStudio": "DevStudio",
     "marketplace": "App Store & Marketplace",
-    "marketplaceAdmin": "Marketplace Admin"
+    "marketplaceAdmin": "Marketplace Admin",
+    "adjustmentsSchedule": "Adjustments Movement Schedule"
   },
   "security": {
     "title": "Security & Monitoring",

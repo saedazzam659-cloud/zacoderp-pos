@@ -556,6 +556,7 @@ const reportsSubNav: NavDef[] = [
   { nameKey: "nav.bankCashFlow",     href: "/accounting/reports/bank-cash-flow",    icon: Landmark,   permKey: "accounting_reports" },
   { nameKey: "nav.forecastIncomeStatement", href: "/accounting/reports/forecast-income-statement", icon: Sparkles, permKey: "accounting_reports" },
   { nameKey: "nav.taxDeclaration",   href: "/accounting/reports/tax-declaration",   icon: BadgePercent, permKey: "accounting_reports" },
+  { nameKey: "nav.adjustmentsSchedule", href: "/accounting/reports/adjustments-schedule", icon: CalendarRange, permKey: "accounting_reports" },
 ];
 const cashSubNav: NavDef[] = [
   { nameKey: "nav.cashBoxes",        href: "/cash/boxes",            icon: Wallet,          permKey: "cash_boxes" },

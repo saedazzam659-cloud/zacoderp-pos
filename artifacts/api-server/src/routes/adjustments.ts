@@ -16,6 +16,18 @@ import { runDueAdjustmentsForCompany, resolveJeIssuingBranch, ADJ_LOCK_CLASS, ty
 
 const router = Router();
 router.use(extractAuth);
+
+// The movement-schedule REPORT is part of the accounting-reports module
+// (the screen lives under /accounting/reports and is gated by
+// accounting_reports in the UI) — register it BEFORE the accounts module
+// gate so report-only users can read it. Read-only endpoint.
+router.get(
+  "/reports/movement-schedule",
+  requireModulePermission("accounting_reports"),
+  moduleAudit("accounting_reports"),
+  movementScheduleHandler,
+);
+
 router.use(requireModulePermission("accounts"));
 router.use(moduleAudit("accounts"));
 
@@ -82,6 +94,163 @@ async function enrichWithRecognition<T extends { id: number; totalAmount: string
       runCount:         m.cnt,
     };
   });
+}
+
+// ═══ GET /api/adjustments/reports/movement-schedule ══════════════════════
+// جدول التسويات وحركة المصروف المقدم والمستحق — mirrors the FA movement
+// schedule philosophy: POSTED JEs only, so the report always ties to the
+// trial balance. Grouped by the expense account; per-adjustment rows carry
+// إجمالي التسوية / رصيد أول (recognized before the period) / المعترف به خلال
+// الفترة / الرصيد المتبقي, plus the month-by-month posted run detail.
+// Registered BEFORE /:id (Express 5 literal-before-param rule).
+async function movementScheduleHandler(req: any, res: any) {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+    const today = new Date().toISOString().slice(0, 10);
+    const rawFrom = typeof req.query.from === "string" ? req.query.from : "";
+    const rawTo   = typeof req.query.to   === "string" ? req.query.to   : "";
+    if ((rawFrom && !isISO(rawFrom)) || (rawTo && !isISO(rawTo))) {
+      res.status(400).json({ error: "صيغة التاريخ غير صحيحة (YYYY-MM-DD)" }); return;
+    }
+    let from = rawFrom || `${today.slice(0, 4)}-01-01`;
+    let to   = rawTo   || today;
+    if (from > to) { const t = from; from = to; to = t; }
+    const fromYm = ymOf(from);
+    const toYm   = ymOf(to);
+    const typeFilter = req.query.type === "prepaid" || req.query.type === "accrued"
+      ? req.query.type : null;
+    const ccFilter = Number(req.query.costCenterId);
+
+    const conds = [eq(accountingAdjustmentsTable.companyId, cid)];
+    if (typeFilter) conds.push(eq(accountingAdjustmentsTable.type, typeFilter));
+    if (Number.isInteger(ccFilter) && ccFilter > 0)
+      conds.push(eq(accountingAdjustmentsTable.costCenterId, ccFilter));
+
+    const [adjustments, accounts, ccs] = await Promise.all([
+      db.select().from(accountingAdjustmentsTable).where(and(...conds))
+        .orderBy(asc(accountingAdjustmentsTable.startDate), asc(accountingAdjustmentsTable.id)),
+      db.select({ id: accountsTable.id, code: accountsTable.code, nameAr: accountsTable.nameAr })
+        .from(accountsTable).where(eq(accountsTable.companyId, cid)),
+      db.select({ id: costCentersTable.id, nameAr: costCentersTable.nameAr })
+        .from(costCentersTable).where(eq(costCentersTable.companyId, cid)),
+    ]);
+
+    // Only adjustments whose schedule has started by the period end are
+    // relevant; future-dated ones would render all-zero rows.
+    const relevant = adjustments.filter(a => ymOf(a.startDate) <= toYm);
+    const acctMap = new Map(accounts.map(a => [a.id, a]));
+    const ccMap   = new Map(ccs.map(c => [c.id, c.nameAr]));
+
+    // All runs for the relevant adjustments + their JE posting status.
+    // POSTED-only recognition (a draft JE has zero report impact) — the run
+    // still appears in the month detail flagged draft so the user sees WHY
+    // a month is excluded.
+    const ids = relevant.map(a => a.id);
+    const runs = ids.length ? await db.select({
+      adjustmentId:  accountingAdjustmentRunsTable.adjustmentId,
+      periodMonth:   accountingAdjustmentRunsTable.periodMonth,
+      amount:        accountingAdjustmentRunsTable.amount,
+      journalEntryId: accountingAdjustmentRunsTable.journalEntryId,
+      jeNumber:      journalEntriesTable.docNumber,
+      jeStatus:      journalEntriesTable.status,
+    }).from(accountingAdjustmentRunsTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, accountingAdjustmentRunsTable.journalEntryId))
+      .where(inArray(accountingAdjustmentRunsTable.adjustmentId, ids))
+      .orderBy(asc(accountingAdjustmentRunsTable.periodMonth)) : [];
+
+    const runsByAdj = new Map<number, typeof runs>();
+    for (const r of runs) {
+      const arr = runsByAdj.get(r.adjustmentId) ?? [];
+      arr.push(r); runsByAdj.set(r.adjustmentId, arr);
+    }
+
+    interface Row {
+      adjustmentId: number; name: string; type: string; status: string;
+      startDate: string; endDate: string; monthsCount: number;
+      monthlyAmount: number; costCenter: string | null;
+      contraAccount: string | null;
+      total: number; opening: number; period: number; closing: number;
+      remaining: number; progressPct: number;
+      runs: { ym: string; amount: number; jeId: number | null; jeNumber: string | null; posted: boolean }[];
+    }
+    interface Group {
+      accountId: number; accountCode: string; accountName: string;
+      rows: Row[];
+      totals: { total: number; opening: number; period: number; closing: number; remaining: number };
+    }
+    const groups = new Map<number, Group>();
+
+    for (const a of relevant) {
+      const aRuns = runsByAdj.get(a.id) ?? [];
+      let opening = 0, period = 0;
+      const runDetail = aRuns.map(r => {
+        const posted = r.jeStatus === "posted";
+        const amt = Number(r.amount) || 0;
+        if (posted) {
+          if (r.periodMonth < fromYm) opening += amt;
+          else if (r.periodMonth <= toYm) period += amt;
+          // posted runs AFTER the period end are ignored entirely (future view)
+        }
+        return {
+          ym: r.periodMonth, amount: r2(amt),
+          jeId: r.journalEntryId ?? null, jeNumber: r.jeNumber ?? null, posted,
+        };
+      });
+      const total = Number(a.totalAmount) || 0;
+      const closing = r2(opening + period);
+      // Skip rows with zero movement AND zero balance in the window
+      // (e.g. cancelled before anything posted) — pure noise otherwise.
+      if (a.status === "cancelled" && closing === 0) continue;
+
+      const [sy, sm] = a.startDate.split("-").map(Number);
+      const [ey, em] = a.endDate.split("-").map(Number);
+      const monthsCount = Math.max(1, (ey * 12 + em) - (sy * 12 + sm) + 1);
+
+      const acct = acctMap.get(a.expenseAccountId);
+      const contra = acctMap.get(a.contraAccountId);
+      const key = a.expenseAccountId;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          accountId: key,
+          accountCode: acct?.code ?? "—",
+          accountName: acct?.nameAr ?? "حساب غير معروف",
+          rows: [],
+          totals: { total: 0, opening: 0, period: 0, closing: 0, remaining: 0 },
+        };
+        groups.set(key, g);
+      }
+      const remaining = r2(Math.max(0, total - closing));
+      g.rows.push({
+        adjustmentId: a.id, name: a.name, type: a.type, status: a.status,
+        startDate: a.startDate, endDate: a.endDate, monthsCount,
+        monthlyAmount: r2(Number(a.monthlyAmount) || 0),
+        costCenter: a.costCenterId != null ? (ccMap.get(a.costCenterId) ?? null) : null,
+        contraAccount: contra ? `${contra.code} — ${contra.nameAr}` : null,
+        total: r2(total), opening: r2(opening), period: r2(period),
+        closing, remaining,
+        progressPct: total > 0 ? r2((closing / total) * 100) : 0,
+        runs: runDetail,
+      });
+      g.totals.total     = r2(g.totals.total + total);
+      g.totals.opening   = r2(g.totals.opening + opening);
+      g.totals.period    = r2(g.totals.period + period);
+      g.totals.closing   = r2(g.totals.closing + closing);
+      g.totals.remaining = r2(g.totals.remaining + remaining);
+    }
+
+    const sorted = [...groups.values()].sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+    const grand = { total: 0, opening: 0, period: 0, closing: 0, remaining: 0 };
+    for (const g of sorted) {
+      grand.total     = r2(grand.total + g.totals.total);
+      grand.opening   = r2(grand.opening + g.totals.opening);
+      grand.period    = r2(grand.period + g.totals.period);
+      grand.closing   = r2(grand.closing + g.totals.closing);
+      grand.remaining = r2(grand.remaining + g.totals.remaining);
+    }
+    res.json({ from, to, groups: sorted, totals: grand });
+  } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
 }
 
 // ─── GET /api/adjustments — list all adjustments for the company ─────────
