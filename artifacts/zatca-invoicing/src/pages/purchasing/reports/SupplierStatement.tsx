@@ -45,6 +45,7 @@ export default function SupplierStatement() {
     invoice: t("purchasingReports.supplierStatement.type.invoice"),
     invoice_payment: "سداد فاتورة",
     return:  t("purchasingReports.supplierStatement.type.return"),
+    return_refund: "استرداد مرتجع",
     payment: t("purchasingReports.supplierStatement.type.payment"),
   };
 
@@ -54,6 +55,7 @@ export default function SupplierStatement() {
     invoice: "فاتورة مشتريات",
     invoice_payment: "سداد فاتورة",
     return:  "مرتجع مشتريات",
+    return_refund: "استرداد مرتجع",
     payment: "سند صرف",
   };
 
@@ -66,7 +68,7 @@ export default function SupplierStatement() {
     if (l.type === "invoice" || l.type === "return") {
       return `${base} - ${l.paymentType === "cash" ? "نقدًا" : l.paymentType === "bank" ? "بنكيًا" : "أجل"}`;
     }
-    if (l.type === "invoice_payment") {
+    if (l.type === "invoice_payment" || l.type === "return_refund") {
       if (l.channel === "cashbox") return `${base} - نقدي`;
       if (l.channel === "bank")    return `${base} - بنكي`;
       return base;

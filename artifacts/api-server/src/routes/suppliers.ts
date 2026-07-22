@@ -103,7 +103,14 @@ router.get("/balances", async (req, res) => {
         total: sql<string>`coalesce(sum(${purchaseReturnsTable.totalAmount}),0)`,
       })
       .from(purchaseReturnsTable)
-      .where(and(eq(purchaseReturnsTable.companyId, companyId), eq(purchaseReturnsTable.status, "posted")))
+      .where(and(
+        eq(purchaseReturnsTable.companyId, companyId),
+        eq(purchaseReturnsTable.status, "posted"),
+        // Cash/bank returns are refunded on the spot (the JE debits the cash
+        // box or bank, and the AP pass-through legs net to zero) — they must
+        // NOT reduce the supplier's payable balance. Only CREDIT returns do.
+        sql`coalesce(${purchaseReturnsTable.paymentType}, 'credit') NOT IN ('cash','bank')`,
+      ))
       .groupBy(purchaseReturnsTable.supplierId),
 
     db

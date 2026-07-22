@@ -3224,6 +3224,11 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
       : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId)
       : await getSupplierAccountId(cid, ret.supplierId);
+    // Supplier AP account for the cash/bank pass-through legs (may be null).
+    const returnSupplierApAccId =
+      (ret.paymentType === "cash" || ret.paymentType === "bank")
+        ? await getSupplierAccountId(cid, ret.supplierId)
+        : null;
 
     const missing: string[] = [];
     if (vatAmount > 0 && !taxAccId) missing.push("حساب الضرائب (مدخلات)");
@@ -3288,7 +3293,20 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       // return tags the same CC as the purchase it reverses.
       costCenter:   (ret as any).costCenter ?? null,
       lines: [
-        { accountId: counterpartyAccountId,           debit:  totalAmount,    description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : "تخفيض رصيد المورد" },
+        // CASH/BANK returns pass through the supplier's AP account so كشف حساب
+        // المورد shows BOTH legs (تخفيض الرصيد بالمرتجع ثم الاسترداد) — mirrors
+        // the cash/bank purchase-invoice pass-through. The two AP legs net to
+        // zero, so supplier balances are unaffected. If the supplier has no
+        // ledger account, fall back to the old direct debit.
+        ...(((ret.paymentType === "cash" || ret.paymentType === "bank") && returnSupplierApAccId)
+          ? [
+              { accountId: returnSupplierApAccId, debit:  totalAmount, description: "تخفيض رصيد المورد بالمرتجع" },
+              { accountId: returnSupplierApAccId, credit: totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي من المورد" : "استرداد بنكي من المورد" },
+              { accountId: counterpartyAccountId, debit:  totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي" : "استرداد بنكي" },
+            ]
+          : [
+              { accountId: counterpartyAccountId, debit:  totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : "تخفيض رصيد المورد" },
+            ]),
         { accountId: discountAccId,                   debit:  discountAmount, description: "إلغاء خصم مكتسب" },
         // Inventory: one credit line per warehouse using its own GL account.
         // Posted at actual stock-out cost (weighted source cost) so GL ties

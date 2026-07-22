@@ -456,7 +456,6 @@ router.get("/supplier-statement", async (req, res) => {
       eq(purchaseReturnsTable.companyId, cid),
       eq(purchaseReturnsTable.supplierId, sid),
       eq(purchaseReturnsTable.status, "posted"),
-      eq(purchaseReturnsTable.paymentType, "credit"),
     ];
     pushBranchScope(req, retConds, purchaseReturnsTable.branchId, bid);
     if (from) retConds.push(gte(purchaseReturnsTable.returnDate, from));
@@ -468,6 +467,7 @@ router.get("/supplier-statement", async (req, res) => {
       journalEntryNumber: journalEntriesTable.docNumber,
       total: purchaseReturnsTable.totalAmount,
       notes: purchaseReturnsTable.notes,
+      paymentType: purchaseReturnsTable.paymentType,
     }).from(purchaseReturnsTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, purchaseReturnsTable.journalEntryId))
       .where(and(...retConds));
@@ -559,7 +559,21 @@ router.get("/supplier-statement", async (req, res) => {
         }
         return [invoiceLine];
       }),
-      ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes), paymentType: "credit" })),
+      ...rets.flatMap(r => {
+        const base = { id: r.id, docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, date: r.date };
+        const returnLine = { ...base, type: "return", debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes), paymentType: r.paymentType ?? "credit" };
+        if (r.paymentType === "cash" || r.paymentType === "bank") {
+          // Refunded-on-the-spot return → paired refund line (net zero).
+          const refundLine = {
+            ...base, type: "return_refund", debit: 0, credit: Number(r.total),
+            description: r.paymentType === "cash" ? "استرداد نقدي — مرتجع مشتريات" : "استرداد بنكي — مرتجع مشتريات",
+            paymentType: r.paymentType,
+            channel: (r.paymentType === "cash" ? "cashbox" : "bank") as "cashbox" | "bank",
+          };
+          return [returnLine, refundLine];
+        }
+        return [returnLine];
+      }),
       ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: voucherDesc(p.description, p.notes), channel: voucherChannel(p.cashBoxId, p.bankAccountId) })),
       // Manual / direct JE rows: show the actual journal-line text the user
       // wrote (resolved in fetchSupplierDirectJeLines), falling back to a

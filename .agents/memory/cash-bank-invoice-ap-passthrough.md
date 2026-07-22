@@ -13,4 +13,6 @@ Cash/bank-paid purchase invoices originally credited bank/cash DIRECTLY, so the 
 
 **Why:** statements/balances mix invoice-table aggregates with JE aggregates; any new JE leg on AP must be excluded on exactly one side or totals double.
 
-**How to apply:** already-posted cash/bank invoices need فك ترحيل → إعادة ترحيل to regenerate the JE with pass-through legs. `/supplier-statement-detailed` intentionally still credit-only. Same latent pattern may apply to cash/bank SALES invoices vs customer AR.
+**Returns mirror the same pattern:** cash/bank purchase returns (incl. from-invoice returns — same post endpoint) post DR AP + CR AP ("استرداد نقدي/بنكي من المورد") + DR bank/cash; `/suppliers/balances` return aggregation excludes cash/bank; statement expands them to `return` (debit) + `return_refund` (credit, channel). UI labels: `return_refund` = "استرداد مرتجع".
+
+**How to apply:** already-posted cash/bank invoices AND returns need فك ترحيل → إعادة ترحيل to regenerate the JE with pass-through legs. `/supplier-statement-detailed` intentionally still credit-only. Same latent pattern may apply to cash/bank SALES invoices vs customer AR.
