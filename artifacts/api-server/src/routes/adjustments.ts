@@ -53,17 +53,24 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const ymOf = (iso: string) => iso.slice(0, 7);
 const lastDayUTC = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
 function* monthsBetween(startISO: string, endISO: string): Generator<{ ym: string; isoDate: string }> {
-  const [sy, sm] = startISO.split("-").map(Number);
-  const [ey, em] = endISO.split("-").map(Number);
-  let y = sy, m = sm;
-  while (y < ey || (y === ey && m <= em)) {
-    const ym = `${y}-${pad(m)}`;
-    // Use the last day of the month as the canonical entry date — this is
-    // what most accounting policies expect for adjustment recognition.
-    const isoDate = `${y}-${pad(m)}-${pad(lastDayUTC(y, m - 1))}`;
-    yield { ym, isoDate };
-    m += 1;
-    if (m > 12) { m = 1; y += 1; }
+  // MUST stay in lockstep with lib/adjustmentPosting.ts monthsBetween.
+  // ANNIVERSARY recognition: installment k falls one FULL month after the
+  // previous one, on the START DAY of month — start 2025-11-22 → first
+  // installment 2025-12-22, then 2026-01-22 … (day clamped to short months).
+  const [sy, sm, sd] = startISO.split("-").map(Number);
+  let [ey, em, ed] = endISO.split("-").map(Number);
+  // Day-aware count: end month is dropped when partial (end day < start day).
+  if (ed < sd) {
+    em -= 1;
+    if (em < 1) { em = 12; ey -= 1; }
+  }
+  const count = Math.max(0, (ey - sy) * 12 + (em - sm) + 1);
+  for (let k = 1; k <= count; k++) {
+    const mAbs = sm + k;
+    const y = sy + Math.floor((mAbs - 1) / 12);
+    const m = ((mAbs - 1) % 12) + 1;
+    const day = Math.min(sd, lastDayUTC(y, m - 1));
+    yield { ym: `${y}-${pad(m)}`, isoDate: `${y}-${pad(m)}-${pad(day)}` };
   }
 }
 
@@ -523,11 +530,14 @@ router.put("/:id", async (req, res) => {
         try { await validateAccounts(cid, newExp, newCtr); }
         catch (e: any) { throw Object.assign(new Error(e.message), { status: 400 }); }
 
-        // Re-spread the un-recognized remainder over remaining months
-        let remainingMonths = 0;
-        for (const { ym } of monthsBetween(newStart, newEnd)) {
-          if (!generated.has(ym)) remainingMonths++;
-        }
+        // Re-spread the un-recognized remainder over remaining months.
+        // COUNT-based (not YM-set intersection): legacy runs booked under the
+        // old end-of-month scheme carry period keys shifted one month EARLIER
+        // than the anniversary schedule, so name-matching would inflate the
+        // remaining count. remaining = scheduled installments − booked runs.
+        let scheduledMonths = 0;
+        for (const _ of monthsBetween(newStart, newEnd)) scheduledMonths++;
+        const remainingMonths = Math.max(0, scheduledMonths - generated.size);
         const remainder = newTotal - recognized;
         if (remainingMonths === 0 && remainder > 0.01)
           throw Object.assign(new Error("لا توجد أشهر متبقية لتوزيع الرصيد الجديد — مدّد تاريخ النهاية"), { status: 400 });
@@ -648,7 +658,13 @@ router.post("/:id/generate", async (req, res) => {
         ccCode = cc?.code ?? null;
       }
 
+      let totalMonths = 0;
+      for (const _ of monthsBetween(adj.startDate, adj.endDate)) totalMonths++;
+
       for (const { ym, isoDate } of monthsBetween(adj.startDate, adj.endDate)) {
+        // Cap at the scheduled installment count — legacy end-of-month runs
+        // carry shifted period keys vs the anniversary schedule.
+        if (generated.size >= totalMonths) break;
         if (generated.has(ym)) continue;
 
         const writability = await assertWritableForDate(cid, isoDate);
@@ -706,8 +722,6 @@ router.post("/:id/generate", async (req, res) => {
       }
 
       // Mark adjustment completed when every month has a run
-      let totalMonths = 0;
-      for (const _ of monthsBetween(adj.startDate, adj.endDate)) totalMonths++;
       if (generated.size >= totalMonths && totalMonths > 0) {
         await tx.update(accountingAdjustmentsTable).set({ status: "completed", updatedAt: new Date() })
           .where(eq(accountingAdjustmentsTable.id, id));

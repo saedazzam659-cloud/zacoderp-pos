@@ -41,21 +41,24 @@ export function* monthsBetween(startISO: string, endISO: string): Generator<{ ym
   const [sy, sm, sd] = startISO.split("-").map(Number);
   let [ey, em, ed] = endISO.split("-").map(Number);
   // Day-aware month count: an installment month only counts if the period
-  // actually covers it. 2025-11-04 → 2026-05-03 is EXACTLY 6 months
-  // (Nov..Apr), not 7 — when the end day is before the start day, the end
-  // month is partial and is dropped from the schedule.
+  // actually covers it. 2025-11-22 → 2026-05-21 is EXACTLY 6 months —
+  // when the end day is before the start day, the end month is partial
+  // and is dropped from the schedule.
   if (ed < sd) {
     em -= 1;
     if (em < 1) { em = 12; ey -= 1; }
   }
-  let y = sy, m = sm;
-  while (y < ey || (y === ey && m <= em)) {
-    const ym = `${y}-${pad(m)}`;
-    // Last day of the month = canonical recognition date.
-    const isoDate = `${y}-${pad(m)}-${pad(lastDayUTC(y, m - 1))}`;
-    yield { ym, isoDate };
-    m += 1;
-    if (m > 12) { m = 1; y += 1; }
+  const count = Math.max(0, (ey - sy) * 12 + (em - sm) + 1);
+  // ANNIVERSARY recognition (user requirement): installment k falls one
+  // FULL month after the previous one, on the START DAY of month —
+  // start 2025-11-22 → first installment 2025-12-22, then 2026-01-22 …
+  // (day clamped to short months, e.g. day 31 → Feb 28/29).
+  for (let k = 1; k <= count; k++) {
+    const mAbs = sm + k;
+    const y = sy + Math.floor((mAbs - 1) / 12);
+    const m = ((mAbs - 1) % 12) + 1;
+    const day = Math.min(sd, lastDayUTC(y, m - 1));
+    yield { ym: `${y}-${pad(m)}`, isoDate: `${y}-${pad(m)}-${pad(day)}` };
   }
 }
 
@@ -197,8 +200,12 @@ export async function runDueAdjustmentsForCompany(
       for (const _ of monthsBetween(adj.startDate, adj.endDate)) totalMonths++;
 
       for (const { ym, isoDate } of monthsBetween(adj.startDate, adj.endDate)) {
+        // NEVER exceed the scheduled installment count — legacy runs booked
+        // under the old end-of-month scheme carry shifted period keys, so
+        // without this cap the anniversary schedule would mint one extra run.
+        if (generated.size >= totalMonths) break;
         if (generated.has(ym)) continue;
-        // Never pre-book future months — a month becomes due on its last day.
+        // Never pre-book future months — a month becomes due on its date.
         if (isoDate > today) break;
 
         const writability = await assertWritableForDate(cid, isoDate);
