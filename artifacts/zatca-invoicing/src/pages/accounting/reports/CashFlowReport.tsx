@@ -53,6 +53,28 @@ const ENTRY_TYPE_LABEL: Record<string, string> = {
 };
 const typeLabel = (k?: string | null) => (k && ENTRY_TYPE_LABEL[k]) || "قيد يومية";
 
+// ── بنود ملخص التدفقات النقدية (نموذج الشركاء — جدول رقم 3) ────────────────
+// Same 16 notes as the partner "Guidelines for filling the Cash Flow
+// Statements" schedule; note 1 is the beginning balance, rendered separately.
+const SUMMARY_NOTE_META: Record<string, { label: string; labelEn: string; desc: string }> = {
+  in_sales:         { label: "المتحصلات من بيع السلع والخدمات (نقدي وآجل)",            labelEn: "Collection received from Sale of Goods/Services in trade (Cash and Credit)", desc: "متحصلات أي عملية بيع لنشاط الشركة الرئيسي (بضاعة تامة، خدمات، صيانة...)" },
+  in_interest:      { label: "الفوائد والعوائد على الودائع والاستثمارات المحلية",        labelEn: "Interest on deposits on local investment made by the Entity", desc: "العوائد الدورية للأدوات المالية المستثمرة والمسجلة في السجلات المالية (أسهم، سندات، أوراق حكومية، فوائد ودائع بنكية...)" },
+  in_other:         { label: "متحصلات أخرى من الأنشطة التشغيلية",                        labelEn: "Other Collection made from Operating Activities", desc: "متحصلات قضايا وتعويضات، متحصلات تأمين، تراخيص، إيجارات، وأخرى" },
+  in_fixed_assets:  { label: "المتحصلات من بيع الأصول الثابتة والأصول طويلة الأجل",      labelEn: "Collection from Sale of Fixed Assets and long term assets", desc: "متحصلات بيع أي أصل ثابت أو أصول طويلة الأجل (بما فيها حقوق الملكية الفكرية والعلامات التجارية)" },
+  in_investments:   { label: "المتحصلات من بيع الاستثمارات (أسهم وأوراق مالية)",         labelEn: "Collection from Sale of Investment (shares, securities or other investments)", desc: "متحصلات بيع أي أداة مالية كليًا أو جزئيًا مسجلة في السجلات المالية" },
+  in_debt:          { label: "المتحصلات من القروض قصيرة أو طويلة الأجل",                 labelEn: "Collection - Proceeds from short-term or long-term debt", desc: "النقد الداخل من أي اقتراض أو تمويل وفق شروط سداد متفق عليها" },
+  out_suppliers:    { label: "المدفوعات للموردين (سلع وخدمات)",                          labelEn: "Payments to Suppliers (Goods and Services)", desc: "كل المدفوعات للموردين لشراء الخامات والبضائع والخدمات (نقل، مرافق، تأمين، جمارك...)" },
+  out_payroll:      { label: "مدفوعات الرواتب والأجور والعمولات والحوافز",               labelEn: "Payments to Payroll Activities (Wages, Commission, Incentive, etc)", desc: "كل المدفوعات للموظفين (رواتب، مواصلات، سكن، عمولات، حوافز...) وما يُدفع نيابة عنهم لجهات خارجية" },
+  out_tax:          { label: "المدفوعات الضريبية (هيئة الزكاة والضريبة والجمارك)",        labelEn: "Tax Payments", desc: "كل المدفوعات للهيئة (ضريبة القيمة المضافة، الاستقطاع، الزكاة، الضريبة الانتقائية...)" },
+  out_government:   { label: "مدفوعات الجهات الحكومية الأخرى",                           labelEn: "Payments for Governmental Institutions", desc: "المدفوعات للجهات الحكومية غير الهيئة والتأمينات الاجتماعية (مكتب العمل، الجوازات، الوزارات...)" },
+  out_fixed_assets: { label: "مدفوعات شراء الأصول الثابتة والأصول طويلة الأجل",          labelEn: "Payments for Purchase of Fixed Assets and long term assets", desc: "كل المدفوعات لشراء أي أصل ثابت أو أصول طويلة الأجل (بما فيها حقوق الملكية والعلامات التجارية)" },
+  out_investments:  { label: "مدفوعات شراء الأسهم والأوراق المالية والاستثمارات",        labelEn: "Payments for Purchase of shares, securities and current/new investments", desc: "المدفوعات لشراء أي أداة مالية كليًا أو جزئيًا تُسجل في السجلات المالية" },
+  out_loans:        { label: "مدفوعات أقساط القروض والتمويل (مرابحة)",                   labelEn: "Payments for Murabaha Loans", desc: "المدفوعات لسداد أقساط القروض حسب الاتفاق بين الشركة والبنك أو أي طرف خارجي" },
+  out_dividends:    { label: "توزيعات الأرباح المدفوعة",                                 labelEn: "Dividend Payments", desc: "توزيعات الأرباح المدفوعة" },
+  out_shareholders: { label: "المدفوعات للمساهمين والشركاء",                             labelEn: "Payments for Shareholders", desc: "أي مدفوعات تتم لأي من المساهمين أو الشركاء شخصيًا" },
+  out_other:        { label: "مدفوعات أخرى من الأنشطة التشغيلية",                        labelEn: "Other Payments made from Operating Activities", desc: "أي مدفوعات تشغيلية أخرى لم تُدرج في البنود السابقة" },
+};
+
 function typeTone(k?: string | null): string {
   const key = k ?? "";
   if (key.startsWith("sales") || key === "pos_sale")
@@ -80,13 +102,17 @@ type CashFlowLine = {
   accountName: string;
   accountNameEn: string | null;
   counterAccounts: string[];
+  category?: string;
   inflow: number;
   outflow: number;
 };
+type SummaryNote = { no: number; key: string; side: "in" | "out"; amount: number; count: number };
 type CashFlowResponse = {
   opening: number;
   lines: CashFlowLine[];
   totals: { inflows: number; outflows: number; net: number; closing: number };
+  summary?: SummaryNote[];
+  internalTransfers?: number;
   accounts: { accountId: number; kind: string; nameAr: string; nameEn: string | null }[];
 };
 
@@ -111,6 +137,8 @@ export default function CashFlowReport() {
   const [costCenterIds, setCostCenterIds] = useState<number[]>([]);
   const ccCsv = costCenterIds.length ? [...costCenterIds].sort((a, b) => a - b).join(",") : "";
   const [searched, setSearched] = useState(false);
+  // "summary" = one-page partner schedule (نموذج جدول رقم 3); "detail" = full movement grid.
+  const [view, setView] = useState<"summary" | "detail">("summary");
 
   // Deep-link + browser-back re-hydration (same pattern as AccountStatement).
   const searchString = useSearch();
@@ -121,6 +149,8 @@ export default function CashFlowReport() {
     const f = p.get("fromDate"); const tt = p.get("toDate");
     const b = p.get("branchId"); const a = p.get("accountId");
     const cur = p.get("currencyId"); const cc = p.get("costCenterId");
+    const v = p.get("view");
+    if (v === "detail" || v === "summary") setView(v);
     if (f) setFromDate(f);
     if (tt) setToDate(tt);
     if (b) setBranchId(Number(b));
@@ -142,13 +172,14 @@ export default function CashFlowReport() {
     if (accountId)  next.set("accountId", accountId);
     if (currencyId) next.set("currencyId", currencyId);
     if (ccCsv)      next.set("costCenterId", ccCsv);
+    if (view !== "summary") next.set("view", view);
     const nextStr = next.toString();
     const currentStr = new URLSearchParams(searchString || "").toString();
     if (nextStr !== currentStr) {
       setLocation(`/accounting/reports/cash-flow?${nextStr}`, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, fromDate, toDate, branchId, accountId, currencyId, ccCsv]);
+  }, [searched, fromDate, toDate, branchId, accountId, currencyId, ccCsv, view]);
 
   // ── Filter sources ─────────────────────────────────────────────────────
   const { data: banks = [] } = useQuery<any[]>({
@@ -242,6 +273,85 @@ export default function CashFlowReport() {
     });
   }, [data, opening]);
 
+  // ── Partner-schedule summary (نموذج جدول رقم 3) ────────────────────────
+  const summaryNotes = data?.summary ?? [];
+  const internalTransfers = data?.internalTransfers ?? 0;
+  const summaryInflowRows  = summaryNotes.filter(n => n.side === "in");
+  const summaryOutflowRows = summaryNotes.filter(n => n.side === "out");
+  const summaryInTotal  = summaryInflowRows.reduce((s, n) => s + n.amount, 0);
+  const summaryOutTotal = summaryOutflowRows.reduce((s, n) => s + n.amount, 0);
+  // Summary excludes internal treasury transfers (net zero), so its closing
+  // still equals opening + (summaryIn − summaryOut) because transfers cancel.
+  const summaryNet     = summaryInTotal - summaryOutTotal;
+  const summaryClosing = opening + summaryNet;
+
+  const SUMMARY_EXPORT_COLS = [
+    { key: "no",     header: "م", width: 6 },
+    { key: "label",  header: "البيان", width: 52 },
+    { key: "desc",   header: "الوصف", width: 60 },
+    { key: "count",  header: "عدد الحركات", width: 12 },
+    { key: "inflow",  header: "وارد", width: 16, numFmt: moneyFmt },
+    { key: "outflow", header: "منصرف", width: 16, numFmt: moneyFmt },
+  ];
+  const summaryExportRows = [
+    { no: 1, label: "النقدية المتاحة — رصيد أول المدة", desc: `الرصيد الفعلي للنقدية والبنوك في ${fromDate}`, count: "", inflow: opening, outflow: "" },
+    ...summaryNotes.map(n => ({
+      no: n.no,
+      label: SUMMARY_NOTE_META[n.key]?.label ?? n.key,
+      desc:  SUMMARY_NOTE_META[n.key]?.desc ?? "",
+      count: n.count || 0,
+      inflow:  n.side === "in"  ? n.amount : "",
+      outflow: n.side === "out" ? n.amount : "",
+    })),
+  ];
+  const summaryExportTotalsRow = {
+    no: "", label: "صافي التدفق النقدي / رصيد آخر المدة",
+    desc: `صافي: ${fmt(summaryNet)} — رصيد آخر المدة: ${fmt(summaryClosing)}`,
+    count: "", inflow: summaryInTotal, outflow: summaryOutTotal,
+  };
+
+  const handlePrintSummary = () => {
+    let bal = opening;
+    const printLines = summaryNotes.map(n => {
+      const inAmt  = n.side === "in"  ? n.amount : 0;
+      const outAmt = n.side === "out" ? n.amount : 0;
+      bal += inAmt - outAmt;
+      return {
+        id: n.no,
+        date: "",
+        docType: n.side === "in" ? "متحصلات" : "مدفوعات",
+        type: n.side === "in" ? "متحصلات" : "مدفوعات",
+        docNumber: String(n.no),
+        journalEntryNumber: null,
+        description: SUMMARY_NOTE_META[n.key]?.label ?? n.key,
+        debit: inAmt,
+        credit: outAmt,
+        balance: bal,
+      };
+    });
+    exportStatementToPDF({
+      mode: "general",
+      company: (user?.company as any) ?? null,
+      account: {
+        code: "",
+        nameAr: "قائمة التدفقات النقدية — ملخص",
+        nameEn: "Cash Flow Statement — Summary",
+        partyNameAr: "النقدية وما في حكمها (الصناديق والبنوك)",
+        partyNameEn: "Cash & cash equivalents",
+      },
+      from: fromDate,
+      to: toDate,
+      opening,
+      lines: printLines,
+      totals: { debit: summaryInTotal, credit: summaryOutTotal },
+      closing: summaryClosing,
+      filename: `cash-flow-summary-${fromDate}-${toDate}`,
+      autoPrint: true,
+      fmt,
+      userName: user?.username ?? null,
+    } as any);
+  };
+
   // ── Export shapes ──────────────────────────────────────────────────────
   const EXPORT_COLS = [
     { key: "date",        header: "التاريخ", width: 14 },
@@ -249,6 +359,7 @@ export default function CashFlowReport() {
     { key: "type",        header: "نوع الحركة", width: 18 },
     { key: "account",     header: "الخزينة / البنك", width: 22 },
     { key: "description", header: "البيان", width: 36 },
+    { key: "category",    header: "التصنيف", width: 30 },
     { key: "counter",     header: "الحساب المقابل", width: 28 },
     { key: "inflow",      header: "وارد", width: 14, numFmt: moneyFmt },
     { key: "outflow",     header: "منصرف", width: 14, numFmt: moneyFmt },
@@ -266,6 +377,7 @@ export default function CashFlowReport() {
       type:        typeLabel(r.entryType),
       account:     r.accountName,
       description: r.description || "",
+      category:    r.category === "internal_transfer" ? "تحويل داخلي" : (SUMMARY_NOTE_META[r.category as string]?.label ?? ""),
       counter:     (r.counterAccounts || []).join("، "),
       inflow:      r.inflow  || "",
       outflow:     r.outflow || "",
@@ -348,7 +460,20 @@ export default function CashFlowReport() {
           </p>
         </div>
         <div className="flex gap-2">
-          {searched && rows.length > 0 && (
+          {searched && (view === "summary" ? !!data : rows.length > 0) && (view === "summary" ? (
+            <>
+              <ExportButtons
+                rows={summaryExportRows}
+                columns={SUMMARY_EXPORT_COLS}
+                filename={`cash-flow-summary-${fromDate}-${toDate}`}
+                title={`قائمة التدفقات النقدية (ملخص) من ${fromDate} إلى ${toDate}`}
+                totalsRow={summaryExportTotalsRow}
+              />
+              <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={handlePrintSummary} data-testid="button-print-cashflow-summary">
+                <Printer className="h-4 w-4" />طباعة
+              </Button>
+            </>
+          ) : (
             <>
               <ExportButtons
                 rows={exportRows}
@@ -361,8 +486,34 @@ export default function CashFlowReport() {
                 <Printer className="h-4 w-4" />طباعة
               </Button>
             </>
-          )}
+          ))}
         </div>
+      </div>
+
+      {/* View toggle: ملخص الشركاء (صفحة واحدة) / تفصيلي */}
+      <div className="inline-flex rounded-lg border bg-card p-1 shadow-sm">
+        <button
+          type="button"
+          onClick={() => setView("summary")}
+          data-testid="tab-cashflow-summary"
+          className={cn(
+            "px-4 py-1.5 rounded-md text-sm font-semibold transition-colors",
+            view === "summary" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          ملخص (نموذج الشركاء)
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("detail")}
+          data-testid="tab-cashflow-detail"
+          className={cn(
+            "px-4 py-1.5 rounded-md text-sm font-semibold transition-colors",
+            view === "detail" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          تفصيلي (كل الحركات)
+        </button>
       </div>
 
       {/* Filters */}
@@ -438,15 +589,99 @@ export default function CashFlowReport() {
         </div>
       )}
 
-      {/* Empty state */}
-      {searched && !isLoading && rows.length === 0 && (
+      {/* Empty state (detail view only — the summary form is required even with zeros) */}
+      {searched && !isLoading && view === "detail" && rows.length === 0 && (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           لا توجد حركات نقدية في الفترة المحددة
         </div>
       )}
 
+      {/* Partner-schedule summary (نموذج جدول رقم 3) — one printable page */}
+      {searched && !isLoading && view === "summary" && data && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="border-b bg-muted/40 px-4 py-3">
+            <h2 className="font-bold">قائمة التدفقات النقدية — ملخص ({fromDate} إلى {toDate})</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              مصنفة آليًا حسب الحساب المقابل ونوع القيد — التحويلات الداخلية بين الصناديق والبنوك مستبعدة
+              {internalTransfers > 0 && <> (إجمالي التحويلات الداخلية المستبعدة: {fmt(internalTransfers)})</>}
+            </p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/60 text-xs text-muted-foreground">
+                <th className="px-3 py-2 text-start w-10">م</th>
+                <th className="px-3 py-2 text-start">البيان</th>
+                <th className="px-3 py-2 text-end w-28">عدد الحركات</th>
+                <th className="px-3 py-2 text-end w-36">وارد</th>
+                <th className="px-3 py-2 text-end w-36">منصرف</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b bg-amber-50/50 font-semibold">
+                <td className="px-3 py-2">1</td>
+                <td className="px-3 py-2">النقدية المتاحة — رصيد أول المدة</td>
+                <td className="px-3 py-2 text-end text-muted-foreground">—</td>
+                <td className={cn("px-3 py-2 text-end font-mono tabular-nums", opening >= 0 ? "text-primary" : "text-destructive")}>{fmt(opening)}</td>
+                <td className="px-3 py-2" />
+              </tr>
+              {summaryNotes.map(n => {
+                const meta = SUMMARY_NOTE_META[n.key];
+                return (
+                  <tr key={n.key} className={cn("border-b", n.amount === 0 && "text-muted-foreground/70")} data-testid={`summary-row-${n.key}`}>
+                    <td className="px-3 py-2">{n.no}</td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{meta?.label ?? n.key}</div>
+                      {meta?.desc && <div className="text-[11px] text-muted-foreground mt-0.5">{meta.desc}</div>}
+                    </td>
+                    <td className="px-3 py-2 text-end font-mono tabular-nums">
+                      {n.count > 0 ? (
+                        <button
+                          type="button"
+                          className="text-primary hover:underline"
+                          title="عرض الحركات التفصيلية"
+                          onClick={() => setView("detail")}
+                        >
+                          {n.count}
+                        </button>
+                      ) : "0"}
+                    </td>
+                    <td className="px-3 py-2 text-end font-mono tabular-nums text-emerald-700">{n.side === "in"  ? fmt(n.amount) : ""}</td>
+                    <td className="px-3 py-2 text-end font-mono tabular-nums text-rose-700">{n.side === "out" ? fmt(n.amount) : ""}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t bg-muted/50 font-bold">
+                <td className="px-3 py-2" colSpan={2}>الإجمالي</td>
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2 text-end font-mono tabular-nums text-emerald-700">{fmt(summaryInTotal)}</td>
+                <td className="px-3 py-2 text-end font-mono tabular-nums text-rose-700">{fmt(summaryOutTotal)}</td>
+              </tr>
+              <tr className="bg-muted/30 font-semibold">
+                <td className="px-3 py-2" colSpan={2}>صافي التدفق النقدي للفترة</td>
+                <td className="px-3 py-2" />
+                <td colSpan={2} className={cn("px-3 py-2 text-end font-mono tabular-nums", summaryNet >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                  {summaryNet > 0 ? "+" : ""}{fmt(summaryNet)}
+                </td>
+              </tr>
+              <tr className="bg-blue-50/60 font-bold">
+                <td className="px-3 py-2" colSpan={2}>النقدية المتاحة — رصيد آخر المدة</td>
+                <td className="px-3 py-2" />
+                <td colSpan={2} className={cn("px-3 py-2 text-end font-mono tabular-nums", summaryClosing >= 0 ? "text-primary" : "text-destructive")}>
+                  {fmt(summaryClosing)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+          <div className="border-t px-4 py-2 text-[11px] text-muted-foreground">
+            ملاحظة عامة: البنود غير المنطبقة تظهر بقيمة صفر وفق متطلبات النموذج — وتُراجع نتيجة التصنيف الآلي من العرض التفصيلي قبل الإرسال.
+          </div>
+        </div>
+      )}
+
       {/* Grid */}
-      {searched && rows.length > 0 && (
+      {searched && view === "detail" && rows.length > 0 && (
         <AdvancedReportGrid
           slug="cashFlowReportGrid"
           cid={cid}
@@ -533,6 +768,26 @@ export default function CashFlowReport() {
               className: "text-muted-foreground",
               value: (r: any) => r.description ?? "",
               render: (r: any) => <span className="max-w-xs truncate inline-block align-middle" title={r.description || ""}>{r.description || "—"}</span>,
+            },
+            { key: "category", label: "التصنيف", type: "text",
+              value: (r: any) => r.category === "internal_transfer"
+                ? "تحويل داخلي (مستبعد من الملخص)"
+                : (SUMMARY_NOTE_META[r.category as string]?.label ?? "—"),
+              render: (r: any) => (
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium max-w-[220px] truncate",
+                    r.category === "internal_transfer"
+                      ? "border-slate-300 bg-slate-50 text-slate-600"
+                      : r.category?.startsWith("in_")
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-rose-200 bg-rose-50 text-rose-800",
+                  )}
+                  title={r.category === "internal_transfer" ? "تحويل داخلي بين الصناديق والبنوك — مستبعد من الملخص" : (SUMMARY_NOTE_META[r.category as string]?.label ?? "")}
+                >
+                  {r.category === "internal_transfer" ? "تحويل داخلي" : (SUMMARY_NOTE_META[r.category as string]?.label ?? "—")}
+                </span>
+              ),
             },
             { key: "counter", label: "الحساب المقابل", type: "text",
               value: (r: any) => (r.counterAccounts || []).join("، "),

@@ -1567,7 +1567,10 @@ router.get("/cash-flow", async (req: Request, res: Response) => {
     //    For internal treasury transfers the other side IS a treasury account,
     //    so we fall back to it when nothing else exists.
     const entryIds = Array.from(new Set(rows.map(r => r.entryId)));
-    type CounterLine = { accountId: number; label: string; debit: number; credit: number; isTreasury: boolean };
+    type CounterLine = {
+      accountId: number; label: string; debit: number; credit: number;
+      isTreasury: boolean; accountType: string; nameAr: string; nameEn: string | null; code: string;
+    };
     const entryLines = new Map<number, CounterLine[]>(); // entryId → all its account lines
     if (entryIds.length) {
       const others = await db
@@ -1579,6 +1582,7 @@ router.get("/cash-flow", async (req: Request, res: Response) => {
           code:      accountsTable.code,
           nameAr:    accountsTable.nameAr,
           nameEn:    accountsTable.nameEn,
+          accountType: accountsTable.accountType,
         })
         .from(journalEntryLinesTable)
         .innerJoin(accountsTable, eq(accountsTable.id, journalEntryLinesTable.accountId))
@@ -1592,6 +1596,10 @@ router.get("/cash-flow", async (req: Request, res: Response) => {
           debit: Number(o.debit || 0),
           credit: Number(o.credit || 0),
           isTreasury: allTreasuryIds.has(o.accountId),
+          accountType: o.accountType,
+          nameAr: o.nameAr,
+          nameEn: o.nameEn,
+          code: o.code,
         });
         entryLines.set(o.entryId, arr);
       }
@@ -1615,6 +1623,57 @@ router.get("/cash-flow", async (req: Request, res: Response) => {
       return pick(nonTreasuryAny.length ? nonTreasuryAny : all); // degenerate single-sided entries
     };
 
+    // 4b) Partner-schedule classification (نموذج قائمة التدفقات النقدية —
+    //     Schedule No.3): each treasury movement is bucketed into one of 16
+    //     standard notes based on the counter-account type/name keywords and
+    //     the JE entryType. Internal treasury↔treasury transfers are tagged
+    //     `internal_transfer` and EXCLUDED from the summary (they net to zero
+    //     inside cash & equivalents).
+    const has = (s: string, ...kws: string[]) => kws.some(k => s.includes(k));
+    // A transfer only nets to zero WITHIN the report when the counter treasury
+    // account is also inside the current scope (accountId/currency filters can
+    // exclude one side) — otherwise treat it as a regular in/out movement.
+    const scopedSet = new Set(scopedIds);
+    const classifyLine = (entryId: number, selfAccountId: number, entryType: string | null, isInflow: boolean): string => {
+      const all = (entryLines.get(entryId) ?? []).filter(l => l.accountId !== selfAccountId);
+      const opposite = all.filter(l => (isInflow ? l.credit > 0 : l.debit > 0));
+      const cand = (opposite.filter(l => !l.isTreasury).length ? opposite.filter(l => !l.isTreasury)
+                   : all.filter(l => !l.isTreasury).length    ? all.filter(l => !l.isTreasury)
+                   : opposite.length ? opposite : all);
+      // Pure internal transfer: nothing but treasury on the other side, and
+      // every counter treasury account is itself inside the report scope.
+      if (!all.some(l => !l.isTreasury) && all.length) {
+        const countersInScope = all.every(l => scopedSet.has(l.accountId));
+        if (countersInScope) return "internal_transfer";
+        return isInflow ? "in_other" : "out_other";
+      }
+      const et = entryType ?? "";
+      const txt = cand.map(l => `${l.nameAr} ${(l.nameEn ?? "").toLowerCase()}`).join(" | ");
+      const types = new Set(cand.map(l => l.accountType));
+      if (isInflow) {
+        if (et === "fa_disposal" || has(txt, "أصول ثابتة", "اصول ثابتة", "fixed asset")) return "in_fixed_assets";
+        if (has(txt, "استثمار", "أسهم", "اسهم", "سندات", "صكوك", "investment", "securities", "shares", "bonds")) return "in_investments";
+        if (has(txt, "فوائد", "عوائد ودائع", "ودائع", "عائد استثمار", "interest", "deposit")) return "in_interest";
+        if (has(txt, "قرض", "قروض", "مرابحة", "تمويل", "loan", "murabaha", "financing") && types.has("liability")) return "in_debt";
+        if (et.startsWith("sales") || et === "pos_sale" || et.startsWith("receipt")
+            || types.has("revenue")
+            || has(txt, "عملاء", "مدينون", "مدينين", "customer", "receivable")) return "in_sales";
+        return "in_other";
+      }
+      if (et === "fa_acquisition" || has(txt, "أصول ثابتة", "اصول ثابتة", "fixed asset")) return "out_fixed_assets";
+      if (has(txt, "استثمار", "أسهم", "اسهم", "سندات", "صكوك", "investment", "securities", "shares", "bonds")) return "out_investments";
+      if (has(txt, "توزيعات أرباح", "توزيعات ارباح", "أرباح موزعة", "dividend")) return "out_dividends";
+      if (has(txt, "جاري الشريك", "جاري الشركاء", "مساهمين", "مساهمون", "شركاء", "shareholder", "partner current")) return "out_shareholders";
+      if (et === "payroll_run" || et === "employee_loan" || et === "eos_payment"
+          || has(txt, "رواتب", "أجور", "اجور", "مستحقات موظفين", "سلف موظفين", "عمولات مندوبين", "حوافز", "salar", "wage", "payroll", "incentive", "commission")) return "out_payroll";
+      if (has(txt, "ضريبة", "الضريبة", "زكاة", "ضريبه", "vat", "zakat", "tax", "withholding")) return "out_tax";
+      if (has(txt, "تأمينات اجتماعية", "التأمينات", "جوازات", "مكتب العمل", "رسوم حكومية", "حكومي", "قوى", "gosi", "government", "muqeem", "qiwa")) return "out_government";
+      if (has(txt, "قرض", "قروض", "مرابحة", "تمويل", "أقساط تمويل", "loan", "murabaha", "financing") && (types.has("liability") || types.has("expense"))) return "out_loans";
+      if (et.startsWith("purchase") || et.startsWith("lc_")
+          || has(txt, "موردين", "موردون", "دائنون", "دائنين", "supplier", "vendor", "payable")) return "out_suppliers";
+      return "out_other";
+    };
+
     // 5) Assemble: debit on a treasury account = inflow (وارد), credit = outflow.
     let inflows = 0, outflows = 0;
     const lines = rows.map(r => {
@@ -1635,16 +1694,57 @@ router.get("/cash-flow", async (req: Request, res: Response) => {
         accountName: acc?.nameAr ?? "",
         accountNameEn: acc?.nameEn ?? null,
         counterAccounts: countersFor(r.entryId, r.accountId as number, debit > 0).slice(0, 4),
+        category: classifyLine(r.entryId, r.accountId as number, r.entryType, debit > 0),
         inflow: debit,
         outflow: credit,
       };
     });
+
+    // 6) Partner-schedule summary (Schedule No.3 layout): fixed note order,
+    //    zero-filled (the form requires zeros for non-applicable notes),
+    //    internal transfers excluded (net zero within cash & equivalents).
+    const SUMMARY_NOTES: { key: string; side: "in" | "out" }[] = [
+      { key: "in_sales",          side: "in"  },
+      { key: "in_interest",       side: "in"  },
+      { key: "in_other",          side: "in"  },
+      { key: "in_fixed_assets",   side: "in"  },
+      { key: "in_investments",    side: "in"  },
+      { key: "in_debt",           side: "in"  },
+      { key: "out_suppliers",     side: "out" },
+      { key: "out_payroll",       side: "out" },
+      { key: "out_tax",           side: "out" },
+      { key: "out_government",    side: "out" },
+      { key: "out_fixed_assets",  side: "out" },
+      { key: "out_investments",   side: "out" },
+      { key: "out_loans",         side: "out" },
+      { key: "out_dividends",     side: "out" },
+      { key: "out_shareholders",  side: "out" },
+      { key: "out_other",         side: "out" },
+    ];
+    const catTotals = new Map<string, { amount: number; count: number }>();
+    let transfersTotal = 0;
+    for (const l of lines) {
+      if (l.category === "internal_transfer") { transfersTotal += (l.inflow || l.outflow || 0); continue; }
+      const cur = catTotals.get(l.category) ?? { amount: 0, count: 0 };
+      cur.amount += l.inflow > 0 ? l.inflow : l.outflow;
+      cur.count  += 1;
+      catTotals.set(l.category, cur);
+    }
+    const summary = SUMMARY_NOTES.map((n, i) => ({
+      no: i + 2, // note 1 is the beginning balance
+      key: n.key,
+      side: n.side,
+      amount: catTotals.get(n.key)?.amount ?? 0,
+      count:  catTotals.get(n.key)?.count  ?? 0,
+    }));
 
     const net = inflows - outflows;
     res.json({
       opening,
       lines,
       totals: { inflows, outflows, net, closing: opening + net },
+      summary,
+      internalTransfers: transfersTotal,
       accounts: scopedIds.map(id => ({ accountId: id, ...treasury.get(id)! })),
     });
   } catch (e: any) {
