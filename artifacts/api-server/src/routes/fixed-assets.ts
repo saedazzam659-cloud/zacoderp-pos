@@ -1183,6 +1183,14 @@ router.get("/reports/movement-schedule", async (req, res) => {
       const disp = disposalByAsset.get(a.id);
       const dispDate = disp ? d10(disp.disposalDate) : "";
 
+      // An asset that enters the books AFTER the report period end must not
+      // appear at all (e.g. a 2026 asset on a 2025 schedule). Resolve the
+      // effective entry date from purchaseDate, falling back to
+      // depreciationStart; assets with neither date are kept (never silently
+      // dropped) and land in الإضافات as before.
+      const entryDate = acqDate || d10(a.depreciationStart);
+      if (entryDate && entryDate > to) continue;
+
       const acquiredBefore   = !!acqDate && acqDate < from;
       const acquiredInPeriod = !!acqDate && acqDate >= from && acqDate <= to;
       const disposedBefore   = !!dispDate && dispDate < from;
