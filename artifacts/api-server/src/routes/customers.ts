@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable } from "@workspace/db";
+import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable, accountsTable } from "@workspace/db";
 import { and, asc, eq, sql, gte, lte } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
@@ -243,6 +243,12 @@ router.post("/", async (req, res) => {
     : rawCategory === "local" ? "local"
     : undefined;
   let accountId: number | null = (data as any).accountId ? Number((data as any).accountId) : null;
+  if (accountId) {
+    // Tenant guard: the linked account must belong to THIS company.
+    const [acc] = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, accountId), eq(accountsTable.companyId, effectiveCompanyId)));
+    if (!acc) { res.status(400).json({ error: "الحساب المحدّد غير موجود في هذه الشركة" }); return; }
+  }
   if (!accountId) {
     try {
       accountId = await ensureCustomerAccount(effectiveCompanyId, String(data.nameAr).trim(), customerCategory);
@@ -393,6 +399,16 @@ router.put("/:id", async (req, res) => {
   // UpdateCustomerBody zod schema strips unknown keys, so we merge it
   // back in explicitly when the client sends it.
   const setData: any = { ...parsed.data };
+  // Tenant guard: never persist an accountId from another company.
+  if ((req.body as any)?.accountId != null && (req.body as any).accountId !== "") {
+    const accId = Number((req.body as any).accountId);
+    const [acc] = Number.isInteger(accId) && accId > 0
+      ? await db.select({ id: accountsTable.id }).from(accountsTable)
+          .where(and(eq(accountsTable.id, accId), eq(accountsTable.companyId, existing.companyId)))
+      : [];
+    if (!acc) { res.status(400).json({ error: "الحساب المحدّد غير موجود في هذه الشركة" }); return; }
+    setData.accountId = accId;
+  }
   if (typeof (req.body as any)?.includeInStatements === "boolean") {
     setData.includeInStatements = (req.body as any).includeInStatements;
   }

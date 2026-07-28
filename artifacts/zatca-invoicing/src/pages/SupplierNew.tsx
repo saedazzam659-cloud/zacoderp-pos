@@ -286,7 +286,6 @@ export default function SupplierNew() {
                     value={accountId}
                     onValueChange={setAccountId}
                     placeholder="— اختر حساب الدائنين —"
-                    excludeIds={(existingSuppliers as any[]).map((s: any) => s.accountId)}
                   />
                   <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ</p>
                 </div>

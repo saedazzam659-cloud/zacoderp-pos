@@ -8,6 +8,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { useToast } from "@/hooks/use-toast";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -84,11 +85,16 @@ export function SupplierVatControl({ suppliers, supplierId, onSupplierChange }: 
   const [newDistrict,       setNewDistrict]       = useState("");
   const [newCity,           setNewCity]           = useState("");
   const [newPostalCode,     setNewPostalCode]     = useState("");
+  // ربط اختياري بحساب موجود في شجرة الحسابات (مثال: «مورد عام») بدلاً من
+  // إنشاء حساب فرعي جديد لكل مورد. آخر اختيار يُحفظ محلياً ويُقترح تلقائياً.
+  const lastAccKey = `quickAddLastAccount:supplier:${user?.companyId ?? "0"}`;
+  const [newAccountId, setNewAccountId] = useState("");
 
   function resetForm() {
     setNewName(""); setNewVat("");
     setNewBuildingNumber(""); setNewStreet(""); setNewDistrict("");
     setNewCity(""); setNewPostalCode("");
+    try { setNewAccountId(localStorage.getItem(lastAccKey) ?? ""); } catch { setNewAccountId(""); }
   }
 
   const createSupplier = useMutation({
@@ -108,6 +114,7 @@ export function SupplierVatControl({ suppliers, supplierId, onSupplierChange }: 
           city:           newCity.trim()           || null,
           postalCode:     newPostalCode.trim()     || null,
           country: "SA",
+          accountId: newAccountId ? Number(newAccountId) : undefined,
         }),
       });
       if (!res.ok) {
@@ -118,6 +125,10 @@ export function SupplierVatControl({ suppliers, supplierId, onSupplierChange }: 
       return res.json();
     },
     onSuccess: (sup: any) => {
+      try {
+        if (newAccountId) localStorage.setItem(lastAccKey, newAccountId);
+        else localStorage.removeItem(lastAccKey);
+      } catch {}
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       toast({ title: "تم إضافة المورد" });
       setOpen(false);
@@ -166,6 +177,23 @@ export function SupplierVatControl({ suppliers, supplierId, onSupplierChange }: 
             <div className="space-y-1.5">
               <Label className="text-sm">الرقم الضريبي (VAT)</Label>
               <Input value={newVat} onChange={(e) => setNewVat(e.target.value)} placeholder="310000000000003" dir="ltr" className="text-left font-mono" maxLength={15} />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-sm">حساب الدائنين من شجرة الحسابات (اختياري)</Label>
+              <AccountCombobox
+                value={newAccountId}
+                onValueChange={setNewAccountId}
+                placeholder="— بدون: إنشاء حساب تلقائي للمورد —"
+                allowEmpty
+                emptyLabel="بدون — إنشاء حساب تلقائي"
+                filterTypes={["liability"]}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                اختر حساباً موجوداً (مثل «مورد عام») لربط المورد عليه دون إضافة حساب جديد
+                في شجرة الحسابات — ويمكن ربط أكثر من مورد على نفس الحساب. اتركه فارغاً
+                لإنشاء حساب فرعي باسم المورد تلقائياً. يتذكّر النظام آخر حساب اخترته.
+              </p>
             </div>
 
             {/* National Address — العنوان الوطني (Saudi Post) */}

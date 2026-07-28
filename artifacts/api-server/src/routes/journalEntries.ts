@@ -505,6 +505,11 @@ router.get("/settlement-candidates", async (req, res) => {
         partyAccountId = s?.accountId ?? null;
       }
     }
+    // Shared accounts (e.g. "مورد عام" linked to several suppliers) are
+    // ambiguous for account-only matching — return no candidates.
+    if (partyAccountId != null && await partyAccountShared(db, cid, kind, partyAccountId)) {
+      partyAccountId = null;
+    }
     if (!partyAccountId) { res.json([]); return; }
 
     // A payment DIRECTION line: customer account CREDITED (sales) /
@@ -774,6 +779,19 @@ router.post("/:id/unlink-settlement", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// True when the party account is SHARED by more than one supplier/customer
+// (e.g. a common "مورد عام" account). Account-only settlement matching is
+// ambiguous on shared accounts — another party's JEs would surface as
+// candidates — so callers must treat a shared account as "no account".
+async function partyAccountShared(
+  dbx: any, cid: number, kind: SettlementKind, accountId: number,
+): Promise<boolean> {
+  const t = kind === "sales" ? customersTable : suppliersTable;
+  const [row] = await dbx.select({ n: sql<number>`count(*)::int` })
+    .from(t).where(and(eq(t.companyId, cid), eq(t.accountId, accountId)));
+  return (row?.n ?? 0) > 1;
+}
+
 // Resolve the invoice's party (customer AR / supplier AP) leaf account id.
 async function resolvePartyAccountForInvoice(
   dbx: any, cid: number, kind: SettlementKind, invId: number,
@@ -786,6 +804,7 @@ async function resolvePartyAccountForInvoice(
     const [c] = await dbx.select({ accountId: customersTable.accountId })
       .from(customersTable)
       .where(and(eq(customersTable.id, inv.customerId), eq(customersTable.companyId, cid)));
+    if (c?.accountId != null && await partyAccountShared(dbx, cid, "sales", c.accountId)) return null;
     return c?.accountId ?? null;
   }
   const [inv] = await dbx.select({ supplierId: purchaseInvoicesTable.supplierId })
@@ -795,6 +814,7 @@ async function resolvePartyAccountForInvoice(
   const [s] = await dbx.select({ accountId: suppliersTable.accountId })
     .from(suppliersTable)
     .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
+  if (s?.accountId != null && await partyAccountShared(dbx, cid, kind, s.accountId)) return null;
   return s?.accountId ?? null;
 }
 

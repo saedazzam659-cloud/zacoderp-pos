@@ -535,9 +535,6 @@ export default function Suppliers() {
                     value={editForm.accountId}
                     onValueChange={(v) => setEditForm(f => ({ ...f, accountId: v }))}
                     placeholder={`— ${t("pages.suppliers.selectAccountsPayable")} —`}
-                    excludeIds={suppliers
-                      .filter((s: any) => s.id !== editSup?.id)
-                      .map((s: any) => s.accountId)}
                   />
                   <p className="text-xs text-muted-foreground">{t("pages.suppliers.accountingLinkHelp")}</p>
                 </div>

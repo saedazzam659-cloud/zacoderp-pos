@@ -25,6 +25,17 @@ const SUPPLIER_DOC_ENTRY_TYPES = [
  *  sources OTHER than the supplier-document tables (e.g. fixed-asset credit
  *  acquisition, manual JEs, opening balances). Each row carries the JE date,
  *  doc number, description, and signed debit/credit amount. */
+/** True when the AP account is linked to MORE THAN ONE supplier (a shared
+ *  "مورد عام" account). Direct-JE lines on such an account cannot be
+ *  attributed to a single supplier — attributing them to each linked
+ *  supplier would duplicate the same JE across several statements. */
+async function supplierAccountShared(cid: number, accountId: number): Promise<boolean> {
+  const [row] = await db.select({ n: sql<number>`count(*)::int` })
+    .from(suppliersTable)
+    .where(and(eq(suppliersTable.companyId, cid), eq(suppliersTable.accountId, accountId)));
+  return (row?.n ?? 0) > 1;
+}
+
 async function fetchSupplierDirectJeLines(
   cid: number,
   supplierAccountId: number | null | undefined,
@@ -34,6 +45,7 @@ async function fetchSupplierDirectJeLines(
 ): Promise<{ id: number; date: string; docNumber: string | null; description: string | null;
               debit: number; credit: number; entryType: string }[]> {
   if (!supplierAccountId) return [];
+  if (await supplierAccountShared(cid, supplierAccountId)) return [];
   const conds: any[] = [
     eq(journalEntriesTable.companyId, cid),
     eq(journalEntriesTable.status, "posted"),
@@ -372,7 +384,7 @@ router.get("/supplier-statement", async (req, res) => {
         ));
       // Direct JE net (credit - debit) before the from date.
       let jeNet = 0;
-      if (supAccountId) {
+      if (supAccountId && !(await supplierAccountShared(cid as number, supAccountId))) {
         const [je] = await db
           .select({ s: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)` })
           .from(journalEntryLinesTable)
@@ -657,7 +669,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
         ));
       let jeNet = 0;
-      if (supAccountId) {
+      if (supAccountId && !(await supplierAccountShared(cid as number, supAccountId))) {
         const [je] = await db
           .select({ s: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)` })
           .from(journalEntryLinesTable)

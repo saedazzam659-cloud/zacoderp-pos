@@ -8,6 +8,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { useToast } from "@/hooks/use-toast";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -88,11 +89,16 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
   const [newDistrict,       setNewDistrict]       = useState("");
   const [newCity,           setNewCity]           = useState("");
   const [newPostalCode,     setNewPostalCode]     = useState("");
+  // ربط اختياري بحساب موجود في شجرة الحسابات (مثال: «عميل عام») بدلاً من
+  // إنشاء حساب فرعي جديد لكل عميل. آخر اختيار يُحفظ محلياً ويُقترح تلقائياً.
+  const lastAccKey = `quickAddLastAccount:customer:${user?.companyId ?? "0"}`;
+  const [newAccountId, setNewAccountId] = useState("");
 
   function resetForm() {
     setNewName(""); setNewVat(""); setNewPhone("");
     setNewBuildingNumber(""); setNewStreet(""); setNewDistrict("");
     setNewCity(""); setNewPostalCode("");
+    try { setNewAccountId(localStorage.getItem(lastAccKey) ?? ""); } catch { setNewAccountId(""); }
   }
 
   const createCustomer = useMutation({
@@ -113,6 +119,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
           city:           newCity.trim()           || undefined,
           postalCode:     newPostalCode.trim()     || undefined,
           country: "SA",
+          accountId: newAccountId ? Number(newAccountId) : undefined,
         }),
       });
       if (!res.ok) {
@@ -123,6 +130,10 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
       return res.json();
     },
     onSuccess: (cus: any) => {
+      try {
+        if (newAccountId) localStorage.setItem(lastAccKey, newAccountId);
+        else localStorage.removeItem(lastAccKey);
+      } catch {}
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast({ title: "تم إضافة العميل" });
       setOpen(false);
@@ -168,7 +179,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
         <DialogContent dir="rtl" className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>إضافة عميل جديد</DialogTitle>
-            <DialogDescription>أدخل اسم العميل ورقمه الضريبي ورقم هاتفه والعنوان الوطني (اختياري) لإضافته بسرعة. سيتم إنشاء حساب له تلقائياً في شجرة الحسابات.</DialogDescription>
+            <DialogDescription>أدخل اسم العميل ورقمه الضريبي ورقم هاتفه والعنوان الوطني (اختياري) لإضافته بسرعة. يمكنك ربطه بحساب موجود في شجرة الحسابات أو ترك النظام ينشئ حساباً تلقائياً.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
@@ -190,6 +201,23 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
                 className="text-left font-mono"
                 maxLength={20}
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-sm">حساب المدينين من شجرة الحسابات (اختياري)</Label>
+              <AccountCombobox
+                value={newAccountId}
+                onValueChange={setNewAccountId}
+                placeholder="— بدون: إنشاء حساب تلقائي للعميل —"
+                allowEmpty
+                emptyLabel="بدون — إنشاء حساب تلقائي"
+                filterTypes={["asset"]}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                اختر حساباً موجوداً (مثل «عميل عام») لربط العميل عليه دون إضافة حساب جديد
+                في شجرة الحسابات — ويمكن ربط أكثر من عميل على نفس الحساب. اتركه فارغاً
+                لإنشاء حساب فرعي باسم العميل تلقائياً. يتذكّر النظام آخر حساب اخترته.
+              </p>
             </div>
 
             {/* National Address — العنوان الوطني (Saudi Post) */}

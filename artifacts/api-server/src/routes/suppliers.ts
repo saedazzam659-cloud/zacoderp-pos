@@ -57,8 +57,13 @@ router.get("/balances", async (req, res) => {
     .from(suppliersTable).where(
       eq(suppliersTable.companyId, companyId),
     );
+  // Accounts shared by MORE THAN ONE supplier (e.g. a common "مورد عام"
+  // account) are excluded from direct-JE attribution — a shared account's JE
+  // net cannot be assigned to a single supplier without misstating the others.
+  const accCount = new Map<number, number>();
+  for (const s of supplierRows) if (s.accountId != null) accCount.set(s.accountId, (accCount.get(s.accountId) ?? 0) + 1);
   const accIdToSupplier = new Map<number, number>();
-  for (const s of supplierRows) if (s.accountId != null) accIdToSupplier.set(s.accountId, s.id);
+  for (const s of supplierRows) if (s.accountId != null && accCount.get(s.accountId) === 1) accIdToSupplier.set(s.accountId, s.id);
   const supplierAccIds: number[] = Array.from(accIdToSupplier.keys());
 
   const [invRows, lcInvRows, retRows, setRows, jeRows] = await Promise.all([
@@ -238,10 +243,9 @@ router.post("/", async (req, res) => {
     res.status(409).json({ error: `رقم السجل التجاري "${data.crNumber}" مستخدم لمورد آخر` });
     return;
   }
-  if (data.accountId && existing.some(s => s.accountId === Number(data.accountId))) {
-    res.status(409).json({ error: "هذا الحساب مرتبط بمورد آخر — اختر حساباً آخر" });
-    return;
-  }
+  // NOTE: sharing one COA account across several suppliers is ALLOWED by
+  // design (e.g. many small local suppliers linked to a shared "مورد عام"
+  // account so they don't clutter the chart of accounts).
 
   // Validate branchId belongs to the same company (prevents cross-tenant assignment)
   if (data.branchId) {
@@ -264,6 +268,12 @@ router.post("/", async (req, res) => {
     data.accountParentId && Number.isInteger(Number(data.accountParentId)) && Number(data.accountParentId) > 0
       ? Number(data.accountParentId) : null;
   let accountId: number | null = data.accountId ? Number(data.accountId) : null;
+  if (accountId) {
+    // Tenant guard: the linked account must belong to THIS company.
+    const [acc] = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, accountId), eq(accountsTable.companyId, companyId)));
+    if (!acc) { res.status(400).json({ error: "الحساب المحدّد غير موجود في هذه الشركة" }); return; }
+  }
   if (!accountId) {
     try {
       if (accountParentId) {
@@ -410,10 +420,7 @@ router.put("/:id", async (req, res) => {
     res.status(409).json({ error: `رقم السجل التجاري "${data.crNumber}" مستخدم لمورد آخر` });
     return;
   }
-  if (data.accountId && others.some(s => s.id !== id && s.accountId === Number(data.accountId))) {
-    res.status(409).json({ error: "هذا الحساب مرتبط بمورد آخر — اختر حساباً آخر" });
-    return;
-  }
+  // Shared COA accounts across suppliers are allowed (e.g. "مورد عام").
 
   if (data.branchId) {
     const [b] = await db.select().from(branchesTable).where(and(eq(branchesTable.id, Number(data.branchId)), eq(branchesTable.companyId, existing.companyId)));
@@ -426,6 +433,12 @@ router.put("/:id", async (req, res) => {
   //  - otherwise (never linked, or the linked account was deleted) re-mint
   //    an AP sub-account — same behaviour as create.
   let accountId: number | null = data.accountId ? Number(data.accountId) : null;
+  if (accountId) {
+    // Tenant guard: the linked account must belong to THIS company.
+    const [acc] = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, accountId), eq(accountsTable.companyId, existing.companyId)));
+    if (!acc) { res.status(400).json({ error: "الحساب المحدّد غير موجود في هذه الشركة" }); return; }
+  }
   if (!accountId && existing.accountId != null) {
     const [still] = await db.select({ id: accountsTable.id }).from(accountsTable)
       .where(and(eq(accountsTable.id, existing.accountId), eq(accountsTable.companyId, existing.companyId)));
