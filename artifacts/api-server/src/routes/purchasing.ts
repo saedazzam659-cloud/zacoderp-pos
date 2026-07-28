@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
@@ -1394,7 +1395,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
 // status check and duplicate side effects. api-server is a single process,
 // so a process-local lock fully serializes concurrent requests.
 const __postingLocks = new Set<string>();
-router.patch("/purchase-invoices/:id/post", async (req, res) => {
+router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async (req, res) => {
   let __lockKey: string | null = null;
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -2102,7 +2103,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
 // ─── UNPOST purchase invoice (فك الترحيل) ───────────────────────────────────
 // Reverses stock movements, zeroes-out the journal entry lines (audit trail),
 // then deletes the JE and sets the invoice back to draft.
-router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res) => {
+router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -2941,7 +2942,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/purchase-returns/:id/post", async (req, res) => {
+router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -3351,7 +3352,7 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
 });
 
 // ─── UNPOST purchase return (فك الترحيل) ────────────────────────────────────
-router.patch("/purchase-returns/:id/unpost", requireAdminRole, async (req, res) => {
+router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -3467,7 +3468,7 @@ router.post("/supplier-settlements", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/supplier-settlements/:id/post", async (req, res) => {
+router.patch("/supplier-settlements/:id/post", requirePostRight("purchase"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -3483,7 +3484,7 @@ router.patch("/supplier-settlements/:id/post", async (req, res) => {
 // Mirrors the unpost flow on purchase-invoices / purchase-returns: admin-only,
 // flips status back to draft so the user can edit or delete the row.
 // Without this the DELETE guard above would be a dead-end for posted rows.
-router.patch("/supplier-settlements/:id/unpost", requireAdminRole, async (req, res) => {
+router.patch("/supplier-settlements/:id/unpost", requireUnpostRight("purchase"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

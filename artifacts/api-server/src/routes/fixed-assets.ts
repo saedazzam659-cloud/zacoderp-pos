@@ -4,6 +4,7 @@
 // module key "fixed_assets".
 // ─────────────────────────────────────────────────────────────────────────
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
   fixedAssetsTable, faCategoriesTable, faAssetGroupsTable, faMaintenanceTable, faTransfersTable,
@@ -877,7 +878,7 @@ router.post("/depreciation/run-auto-now", async (req, res) => {
 });
 
 // Post monthly depreciation for one period — body { periodMonth, periodYear }.
-router.post("/depreciation/post", async (req, res) => {
+router.post("/depreciation/post", requirePostRight("faDepreciation"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body ?? {};
@@ -899,7 +900,7 @@ router.post("/depreciation/post", async (req, res) => {
 // UNPOST a single depreciation run — fully reverses its economic effect
 // (asset accumulated depreciation + book value AND its JE) and flips the run
 // to 'unposted'. Called from مركز الترحيل. Atomic + chain-guarded.
-router.post("/depreciation/:runId/unpost", async (req, res) => {
+router.post("/depreciation/:runId/unpost", requireUnpostRight("faDepreciation"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const runId = Number(req.params.runId);
@@ -918,7 +919,7 @@ router.post("/depreciation/:runId/unpost", async (req, res) => {
 // (RE)POST a single depreciation run — recomputes day-based from the asset's
 // current state, reapplies it, rebuilds the JE (forced posted) and flips the
 // run to 'posted'. Called from مركز الترحيل. Atomic + chain-guarded.
-router.post("/depreciation/:runId/post", async (req, res) => {
+router.post("/depreciation/:runId/post", requirePostRight("faDepreciation"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const runId = Number(req.params.runId);

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { randomUUID } from "node:crypto";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -1154,7 +1155,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/sales-invoices/:id/post", async (req, res) => {
+router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -1697,7 +1698,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
 });
 
 // ─── UNPOST sales invoice (فك الترحيل) ──────────────────────────────────────
-router.patch("/sales-invoices/:id/unpost", requireAdminRole, async (req, res) => {
+router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -2293,7 +2294,7 @@ router.put("/sales-returns/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/sales-returns/:id/post", async (req, res) => {
+router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -2707,7 +2708,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
 });
 
 // ─── UNPOST sales return (فك الترحيل) ───────────────────────────────────────
-router.patch("/sales-returns/:id/unpost", requireAdminRole, async (req, res) => {
+router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -3421,7 +3422,7 @@ router.post("/customer-settlements", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/customer-settlements/:id/post", async (req, res) => {
+router.patch("/customer-settlements/:id/post", requirePostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -3437,7 +3438,7 @@ router.patch("/customer-settlements/:id/post", async (req, res) => {
 // Mirrors the unpost flow on sales-invoices / sales-returns: admin-only,
 // flips status back to draft so the user can edit or delete the row.
 // Without this the DELETE guard above would be a dead-end for posted rows.
-router.patch("/customer-settlements/:id/unpost", requireAdminRole, async (req, res) => {
+router.patch("/customer-settlements/:id/unpost", requireUnpostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

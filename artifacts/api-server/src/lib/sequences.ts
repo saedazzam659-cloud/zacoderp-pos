@@ -62,6 +62,12 @@ export type NextSequenceCtx = {
    *  to, not the month it was entered. When omitted (or when the company
    *  is on the default `"system"` setting), today's date is used. */
   docDate?: Date | string | null;
+  /** INTERNAL — unified-JE-counter mode ("الطريقة العالمية"). When set, the
+   *  issued number is formatted with THIS prefix instead of the sequence's
+   *  own prefix (counter, month pattern, padding and capacity still come
+   *  from the sequence row). Used by nextJeSubSequence to draw the shared
+   *  "journal_entry" counter while rendering the source screen's prefix. */
+  prefixOverride?: string | null;
 };
 
 export class SequenceCapacityExceededError extends Error {
@@ -346,7 +352,8 @@ export async function nextSequenceNumber(
         // being adopted on a monthly_reset toggle (see below).
         seed = seq.start_number;
 
-        const renderedPrefix = `${seq.prefix ?? ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+        const effPrefixForSeed = ctx.prefixOverride != null ? ctx.prefixOverride : (seq.prefix ?? "");
+        const renderedPrefix = `${effPrefixForSeed}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
         const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix);
         if (logMax != null) seed = Math.max(seed, logMax + 1);
 
@@ -404,7 +411,10 @@ export async function nextSequenceNumber(
       throw new SequenceCapacityExceededError(seq.code);
     }
 
-    const generated = format(seq.prefix ?? "", issuedNumber, seq.pad_length ?? 0, seq.month_pattern, effectiveDate);
+    const generated = format(
+      ctx.prefixOverride != null ? ctx.prefixOverride : (seq.prefix ?? ""),
+      issuedNumber, seq.pad_length ?? 0, seq.month_pattern, effectiveDate,
+    );
 
     // 4. Bump the per-(branch, period) counter only. Master sequences row is
     //    NEVER written to during issuance (per spec).
@@ -573,11 +583,58 @@ export async function nextJeSubSequence(
   subType: string | null | undefined,
   ctx: NextSequenceCtx = {},
 ): Promise<string | null> {
+  // ── "الطريقة العالمية" — unified JE counter with per-source prefixes ──
+  // When the active "journal_entry" sequence has apply_source_prefixes=true,
+  // EVERY auto-generated JE draws from that ONE shared counter (monthly reset
+  // + month pattern + branch buckets all honoured), and only the PREFIX comes
+  // from the screen's bound sub-type sequence (falling back to the JE
+  // sequence's own prefix). The sub-type sequence's own counter is NOT
+  // consumed in this mode.
+  const unified = await unifiedJePrefixMode(companyId);
+  if (unified) {
+    let prefixOverride: string | null = null;
+    if (subType) prefixOverride = await activeSequencePrefix(companyId, subType);
+    return await nextSequenceNumber(companyId, "journal_entry", {
+      ...ctx,
+      prefixOverride: prefixOverride ?? undefined,
+    });
+  }
   if (subType) {
     const fromSub = await nextSequenceNumber(companyId, subType, ctx);
     if (fromSub != null) return fromSub;
   }
   return await nextSequenceNumber(companyId, "journal_entry", ctx);
+}
+
+/** True when the company's active "journal_entry" sequence has opted into the
+ *  unified-counter mode (apply_source_prefixes). Cheap read, no locks. */
+export async function unifiedJePrefixMode(companyId: number): Promise<boolean> {
+  const r = await db.execute<{ apply_source_prefixes: boolean }>(sql`
+    SELECT apply_source_prefixes
+    FROM sequences
+    WHERE company_id = ${companyId}
+      AND is_active = true
+      AND transaction_types ? ${"journal_entry"}
+    ORDER BY id ASC
+    LIMIT 1
+  `);
+  return r.rows?.[0]?.apply_source_prefixes === true;
+}
+
+/** Prefix of the active sequence bound to `txType`, or null when none. Used
+ *  by the unified-JE-counter mode to render the source screen's prefix. */
+export async function activeSequencePrefix(companyId: number, txType: string): Promise<string | null> {
+  const r = await db.execute<{ prefix: string | null }>(sql`
+    SELECT prefix
+    FROM sequences
+    WHERE company_id = ${companyId}
+      AND is_active = true
+      AND transaction_types ? ${txType}
+    ORDER BY id ASC
+    LIMIT 1
+  `);
+  const row = r.rows?.[0];
+  return row ? (row.prefix ?? "") : null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

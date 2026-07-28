@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
   CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck, PowerOff, Power,
-  Copy, ArrowLeftRight, Sparkles, Eye, EyeOff, ChevronLeft, ChevronRight,
+  Copy, ArrowLeftRight, Sparkles, Eye, EyeOff, ChevronLeft, ChevronRight, BookCheck,
 } from "lucide-react";
 import {
   PERMISSION_MODULES, PERMISSION_GROUPS, ACTION_LABELS,
@@ -99,6 +99,7 @@ type UserRow = {
   branchIds: number[];
   // Approval workflow — server returns numeric strings for the cap because
   // it's a NUMERIC column; we coerce on form-load.
+  postingPermissions?: Record<string, { post?: boolean; unpost?: boolean }> | null;
   canApprove?: boolean;
   approvalLevel?: number;
   maxApprovalAmount?: string | number | null;
@@ -106,6 +107,47 @@ type UserRow = {
 };
 
 type Branch = { id: number; code: string; nameAr: string; nameEn?: string | null };
+
+
+// ─── Per-user POST/UNPOST rights (صلاحيات الترحيل وفك الترحيل) ────────────
+// Mirrors the backend AutoPostDocType categories (api-server lib/postingStatus).
+// Semantics: unchecked = explicitly denied; checked (or never saved) = allowed.
+// Admin/superadmin always bypass on the server.
+const POSTING_DOC_TYPES: Array<{ key: string; labelKey: string }> = [
+  { key: "journalEntry",   labelKey: "users.postDocJournalEntry" },
+  { key: "sales",          labelKey: "users.postDocSales" },
+  { key: "purchase",       labelKey: "users.postDocPurchase" },
+  { key: "receipt",        labelKey: "users.postDocReceipt" },
+  { key: "payment",        labelKey: "users.postDocPayment" },
+  { key: "financial",      labelKey: "users.postDocFinancial" },
+  { key: "cashTransfer",   labelKey: "users.postDocCashTransfer" },
+  { key: "payroll",        labelKey: "users.postDocPayroll" },
+  { key: "production",     labelKey: "users.postDocProduction" },
+  { key: "stockMovement",  labelKey: "users.postDocStockMovement" },
+  { key: "goodsReceipt",   labelKey: "users.postDocGoodsReceipt" },
+  { key: "goodsDelivery",  labelKey: "users.postDocGoodsDelivery" },
+  { key: "adjustment",     labelKey: "users.postDocAdjustment" },
+  { key: "faAcquisition",  labelKey: "users.postDocFaAcquisition" },
+  { key: "faDepreciation", labelKey: "users.postDocFaDepreciation" },
+  { key: "faDisposal",     labelKey: "users.postDocFaDisposal" },
+  { key: "ctgOutgoingBill", labelKey: "users.postDocCtgOutgoingBill" },
+  { key: "ctgIncomingBill", labelKey: "users.postDocCtgIncomingBill" },
+];
+
+type PostingPerms = Record<string, { post: boolean; unpost: boolean }>;
+
+// Seed the matrix: every doc type checked (allowed) unless the stored map
+// explicitly denies it. A user who was never configured sees all-checked.
+const seedPostingPerms = (stored?: Record<string, { post?: boolean; unpost?: boolean }> | null): PostingPerms => {
+  const out: PostingPerms = {};
+  for (const d of POSTING_DOC_TYPES) {
+    out[d.key] = {
+      post:   stored?.[d.key]?.post   !== false,
+      unpost: stored?.[d.key]?.unpost !== false,
+    };
+  }
+  return out;
+};
 
 const emptyForm = () => ({
   id: 0 as number,
@@ -125,6 +167,9 @@ const emptyForm = () => ({
   // into the user's sidebar. (Was viewOnlyPermissions() which silently granted
   // view on every module and made "I picked HR only" show every menu.)
   permissions: emptyPermissions(),
+  // All-checked by default — matches the server's back-compat "allowed unless
+  // explicitly denied" semantics.
+  postingPermissions: seedPostingPerms(),
   // Approval defaults: off, level 0, no cap, single-signature is fine.
   canApprove: false,
   approvalLevel: 0,
@@ -343,6 +388,7 @@ export default function Users() {
       // what was saved: modules the user was never granted stay unchecked and a
       // plain re-save can never silently grant view on every module.
       permissions: { ...emptyPermissions(), ...(u.permissions ?? {}) },
+      postingPermissions: seedPostingPerms(u.postingPermissions),
       // Approval workflow fields — coerce numeric-string cap to a string the
       // <Input type="number"> can render without leading zeros.
       canApprove: !!u.canApprove,
@@ -379,6 +425,7 @@ export default function Users() {
         scopeOwnCustomersOnly: form.scopeOwnCustomersOnly,
         branchIds: form.branchIds,
         permissions: form.permissions,
+        postingPermissions: form.postingPermissions,
         // Approval workflow — server clamps these too as a safety net.
         canApprove: form.canApprove,
         approvalLevel: Number(form.approvalLevel) || 0,
@@ -680,10 +727,14 @@ export default function Users() {
 
           <CardContent className="pt-5">
             <Tabs defaultValue="info" className="w-full" dir={isRtl ? "rtl" : "ltr"}>
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
+              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5">
                 <TabsTrigger value="info">{t("users.tabInfo")}</TabsTrigger>
                 <TabsTrigger value="branches">{t("users.tabBranches", { count: form.branchIds.length })}</TabsTrigger>
                 <TabsTrigger value="permissions">{t("users.tabPermissions")}</TabsTrigger>
+                <TabsTrigger value="posting" data-testid="tab-posting" className="gap-1.5">
+                  <BookCheck className="h-3.5 w-3.5" />
+                  {t("users.tabPosting")}
+                </TabsTrigger>
                 <TabsTrigger value="approval" data-testid="tab-approval" className="gap-1.5">
                   <ShieldCheck className="h-3.5 w-3.5" />
                   {t("users.tabApproval")}
@@ -1145,6 +1196,78 @@ export default function Users() {
                     );
                   })}
                 </div>
+              </TabsContent>
+
+              {/* Posting rights tab — per-doc-type ترحيل / فك ترحيل */}
+              <TabsContent value="posting" className="space-y-4 pt-4" data-testid="posting-tab-content">
+                <div className="text-sm text-muted-foreground flex items-start gap-2 p-3 rounded-lg border border-sky-200 bg-sky-50/40 dark:bg-sky-950/20">
+                  <BookCheck className="h-4 w-4 text-sky-600 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-semibold text-sky-900 dark:text-sky-100">{t("users.tabPosting")}</div>
+                    <div className="text-xs mt-0.5">{t("users.postingSectionHint")}</div>
+                    {(form.role === "admin") && (
+                      <div className="text-xs mt-1.5 text-amber-700 font-medium">{t("users.postingAdminNote")}</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex gap-2 text-xs">
+                  <Button type="button" variant="outline" size="sm" data-testid="btn-posting-all"
+                    onClick={() => setForm(f => ({ ...f, postingPermissions: seedPostingPerms() }))}>
+                    {t("users.postingAllowAll")}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" data-testid="btn-posting-none"
+                    onClick={() => setForm(f => {
+                      const next: PostingPerms = {};
+                      POSTING_DOC_TYPES.forEach(d => { next[d.key] = { post: false, unpost: false }; });
+                      return { ...f, postingPermissions: next };
+                    })}>
+                    {t("users.postingDenyAll")}
+                  </Button>
+                </div>
+
+                <div className="rounded-lg border overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/60">
+                      <tr>
+                        <th className="text-start px-3 py-2 font-medium">{t("users.postingModuleCol")}</th>
+                        <th className="text-center px-3 py-2 font-medium w-28">{t("users.postingPostCol")}</th>
+                        <th className="text-center px-3 py-2 font-medium w-28">{t("users.postingUnpostCol")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {POSTING_DOC_TYPES.map(d => {
+                        const row = form.postingPermissions[d.key] ?? { post: true, unpost: true };
+                        return (
+                          <tr key={d.key} className="border-t hover:bg-muted/30">
+                            <td className="px-3 py-1.5">{t(d.labelKey)}</td>
+                            <td className="text-center px-3 py-1.5">
+                              <Checkbox
+                                checked={row.post}
+                                data-testid={`posting-post-${d.key}`}
+                                onCheckedChange={(v) => setForm(f => ({
+                                  ...f,
+                                  postingPermissions: { ...f.postingPermissions, [d.key]: { ...row, post: !!v } },
+                                }))}
+                              />
+                            </td>
+                            <td className="text-center px-3 py-1.5">
+                              <Checkbox
+                                checked={row.unpost}
+                                data-testid={`posting-unpost-${d.key}`}
+                                onCheckedChange={(v) => setForm(f => ({
+                                  ...f,
+                                  postingPermissions: { ...f.postingPermissions, [d.key]: { ...row, unpost: !!v } },
+                                }))}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[11px] text-muted-foreground">{t("users.postingDraftHint")}</p>
               </TabsContent>
 
               {/* Approval Permissions Tab — controls per-user document-approval workflow */}

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import { cashTransfersTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
@@ -86,7 +87,7 @@ router.put("/:id", async (req, res) => {
   res.json(row);
 });
 
-router.post("/:id/post", async (req, res) => {
+router.post("/:id/post", requirePostRight("cashTransfer"), async (req, res) => {
   const id = parseInt(req.params.id);
   const [existing] = await db.select().from(cashTransfersTable).where(eq(cashTransfersTable.id, id));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }

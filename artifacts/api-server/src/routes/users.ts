@@ -6,6 +6,26 @@ import bcrypt from "bcryptjs";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
+
+// ─── Per-user POST/UNPOST rights (صلاحيات الترحيل وفك الترحيل) ─────────────
+// Clamp the client payload to the known shape:
+//   { "<docType>": { post?: boolean, unpost?: boolean } } | null
+// Unknown keys are kept (forward-compat with new doc types) but values are
+// coerced to plain booleans; anything malformed collapses to null (= all
+// allowed, the back-compat default).
+function sanitizePostingPermissions(raw: any): Record<string, { post: boolean; unpost: boolean }> | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out: Record<string, { post: boolean; unpost: boolean }> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!k || typeof v !== "object" || v == null) continue;
+    out[String(k).slice(0, 64)] = {
+      post:   (v as any).post   !== false,
+      unpost: (v as any).unpost !== false,
+    };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 router.use(extractAuth);
 
 // ─── Plan-based user quota ───────────────────────────────────────
@@ -83,6 +103,7 @@ router.get("/", async (req, res) => {
       nameAr: usersTable.nameAr,
       nameEn: usersTable.nameEn,
       permissions: usersTable.permissions,
+      postingPermissions: usersTable.postingPermissions,
       viewAllBranches: usersTable.viewAllBranches,
       scopeOwnCustomersOnly: usersTable.scopeOwnCustomersOnly,
       isActive: usersTable.isActive,
@@ -192,6 +213,9 @@ router.post("/", async (req, res) => {
       nameAr: nameAr || null,
       nameEn: nameEn || null,
       permissions: permissions ?? null,
+      // Per-user POST/UNPOST rights (صلاحيات الترحيل وفك الترحيل). NULL =
+      // all allowed (back-compat); see lib/postingRights.ts.
+      postingPermissions: sanitizePostingPermissions(req.body?.postingPermissions),
       // Default true if not provided (matches the column default).
       viewAllBranches: typeof viewAllBranches === "boolean" ? viewAllBranches : true,
       scopeOwnCustomersOnly: typeof req.body?.scopeOwnCustomersOnly === "boolean" ? req.body.scopeOwnCustomersOnly : false,
@@ -268,6 +292,9 @@ router.patch("/:id", async (req, res) => {
       update.scopeOwnCustomersOnly = req.body.scopeOwnCustomersOnly;
     }
     if (permissions !== undefined) update.permissions = permissions;
+    if (req.body?.postingPermissions !== undefined) {
+      update.postingPermissions = sanitizePostingPermissions(req.body.postingPermissions);
+    }
     // ─── Approval permissions (clamped) ───
     if (typeof canApprove === "boolean") update.canApprove = canApprove;
     if (typeof requireSecondApproval === "boolean") update.requireSecondApproval = requireSecondApproval;

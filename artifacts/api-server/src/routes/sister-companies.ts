@@ -8,6 +8,7 @@
 // 403). See `replit.md` → "Sister Companies" for the JE pattern.
 
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
   sisterCompaniesTable, sisterTransfersTable, sisterTransferItemsTable,
@@ -344,7 +345,7 @@ router.put("/transfers/:id", async (req, res) => {
 });
 
 // POST /transfers/:id/post — confirm: stock out + JE creation
-router.post("/transfers/:id/post", async (req, res) => {
+router.post("/transfers/:id/post", requirePostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   // Atomic claim
@@ -418,7 +419,7 @@ router.post("/transfers/:id/post", async (req, res) => {
 // BLOCKED when any return references this transfer (draft OR posted): returns
 // are the sanctioned reversal path, so unposting a transfer that already has a
 // return would corrupt the sister-company AR balance and the stock ledger.
-router.post("/transfers/:id/unpost", async (req, res) => {
+router.post("/transfers/:id/unpost", requireUnpostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const [tr] = await db.select().from(sisterTransfersTable)
@@ -684,7 +685,7 @@ router.put("/returns/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/returns/:id/post", async (req, res) => {
+router.post("/returns/:id/post", requirePostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const claim = await db.update(sisterReturnsTable)
@@ -773,7 +774,7 @@ router.post("/returns/:id/post", async (req, res) => {
 });
 
 // POST /returns/:id/unpost — reverse stock-in + JE + returnedQty, posted→draft.
-router.post("/returns/:id/unpost", async (req, res) => {
+router.post("/returns/:id/unpost", requireUnpostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const [ret] = await db.select().from(sisterReturnsTable)
@@ -964,7 +965,7 @@ router.put("/settlements/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/settlements/:id/post", async (req, res) => {
+router.post("/settlements/:id/post", requirePostRight("receipt"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const claim = await db.update(sisterSettlementsTable)
@@ -1029,7 +1030,7 @@ router.post("/settlements/:id/post", async (req, res) => {
 });
 
 // POST /settlements/:id/unpost — reverse the cash/bank↔AR JE, posted→draft.
-router.post("/settlements/:id/unpost", async (req, res) => {
+router.post("/settlements/:id/unpost", requireUnpostRight("receipt"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const [v] = await db.select().from(sisterSettlementsTable)

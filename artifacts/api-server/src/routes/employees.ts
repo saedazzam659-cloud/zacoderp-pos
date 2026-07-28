@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable, accountsTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
@@ -1225,7 +1226,7 @@ router.post("/payroll/runs", async (req, res) => {
   } catch (e: any) { respondHrError(req, res, e); }
 });
 
-router.post("/payroll/runs/:id/post", async (req, res) => {
+router.post("/payroll/runs/:id/post", requirePostRight("payroll"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -1292,7 +1293,7 @@ router.get("/payroll/runs/:id/journal", async (req, res) => {
 });
 
 // Unpost a payroll run — deletes its JE and reverts loan paidAmounts
-router.post("/payroll/runs/:id/unpost", requireAdminRole, async (req, res) => {
+router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

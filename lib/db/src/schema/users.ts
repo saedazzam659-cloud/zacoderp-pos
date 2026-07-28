@@ -27,6 +27,12 @@ export const usersTable = pgTable("users", {
   // Shape: { "<moduleKey>": { view, create, edit, delete, post, export, ... } }
   // For admin/superadmin, full access is granted regardless of this map.
   permissions: jsonb("permissions"),
+  // ─── Per-user POST / UNPOST rights (صلاحيات الترحيل وفك الترحيل) ─────
+  // Shape: { "<AutoPostDocType>": { post?: boolean, unpost?: boolean } }
+  // NULL / missing key / undefined → ALLOWED (back-compat: existing users keep
+  // today's behaviour); explicit false → denied. Admin/superadmin always
+  // bypass. Enforcement lives in api-server lib/postingRights.ts.
+  postingPermissions: jsonb("posting_permissions"),
   // Per-user UI preferences (durable, server-side mirror of what used to live
   // only in localStorage). Survives a browser cache/localStorage wipe. Shape:
   //   { "<screenSlug>": { ...arbitrary layout blob } }

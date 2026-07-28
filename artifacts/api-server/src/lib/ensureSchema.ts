@@ -349,6 +349,14 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // budget-skipped.
     { label: "users.is_trainee column",
       sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trainee BOOLEAN NOT NULL DEFAULT FALSE` },
+    // Per-user POST/UNPOST rights map (صلاحيات الترحيل وفك الترحيل) — NULL
+    // means "all allowed" (back-compat). See api-server lib/postingRights.ts.
+    { label: "users.posting_permissions column",
+      sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS posting_permissions JSONB` },
+    // "الطريقة العالمية" — unified JE counter with per-source prefixes; flag
+    // lives on the sequence bound to journal_entry. See lib/sequences.ts.
+    { label: "sequences.apply_source_prefixes column",
+      sql:   `ALTER TABLE sequences ADD COLUMN IF NOT EXISTS apply_source_prefixes BOOLEAN NOT NULL DEFAULT FALSE` },
     // Trainee usernames (emails) must be globally unique so the code-less
     // login can resolve the tenant unambiguously.
     { label: "users_trainee_username_uniq",

@@ -17,6 +17,17 @@ router.use(extractAuth);
 
 const TX_SET = new Set<string>(SEQUENCE_TX_TYPES);
 
+// Auto-generated journal-entry SUB-SERIES types (see the "journal-entry
+// SUB-SERIES" block in SEQUENCE_TX_TYPES). Used by the peek endpoint to
+// mirror the unified-JE-counter mode ("الطريقة العالمية") exactly like
+// nextJeSubSequence does at issuance time.
+const JE_SUB_TYPES = new Set<string>([
+  "adjustment_entry", "fa_depreciation", "fa_acquisition", "fa_disposal",
+  "hr_payroll", "hr_loan", "hr_eos", "hr_custody",
+  "contracting_bill_je", "opening_balance_je",
+  "stock_transfer_je", "stock_adjustment_je",
+]);
+
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
@@ -131,7 +142,7 @@ router.get("/peek/:txType", async (req: any, res) => {
   // first and transparently fall back to the unified base type when no
   // sub-type series is configured. Returns null when no active sequence is
   // bound to the type (caller then tries the next candidate).
-  async function resolveForType(qType: string): Promise<{
+  async function resolveForType(qType: string, prefixOverride?: string | null): Promise<{
     number: string | null; hasSequence: true; sequenceCode: string;
     branchId: number; exhausted: boolean;
   } | null> {
@@ -190,7 +201,8 @@ router.get("/peek/:txType", async (req: any, res) => {
       // legacy "" row being adopted on a monthly_reset toggle. (Read-only: the
       // preview never retires the legacy row — only the real issuance does.)
       let seed = seq.start_number;
-      const renderedPrefix = `${seq.prefix ?? ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+      const effPrefix = prefixOverride != null ? prefixOverride : (seq.prefix ?? "");
+      const renderedPrefix = `${effPrefix}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
       const escaped = renderedPrefix.replace(/([\\%_])/g, "\\$1");
       const logRows = await db.execute<{ mx: number | null }>(sql`
         SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::int) AS mx
@@ -216,7 +228,10 @@ router.get("/peek/:txType", async (req: any, res) => {
 
     const exhausted = previewNumber > seq.end_number;
     return {
-      number: exhausted ? null : fmt(seq.prefix, previewNumber, seq.pad_length, seq.month_pattern, effectiveDate),
+      number: exhausted ? null : fmt(
+        prefixOverride != null ? prefixOverride : seq.prefix,
+        previewNumber, seq.pad_length, seq.month_pattern, effectiveDate,
+      ),
       hasSequence: true,
       sequenceCode: seq.code,
       branchId: branchKey,
@@ -228,6 +243,33 @@ router.get("/peek/:txType", async (req: any, res) => {
   // sub-type FIRST, then the per-payment-method sub-type (?paymentType=), then
   // the unified base type. Mirrors the issuance-time resolution in
   // `nextSequenceForPayment`.
+  // ── "الطريقة العالمية" — unified JE counter with per-source prefixes ──
+  // JE sub-series types preview the SHARED journal_entry counter (with the
+  // sub-type's prefix) when the mode is on, mirroring nextJeSubSequence.
+  if (JE_SUB_TYPES.has(txType) || txType === "journal_entry") {
+    const uni = await db.execute<{ apply_source_prefixes: boolean }>(sql`
+      SELECT apply_source_prefixes FROM sequences
+      WHERE company_id = ${cid} AND is_active = true
+        AND transaction_types ? ${"journal_entry"}
+      ORDER BY id ASC LIMIT 1
+    `);
+    if (uni.rows?.[0]?.apply_source_prefixes === true) {
+      let ovr: string | null = null;
+      if (txType !== "journal_entry") {
+        const p = await db.execute<{ prefix: string | null }>(sql`
+          SELECT prefix FROM sequences
+          WHERE company_id = ${cid} AND is_active = true
+            AND transaction_types ? ${txType}
+          ORDER BY id ASC LIMIT 1
+        `);
+        ovr = p.rows?.[0] ? (p.rows[0].prefix ?? "") : null;
+      }
+      const uniRes = await resolveForType("journal_entry", ovr);
+      if (uniRes) { res.json(uniRes); return; }
+      res.json({ number: null, hasSequence: false }); return;
+    }
+  }
+
   const isForeign = ["1", "true"].includes(String(req.query?.foreign ?? "").toLowerCase());
   const foreignSub = isForeign ? foreignSubTypeFor(txType, true) : null;
   const sub = subTypeFor(txType, req.query?.paymentType as string | undefined);
@@ -664,6 +706,9 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
         // the beginning of each calendar month. Defaults to false (legacy
         // continuous numbering) when the client omits it.
         monthlyReset:     !!req.body.monthlyReset,
+        // "الطريقة العالمية" — unified JE counter with per-source prefixes.
+        // Only meaningful when this sequence is bound to journal_entry.
+        applySourcePrefixes: !!req.body.applySourcePrefixes,
         transactionTypes: req.body.transactionTypes,
         // Normalize: dedupe + coerce to int. validatePayload already
         // rejected non-positive entries.
@@ -822,6 +867,9 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         padLength:        req.body.padLength        ?? existing.padLength,
         isActive:         req.body.isActive         ?? existing.isActive,
         monthlyReset:     req.body.monthlyReset     ?? existing.monthlyReset,
+        applySourcePrefixes: typeof req.body.applySourcePrefixes === "boolean"
+          ? req.body.applySourcePrefixes
+          : (existing as any).applySourcePrefixes,
         transactionTypes: req.body.transactionTypes ?? existing.transactionTypes,
         branchIds:        req.body.branchIds        ?? existing.branchIds,
         fiscalPeriodIds:  req.body.fiscalPeriodIds  ?? existing.fiscalPeriodIds,
@@ -913,6 +961,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         padLength:        Number(merged.padLength),
         isActive:         !!merged.isActive,
         monthlyReset:     !!merged.monthlyReset,
+        applySourcePrefixes: !!(merged as any).applySourcePrefixes,
         transactionTypes: merged.transactionTypes,
         // Same dedupe-and-coerce normalization as CREATE keeps the column
         // shape stable regardless of which path wrote it.

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
   journalEntriesTable, journalEntryLinesTable, branchesTable, usersTable,
@@ -1372,7 +1373,7 @@ router.put("/:id", async (req, res) => {
 // require the entry to be balanced (sum debit === sum credit) with ≥2 valid
 // lines and an open period. Source-document JEs left as drafts (auto-posting
 // OFF) ARE postable here — see the NOTE in the handler.
-router.post("/:id/post", async (req, res) => {
+router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
@@ -1456,7 +1457,7 @@ router.post("/:id/post", async (req, res) => {
 });
 
 // ─── POST /:id/unpost — flip status from posted → draft ─────────────────────
-router.post("/:id/unpost", async (req, res) => {
+router.post("/:id/unpost", requireUnpostRight("journalEntry"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);

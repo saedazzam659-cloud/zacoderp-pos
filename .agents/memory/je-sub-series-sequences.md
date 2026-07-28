@@ -12,3 +12,4 @@ Auto-JE producers draw numbers via `nextJeSubSequence(cid, subType, ctx)`: it tr
 - Fallback never double-draws: a miss on the sub-type consumes nothing.
 - Reserved-number reuse (unpost→repost) still wins before any fresh draw (`resolveJeNumber`).
 - Adjustments engine: `resolveJeIssuingBranch(cid, date, subType)` must resolve the branch bucket against the SAME sequence the number will draw from (sub-type first, then journal_entry) or numbers come from the wrong branch bucket.
+- Unified mode ("الطريقة العالمية"): `sequences.apply_source_prefixes` on the journal_entry-bound sequence → ALL auto-JEs draw the SHARED journal_entry counter, only the prefix comes from the sub-type-bound sequence (`prefixOverride` in NextSequenceCtx; sub-type counters NOT consumed). Peek must mirror via the JE_SUB_TYPES branch in routes/sequences.ts (`resolveForType(type, prefixOverride)`), and the monthly-reset self-heal LIKE uses the OVERRIDE prefix.

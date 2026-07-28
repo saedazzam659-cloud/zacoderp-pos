@@ -17,6 +17,7 @@
 //   supplier + debit   →  DR contra(amount) + DR vat(vatAmt) / CR partyAP(total)
 
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
   accountNotesTable,
@@ -375,7 +376,7 @@ router.put("/:id", async (req, res) => {
 // ═════════════════════════════════════════════════════════════════
 // POST  (claim → JE → mark posted)
 // ═════════════════════════════════════════════════════════════════
-router.post("/:id/post", async (req, res) => {
+router.post("/:id/post", requirePostRight("financial"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرف غير صالح" }); return; }
@@ -496,7 +497,7 @@ router.post("/:id/post", async (req, res) => {
 // ═════════════════════════════════════════════════════════════════
 // UNPOST  (reverse: delete JE → flip back to draft)
 // ═════════════════════════════════════════════════════════════════
-router.post("/:id/unpost", async (req, res) => {
+router.post("/:id/unpost", requireUnpostRight("financial"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرف غير صالح" }); return; }

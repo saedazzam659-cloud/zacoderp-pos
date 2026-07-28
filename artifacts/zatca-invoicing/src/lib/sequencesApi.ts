@@ -41,6 +41,10 @@ export type SequenceRow = {
   // of each calendar month. Pair with a `{MM}` monthPattern so each month gets
   // a distinct stream and never collides. Default false = continuous numbering.
   monthlyReset?: boolean;
+  // "الطريقة العالمية" — only meaningful on the sequence bound to
+  // journal_entry: when true, ALL auto-JEs draw from this sequence's counter
+  // with the source screen's prefix (sub-series counters are not consumed).
+  applySourcePrefixes?: boolean;
   transactionTypes: string[];
   // Optional whitelist of branch IDs allowed to use this sequence. An empty
   // array means "all branches" (preserves the original behavior).

@@ -2563,7 +2563,34 @@
     "requireSecondApproval": "Requires second approval",
     "requireSecondApprovalHint": "Their approval alone is not final — the document moves to the next level for a second signoff.",
     "approvalDisabledHint": "Approval is disabled for this user — the Approve button will be hidden everywhere.",
-    "approvalAdminNote": "Admin role automatically gets the highest approval level regardless of these settings."
+    "approvalAdminNote": "Admin role automatically gets the highest approval level regardless of these settings.",
+    "tabPosting": "Posting & Unposting",
+    "postingSectionHint": "Choose which screens this user may post or unpost. When posting is denied for a screen, the user's documents there are saved as drafts until an authorized user posts them from the Posting Center — even with auto-posting enabled.",
+    "postingAdminNote": "Admins and superadmins are always allowed to post and unpost regardless of these settings.",
+    "postingAllowAll": "Allow all",
+    "postingDenyAll": "Deny all",
+    "postingModuleCol": "Screen / document type",
+    "postingPostCol": "Post",
+    "postingUnpostCol": "Unpost",
+    "postingDraftHint": "A user without the post right: their documents are saved as drafts (no effect on financial reports) until posted from the Posting Center by an authorized user.",
+    "postDocJournalEntry": "Journal entries",
+    "postDocSales": "Sales (invoices / returns / customer settlements)",
+    "postDocPurchase": "Purchases (invoices / returns / supplier settlements)",
+    "postDocReceipt": "Receipt vouchers",
+    "postDocPayment": "Payment vouchers",
+    "postDocFinancial": "Account notes",
+    "postDocCashTransfer": "Cash transfers",
+    "postDocPayroll": "Payroll & HR",
+    "postDocProduction": "Production orders",
+    "postDocStockMovement": "Stock movements (transfer / adjustment / count)",
+    "postDocGoodsReceipt": "Goods receipts",
+    "postDocGoodsDelivery": "Goods deliveries",
+    "postDocAdjustment": "Monthly adjustments",
+    "postDocFaAcquisition": "Fixed-asset acquisition",
+    "postDocFaDepreciation": "Fixed-asset depreciation",
+    "postDocFaDisposal": "Fixed-asset disposal",
+    "postDocCtgOutgoingBill": "Outgoing contracting bills",
+    "postDocCtgIncomingBill": "Incoming contracting bills"
   },
   "perms": {
     "groups": {
@@ -3865,7 +3892,9 @@
       "stock_transfer_je": "Stock Transfer JE",
       "stock_adjustment_je": "Stock Adjustment JE",
       "__reset__": "Reset"
-    }
+    },
+    "applySourcePrefixes": "Unified JE counter with per-screen prefixes",
+    "applySourcePrefixesHelp": "When enabled: auto-generated journal entries from every screen (purchases, payroll, depreciation, adjustments…) draw their number from THIS sequence's counter — only the prefix changes per screen from its bound sub-series (e.g. QYD/01/0001 then PH/01/0002). With monthly reset, the counter restarts for all screens together each month."
   },
   "offers": {
     "title": "Offers",

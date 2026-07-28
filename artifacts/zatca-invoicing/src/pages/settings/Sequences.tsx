@@ -41,6 +41,7 @@ const EMPTY_FORM = {
   // When true the running counter restarts at startNumber at the start of each
   // calendar month. Default false = continuous numbering (legacy behaviour).
   monthlyReset: false,
+  applySourcePrefixes: false,
   transactionTypes: [] as string[],
   branchIds: [] as number[],
   // Whitelist of fiscal-period IDs this sequence applies to. Empty = all
@@ -543,6 +544,7 @@ export default function Sequences() {
       padLength:        r.padLength,
       isActive:         r.isActive,
       monthlyReset:     r.monthlyReset ?? false,
+      applySourcePrefixes: r.applySourcePrefixes ?? false,
       transactionTypes: Array.isArray(r.transactionTypes) ? r.transactionTypes : [],
       // Coerce in case the column round-trips strings (older rows or when
       // jsonb is read back unparsed). The backend stores numeric ids.
@@ -806,6 +808,19 @@ export default function Sequences() {
                     {t("sequences.monthlyResetHelp")}
                   </p>
                 </div>
+                {(form.transactionTypes ?? []).includes("journal_entry") && (
+                  <div className="md:col-span-2">
+                    <div className="flex items-center gap-2">
+                      <Switch checked={form.applySourcePrefixes}
+                              onCheckedChange={v => setForm({ ...form, applySourcePrefixes: v })}
+                              data-testid="switch-apply-source-prefixes" />
+                      <Label>{t("sequences.applySourcePrefixes")}</Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t("sequences.applySourcePrefixesHelp")}
+                    </p>
+                  </div>
+                )}
                 <div>
                   <Label>{t("sequences.padLength")}</Label>
                   <Input type="number" min={0} max={12} value={form.padLength}

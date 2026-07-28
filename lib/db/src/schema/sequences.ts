@@ -138,6 +138,18 @@ export const sequencesTable = pgTable("sequences", {
   // The actual month-change detection lives per-branch in
   // `sequence_counters.last_period` so each branch resets independently.
   monthlyReset:     boolean("monthly_reset").notNull().default(false),
+  // "الطريقة العالمية" — unified JE counter with per-source prefixes.
+  // Meaningful ONLY on the sequence bound to "journal_entry". When true,
+  // EVERY auto-generated journal entry (from any screen: purchases, HR,
+  // fixed assets, adjustments, …) draws its running number from THIS
+  // sequence's counter (honouring monthlyReset + monthPattern + branch
+  // buckets), while the PREFIX is taken from the active sequence bound to
+  // the screen's JE sub-type (e.g. "PH/" for purchase JEs) — falling back
+  // to this sequence's own prefix when the screen has no bound sub-series.
+  // Result: QYD/01/0001 (manual JE) → PH/01/0002 (purchase JE) → one
+  // continuous stream that resets together each month. Default false keeps
+  // the legacy independent sub-series behaviour.
+  applySourcePrefixes: boolean("apply_source_prefixes").notNull().default(false),
   // Transaction types this sequence feeds. Stored as a JSON array of strings
   // matching SEQUENCE_TX_TYPES so the column stays portable across versions.
   transactionTypes: jsonb("transaction_types").notNull().default([]),

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
   paymentVouchersTable, paymentVoucherLinesTable,
@@ -674,7 +675,7 @@ router.put("/:id", async (req, res) => {
   res.json(row);
 });
 
-router.post("/:id/post", async (req, res) => {
+router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
   const id = parseInt(req.params.id);
   // Multi-tenant guard — must own the voucher to post it.
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
@@ -697,7 +698,7 @@ router.post("/:id/post", async (req, res) => {
   }
 });
 
-router.post("/:id/unpost", requireAdminRole, async (req, res) => {
+router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
   const id = parseInt(req.params.id as string);
   // Multi-tenant guard — admins from one tenant must not unpost another
   // tenant's voucher even if they happen to know the ID.

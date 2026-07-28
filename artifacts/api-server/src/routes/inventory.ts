@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
@@ -1455,7 +1456,7 @@ router.put("/stock-transfers/:id", async (req, res) => {
 });
 
 // POST transfer — confirm/post
-router.post("/stock-transfers/:id/post", async (req, res) => {
+router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
 
@@ -1739,7 +1740,7 @@ router.put("/stock-adjustments/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/stock-adjustments/:id/post", async (req, res) => {
+router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   // Atomic claim: only one concurrent caller can flip draft → posted (we keep status here; final flip after JE).
@@ -1906,7 +1907,7 @@ router.put("/stock-counts/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/stock-counts/:id/post", async (req, res) => {
+router.post("/stock-counts/:id/post", requirePostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const [cnt] = await db.select().from(stockCountsTable).where(and(eq(stockCountsTable.id, id), eq(stockCountsTable.companyId, cid)));

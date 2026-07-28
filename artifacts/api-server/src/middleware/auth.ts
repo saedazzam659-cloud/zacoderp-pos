@@ -1,3 +1,4 @@
+import { setContextAuthUser } from "../lib/requestContext.js";
 import { db } from "@workspace/db";
 import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable, kioskTokensTable, branchesTable } from "@workspace/db";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -94,7 +95,7 @@ export function denyKiosk(req: Request, res: Response): boolean {
 export async function resolveBearerToken(token: string): Promise<{
   user: {
     id: number; username: string; role: string; companyId: number | null;
-    isActive: boolean; permissions: any; viewAllBranches: boolean; email: string | null;
+    isActive: boolean; permissions: any; postingPermissions?: any; viewAllBranches: boolean; email: string | null;
     sessionId: string | null;
   };
   origin: "user" | "superadmin";
@@ -105,7 +106,8 @@ export async function resolveBearerToken(token: string): Promise<{
     .select({
       id: usersTable.id, username: usersTable.username, role: usersTable.role,
       companyId: usersTable.companyId, isActive: usersTable.isActive,
-      permissions: usersTable.permissions, viewAllBranches: usersTable.viewAllBranches,
+      permissions: usersTable.permissions, postingPermissions: usersTable.postingPermissions,
+      viewAllBranches: usersTable.viewAllBranches,
       email: usersTable.email, sessionId: usersTable.sessionId,
       currentSessionId: usersTable.currentSessionId,
     })
@@ -129,7 +131,8 @@ export async function resolveBearerToken(token: string): Promise<{
     .select({
       id: usersTable.id, username: usersTable.username, role: usersTable.role,
       companyId: usersTable.companyId, isActive: usersTable.isActive,
-      permissions: usersTable.permissions, viewAllBranches: usersTable.viewAllBranches,
+      permissions: usersTable.permissions, postingPermissions: usersTable.postingPermissions,
+      viewAllBranches: usersTable.viewAllBranches,
       email: usersTable.email,
       currentSessionId: usersTable.currentSessionId,
     })
@@ -196,6 +199,7 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
         branchIds: [],
         companyMenuPermissions: null,
       };
+      setContextAuthUser(req.authUser);
       // Fire-and-forget last-used update; throttled by SQL since it only
       // runs when the row hasn't been touched in the last 60 seconds.
       const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
@@ -255,10 +259,12 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
     role: user.role,
     companyId: user.companyId,
     permissions: user.permissions as any,
+    postingPermissions: (user as any).postingPermissions ?? null,
     viewAllBranches: user.viewAllBranches,
     branchIds: links.map(l => l.branchId),
     companyMenuPermissions,
   };
+  setContextAuthUser(req.authUser);
 
   // Manual-session header (`x-session-id`). Honoured only when the value
   // matches the user's persisted currentSessionId — that field is set via

@@ -8,6 +8,7 @@ import { db, planConfigsTable, seoGeneratedArticlesTable } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { visitorCountryMiddleware, visitorCountryHandler } from "./middleware/visitorCountry.js";
+import { runAuthContext } from "./lib/requestContext.js";
 
 // ─── Marketing/SEO discovery surface ────────────────────────────────────
 // Builds the dynamic sitemap.xml + robots.txt so Google can discover the
@@ -220,6 +221,12 @@ app.use(cookieParser());
 // BEFORE both the SEO routes mounted at root and the /api router so every
 // downstream handler sees a populated req.visitorCountry.
 app.use(visitorCountryMiddleware);
+
+// Per-request AsyncLocalStorage context (lib/requestContext.ts). Establishes
+// a fresh holder that extractAuth later fills with the resolved authUser, so
+// deep library code (resolvePostingStatus → per-user posting rights) can see
+// who is calling without threading req through every helper.
+app.use(runAuthContext);
 
 // Prevent HTTP caching on all API responses so clients always get fresh data
 app.use((_req, res, next) => {

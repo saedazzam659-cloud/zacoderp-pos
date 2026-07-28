@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
   goodsDeliveriesTable, goodsDeliveryLinesTable,
@@ -418,7 +419,7 @@ router.delete("/:id", async (req, res) => {
 // POST (ترحيل) — DECREASE stock + create JE
 // Dr Delivery Clearing / Cr Inventory (per warehouse)
 // ═══════════════════════════════════════════════
-router.patch("/:id/post", async (req, res) => {
+router.patch("/:id/post", requirePostRight("goodsDelivery"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -671,7 +672,7 @@ router.patch("/:id/post", async (req, res) => {
 // ═══════════════════════════════════════════════
 // UNPOST (فك الترحيل) — only when not yet invoiced
 // ═══════════════════════════════════════════════
-router.patch("/:id/unpost", requireAdminRole, async (req, res) => {
+router.patch("/:id/unpost", requireUnpostRight("goodsDelivery"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

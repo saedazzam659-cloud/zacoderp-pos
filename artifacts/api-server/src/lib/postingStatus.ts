@@ -23,6 +23,8 @@
 //   the trial balance / income statement / balance sheet.
 import { eq } from "drizzle-orm";
 import { db, companiesTable } from "@workspace/db";
+import { canPostDoc } from "./postingRights";
+import { getContextAuthUser } from "./requestContext";
 
 /**
  * Document categories that produce a journal entry. Add a new entry here
@@ -63,7 +65,21 @@ export type AutoPostDocType =
 export async function resolvePostingStatus(
   cid: number,
   docType: AutoPostDocType,
+  /**
+   * Optional requesting user (req.authUser). When provided and the user's
+   * per-user posting rights (users.posting_permissions) EXPLICITLY deny the
+   * post right for this doc type, the JE is forced to "draft" even when the
+   * company auto-posting toggles are ON — someone with the right must post
+   * it later from مركز الترحيل. Omitted (system/scheduler paths) → no
+   * user-level restriction. Admin/superadmin always bypass.
+   */
+  authUser?: unknown,
 ): Promise<"posted" | "draft"> {
+  // Per-user posting rights: explicit param wins, else the per-request
+  // AsyncLocalStorage context (set by extractAuth). System/scheduler paths
+  // have neither → no user-level restriction.
+  const effectiveUser = authUser ?? getContextAuthUser();
+  if (effectiveUser && !canPostDoc(effectiveUser as any, docType)) return "draft";
   const [c] = await db
     .select({
       master:        companiesTable.autoPostingEnabled,
