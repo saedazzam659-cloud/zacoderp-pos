@@ -14,7 +14,7 @@ import {
   journalEntriesTable,
   journalEntryLinesTable,
 } from "@workspace/db";
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import {
   buildCustodyDisbursementJournal,
@@ -84,6 +84,28 @@ router.get("/", async (req, res) => {
       .leftJoin(employeesTable, eq(employeesTable.id, employeeCustodiesTable.employeeId))
       .where(and(...conds))
       .orderBy(desc(employeeCustodiesTable.custodyDate), desc(employeeCustodiesTable.id));
+
+    // Self-heal dangling disbursement links: if the disbursement JE was
+    // deleted (e.g. an old wrong-sequence draft removed before the unpost
+    // cascade existed), the custody still points at a dead JE id — which
+    // hides the «صرف» button forever. Detect and clear those links here so
+    // the screen repairs itself on next load.
+    const jeIds = [...new Set(rows.map(r => r.disbursementJournalId).filter((v): v is number => v != null))];
+    if (jeIds.length > 0) {
+      const alive = await db.select({ id: journalEntriesTable.id }).from(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.companyId, cid), inArray(journalEntriesTable.id, jeIds)));
+      const aliveSet = new Set(alive.map(a => a.id));
+      const dangling = rows.filter(r => r.disbursementJournalId != null && !aliveSet.has(r.disbursementJournalId));
+      if (dangling.length > 0) {
+        await db.update(employeeCustodiesTable)
+          .set({ disbursementJournalId: null, updatedAt: new Date() })
+          .where(and(
+            eq(employeeCustodiesTable.companyId, cid),
+            inArray(employeeCustodiesTable.id, dangling.map(d => d.id)),
+          ));
+        for (const d of dangling) (d as any).disbursementJournalId = null;
+      }
+    }
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

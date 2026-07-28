@@ -37,3 +37,10 @@ Loan disbursement JE (locked type, marker `JE#<id>` in employee_loans.notes) is 
 BEFORE ensureNotLocked; blocked once paidAmount>0. All checks re-validated inside the tx
 under FOR UPDATE. **Why:** a bare status flip left the source row "disbursed" with the
 صرف button gone forever.
+
+## Dangling disbursement link self-heal
+If the disbursement JE was deleted OUTSIDE the unpost cascade (e.g. old draft deleted
+directly), custody.disbursement_journal_id points at a dead JE and the صرف button hides
+forever. The custody LIST endpoint self-heals: checks referenced JE ids exist, NULLs
+dangling links on read. **Why:** legacy rows broken before the cascade existed can't be
+fixed by unposting — there's no JE left to unpost.
