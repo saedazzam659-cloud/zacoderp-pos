@@ -26,3 +26,14 @@ A SEPARATE module from loans, SAP-style. Custody is **NOT** salary-deducted (loa
   `.for("update")` inside the tx — a bare read-then-write races into double-disburse / stale-aggregate.
 - Validate every mutable foreign id (employeeId, custodyAccountId, expenseAccountId, branchId)
   belongs to the company BEFORE posting — the router only blocks anonymous, not cross-tenant ids.
+
+## Unpost cascade for custody & loan JEs (2026-07-28)
+JE unpost (journal-entries /:id/unpost) cascades HR disbursements: custody JE types are
+THREE (employee_custody, employee_custody_settlement, employee_custody_return — check
+hr-journals.ts, not just the base type). Disbursement unpost clears
+disbursement_journal_id + DELETES the JE (blocked while settlements/returns exist);
+settlement/return unpost deletes the settlement row + rolls settled/returned back.
+Loan disbursement JE (locked type, marker `JE#<id>` in employee_loans.notes) is handled
+BEFORE ensureNotLocked; blocked once paidAmount>0. All checks re-validated inside the tx
+under FOR UPDATE. **Why:** a bare status flip left the source row "disbursed" with the
+صرف button gone forever.

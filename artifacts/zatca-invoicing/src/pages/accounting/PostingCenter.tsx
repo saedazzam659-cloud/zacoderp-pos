@@ -65,7 +65,8 @@ type ModuleKey =
   | "cash_transfers"
   | "stock_transfers"   | "stock_adjustments" | "stock_counts"
   | "sister_transfers"  | "sister_returns"    | "sister_settlements"
-  | "fixed_asset_depreciation";
+  | "fixed_asset_depreciation"
+  | "hr_payroll";
 
 type ModuleDef = {
   key: ModuleKey;
@@ -122,6 +123,10 @@ const MODULES: ModuleDef[] = [
   // (asset accum-dep + book value AND its JE); "post" recomputes day-based and
   // reapplies. Both endpoints are POST /api/fixed-assets/depreciation/:id/:action.
   { key: "fixed_asset_depreciation", label: "إهلاك الأصول الثابتة", group: "الأصول الثابتة", endpoint: (id, a) => `/api/fixed-assets/depreciation/${id}/${a}`, method: "POST", supportsUnpost: true },
+  // ── HR (الموارد البشرية) ──
+  // Row id = payroll_runs.id. post/unpost reuse the HR module's own endpoints
+  // (JE build + loan-installment reversal live there).
+  { key: "hr_payroll", label: "مسيرات الرواتب", group: "الموارد البشرية", endpoint: (id, a) => `/api/employees/payroll/runs/${id}/${a}`, method: "POST", supportsUnpost: true },
 ];
 
 // Memoization-friendly conversion of MODULES into the SearchCombobox's
@@ -169,6 +174,7 @@ const SOURCE_ROUTE: Record<ModuleKey, (id: number) => string> = {
   sister_returns:     (id) => `/inventory/sister-returns/${id}`,
   sister_settlements: (id) => `/inventory/sister-settlements/${id}`,
   fixed_asset_depreciation: ()   => `/fixed-assets/depreciation`,
+  hr_payroll:         ()   => `/hr/payroll`,
 };
 
 type StatusFilter = "all" | "posted" | "unposted";

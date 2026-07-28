@@ -9,6 +9,7 @@ import {
   receiptVoucherLinesTable, paymentVoucherLinesTable,
   stockTransfersTable, stockAdjustmentsTable,
   payrollRunsTable, employeeLoansTable,
+  employeeCustodiesTable, employeeCustodySettlementsTable,
   fixedAssetsTable, faDepreciationRunsTable,
   accountingAdjustmentRunsTable,
 } from "@workspace/db";
@@ -1482,15 +1483,146 @@ router.post("/:id/unpost", requireUnpostRight("journalEntry"), async (req, res) 
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
 
+    const [existing] = await db.select().from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+
+    // ── employee_custody cascade (عُهد الموظفين) ────────────────────────────
+    // Unposting a custody DISBURSEMENT JE must undo the disbursement itself:
+    // clear disbursement_journal_id (so the «صرف» button returns on the HR
+    // screen) and DELETE the JE — a bare status flip used to leave the custody
+    // row still "disbursed" with the button gone forever. Runs BEFORE the
+    // status early-return on purpose so it also HEALS rows broken by the old
+    // behavior (draft JE whose custody still points at it).
+    const CUSTODY_JE_TYPES = ["employee_custody", "employee_custody_settlement", "employee_custody_return"];
+    if (CUSTODY_JE_TYPES.includes(existing.entryType ?? "")) {
+      const cGuard = await assertWritableForPeriodId(cid, existing.periodId);
+      // Structured signal thrown from inside the tx (validation, not a crash).
+      class CascadeBlocked extends Error { constructor(public code: number, msg: string) { super(msg); } }
+      try {
+        const cascaded = await db.transaction(async (tx) => {
+          // Disbursement JE? (custody row points at it) — lock the custody row
+          // so a concurrent settlement can't slip in mid-unwind.
+          const [cust] = await tx.select().from(employeeCustodiesTable)
+            .where(and(
+              eq(employeeCustodiesTable.companyId, cid),
+              eq(employeeCustodiesTable.disbursementJournalId, id),
+            )).for("update");
+          if (cust) {
+            const [dep] = await tx.select({ id: employeeCustodySettlementsTable.id })
+              .from(employeeCustodySettlementsTable)
+              .where(and(
+                eq(employeeCustodySettlementsTable.companyId, cid),
+                eq(employeeCustodySettlementsTable.custodyId, cust.id),
+              )).limit(1);
+            if (dep || Number(cust.settledAmount) > 0 || Number(cust.returnedAmount) > 0) {
+              throw new CascadeBlocked(409, "لا يمكن فك ترحيل قيد صرف العهدة: توجد تسويات أو إرجاعات مسجلة عليها — قم بفك ترحيلها أولاً");
+            }
+            if (!cGuard.ok) throw new CascadeBlocked(423, cGuard.reason || "الفترة مقفلة");
+            await tx.update(employeeCustodiesTable)
+              .set({ disbursementJournalId: null, status: "active", updatedAt: new Date() })
+              .where(eq(employeeCustodiesTable.id, cust.id));
+            await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, id));
+            await tx.delete(journalEntriesTable)
+              .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+            return { kind: "employee_custody_disburse", custodyId: cust.id };
+          }
+          // Settlement / return JE → remove the settlement row, roll the
+          // custody's settled/returned totals back, then delete the JE.
+          const [stl] = await tx.select().from(employeeCustodySettlementsTable)
+            .where(and(
+              eq(employeeCustodySettlementsTable.companyId, cid),
+              eq(employeeCustodySettlementsTable.journalId, id),
+            ));
+          if (stl) {
+            if (!cGuard.ok) throw new CascadeBlocked(423, cGuard.reason || "الفترة مقفلة");
+            const [c] = await tx.select().from(employeeCustodiesTable)
+              .where(and(
+                eq(employeeCustodiesTable.id, stl.custodyId),
+                eq(employeeCustodiesTable.companyId, cid),
+              )).for("update");
+            if (c) {
+              const amt = Number(stl.amount) || 0;
+              const newSettled  = stl.kind === "return" ? Number(c.settledAmount)
+                : Math.max(0, +(Number(c.settledAmount) - amt).toFixed(2));
+              const newReturned = stl.kind === "return"
+                ? Math.max(0, +(Number(c.returnedAmount) - amt).toFixed(2))
+                : Number(c.returnedAmount);
+              const remaining = +(Number(c.amount) - newSettled - newReturned).toFixed(2);
+              await tx.update(employeeCustodiesTable).set({
+                settledAmount: String(newSettled),
+                returnedAmount: String(newReturned),
+                status: c.status === "cancelled" ? c.status : (remaining <= 0.005 ? "settled" : "active"),
+                updatedAt: new Date(),
+              }).where(eq(employeeCustodiesTable.id, c.id));
+            }
+            await tx.delete(employeeCustodySettlementsTable)
+              .where(eq(employeeCustodySettlementsTable.id, stl.id));
+            await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, id));
+            await tx.delete(journalEntriesTable)
+              .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+            return { kind: "employee_custody_settlement", custodyId: stl.custodyId };
+          }
+          return null; // orphan — no custody references it
+        });
+        if (cascaded) { res.json({ ok: true, cascaded: cascaded.kind, custodyId: cascaded.custodyId }); return; }
+      } catch (err: any) {
+        if (err instanceof CascadeBlocked) { res.status(err.code).json({ error: err.message }); return; }
+        throw err;
+      }
+      // Orphan → fall through to plain flip.
+    }
+
+    // ── employee_loan disbursement cascade (سلف الموظفين) ───────────────────
+    // Loan disbursement JEs are LOCKED (ensureNotLocked used to 403 them), so
+    // there was NO way to undo a disbursement. Unposting the JE now unwinds
+    // it: strip the JE# marker from the loan's notes (the «صرف» button keys
+    // off it) and delete the JE. Blocked once installments were deducted.
+    if (existing.entryType === "employee_loan") {
+      const [loan] = await db.select().from(employeeLoansTable)
+        .where(and(
+          eq(employeeLoansTable.companyId, cid),
+          sql`${employeeLoansTable.notes} ~ ${`(^|\\s)JE#${id}([^0-9]|$)`}`,
+        ));
+      if (loan) {
+        const lGuard = await assertWritableForPeriodId(cid, existing.periodId);
+        if (!lGuard.ok) { res.status(423).json({ error: lGuard.reason }); return; }
+        try {
+          await db.transaction(async (tx) => {
+            // Re-read under FOR UPDATE: a concurrent payroll post could bump
+            // paidAmount between the pre-check and the delete.
+            const [locked] = await tx.select().from(employeeLoansTable)
+              .where(and(eq(employeeLoansTable.id, loan.id), eq(employeeLoansTable.companyId, cid)))
+              .for("update");
+            if (!locked || Number(locked.paidAmount) > 0) {
+              throw Object.assign(new Error("لا يمكن فك ترحيل قيد صرف السلفة: تم خصم أقساط منها في الرواتب — قم بفك ترحيل مسير الرواتب أولاً"), { status: 409 });
+            }
+            const strippedNotes = (locked.notes || "")
+              .replace(new RegExp(`(^|\\s)JE#${id}(\\s*—\\s*)?`), "$1")
+              .trim() || null;
+            await tx.update(employeeLoansTable)
+              .set({ notes: strippedNotes, updatedAt: new Date() })
+              .where(eq(employeeLoansTable.id, loan.id));
+            await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, id));
+            await tx.delete(journalEntriesTable)
+              .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+          });
+        } catch (err: any) {
+          if (err?.status === 409) { res.status(409).json({ error: err.message }); return; }
+          throw err;
+        }
+        res.json({ ok: true, cascaded: "employee_loan_disburse", loanId: loan.id });
+        return;
+      }
+      // Not a disbursement JE (e.g. legacy LOAN-{id} creation JE) → keep the
+      // locked-type protection below.
+    }
+
     const lockCheck = await ensureNotLocked(id, cid);
     if (!lockCheck.ok) {
       res.status(403).json({ error: "هذا القيد تم إنشاؤه تلقائياً من مستند مصدر — لفك ترحيله قم بفك ترحيل المستند الأصلي" });
       return;
     }
-
-    const [existing] = await db.select().from(journalEntriesTable)
-      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
-    if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
 
     // ── fa_depreciation cascade ──────────────────────────────────────────────
     // Unposting a depreciation JE must unwind the WHOLE run (reverse the

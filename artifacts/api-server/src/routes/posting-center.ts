@@ -38,6 +38,7 @@ import {
   sisterCompaniesTable,
   fixedAssetsTable, faDepreciationRunsTable,
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
+  payrollRunsTable,
 } from "@workspace/db";
 import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -80,6 +81,7 @@ const MODULE_PERM_KEY: Record<string, string> = {
   sister_returns:     "sister_companies",
   sister_settlements: "sister_companies",
   fixed_asset_depreciation: "fixed_assets",
+  hr_payroll:        "hr_payroll",
 };
 
 // Hard server-side cap on the number of rows returned per list call. The
@@ -113,6 +115,7 @@ const MODULES = [
   "sister_returns",
   "sister_settlements",
   "fixed_asset_depreciation",
+  "hr_payroll",
 ] as const;
 type ModuleKey = typeof MODULES[number];
 
@@ -137,6 +140,7 @@ const MODULE_LABELS_AR: Record<ModuleKey, string> = {
   sister_returns:     "مرتجعات الشركات الشقيقة",
   sister_settlements: "تسويات الشركات الشقيقة",
   fixed_asset_depreciation: "إهلاك الأصول الثابتة",
+  hr_payroll:        "مسيرات الرواتب",
 };
 
 // Unified row shape returned to the client. Every module is mapped onto this
@@ -177,6 +181,50 @@ function gateByModule(req: any, res: any, next: any) {
   return requirePermission(permKey, "view")(req, res, next);
 }
 
+// ─── HR: payroll runs (مسيرات الرواتب) ──────────────────────────────────────
+// Row id = payroll_runs.id. post/unpost go through the existing HR endpoints
+// (POST /api/employees/payroll/runs/:id/post|unpost) which own the JE math
+// and the loan-installment reversal.
+async function listPayrollRuns(
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
+): Promise<PostingRow[]> {
+  const conds = [
+    eq(payrollRunsTable.companyId, cid),
+    ...branchScopeSpread(req, payrollRunsTable.branchId, branchIdRaw),
+  ];
+  if (dateFrom) conds.push(gte(payrollRunsTable.periodEnd, dateFrom));
+  if (dateTo)   conds.push(lte(payrollRunsTable.periodEnd, dateTo));
+  const rows = await db.select({
+    id:             payrollRunsTable.id,
+    code:           payrollRunsTable.code,
+    year:           payrollRunsTable.year,
+    month:          payrollRunsTable.month,
+    periodEnd:      payrollRunsTable.periodEnd,
+    payDate:        payrollRunsTable.payDate,
+    totalNet:       payrollRunsTable.totalNet,
+    employeesCount: payrollRunsTable.employeesCount,
+    status:         payrollRunsTable.status,
+    postedJournalId: payrollRunsTable.postedJournalId,
+  }).from(payrollRunsTable)
+    .where(and(...conds))
+    .orderBy(desc(payrollRunsTable.year), desc(payrollRunsTable.month), desc(payrollRunsTable.id))
+    .limit(LIST_LIMIT);
+  return rows.map(r => ({
+    id: r.id,
+    module: "hr_payroll" as ModuleKey,
+    docNumber: r.code,
+    date: (r.payDate || r.periodEnd) as string,
+    type: MODULE_LABELS_AR.hr_payroll,
+    description: `مسير رواتب ${String(r.month).padStart(2, "0")}/${r.year} — ${r.employeesCount} موظف`,
+    party: null,
+    amount: parseFloat(r.totalNet || "0"),
+    status: r.status,
+    posted: r.status === "posted",
+    journalEntryId: r.postedJournalId,
+    journalEntryDocNumber: null,
+  }));
+}
+
 // Dispatch a single module to its list builder. Extracted so both the
 // single-module path and the "all" aggregation path share one switch and can
 // never drift apart. Stock modules have no req/branch params (warehouse-scoped).
@@ -211,6 +259,7 @@ async function listForModule(
     case "sister_returns":     return listSisterReturns(req, cid, dateFrom, dateTo, branchIdRaw);
     case "sister_settlements": return listSisterSettlements(req, cid, dateFrom, dateTo, branchIdRaw);
     case "fixed_asset_depreciation": return listFixedAssetDepreciation(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "hr_payroll":        return listPayrollRuns(req, cid, dateFrom, dateTo, branchIdRaw);
     default:                   return [];
   }
 }
@@ -379,6 +428,7 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
       case "sister_returns":     rows = await listSisterReturns(req, cid, undefined, undefined, branchIdRaw);     break;
       case "sister_settlements": rows = await listSisterSettlements(req, cid, undefined, undefined, branchIdRaw); break;
       case "fixed_asset_depreciation": rows = await listFixedAssetDepreciation(req, cid, undefined, undefined, branchIdRaw); break;
+      case "hr_payroll":        rows = await listPayrollRuns(req, cid, undefined, undefined, branchIdRaw);      break;
     }
 
     const unposted = rows.filter(r => !r.posted && r.status !== "cancelled");
