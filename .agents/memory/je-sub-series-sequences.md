@@ -13,3 +13,15 @@ Auto-JE producers draw numbers via `nextJeSubSequence(cid, subType, ctx)`: it tr
 - Reserved-number reuse (unpost→repost) still wins before any fresh draw (`resolveJeNumber`).
 - Adjustments engine: `resolveJeIssuingBranch(cid, date, subType)` must resolve the branch bucket against the SAME sequence the number will draw from (sub-type first, then journal_entry) or numbers come from the wrong branch bucket.
 - Unified mode ("الطريقة العالمية"): `sequences.apply_source_prefixes` on the journal_entry-bound sequence → ALL auto-JEs draw the SHARED journal_entry counter, only the prefix comes from the sub-type-bound sequence (`prefixOverride` in NextSequenceCtx; sub-type counters NOT consumed). Peek must mirror via the JE_SUB_TYPES branch in routes/sequences.ts (`resolveForType(type, prefixOverride)`), and the monthly-reset self-heal LIKE uses the OVERRIDE prefix.
+
+## Gate: sub-series are inert unless apply_source_prefixes is ON (2026-07-28)
+Screen-bound JE sub-series must NOT affect journal numbering while the journal_entry
+sequence's `apply_source_prefixes` checkbox is OFF — nextJeSubSequence, the peek
+endpoint, and adjustmentPosting branch-bucket resolution all fall back to the plain
+unified journal_entry series. Sub-series only ever supply the PREFIX (unified mode);
+the counter always lives on journal_entry in both modes.
+**Why:** tenants pre-configure screen codes now and flip them on at a fiscal-year
+boundary (e.g. 2027) without disturbing live numbering; new companies can enable day one.
+Mode detection is PERIOD-AWARE (unifiedJePrefixMode/activeSequencePrefix take docDate,
+same exact→year→universal tiers) so a 2027-scoped JE sequence can be ON while the
+current-year one stays classic. Keep issuance + peek mirrored when touching this.

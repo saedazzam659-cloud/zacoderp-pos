@@ -590,47 +590,71 @@ export async function nextJeSubSequence(
   // from the screen's bound sub-type sequence (falling back to the JE
   // sequence's own prefix). The sub-type sequence's own counter is NOT
   // consumed in this mode.
-  const unified = await unifiedJePrefixMode(companyId);
+  const unified = await unifiedJePrefixMode(companyId, ctx.docDate);
   if (unified) {
     let prefixOverride: string | null = null;
-    if (subType) prefixOverride = await activeSequencePrefix(companyId, subType);
+    if (subType) prefixOverride = await activeSequencePrefix(companyId, subType, ctx.docDate);
     return await nextSequenceNumber(companyId, "journal_entry", {
       ...ctx,
       prefixOverride: prefixOverride ?? undefined,
     });
   }
-  if (subType) {
-    const fromSub = await nextSequenceNumber(companyId, subType, ctx);
-    if (fromSub != null) return fromSub;
-  }
+  // ── Mode OFF (checkbox unchecked): screen-bound sub-series must NOT touch
+  // JE numbering at all — every auto-JE keeps drawing from the classic
+  // unified "journal_entry" series with its own prefix. This lets a company
+  // pre-configure screen codes today and flip them on later (e.g. from the
+  // start of a new fiscal year) without changing live JE numbers.
   return await nextSequenceNumber(companyId, "journal_entry", ctx);
 }
 
+/** Normalize an optional document date to "YYYY-MM-DD" (today when absent). */
+function toDateStr(d: Date | string | null | undefined): string {
+  const dt = d ? new Date(d) : new Date();
+  const use = isNaN(dt.getTime()) ? new Date() : dt;
+  return `${use.getUTCFullYear()}-${String(use.getUTCMonth() + 1).padStart(2, "0")}-${String(use.getUTCDate()).padStart(2, "0")}`;
+}
+
 /** True when the company's active "journal_entry" sequence has opted into the
- *  unified-counter mode (apply_source_prefixes). Cheap read, no locks. */
-export async function unifiedJePrefixMode(companyId: number): Promise<boolean> {
+ *  unified-counter mode (apply_source_prefixes). PERIOD-AWARE: reads the flag
+ *  from the SAME sequence row nextSequenceNumber will pick for `docDate`
+ *  (exact fiscal period → same-year → universal), so a tenant can keep the
+ *  mode OFF on their current-year JE sequence and ON on a new-year one
+ *  (e.g. enable "الطريقة العالمية" starting 2027 only). */
+export async function unifiedJePrefixMode(
+  companyId: number,
+  docDate: Date | string | null | undefined = null,
+): Promise<boolean> {
+  const pm = await resolveSequencePeriodMatch(db, companyId, toDateStr(docDate));
   const r = await db.execute<{ apply_source_prefixes: boolean }>(sql`
     SELECT apply_source_prefixes
     FROM sequences
     WHERE company_id = ${companyId}
       AND is_active = true
       AND transaction_types ? ${"journal_entry"}
-    ORDER BY id ASC
+      AND ${periodMatchWhereSql(pm)}
+    ORDER BY ${periodMatchRankSql(pm)}, id ASC
     LIMIT 1
   `);
   return r.rows?.[0]?.apply_source_prefixes === true;
 }
 
 /** Prefix of the active sequence bound to `txType`, or null when none. Used
- *  by the unified-JE-counter mode to render the source screen's prefix. */
-export async function activeSequencePrefix(companyId: number, txType: string): Promise<string | null> {
+ *  by the unified-JE-counter mode to render the source screen's prefix.
+ *  Period-aware with the same tiers as issuance. */
+export async function activeSequencePrefix(
+  companyId: number,
+  txType: string,
+  docDate: Date | string | null | undefined = null,
+): Promise<string | null> {
+  const pm = await resolveSequencePeriodMatch(db, companyId, toDateStr(docDate));
   const r = await db.execute<{ prefix: string | null }>(sql`
     SELECT prefix
     FROM sequences
     WHERE company_id = ${companyId}
       AND is_active = true
       AND transaction_types ? ${txType}
-    ORDER BY id ASC
+      AND ${periodMatchWhereSql(pm)}
+    ORDER BY ${periodMatchRankSql(pm)}, id ASC
     LIMIT 1
   `);
   const row = r.rows?.[0];

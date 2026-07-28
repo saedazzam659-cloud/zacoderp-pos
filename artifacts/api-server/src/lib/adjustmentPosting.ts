@@ -222,8 +222,12 @@ export async function resolveJeIssuingBranch(
     `);
     return seqRows.rows?.[0]?.id;
   };
-  // Sub-type series wins when bound (mirrors nextJeSubSequence resolution).
-  const seqId = (subType ? await pickSeq(subType) : undefined) ?? await pickSeq("journal_entry");
+  // Auto-JE counters ALWAYS come from the unified "journal_entry" series now
+  // (mirrors nextJeSubSequence): screen sub-series are inert until the
+  // apply_source_prefixes checkbox is on, and even then they only supply the
+  // PREFIX — the counter (and thus the branch bucket) stays on journal_entry.
+  void subType;
+  const seqId = await pickSeq("journal_entry");
   if (!seqId) return null;
 
   // 2. Within THAT sequence, pick the real-branch bucket with the highest

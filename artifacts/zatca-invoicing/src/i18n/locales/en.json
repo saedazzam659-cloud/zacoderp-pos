@@ -3893,8 +3893,8 @@
       "stock_adjustment_je": "Stock Adjustment JE",
       "__reset__": "Reset"
     },
-    "applySourcePrefixes": "Unified JE counter with per-screen prefixes",
-    "applySourcePrefixesHelp": "When enabled: auto-generated journal entries from every screen (purchases, payroll, depreciation, adjustments…) draw their number from THIS sequence's counter — only the prefix changes per screen from its bound sub-series (e.g. QYD/01/0001 then PH/01/0002). With monthly reset, the counter restarts for all screens together each month."
+    "applySourcePrefixes": "Enable screen prefixes in the journal register (unified method)",
+    "applySourcePrefixesHelp": "While OFF: the journal register keeps its classic unified numbering and screen sub-series have no effect at all — you can configure screen codes today and switch them on later (e.g. at the start of a new fiscal year). When enabled: auto-generated journal entries from every screen (purchases, payroll, depreciation, adjustments…) draw their number from THIS sequence's counter — only the prefix changes per screen from its bound sub-series (e.g. QYD/01/0001 then PH/01/0002). With monthly reset, the counter restarts for all screens together each month."
   },
   "offers": {
     "title": "Offers",

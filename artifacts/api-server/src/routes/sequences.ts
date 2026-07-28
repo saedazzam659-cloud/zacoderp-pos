@@ -247,11 +247,16 @@ router.get("/peek/:txType", async (req: any, res) => {
   // JE sub-series types preview the SHARED journal_entry counter (with the
   // sub-type's prefix) when the mode is on, mirroring nextJeSubSequence.
   if (JE_SUB_TYPES.has(txType) || txType === "journal_entry") {
+    // PERIOD-AWARE mode detection: read the flag from the SAME journal_entry
+    // sequence row issuance will pick for this date (exact period → same-year
+    // → universal), so a tenant can enable the mode on a 2027-scoped sequence
+    // while the current-year one stays classic.
     const uni = await db.execute<{ apply_source_prefixes: boolean }>(sql`
       SELECT apply_source_prefixes FROM sequences
       WHERE company_id = ${cid} AND is_active = true
         AND transaction_types ? ${"journal_entry"}
-      ORDER BY id ASC LIMIT 1
+        AND ${periodMatchWhereSql(pm)}
+      ORDER BY ${periodMatchRankSql(pm)}, id ASC LIMIT 1
     `);
     if (uni.rows?.[0]?.apply_source_prefixes === true) {
       let ovr: string | null = null;
@@ -260,12 +265,21 @@ router.get("/peek/:txType", async (req: any, res) => {
           SELECT prefix FROM sequences
           WHERE company_id = ${cid} AND is_active = true
             AND transaction_types ? ${txType}
-          ORDER BY id ASC LIMIT 1
+            AND ${periodMatchWhereSql(pm)}
+          ORDER BY ${periodMatchRankSql(pm)}, id ASC LIMIT 1
         `);
         ovr = p.rows?.[0] ? (p.rows[0].prefix ?? "") : null;
       }
       const uniRes = await resolveForType("journal_entry", ovr);
       if (uniRes) { res.json(uniRes); return; }
+      res.json({ number: null, hasSequence: false }); return;
+    }
+    // Mode OFF: JE sub-types must preview the classic unified "journal_entry"
+    // series (screen sub-series are inert until the checkbox is enabled),
+    // mirroring nextJeSubSequence issuance exactly.
+    if (JE_SUB_TYPES.has(txType)) {
+      const plain = await resolveForType("journal_entry");
+      if (plain) { res.json(plain); return; }
       res.json({ number: null, hasSequence: false }); return;
     }
   }
