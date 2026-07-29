@@ -19,7 +19,7 @@ import { eq, and, desc, sql, inArray, notInArray, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
-import { nextSequenceNumber } from "../lib/sequences.js";
+import { nextSequenceNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodGuard.js";
 import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAudit.js";
 import { describeDevice } from "../lib/deviceFingerprint.js";
@@ -1519,6 +1519,8 @@ router.post("/:id/unpost", requireUnpostRight("journalEntry"), async (req, res) 
               throw new CascadeBlocked(409, "لا يمكن فك ترحيل قيد صرف العهدة: توجد تسويات أو إرجاعات مسجلة عليها — قم بفك ترحيلها أولاً");
             }
             if (!cGuard.ok) throw new CascadeBlocked(423, cGuard.reason || "الفترة مقفلة");
+            // Stash the JE number so re-disbursing reuses it (no sequence gap).
+            await reserveJeNumberFromEntry(cid, "employee_custody_disb", cust.id, id, tx as any);
             await tx.update(employeeCustodiesTable)
               .set({ disbursementJournalId: null, status: "active", updatedAt: new Date() })
               .where(eq(employeeCustodiesTable.id, cust.id));
@@ -1597,6 +1599,8 @@ router.post("/:id/unpost", requireUnpostRight("journalEntry"), async (req, res) 
             if (!locked || Number(locked.paidAmount) > 0) {
               throw Object.assign(new Error("لا يمكن فك ترحيل قيد صرف السلفة: تم خصم أقساط منها في الرواتب — قم بفك ترحيل مسير الرواتب أولاً"), { status: 409 });
             }
+            // Stash the JE number so re-disbursing reuses it (no sequence gap).
+            await reserveJeNumberFromEntry(cid, "employee_loan", locked.id, id, tx as any);
             const strippedNotes = (locked.notes || "")
               .replace(new RegExp(`(^|\\s)JE#${id}(\\s*—\\s*)?`), "$1")
               .trim() || null;

@@ -137,7 +137,7 @@ export const employeesApi = {
 
   // HR Settings (account mapping)
   hrSettings:        () => req<any>("GET", "/hr/settings"),
-  updateHrSettings:  (mapping: any) => req<any>("PUT", "/hr/settings", { mapping }),
+  updateHrSettings:  (mapping: any, alertThresholds?: any) => req<any>("PUT", "/hr/settings", { mapping, ...(alertThresholds !== undefined ? { alertThresholds } : {}) }),
 
   // AI — explain HR journal entry
   aiExplainHrJournal: (entryType: string, entry: any, lines: any[], context?: any) =>

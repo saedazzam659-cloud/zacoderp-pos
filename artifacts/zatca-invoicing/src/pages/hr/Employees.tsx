@@ -15,7 +15,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Plus, Pencil, Trash2, Search, UserCog, BadgeAlert,
   Sparkles, FileSignature, Loader2, CheckCircle2, IdCard, Landmark,
+  FileBadge, Settings2,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
@@ -74,6 +76,7 @@ export default function Employees() {
 
   const [aiText, setAiText] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [showAlertSettings, setShowAlertSettings] = useState(false);
 
   const empQ = useQuery({ queryKey: ["employees"], queryFn: employeesApi.list });
   const alertsQ = useQuery({ queryKey: ["employees", "alerts"], queryFn: employeesApi.alerts });
@@ -160,8 +163,8 @@ export default function Employees() {
     }
   }
 
-  const alerts = alertsQ.data ?? { expiringIqamas: [], expiringContracts: [], expiringPassports: [] };
-  const totalAlerts = (alerts.expiringIqamas?.length ?? 0) + (alerts.expiringContracts?.length ?? 0) + (alerts.expiringPassports?.length ?? 0);
+  const alerts = alertsQ.data ?? { expiringIqamas: [], expiringContracts: [], expiringPassports: [], expiringWorkPermits: [] };
+  const totalAlerts = (alerts.expiringIqamas?.length ?? 0) + (alerts.expiringContracts?.length ?? 0) + (alerts.expiringPassports?.length ?? 0) + (alerts.expiringWorkPermits?.length ?? 0);
 
   const align = isRtl ? "text-right" : "text-left";
 
@@ -485,10 +488,16 @@ export default function Employees() {
         </TabsContent>
 
         <TabsContent value="alerts" className="space-y-4">
+          <div className="flex justify-end">
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowAlertSettings(true)}>
+              <Settings2 className="h-4 w-4" />
+              {tr("alertSettings")}
+            </Button>
+          </div>
           {alertsQ.isLoading ? (
             <Skeleton className="h-40 w-full" />
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
               <AlertsCard
                 title={tr("alertIqamas")}
                 icon={IdCard}
@@ -516,6 +525,15 @@ export default function Employees() {
                 noneLabel={tr("alertCardNone")}
                 tr={tr}
               />
+              <AlertsCard
+                title={tr("alertWorkPermits")}
+                icon={FileBadge}
+                color="violet"
+                rows={alerts.expiringWorkPermits ?? []}
+                fields={[["nameAr", tr("alertEmployee")], ["code", tr("colCode")], ["workPermitExpiry", tr("alertExpires")]]}
+                noneLabel={tr("alertCardNone")}
+                tr={tr}
+              />
             </div>
           )}
           {totalAlerts === 0 && !alertsQ.isLoading && (
@@ -524,9 +542,90 @@ export default function Employees() {
               <p className="text-emerald-800 font-medium">{tr("noAlerts")}</p>
             </div>
           )}
+          <AlertSettingsDialog open={showAlertSettings} onClose={() => setShowAlertSettings(false)} tr={tr} />
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function AlertSettingsDialog({ open, onClose, tr }: { open: boolean; onClose: () => void; tr: (k: string, opts?: any) => string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const settingsQ = useQuery({ queryKey: ["hr", "settings"], queryFn: employeesApi.hrSettings, enabled: open });
+  const [vals, setVals] = useState<Record<string, string>>({});
+
+  const th = settingsQ.data?.alertThresholds ?? { iqama: 90, contract: 90, passport: 90, workPermit: 90 };
+  const val = (k: string) => vals[k] ?? String(th[k] ?? 90);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const clamp = (v: string, fallback: number) => {
+        const n = Math.round(Number(v));
+        return Number.isFinite(n) && n >= 1 && n <= 3650 ? n : fallback;
+      };
+      // PUT rewrites the whole mapping — send the current one back untouched.
+      const mapping = settingsQ.data?.mapping ?? {};
+      return employeesApi.updateHrSettings(mapping, {
+        iqama:      clamp(val("iqama"), th.iqama),
+        contract:   clamp(val("contract"), th.contract),
+        passport:   clamp(val("passport"), th.passport),
+        workPermit: clamp(val("workPermit"), th.workPermit),
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employees", "alerts"] });
+      qc.invalidateQueries({ queryKey: ["hr", "settings"] });
+      toast({ title: tr("alertSettingsSaved") });
+      setVals({});
+      onClose();
+    },
+    onError: (e: any) => toast({ title: tr("toastError"), description: parseError(e), variant: "destructive" }),
+  });
+
+  const FIELDS: [string, string][] = [
+    ["iqama", tr("alertThIqama")],
+    ["contract", tr("alertThContract")],
+    ["passport", tr("alertThPassport")],
+    ["workPermit", tr("alertThWorkPermit")],
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { setVals({}); onClose(); } }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Settings2 className="h-5 w-5" />
+            {tr("alertSettings")}
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{tr("alertSettingsDesc")}</p>
+        {settingsQ.isLoading ? (
+          <Skeleton className="h-32 w-full" />
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {FIELDS.map(([k, label]) => (
+              <div key={k} className="space-y-1">
+                <label className="text-xs font-medium">{label}</label>
+                <Input
+                  inputMode="numeric"
+                  dir="ltr"
+                  value={val(k)}
+                  onChange={(e) => setVals(v => ({ ...v, [k]: e.target.value.replace(/[^0-9]/g, "") }))}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-[11px] text-muted-foreground">{tr("alertThHint")}</p>
+        <DialogFooter>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || settingsQ.isLoading} className="gap-1.5">
+            {save.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {tr("save", { defaultValue: "حفظ" })}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -535,11 +634,13 @@ function AlertsCard({ title, icon: Icon, color, rows, fields, noneLabel, tr }: a
     rose:  "border-rose-200 bg-rose-50/30",
     amber: "border-amber-200 bg-amber-50/30",
     sky:   "border-sky-200 bg-sky-50/30",
+    violet: "border-violet-200 bg-violet-50/30",
   };
   const iconMap: Record<string, string> = {
     rose: "text-rose-600 bg-rose-100",
     amber: "text-amber-600 bg-amber-100",
     sky: "text-sky-600 bg-sky-100",
+    violet: "text-violet-600 bg-violet-100",
   };
   return (
     <div className={cn("rounded-xl border p-4", colorMap[color])}>

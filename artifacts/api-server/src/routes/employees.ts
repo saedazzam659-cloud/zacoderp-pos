@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
-import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable, accountsTable } from "@workspace/db";
+import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable, accountsTable, companiesTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
-import { nextSequenceOrFallback } from "../lib/sequences.js";
+import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { requireAdminRole } from "../middleware/permissions.js";
 import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
@@ -91,9 +91,19 @@ router.get("/alerts", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const today = new Date();
-    const in90 = new Date(today.getTime() + 90 * 86400000);
     const todayStr = today.toISOString().slice(0, 10);
-    const in90Str = in90.toISOString().slice(0, 10);
+
+    // Per-company alert lead times (days) — configurable from إعدادات التنبيهات.
+    const [comp] = await db.select({ th: companiesTable.hrAlertThresholds })
+      .from(companiesTable).where(eq(companiesTable.id, cid));
+    const th = (comp?.th ?? {}) as Record<string, number>;
+    const days = (k: string) => {
+      const v = Number(th[k]);
+      return Number.isFinite(v) && v >= 1 && v <= 3650 ? Math.round(v) : 90;
+    };
+    const horizon = (k: string) =>
+      new Date(today.getTime() + days(k) * 86400000).toISOString().slice(0, 10);
+    const in90Str = horizon("iqama");
 
     const expIqamas = await db.select({
       id: employeesTable.id, code: employeesTable.code, nameAr: employeesTable.nameAr,
@@ -118,7 +128,7 @@ router.get("/alerts", async (req, res) => {
         eq(employeeContractsTable.companyId, cid),
         eq(employeeContractsTable.status, "active"),
         isNotNull(employeeContractsTable.endDate),
-        lte(employeeContractsTable.endDate, in90Str),
+        lte(employeeContractsTable.endDate, horizon("contract")),
       )).orderBy(asc(employeeContractsTable.endDate));
 
     const expPassports = await db.select({
@@ -128,18 +138,32 @@ router.get("/alerts", async (req, res) => {
       .where(and(
         eq(employeesTable.companyId, cid),
         isNotNull(employeesTable.passportExpiry),
-        lte(employeesTable.passportExpiry, in90Str),
+        lte(employeesTable.passportExpiry, horizon("passport")),
         eq(employeesTable.status, "active"),
       )).orderBy(asc(employeesTable.passportExpiry));
+
+    // انتهاء رخصة العمل — same pattern as iqamas, own configurable window.
+    const expWorkPermits = await db.select({
+      id: employeesTable.id, code: employeesTable.code, nameAr: employeesTable.nameAr,
+      workPermitExpiry: employeesTable.workPermitExpiry, borderNumber: employeesTable.borderNumber,
+    }).from(employeesTable)
+      .where(and(
+        eq(employeesTable.companyId, cid),
+        isNotNull(employeesTable.workPermitExpiry),
+        lte(employeesTable.workPermitExpiry, horizon("workPermit")),
+        eq(employeesTable.status, "active"),
+      )).orderBy(asc(employeesTable.workPermitExpiry));
 
     const daysLeft = (d: string) => Math.ceil((new Date(d).getTime() - today.getTime()) / 86400000);
     const tag = (rows: any[], field: string) =>
       rows.map(r => ({ ...r, daysLeft: daysLeft(r[field]) }));
 
     res.json({
-      expiringIqamas:    tag(expIqamas, "iqamaExpiry"),
-      expiringContracts: tag(expContracts, "endDate"),
-      expiringPassports: tag(expPassports, "passportExpiry"),
+      expiringIqamas:      tag(expIqamas, "iqamaExpiry"),
+      expiringContracts:   tag(expContracts, "endDate"),
+      expiringPassports:   tag(expPassports, "passportExpiry"),
+      expiringWorkPermits: tag(expWorkPermits, "workPermitExpiry"),
+      thresholds: { iqama: days("iqama"), contract: days("contract"), passport: days("passport"), workPermit: days("workPermit") },
       todayStr, in90Str,
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1322,12 +1346,17 @@ router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), async (re
         }
       }
     }
-    if (run.postedJournalId) {
-      await db.delete(journalEntriesTable).where(eq(journalEntriesTable.id, run.postedJournalId));
-    }
-    const [upd] = await db.update(payrollRunsTable)
-      .set({ status: "draft", postedJournalId: null, updatedAt: new Date() })
-      .where(eq(payrollRunsTable.id, id)).returning();
+    const upd = await db.transaction(async (tx) => {
+      if (run.postedJournalId) {
+        // Stash the JE number so re-approving the run reuses it (no sequence gap).
+        await reserveJeNumberFromEntry(cid, "payroll_run", id, run.postedJournalId, tx as any);
+        await tx.delete(journalEntriesTable).where(eq(journalEntriesTable.id, run.postedJournalId));
+      }
+      const [row] = await tx.update(payrollRunsTable)
+        .set({ status: "draft", postedJournalId: null, updatedAt: new Date() })
+        .where(eq(payrollRunsTable.id, id)).returning();
+      return row;
+    });
     res.json(upd);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

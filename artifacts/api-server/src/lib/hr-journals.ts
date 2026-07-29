@@ -16,7 +16,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { assertWritableForDate } from "./periodGuard.js";
-import { nextJeSubSequence } from "./sequences.js";
+import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -190,8 +190,11 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   if (!prW.ok) throw new Error(prW.reason);
   // JE draws its own continuous "journal_entry" number; run code stays in the
   // description + source link. Falls back to the run code.
-  const jeDocNumber = (await nextJeSubSequence(cid, "hr_payroll", {
-    userId: null, refTable: "journal_entries", branchId: run.branchId ?? null, docDate: payrollDate,
+  // Reuses a stashed number on unpost→repost (keyed payroll_run:runId) so
+  // re-approving a payroll run keeps its original JE number (no gaps).
+  const jeDocNumber = (await resolveJeNumber({
+    companyId: cid, sourceType: "payroll_run", sourceId: runId, subType: "hr_payroll",
+    branchId: run.branchId ?? null, docDate: payrollDate, userId: null, dx: dx as any,
   })) ?? run.code;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
@@ -272,8 +275,10 @@ export async function buildLoanDisbursementJournal(
   const loanW = await assertWritableForDate(cid, loan.loanDate);
   if (!loanW.ok) throw new Error(loanW.reason);
   // JE draws its own continuous "journal_entry" number; falls back to LOAN-*.
-  const jeDocNumber = (await nextJeSubSequence(cid, "hr_loan", {
-    userId: null, refTable: "journal_entries", branchId: emp?.branchId ?? null, docDate: loan.loanDate,
+  // Reuses a stashed number on unpost→re-disburse (keyed employee_loan:loanId).
+  const jeDocNumber = (await resolveJeNumber({
+    companyId: cid, sourceType: "employee_loan", sourceId: loan.id, subType: "hr_loan",
+    branchId: emp?.branchId ?? null, docDate: loan.loanDate, userId: null, dx: dx as any,
   })) ?? `LOAN-${loan.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
@@ -379,8 +384,10 @@ export async function buildCustodyDisbursementJournal(
 
   const w = await assertWritableForDate(cid, cust.custodyDate);
   if (!w.ok) throw new Error(w.reason);
-  const jeDocNumber = (await nextJeSubSequence(cid, "hr_custody", {
-    userId: null, refTable: "journal_entries", branchId: cust.branchId ?? emp?.branchId ?? null, docDate: cust.custodyDate,
+  // Reuses a stashed number on unpost→re-disburse (keyed employee_custody_disb:custodyId).
+  const jeDocNumber = (await resolveJeNumber({
+    companyId: cid, sourceType: "employee_custody_disb", sourceId: cust.id, subType: "hr_custody",
+    branchId: cust.branchId ?? emp?.branchId ?? null, docDate: cust.custodyDate, userId: null, dx: dx as any,
   })) ?? `CUST-${cust.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,

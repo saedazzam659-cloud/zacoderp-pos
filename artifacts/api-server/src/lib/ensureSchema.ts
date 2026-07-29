@@ -353,6 +353,9 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // means "all allowed" (back-compat). See api-server lib/postingRights.ts.
     { label: "users.posting_permissions column",
       sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS posting_permissions JSONB` },
+    // Per-type HR expiry-alert lead times (days) — {iqama,contract,passport,workPermit}.
+    { label: "companies.hr_alert_thresholds column",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS hr_alert_thresholds JSONB` },
     // "الطريقة العالمية" — unified JE counter with per-source prefixes; flag
     // lives on the sequence bound to journal_entry. See lib/sequences.ts.
     { label: "sequences.apply_source_prefixes column",

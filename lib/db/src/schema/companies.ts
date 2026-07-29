@@ -172,6 +172,10 @@ export const companiesTable = pgTable("companies", {
   hrEosProvisionAccountId:       integer("hr_eos_provision_account_id"),
   hrDefaultPayCashBoxId:         integer("hr_default_pay_cashbox_id"),
   hrDefaultPayBankAccountId:     integer("hr_default_pay_bank_account_id"),
+  // Per-type HR expiry-alert lead times (days). Absent key ⇒ default 90.
+  hrAlertThresholds: jsonb("hr_alert_thresholds").$type<{
+    iqama?: number; contract?: number; passport?: number; workPermit?: number;
+  }>(),
   // ─── Fixed Assets (IAS 16) account mapping (company-wide defaults) ─────
   // The fa-journals helper falls back to these when the asset's category
   // doesn't carry a per-category override. AcquisitionClearing is the CR
