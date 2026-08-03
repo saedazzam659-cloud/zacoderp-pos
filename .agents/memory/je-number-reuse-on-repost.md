@@ -55,3 +55,7 @@ counter back or mint a duplicate.
 - The table is created in `ensureSchema.ts` custom-DDL block (declared drizzle
   tables are NOT auto-created); reaches prod only via Publish.
 - Additive + fail-safe: any mismatch degrades to the prior "draw a new number".
+
+## Payroll payment (صرف الرواتب)
+- payment JE keyed `payroll_pay:runId` (sub `hr_payroll`); run's own JE keyed `payroll_run:runId` — two independent reservation keys per run.
+- **Race lesson:** payroll `/pay` and `/unpost` must BOTH `SELECT … FOR UPDATE` the run inside ONE tx — a pre-tx status check lets a concurrent pay attach a payment JE to a run being reverted to draft.

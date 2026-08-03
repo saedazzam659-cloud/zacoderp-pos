@@ -104,6 +104,9 @@ export const employeesApi = {
   createPayroll:  (data: any) => req<any>("POST", "/employees/payroll/runs", data),
   postPayroll:    (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/post`, {}),
   unpostPayroll:  (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/unpost`, {}),
+  payPayroll:     (id: number, data: { cashBoxId?: number | null; bankAccountId?: number | null; payDate?: string }) =>
+    req<any>("POST", `/employees/payroll/runs/${id}/pay`, data),
+  unpayPayroll:   (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/unpay`, {}),
   payrollJournal: (id: number) => req<any>("GET",  `/employees/payroll/runs/${id}/journal`),
   deletePayroll:  (id: number) => req<any>("DELETE", `/employees/payroll/runs/${id}`),
 

@@ -234,6 +234,59 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   return entry.id;
 }
 
+// ─── PAYROLL PAYMENT JOURNAL (صرف الرواتب) ──────────────────────────────────
+// DR salaries payable (21051) / CR cash|bank — the actual salary disbursement
+// after the payroll run has been posted (which credited 21051).
+export async function buildPayrollPaymentJournal(
+  cid: number,
+  runId: number,
+  payDate: string,
+  source: { cashBoxId?: number | null; bankAccountId?: number | null },
+  dx: DbOrTx = db
+): Promise<number> {
+  const [run] = await dx.select().from(payrollRunsTable)
+    .where(and(eq(payrollRunsTable.id, runId), eq(payrollRunsTable.companyId, cid)));
+  if (!run) throw new Error("مسير الرواتب غير موجود");
+
+  const amount = num(run.totalNet);
+  if (amount <= 0) throw new Error("صافي المسير يجب أن يكون أكبر من صفر");
+
+  const accounts = await resolveHrAccounts(cid, true, dx);
+  if (!accounts.salariesPayable) throw new Error("حساب الرواتب المستحقة (21051) غير مربوط في إعدادات الموارد البشرية");
+  const cash = await resolveCashAccount(cid, source, dx);
+
+  const period = `${String(run.month).padStart(2, "0")}/${run.year}`;
+  const desc = `صرف رواتب المسير ${run.code} عن الفترة ${period}`;
+
+  const w = await assertWritableForDate(cid, payDate);
+  if (!w.ok) throw new Error(w.reason);
+  // Reuses a stashed number on unpay→re-pay (keyed payroll_pay:runId) so the
+  // payment JE keeps its original number (no gaps).
+  const jeDocNumber = (await resolveJeNumber({
+    companyId: cid, sourceType: "payroll_pay", sourceId: runId, subType: "hr_payroll",
+    branchId: run.branchId ?? null, docDate: payDate, userId: null, dx: dx as any,
+  })) ?? `PAY-${run.code}`;
+  const [entry] = await dx.insert(journalEntriesTable).values({
+    companyId: cid,
+    branchId: run.branchId ?? null,
+    docNumber: jeDocNumber,
+    entryDate: payDate,
+    currency: "SAR",
+    exchangeRate: "1",
+    description: desc,
+    entryType: "payroll_payment",
+    status: await resolvePostingStatus(cid, "payroll"),
+  }).returning();
+
+  await dx.insert(journalEntryLinesTable).values([
+    { entryId: entry.id, accountId: accounts.salariesPayable, debit: fix(amount), credit: "0.00",
+      description: `سداد صافي رواتب الفترة ${period}`, sortOrder: 0 },
+    { entryId: entry.id, accountId: cash.accountId, debit: "0.00", credit: fix(amount),
+      description: cash.label, sortOrder: 1 },
+  ]);
+  return entry.id;
+}
+
 // Resolves the loan receivable account for a loan row: the row's own
 // loan_account_id wins, else the company loans mapping (11081). Throws when
 // nothing resolves so postings never silently misfire.

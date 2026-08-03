@@ -280,6 +280,9 @@ export const payrollRunsTable = pgTable("payroll_runs", {
   employeesCount: integer("employees_count").notNull().default(0),
   status:         text("status").notNull().default("draft"),
   postedJournalId:integer("posted_journal_id"),
+  // JE of the actual salary payment (DR salaries payable / CR cash|bank).
+  // Set by «صرف الرواتب»; non-null = paid (blocks double payment + run unpost).
+  paymentJournalId: integer("payment_journal_id"),
   notes:          text("notes"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),

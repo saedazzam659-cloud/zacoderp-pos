@@ -6,7 +6,7 @@ import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { requireAdminRole } from "../middleware/permissions.js";
-import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal } from "../lib/hr-journals.js";
+import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, resolveHrAccounts } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import {
   dateOrNull, requireDate, assertDateOrder, moneyOrZero, requirePositiveMoney,
@@ -1321,32 +1321,38 @@ router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), async (re
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const [run] = await db.select().from(payrollRunsTable)
-      .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)));
-    if (!run) { res.status(404).json({ error: "غير موجود" }); return; }
-    if (run.status !== "posted") { res.status(400).json({ error: "المسير ليس معتمداً" }); return; }
+    // One transaction with a FOR UPDATE row lock: serializes against a
+    // concurrent /pay so a payment JE can never attach to a run that is
+    // being reverted to draft (and vice-versa). Loan reversal rides the
+    // same tx so a failure rolls everything back together.
+    const upd = await db.transaction(async (tx) => {
+      const [run] = await tx.select().from(payrollRunsTable)
+        .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)))
+        .for("update");
+      if (!run) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      if (run.status !== "posted") throw Object.assign(new Error("المسير ليس معتمداً"), { status: 400 });
+      if (run.paymentJournalId) throw Object.assign(new Error("تم صرف رواتب هذا المسير — قم بفك ترحيل قيد الصرف أولاً"), { status: 409 });
 
-    // Reverse loan paidAmounts
-    const lines = await db.select().from(payrollLinesTable).where(eq(payrollLinesTable.payrollRunId, id));
-    for (const l of lines) {
-      if (Number(l.loanDeduction) > 0) {
-        const loans = await db.select().from(employeeLoansTable)
-          .where(and(eq(employeeLoansTable.companyId, cid), eq(employeeLoansTable.employeeId, l.employeeId)))
-          .orderBy(desc(employeeLoansTable.loanDate));
-        let toReverse = Number(l.loanDeduction);
-        for (const loan of loans) {
-          if (toReverse <= 0) break;
-          const paid = Number(loan.paidAmount);
-          const give = Math.min(toReverse, paid);
-          const newPaid = +(paid - give).toFixed(2);
-          await db.update(employeeLoansTable)
-            .set({ paidAmount: String(newPaid), status: newPaid >= Number(loan.amount) ? "completed" : "active", updatedAt: new Date() })
-            .where(eq(employeeLoansTable.id, loan.id));
-          toReverse -= give;
+      // Reverse loan paidAmounts
+      const lines = await tx.select().from(payrollLinesTable).where(eq(payrollLinesTable.payrollRunId, id));
+      for (const l of lines) {
+        if (Number(l.loanDeduction) > 0) {
+          const loans = await tx.select().from(employeeLoansTable)
+            .where(and(eq(employeeLoansTable.companyId, cid), eq(employeeLoansTable.employeeId, l.employeeId)))
+            .orderBy(desc(employeeLoansTable.loanDate));
+          let toReverse = Number(l.loanDeduction);
+          for (const loan of loans) {
+            if (toReverse <= 0) break;
+            const paid = Number(loan.paidAmount);
+            const give = Math.min(toReverse, paid);
+            const newPaid = +(paid - give).toFixed(2);
+            await tx.update(employeeLoansTable)
+              .set({ paidAmount: String(newPaid), status: newPaid >= Number(loan.amount) ? "completed" : "active", updatedAt: new Date() })
+              .where(eq(employeeLoansTable.id, loan.id));
+            toReverse -= give;
+          }
         }
       }
-    }
-    const upd = await db.transaction(async (tx) => {
       if (run.postedJournalId) {
         // Stash the JE number so re-approving the run reuses it (no sequence gap).
         await reserveJeNumberFromEntry(cid, "payroll_run", id, run.postedJournalId, tx as any);
@@ -1358,7 +1364,78 @@ router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), async (re
       return row;
     });
     res.json(upd);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status || 500).json({ error: e.message }); }
+});
+
+// ─── PAY (صرف الرواتب) — DR salaries payable / CR cash|bank ─────────────────
+router.post("/payroll/runs/:id/pay", requirePostRight("payroll"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body || {};
+    const result = await db.transaction(async (tx) => {
+      // FOR UPDATE lock: prevents two concurrent pay clicks double-posting.
+      const [run] = await tx.select().from(payrollRunsTable)
+        .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)))
+        .for("update");
+      if (!run) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      if (run.status !== "posted") throw Object.assign(new Error("يجب اعتماد المسير أولاً"), { status: 400 });
+      if (run.paymentJournalId) throw Object.assign(new Error("تم صرف رواتب هذا المسير بالفعل"), { status: 409 });
+
+      // Payment source: explicit body wins, else the HR default cash box/bank.
+      let source = {
+        cashBoxId:     b.cashBoxId     ? Number(b.cashBoxId)     : null,
+        bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
+      };
+      if (!source.cashBoxId && !source.bankAccountId) {
+        const accounts = await resolveHrAccounts(cid, false, tx);
+        source = { cashBoxId: accounts.defaultPayCashBoxId, bankAccountId: accounts.defaultPayBankAccountId };
+        // If both defaults are set, prefer the bank (salaries are normally bank-paid).
+        if (source.cashBoxId && source.bankAccountId) source = { cashBoxId: null, bankAccountId: source.bankAccountId };
+      }
+
+      const payDate = typeof b.payDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.payDate)
+        ? b.payDate
+        : new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10); // KSA today
+
+      const journalId = await buildPayrollPaymentJournal(cid, id, payDate, source, tx);
+      const [upd] = await tx.update(payrollRunsTable)
+        .set({ paymentJournalId: journalId, payDate, updatedAt: new Date() })
+        .where(eq(payrollRunsTable.id, id)).returning();
+      return { ...upd, journalId };
+    });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e?.status || 400).json({ error: e.message });
+  }
+});
+
+// ─── UNPAY (فك ترحيل قيد صرف الرواتب) ────────────────────────────────────────
+router.post("/payroll/runs/:id/unpay", requireUnpostRight("payroll"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const result = await db.transaction(async (tx) => {
+      const [run] = await tx.select().from(payrollRunsTable)
+        .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)))
+        .for("update");
+      if (!run) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      if (!run.paymentJournalId) throw Object.assign(new Error("لا يوجد قيد صرف لهذا المسير"), { status: 400 });
+      // Stash the JE number so re-paying reuses it (no sequence gap).
+      await reserveJeNumberFromEntry(cid, "payroll_pay", id, run.paymentJournalId, tx as any);
+      await tx.delete(journalEntriesTable).where(and(
+        eq(journalEntriesTable.id, run.paymentJournalId),
+        eq(journalEntriesTable.companyId, cid),
+      ));
+      const [upd] = await tx.update(payrollRunsTable)
+        .set({ paymentJournalId: null, updatedAt: new Date() })
+        .where(eq(payrollRunsTable.id, id)).returning();
+      return upd;
+    });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e?.status || 400).json({ error: e.message });
+  }
 });
 
 router.delete("/payroll/runs/:id", async (req, res) => {

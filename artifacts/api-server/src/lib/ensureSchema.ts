@@ -356,6 +356,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // Per-type HR expiry-alert lead times (days) — {iqama,contract,passport,workPermit}.
     { label: "companies.hr_alert_thresholds column",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS hr_alert_thresholds JSONB` },
+    { label: "payroll_runs.payment_journal_id column",
+      sql:   `ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS payment_journal_id INTEGER` },
     // "الطريقة العالمية" — unified JE counter with per-source prefixes; flag
     // lives on the sequence bound to journal_entry. See lib/sequences.ts.
     { label: "sequences.apply_source_prefixes column",

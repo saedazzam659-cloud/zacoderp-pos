@@ -11,7 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Banknote, FileSpreadsheet, Sparkles, Calculator, CheckCircle2, Trash2, Loader2, Eye, Save, Receipt, X, BookOpen, RotateCcw } from "lucide-react";
+import { Banknote, FileSpreadsheet, Sparkles, Calculator, CheckCircle2, Trash2, Loader2, Eye, Save, Receipt, X, BookOpen, RotateCcw, HandCoins, Undo2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { DateField } from "@/components/ui/date-field";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { fmt2 } from "@/lib/format";
 
@@ -49,6 +51,10 @@ export default function Payroll() {
   const [viewing, setViewing] = useState<number | null>(null);
   const [showJournal, setShowJournal] = useState(false);
   const [jeExplain, setJeExplain] = useState<string>("");
+  const [payFor, setPayFor] = useState<any | null>(null);
+  const [payMethod, setPayMethod] = useState<"cash" | "bank">("bank");
+  const [payAccountId, setPayAccountId] = useState<number | "">("");
+  const [payDate, setPayDate] = useState<string>("");
 
   const { data: runs = [], isLoading: loadingRuns } = useQuery<any[]>({
     queryKey: ["payroll-runs"], queryFn: () => employeesApi.payrollRuns(),
@@ -126,6 +132,49 @@ export default function Payroll() {
   const explainJeMut = useMutation({
     mutationFn: () => employeesApi.aiExplainHrJournal("payroll_run", journalData.entry, journalData.lines, { run: { code: viewRun.code, year: viewRun.year, month: viewRun.month, employeesCount: viewRun.employeesCount } }),
     onSuccess: (data) => { setJeExplain(data.explanation); toast({ title: tr("toastExplainGenerated") }); },
+    onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
+  });
+
+  const { data: hrSettings } = useQuery<any>({
+    queryKey: ["hr", "settings"], queryFn: employeesApi.hrSettings,
+  });
+  const cashList = (hrSettings?.cashBoxes || []) as any[];
+  const bankList = (hrSettings?.bankAccounts || []) as any[];
+
+  function openPay(r: any) {
+    setPayFor(r);
+    setPayDate(new Date().toISOString().slice(0, 10));
+    const defBank = hrSettings?.mapping?.defaultPayBankAccountId;
+    const defCash = hrSettings?.mapping?.defaultPayCashBoxId;
+    if (defBank) { setPayMethod("bank"); setPayAccountId(Number(defBank)); }
+    else if (defCash) { setPayMethod("cash"); setPayAccountId(Number(defCash)); }
+    else { setPayMethod("bank"); setPayAccountId(""); }
+  }
+
+  const payMut = useMutation({
+    mutationFn: () => {
+      if (!payFor) throw new Error("—");
+      const payload = payMethod === "cash"
+        ? { cashBoxId: payAccountId ? Number(payAccountId) : null, bankAccountId: null, payDate }
+        : { cashBoxId: null, bankAccountId: payAccountId ? Number(payAccountId) : null, payDate };
+      return employeesApi.payPayroll(payFor.id, payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["payroll-runs"] });
+      qc.invalidateQueries({ queryKey: ["payroll-run", viewing] });
+      setPayFor(null); setPayAccountId("");
+      toast({ title: tr("toastPaidTitle"), description: tr("toastPaidDesc") });
+    },
+    onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
+  });
+
+  const unpayMut = useMutation({
+    mutationFn: (id: number) => employeesApi.unpayPayroll(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["payroll-runs"] });
+      qc.invalidateQueries({ queryKey: ["payroll-run", viewing] });
+      toast({ title: tr("toastUnpaidTitle"), description: tr("toastUnpaidDesc") });
+    },
     onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
@@ -224,6 +273,21 @@ export default function Payroll() {
                         <Button size="sm" variant="ghost" onClick={() => { setViewing(r.id); setTab("detail"); }} data-testid={`btn-view-${r.id}`}>
                           <Eye className="size-3.5" />
                         </Button>
+                        {r.status === "posted" && !r.paymentJournalId && (
+                          <Button size="sm" variant="ghost" onClick={() => openPay(r)}
+                            title={tr("payTooltip")} data-testid={`btn-pay-${r.id}`}>
+                            <HandCoins className="size-3.5 text-emerald-600" />
+                          </Button>
+                        )}
+                        {r.status === "posted" && !!r.paymentJournalId && (
+                          <>
+                            <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200 me-1">{tr("paidBadge")}</Badge>
+                            <Button size="sm" variant="ghost" onClick={() => { if (confirm(tr("unpayConfirm"))) unpayMut.mutate(r.id); }}
+                              title={tr("unpayTooltip")} data-testid={`btn-unpay-${r.id}`}>
+                              <Undo2 className="size-3.5 text-amber-600" />
+                            </Button>
+                          </>
+                        )}
                         {r.status === "draft" && (
                           <>
                             <Button size="sm" variant="ghost" onClick={() => { if (confirm(tr("approveConfirm"))) postMut.mutate(r.id); }}
@@ -463,6 +527,53 @@ export default function Payroll() {
           </TabsContent>
         )}
       </Tabs>
+
+      {/* Pay-salaries dialog */}
+      <Dialog open={!!payFor} onOpenChange={(o) => { if (!o) { setPayFor(null); setPayAccountId(""); } }}>
+        <DialogContent className="max-w-md" dir={isRtl ? "rtl" : "ltr"}>
+          <DialogHeader><DialogTitle>{tr("payDialogTitle")}</DialogTitle></DialogHeader>
+          {payFor && (
+            <div className="space-y-3 text-sm">
+              <div className="rounded border bg-muted/30 p-3 space-y-1">
+                <div><span className="text-muted-foreground">{tr("colCode")}</span> <strong>{payFor.code}</strong></div>
+                <div><span className="text-muted-foreground">{tr("colPeriod")}</span> {MONTHS[payFor.month - 1]} {payFor.year}</div>
+                <div><span className="text-muted-foreground">{tr("colNet")}</span> <strong className="text-emerald-700">{fmt2(payFor.totalNet)} {tr("sar")}</strong></div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">{tr("payDateLabel")}</label>
+                <DateField value={payDate} onChange={(e) => setPayDate(e.target.value)} data-testid="input-pay-date" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{tr("payMethodLabel")}</label>
+                <div className="flex gap-2">
+                  <Button type="button" variant={payMethod === "bank" ? "default" : "outline"} size="sm" onClick={() => { setPayMethod("bank"); setPayAccountId(""); }} data-testid="pay-bank">{tr("methodBank")}</Button>
+                  <Button type="button" variant={payMethod === "cash" ? "default" : "outline"} size="sm" onClick={() => { setPayMethod("cash"); setPayAccountId(""); }} data-testid="pay-cash">{tr("methodCash")}</Button>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">{payMethod === "cash" ? tr("labelCashBox") : tr("labelBankAccount")}</label>
+                <SearchCombobox
+                  items={(payMethod === "cash" ? cashList : bankList).map((x: any) => ({ value: String(x.id), label: pickName(x.nameAr, x.nameEn) || `#${x.id}` }))}
+                  value={payAccountId ? String(payAccountId) : ""}
+                  onValueChange={(v) => setPayAccountId(v ? Number(v) : "")}
+                  placeholder={tr("chooseAccount")}
+                  className="w-full"
+                />
+              </div>
+              <div className="text-xs text-muted-foreground bg-blue-50/50 border border-blue-200 rounded p-2">
+                {tr("payJournalNote", { amount: fmt2(payFor.totalNet) })}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPayFor(null)}>{tr("cancel")}</Button>
+            <Button onClick={() => payMut.mutate()} disabled={payMut.isPending || !payAccountId || !payDate} data-testid="btn-confirm-pay">
+              {payMut.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <HandCoins className="size-4 me-1" />}
+              {tr("confirmPay")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
