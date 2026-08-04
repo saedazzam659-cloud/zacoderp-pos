@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import EmbeddedPaymentForm from "@/components/documents/EmbeddedPaymentForm";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useFormatters } from "@/lib/format";
@@ -32,6 +33,8 @@ interface PurchaseInvoicePaymentsTabProps {
   paymentType?: string;
   cashBoxId?: string;
   bankAccountId?: string;
+  /** كود عملة الفاتورة — يُمرَّر لنموذج الدفعة المضمَّن. */
+  currencyCode?: string;
 }
 
 function paymentTypeLabel(pt?: string): string {
@@ -43,7 +46,7 @@ function paymentTypeLabel(pt?: string): string {
 export default function PurchaseInvoicePaymentsTab({
   invoiceId, docNumber, companyId, token,
   supplierId, supplierName, invoiceTotal, invoiceExchangeRate = 1,
-  paymentType, cashBoxId, bankAccountId,
+  paymentType, cashBoxId, bankAccountId, currencyCode,
 }: PurchaseInvoicePaymentsTabProps) {
   const { fmt } = useFormatters();
   const [, navigate] = useLocation();
@@ -199,21 +202,8 @@ export default function PurchaseInvoicePaymentsTab({
     return { label: "غير مسدَّدة", tone: "red" as const, Icon: CircleX };
   }, [summary]);
 
-  function openNewVoucher() {
-    if (!invoiceId) return;
-    const params = new URLSearchParams();
-    params.set("purchaseInvoiceId", String(invoiceId));
-    if (supplierId) params.set("entityId", supplierId);
-    if (supplierName) params.set("entityName", supplierName);
-    // Cap the prefilled amount at the balance left AFTER posted + draft
-    // vouchers (server rejects anything above it).
-    if (summary.available > 0) params.set("amount", summary.available.toFixed(2));
-    const pt = paymentType === "bank" ? "bank" : "cash";
-    params.set("paymentType", pt);
-    if (pt === "cash" && cashBoxId) params.set("cashBoxId", cashBoxId);
-    if (pt === "bank" && bankAccountId) params.set("bankAccountId", bankAccountId);
-    navigate(`/cash/payment-vouchers/new?${params.toString()}`);
-  }
+  // نموذج تسجيل الدفعة المضمَّن — بدلاً من التحويل لشاشة السندات.
+  const [showPayForm, setShowPayForm] = useState(false);
 
   // ── New / unsaved invoice: nothing to settle yet ──────────────────
   if (!invoiceId) {
@@ -271,8 +261,8 @@ export default function PurchaseInvoicePaymentsTab({
         ) : (
           <Button
             size="sm"
-            onClick={openNewVoucher}
-            disabled={summary.available <= 0.005}
+            onClick={() => setShowPayForm(true)}
+            disabled={showPayForm || summary.available <= 0.005}
             title={summary.available <= 0.005
               ? (summary.pending > 0.005
                 ? "قيمة الفاتورة مغطّاة بالكامل بسندات (مرحّلة + مسودّات) — رحّل أو عدّل المسودات أولاً"
@@ -285,6 +275,24 @@ export default function PurchaseInvoicePaymentsTab({
           </Button>
         )}
       </div>
+
+      {/* نموذج تسجيل الدفعة المضمَّن (نفس نمط الإشعارات) */}
+      {showPayForm && (
+        <EmbeddedPaymentForm
+          kind="purchase"
+          invoiceId={invoiceId}
+          companyId={companyId}
+          token={token}
+          entityId={supplierId}
+          entityName={supplierName}
+          docNumber={docNumber}
+          available={summary.available}
+          exchangeRate={invoiceExchangeRate}
+          currencyCode={currencyCode}
+          onClose={() => setShowPayForm(false)}
+          onSaved={invalidateSettleQueries}
+        />
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

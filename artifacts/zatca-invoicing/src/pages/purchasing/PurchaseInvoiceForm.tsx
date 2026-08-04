@@ -1999,6 +1999,7 @@ export default function PurchaseInvoiceForm() {
                   supplierName={supName((suppliers as any[]).find((s: any) => String(s.id) === String(supplierId))) || ""}
                   invoiceTotal={totalAmount + totalExpLoaded}
                   invoiceExchangeRate={Number(exchangeRate) || 1}
+                  currencyCode={currencyCode}
                   paymentType={paymentType}
                   cashBoxId={cashBoxId}
                   bankAccountId={bankAccountId}

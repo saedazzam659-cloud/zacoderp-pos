@@ -3431,6 +3431,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         ?? ""}
                       invoiceTotal={totalAmount}
                       invoiceExchangeRate={Number(exchangeRate) || 1}
+                      currencyCode={currencyCode}
                       paymentType={paymentType}
                       cashBoxId={cashBoxId}
                       bankAccountId={bankAccountId}
