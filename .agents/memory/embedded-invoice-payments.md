@@ -11,3 +11,4 @@ Rules learned:
 - **Currency identity**: invoices carry `currencyCode`, vouchers persist `currencyId` — the form fetches /api/currencies and resolves code→id; passing only exchangeRate silently drops the voucher's currency.
 - Amounts are entered in DOC currency with the invoice's exchangeRate; cap distributed ≤ summary.available (+0.005 tolerance); server re-checks in base currency under a per-invoice advisory lock.
 - "حفظ وترحيل" = create then POST /:id/post per voucher (JE built in the voucher post path — unified JE series untouched).
+- **Post-payment edit guard**: sales/purchase invoice PUT calls `assertInvoiceEditKeepsSettlementsCovered` (lib/invoiceSettlement.ts) — rejects saving when new net due (total×rate − returns, base ccy) < settled (vouchers incl. drafts + settlement JEs). Any new invoice-mutating path must call it too.

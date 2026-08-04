@@ -30,6 +30,7 @@ import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeN
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { goodsReceiptsTable } from "@workspace/db";
 import { getReceivingClearingAccountId } from "./goodsReceipts.js";
+import { assertInvoiceEditKeepsSettlementsCovered } from "../lib/invoiceSettlement.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -1294,6 +1295,14 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
+    // حارس ما بعد السداد: لا يجوز أن يصبح صافي الفاتورة أقل من المسدَّد عليها.
+    try {
+      const newTotalBase = (parseFloat(String(totalAmount)) || 0) * (parseFloat(String(exchangeRate)) || 1);
+      await assertInvoiceEditKeepsSettlementsCovered(cid, "purchase", id, newTotalBase);
+    } catch (e: any) {
+      res.status(e?.status ?? 400).json({ error: e?.message || "التعديل يتعارض مع دفعات مسجَّلة على الفاتورة" });
+      return;
+    }
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [inv] = await db.update(purchaseInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,

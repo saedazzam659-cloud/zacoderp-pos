@@ -31,6 +31,7 @@ import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type Batch
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber, nextSequenceForPayment, nextPosStationNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
+import { assertInvoiceEditKeepsSettlementsCovered } from "../lib/invoiceSettlement.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
 import { salesInvoiceRowToZatcaData } from "../lib/zatca-sales-mapper.js";
 import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH, csidEnvMismatchMessage } from "../lib/zatca-env.js";
@@ -1087,6 +1088,14 @@ router.put("/sales-invoices/:id", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
+    // حارس ما بعد السداد: لا يجوز أن يصبح صافي الفاتورة أقل من المسدَّد عليها.
+    try {
+      const newTotalBase = (parseFloat(String(totals.totalAmount)) || 0) * (parseFloat(String(exchangeRate)) || 1);
+      await assertInvoiceEditKeepsSettlementsCovered(cid, "sales", id, newTotalBase);
+    } catch (e: any) {
+      res.status(e?.status ?? 400).json({ error: e?.message || "التعديل يتعارض مع دفعات مسجَّلة على الفاتورة" });
+      return;
+    }
     // Only re-snapshot commission when the caller explicitly sent salesRepId
     // (so existing forms that don't know about reps don't wipe historical data).
     const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");

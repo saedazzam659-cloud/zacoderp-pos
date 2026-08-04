@@ -136,6 +136,42 @@ export async function assertJeSettlementAllowed(
   }
 }
 
+/** حارس تعديل الفاتورة بعد السداد: يمنع حفظ تعديل يجعل صافي المستحق
+ *  (الإجمالي الجديد − المرتجعات) أقل من مجموع ما سُدِّد فعلاً
+ *  (سندات + قيود سداد، بالعملة الأساسية). يُستدعى من PUT الفواتير قبل
+ *  الكتابة — الحماية من الخادم وليست واجهة فقط. */
+export async function assertInvoiceEditKeepsSettlementsCovered(
+  cid: number,
+  kind: SettlementKind,
+  invoiceId: number,
+  newTotalBase: number,
+): Promise<void> {
+  const [vouchers, jes] = await Promise.all([
+    sumVouchersForInvoice(cid, kind, invoiceId),
+    sumSettlementJEs(cid, kind, invoiceId),
+  ]);
+  const settled = vouchers + jes;
+  if (settled <= 0.005) return; // لا مدفوعات — التعديل حر
+  // مرتجعات الفاتورة بالعملة الأساسية (نفس منطق invoiceNetDueBase).
+  const rTable = kind === "sales" ? salesReturnsTable : purchaseReturnsTable;
+  const rets = await db.select({
+    total: (rTable as any).totalAmount,
+    rate:  (rTable as any).exchangeRate,
+  }).from(rTable as any)
+    .where(and(eq((rTable as any).companyId, cid), eq((rTable as any).invoiceId, invoiceId)));
+  const retBase = (rets as any[]).reduce(
+    (s, r) => s + (parseFloat(String(r.total)) || 0) * (parseFloat(String(r.rate)) || 1), 0);
+  const newNetDue = Math.max(0, newTotalBase - retBase);
+  if (newNetDue + 0.01 < settled) {
+    const err: any = new Error(
+      `لا يمكن حفظ التعديل: قيمة الفاتورة بعد التعديل (${newNetDue.toFixed(2)}) أصبحت أقل من المبلغ المسدَّد عليها (${settled.toFixed(2)} — سندات وقيود سداد مرتبطة، تشمل المسودات). ` +
+      `عدّل أو ألغِ سندات السداد المرتبطة أولاً، أو سجّل مرتجعاً بدلاً من تخفيض الفاتورة.`,
+    );
+    err.status = 400;
+    throw err;
+  }
+}
+
 /** Net due (total − returns) of the invoice in BASE currency, plus its
  *  paymentType. Throws when the invoice doesn't exist in this tenant. */
 export async function invoiceNetDueBase(
