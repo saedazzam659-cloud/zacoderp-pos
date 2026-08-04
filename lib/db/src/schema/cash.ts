@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum,
+  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, jsonb,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
@@ -172,6 +172,22 @@ export const paymentVoucherLinesTable = pgTable("payment_voucher_lines", {
   supplierVatNumber:     text("supplier_vat_number"),
   supplierInvoiceNumber: text("supplier_invoice_number"),
   supplierInvoiceDate:   text("supplier_invoice_date"),
+  // ── نوع العملية (op type) — ADDITIVE. "direct" = عادي (default, legacy
+  // rows keep behaving unchanged). "prepaid" = مصروف مقدم: the line debits
+  // the PREPAID asset account (accountId) and carries an amortization plan
+  // that mints ONE linked accounting_adjustments row on /post (same engine
+  // as deferred-expense purchase-invoice lines).
+  opType:                   text("op_type").notNull().default("direct"),
+  // Prepaid plan (only meaningful when opType='prepaid'):
+  deferredExpenseAccountId: integer("deferred_expense_account_id").references(() => accountsTable.id),
+  deferredStartDate:        text("deferred_start_date"),           // ISO YYYY-MM-DD
+  deferredEndDate:          text("deferred_end_date"),             // ISO YYYY-MM-DD
+  deferredPeriodicity:      text("deferred_periodicity"),          // monthly|quarterly|semiannual|annual
+  // Canonical [{costCenterId:int, pct:number}] — same contract as parseCcSplit.
+  deferredCostCenters:      jsonb("deferred_cost_centers"),
+  // Link to the accounting adjustment created at post time (idempotency +
+  // unpost/repost lifecycle).
+  deferredAdjustmentId:     integer("deferred_adjustment_id"),
   sortOrder:         integer("sort_order").notNull().default(0),
 });
 

@@ -53,6 +53,13 @@ interface PvLine {
   supplierVatNumber: string;
   supplierInvoiceNumber: string;
   supplierInvoiceDate: string;
+  // نوع العملية: "direct" عادي أو "prepaid" مصروف مقدم (خطة استهلاك شهرية).
+  opType: "direct" | "prepaid";
+  deferredExpenseAccountId: string; // حساب المصروف (المدين في قيود التسوية)
+  deferredStartDate: string;        // ISO
+  deferredEndDate: string;          // ISO
+  deferredPeriodicity: string;      // monthly|quarterly|semiannual|annual
+  deferredCostCenters: { costCenterId: string; pct: string }[];
 }
 
 let _pvLineSeq = 0;
@@ -71,6 +78,12 @@ function newPvLine(init: Partial<PvLine> = {}): PvLine {
     supplierVatNumber: "",
     supplierInvoiceNumber: "",
     supplierInvoiceDate: "",
+    opType: "direct",
+    deferredExpenseAccountId: "",
+    deferredStartDate: "",
+    deferredEndDate: "",
+    deferredPeriodicity: "monthly",
+    deferredCostCenters: [],
     ...init,
   };
 }
@@ -298,6 +311,14 @@ export default function PaymentVoucherForm() {
         supplierVatNumber: l.supplierVatNumber ?? "",
         supplierInvoiceNumber: l.supplierInvoiceNumber ?? "",
         supplierInvoiceDate: l.supplierInvoiceDate ?? "",
+        opType: l.opType === "prepaid" ? "prepaid" : "direct",
+        deferredExpenseAccountId: l.deferredExpenseAccountId != null ? String(l.deferredExpenseAccountId) : "",
+        deferredStartDate: l.deferredStartDate ?? "",
+        deferredEndDate: l.deferredEndDate ?? "",
+        deferredPeriodicity: l.deferredPeriodicity ?? "monthly",
+        deferredCostCenters: Array.isArray(l.deferredCostCenters)
+          ? l.deferredCostCenters.map((s: any) => ({ costCenterId: String(s.costCenterId ?? ""), pct: String(s.pct ?? "") }))
+          : [],
       }));
     } else {
       lines = [newPvLine({
@@ -524,6 +545,18 @@ export default function PaymentVoucherForm() {
           throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب محاسبي"));
         if (!((Number(l.amount) || 0) > 0))
           throw new Error(t(`${NS}.lineAmountRequired`, "مبلغ البند يجب أن يكون أكبر من صفر"));
+        if (l.opType === "prepaid") {
+          if (!l.deferredExpenseAccountId)
+            throw new Error(t(`${NS}.prepaidExpenseAccountRequired`, "بند مصروف مقدم: حساب المصروف مطلوب"));
+          if (!l.deferredStartDate || !l.deferredEndDate || l.deferredEndDate < l.deferredStartDate)
+            throw new Error(t(`${NS}.prepaidPeriodRequired`, "بند مصروف مقدم: فترة الاستهلاك (من/إلى) مطلوبة وبتواريخ صحيحة"));
+          const split = l.deferredCostCenters.filter(s => s.costCenterId);
+          if (split.length) {
+            const sum = split.reduce((s, x) => s + (Number(x.pct) || 0), 0);
+            if (Math.abs(sum - 100) > 0.01)
+              throw new Error(t(`${NS}.prepaidCcSplitInvalid`, "بند مصروف مقدم: مجموع نسب مراكز التكلفة يجب أن يساوي 100%"));
+          }
+        }
       }
       const linesPayload = kept.map(l => ({
         accountId:         l.accountId ? parseInt(l.accountId) : null,
@@ -539,6 +572,20 @@ export default function PaymentVoucherForm() {
         supplierVatNumber:     l.supplierVatNumber?.trim() || null,
         supplierInvoiceNumber: l.supplierInvoiceNumber?.trim() || null,
         supplierInvoiceDate:   l.supplierInvoiceDate?.trim() || null,
+        opType: l.opType,
+        deferredExpenseAccountId: l.opType === "prepaid" && l.deferredExpenseAccountId
+          ? parseInt(l.deferredExpenseAccountId) : null,
+        deferredStartDate: l.opType === "prepaid" ? (l.deferredStartDate || null) : null,
+        deferredEndDate:   l.opType === "prepaid" ? (l.deferredEndDate   || null) : null,
+        deferredPeriodicity: l.opType === "prepaid" ? (l.deferredPeriodicity || "monthly") : null,
+        deferredCostCenters: l.opType === "prepaid"
+          ? (() => {
+              const split = l.deferredCostCenters.filter(s => s.costCenterId);
+              return split.length
+                ? split.map(s => ({ costCenterId: parseInt(s.costCenterId), pct: Number(s.pct) || 0 }))
+                : null;
+            })()
+          : null,
       }));
       const grandTotal = kept.reduce(
         (s, l) => s + (Number(l.amount) || 0) + (Number(l.taxAmount) || 0), 0);
@@ -1186,6 +1233,140 @@ export default function PaymentVoucherForm() {
                                 >
                                   <Plus className="h-3.5 w-3.5" />
                                   {t(`${NS}.addTax`, "إضافة ضريبة")} 15%
+                                </Button>
+                              )}
+
+                              {/* ── نوع العملية: مصروف مقدم (خطة استهلاك) ── */}
+                              {l.opType === "prepaid" ? (
+                                <div className="rounded-md bg-amber-500/5 border border-amber-500/30 px-2 py-2 space-y-2" data-testid={`pv-line-prepaid-${idx}`}>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold text-amber-700 shrink-0">
+                                      {t(`${NS}.prepaidTitle`, "مصروف مقدم — خطة الاستهلاك")}
+                                    </span>
+                                    <Button
+                                      type="button" variant="ghost" size="sm"
+                                      className="h-7 gap-1 text-destructive hover:text-destructive ml-auto"
+                                      onClick={() => updateLine(l.key, {
+                                        opType: "direct", deferredExpenseAccountId: "",
+                                        deferredStartDate: "", deferredEndDate: "",
+                                        deferredPeriodicity: "monthly", deferredCostCenters: [],
+                                      })}
+                                      data-testid={`pv-line-prepaid-remove-${idx}`}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                      {t(`${NS}.prepaidRemove`, "إلغاء (بند عادي)")}
+                                    </Button>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {t(`${NS}.prepaidHint`, "حساب البند أعلاه = حساب المصروف المقدم (أصل). عند الترحيل تُنشأ تسوية شهرية تُقفل الأصل في حساب المصروف أدناه.")}
+                                  </p>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <div>
+                                      <Label className="text-[11px]">{t(`${NS}.prepaidExpenseAccount`, "حساب المصروف")}</Label>
+                                      <SearchCombobox
+                                        items={postableAccounts}
+                                        value={l.deferredExpenseAccountId}
+                                        onValueChange={(aid) => updateLine(l.key, { deferredExpenseAccountId: aid })}
+                                        placeholder={t(`${NS}.selectAccountPh`, "— اختر الحساب —")}
+                                        searchPlaceholder={t(`${NS}.searchAccountPh`, "ابحث بالاسم أو الكود...")}
+                                        emptyText={t(`${NS}.noAccounts`, "لا توجد حسابات")}
+                                      />
+                                    </div>
+                                    <div>
+                                      <Label className="text-[11px]">{t(`${NS}.prepaidPeriodicity`, "الدورية")}</Label>
+                                      <select
+                                        value={l.deferredPeriodicity}
+                                        onChange={e => updateLine(l.key, { deferredPeriodicity: e.target.value })}
+                                        className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
+                                      >
+                                        <option value="monthly">{t(`${NS}.perMonthly`, "شهري")}</option>
+                                        <option value="quarterly">{t(`${NS}.perQuarterly`, "ربع سنوي")}</option>
+                                        <option value="semiannual">{t(`${NS}.perSemiannual`, "نصف سنوي")}</option>
+                                        <option value="annual">{t(`${NS}.perAnnual`, "سنوي")}</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <Label className="text-[11px]">{t(`${NS}.prepaidStart`, "بداية الاستهلاك")}</Label>
+                                      <DateField
+                                        value={l.deferredStartDate}
+                                        onChange={e => updateLine(l.key, { deferredStartDate: e.target.value })}
+                                        data-testid={`pv-line-prepaid-start-${idx}`}
+                                      />
+                                    </div>
+                                    <div>
+                                      <Label className="text-[11px]">{t(`${NS}.prepaidEnd`, "نهاية الاستهلاك")}</Label>
+                                      <DateField
+                                        value={l.deferredEndDate}
+                                        onChange={e => updateLine(l.key, { deferredEndDate: e.target.value })}
+                                        data-testid={`pv-line-prepaid-end-${idx}`}
+                                      />
+                                    </div>
+                                  </div>
+                                  {/* Optional multi-CC split (Σ = 100%) */}
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-[11px]">{t(`${NS}.prepaidCcSplit`, "توزيع مراكز التكلفة (اختياري)")}</Label>
+                                      <Button
+                                        type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]"
+                                        onClick={() => updateLine(l.key, {
+                                          deferredCostCenters: [...l.deferredCostCenters, { costCenterId: "", pct: "" }],
+                                        })}
+                                      >
+                                        <Plus className="h-3 w-3" /> {t(`${NS}.prepaidCcAdd`, "إضافة مركز")}
+                                      </Button>
+                                      {l.deferredCostCenters.length > 0 && (() => {
+                                        const sum = l.deferredCostCenters.reduce((s, x) => s + (Number(x.pct) || 0), 0);
+                                        const ok = Math.abs(sum - 100) <= 0.01;
+                                        return (
+                                          <span className={cn("text-[11px] font-mono", ok ? "text-green-700" : "text-destructive")}>
+                                            Σ {fmtNum(sum)}%
+                                          </span>
+                                        );
+                                      })()}
+                                    </div>
+                                    {l.deferredCostCenters.map((s, si) => (
+                                      <div key={si} className="flex items-center gap-2">
+                                        <select
+                                          value={s.costCenterId}
+                                          onChange={e => updateLine(l.key, {
+                                            deferredCostCenters: l.deferredCostCenters.map((x, xi) => xi === si ? { ...x, costCenterId: e.target.value } : x),
+                                          })}
+                                          className="flex-1 h-7 border border-input rounded-md px-2 text-xs bg-background"
+                                        >
+                                          <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
+                                          {(costCentersList as any[]).filter((c: any) => c.isActive !== false).map((c: any) => (
+                                            <option key={c.id} value={String(c.id)}>{c.code} — {c.nameAr}</option>
+                                          ))}
+                                        </select>
+                                        <Input
+                                          type="text" inputMode="decimal" dir="ltr" placeholder="%"
+                                          value={s.pct}
+                                          onChange={e => updateLine(l.key, {
+                                            deferredCostCenters: l.deferredCostCenters.map((x, xi) => xi === si ? { ...x, pct: e.target.value.replace(/[^0-9.]/g, "") } : x),
+                                          })}
+                                          className="h-7 w-20 text-xs text-left font-mono"
+                                        />
+                                        <Button
+                                          type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                          onClick={() => updateLine(l.key, {
+                                            deferredCostCenters: l.deferredCostCenters.filter((_, xi) => xi !== si),
+                                          })}
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <Button
+                                  type="button" variant="outline" size="sm"
+                                  onClick={() => updateLine(l.key, { opType: "prepaid" })}
+                                  className="h-7 gap-1 text-xs border-amber-500/50 text-amber-700 hover:bg-amber-500/5 hover:text-amber-700"
+                                  data-testid={`pv-line-prepaid-add-${idx}`}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                  {t(`${NS}.prepaidAdd`, "مصروف مقدم")}
                                 </Button>
                               )}
 

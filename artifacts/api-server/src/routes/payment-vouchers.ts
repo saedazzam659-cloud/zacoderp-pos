@@ -9,8 +9,11 @@ import {
   purchaseReturnsTable,
   journalEntriesTable, journalEntryLinesTable,
   accountsTable,
+  accountingAdjustmentsTable, accountingAdjustmentRunsTable,
+  costCentersTable,
 } from "@workspace/db";
-import { eq, and, or, desc, inArray, asc } from "drizzle-orm";
+import { eq, and, or, desc, inArray, asc, sql } from "drizzle-orm";
+import { normalizePeriodicity, parseCcSplit, installmentsBetween, runDueAdjustmentsForCompany } from "../lib/adjustmentPosting.js";
 import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
 import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
@@ -281,7 +284,18 @@ interface RawPvLine {
   supplierVatNumber: string | null;
   supplierInvoiceNumber: string | null;
   supplierInvoiceDate: string | null;
+  // نوع العملية — "direct" (default) or "prepaid" (مصروف مقدم). ADDITIVE:
+  // legacy callers that don't send opType keep the direct behavior untouched.
+  opType: "direct" | "prepaid";
+  // Prepaid amortization plan (only when opType === "prepaid"):
+  deferredExpenseAccountId: number | null;
+  deferredStartDate: string | null;   // ISO YYYY-MM-DD
+  deferredEndDate: string | null;     // ISO YYYY-MM-DD
+  deferredPeriodicity: string | null;
+  deferredCostCenters: { costCenterId: number; pct: number }[] | null;
 }
+
+const PV_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 // Trim a free-text metadata field to null when blank.
 function txtOrNull(v: any): string | null {
@@ -311,6 +325,13 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
       supplierVatNumber: txtOrNull(l?.supplierVatNumber),
       supplierInvoiceNumber: txtOrNull(l?.supplierInvoiceNumber),
       supplierInvoiceDate: txtOrNull(l?.supplierInvoiceDate),
+      opType: l?.opType === "prepaid" ? "prepaid" : "direct",
+      deferredExpenseAccountId: l?.deferredExpenseAccountId ? parseInt(l.deferredExpenseAccountId) : null,
+      deferredStartDate: PV_ISO.test(String(l?.deferredStartDate ?? "")) ? String(l.deferredStartDate) : null,
+      deferredEndDate:   PV_ISO.test(String(l?.deferredEndDate   ?? "")) ? String(l.deferredEndDate)   : null,
+      deferredPeriodicity: l?.opType === "prepaid" ? normalizePeriodicity(l?.deferredPeriodicity) : null,
+      deferredCostCenters: Array.isArray(l?.deferredCostCenters) && l.deferredCostCenters.length
+        ? l.deferredCostCenters : null,
     });
   }
   return out;
@@ -322,12 +343,46 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
 async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId: number | null): Promise<void> {
   if (lines.length === 0) throw new Error("يجب إضافة بند واحد على الأقل");
   const acctIds = new Set<number>();
+  const ccIdsNeeded = new Set<number>();
   for (const l of lines) {
     if (!l.accountId) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
     if (l.amount <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
     if (l.taxAmount < 0) throw new Error("مبلغ الضريبة غير صالح");
     acctIds.add(l.accountId);
     if (l.taxAccountId) acctIds.add(l.taxAccountId);
+    if (l.opType === "prepaid") {
+      // مصروف مقدم: line accountId = حساب المصروف المقدم (asset), plan
+      // requires the expense account + a valid recognition window.
+      if (!l.deferredExpenseAccountId) throw new Error("بند مصروف مقدم: حساب المصروف مطلوب");
+      acctIds.add(l.deferredExpenseAccountId);
+      if (!l.deferredStartDate || !l.deferredEndDate || l.deferredEndDate < l.deferredStartDate) {
+        throw new Error("بند مصروف مقدم: فترة الاستهلاك (من/إلى) مطلوبة وبتواريخ صحيحة");
+      }
+      if (installmentsBetween(l.deferredStartDate, l.deferredEndDate, "monthly").length <= 0) {
+        throw new Error("بند مصروف مقدم: لا توجد أشهر صالحة بين تاريخي الاستهلاك");
+      }
+      // Optional multi-CC split: canonical {costCenterId,pct}; a
+      // present-but-invalid split blocks saving explicitly (never silent).
+      if (l.deferredCostCenters) {
+        const parsed = parseCcSplit(l.deferredCostCenters);
+        if (!parsed) throw new Error("بند مصروف مقدم: توزيع مراكز التكلفة غير صالح — مجموع النسب يجب أن يساوي 100%");
+        l.deferredCostCenters = parsed;
+        for (const s of parsed) ccIdsNeeded.add(s.costCenterId);
+      }
+    } else {
+      // Never persist a stale plan on a direct line.
+      l.deferredExpenseAccountId = null;
+      l.deferredStartDate = null; l.deferredEndDate = null;
+      l.deferredPeriodicity = null; l.deferredCostCenters = null;
+    }
+  }
+  if (ccIdsNeeded.size) {
+    const found = await db.select({ id: costCentersTable.id }).from(costCentersTable)
+      .where(and(eq(costCentersTable.companyId, cid), inArray(costCentersTable.id, [...ccIdsNeeded])));
+    const fs = new Set(found.map((c) => c.id));
+    for (const id of ccIdsNeeded) {
+      if (!fs.has(id)) throw new Error("بند مصروف مقدم: مركز تكلفة غير موجود في توزيع النسب");
+    }
   }
   if (acctIds.size) {
     const found = await db.select({ id: accountsTable.id }).from(accountsTable)
@@ -349,6 +404,43 @@ function paymentLinesTotal(lines: RawPvLine[]): number {
 
 // Persist allocation lines for a voucher, replacing any existing rows.
 async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promise<void> {
+  // Wholesale replace loses line ids — capture existing prepaid-adjustment
+  // links BEFORE the delete and re-attach each to the first unclaimed new
+  // prepaid line with the same (prepaid account, expense account) pair, so an
+  // unpost→edit→repost cycle reuses the SAME adjustment instead of minting a
+  // duplicate. Links with no matching new line stay detached; the repost
+  // orphan guard cancels their adjustments.
+  const prev = await db.select({
+    adjId:   paymentVoucherLinesTable.deferredAdjustmentId,
+    acct:    paymentVoucherLinesTable.accountId,
+    expAcct: paymentVoucherLinesTable.deferredExpenseAccountId,
+    amount:  paymentVoucherLinesTable.amount,
+    dStart:  paymentVoucherLinesTable.deferredStartDate,
+    dEnd:    paymentVoucherLinesTable.deferredEndDate,
+    dPer:    paymentVoucherLinesTable.deferredPeriodicity,
+    dCcs:    paymentVoucherLinesTable.deferredCostCenters,
+  }).from(paymentVoucherLinesTable)
+    .where(and(
+      eq(paymentVoucherLinesTable.voucherId, voucherId),
+      sql`${paymentVoucherLinesTable.deferredAdjustmentId} IS NOT NULL`,
+    ));
+  const adjByLine = new Map<number, number>(); // line index → adjustment id
+  const pool = prev.filter((p): p is typeof p & { adjId: number } => typeof p.adjId === "number");
+  for (const p of pool) {
+    // Reuse a link ONLY when the COMPLETE plan is unchanged (accounts, net
+    // amount, window, periodicity, CC split). Any edit → leave detached; the
+    // repost orphan guard cancels the stale adjustment and a fresh one is
+    // minted with the new plan. Reusing on a partial match would silently
+    // amortize the OLD schedule against the NEW payment JE.
+    const idx = lines.findIndex((l, i) =>
+      l.opType === "prepaid" && !adjByLine.has(i) &&
+      l.accountId === p.acct && l.deferredExpenseAccountId === p.expAcct &&
+      Math.abs(l.amount - (parseFloat(String(p.amount)) || 0)) < 0.005 &&
+      l.deferredStartDate === p.dStart && l.deferredEndDate === p.dEnd &&
+      (l.deferredPeriodicity || "monthly") === (p.dPer || "monthly") &&
+      JSON.stringify(l.deferredCostCenters ?? null) === JSON.stringify(p.dCcs ?? null));
+    if (idx >= 0) adjByLine.set(idx, p.adjId);
+  }
   await db.delete(paymentVoucherLinesTable).where(eq(paymentVoucherLinesTable.voucherId, voucherId));
   if (lines.length === 0) return;
   await db.insert(paymentVoucherLinesTable).values(lines.map((l, i) => ({
@@ -366,6 +458,13 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promi
     supplierVatNumber: l.supplierVatNumber,
     supplierInvoiceNumber: l.supplierInvoiceNumber,
     supplierInvoiceDate: l.supplierInvoiceDate,
+    opType: l.opType,
+    deferredExpenseAccountId: l.deferredExpenseAccountId,
+    deferredStartDate: l.deferredStartDate,
+    deferredEndDate: l.deferredEndDate,
+    deferredPeriodicity: l.deferredPeriodicity,
+    deferredCostCenters: l.deferredCostCenters,
+    deferredAdjustmentId: adjByLine.get(i) ?? null,
     sortOrder: i,
   })));
 }
@@ -687,13 +786,147 @@ router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
   if (!existing.amount || parseFloat(existing.amount) <= 0) {
     res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return;
   }
+  // ── مصروف مقدم: FX guard. The amortization engine posts BASE-currency JEs
+  // and accounting_adjustments carries no currency, so a foreign-currency
+  // voucher would amortize the wrong value. Reject explicitly (never guess).
+  const pvRate = parseFloat(String((existing as any).exchangeRate ?? "1")) || 1;
+  const anyPrepaid = await db.select({ id: paymentVoucherLinesTable.id })
+    .from(paymentVoucherLinesTable)
+    .where(and(eq(paymentVoucherLinesTable.voucherId, id), eq(paymentVoucherLinesTable.opType, "prepaid")))
+    .limit(1);
+  if (anyPrepaid.length && Math.abs(pvRate - 1) > 1e-9) {
+    res.status(400).json({ error: "بنود المصروف المقدم متاحة فقط لسندات الصرف بالعملة الأساسية (سعر الصرف = 1)" });
+    return;
+  }
+  // Atomically CLAIM the draft→posted transition so two concurrent /post
+  // requests can never both build a JE / mint adjustments. Loser gets 400.
+  const [claimed] = await db.update(paymentVouchersTable)
+    .set({ status: "posted" })
+    .where(and(
+      eq(paymentVouchersTable.id, id),
+      eq(paymentVouchersTable.companyId, cid),
+      eq(paymentVouchersTable.status, "draft"),
+    )).returning();
+  if (!claimed) { res.status(400).json({ error: "مرحّل مسبقاً" }); return; }
   try {
     const journalId = await buildPaymentJournal(existing.companyId, existing, req);
     const [row] = await db.update(paymentVouchersTable)
       .set({ status: "posted", journalEntryId: journalId })
       .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
-    res.json(row);
+
+    // ── مصروف مقدم: mint ONE linked accounting adjustment per prepaid line
+    // (same amortization engine as deferred-expense purchase-invoice lines).
+    // The voucher JE above already debited the prepaid asset account; the
+    // adjustment amortizes it monthly: DR expense (+CC split) / CR prepaid.
+    const adjustmentRunWarnings: string[] = [];
+    const vLines = await db.select().from(paymentVoucherLinesTable)
+      .where(eq(paymentVoucherLinesTable.voucherId, id))
+      .orderBy(asc(paymentVoucherLinesTable.sortOrder), asc(paymentVoucherLinesTable.id));
+    const prepaidLines = vLines.filter((l) => (l as any).opType === "prepaid");
+    for (const l of prepaidLines) {
+      // Idempotency: a line already carrying a linked adjustment is skipped so
+      // a retried post (or unpost→repost) never mints a duplicate.
+      if ((l as any).deferredAdjustmentId) continue;
+      const netTotal = parseFloat(String(l.amount)) || 0; // net of VAT — exactly what hit the prepaid account
+      const expAcc = (l as any).deferredExpenseAccountId as number | null;
+      const start = (l as any).deferredStartDate as string | null;
+      const end = (l as any).deferredEndDate as string | null;
+      if (netTotal <= 0 || !expAcc || !start || !end) continue; // validated at save; belt-and-braces
+      const monthsCount = installmentsBetween(start, end, "monthly").length || 1;
+      const monthly = +(netTotal / monthsCount).toFixed(2);
+      const [adj] = await db.insert(accountingAdjustmentsTable).values({
+        companyId:        cid,
+        type:             "prepaid",
+        name:             `مصروف مقدم — ${l.description || existing.description || ""} (سند صرف ${existing.code})`.trim(),
+        expenseAccountId: expAcc,
+        contraAccountId:  l.accountId!, // حساب المصروف المقدم
+        totalAmount:      String(netTotal.toFixed(2)),
+        startDate:        start,
+        endDate:          end,
+        monthlyAmount:    String(monthly),
+        periodicity:      (l as any).deferredPeriodicity || "monthly",
+        sourceType:       "payment_voucher",
+        sourceId:         id,
+        costCenterSplit:  (l as any).deferredCostCenters ?? null,
+        autoGenerate:     true,
+        status:           "active",
+        notes:            `مُنشأ تلقائياً من ترحيل سند الصرف ${existing.code}`,
+      }).returning();
+      if (adj) {
+        await db.update(paymentVoucherLinesTable)
+          .set({ deferredAdjustmentId: adj.id })
+          .where(eq(paymentVoucherLinesTable.id, l.id));
+      }
+    }
+
+    // Repost lifecycle — mirrors purchase invoices: reactivate line-linked
+    // adjustments (unpost froze them), cancel line-orphaned ones, flip their
+    // frozen draft run JEs back to posted, then auto-run due installments.
+    const sourceLinkedAdjs = await db.select({
+      id: accountingAdjustmentsTable.id,
+      name: accountingAdjustmentsTable.name,
+      status: accountingAdjustmentsTable.status,
+    }).from(accountingAdjustmentsTable)
+      .where(and(
+        eq(accountingAdjustmentsTable.companyId, cid),
+        eq(accountingAdjustmentsTable.sourceType, "payment_voucher"),
+        eq(accountingAdjustmentsTable.sourceId, id),
+      ));
+    if (sourceLinkedAdjs.length) {
+      const lineLinkedIds = new Set(
+        vLines.map((l) => (l as any).deferredAdjustmentId).filter((x: any): x is number => typeof x === "number"),
+      );
+      // Re-read links updated just above (fresh inserts aren't in vLines).
+      const freshLinks = await db.select({ adjId: paymentVoucherLinesTable.deferredAdjustmentId })
+        .from(paymentVoucherLinesTable)
+        .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.deferredAdjustmentId} IS NOT NULL`));
+      for (const r of freshLinks) if (typeof r.adjId === "number") lineLinkedIds.add(r.adjId);
+      const activeIds = sourceLinkedAdjs.filter((a) => lineLinkedIds.has(a.id)).map((a) => a.id);
+      const orphanIds = sourceLinkedAdjs.filter((a) => !lineLinkedIds.has(a.id) && a.status !== "cancelled").map((a) => a.id);
+      if (orphanIds.length) {
+        await db.update(accountingAdjustmentsTable)
+          .set({ status: "cancelled", autoGenerate: false, updatedAt: new Date() })
+          .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, orphanIds)));
+      }
+      if (activeIds.length) {
+        await db.update(accountingAdjustmentsTable)
+          .set({ autoGenerate: true, status: "active", updatedAt: new Date() })
+          .where(and(
+            eq(accountingAdjustmentsTable.companyId, cid),
+            inArray(accountingAdjustmentsTable.id, activeIds),
+            sql`${accountingAdjustmentsTable.status} <> 'completed'`,
+          ));
+        const runRows = await db.select({ jeId: accountingAdjustmentRunsTable.journalEntryId })
+          .from(accountingAdjustmentRunsTable)
+          .where(inArray(accountingAdjustmentRunsTable.adjustmentId, activeIds));
+        const runJeIds = runRows.map((r) => r.jeId).filter((x): x is number => typeof x === "number");
+        if (runJeIds.length) {
+          await db.update(journalEntriesTable)
+            .set({ status: "posted", updatedAt: new Date() })
+            .where(and(
+              eq(journalEntriesTable.companyId, cid),
+              inArray(journalEntriesTable.id, runJeIds),
+              eq(journalEntriesTable.status, "draft"),
+            ));
+        }
+        for (const adjId of activeIds) {
+          try { await runDueAdjustmentsForCompany(cid, req as any, adjId); }
+          catch (err: any) {
+            const nm = sourceLinkedAdjs.find((a) => a.id === adjId)?.name || `#${adjId}`;
+            adjustmentRunWarnings.push(`تعذّر توليد/ترحيل قيود التسوية «${nm}»: ${err?.message || "خطأ غير معروف"}`);
+          }
+        }
+      }
+    }
+
+    res.json(adjustmentRunWarnings.length ? { ...row, adjustmentRunWarnings } : row);
   } catch (e: any) {
+    // JE build (or adjustment wiring) failed — release the claim so the
+    // voucher returns to an editable draft instead of a posted-without-JE limbo.
+    await db.update(paymentVouchersTable)
+      .set({ status: "draft", journalEntryId: null })
+      .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)))
+      .catch(() => { /* best-effort rollback */ });
     res.status(e?.status ?? 400).json({ error: e?.message || "تعذّر إنشاء القيد المحاسبي" });
   }
 });
@@ -717,6 +950,65 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
       eq(journalEntriesTable.companyId, cid),
     ));
   }
+  // ── مصروف مقدم: freeze the linked amortization plans while the voucher is
+  // a draft (mirrors purchase invoices). Adjustments WITH generated runs are
+  // kept (their run JEs flip to DRAFT, docNumbers preserved) + autoGenerate
+  // OFF so the hourly scheduler stays away; run-less adjustments are deleted
+  // (repost recreates them via the line link being cleared).
+  const srcAdjs = await db.select({ id: accountingAdjustmentsTable.id })
+    .from(accountingAdjustmentsTable)
+    .where(and(
+      eq(accountingAdjustmentsTable.companyId, cid),
+      eq(accountingAdjustmentsTable.sourceType, "payment_voucher"),
+      eq(accountingAdjustmentsTable.sourceId, id),
+    ));
+  if (srcAdjs.length) {
+    const adjIds = srcAdjs.map((a) => a.id);
+    const runs = await db.select({
+      adjId: accountingAdjustmentRunsTable.adjustmentId,
+      jeId:  accountingAdjustmentRunsTable.journalEntryId,
+    }).from(accountingAdjustmentRunsTable)
+      .where(inArray(accountingAdjustmentRunsTable.adjustmentId, adjIds));
+    const withRuns = new Set(runs.map((r) => r.adjId));
+    const runJeIds = runs.map((r) => r.jeId).filter((x): x is number => typeof x === "number");
+    if (runJeIds.length) {
+      await db.update(journalEntriesTable)
+        .set({ status: "draft", updatedAt: new Date() })
+        .where(and(
+          eq(journalEntriesTable.companyId, cid),
+          inArray(journalEntriesTable.id, runJeIds),
+          eq(journalEntriesTable.status, "posted"),
+        ));
+    }
+    const keepIds = adjIds.filter((x) => withRuns.has(x));
+    let dropIds = adjIds.filter((x) => !withRuns.has(x));
+    // Never delete an adjustment still referenced by ANOTHER voucher's lines
+    // (no FK on deferred_adjustment_id — a stale cross-link would dangle).
+    if (dropIds.length) {
+      const foreignRefs = await db.select({ adjId: paymentVoucherLinesTable.deferredAdjustmentId })
+        .from(paymentVoucherLinesTable)
+        .where(and(
+          inArray(paymentVoucherLinesTable.deferredAdjustmentId, dropIds),
+          sql`${paymentVoucherLinesTable.voucherId} <> ${id}`,
+        ));
+      const foreign = new Set(foreignRefs.map((r) => r.adjId));
+      dropIds = dropIds.filter((x) => !foreign.has(x));
+    }
+    if (keepIds.length) {
+      await db.update(accountingAdjustmentsTable)
+        .set({ autoGenerate: false, updatedAt: new Date() })
+        .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, keepIds)));
+    }
+    if (dropIds.length) {
+      // Clear line links FIRST so repost re-mints cleanly.
+      await db.update(paymentVoucherLinesTable)
+        .set({ deferredAdjustmentId: null })
+        .where(and(eq(paymentVoucherLinesTable.voucherId, id), inArray(paymentVoucherLinesTable.deferredAdjustmentId, dropIds)));
+      await db.delete(accountingAdjustmentsTable)
+        .where(and(eq(accountingAdjustmentsTable.companyId, cid), inArray(accountingAdjustmentsTable.id, dropIds)));
+    }
+  }
+
   const [row] = await db.update(paymentVouchersTable)
     .set({ status: "draft", journalEntryId: null })
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();

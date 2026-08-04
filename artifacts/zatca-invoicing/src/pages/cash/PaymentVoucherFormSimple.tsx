@@ -46,6 +46,14 @@ interface FormState {
   description: string;
   notes: string;
   costCenter: string;
+  // نوع العملية (وضع الحساب العام فقط): "direct" عادي أو "prepaid" مصروف مقدم.
+  // Prepaid submits as a ONE-line multi voucher (same backend engine); the
+  // voucher becomes a multi voucher on later edits — accepted behavior.
+  opType: "direct" | "prepaid";
+  deferredExpenseAccountId: string;
+  deferredStartDate: string;
+  deferredEndDate: string;
+  deferredPeriodicity: string;
 }
 
 const EMPTY: FormState = {
@@ -66,6 +74,11 @@ const EMPTY: FormState = {
   description: "",
   notes: "",
   costCenter: "",
+  opType: "direct",
+  deferredExpenseAccountId: "",
+  deferredStartDate: "",
+  deferredEndDate: "",
+  deferredPeriodicity: "monthly",
 };
 
 // ── Branch matching for treasuries ───────────────────────────────
@@ -317,6 +330,11 @@ export default function PaymentVoucherForm() {
       description: existing.description ?? "",
       notes: existing.notes ?? "",
       costCenter: existing.costCenter ?? "",
+      opType: "direct",
+      deferredExpenseAccountId: "",
+      deferredStartDate: "",
+      deferredEndDate: "",
+      deferredPeriodicity: "monthly",
     });
     setLinkInvoice(!!existing.purchaseInvoiceId);
     setEntityMode(existing.accountId && !existing.entityId ? "account" : "party");
@@ -373,6 +391,23 @@ export default function PaymentVoucherForm() {
       label: isRtl ? b.nameAr : (b.nameEn || b.nameAr),
       description: b.accountNumber ?? b.iban ?? undefined,
     })), [bankAccounts, isRtl, form.branchId]);
+
+  // Postable (leaf) accounts — feeds the prepaid "حساب المصروف" picker.
+  const postableAccountItems: ComboboxItem[] = useMemo(() => {
+    const parentIds = new Set<number>();
+    for (const a of (accounts as any[])) {
+      if (a.parentId != null) parentIds.add(Number(a.parentId));
+    }
+    return (accounts as any[])
+      .filter((a: any) => !parentIds.has(Number(a.id)) && a.isActive !== false)
+      .map((a: any) => ({
+        value: String(a.id),
+        label: (isRtl ? a.nameAr || a.nameEn : a.nameEn || a.nameAr) || "",
+        code: a.code ?? undefined,
+      }))
+      .sort((x: ComboboxItem, y: ComboboxItem) =>
+        String(x.code ?? "").localeCompare(String(y.code ?? "")));
+  }, [accounts, isRtl]);
 
   const supplierItems: ComboboxItem[] = useMemo(() =>
     (suppliers as any[]).map(s => ({
@@ -458,6 +493,13 @@ export default function PaymentVoucherForm() {
       }
 
       const isAccountMode = entityMode === "account";
+      const isPrepaid = isAccountMode && form.opType === "prepaid";
+      if (isPrepaid) {
+        if (!form.deferredExpenseAccountId)
+          throw new Error(t(`${NS}.prepaidExpenseAccountRequired`, "مصروف مقدم: حساب المصروف مطلوب"));
+        if (!form.deferredStartDate || !form.deferredEndDate || form.deferredEndDate < form.deferredStartDate)
+          throw new Error(t(`${NS}.prepaidPeriodRequired`, "مصروف مقدم: فترة الاستهلاك (من/إلى) مطلوبة وبتواريخ صحيحة"));
+      }
       const body = {
         ...form,
         amount: amtNum.toFixed(2),
@@ -474,6 +516,29 @@ export default function PaymentVoucherForm() {
         currencyId:   form.currencyId   ? parseInt(form.currencyId)   : null,
         purchaseInvoiceId: !isAccountMode && linkInvoice && form.purchaseInvoiceId
           ? parseInt(form.purchaseInvoiceId) : null,
+        // مصروف مقدم: submit as ONE allocation line so the shared multi-line
+        // backend creates the amortization adjustment on /post. Header
+        // accountId is nulled (the line carries the prepaid asset account).
+        ...(isPrepaid ? {
+          accountId: null,
+          lines: [{
+            accountId:   form.accountId ? parseInt(form.accountId) : null,
+            description: form.description || null,
+            amount:      amtNum.toFixed(2),
+            taxRate:     "0",
+            taxAmount:   "0",
+            taxAccountId: null,
+            costCenter:  form.costCenter || null,
+            branchId:    form.branchId ? parseInt(form.branchId) : null,
+            purchaseInvoiceId: null,
+            opType: "prepaid",
+            deferredExpenseAccountId: parseInt(form.deferredExpenseAccountId),
+            deferredStartDate: form.deferredStartDate,
+            deferredEndDate:   form.deferredEndDate,
+            deferredPeriodicity: form.deferredPeriodicity || "monthly",
+            deferredCostCenters: null,
+          }],
+        } : {}),
       };
 
       const url = isNew
@@ -995,6 +1060,74 @@ export default function PaymentVoucherForm() {
                     <p className="text-[11px] text-muted-foreground mt-1">
                       {t(`${NS}.jeHintDrAccount`, "الحساب المختار سيكون مديناً في القيد المحاسبي")}
                     </p>
+
+                    {/* ── نوع العملية: مصروف مقدم (اختياري) ── */}
+                    <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/40 p-3 space-y-3 mt-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <Label htmlFor="pv-prepaid-toggle" className="text-xs font-semibold text-amber-900 cursor-pointer">
+                          {t(`${NS}.prepaidToggle`, "مصروف مقدم (يوزع على فترات)")}
+                        </Label>
+                        <Switch
+                          id="pv-prepaid-toggle"
+                          checked={form.opType === "prepaid"}
+                          onCheckedChange={(v) => setForm(p => ({
+                            ...p,
+                            opType: v ? "prepaid" : "direct",
+                            ...(v ? {} : { deferredExpenseAccountId: "", deferredStartDate: "", deferredEndDate: "", deferredPeriodicity: "monthly" }),
+                          }))}
+                          data-testid="pv-prepaid-toggle"
+                        />
+                      </div>
+                      {form.opType === "prepaid" && (
+                        <div className="space-y-2">
+                          <p className="text-[11px] text-muted-foreground">
+                            {t(`${NS}.prepaidHint`, "الحساب أعلاه = حساب المصروف المقدم (أصل). عند الترحيل تُنشأ تسوية شهرية تُقفل الأصل في حساب المصروف أدناه.")}
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <Label className="text-[11px]">{t(`${NS}.prepaidExpenseAccount`, "حساب المصروف")}</Label>
+                              <SearchCombobox
+                                items={postableAccountItems}
+                                value={form.deferredExpenseAccountId}
+                                onValueChange={(aid) => setForm(p => ({ ...p, deferredExpenseAccountId: aid }))}
+                                placeholder={t(`${NS}.selectAccountPh`, "— اختر الحساب —")}
+                                searchPlaceholder={t(`${NS}.searchAccountPh`, "ابحث بالاسم أو الكود...")}
+                                emptyText={t(`${NS}.noAccounts`, "لا توجد حسابات")}
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-[11px]">{t(`${NS}.prepaidPeriodicity`, "الدورية")}</Label>
+                              <select
+                                value={form.deferredPeriodicity}
+                                onChange={e => setForm(p => ({ ...p, deferredPeriodicity: e.target.value }))}
+                                className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
+                              >
+                                <option value="monthly">{t(`${NS}.perMonthly`, "شهري")}</option>
+                                <option value="quarterly">{t(`${NS}.perQuarterly`, "ربع سنوي")}</option>
+                                <option value="semiannual">{t(`${NS}.perSemiannual`, "نصف سنوي")}</option>
+                                <option value="annual">{t(`${NS}.perAnnual`, "سنوي")}</option>
+                              </select>
+                            </div>
+                            <div>
+                              <Label className="text-[11px]">{t(`${NS}.prepaidStart`, "بداية الاستهلاك")}</Label>
+                              <DateField
+                                value={form.deferredStartDate}
+                                onChange={e => setForm(p => ({ ...p, deferredStartDate: e.target.value }))}
+                                data-testid="pv-prepaid-start"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-[11px]">{t(`${NS}.prepaidEnd`, "نهاية الاستهلاك")}</Label>
+                              <DateField
+                                value={form.deferredEndDate}
+                                onChange={e => setForm(p => ({ ...p, deferredEndDate: e.target.value }))}
+                                data-testid="pv-prepaid-end"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
