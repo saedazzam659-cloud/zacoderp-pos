@@ -53,14 +53,30 @@ interface PvLine {
   supplierVatNumber: string;
   supplierInvoiceNumber: string;
   supplierInvoiceDate: string;
-  // نوع العملية: "direct" عادي أو "prepaid" مصروف مقدم (خطة استهلاك شهرية).
-  opType: "direct" | "prepaid";
+  // نوع العملية: direct عادي | prepaid مصروف مقدم | fixed_asset شراء أصل |
+  // supplier_advance دفعة مقدمة لمورد | supplier_settlement تسوية دفعة مورد |
+  // employee_loan سلفة موظف | employee_custody عهدة موظف.
+  opType: PvOpType;
   deferredExpenseAccountId: string; // حساب المصروف (المدين في قيود التسوية)
   deferredStartDate: string;        // ISO
   deferredEndDate: string;          // ISO
   deferredPeriodicity: string;      // monthly|quarterly|semiannual|annual
   deferredCostCenters: { costCenterId: string; pct: string }[];
+  // Phase-2 op-type payloads:
+  opSupplierId: string;      // supplier_advance / supplier_settlement
+  opEmployeeId: string;      // employee_loan / employee_custody
+  assetName: string;         // fixed_asset
+  faMethod: string;          // straight_line | declining_balance
+  faLifeYears: string;
+  faStart: string;           // ISO
+  loanInstallments: string;  // employee_loan
 }
+
+type PvOpType = "direct" | "prepaid" | "fixed_asset" | "supplier_advance" | "supplier_settlement" | "employee_loan" | "employee_custody";
+const PV_OP_TYPES: PvOpType[] = ["direct", "prepaid", "fixed_asset", "supplier_advance", "supplier_settlement", "employee_loan", "employee_custody"];
+// Ops whose DEBIT account is resolved server-side (supplier AP / HR control
+// accounts) — the account picker is skipped client-side for these.
+const SERVER_ACCOUNT_OPS: PvOpType[] = ["supplier_advance", "supplier_settlement", "employee_loan", "employee_custody"];
 
 let _pvLineSeq = 0;
 function newPvLine(init: Partial<PvLine> = {}): PvLine {
@@ -84,6 +100,13 @@ function newPvLine(init: Partial<PvLine> = {}): PvLine {
     deferredEndDate: "",
     deferredPeriodicity: "monthly",
     deferredCostCenters: [],
+    opSupplierId: "",
+    opEmployeeId: "",
+    assetName: "",
+    faMethod: "straight_line",
+    faLifeYears: "5",
+    faStart: "",
+    loanInstallments: "1",
     ...init,
   };
 }
@@ -198,6 +221,13 @@ export default function PaymentVoucherForm() {
     queryFn: () => fetch(`${API}/api/suppliers?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
+  // Employees — feed the سلفة/عهدة op-type pickers.
+  const { data: employees = [] } = useQuery<any[]>({
+    queryKey: ["employees", cid],
+    queryFn: () => fetch(`${API}/api/employees?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+    staleTime: 60_000,
+  });
   // Chart of accounts — feeds the general-account cascade picker.
   const { data: accounts = [] } = useQuery<any[]>({
     queryKey: ["accounts", cid],
@@ -311,7 +341,14 @@ export default function PaymentVoucherForm() {
         supplierVatNumber: l.supplierVatNumber ?? "",
         supplierInvoiceNumber: l.supplierInvoiceNumber ?? "",
         supplierInvoiceDate: l.supplierInvoiceDate ?? "",
-        opType: l.opType === "prepaid" ? "prepaid" : "direct",
+        opType: PV_OP_TYPES.includes(l.opType) ? l.opType : "direct",
+        opSupplierId: l.opSupplierId != null ? String(l.opSupplierId) : "",
+        opEmployeeId: l.opEmployeeId != null ? String(l.opEmployeeId) : "",
+        assetName: l.assetName ?? "",
+        faMethod: l.faMethod ?? "straight_line",
+        faLifeYears: l.faLifeYears != null ? String(l.faLifeYears) : "5",
+        faStart: l.faStart ?? "",
+        loanInstallments: l.loanInstallments != null ? String(l.loanInstallments) : "1",
         deferredExpenseAccountId: l.deferredExpenseAccountId != null ? String(l.deferredExpenseAccountId) : "",
         deferredStartDate: l.deferredStartDate ?? "",
         deferredEndDate: l.deferredEndDate ?? "",
@@ -474,6 +511,20 @@ export default function PaymentVoucherForm() {
         String(x.code ?? "").localeCompare(String(y.code ?? "")));
   }, [accounts, isRtl]);
 
+  // Supplier / employee pickers for the Phase-2 op-type panels.
+  const supplierItems: ComboboxItem[] = useMemo(() =>
+    (suppliers as any[]).map((s: any) => ({
+      value: String(s.id),
+      label: (isRtl ? s.nameAr || s.name || s.nameEn : s.nameEn || s.name || s.nameAr) || String(s.id),
+      code: s.code ?? undefined,
+    })), [suppliers, isRtl]);
+  const employeeItems: ComboboxItem[] = useMemo(() =>
+    (employees as any[]).map((e: any) => ({
+      value: String(e.id),
+      label: (isRtl ? e.nameAr || e.name || e.nameEn : e.nameEn || e.name || e.nameAr) || String(e.id),
+      code: e.employeeNo ?? e.code ?? undefined,
+    })), [employees, isRtl]);
+
   // ── Account-name lookup (for JE preview line labels) ───────────
   const accountName = (id: string) => {
     const a = (accounts as any[]).find((x: any) => String(x.id) === String(id));
@@ -541,7 +592,7 @@ export default function PaymentVoucherForm() {
       if (kept.length === 0)
         throw new Error(t(`${NS}.linesRequired`, "يجب إضافة بند واحد على الأقل"));
       for (const l of kept) {
-        if (!l.accountId)
+        if (!l.accountId && !SERVER_ACCOUNT_OPS.includes(l.opType))
           throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب محاسبي"));
         if (!((Number(l.amount) || 0) > 0))
           throw new Error(t(`${NS}.lineAmountRequired`, "مبلغ البند يجب أن يكون أكبر من صفر"));
@@ -557,6 +608,14 @@ export default function PaymentVoucherForm() {
               throw new Error(t(`${NS}.prepaidCcSplitInvalid`, "بند مصروف مقدم: مجموع نسب مراكز التكلفة يجب أن يساوي 100%"));
           }
         }
+        if (l.opType === "fixed_asset" && !l.assetName.trim())
+          throw new Error(t(`${NS}.opAssetNameRequired`, "بند أصل ثابت: اسم الأصل مطلوب"));
+        if ((l.opType === "supplier_advance" || l.opType === "supplier_settlement") && !l.opSupplierId)
+          throw new Error(t(`${NS}.opSupplierRequired`, "بند مورد: يجب اختيار المورد"));
+        if (l.opType === "supplier_settlement" && !l.purchaseInvoiceId)
+          throw new Error(t(`${NS}.opInvoiceRequired`, "بند تسوية دفعة مورد: يجب اختيار فاتورة المورد"));
+        if ((l.opType === "employee_loan" || l.opType === "employee_custody") && !l.opEmployeeId)
+          throw new Error(t(`${NS}.opEmployeeRequired`, "بند سلفة/عهدة: يجب اختيار الموظف"));
       }
       const linesPayload = kept.map(l => ({
         accountId:         l.accountId ? parseInt(l.accountId) : null,
@@ -586,6 +645,15 @@ export default function PaymentVoucherForm() {
                 : null;
             })()
           : null,
+        opSupplierId: (l.opType === "supplier_advance" || l.opType === "supplier_settlement") && l.opSupplierId
+          ? parseInt(l.opSupplierId) : null,
+        opEmployeeId: (l.opType === "employee_loan" || l.opType === "employee_custody") && l.opEmployeeId
+          ? parseInt(l.opEmployeeId) : null,
+        assetName: l.opType === "fixed_asset" ? (l.assetName.trim() || null) : null,
+        faMethod: l.opType === "fixed_asset" ? (l.faMethod || "straight_line") : null,
+        faLifeYears: l.opType === "fixed_asset" ? (Number(l.faLifeYears) || 5) : null,
+        faStart: l.opType === "fixed_asset" ? (l.faStart || null) : null,
+        loanInstallments: l.opType === "employee_loan" ? Math.max(1, Number(l.loanInstallments) || 1) : null,
       }));
       const grandTotal = kept.reduce(
         (s, l) => s + (Number(l.amount) || 0) + (Number(l.taxAmount) || 0), 0);
@@ -1358,16 +1426,156 @@ export default function PaymentVoucherForm() {
                                     ))}
                                   </div>
                                 </div>
+                              ) : l.opType !== "direct" ? (
+                                /* ── Phase-2 op-type panel (أصل/مورد/سلفة/عهدة) ── */
+                                <div className="rounded-md bg-sky-500/5 border border-sky-500/30 px-2 py-2 space-y-2" data-testid={`pv-line-op-${idx}`}>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold text-sky-700 shrink-0">
+                                      {l.opType === "fixed_asset" && t(`${NS}.opFixedAsset`, "شراء أصل ثابت")}
+                                      {l.opType === "supplier_advance" && t(`${NS}.opSupplierAdvance`, "دفعة مقدمة لمورد")}
+                                      {l.opType === "supplier_settlement" && t(`${NS}.opSupplierSettlement`, "تسوية دفعة مورد")}
+                                      {l.opType === "employee_loan" && t(`${NS}.opEmployeeLoan`, "سلفة موظف")}
+                                      {l.opType === "employee_custody" && t(`${NS}.opEmployeeCustody`, "عهدة موظف")}
+                                    </span>
+                                    <Button
+                                      type="button" variant="ghost" size="sm"
+                                      className="h-7 gap-1 text-destructive hover:text-destructive ml-auto"
+                                      onClick={() => updateLine(l.key, {
+                                        opType: "direct", opSupplierId: "", opEmployeeId: "",
+                                        assetName: "", faStart: "", loanInstallments: "1",
+                                      })}
+                                      data-testid={`pv-line-op-remove-${idx}`}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                      {t(`${NS}.prepaidRemove`, "إلغاء (بند عادي)")}
+                                    </Button>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {l.opType === "fixed_asset" && t(`${NS}.opFaHint`, "حساب البند أعلاه = حساب الأصل الثابت. عند الترحيل تُنشأ بطاقة أصل تلقائياً وتبدأ جدولة الإهلاك.")}
+                                    {l.opType === "supplier_advance" && t(`${NS}.opAdvHint`, "لا حاجة لاختيار حساب — يُحمَّل حساب المورد الدائن تلقائياً (رصيد مدين = دفعة مقدمة).")}
+                                    {l.opType === "supplier_settlement" && t(`${NS}.opSetHint`, "لا حاجة لاختيار حساب — يُسدَّد جزء من فاتورة المورد المختارة عبر حسابه الدائن.")}
+                                    {l.opType === "employee_loan" && t(`${NS}.opLoanHint`, "لا حاجة لاختيار حساب — يُحمَّل حساب سلف الموظفين تلقائياً وتُنشأ سلفة تُسدَّد من الرواتب.")}
+                                    {l.opType === "employee_custody" && t(`${NS}.opCustHint`, "لا حاجة لاختيار حساب — يُحمَّل حساب عهد الموظفين تلقائياً وتُنشأ عهدة باسم الموظف.")}
+                                  </p>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {(l.opType === "supplier_advance" || l.opType === "supplier_settlement") && (
+                                      <div>
+                                        <Label className="text-[11px]">{t(`${NS}.opSupplier`, "المورد")}</Label>
+                                        <SearchCombobox
+                                          items={supplierItems}
+                                          value={l.opSupplierId}
+                                          onValueChange={(v) => updateLine(l.key, { opSupplierId: v, purchaseInvoiceId: "" })}
+                                          placeholder={t(`${NS}.selectSupplierPh`, "— اختر المورد —")}
+                                          searchPlaceholder={t(`${NS}.searchPh`, "ابحث...")}
+                                          emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
+                                        />
+                                      </div>
+                                    )}
+                                    {l.opType === "supplier_settlement" && (
+                                      <div>
+                                        <Label className="text-[11px]">{t(`${NS}.opInvoice`, "فاتورة المورد")}</Label>
+                                        <select
+                                          value={l.purchaseInvoiceId}
+                                          onChange={e => updateLine(l.key, { purchaseInvoiceId: e.target.value })}
+                                          className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
+                                          data-testid={`pv-line-op-invoice-${idx}`}
+                                        >
+                                          <option value="">— {t(`${NS}.selectInvoicePh`, "اختر الفاتورة")} —</option>
+                                          {(purchaseInvoices as any[])
+                                            .filter((pi: any) => String(pi.supplierId ?? "") === l.opSupplierId)
+                                            .map((pi: any) => (
+                                              <option key={pi.id} value={String(pi.id)}>
+                                                {pi.invoiceNumber ?? pi.id} — {fmtNum(Number(pi.total ?? pi.totalAmount ?? 0))}
+                                              </option>
+                                            ))}
+                                        </select>
+                                      </div>
+                                    )}
+                                    {(l.opType === "employee_loan" || l.opType === "employee_custody") && (
+                                      <div>
+                                        <Label className="text-[11px]">{t(`${NS}.opEmployee`, "الموظف")}</Label>
+                                        <SearchCombobox
+                                          items={employeeItems}
+                                          value={l.opEmployeeId}
+                                          onValueChange={(v) => updateLine(l.key, { opEmployeeId: v })}
+                                          placeholder={t(`${NS}.selectEmployeePh`, "— اختر الموظف —")}
+                                          searchPlaceholder={t(`${NS}.searchPh`, "ابحث...")}
+                                          emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
+                                        />
+                                      </div>
+                                    )}
+                                    {l.opType === "employee_loan" && (
+                                      <div>
+                                        <Label className="text-[11px]">{t(`${NS}.opInstallments`, "عدد الأقساط")}</Label>
+                                        <Input
+                                          type="text" inputMode="numeric" dir="ltr"
+                                          value={l.loanInstallments}
+                                          onChange={e => updateLine(l.key, { loanInstallments: e.target.value.replace(/[^0-9]/g, "") })}
+                                          className="h-8 text-sm text-left font-mono"
+                                          data-testid={`pv-line-op-installments-${idx}`}
+                                        />
+                                      </div>
+                                    )}
+                                    {l.opType === "fixed_asset" && (<>
+                                      <div className="sm:col-span-2">
+                                        <Label className="text-[11px]">{t(`${NS}.opAssetName`, "اسم الأصل")}</Label>
+                                        <Input
+                                          value={l.assetName}
+                                          onChange={e => updateLine(l.key, { assetName: e.target.value })}
+                                          className="h-8 text-sm"
+                                          data-testid={`pv-line-op-assetname-${idx}`}
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-[11px]">{t(`${NS}.opFaMethod`, "طريقة الإهلاك")}</Label>
+                                        <select
+                                          value={l.faMethod}
+                                          onChange={e => updateLine(l.key, { faMethod: e.target.value })}
+                                          className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
+                                        >
+                                          <option value="straight_line">{t(`${NS}.faStraight`, "القسط الثابت")}</option>
+                                          <option value="declining_balance">{t(`${NS}.faDeclining`, "الرصيد المتناقص")}</option>
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <Label className="text-[11px]">{t(`${NS}.opFaLife`, "العمر الإنتاجي (سنوات)")}</Label>
+                                        <Input
+                                          type="text" inputMode="decimal" dir="ltr"
+                                          value={l.faLifeYears}
+                                          onChange={e => updateLine(l.key, { faLifeYears: e.target.value.replace(/[^0-9.]/g, "") })}
+                                          className="h-8 text-sm text-left font-mono"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-[11px]">{t(`${NS}.opFaStart`, "بداية الإهلاك (افتراضي: تاريخ السند)")}</Label>
+                                        <DateField
+                                          value={l.faStart}
+                                          onChange={e => updateLine(l.key, { faStart: e.target.value })}
+                                          data-testid={`pv-line-op-fastart-${idx}`}
+                                        />
+                                      </div>
+                                    </>)}
+                                  </div>
+                                </div>
                               ) : (
-                                <Button
-                                  type="button" variant="outline" size="sm"
-                                  onClick={() => updateLine(l.key, { opType: "prepaid" })}
-                                  className="h-7 gap-1 text-xs border-amber-500/50 text-amber-700 hover:bg-amber-500/5 hover:text-amber-700"
-                                  data-testid={`pv-line-prepaid-add-${idx}`}
+                                /* op-type selector — direct line by default */
+                                <select
+                                  value="direct"
+                                  onChange={e => {
+                                    const v = e.target.value as PvOpType;
+                                    if (v !== "direct") updateLine(l.key, { opType: v });
+                                  }}
+                                  className="h-7 border border-input rounded-md px-2 text-xs bg-background text-muted-foreground"
+                                  data-testid={`pv-line-optype-${idx}`}
                                 >
-                                  <Plus className="h-3.5 w-3.5" />
-                                  {t(`${NS}.prepaidAdd`, "مصروف مقدم")}
-                                </Button>
+                                  <option value="direct">+ {t(`${NS}.opChoose`, "عملية خاصة (مصروف مقدم / أصل / مورد / سلفة / عهدة)")}</option>
+                                  <option value="prepaid">{t(`${NS}.prepaidAdd`, "مصروف مقدم")}</option>
+                                  <option value="fixed_asset">{t(`${NS}.opFixedAsset`, "شراء أصل ثابت")}</option>
+                                  <option value="supplier_advance">{t(`${NS}.opSupplierAdvance`, "دفعة مقدمة لمورد")}</option>
+                                  <option value="supplier_settlement">{t(`${NS}.opSupplierSettlement`, "تسوية دفعة مورد")}</option>
+                                  <option value="employee_loan">{t(`${NS}.opEmployeeLoan`, "سلفة موظف")}</option>
+                                  <option value="employee_custody">{t(`${NS}.opEmployeeCustody`, "عهدة موظف")}</option>
+                                </select>
                               )}
 
                               {/* running line total */}

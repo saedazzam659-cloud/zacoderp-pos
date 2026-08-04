@@ -11,7 +11,11 @@ import {
   accountsTable,
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
   costCentersTable,
+  employeesTable, employeeLoansTable, employeeCustodiesTable,
+  fixedAssetsTable, faDepreciationRunsTable,
 } from "@workspace/db";
+import { resolveHrAccounts } from "../lib/hr-journals.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { eq, and, or, desc, inArray, asc, sql } from "drizzle-orm";
 import { normalizePeriodicity, parseCcSplit, installmentsBetween, runDueAdjustmentsForCompany } from "../lib/adjustmentPosting.js";
 import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
@@ -284,16 +288,27 @@ interface RawPvLine {
   supplierVatNumber: string | null;
   supplierInvoiceNumber: string | null;
   supplierInvoiceDate: string | null;
-  // نوع العملية — "direct" (default) or "prepaid" (مصروف مقدم). ADDITIVE:
-  // legacy callers that don't send opType keep the direct behavior untouched.
-  opType: "direct" | "prepaid";
+  // نوع العملية — ADDITIVE: legacy callers that don't send opType keep the
+  // direct behavior untouched.
+  opType: PvOpType;
   // Prepaid amortization plan (only when opType === "prepaid"):
   deferredExpenseAccountId: number | null;
   deferredStartDate: string | null;   // ISO YYYY-MM-DD
   deferredEndDate: string | null;     // ISO YYYY-MM-DD
   deferredPeriodicity: string | null;
   deferredCostCenters: { costCenterId: number; pct: number }[] | null;
+  // Phase-2 op-type payloads:
+  opSupplierId: number | null;        // supplier_advance / supplier_settlement
+  opEmployeeId: number | null;        // employee_loan / employee_custody
+  assetName: string | null;           // fixed_asset
+  faMethod: string | null;            // straight_line | declining_balance
+  faLifeYears: number | null;
+  faStart: string | null;             // ISO YYYY-MM-DD
+  loanInstallments: number | null;    // employee_loan
 }
+
+const PV_OP_TYPES = ["direct", "prepaid", "fixed_asset", "supplier_advance", "supplier_settlement", "employee_loan", "employee_custody"] as const;
+type PvOpType = (typeof PV_OP_TYPES)[number];
 
 const PV_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -325,13 +340,20 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
       supplierVatNumber: txtOrNull(l?.supplierVatNumber),
       supplierInvoiceNumber: txtOrNull(l?.supplierInvoiceNumber),
       supplierInvoiceDate: txtOrNull(l?.supplierInvoiceDate),
-      opType: l?.opType === "prepaid" ? "prepaid" : "direct",
+      opType: (PV_OP_TYPES as readonly string[]).includes(l?.opType) ? l.opType : "direct",
       deferredExpenseAccountId: l?.deferredExpenseAccountId ? parseInt(l.deferredExpenseAccountId) : null,
       deferredStartDate: PV_ISO.test(String(l?.deferredStartDate ?? "")) ? String(l.deferredStartDate) : null,
       deferredEndDate:   PV_ISO.test(String(l?.deferredEndDate   ?? "")) ? String(l.deferredEndDate)   : null,
       deferredPeriodicity: l?.opType === "prepaid" ? normalizePeriodicity(l?.deferredPeriodicity) : null,
       deferredCostCenters: Array.isArray(l?.deferredCostCenters) && l.deferredCostCenters.length
         ? l.deferredCostCenters : null,
+      opSupplierId: l?.opSupplierId ? parseInt(l.opSupplierId) : null,
+      opEmployeeId: l?.opEmployeeId ? parseInt(l.opEmployeeId) : null,
+      assetName: txtOrNull(l?.assetName),
+      faMethod: l?.faMethod === "declining_balance" ? "declining_balance" : "straight_line",
+      faLifeYears: parseFloat(l?.faLifeYears ?? "0") || null,
+      faStart: PV_ISO.test(String(l?.faStart ?? "")) ? String(l.faStart) : null,
+      loanInstallments: l?.loanInstallments ? Math.max(1, parseInt(l.loanInstallments) || 1) : null,
     });
   }
   return out;
@@ -344,6 +366,57 @@ async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId:
   if (lines.length === 0) throw new Error("يجب إضافة بند واحد على الأقل");
   const acctIds = new Set<number>();
   const ccIdsNeeded = new Set<number>();
+  // ── Phase-2 op types: resolve the DEBIT account SERVER-SIDE for supplier
+  // and HR ops (never trust a client-picked account for a party sub-ledger).
+  const supOps = lines.filter((l) => l.opType === "supplier_advance" || l.opType === "supplier_settlement");
+  if (supOps.length) {
+    const ids = [...new Set(supOps.map((l) => l.opSupplierId).filter((x): x is number => !!x))];
+    if (ids.length !== new Set(supOps.map((l) => l.opSupplierId ?? -1)).size || supOps.some((l) => !l.opSupplierId)) {
+      throw new Error("بند مورد: يجب اختيار المورد");
+    }
+    const sups = await db.select({ id: suppliersTable.id, accountId: suppliersTable.accountId })
+      .from(suppliersTable)
+      .where(and(eq(suppliersTable.companyId, cid), inArray(suppliersTable.id, ids)));
+    const byId = new Map(sups.map((s) => [s.id, s]));
+    let apFallback: number | null | undefined; // lazy — mapping lookup only when needed
+    for (const l of supOps) {
+      const s = byId.get(l.opSupplierId!);
+      if (!s) throw new Error("بند مورد: المورد غير موجود في هذه الشركة");
+      let acct = s.accountId ?? null;
+      if (!acct) {
+        if (apFallback === undefined) apFallback = (await loadMappings(cid, "supplier_settlement"))("supplier_settlement", "payable");
+        acct = apFallback ?? null;
+      }
+      if (!acct) throw new Error("بند مورد: لا يوجد حساب دائن للمورد — اربط المورد بحساب أو حدّد «تسوية الموردين» في ربط القيود");
+      l.accountId = acct; // server-resolved supplier AP
+      if (l.opType === "supplier_settlement") {
+        if (!l.purchaseInvoiceId) throw new Error("بند تسوية دفعة مورد: يجب اختيار فاتورة المورد");
+        await validatePurchaseInvoiceLink(cid, l.purchaseInvoiceId, l.opSupplierId!);
+      }
+    }
+  }
+  const hrOps = lines.filter((l) => l.opType === "employee_loan" || l.opType === "employee_custody");
+  if (hrOps.length) {
+    if (hrOps.some((l) => !l.opEmployeeId)) throw new Error("بند سلفة/عهدة: يجب اختيار الموظف");
+    const ids = [...new Set(hrOps.map((l) => l.opEmployeeId!))];
+    const emps = await db.select({ id: employeesTable.id }).from(employeesTable)
+      .where(and(eq(employeesTable.companyId, cid), inArray(employeesTable.id, ids)));
+    const found = new Set(emps.map((e) => e.id));
+    for (const l of hrOps) {
+      if (!found.has(l.opEmployeeId!)) throw new Error("بند سلفة/عهدة: الموظف غير موجود في هذه الشركة");
+    }
+    const hr = await resolveHrAccounts(cid);
+    for (const l of hrOps) {
+      const acct = l.opType === "employee_loan" ? hr.employeeLoans : hr.employeeCustody;
+      if (!acct) {
+        throw new Error(l.opType === "employee_loan"
+          ? "لا يوجد حساب سلف الموظفين (11081) — أضِفه في شجرة الحسابات أو اربطه في إعدادات الرواتب"
+          : "لا يوجد حساب عهد الموظفين (11082) — أضِفه في شجرة الحسابات أو اربطه في إعدادات الرواتب");
+      }
+      l.accountId = acct; // server-resolved HR control account
+      if (l.opType === "employee_loan" && !l.loanInstallments) l.loanInstallments = 1;
+    }
+  }
   for (const l of lines) {
     if (!l.accountId) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
     if (l.amount <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
@@ -370,11 +443,22 @@ async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId:
         for (const s of parsed) ccIdsNeeded.add(s.costCenterId);
       }
     } else {
-      // Never persist a stale plan on a direct line.
+      // Never persist a stale plan on a non-prepaid line.
       l.deferredExpenseAccountId = null;
       l.deferredStartDate = null; l.deferredEndDate = null;
       l.deferredPeriodicity = null; l.deferredCostCenters = null;
     }
+    if (l.opType === "fixed_asset") {
+      // Asset account is user-picked (line.accountId, tenant-checked below);
+      // the card needs at least a name + sane depreciation params.
+      if (!l.assetName) throw new Error("بند أصل ثابت: اسم الأصل مطلوب");
+      if (!l.faLifeYears || l.faLifeYears <= 0) l.faLifeYears = 5;
+    } else {
+      l.assetName = null; l.faMethod = null; l.faLifeYears = null; l.faStart = null;
+    }
+    if (l.opType !== "supplier_advance" && l.opType !== "supplier_settlement") l.opSupplierId = null;
+    if (l.opType !== "employee_loan" && l.opType !== "employee_custody") l.opEmployeeId = null;
+    if (l.opType !== "employee_loan") l.loanInstallments = null;
   }
   if (ccIdsNeeded.size) {
     const found = await db.select({ id: costCentersTable.id }).from(costCentersTable)
@@ -465,6 +549,13 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promi
     deferredPeriodicity: l.deferredPeriodicity,
     deferredCostCenters: l.deferredCostCenters,
     deferredAdjustmentId: adjByLine.get(i) ?? null,
+    opSupplierId: l.opSupplierId,
+    opEmployeeId: l.opEmployeeId,
+    assetName: l.assetName,
+    faMethod: l.faMethod,
+    faLifeYears: l.faLifeYears != null ? String(l.faLifeYears) : null,
+    faStart: l.faStart,
+    loanInstallments: l.loanInstallments,
     sortOrder: i,
   })));
 }
@@ -643,7 +734,10 @@ router.post("/", async (req, res) => {
   // transaction-scoped advisory lock (closes the concurrent-saves window).
   const [row] = await db.transaction(async (tx) => {
     if (purchaseInvoiceId) {
-      await acquireSettlementLock(tx, cid, "purchase", purchaseInvoiceId);
+      // Lock EVERY distinct linked invoice (sorted → deadlock-free), not just
+      // the first: multi-line vouchers can settle several invoices at once.
+      const lockIds = [...new Set([purchaseInvoiceId, ...(lines ?? []).map((l) => l.purchaseInvoiceId).filter((x): x is number => !!x)])].sort((a, b) => a - b);
+      for (const lid of lockIds) await acquireSettlementLock(tx, cid, "purchase", lid);
       await assertNoPurchaseOverpayment(
         cid,
         parseFloat(d.exchangeRate || "1") || 1,
@@ -734,7 +828,9 @@ router.put("/:id", async (req, res) => {
   // excluding THIS voucher's own old amounts.
   const [row] = await db.transaction(async (tx) => {
     if (purchaseInvoiceId) {
-      await acquireSettlementLock(tx, cid, "purchase", purchaseInvoiceId);
+      // Lock EVERY distinct linked invoice (sorted → deadlock-free).
+      const lockIds = [...new Set([purchaseInvoiceId, ...(lines ?? []).map((l) => l.purchaseInvoiceId).filter((x): x is number => !!x)])].sort((a, b) => a - b);
+      for (const lid of lockIds) await acquireSettlementLock(tx, cid, "purchase", lid);
       await assertNoPurchaseOverpayment(
         cid,
         parseFloat(d.exchangeRate || "1") || 1,
@@ -790,12 +886,12 @@ router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
   // and accounting_adjustments carries no currency, so a foreign-currency
   // voucher would amortize the wrong value. Reject explicitly (never guess).
   const pvRate = parseFloat(String((existing as any).exchangeRate ?? "1")) || 1;
-  const anyPrepaid = await db.select({ id: paymentVoucherLinesTable.id })
+  const anySpecialOp = await db.select({ id: paymentVoucherLinesTable.id })
     .from(paymentVoucherLinesTable)
-    .where(and(eq(paymentVoucherLinesTable.voucherId, id), eq(paymentVoucherLinesTable.opType, "prepaid")))
+    .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.opType} <> 'direct'`))
     .limit(1);
-  if (anyPrepaid.length && Math.abs(pvRate - 1) > 1e-9) {
-    res.status(400).json({ error: "بنود المصروف المقدم متاحة فقط لسندات الصرف بالعملة الأساسية (سعر الصرف = 1)" });
+  if (anySpecialOp.length && Math.abs(pvRate - 1) > 1e-9) {
+    res.status(400).json({ error: "بنود العمليات الخاصة (مصروف مقدم/أصل/سلفة/عهدة/مورد) متاحة فقط لسندات الصرف بالعملة الأساسية (سعر الصرف = 1)" });
     return;
   }
   // Atomically CLAIM the draft→posted transition so two concurrent /post
@@ -856,6 +952,114 @@ router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
         await db.update(paymentVoucherLinesTable)
           .set({ deferredAdjustmentId: adj.id })
           .where(eq(paymentVoucherLinesTable.id, l.id));
+      }
+    }
+
+    // ── Phase-2 op types: mint the linked records (asset card / HR loan /
+    // HR custody). Idempotent — retried posts and unpost→repost cycles skip
+    // lines whose record already exists. Supplier ops need nothing here: the
+    // JE already debits the supplier AP account and the settlement cap
+    // guarded the invoice link at save time.
+    const vDate = String((existing as any).date ?? new Date().toISOString().slice(0, 10));
+    for (const l of vLines) {
+      const op = (l as any).opType as string;
+      const net = parseFloat(String(l.amount)) || 0;
+      if (net <= 0) continue;
+      if (op === "fixed_asset") {
+        // One live asset per source line — the partial unique index
+        // uq_fixed_assets_source is the race-safe guard; the pre-check keeps
+        // the common retry path quiet.
+        const [dup] = await db.select({ id: fixedAssetsTable.id }).from(fixedAssetsTable)
+          .where(and(
+            eq(fixedAssetsTable.companyId, cid),
+            eq(fixedAssetsTable.sourceType, "payment_voucher"),
+            eq(fixedAssetsTable.sourceDocumentId, id),
+            eq(fixedAssetsTable.sourceLineId, l.id),
+            sql`${fixedAssetsTable.status} NOT IN ('sold','scrapped')`,
+          ));
+        if (dup) continue;
+        const nameAr = (l as any).assetName || l.description || `أصل — سند صرف ${existing.code}`;
+        const code = await nextSequenceOrFallback(
+          cid, "fixed_asset",
+          { userId: (req as any).authUser?.id ?? null, refTable: "fixed_assets", branchId: (l as any).branchId ?? null },
+          async () => `AST-PV${id}-${l.id}`,
+        );
+        try {
+          await db.insert(fixedAssetsTable).values({
+            companyId: cid,
+            branchId: (l as any).branchId ?? null,
+            code,
+            nameAr,
+            status: "active",
+            purchaseDate: vDate,
+            purchaseValue: net.toFixed(2),
+            paymentMethod: existing.paymentType === "bank" ? "bank" : "cash",
+            // Cost already booked by the voucher JE (DR asset account) —
+            // never post a second acquisition JE.
+            skipAcquisitionJe: true,
+            depreciationMethod: ((l as any).faMethod === "declining_balance" ? "declining_balance" : "straight_line") as any,
+            lifeYears: String(parseFloat((l as any).faLifeYears || "5") || 5),
+            scrapValue: "0",
+            depreciationStart: (l as any).faStart || vDate,
+            accumulatedDepreciation: "0",
+            bookValue: net.toFixed(2),
+            qrPayload: JSON.stringify({ kind: "fixed_asset", code, name: nameAr, companyId: cid }),
+            notes: `مُنشأ تلقائياً من سند الصرف ${existing.code}`,
+            sourceType: "payment_voucher",
+            sourceDocumentId: id,
+            sourceLineId: l.id,
+          });
+        } catch (e: any) {
+          if (e?.code === "23505") continue; // concurrent duplicate — already created
+          adjustmentRunWarnings.push(`تعذّر إنشاء بطاقة الأصل «${nameAr}»: ${e?.message ?? "خطأ"}`);
+        }
+      } else if (op === "employee_loan" && !(l as any).opRefId && (l as any).opEmployeeId) {
+        const inst = Math.max(1, Number((l as any).loanInstallments) || 1);
+        // Insert + line-link in ONE tx so a crash can never strand an
+        // unlinked loan that a retried post would duplicate.
+        await db.transaction(async (tx) => {
+        const [loan] = await tx.insert(employeeLoansTable).values({
+          companyId: cid,
+          employeeId: (l as any).opEmployeeId,
+          loanDate: vDate,
+          loanType: "loan",
+          amount: net.toFixed(2),
+          installments: inst,
+          installmentAmt: (net / inst).toFixed(2),
+          paidAmount: "0",
+          status: "active",
+          reason: l.description ?? null,
+          notes: `صُرفت عبر سند الصرف ${existing.code} — لا تُنشئ قيد صرف إضافياً`,
+          loanAccountId: l.accountId ?? null,
+        }).returning();
+        if (loan) {
+          await tx.update(paymentVoucherLinesTable).set({ opRefId: loan.id })
+            .where(eq(paymentVoucherLinesTable.id, l.id));
+        }
+        });
+      } else if (op === "employee_custody" && !(l as any).opRefId && (l as any).opEmployeeId) {
+        // Same single-tx pattern as loans — never strand an unlinked custody.
+        await db.transaction(async (tx) => {
+        const [cust] = await tx.insert(employeeCustodiesTable).values({
+          companyId: cid,
+          branchId: (l as any).branchId ?? existing.branchId ?? null,
+          employeeId: (l as any).opEmployeeId,
+          custodyDate: vDate,
+          amount: net.toFixed(2),
+          settledAmount: "0",
+          returnedAmount: "0",
+          purpose: l.description ?? null,
+          notes: `صُرفت عبر سند الصرف ${existing.code}`,
+          status: "active",
+          custodyAccountId: l.accountId ?? null,
+          // The voucher JE IS the disbursement JE (DR custody / CR treasury).
+          disbursementJournalId: journalId,
+        }).returning();
+        if (cust) {
+          await tx.update(paymentVoucherLinesTable).set({ opRefId: cust.id })
+            .where(eq(paymentVoucherLinesTable.id, l.id));
+        }
+        });
       }
     }
 
@@ -941,6 +1145,77 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status !== "posted") { res.status(400).json({ error: "السند ليس مرحّلاً" }); return; }
+  // ── Phase-2 op types: guard + rollback the linked records BEFORE touching
+  // the JE. Any record that has downstream activity BLOCKS the unpost (the
+  // user must undo that activity first); untouched records are deleted so a
+  // repost re-mints them cleanly.
+  const opLines = await db.select().from(paymentVoucherLinesTable)
+    .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.opType} IN ('fixed_asset','employee_loan','employee_custody')`));
+  if (opLines.length) {
+    // Fixed assets: block if any linked asset was already disposed (sold/
+    // scrapped = downstream activity) or has depreciation runs.
+    const allSourced = await db.select({ id: fixedAssetsTable.id, nameAr: fixedAssetsTable.nameAr, status: fixedAssetsTable.status })
+      .from(fixedAssetsTable)
+      .where(and(
+        eq(fixedAssetsTable.companyId, cid),
+        eq(fixedAssetsTable.sourceType, "payment_voucher"),
+        eq(fixedAssetsTable.sourceDocumentId, id),
+      ));
+    const disposed = allSourced.find((a) => a.status === "sold" || a.status === "scrapped");
+    if (disposed) {
+      res.status(400).json({ error: `لا يمكن فك الترحيل: الأصل «${disposed.nameAr}» المرتبط بالسند تم بيعه أو إعدامه` });
+      return;
+    }
+    const assets = allSourced;
+    if (assets.length) {
+      const runs = await db.select({ assetId: faDepreciationRunsTable.assetId })
+        .from(faDepreciationRunsTable)
+        .where(inArray(faDepreciationRunsTable.assetId, assets.map((a) => a.id)))
+        .limit(1);
+      if (runs.length) {
+        const blocked = assets.find((a) => a.id === runs[0].assetId);
+        res.status(400).json({ error: `لا يمكن فك الترحيل: الأصل «${blocked?.nameAr ?? runs[0].assetId}» له قيود إهلاك — احذف قيود الإهلاك أولاً من وحدة الأصول الثابتة` });
+        return;
+      }
+    }
+    // Loans: block if any repayment was deducted; custody: block if settled/returned.
+    const loanIds = opLines.filter((l) => (l as any).opType === "employee_loan" && (l as any).opRefId).map((l) => (l as any).opRefId as number);
+    if (loanIds.length) {
+      const loans = await db.select({ id: employeeLoansTable.id, paid: employeeLoansTable.paidAmount })
+        .from(employeeLoansTable)
+        .where(and(eq(employeeLoansTable.companyId, cid), inArray(employeeLoansTable.id, loanIds)));
+      const busy = loans.find((x) => (parseFloat(String(x.paid)) || 0) > 0);
+      if (busy) { res.status(400).json({ error: "لا يمكن فك الترحيل: سلفة الموظف المرتبطة سُدد جزء منها عبر الرواتب" }); return; }
+    }
+    const custIds = opLines.filter((l) => (l as any).opType === "employee_custody" && (l as any).opRefId).map((l) => (l as any).opRefId as number);
+    if (custIds.length) {
+      const custs = await db.select({
+        id: employeeCustodiesTable.id,
+        settled: employeeCustodiesTable.settledAmount,
+        returned: employeeCustodiesTable.returnedAmount,
+      }).from(employeeCustodiesTable)
+        .where(and(eq(employeeCustodiesTable.companyId, cid), inArray(employeeCustodiesTable.id, custIds)));
+      const busy = custs.find((x) => (parseFloat(String(x.settled)) || 0) > 0 || (parseFloat(String(x.returned)) || 0) > 0);
+      if (busy) { res.status(400).json({ error: "لا يمكن فك الترحيل: عهدة الموظف المرتبطة لها تسويات أو إرجاعات" }); return; }
+    }
+    // All guards passed → delete the untouched records + clear line links.
+    if (assets.length) {
+      await db.delete(fixedAssetsTable)
+        .where(and(eq(fixedAssetsTable.companyId, cid), inArray(fixedAssetsTable.id, assets.map((a) => a.id))));
+    }
+    if (loanIds.length || custIds.length) {
+      await db.update(paymentVoucherLinesTable).set({ opRefId: null })
+        .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.opRefId} IS NOT NULL`));
+    }
+    if (loanIds.length) {
+      await db.delete(employeeLoansTable)
+        .where(and(eq(employeeLoansTable.companyId, cid), inArray(employeeLoansTable.id, loanIds)));
+    }
+    if (custIds.length) {
+      await db.delete(employeeCustodiesTable)
+        .where(and(eq(employeeCustodiesTable.companyId, cid), inArray(employeeCustodiesTable.id, custIds)));
+    }
+  }
   if (existing.journalEntryId) {
     // Stash the JE number BEFORE deleting so the next post (after an edit)
     // reuses the SAME journal-entry number instead of burning a fresh one.

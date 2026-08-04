@@ -188,6 +188,25 @@ export const paymentVoucherLinesTable = pgTable("payment_voucher_lines", {
   // Link to the accounting adjustment created at post time (idempotency +
   // unpost/repost lifecycle).
   deferredAdjustmentId:     integer("deferred_adjustment_id"),
+  // ── Phase-2 op types (ADDITIVE, plain int refs to avoid import cycles):
+  // "fixed_asset"        → line debits the asset account; on /post an asset
+  //                        card is minted (sourceType 'payment_voucher').
+  // "supplier_advance"   → line debits the supplier's AP account (advance).
+  // "supplier_settlement"→ same + purchaseInvoiceId allocation (cap-guarded).
+  // "employee_loan"      → line debits employee-loans acct; mints hr loan row.
+  // "employee_custody"   → line debits custody acct; mints custody row.
+  opSupplierId:      integer("op_supplier_id"),      // suppliers.id (supplier ops)
+  opEmployeeId:      integer("op_employee_id"),      // employees.id (hr ops)
+  // Created linked record id (employee_loans.id / employee_custodies.id) —
+  // idempotency + unpost cleanup. Fixed assets link via their source columns.
+  opRefId:           integer("op_ref_id"),
+  // Fixed-asset params (only when opType='fixed_asset'):
+  assetName:         text("asset_name"),
+  faMethod:          text("fa_method"),              // straight_line|declining_balance
+  faLifeYears:       text("fa_life_years"),          // numeric string, default "5"
+  faStart:           text("fa_start"),               // ISO YYYY-MM-DD (depreciation start)
+  // Employee-loan params:
+  loanInstallments:  integer("loan_installments"),
   sortOrder:         integer("sort_order").notNull().default(0),
 });
 
