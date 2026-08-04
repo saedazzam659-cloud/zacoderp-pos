@@ -1413,6 +1413,23 @@ router.post("/register", async (req, res) => {
     req.log?.warn?.({ err }, "industry templates apply failed");
   }
 
+  // ── TEMPLATE COMPANY DEFAULTS ──────────────────────────────────────
+  // Every new tenant (public signup on the main site AND superadmin
+  // creation, both of which land here) is seeded from the designated
+  // template company: menu/invoice/print display settings, numbering
+  // sequences (fresh counters, JE sequence with monthly reset + source
+  // prefixes) and the template's chart-of-accounts tree WITHOUT its party
+  // sub-accounts. Each part is skip-safe: if the industry templates above
+  // already seeded a COA, the template COA clone is skipped automatically.
+  // Failures are logged and never block registration.
+  try {
+    const { applyCompanyTemplateDefaults } = await import("../lib/companyTemplate.js");
+    const r = await applyCompanyTemplateDefaults(company.id);
+    req.log?.info?.({ companyId: company.id, applied: r.applied }, "company template defaults");
+  } catch (err) {
+    req.log?.warn?.({ err, companyId: company.id }, "company template defaults failed");
+  }
+
   // Hash password + create admin user (inactive until superadmin approves)
   const passwordHash = await bcrypt.hash(password, 12);
   const [newUser] = await db.insert(usersTable).values({

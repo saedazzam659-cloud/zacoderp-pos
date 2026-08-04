@@ -68,14 +68,19 @@ router.post("/", async (req, res) => {
     journalEntryFormMode: "manual",
   }).returning();
 
-  // Auto-seed the standard commercial chart of accounts so the new tenant
-  // can post journal entries immediately without a manual import step.
-  // Failures are logged but do not block company creation — the user can
-  // re-seed later from the chart-of-accounts screen.
+  // Seed the new tenant from the designated TEMPLATE company (display
+  // settings, numbering sequences, chart of accounts — without the template's
+  // party sub-accounts). Falls back to the generic default COA when the
+  // template company doesn't exist. Failures are logged but do not block
+  // company creation — the user can re-seed later.
   try {
-    await seedDefaultChartOfAccounts(company.id);
+    const { applyCompanyTemplateDefaults } = await import("../lib/companyTemplate.js");
+    // Internally falls back to seedDefaultChartOfAccounts whenever the
+    // template is missing/empty or its COA clone fails.
+    await applyCompanyTemplateDefaults(company.id);
   } catch (err) {
     logger.error({ err, companyId: company.id }, "default-coa.seed-failed");
+    try { await seedDefaultChartOfAccounts(company.id); } catch { /* logged above */ }
   }
 
   res.status(201).json(company);
