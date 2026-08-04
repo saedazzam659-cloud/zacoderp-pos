@@ -449,6 +449,41 @@ router.get("/balance-sheet", async (req, res) => {
     const liabilities = rows.filter(r => r.accountType === "liability");
     const equity      = rows.filter(r => r.accountType === "equity");
 
+    // ── Current-period net profit/loss (بند نظامي محسوب، لا يُخزَّن كقيد) ──
+    // Until the P&L result has been transferred to retained earnings by the
+    // year-closing entries, equity is understated (profit) or overstated
+    // (loss) and the sheet does not balance. Inject a COMPUTED equity line =
+    // residual (unclosed) revenues − expenses up to asOfDate. Closing entries
+    // dated on/before asOfDate zero the P&L accounts, so once the year is
+    // closed the figure becomes 0 and the line disappears on its own — this
+    // "residual as of the date" rule (rather than the fiscal year's CURRENT
+    // status flag) keeps HISTORICAL balance sheets balanced too: an as-of date
+    // inside a now-closed year but BEFORE its closing entry still shows the
+    // period's P&L in equity, exactly as the books stood on that day.
+    {
+      const revenues = rows.filter(r => r.accountType === "revenue");
+      const expenses = rows.filter(r => r.accountType === "expense");
+      const totalRevenue  = revenues.reduce((s, r) => s + (r.totalCredit - r.totalDebit), 0);
+      const totalExpenses = expenses.reduce((s, r) => s + (r.totalDebit - r.totalCredit), 0);
+      const netIncome = +(totalRevenue - totalExpenses).toFixed(2);
+      if (Math.abs(netIncome) >= 0.005) {
+        equity.push({
+          id: -1,
+          code: "",
+          nameAr: netIncome >= 0 ? "صافي ربح الفترة الحالية" : "صافي خسارة الفترة الحالية",
+          nameEn: netIncome >= 0 ? "Current Period Net Profit" : "Current Period Net Loss",
+          accountType: "equity",
+          // Equity is credit-natured (balance = debit − credit): a profit
+          // INCREASES equity ⇒ negative signed balance.
+          balance: -netIncome,
+          totalDebit: 0,
+          totalCredit: 0,
+          synthetic: true,
+          netIncome,
+        } as any);
+      }
+    }
+
     const totalAssets      = assets.reduce((s, r) => s + r.balance, 0);
     const totalLiabilities = liabilities.reduce((s, r) => s + r.balance, 0);
     const totalEquity      = equity.reduce((s, r) => s + r.balance, 0);

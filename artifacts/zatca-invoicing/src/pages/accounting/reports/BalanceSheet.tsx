@@ -82,6 +82,10 @@ export default function BalanceSheet() {
   const parentDescendants = useMemo(() => descendantIds(tree, accountParentIds), [tree, accountParentIds]);
   const filterGroup = (arr: any[] | undefined) =>
     (arr ?? []).filter((r: any) => {
+      // Synthetic computed lines (e.g. صافي ربح/خسارة الفترة الحالية) are not
+      // real COA accounts — keep them regardless of tree/level filters so the
+      // sheet stays balanced.
+      if (r.synthetic) return true;
       if (!showZero && r.balance === 0) return false;
       return matchesAccountFilters(Number(r.id), tree, { parentDescendants, levelMode });
     });
@@ -93,7 +97,12 @@ export default function BalanceSheet() {
   const totalLiabilities = liabilities.reduce((s, r) => s + (r.balance || 0), 0);
   const totalEquity      = equity.reduce((s, r) => s + (r.balance || 0), 0);
   const totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
-  const isBalanced = data ? Math.abs(totalAssets - totalLiabilitiesAndEquity) < 0.01 : true;
+  // Balances are SIGNED (debit − credit): assets are positive, liabilities and
+  // equity are negative. The correct balancing invariant is therefore
+  // assets + liabilities + equity ≈ 0 (a full trial balance sums to zero) —
+  // NOT assets − (liabilities+equity), which compares opposite signs.
+  const balanceDiff = totalAssets + totalLiabilities + totalEquity;
+  const isBalanced = data ? Math.abs(balanceDiff) < 0.01 : true;
 
   const exportRows = data ? [
     ...assets.map((r: any) =>
@@ -170,7 +179,7 @@ export default function BalanceSheet() {
             <span>
               {isBalanced
                 ? t("balanceSheet.balanced", { value: fmt(Math.abs(totalAssets)) })
-                : t("balanceSheet.diff", { diff: fmt(Math.abs(totalAssets - totalLiabilitiesAndEquity)) })}
+                : t("balanceSheet.diff", { diff: fmt(Math.abs(balanceDiff)) })}
             </span>
           </div>
 
