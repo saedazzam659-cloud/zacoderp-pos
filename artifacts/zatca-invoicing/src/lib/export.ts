@@ -91,6 +91,8 @@ export interface ExportCompanyInfo {
   city?: string | null;
   postalCode?: string | null;
   logo?: string | null;
+  /** Brand mark (العلامة التجارية) shown at the inline-end corner of prints. */
+  brandLogo?: string | null;
 }
 
 /** Compose the single-line address from the granular ZATCA address parts. */
@@ -505,6 +507,16 @@ export async function exportToPDF(
        </div>`
     : "";
 
+  // Brand mark (العلامة التجارية) — pinned at the OPPOSITE corner
+  // (inline-end → left in RTL) so it mirrors the company logo without
+  // touching the centered company block layout.
+  const safeBrandCorner = safeLogoSrc(company?.brandLogo);
+  const brandHtml = safeBrandCorner
+    ? `<div class="brand-corner">
+         <img src="${safeBrandCorner}" alt="" style="width:56px;height:56px;object-fit:contain;display:block;" />
+       </div>`
+    : "";
+
   // Branded company block (name + CR/VAT/phone + address) shown in the green
   // header beneath the logo. Each value is escaped before interpolation.
   const companyMetaLine = [
@@ -618,6 +630,11 @@ export async function exportToPDF(
     .header .logo-corner {
       position: absolute;
       inset-inline-start: 8px;
+      top: 2px;
+    }
+    .header .brand-corner {
+      position: absolute;
+      inset-inline-end: 8px;
       top: 2px;
     }
     .header img { max-height: 56px !important; max-width: 150px !important; width: auto !important; height: auto !important; }
@@ -776,6 +793,7 @@ export async function exportToPDF(
 <body>
   <div class="header">
     ${logoHtml}
+    ${brandHtml}
     ${companyHtml}
     <h1>${escape(title)}</h1>
     ${subtitle ? `<p>${escape(subtitle)}</p>` : ""}

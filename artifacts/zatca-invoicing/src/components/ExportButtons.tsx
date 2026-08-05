@@ -64,6 +64,7 @@ export default function ExportButtons({
         city: c.city ?? null,
         postalCode: c.postalCode ?? null,
         logo: c.logo ?? null,
+        brandLogo: c.brandLogo ?? null,
       }
     : null;
 
