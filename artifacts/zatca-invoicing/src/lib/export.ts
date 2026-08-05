@@ -1650,6 +1650,9 @@ export interface StatementPdfCompany {
   buildingNumber?: string | null;
   postalCode?: string | null;
   logo?: string | null;
+  /** Secondary brand-mark image (العلامة التجارية) — printed at the END
+   *  (left in RTL) corner, mirroring the journal-entry print letterhead. */
+  brandLogo?: string | null;
 }
 
 export interface StatementPdfAccount {
@@ -1745,6 +1748,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     escape(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
   const safeLogo = safeLogoSrc(company?.logo);
+  const safeBrand = safeLogoSrc(company?.brandLogo);
   const addressLine = [
     company?.buildingNumber, company?.street,
     company?.district, company?.city, company?.postalCode,
@@ -1861,6 +1865,11 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     }
     .co-logo img { max-width: 90%; max-height: 90%; object-fit: contain; }
     .logo-fallback { font-weight: 700; color: #94a3b8; font-size: 11pt; }
+    /* Brand mark (العلامة التجارية) — END/left corner, same size as the
+       central company logo. Purely additive: the company-info block and
+       the centered logo keep their exact layout. */
+    .co-brand { text-align: left; }
+    .co-brand img { width: 56px; height: 56px; object-fit: contain; }
 
     /* "كشف حساب" title — pushed DOWN below the company row, centered,
        followed by a SOLID BLACK horizontal rule that spans the full
@@ -2063,10 +2072,10 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
             <div class="co-center">
               <div class="co-logo">${logoHtml}</div>
             </div>
-            <!-- Left placeholder column to keep the logo centered. The
-                 customer info now lives BELOW the black rule per user
-                 request, so this side is intentionally empty. -->
-            <div></div>
+            <!-- Left column: brand mark (العلامة التجارية) when configured,
+                 else stays empty to keep the logo centered. Customer info
+                 lives BELOW the black rule per user request. -->
+            <div class="co-brand">${safeBrand ? `<img src="${safeBrand}" alt="" />` : ""}</div>
           </div>
 
           <!-- "كشف حساب" title pushed down + period range box + solid
