@@ -100,6 +100,11 @@ interface JournalLine {
   supplierVatNumber:     string;
   supplierInvoiceNumber: string;
   supplierInvoiceDate:   string;
+  // UI-only link: id of the source JE line this VAT/zero-tax line was
+  // generated from. Guarantees ONE tax line per source line — a re-click
+  // REPLACES the existing linked tax line instead of appending a sibling.
+  // Never sent to the backend (payload mapping picks explicit fields).
+  taxOfLineId?: string;
 }
 
 function newLine(): JournalLine {
@@ -692,6 +697,67 @@ export default function JournalEntryForm() {
     mutationFn: (direction: "input" | "output") =>
       journalEntriesApi.suggestVatAccount({ direction, companyId: cid }),
   });
+  // suggestVatAccount can be slow (AI/rules server round-trip). Cache the
+  // per-direction result for the session AND prefetch both directions once
+  // when the company tax has no routed account, so the per-line tax button
+  // resolves instantly (<1s) on every click.
+  type VatSuggestion = { accountId: number | null; accountLabel: string; reasoning: string; source: "ai" | "rules" };
+  const vatSuggestCache = useRef<Partial<Record<"input" | "output", VatSuggestion>>>({});
+  const vatSuggestInflight = useRef<Partial<Record<"input" | "output", Promise<VatSuggestion>>>>({});
+  const fetchVatSuggestion = (direction: "input" | "output"): Promise<VatSuggestion> => {
+    const cached = vatSuggestCache.current[direction];
+    if (cached) return Promise.resolve(cached);
+    let p = vatSuggestInflight.current[direction];
+    if (!p) {
+      p = taxEntryMutation.mutateAsync(direction).then((s: VatSuggestion) => {
+        vatSuggestCache.current[direction] = s;
+        return s;
+      }).finally(() => { delete vatSuggestInflight.current[direction]; });
+      vatSuggestInflight.current[direction] = p;
+    }
+    return p;
+  };
+  const taxNeedsSuggestion = (direction: "input" | "output") => {
+    if (!selectedJeTax) return true;
+    const routed = direction === "output"
+      ? (selectedJeTax.salesTaxAccountId ?? selectedJeTax.accountId)
+      : (selectedJeTax.purchaseTaxAccountId ?? selectedJeTax.accountId);
+    return !routed;
+  };
+  // The suggestion is company-specific — a company/context switch must never
+  // reuse the previous company's cached VAT account.
+  useEffect(() => {
+    vatSuggestCache.current = {};
+    vatSuggestInflight.current = {};
+  }, [cid]);
+  useEffect(() => {
+    // Fire-and-forget prefetch once the tax catalog resolves; errors are
+    // swallowed here — the real click path re-tries and surfaces them.
+    for (const d of ["input", "output"] as const) {
+      if (taxNeedsSuggestion(d) && !vatSuggestCache.current[d]) {
+        fetchVatSuggestion(d).catch(() => {});
+      }
+    }
+  }, [cid, selectedJeTax?.id, selectedJeTax?.accountId, selectedJeTax?.salesTaxAccountId, selectedJeTax?.purchaseTaxAccountId, jeTaxes.length]);
+
+  // A generated tax line is recognised either by its in-session link
+  // (`taxOfLineId`) or — for entries reloaded from the server, where the link
+  // is not persisted — by being the row DIRECTLY BELOW its source with the
+  // generated description prefix. This keeps the ONE-tax-line-per-source
+  // guarantee across edit sessions.
+  const GENERATED_TAX_DESC = /^ضريبة (المدخلات|المخرجات|صفرية)/;
+  const isGeneratedTaxLine = (l: JournalLine) =>
+    !!l.taxOfLineId || (isVatAccountLine(l) && GENERATED_TAX_DESC.test((l.description || "").trim()));
+  const findLinkedTaxIdx = (list: JournalLine[], sourceId: string) => {
+    const byLink = list.findIndex(l => l.taxOfLineId === sourceId);
+    if (byLink >= 0) return byLink;
+    const srcIdx = list.findIndex(l => l.id === sourceId);
+    if (srcIdx >= 0 && srcIdx + 1 < list.length) {
+      const below = list[srcIdx + 1];
+      if (!below.taxOfLineId && isGeneratedTaxLine(below)) return srcIdx + 1;
+    }
+    return -1;
+  };
 
   async function applyTaxEntry(direction: "input" | "output", sourceLineId?: string) {
     if (isLockedSourceEntry) return;
@@ -749,9 +815,9 @@ export default function JournalEntryForm() {
       }
     }
     if (!resolvedAccountId) {
-      let suggestion: { accountId: number | null; accountLabel: string; reasoning: string; source: "ai" | "rules" };
+      let suggestion: VatSuggestion;
       try {
-        suggestion = await taxEntryMutation.mutateAsync(direction);
+        suggestion = await fetchVatSuggestion(direction);
       } catch (e: any) {
         toast({
           title: "تعذر اقتراح حساب الضريبة",
@@ -804,7 +870,10 @@ export default function JournalEntryForm() {
     const vatLine: JournalLine = {
       id: crypto.randomUUID(),
       accountId: vatAccountId,
-      costCenter: sourceLine.costCenter ?? "",
+      // Tax lines never carry a cost centre — the dimension belongs to the
+      // expense/revenue source line only (matches auto-JE VAT behaviour).
+      costCenter: "",
+      taxOfLineId: sourceLine.id,
       debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
       credit: direction === "output" ? vatAmount.toFixed(2) : "",
       description: direction === "input"
@@ -822,6 +891,15 @@ export default function JournalEntryForm() {
             ? { ...l, [sideField]: pendingNet!.toFixed(2), description: ((l.description || "") + NET_MARKER).trim() }
             : l)
         : prev;
+      // ONE tax line per source line: if a tax line linked to this source
+      // already exists (VAT or zero-rated, incl. reloaded entries detected
+      // positionally), REPLACE it in place instead of inserting a duplicate.
+      const existingIdx = findLinkedTaxIdx(updated, sourceLine.id);
+      if (existingIdx >= 0) {
+        const next = [...updated];
+        next[existingIdx] = { ...vatLine, id: next[existingIdx].id };
+        return next;
+      }
       // Insert the VAT line DIRECTLY BELOW its source row (not appended last).
       const idx = updated.findIndex(l => l.id === sourceLine.id);
       if (idx < 0) return [...updated, vatLine];
@@ -857,6 +935,19 @@ export default function JournalEntryForm() {
     const srcDesc = (sourceLine.description || "").trim();
     const sourceIsVatLine =
       srcDesc.startsWith("ضريبة المدخلات") || srcDesc.startsWith("ضريبة المخرجات") || srcDesc.startsWith("ضريبة صفرية");
+    // A source already split into its net component (inclusive-mode VAT was
+    // extracted) must NOT be switched to zero-rated — the source amount is no
+    // longer the gross and replacing its VAT line with 0.00 would silently
+    // lose the extracted VAT and unbalance the entry.
+    const sourceIsNetExtracted = srcDesc.includes(NET_MARKER_PREFIX);
+    if (sourceIsNetExtracted) {
+      toast({
+        title: "لا يمكن تحويل السطر إلى ضريبة صفرية",
+        description: "تم استخراج الضريبة من مبلغ هذا السطر (شامل الضريبة). احذف سطر الضريبة وأعد المبلغ الأصلي أولاً.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     if (!sourceLine.accountId || amount <= 0 || sourceIsVatLine) {
       toast({
@@ -884,9 +975,9 @@ export default function JournalEntryForm() {
       }
     }
     if (!resolvedAccountId) {
-      let suggestion: { accountId: number | null; accountLabel: string; reasoning: string; source: "ai" | "rules" };
+      let suggestion: VatSuggestion;
       try {
-        suggestion = await taxEntryMutation.mutateAsync(direction);
+        suggestion = await fetchVatSuggestion(direction);
       } catch (e: any) {
         toast({ title: "تعذر اقتراح حساب الضريبة", description: e?.message ?? "حدث خطأ أثناء الاتصال بالخدمة.", variant: "destructive" });
         return;
@@ -912,7 +1003,9 @@ export default function JournalEntryForm() {
     const zeroLine: JournalLine = {
       id: crypto.randomUUID(),
       accountId: vatAccountId,
-      costCenter: sourceLine.costCenter ?? "",
+      // Tax lines never carry a cost centre (see applyTaxEntry).
+      costCenter: "",
+      taxOfLineId: sourceLine.id,
       debit:  direction === "input"  ? "0.00" : "",
       credit: direction === "output" ? "0.00" : "",
       description: direction === "input"
@@ -925,6 +1018,14 @@ export default function JournalEntryForm() {
     };
 
     setLines(prev => {
+      // ONE tax line per source line — replace any existing linked tax line
+      // (incl. reloaded entries detected positionally).
+      const existingIdx = findLinkedTaxIdx(prev, sourceLine.id);
+      if (existingIdx >= 0) {
+        const next = [...prev];
+        next[existingIdx] = { ...zeroLine, id: next[existingIdx].id };
+        return next;
+      }
       // Insert the zero-rated line DIRECTLY BELOW its source row.
       const idx = prev.findIndex(l => l.id === sourceLine.id);
       if (idx < 0) return [...prev, zeroLine];
@@ -2347,6 +2448,20 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                         the user can confirm the centre before saving and
                         works the same way the account tooltip does. */}
                     {(() => {
+                      // GENERATED tax lines never carry a cost centre — hide
+                      // the picker (the dimension belongs to the source line).
+                      // Manually-entered VAT-account lines keep the picker so
+                      // deliberate VAT adjustments can still be dimensioned.
+                      if (isGeneratedTaxLine(line)) {
+                        return (
+                          <div
+                            className="flex h-8 items-center px-2 text-xs text-muted-foreground select-none"
+                            data-testid={`cc-hidden-vat-${line.id}`}
+                          >
+                            —
+                          </div>
+                        );
+                      }
                       const c = findCc(line.costCenter);
                       const tip = c ? (
                         <div className="space-y-1 text-xs leading-5">
