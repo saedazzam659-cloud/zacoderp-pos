@@ -231,6 +231,7 @@ export default function PaymentVouchers() {
               <tr className="border-b bg-muted/20 text-xs text-muted-foreground">
                 <th className="h-9 px-4 text-start font-medium">{t(`${NS}.colCodeDate`)}</th>
                 <th className="h-9 px-4 text-start font-medium">{t(`${NS}.colDescription`)}</th>
+                <th className="h-9 px-4 text-center font-medium">{t(`${NS}.colVoucherKind`, "نوع السند")}</th>
                 <th className="h-9 px-4 text-start font-medium hidden md:table-cell">{t(`${NS}.colEntity`)}</th>
                 <th className="h-9 px-4 text-start font-medium hidden md:table-cell">{t(`${NS}.colMethod`)}</th>
                 <th className="h-9 px-4 text-start font-medium">{t(`${NS}.colAmount`)}</th>
@@ -241,9 +242,9 @@ export default function PaymentVouchers() {
             </thead>
             <tbody>
               {isLoading ? Array.from({ length: 4 }).map((_, i) => (
-                <tr key={i} className="border-b"><td colSpan={8} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>
+                <tr key={i} className="border-b"><td colSpan={9} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>
               )) : filtered.length === 0 ? (
-                <tr><td colSpan={8} className="py-14 text-center text-muted-foreground">
+                <tr><td colSpan={9} className="py-14 text-center text-muted-foreground">
                   <ArrowUpCircle className="h-8 w-8 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">{search ? t("cashCommon.noResults") : t(`${NS}.noVouchers`)}</p>
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />{t(`${NS}.newVoucher`)}</Button>}
@@ -261,6 +262,11 @@ export default function PaymentVouchers() {
                   <td className="px-4 py-3 max-w-48">
                     <p className="text-sm truncate">{row.description || "—"}</p>
                     {row.refNumber && <p className="text-xs text-muted-foreground">{t(`${NS}.ref`, { value: row.refNumber })}</p>}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {(row.isMulti ?? row.accountId == null)
+                      ? <span className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">{t(`${NS}.kindMulti`, "متعدد")}</span>
+                      : <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">{t(`${NS}.kindSimple`, "عادي")}</span>}
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
                     <span className="text-xs bg-muted px-2 py-0.5 rounded-full">{ENTITY_LABELS[row.entityType] || "—"}</span>

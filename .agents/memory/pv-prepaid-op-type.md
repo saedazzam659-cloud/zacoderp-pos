@@ -22,3 +22,8 @@ Payment voucher lines carry `op_type` ('direct' default | 'prepaid'). A prepaid 
 - /unpost guards run BEFORE JE deletion: block on asset sold/scrapped or any depreciation run, loan paidAmount>0, custody settled/returned>0; otherwise delete records + clear op_ref_id so repost re-mints.
 - Settlement overpayment: advisory locks must cover EVERY distinct linked invoice (sorted ids), not just the header/first line's.
 - Custody RETURN (استرداد عهدة) is deliberately excluded — it's cash-in and belongs to receipt vouchers. Supplier advance = plain AP debit balance; no separate advances account.
+
+## UI additions (Aug 2026)
+- PV list: multi vouchers detected by header `accountId == null`; list endpoint backfills empty البيان from line descriptions and returns `isMulti`.
+- Posted multi-PV form: lock fieldset lives INSIDE each TabsContent (tabs stay navigable read-only); links that must work when locked are `<a>` not `<button>` (fieldset disables buttons).
+- Prepaid schedule preview client-side must PORT monthsBetween/installmentsBetween semantics exactly: first installment = start+1 MONTH even for quarterly/annual (grouping takes every P-th anniversary month), day-aware month count, final group partial; never step first date by P months.

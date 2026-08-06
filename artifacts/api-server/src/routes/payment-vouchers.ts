@@ -251,7 +251,35 @@ router.get("/", async (req, res) => {
     : await db.select().from(paymentVouchersTable)
         .where((branchScope.length || piFilter.length) ? and(...branchScope, ...piFilter) : undefined)
         .orderBy(desc(paymentVouchersTable.createdAt));
-  res.json(rows);
+
+  // Multi-line vouchers (header accountId = null) often carry their البيان on
+  // the allocation LINES only — surface it in the list by falling back to the
+  // lines' descriptions when the header description is empty. Also expose
+  // `isMulti` so the list can render a voucher-type column without guessing.
+  const emptyDescMultiIds = rows
+    .filter((r) => r.accountId == null && !(r.description ?? "").trim())
+    .map((r) => r.id);
+  const lineDescByVoucher = new Map<number, string>();
+  if (emptyDescMultiIds.length) {
+    const lineRows = await db.select({
+        voucherId: paymentVoucherLinesTable.voucherId,
+        description: paymentVoucherLinesTable.description,
+      }).from(paymentVoucherLinesTable)
+      .where(inArray(paymentVoucherLinesTable.voucherId, emptyDescMultiIds))
+      .orderBy(asc(paymentVoucherLinesTable.sortOrder), asc(paymentVoucherLinesTable.id));
+    for (const lr of lineRows) {
+      const d = (lr.description ?? "").trim();
+      if (!d || lr.voucherId == null) continue;
+      const prev = lineDescByVoucher.get(lr.voucherId);
+      if (!prev) lineDescByVoucher.set(lr.voucherId, d);
+      else if (!prev.includes(d) && prev.length < 120) lineDescByVoucher.set(lr.voucherId, `${prev} / ${d}`);
+    }
+  }
+  res.json(rows.map((r) => ({
+    ...r,
+    isMulti: r.accountId == null,
+    description: (r.description ?? "").trim() || lineDescByVoucher.get(r.id) || r.description,
+  })));
 });
 
 router.get("/:id", async (req, res) => {

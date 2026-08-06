@@ -62,6 +62,9 @@ interface PvLine {
   deferredEndDate: string;          // ISO
   deferredPeriodicity: string;      // monthly|quarterly|semiannual|annual
   deferredCostCenters: { costCenterId: string; pct: string }[];
+  // Linked amortization adjustment minted at post time (read-only; NOT sent
+  // back in the save payload — the payload whitelists its fields explicitly).
+  deferredAdjustmentId?: number | null;
   // Phase-2 op-type payloads:
   opSupplierId: string;      // supplier_advance / supplier_settlement
   opEmployeeId: string;      // employee_loan / employee_custody
@@ -74,6 +77,44 @@ interface PvLine {
 
 type PvOpType = "direct" | "prepaid" | "fixed_asset" | "supplier_advance" | "supplier_settlement" | "employee_loan" | "employee_custody";
 const PV_OP_TYPES: PvOpType[] = ["direct", "prepaid", "fixed_asset", "supplier_advance", "supplier_settlement", "employee_loan", "employee_custody"];
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * Client-side preview of the prepaid amortization schedule — a faithful port
+ * of the server's `monthsBetween` + `installmentsBetween` (adjustmentPosting.ts):
+ * - day-aware month count (end day < start day drops the partial end month);
+ * - ANNIVERSARY dates: first installment ONE MONTH after start (2025-05-01 →
+ *   2025-06-01), day clamped to short months;
+ * - grouped periodicities take every P-th month, so a quarterly plan's first
+ *   posting is still start+1 month and the FINAL group may cover fewer months;
+ * - per-installment = monthly (net / monthsCount) × monthsCovered of the group.
+ * Pure string/UTC math — no local Date parsing (UTC+3 off-by-one traps).
+ */
+function prepaidSchedulePreview(start: string, end: string, periodicity: string, netAmount: number) {
+  if (!start || !end || !(netAmount > 0) || end < start) return null;
+  const sParts = start.split("-").map(Number);
+  const eParts = end.split("-").map(Number);
+  if (sParts.length !== 3 || eParts.length !== 3 || sParts.some(Number.isNaN) || eParts.some(Number.isNaN)) return null;
+  const [sy, sm, sd] = sParts;
+  let [ey, em] = eParts;
+  const ed = eParts[2];
+  if (ed < sd) { em -= 1; if (em < 1) { em = 12; ey -= 1; } }
+  const monthsCount = Math.max(0, (ey - sy) * 12 + (em - sm) + 1);
+  if (monthsCount <= 0) return null;
+  const p = periodicity === "quarterly" ? 3 : periodicity === "semiannual" ? 6 : periodicity === "annual" ? 12 : 1;
+  const count = p <= 1 ? monthsCount : Math.ceil(monthsCount / p);
+  const monthly = netAmount / monthsCount;
+  // First anniversary date = start + 1 month, day clamped (matches monthsBetween k=1).
+  const mAbs = sm + 1;
+  const y = sy + Math.floor((mAbs - 1) / 12);
+  const m = ((mAbs - 1) % 12) + 1;
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const firstDate = `${y}-${pad2(m)}-${pad2(Math.min(sd, lastDay))}`;
+  // First installment covers min(p, monthsCount) monthly slices.
+  const perInstallment = monthly * Math.min(p, monthsCount);
+  return { count, perInstallment, firstDate };
+}
 // Ops whose DEBIT account is resolved server-side (supplier AP / HR control
 // accounts) — the account picker is skipped client-side for these.
 const SERVER_ACCOUNT_OPS: PvOpType[] = ["supplier_advance", "supplier_settlement", "employee_loan", "employee_custody"];
@@ -356,6 +397,7 @@ export default function PaymentVoucherForm() {
         deferredCostCenters: Array.isArray(l.deferredCostCenters)
           ? l.deferredCostCenters.map((s: any) => ({ costCenterId: String(s.costCenterId ?? ""), pct: String(s.pct ?? "") }))
           : [],
+        deferredAdjustmentId: l.deferredAdjustmentId ?? null,
       }));
     } else {
       lines = [newPvLine({
@@ -968,8 +1010,11 @@ export default function PaymentVoucherForm() {
         </div>
       )}
 
-      {/* ─── Two-column body: form + live preview ─────────────── */}
-      <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
+      {/* ─── Two-column body: form + live preview ───────────────
+          NOTE: the posted-lock fieldset lives INSIDE each TabsContent (not
+          around the whole Tabs) so tab NAVIGATION stays clickable on a
+          posted voucher — the user can browse all data read-only. */}
+      <div>
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
           {/* ── Left column: TABBED form ──────────────────── */}
           <Tabs defaultValue="voucher" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
@@ -980,6 +1025,7 @@ export default function PaymentVoucherForm() {
             </TabsList>
 
             <TabsContent value="voucher" className="mt-0">
+            <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
             {/* Section: Header */}
             <Card className="border-2">
               <CardHeader className="py-3 px-4 border-b bg-muted/30">
@@ -1066,9 +1112,11 @@ export default function PaymentVoucherForm() {
                 </div>
               </CardContent>
             </Card>
+            </fieldset>
             </TabsContent>
 
             <TabsContent value="party" className="mt-0 space-y-4">
+            <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
             {/* Section: Payment method + treasury (money source) */}
             <Card className="border-2 border-red-100">
               <CardHeader className="py-3 px-4 border-b bg-red-50/40">
@@ -1143,9 +1191,11 @@ export default function PaymentVoucherForm() {
               </CardContent>
             </Card>
 
+            </fieldset>
             </TabsContent>
 
             <TabsContent value="lines" className="mt-0">
+            <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
             {/* Section: Allocation lines — journal-style green box */}
             <Card className="border-2 border-red-100">
               <CardHeader className="py-3 px-4 border-b bg-red-50/40">
@@ -1307,69 +1357,89 @@ export default function PaymentVoucherForm() {
                               {/* ── نوع العملية: مصروف مقدم (خطة استهلاك) ── */}
                               {l.opType === "prepaid" ? (
                                 <div className="rounded-md bg-amber-500/5 border border-amber-500/30 px-2 py-2 space-y-2" data-testid={`pv-line-prepaid-${idx}`}>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-semibold text-amber-700 shrink-0">
-                                      {t(`${NS}.prepaidTitle`, "مصروف مقدم — خطة الاستهلاك")}
+                                  {/* ONE compact row — same rhythm as the main line above:
+                                      [chip] [حساب المصروف] [الدورية] [بداية] [نهاية] [إلغاء] */}
+                                  <div className="grid grid-cols-[auto_2fr_0.9fr_1.1fr_1.1fr_28px] gap-2 items-center">
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-100/70 border border-amber-200 rounded-full px-2 py-0.5 shrink-0" title={t(`${NS}.prepaidHint`, "حساب البند أعلاه = حساب المصروف المقدم (أصل). عند الترحيل تُنشأ تسوية شهرية تُقفل الأصل في حساب المصروف.")}>
+                                      {t(`${NS}.prepaidChip`, "مصروف مقدم")}
                                     </span>
+                                    <SearchCombobox
+                                      items={postableAccounts}
+                                      value={l.deferredExpenseAccountId}
+                                      onValueChange={(aid) => updateLine(l.key, { deferredExpenseAccountId: aid })}
+                                      placeholder={t(`${NS}.prepaidExpenseAccount`, "حساب المصروف")}
+                                      searchPlaceholder={t(`${NS}.searchAccountPh`, "ابحث بالاسم أو الكود...")}
+                                      emptyText={t(`${NS}.noAccounts`, "لا توجد حسابات")}
+                                    />
+                                    <select
+                                      value={l.deferredPeriodicity}
+                                      onChange={e => updateLine(l.key, { deferredPeriodicity: e.target.value })}
+                                      className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
+                                      title={t(`${NS}.prepaidPeriodicity`, "الدورية")}
+                                    >
+                                      <option value="monthly">{t(`${NS}.perMonthly`, "شهري")}</option>
+                                      <option value="quarterly">{t(`${NS}.perQuarterly`, "ربع سنوي")}</option>
+                                      <option value="semiannual">{t(`${NS}.perSemiannual`, "نصف سنوي")}</option>
+                                      <option value="annual">{t(`${NS}.perAnnual`, "سنوي")}</option>
+                                    </select>
+                                    <DateField
+                                      value={l.deferredStartDate}
+                                      onChange={e => updateLine(l.key, { deferredStartDate: e.target.value })}
+                                      placeholder={t(`${NS}.prepaidStart`, "بداية الاستهلاك")}
+                                      title={t(`${NS}.prepaidStart`, "بداية الاستهلاك")}
+                                      data-testid={`pv-line-prepaid-start-${idx}`}
+                                    />
+                                    <DateField
+                                      value={l.deferredEndDate}
+                                      onChange={e => updateLine(l.key, { deferredEndDate: e.target.value })}
+                                      placeholder={t(`${NS}.prepaidEnd`, "نهاية الاستهلاك")}
+                                      title={t(`${NS}.prepaidEnd`, "نهاية الاستهلاك")}
+                                      data-testid={`pv-line-prepaid-end-${idx}`}
+                                    />
                                     <Button
-                                      type="button" variant="ghost" size="sm"
-                                      className="h-7 gap-1 text-destructive hover:text-destructive ml-auto"
+                                      type="button" variant="ghost" size="icon"
+                                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
                                       onClick={() => updateLine(l.key, {
                                         opType: "direct", deferredExpenseAccountId: "",
                                         deferredStartDate: "", deferredEndDate: "",
                                         deferredPeriodicity: "monthly", deferredCostCenters: [],
                                       })}
+                                      title={t(`${NS}.prepaidRemove`, "إلغاء (بند عادي)")}
                                       data-testid={`pv-line-prepaid-remove-${idx}`}
                                     >
                                       <Trash2 className="h-3.5 w-3.5" />
-                                      {t(`${NS}.prepaidRemove`, "إلغاء (بند عادي)")}
                                     </Button>
                                   </div>
-                                  <p className="text-[11px] text-muted-foreground">
-                                    {t(`${NS}.prepaidHint`, "حساب البند أعلاه = حساب المصروف المقدم (أصل). عند الترحيل تُنشأ تسوية شهرية تُقفل الأصل في حساب المصروف أدناه.")}
-                                  </p>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    <div>
-                                      <Label className="text-[11px]">{t(`${NS}.prepaidExpenseAccount`, "حساب المصروف")}</Label>
-                                      <SearchCombobox
-                                        items={postableAccounts}
-                                        value={l.deferredExpenseAccountId}
-                                        onValueChange={(aid) => updateLine(l.key, { deferredExpenseAccountId: aid })}
-                                        placeholder={t(`${NS}.selectAccountPh`, "— اختر الحساب —")}
-                                        searchPlaceholder={t(`${NS}.searchAccountPh`, "ابحث بالاسم أو الكود...")}
-                                        emptyText={t(`${NS}.noAccounts`, "لا توجد حسابات")}
-                                      />
-                                    </div>
-                                    <div>
-                                      <Label className="text-[11px]">{t(`${NS}.prepaidPeriodicity`, "الدورية")}</Label>
-                                      <select
-                                        value={l.deferredPeriodicity}
-                                        onChange={e => updateLine(l.key, { deferredPeriodicity: e.target.value })}
-                                        className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
-                                      >
-                                        <option value="monthly">{t(`${NS}.perMonthly`, "شهري")}</option>
-                                        <option value="quarterly">{t(`${NS}.perQuarterly`, "ربع سنوي")}</option>
-                                        <option value="semiannual">{t(`${NS}.perSemiannual`, "نصف سنوي")}</option>
-                                        <option value="annual">{t(`${NS}.perAnnual`, "سنوي")}</option>
-                                      </select>
-                                    </div>
-                                    <div>
-                                      <Label className="text-[11px]">{t(`${NS}.prepaidStart`, "بداية الاستهلاك")}</Label>
-                                      <DateField
-                                        value={l.deferredStartDate}
-                                        onChange={e => updateLine(l.key, { deferredStartDate: e.target.value })}
-                                        data-testid={`pv-line-prepaid-start-${idx}`}
-                                      />
-                                    </div>
-                                    <div>
-                                      <Label className="text-[11px]">{t(`${NS}.prepaidEnd`, "نهاية الاستهلاك")}</Label>
-                                      <DateField
-                                        value={l.deferredEndDate}
-                                        onChange={e => updateLine(l.key, { deferredEndDate: e.target.value })}
-                                        data-testid={`pv-line-prepaid-end-${idx}`}
-                                      />
-                                    </div>
-                                  </div>
+
+                                  {/* Invoice-style amortization summary — mirrors how the
+                                      deferred-expense plan is presented on purchase invoices:
+                                      installments count × per-installment amount, first posting
+                                      one period AFTER the start date (anniversary engine). */}
+                                  {(() => {
+                                    const s = prepaidSchedulePreview(l.deferredStartDate, l.deferredEndDate, l.deferredPeriodicity, Number(l.amount) || 0);
+                                    if (!s) return null;
+                                    return (
+                                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-background/70 border border-amber-200/70 px-2.5 py-1.5 text-[11px]" data-testid={`pv-line-prepaid-summary-${idx}`}>
+                                        <span className="text-muted-foreground">{t(`${NS}.prepaidInstallments`, "عدد الأقساط")}: <span className="font-mono font-semibold text-foreground">{s.count}</span></span>
+                                        <span className="text-muted-foreground">{t(`${NS}.prepaidPerInstallment`, "قيمة القسط")}: <span className="font-mono font-semibold text-amber-700">{fmt(s.perInstallment)}</span></span>
+                                        <span className="text-muted-foreground">{t(`${NS}.prepaidFirstPost`, "أول ترحيل")}: <span className="font-mono font-semibold text-foreground" dir="ltr">{s.firstDate}</span></span>
+                                        {isLockedSourceEntry && l.deferredAdjustmentId ? (
+                                          /* Anchor (not <button>) — the posted-lock <fieldset disabled>
+                                             disables buttons, but browsing to the schedule must stay
+                                             possible on a posted voucher. */
+                                          <a
+                                            href={`${import.meta.env.BASE_URL}accounting/reports/adjustments-schedule`}
+                                            onClick={(ev) => { ev.preventDefault(); navigate("/accounting/reports/adjustments-schedule"); }}
+                                            className="ms-auto text-primary hover:underline underline-offset-2 cursor-pointer"
+                                            data-testid={`pv-line-prepaid-schedule-link-${idx}`}
+                                          >
+                                            {t(`${NS}.prepaidOpenSchedule`, "عرض جدول التسويات ←")}
+                                          </a>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })()}
+
                                   {/* Optional multi-CC split (Σ = 100%) */}
                                   <div className="space-y-1.5">
                                     <div className="flex items-center gap-2">
@@ -1624,6 +1694,7 @@ export default function PaymentVoucherForm() {
                 </div>
               </CardContent>
             </Card>
+            </fieldset>
             </TabsContent>
           </Tabs>
 
@@ -1698,7 +1769,7 @@ export default function PaymentVoucherForm() {
             </div>
           </aside>
         </div>
-      </fieldset>
+      </div>
 
       {/* ─── Sticky bottom action bar ──────────────────────────── */}
       {!isLockedSourceEntry && (
