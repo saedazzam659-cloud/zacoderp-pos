@@ -63,6 +63,8 @@ export default function TrainingJoinPublic() {
     chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight });
   }, [chat]);
 
+  const retriesRef = useRef(0);
+
   const fallbackToLivekit = async (displayName: string) => {
     try {
       const j = await trainingApi.publicJoin(token, displayName);
@@ -135,10 +137,23 @@ export default function TrainingJoinPublic() {
           title={mode.join.title ?? info?.title}
           myName={name.trim()}
           onLeave={() => {
-            // انقطاع أو مغادرة — ارجع لشاشة الانضمام مع رسالة وإعادة تحميل حالة الجلسة
+            // مغادرة مقصودة — ارجع لشاشة الانضمام
+            retriesRef.current = 0;
             setMode({ kind: "idle" });
-            setErr("انقطع الاتصال بالبث — اضغط «انضمام للجلسة» للمحاولة مرة أخرى");
             trainingApi.publicInfo(token).then(setInfo).catch(() => {});
+          }}
+          onDisconnected={() => {
+            // انقطاع غير مقصود — أعد المحاولة تلقائيًا (حتى 3 مرات) بدل رسالة الخطأ
+            trainingApi.publicInfo(token).then(setInfo).catch(() => {});
+            if (retriesRef.current < 3) {
+              retriesRef.current += 1;
+              setMode({ kind: "idle" });
+              setErr(null);
+              setTimeout(() => { void join(); }, 1500);
+            } else {
+              setMode({ kind: "idle" });
+              setErr("انقطع الاتصال بالبث — اضغط «انضمام للجلسة» للمحاولة مرة أخرى");
+            }
           }}
         />
       </div>

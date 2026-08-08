@@ -9,3 +9,7 @@ description: Free mass training broadcast — WebRTC relay tree with LiveKit fal
 - Invariants: viewer may signal ONLY parent/children (anti-snooping); detach must reparent orphans with subtree-exclusion or you create cycles; `relay-capacity:false` viewers become leaves and their children get reattached; broadcaster (re)join does a full `rebuildTree`.
 - Fallback chain: P2P viewer 12s no-stream timeout → `onFatal` → LiveKit publicJoin; trainer mic-grant mints a micOnly LiveKit token and the viewer page swaps to LiveRoom.
 - Lesson: after context compression, verify "DONE" files actually exist on disk (this hub file was lost while the rest of the feature survived) — architect review caught it.
+
+## TURN إلزامي + إعادة محاولة fallback
+- STUN وحده يفشل شبه دائمًا على شبكات الجوال (CGNAT) — ICE config في p2pTree.ts يتضمن TURN مجاني (openrelay.metered.ca 80/443/tcp، بيانات openrelayproject) وإلا لن يرى مشاهد الموبايل البث إطلاقًا.
+- LiveRoom يفرّق الآن onLeave (مغادرة مقصودة) عن onDisconnected (انقطاع من الخادم)؛ صفحة الانضمام العام تعيد المحاولة تلقائيًا حتى 3 مرات عند الانقطاع بدل رمي المستخدم على شاشة الانضمام برسالة خطأ.

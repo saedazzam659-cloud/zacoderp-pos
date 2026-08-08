@@ -41,6 +41,8 @@ export interface LiveRoomProps {
   canGrantMic?: boolean;
   onGrantMic?: (identity: string, allow: boolean) => Promise<void> | void;
   onLeave: () => void;
+  /** انقطاع غير مقصود من الخادم (بدل onLeave) — يتيح إعادة المحاولة تلقائيًا */
+  onDisconnected?: () => void;
   /** true → ابدأ الكاميرا والمايك فور الاتصال (غرفة الدعم) */
   autoPublishAv?: boolean;
   /** إخفاء الدردشة (اختياري) */
@@ -55,7 +57,7 @@ function decodeData(payload: Uint8Array): any | null {
 const enc = new TextEncoder();
 
 export default function LiveRoom(props: LiveRoomProps) {
-  const { token, wsUrl, role, title, myName, canGrantMic, onGrantMic, onLeave, autoPublishAv, hideChat, onLocalTracksChanged } = props;
+  const { token, wsUrl, role, title, myName, canGrantMic, onGrantMic, onLeave, onDisconnected, autoPublishAv, hideChat, onLocalTracksChanged } = props;
   const localTracksCbRef = useRef(onLocalTracksChanged);
   localTracksCbRef.current = onLocalTracksChanged;
 
@@ -76,6 +78,8 @@ export default function LiveRoom(props: LiveRoomProps) {
   const audioHostRef = useRef<HTMLDivElement>(null);
   const leaveRef = useRef(onLeave);
   leaveRef.current = onLeave;
+  const disconnectedRef = useRef(onDisconnected);
+  disconnectedRef.current = onDisconnected;
 
   const refreshCount = useCallback((room: Room) => {
     setParticipants(room.remoteParticipants.size + 1);
@@ -117,7 +121,7 @@ export default function LiveRoom(props: LiveRoomProps) {
         if (s === ConnectionState.Connected) setConnState("connected");
         else if (s === ConnectionState.Reconnecting) setConnState("reconnecting");
       })
-      .on(RoomEvent.Disconnected, () => { if (!cancelled) leaveRef.current(); })
+      .on(RoomEvent.Disconnected, () => { if (!cancelled) (disconnectedRef.current ?? leaveRef.current)(); })
       .on(RoomEvent.ParticipantPermissionsChanged, (_prev, p: Participant) => {
         if (p === room.localParticipant) {
           const can = !!room.localParticipant.permissions?.canPublish;
