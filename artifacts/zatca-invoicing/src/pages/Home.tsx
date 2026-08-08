@@ -110,19 +110,19 @@ export default function Home() {
       {
         "@context": "https://schema.org",
         "@type":    "Organization",
-        "name":     "زاكود المحاسبي العالمي",
+        "name":     "زاكود المحاسبي",
         "alternateName": ["Zacoderp", "Zacode ERP", "زاكود", "نظام محاسبة سعودي معتمد من ZATCA"],
         "url":      origin,
         "logo":     `${origin}${BASE}/favicon.svg`,
         "image":    `${origin}${BASE}/opengraph.jpg`,
-        "description": "زاكود المحاسبي العالمي — نظام محاسبة سعودي شامل ومعتمد من ZATCA: فوترة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون.",
+        "description": "زاكود المحاسبي — نظام محاسبة سعودي شامل ومعتمد من ZATCA: فوترة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون.",
         "areaServed": { "@type": "Country", "name": areaName },
       },
       {
         "@context": "https://schema.org",
         "@type":    "WebSite",
         "url":      origin,
-        "name":     "زاكود المحاسبي العالمي",
+        "name":     "زاكود المحاسبي",
         "alternateName": "نظام محاسبة سعودي معتمد من ZATCA",
         "inLanguage": "ar-SA",
         // SearchAction intentionally omitted: there is no /search endpoint
@@ -132,7 +132,7 @@ export default function Home() {
       {
         "@context": "https://schema.org",
         "@type":    "SoftwareApplication",
-        "name":     "زاكود المحاسبي العالمي",
+        "name":     "زاكود المحاسبي",
         "alternateName": "Zacoderp",
         "operatingSystem": "Web, Windows, macOS, Linux, iOS, Android",
         "applicationCategory": "BusinessApplication",
@@ -178,7 +178,7 @@ export default function Home() {
   // Helmet@3 + React 19 doesn't reliably populate document.title.
   useEffect(() => {
     const prev = document.title;
-    document.title = "زاكود المحاسبي العالمي | نظام محاسبة سعودي معتمد ZATCA وفاتورة إلكترونية";
+    document.title = "زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA وفاتورة إلكترونية";
     return () => { document.title = prev; };
   }, []);
 
@@ -195,27 +195,27 @@ export default function Home() {
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
       <Helmet>
         <html lang="ar" dir="rtl" />
-        <title>زاكود المحاسبي العالمي | نظام محاسبة سعودي معتمد ZATCA وفاتورة إلكترونية</title>
-        <meta name="description" content="زاكود المحاسبي العالمي — نظام محاسبة سعودي معتمد من ZATCA. فاتورة إلكترونية، محاسبة مالية، ضريبة القيمة المضافة 15%، نقاط بيع، ومخزون في منصة عربية واحدة. ابدأ مجاناً بدون بطاقة دفع." />
+        <title>زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA وفاتورة إلكترونية</title>
+        <meta name="description" content="زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA. فاتورة إلكترونية، محاسبة مالية، ضريبة القيمة المضافة 15%، نقاط بيع، ومخزون في منصة عربية واحدة. ابدأ مجاناً بدون بطاقة دفع." />
         <link rel="canonical" href={canonical} />
-        <meta name="keywords" content="زاكود, زاكود المحاسبي العالمي, Zacoderp, Zacode ERP, نظام محاسبة سعودي, نظام محاسبي سعودي, فاتورة إلكترونية, ZATCA, زاتكا, FATOORA, محاسبة سعودية, نقاط بيع, مخزون, ضريبة القيمة المضافة, ERP سعودي" />
-        <meta name="author" content="زاكود المحاسبي العالمي" />
+        <meta name="keywords" content="زاكود, زاكود المحاسبي, Zacoderp, Zacode ERP, نظام محاسبة سعودي, نظام محاسبي سعودي, فاتورة إلكترونية, ZATCA, زاتكا, FATOORA, محاسبة سعودية, نقاط بيع, مخزون, ضريبة القيمة المضافة, ERP سعودي" />
+        <meta name="author" content="زاكود المحاسبي" />
         <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
         <meta name="theme-color" content="#0d9488" />
-        <meta name="application-name" content="زاكود المحاسبي العالمي" />
+        <meta name="application-name" content="زاكود المحاسبي" />
         <meta name="apple-mobile-web-app-title" content="زاكود" />
         <meta property="og:type" content="website" />
-        <meta property="og:site_name" content="زاكود المحاسبي العالمي" />
-        <meta property="og:title" content="زاكود المحاسبي العالمي | نظام محاسبة سعودي معتمد ZATCA" />
+        <meta property="og:site_name" content="زاكود المحاسبي" />
+        <meta property="og:title" content="زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA" />
         <meta property="og:description" content="فاتورة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون لشركتك السعودية في منصة واحدة معتمدة من ZATCA. ابدأ مجاناً." />
         <meta property="og:url" content={canonical} />
         <meta property="og:image" content={`${origin}${BASE}/opengraph.jpg`} />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="زاكود المحاسبي العالمي - نظام محاسبة سعودي معتمد من ZATCA" />
+        <meta property="og:image:alt" content="زاكود المحاسبي - نظام محاسبة سعودي معتمد من ZATCA" />
         <meta property="og:locale" content="ar_SA" />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="زاكود المحاسبي العالمي | نظام محاسبة سعودي معتمد ZATCA" />
+        <meta name="twitter:title" content="زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA" />
         <meta name="twitter:description" content="فاتورة إلكترونية ومحاسبة شاملة معتمدة من ZATCA لشركتك السعودية." />
         <meta name="twitter:image" content={`${origin}${BASE}/opengraph.jpg`} />
         <link rel="alternate" hrefLang="ar-SA" href={canonical} />
@@ -235,7 +235,7 @@ export default function Home() {
               className="h-9 w-9 shrink-0 rounded-lg shadow"
               data-testid="home-brand-mark"
             />
-            <span className="hidden sm:inline truncate">زاكود المحاسبي العالمي</span>
+            <span className="hidden sm:inline truncate">زاكود المحاسبي</span>
           </div>
           <nav className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <CountrySelector variant="compact" testId="home-country-selector" className="hidden sm:flex" />
@@ -278,12 +278,12 @@ export default function Home() {
           معتمد ومتوافق مع ZATCA — المرحلة الثانية
         </span>
         <h1 className="text-4xl md:text-5xl font-extrabold leading-tight mb-5" data-testid="home-hero-title">
-          نظام محاسبة سعودي شامل <br/>
+          نظام محاسبة {countryInfo.adjAr} شامل <br/>
           <span className="text-primary">للشركات والمؤسسات الحديثة</span>
         </h1>
         <p className="text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed mb-8">
           فاتورة إلكترونية معتمدة، محاسبة مالية كاملة، نقاط بيع، إدارة مخزون، وموارد بشرية —
-          منصة عربية واحدة مصمّمة للسوق السعودي ومتكاملة مع بوابة فاتورة (FATOORA).
+          منصة عربية واحدة مصمّمة للسوق ال{countryInfo.adjAr}{visitorCountry === "SA" ? " ومتكاملة مع بوابة فاتورة (FATOORA)" : ""}.
         </p>
         <div className="flex flex-wrap justify-center gap-3 mb-6">
           <Button size="lg" onClick={() => setLocation("/register")} className="gap-1.5 shadow-lg" data-testid="home-cta-register">
@@ -325,7 +325,7 @@ export default function Home() {
           منصة محاسبة كاملة في مكان واحد
         </h2>
         <p className="text-center text-muted-foreground mb-10 max-w-2xl mx-auto">
-          كل ما تحتاجه شركتك السعودية لإدارة الفوترة، المحاسبة، المبيعات، والمخزون — بدون تكامل معقد ولا تكاليف خفية.
+          كل ما تحتاجه شركتك ال{countryInfo.adjArFem} لإدارة الفوترة، المحاسبة، المبيعات، والمخزون — بدون تكامل معقد ولا تكاليف خفية.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {features.map((f, i) => (
@@ -385,7 +385,7 @@ export default function Home() {
 
       {/* For-whom strip */}
       <section className="max-w-7xl mx-auto px-4 py-14">
-        <h2 className="text-3xl font-bold text-center mb-10">مناسب لمختلف الأنشطة في السعودية</h2>
+        <h2 className="text-3xl font-bold text-center mb-10">مناسب لمختلف الأنشطة {visitorCountry === "GLOBAL" ? "في المنطقة العربية" : `في ${countryInfo.nameAr}`}</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
             { icon: Building2, label: "مؤسسات وشركات" },
@@ -412,7 +412,7 @@ export default function Home() {
           "rounded-3xl p-10 text-center text-primary-foreground shadow-xl",
           "bg-gradient-to-l from-primary to-primary/80",
         )}>
-          <h2 className="text-3xl md:text-4xl font-extrabold mb-3">جاهز تنقل محاسبتك إلى منصة سعودية حديثة؟</h2>
+          <h2 className="text-3xl md:text-4xl font-extrabold mb-3">جاهز تنقل محاسبتك إلى منصة {countryInfo.adjArFem} حديثة؟</h2>
           <p className="text-base md:text-lg opacity-90 max-w-2xl mx-auto mb-7">
             ابدأ تجربتك المجانية خلال دقيقتين — بدون بطاقة دفع، وبدعم عربي مباشر يساعدك على الانطلاق.
           </p>
@@ -434,7 +434,7 @@ export default function Home() {
       </section>
 
       <footer className="text-center text-xs text-muted-foreground pb-8 px-4">
-        © 2026 زاكود المحاسبي العالمي — نظام محاسبة سعودي معتمد من ZATCA. جميع الحقوق محفوظة.
+        © 2026 زاكود المحاسبي — نظام محاسبة {countryInfo.adjAr} معتمد من ZATCA. جميع الحقوق محفوظة.
         <span className="mx-2">•</span>
         <a href="/login" onClick={(e) => { e.preventDefault(); setLocation("/login"); }} className="hover:underline">تسجيل الدخول</a>
         <span className="mx-2">•</span>

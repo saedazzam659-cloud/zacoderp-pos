@@ -22,6 +22,10 @@ export interface Country {
   nameEn:   string;
   policyAr: string;
   policyEn: string;
+  /** صفة النسبة مذكّر — «سعودي» / «مصري»؛ GLOBAL → «عربي» */
+  adjAr: string;
+  /** صفة النسبة مؤنّث — «سعودية» / «مصرية»؛ GLOBAL → «عربية» */
+  adjArFem: string;
   currency: CountryCurrency;
 }
 
@@ -30,48 +34,56 @@ export const COUNTRIES: Country[] = [
     code: "SA", nameAr: "السعودية", nameEn: "Saudi Arabia",
     policyAr: "الالتزام بأنظمة الزكاة والضرائب ZATCA",
     policyEn: "Compliance with ZATCA tax system",
+    adjAr: "سعودي", adjArFem: "سعودية",
     currency: { code: "SAR", nameAr: "ريال سعودي", nameEn: "Saudi Riyal", symbol: "ر.س" },
   },
   {
     code: "AE", nameAr: "الإمارات", nameEn: "United Arab Emirates",
     policyAr: "الالتزام بضريبة الشركات واللوائح التجارية",
     policyEn: "Corporate tax and business regulations compliance",
+    adjAr: "إماراتي", adjArFem: "إماراتية",
     currency: { code: "AED", nameAr: "درهم إماراتي", nameEn: "UAE Dirham", symbol: "د.إ" },
   },
   {
     code: "KW", nameAr: "الكويت", nameEn: "Kuwait",
     policyAr: "الالتزام بالقوانين التجارية المحلية",
     policyEn: "Compliance with local commercial laws",
+    adjAr: "كويتي", adjArFem: "كويتية",
     currency: { code: "KWD", nameAr: "دينار كويتي", nameEn: "Kuwaiti Dinar", symbol: "د.ك" },
   },
   {
     code: "QA", nameAr: "قطر", nameEn: "Qatar",
     policyAr: "الالتزام بلوائح وزارة التجارة والصناعة",
     policyEn: "Ministry of Commerce regulations compliance",
+    adjAr: "قطري", adjArFem: "قطرية",
     currency: { code: "QAR", nameAr: "ريال قطري", nameEn: "Qatari Riyal", symbol: "ر.ق" },
   },
   {
     code: "BH", nameAr: "البحرين", nameEn: "Bahrain",
     policyAr: "الالتزام بضريبة القيمة المضافة والأنظمة التجارية",
     policyEn: "VAT and commercial regulations compliance",
+    adjAr: "بحريني", adjArFem: "بحرينية",
     currency: { code: "BHD", nameAr: "دينار بحريني", nameEn: "Bahraini Dinar", symbol: "د.ب" },
   },
   {
     code: "OM", nameAr: "عُمان", nameEn: "Oman",
     policyAr: "الالتزام بالقوانين التجارية والضريبية العُمانية",
     policyEn: "Omani tax and commercial law compliance",
+    adjAr: "عُماني", adjArFem: "عُمانية",
     currency: { code: "OMR", nameAr: "ريال عُماني", nameEn: "Omani Rial", symbol: "ر.ع" },
   },
   {
     code: "EG", nameAr: "مصر", nameEn: "Egypt",
     policyAr: "الالتزام بضريبة القيمة المضافة والقوانين المصرية",
     policyEn: "VAT and Egyptian tax compliance",
+    adjAr: "مصري", adjArFem: "مصرية",
     currency: { code: "EGP", nameAr: "جنيه مصري", nameEn: "Egyptian Pound", symbol: "ج.م" },
   },
   {
     code: "GLOBAL", nameAr: "دول أخرى", nameEn: "Other Countries",
     policyAr: "سياسات عامة حسب الدولة",
     policyEn: "General policies depending on country",
+    adjAr: "عربي", adjArFem: "عربية",
     currency: { code: "USD", nameAr: "دولار أمريكي", nameEn: "US Dollar", symbol: "$" },
   },
 ];

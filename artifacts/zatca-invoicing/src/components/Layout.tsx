@@ -3479,7 +3479,7 @@ function TopBar({
   // Update browser tab title to current page name (so opening in a new tab shows the screen name)
   useEffect(() => {
     const last = crumbs[crumbs.length - 1]?.label;
-    const appName = t("auth.appName", "زاكود المحاسبي العالمي");
+    const appName = t("auth.appName", "زاكود المحاسبي");
     document.title = last && last !== t("topbar.page") ? `${last} — ${appName}` : appName;
   }, [crumbs, t]);
 
