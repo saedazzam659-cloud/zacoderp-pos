@@ -8,3 +8,5 @@ Rule: every write path that can add settlement value against a credit invoice (r
 **Why:** a plain pre-check (check-then-write) lets two concurrent saves both pass the ≤-remaining cap and jointly overpay the invoice.
 
 **How to apply:** any NEW settlement path (new voucher type, import, API) must reuse the same lock helper + in-tx re-check in `lib/invoiceSettlement.ts` — never a standalone pre-check. Exclude the row's own old amounts on PUT (excludeId).
+
+**Voucher header-link apply (سندات كسداد):** applying an existing unlinked voucher to an invoice sets ONLY the header link — `sumVouchersForInvoice` then counts the FULL header amount, so the apply endpoint must REJECT (409) when voucher base > remaining; no clamping is possible (unlike JE apply). The invoice advisory lock does NOT serialize two requests linking the SAME voucher to DIFFERENT invoices — the claim must be a conditional `UPDATE … WHERE link IS NULL RETURNING`. Candidates must exclude vouchers with any line-level invoice link, and apply/unlink by-id must carry multiBranchScopeSpread.

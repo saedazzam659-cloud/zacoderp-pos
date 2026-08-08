@@ -89,11 +89,65 @@ export default function PurchaseInvoicePaymentsTab({
     staleTime: 15_000,
   });
 
+  // Payment vouchers paid to the SUPPLIER not yet linked to any invoice —
+  // candidates the user can APPLY as settlement (bookkeeping link only).
+  const { data: voucherCandidates = [], isLoading: loadingVCandidates } = useQuery<any[]>({
+    queryKey: ["pv-settlement-candidates", invoiceId, companyId],
+    queryFn: () => fetchJsonArray(
+      `${API}/api/payment-vouchers/settlement-candidates?companyId=${companyId}&purchaseInvoiceId=${invoiceId}`,
+      authH,
+    ),
+    enabled: !!invoiceId && !!companyId,
+    staleTime: 15_000,
+  });
+
   function invalidateSettleQueries() {
     qc.invalidateQueries({ queryKey: ["invoice-settlement-jes", "purchase", invoiceId, companyId] });
     qc.invalidateQueries({ queryKey: ["je-settlement-candidates", "purchase", invoiceId, companyId] });
+    qc.invalidateQueries({ queryKey: ["pv-settlement-candidates", invoiceId, companyId] });
     qc.invalidateQueries({ queryKey: ["invoice-payment-vouchers", invoiceId, companyId] });
   }
+
+  // «إضافة» — link an existing unlinked voucher as settlement. Unlike JEs the
+  // voucher's FULL amount counts, so the server rejects when it exceeds المتبقّي.
+  const applyVoucherMut = useMutation({
+    mutationFn: async (vId: number) => {
+      const res = await fetch(`${API}/api/payment-vouchers/${vId}/apply-settlement`, {
+        method: "POST",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId, purchaseInvoiceId: invoiceId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "فشل إضافة السند كسداد");
+      return j;
+    },
+    onSuccess: (r: any) => {
+      invalidateSettleQueries();
+      toast({
+        title: r?.partial ? "تم سداد جزء" : "تم السداد بالكامل",
+        description: r?.partial
+          ? `أُضيف السند (${fmt(Number(r.applied) || 0)}) كسداد — المتبقّي ${fmt(Number(r.remainingAfter) || 0)}`
+          : `أُضيف السند (${fmt(Number(r.applied) || 0)}) وسُدِّدت الفاتورة بالكامل`,
+      });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // فكّ ارتباط سند مرتبط من رأس السند (لا يحذف السند ولا قيده).
+  const unlinkVoucherMut = useMutation({
+    mutationFn: async (vId: number) => {
+      const res = await fetch(`${API}/api/payment-vouchers/${vId}/unlink-settlement`, {
+        method: "POST",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "فشل فكّ الارتباط");
+      return j;
+    },
+    onSuccess: () => { invalidateSettleQueries(); toast({ title: "تم فكّ ارتباط السند بالفاتورة" }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
 
   // "إضافة" — link an existing JE as settlement (server clamps ≤ المتبقي).
   const applyMut = useMutation({
@@ -365,13 +419,26 @@ export default function PurchaseInvoicePaymentsTab({
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost" size="icon" className="h-7 w-7"
-                      onClick={(e) => { e.stopPropagation(); navigate(`/cash/payment-vouchers/${v.id}`); }}
-                      title="فتح السند"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </Button>
+                    <div className="flex items-center gap-0.5">
+                      <Button
+                        variant="ghost" size="icon" className="h-7 w-7"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/cash/payment-vouchers/${v.id}`); }}
+                        title="فتح السند"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </Button>
+                      {Number(v.purchaseInvoiceId) === Number(invoiceId) && (
+                        <Button
+                          variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600"
+                          disabled={unlinkVoucherMut.isPending}
+                          onClick={(e) => { e.stopPropagation(); unlinkVoucherMut.mutate(v.id); }}
+                          title="فكّ ارتباط السند بالفاتورة (يزيل احتسابه من المسدَّد دون حذف السند)"
+                          data-testid={`btn-unlink-voucher-${v.id}`}
+                        >
+                          <Unlink className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -438,6 +505,72 @@ export default function PurchaseInvoicePaymentsTab({
                     </TableCell>
                   </TableRow>
                 ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {/* Unlinked payment vouchers on the supplier — apply as settlement */}
+      {paymentType !== "cash" && paymentType !== "bank" && (loadingVCandidates || (voucherCandidates as any[]).length > 0) && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Link2 className="h-3.5 w-3.5" />
+            سندات صرف على المورد غير مرتبطة بأي فاتورة — اضغط «إضافة» لاحتسابها كسداد لهذه الفاتورة (بدون إنشاء سند جديد)
+          </p>
+          <div className="rounded-lg border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">رقم السند</TableHead>
+                  <TableHead className="text-xs">التاريخ</TableHead>
+                  <TableHead className="text-xs">الطريقة</TableHead>
+                  <TableHead className="text-xs text-end">المبلغ</TableHead>
+                  <TableHead className="text-xs">الحالة</TableHead>
+                  <TableHead className="text-xs w-24"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingVCandidates && (
+                  <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">جارِ التحميل…</TableCell></TableRow>
+                )}
+                {(voucherCandidates as any[]).map((v: any) => {
+                  const vAmt = Number(v.amount) || 0;
+                  // Server cap is in BASE currency and counts drafts too —
+                  // mirror it: voucher base vs (available × invoice rate).
+                  const vBase = vAmt * (Number(v.exchangeRate) || 1);
+                  const availableBase = summary.available * (Number(invoiceExchangeRate) || 1);
+                  const tooBig = vBase > availableBase + 0.01;
+                  return (
+                    <TableRow key={v.id} data-testid={`voucher-candidate-row-${v.id}`}>
+                      <TableCell className="text-xs font-medium" dir="ltr">{v.code ?? `#${v.id}`}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap" dir="ltr">{v.date ? String(v.date).slice(0, 10) : "—"}</TableCell>
+                      <TableCell className="text-xs">{paymentTypeLabel(v.paymentType)}</TableCell>
+                      <TableCell className="text-xs text-end" dir="ltr">{fmt(vAmt)}</TableCell>
+                      <TableCell className="text-xs">
+                        <Badge variant={v.status === "posted" ? "default" : "secondary"} className="text-[10px]">
+                          {v.status === "posted" ? "مرحّل" : "مسودّة"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          size="sm" variant="outline" className="h-7 px-2 text-xs"
+                          disabled={applyVoucherMut.isPending || summary.available <= 0.005 || tooBig}
+                          onClick={() => applyVoucherMut.mutate(v.id)}
+                          title={summary.available <= 0.005
+                            ? "الفاتورة مسدَّدة بالكامل (بما فيها المسودّات)"
+                            : tooBig
+                              ? `مبلغ السند يتجاوز المتبقّي المتاح (${fmt(summary.available)}) — يُحتسب السند كاملاً ولا يمكن تجزئته`
+                              : "إضافة هذا السند كسداد — يُحتسب مبلغه كاملاً ولا يُنشئ سنداً جديداً"}
+                          data-testid={`btn-apply-voucher-${v.id}`}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          إضافة
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

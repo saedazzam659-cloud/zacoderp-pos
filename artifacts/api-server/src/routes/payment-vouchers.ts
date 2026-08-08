@@ -25,7 +25,7 @@ import { loadMappings, pickAccount, resolveVatInputAccountId } from "../lib/acco
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
-import { sumSettlementJEs, acquireSettlementLock } from "../lib/invoiceSettlement.js";
+import { sumSettlementJEs, acquireSettlementLock, sumVouchersForInvoice, invoiceNetDueBase } from "../lib/invoiceSettlement.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -280,6 +280,168 @@ router.get("/", async (req, res) => {
     isMulti: r.accountId == null,
     description: (r.description ?? "").trim() || lineDescByVoucher.get(r.id) || r.description,
   })));
+});
+
+// ─── Settlement candidates (سندات صرف غير مرتبطة بأي فاتورة) ───────────────
+// Payment vouchers paid to the INVOICE'S SUPPLIER that are not linked to any
+// invoice (neither header nor allocation lines). Surfaced on the purchase
+// invoice «السداد» tab with an «إضافة» button — mirrors the manual-JE
+// settlement-candidates flow. Literal sub-segment BEFORE /:id (Express 5).
+router.get("/settlement-candidates", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const invId = Number(req.query.purchaseInvoiceId);
+    if (!Number.isInteger(invId) || invId <= 0) { res.status(400).json({ error: "purchaseInvoiceId مطلوب" }); return; }
+    const [inv] = await db.select({ supplierId: purchaseInvoicesTable.supplierId })
+      .from(purchaseInvoicesTable)
+      .where(and(eq(purchaseInvoicesTable.id, invId), eq(purchaseInvoicesTable.companyId, cid)));
+    if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    if (inv.supplierId == null) { res.json([]); return; }
+    const branchScope = multiBranchScopeSpread(req, paymentVouchersTable.branchId, req.query.branchIds ?? req.query.branchId);
+    const rows = await db.select().from(paymentVouchersTable)
+      .where(and(
+        eq(paymentVouchersTable.companyId, cid),
+        eq(paymentVouchersTable.entityId, inv.supplierId),
+        sql`${paymentVouchersTable.purchaseInvoiceId} IS NULL`,
+        ...branchScope,
+      ))
+      .orderBy(desc(paymentVouchersTable.id))
+      .limit(100);
+    if (!rows.length) { res.json([]); return; }
+    // Exclude vouchers whose allocation LINES already settle some invoice —
+    // those are spoken for; adding a header link on top would double-count.
+    const linked = await db.selectDistinct({ voucherId: paymentVoucherLinesTable.voucherId })
+      .from(paymentVoucherLinesTable)
+      .where(and(
+        inArray(paymentVoucherLinesTable.voucherId, rows.map((r) => r.id)),
+        sql`${paymentVoucherLinesTable.purchaseInvoiceId} IS NOT NULL`,
+      ));
+    const busy = new Set(linked.map((r) => r.voucherId));
+    res.json(rows.filter((r) => !busy.has(r.id)).map((r) => ({
+      id: r.id, code: r.code, date: r.date, amount: r.amount,
+      exchangeRate: r.exchangeRate, paymentType: r.paymentType,
+      status: r.status, description: r.description,
+      isMulti: r.accountId == null,
+    })));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Apply an EXISTING unlinked voucher as invoice settlement ────────────────
+// Sets the header purchaseInvoiceId. A header-linked voucher counts its FULL
+// amount toward the invoice (sumVouchersForInvoice rule), so — unlike the JE
+// flow — the amount cannot be clamped: it must fit within the remaining due.
+// Race-safe: advisory lock + re-check inside the tx (invoice-settlement cap).
+router.post("/:id/apply-settlement", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.body?.companyId ? parseInt(String(req.body.companyId)) : undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const vid = Number(req.params.id);
+    const invId = Number(req.body?.purchaseInvoiceId);
+    if (!Number.isInteger(vid) || vid <= 0) { res.status(400).json({ error: "معرّف السند غير صحيح" }); return; }
+    if (!Number.isInteger(invId) || invId <= 0) { res.status(400).json({ error: "purchaseInvoiceId مطلوب" }); return; }
+
+    // Branch scope — restricted-branch users must not link vouchers/invoices
+    // outside their allowed branches (NULL-branch rows remain shared).
+    const vBranchScope = multiBranchScopeSpread(req, paymentVouchersTable.branchId, undefined);
+    const iBranchScope = multiBranchScopeSpread(req, purchaseInvoicesTable.branchId, undefined);
+
+    const out = await db.transaction(async (tx) => {
+      await acquireSettlementLock(tx, cid, "purchase", invId);
+
+      const [v] = await tx.select().from(paymentVouchersTable)
+        .where(and(eq(paymentVouchersTable.id, vid), eq(paymentVouchersTable.companyId, cid), ...vBranchScope));
+      if (!v) throw Object.assign(new Error("السند غير موجود"), { httpStatus: 404 });
+      if (v.purchaseInvoiceId != null) {
+        throw Object.assign(new Error("هذا السند مرتبط بفاتورة بالفعل"), { httpStatus: 409 });
+      }
+      const [lineLink] = await tx.select({ id: paymentVoucherLinesTable.id })
+        .from(paymentVoucherLinesTable)
+        .where(and(
+          eq(paymentVoucherLinesTable.voucherId, vid),
+          sql`${paymentVoucherLinesTable.purchaseInvoiceId} IS NOT NULL`,
+        )).limit(1);
+      if (lineLink) {
+        throw Object.assign(new Error("بنود هذا السند مرتبطة بفاتورة بالفعل"), { httpStatus: 409 });
+      }
+
+      const [inv] = await tx.select({ supplierId: purchaseInvoicesTable.supplierId })
+        .from(purchaseInvoicesTable)
+        .where(and(eq(purchaseInvoicesTable.id, invId), eq(purchaseInvoicesTable.companyId, cid), ...iBranchScope));
+      if (!inv) throw Object.assign(new Error("الفاتورة غير موجودة"), { httpStatus: 404 });
+      if (inv.supplierId == null || Number(v.entityId) !== Number(inv.supplierId)) {
+        throw Object.assign(new Error("السند ليس على مورد هذه الفاتورة"), { httpStatus: 400 });
+      }
+
+      const { netDue, paymentType } = await invoiceNetDueBase(cid, "purchase", invId);
+      if (paymentType !== "credit") {
+        throw Object.assign(new Error("لا يمكن سداد إلا فاتورة آجلة — الفواتير النقدية/البنكية تُسدَّد تلقائياً عند الترحيل"), { httpStatus: 400 });
+      }
+      const vouchers = await sumVouchersForInvoice(cid, "purchase", invId);
+      const jes = await sumSettlementJEs(cid, "purchase", invId);
+      const remainingBase = netDue - vouchers - jes;
+      if (remainingBase <= 0.005) {
+        throw Object.assign(new Error("الفاتورة مسدَّدة بالكامل — لا يوجد متبقٍّ"), { httpStatus: 409 });
+      }
+      const vBase = (parseFloat(String(v.amount)) || 0) * (parseFloat(String(v.exchangeRate)) || 1);
+      if (vBase <= 0.005) {
+        throw Object.assign(new Error("مبلغ السند يجب أن يكون أكبر من صفر"), { httpStatus: 400 });
+      }
+      // Header link counts the FULL voucher amount — no clamping possible.
+      if (vBase > remainingBase + 0.01) {
+        throw Object.assign(new Error(
+          `مبلغ السند (${vBase.toFixed(2)}) يتجاوز المتبقّي من الفاتورة (${Math.max(0, remainingBase).toFixed(2)}) — لا يمكن ربطه كاملاً. استخدم سنداً بمبلغ أقل أو سجّل دفعة جديدة بالمبلغ المتبقّي.`,
+        ), { httpStatus: 409 });
+      }
+
+      // Atomic claim — the invoice advisory lock does NOT serialize two
+      // requests applying the SAME voucher to DIFFERENT invoices, so the
+      // update must be conditional on the link still being NULL.
+      const claimed = await tx.update(paymentVouchersTable)
+        .set({ purchaseInvoiceId: invId })
+        .where(and(
+          eq(paymentVouchersTable.id, vid),
+          eq(paymentVouchersTable.companyId, cid),
+          sql`${paymentVouchersTable.purchaseInvoiceId} IS NULL`,
+        ))
+        .returning({ id: paymentVouchersTable.id });
+      if (!claimed.length) {
+        throw Object.assign(new Error("هذا السند ارتبط بفاتورة أخرى للتوّ — حدّث الصفحة"), { httpStatus: 409 });
+      }
+
+      const remainingAfter = Math.max(0, remainingBase - vBase);
+      return {
+        applied: Number(vBase.toFixed(2)),
+        remainingAfter: Number(remainingAfter.toFixed(2)),
+        partial: remainingAfter > 0.005,
+      };
+    });
+    res.json(out);
+  } catch (e: any) {
+    res.status(e?.httpStatus ?? 500).json({ error: e.message });
+  }
+});
+
+// ─── Unlink a header-linked voucher from its invoice ─────────────────────────
+// Clears ONLY the header link (line-level allocations are managed from the
+// voucher form itself). The JE stays untouched — bookkeeping link only.
+router.post("/:id/unlink-settlement", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.body?.companyId ? parseInt(String(req.body.companyId)) : undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const vid = Number(req.params.id);
+    if (!Number.isInteger(vid) || vid <= 0) { res.status(400).json({ error: "معرّف السند غير صحيح" }); return; }
+    const vBranchScope = multiBranchScopeSpread(req, paymentVouchersTable.branchId, undefined);
+    const [v] = await db.select({ id: paymentVouchersTable.id, pid: paymentVouchersTable.purchaseInvoiceId })
+      .from(paymentVouchersTable)
+      .where(and(eq(paymentVouchersTable.id, vid), eq(paymentVouchersTable.companyId, cid), ...vBranchScope));
+    if (!v) { res.status(404).json({ error: "السند غير موجود" }); return; }
+    if (v.pid == null) { res.status(409).json({ error: "السند غير مرتبط بفاتورة من رأس السند — البنود المرتبطة تُدار من شاشة السند نفسه" }); return; }
+    await db.update(paymentVouchersTable)
+      .set({ purchaseInvoiceId: null })
+      .where(eq(paymentVouchersTable.id, vid));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 router.get("/:id", async (req, res) => {
