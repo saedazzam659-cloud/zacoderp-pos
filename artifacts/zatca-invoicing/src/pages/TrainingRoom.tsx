@@ -59,6 +59,8 @@ export default function TrainingRoom() {
   const p2pRef = useRef<P2PBroadcaster | null>(null);
   const [p2pCount, setP2pCount] = useState(0);
   const [p2pStatus, setP2pStatus] = useState<"connected" | "reconnecting">("reconnecting");
+  // المدرب رجع للقائمة والبث مستمر في الخلفية (الغرفة تبقى محمّلة مخفية)
+  const [minimized, setMinimized] = useState(false);
   const [p2pChat, setP2pChat] = useState<P2PChatMsg[]>([]);
   const [p2pHands, setP2pHands] = useState<P2PHand[]>([]);
   const [p2pInput, setP2pInput] = useState("");
@@ -107,6 +109,8 @@ export default function TrainingRoom() {
   };
 
   const startBroadcast = async (s: SessionRow) => {
+    // البث ما زال يعمل في الخلفية لنفس الجلسة — عُد إليه دون إعادة اتصال (يحافظ على الكاميرا والمشاهدين)
+    if (live?.asTrainer && live.session.id === s.id) { setMinimized(false); return; }
     setBusyId(s.id);
     try {
       const info = await trainingApi.start(s.id);
@@ -130,7 +134,7 @@ export default function TrainingRoom() {
     try {
       await trainingApi.end(s.id);
       toast({ title: "تم إنهاء الجلسة" });
-      if (live?.session.id === s.id) setLive(null);
+      if (live?.session.id === s.id) { setLive(null); setMinimized(false); }
       void refresh();
     } catch (e: any) { toast({ title: "تعذّر الإنهاء", description: e.message, variant: "destructive" }); }
     finally { setBusyId(null); }
@@ -187,11 +191,10 @@ export default function TrainingRoom() {
   const sorted = useMemo(() =>
     [...rows].sort((a, b) => (a.status === "live" ? -1 : 0) - (b.status === "live" ? -1 : 0)), [rows]);
 
-  // ── داخل الغرفة ──
-  if (live) {
-    const p2pActive = live.asTrainer && live.session.allowPublic;
-    return (
-      <div className="p-4 md:p-6 h-[calc(100vh-6rem)] flex flex-col gap-2">
+  // ── داخل الغرفة — تبقى محمّلة (مخفية فقط) عند العودة للقائمة كي يستمر البث ──
+  const p2pActive = !!live && live.asTrainer && live.session.allowPublic;
+  const roomUi = live ? (
+      <div className={minimized ? "hidden" : "p-4 md:p-6 h-[calc(100vh-6rem)] flex flex-col gap-2"}>
         <div className="flex-1 min-h-0">
           <LiveRoom
             token={live.token} wsUrl={live.wsUrl}
@@ -203,13 +206,15 @@ export default function TrainingRoom() {
             autoPublishAv={live.asTrainer}
             onLocalTracksChanged={p2pActive ? (tracks) => { void p2pRef.current?.setStream(tracks); } : undefined}
             onLeave={() => {
-              const wasTrainer = live.asTrainer;
-              setLive(null); void refresh();
-              if (wasTrainer) {
+              if (live.asTrainer) {
+                // لا نغلق الغرفة — البث يستمر في الخلفية والمدرب يعود بضغطة زر
+                setMinimized(true); void refresh();
                 toast({
-                  title: "توقّف البث",
-                  description: "البث يعمل فقط أثناء وجودك داخل الغرفة — استخدم «العودة للبث» للاستمرار أو «إنهاء» لإغلاق الجلسة.",
+                  title: "البث مستمر في الخلفية",
+                  description: "الكاميرا والبث ما زالا يعملان — استخدم «العودة للبث» للرجوع أو «إنهاء» لإيقاف الجلسة.",
                 });
+              } else {
+                setLive(null); void refresh();
               }
             }}
           />
@@ -263,11 +268,30 @@ export default function TrainingRoom() {
           </div>
         )}
       </div>
-    );
-  }
+  ) : null;
 
   return (
+    <>
+    {roomUi}
+    {(!live || minimized) && (
     <div className="space-y-4 p-4 md:p-6">
+      {live && minimized && (
+        <div className="rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 p-3 flex items-center justify-between gap-3 flex-wrap" data-testid="banner-bg-broadcast">
+          <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">
+            <Radio className="h-4 w-4 animate-pulse text-red-600" />
+            البث مستمر في الخلفية — «{live.session.title}»
+            <Badge variant="outline" className="gap-1"><Users className="h-3 w-3" /> {p2pCount} مشاهد</Badge>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-500" onClick={() => setMinimized(false)} data-testid="btn-restore-broadcast">
+              <PlayCircle className="h-4 w-4" /> العودة للبث
+            </Button>
+            <Button size="sm" variant="destructive" className="gap-1" onClick={() => endSession(live.session)}>
+              <StopCircle className="h-4 w-4" /> إنهاء
+            </Button>
+          </div>
+        </div>
+      )}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -431,5 +455,7 @@ export default function TrainingRoom() {
         </DialogContent>
       </Dialog>
     </div>
+    )}
+    </>
   );
 }

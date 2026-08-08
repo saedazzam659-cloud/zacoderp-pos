@@ -11,3 +11,9 @@ description: Unified training-hall + support-room LiveKit wiring — routing, au
 - Training broadcast is browser-bound: media publishes ONLY while the trainer's tab is inside the room; leaving the room UI stops both LiveKit publishing AND the P2P broadcaster socket while DB status stays "live" — misleads viewers. Warn the trainer on leave; session list must poll (~10s) so trainee join buttons appear when a session goes live.
 - P2P viewer fail-timer contract: the 12s first-video timeout must arm ONLY on `parent-assigned` (broadcaster actually online) — never at start() or while "waiting", or viewers get bounced into an EMPTY LiveKit room and back to the join screen in a loop.
 - LiveKit billing scales with participant-minutes — 1000-viewer sessions can be costly; warn before large public sessions.
+
+## بث المدرب يستمر في الخلفية (تصغير بدل إغلاق)
+- سبب شكاوى «المدرب لم يبدأ البث بعد» المتكررة: المدرب يرجع لقائمة الجلسات (لنسخ الرابط) فيُفكَّك LiveRoom ويتوقف P2PBroadcaster فورًا، بينما الجلسة تظل «مباشر» في DB.
+- الحل: TrainingRoom لا يعمل setLive(null) عند خروج المدرب — بل `minimized` state؛ الغرفة تبقى mounted داخل div hidden (return واحد بفragment ثابت البنية وإلا React يفكّكها)، والقائمة تعرض بانر «البث مستمر في الخلفية» + العودة/إنهاء. «العودة للبث» لنفس الجلسة = setMinimized(false) بدون start جديد (يحافظ على الكاميرا والمشاهدين).
+- keep-alive: SignalSocket يرسل ping كل 25ث (وسيط النشر يقتل WS الخامل ~دقيقة)؛ الهَب يرد pong للدورين. البروادكاستر يعيد الاتصال تلقائيًا بعد 2ث ما لم يُستدعَ stop()؛ المشاهد المنتظر (بلا مسارات) يعيد الاتصال بصمت بدل fail→fallback.
+- شارة حالة للمدرب في شريط البث الموزّع: «متصل»/«جارٍ الاتصال…» عبر eng.onStatus؛ الخادم يسجّل broadcaster connected/disconnected/rejected في اللوجز.

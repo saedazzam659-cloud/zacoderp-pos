@@ -214,6 +214,7 @@ export class P2PViewer {
   private parentId: string | null = null;
   private stopped = false;
   private playTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   peerId = "";
   onState: (s: ViewerState) => void = () => {};
@@ -237,7 +238,8 @@ export class P2PViewer {
       if (this.remoteStream.getTracks().length === 0) {
         this.clearPlayTimer();
         this.onState("waiting");
-        setTimeout(() => {
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(() => {
           if (!this.stopped) this.sock.connect(`${wsBase()}?role=viewer&token=${encodeURIComponent(publicToken)}&name=${encodeURIComponent(name)}`);
         }, 2000);
         return;
@@ -404,6 +406,7 @@ export class P2PViewer {
   stop() {
     this.stopped = true;
     if (this.playTimer) { clearTimeout(this.playTimer); this.playTimer = null; }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     this.closeUpstream();
     for (const [, pc] of this.downstream) { try { pc.close(); } catch { /* ignore */ } }
     this.downstream.clear();
