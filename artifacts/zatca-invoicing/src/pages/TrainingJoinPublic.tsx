@@ -134,7 +134,12 @@ export default function TrainingJoinPublic() {
           role="subscriber"
           title={mode.join.title ?? info?.title}
           myName={name.trim()}
-          onLeave={() => setMode({ kind: "idle" })}
+          onLeave={() => {
+            // انقطاع أو مغادرة — ارجع لشاشة الانضمام مع رسالة وإعادة تحميل حالة الجلسة
+            setMode({ kind: "idle" });
+            setErr("انقطع الاتصال بالبث — اضغط «انضمام للجلسة» للمحاولة مرة أخرى");
+            trainingApi.publicInfo(token).then(setInfo).catch(() => {});
+          }}
         />
       </div>
     );

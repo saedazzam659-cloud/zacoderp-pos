@@ -76,6 +76,13 @@ export default function TrainingRoom() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // تحديث تلقائي لقائمة الجلسات — حتى يظهر زر «انضمام» للمتدربين فور بدء البث
+  useEffect(() => {
+    if (live) return;
+    const t = setInterval(() => { void refresh(); }, 10000);
+    return () => clearInterval(t);
+  }, [live, refresh]);
+
   const publicUrl = (s: SessionRow) =>
     s.publicToken ? `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, "")}/training/join/${s.publicToken}` : null;
 
@@ -193,7 +200,16 @@ export default function TrainingRoom() {
             onGrantMic={grantMic}
             autoPublishAv={live.asTrainer}
             onLocalTracksChanged={p2pActive ? (tracks) => { void p2pRef.current?.setStream(tracks); } : undefined}
-            onLeave={() => { setLive(null); void refresh(); }}
+            onLeave={() => {
+              const wasTrainer = live.asTrainer;
+              setLive(null); void refresh();
+              if (wasTrainer) {
+                toast({
+                  title: "توقّف البث",
+                  description: "البث يعمل فقط أثناء وجودك داخل الغرفة — استخدم «العودة للبث» للاستمرار أو «إنهاء» لإغلاق الجلسة.",
+                });
+              }
+            }}
           />
         </div>
         {p2pActive && (

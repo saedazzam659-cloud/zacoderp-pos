@@ -187,15 +187,28 @@ export class P2PViewer {
   onGranted: (g: { token: string; wsUrl: string; identity: string }) => void = () => {};
   onFatal: (reason: string) => void = () => {};
 
-  /** timeoutMs: مهلة الوصول لأول فيديو قبل إعلان الفشل (fallback لـ LiveKit). */
+  private timeoutMs = 12000;
+
+  /** timeoutMs: مهلة الوصول لأول فيديو بعد تعيين الأب قبل إعلان الفشل (fallback لـ LiveKit). */
   start(publicToken: string, name: string, timeoutMs = 12000) {
+    this.timeoutMs = timeoutMs;
     this.onState("connecting");
     this.sock.onMessage = (msg) => void this.handle(msg);
     this.sock.onClose = () => { if (!this.stopped) this.fail("انقطع الاتصال بالخادم"); };
     this.sock.connect(`${wsBase()}?role=viewer&token=${encodeURIComponent(publicToken)}&name=${encodeURIComponent(name)}`);
+    // لا مؤقّت فشل هنا — يبدأ فقط عند parent-assigned (أي عندما يكون المدرب متصلًا فعلًا)
+  }
+
+  /** مؤقّت الفشل يعمل فقط عندما يكون المدرب متصلًا فعلًا — لا نفشل أثناء «بانتظار المدرب». */
+  private armPlayTimer(ms = this.timeoutMs) {
+    if (this.playTimer) clearTimeout(this.playTimer);
     this.playTimer = setTimeout(() => {
       if (this.remoteStream.getTracks().length === 0) this.fail("تعذّر الوصول للبث الموزّع في الوقت المحدد");
-    }, timeoutMs);
+    }, ms);
+  }
+
+  private clearPlayTimer() {
+    if (this.playTimer) { clearTimeout(this.playTimer); this.playTimer = null; }
   }
 
   sendChat(text: string) { this.sock.send({ type: "chat", text }); }
@@ -212,11 +225,16 @@ export class P2PViewer {
     switch (msg?.type) {
       case "welcome":
         this.peerId = String(msg.peerId ?? "");
-        if (!msg.broadcasterOnline) this.onState("waiting");
+        if (!msg.broadcasterOnline) {
+          // المدرب غير متصل بعد — انتظر بلا مهلة فشل؛ السيرفر سيعلّقنا عندما يدخل
+          this.clearPlayTimer();
+          this.onState("waiting");
+        }
         break;
       case "no-parent":
       case "broadcaster-gone":
-        // لا مكان في الشجرة أو المدرب خرج — أمهل ثم فشل (الصفحة تتحول لـ LiveKit)
+        // لا مكان في الشجرة أو المدرب خرج — انتظر عودته بدون مهلة فشل
+        this.clearPlayTimer();
         this.onState("waiting");
         this.closeUpstream();
         break;
@@ -224,6 +242,7 @@ export class P2PViewer {
         this.parentId = String(msg.parentId);
         this.closeUpstream(); // سيصلنا offer جديد من الأب
         this.onState("connecting");
+        this.armPlayTimer(); // الآن المدرب متصل — مهلة الوصول للفيديو تبدأ من هنا
         break;
       case "viewer-count": this.onViewerCount(Number(msg.n) || 0); break;
       case "chat": this.onChat({ name: String(msg.name ?? "مشاهد"), text: String(msg.text ?? ""), fromTrainer: !!msg.fromTrainer, at: Date.now() }); break;
