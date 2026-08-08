@@ -14,6 +14,7 @@ import { CalendarClock, Save, Trash2, Loader2, CheckCircle2, XCircle, Clock, Spa
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/ui/date-field";
+import { DailyBoard, MovementsTab, PermissionsTab, ViolationsTab, ApprovalTab } from "./attendance/AttendancePlusTabs";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -23,6 +24,7 @@ export default function Attendance() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.attendance.${k}`, opts) as string;
+  const trp = (k: string, opts?: any) => t(`hrPages.attendancePlus.${k}`, opts) as string;
   const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
 
   const STATUS: Record<string, { label: string; cls: string; icon: any }> = {
@@ -180,10 +182,21 @@ export default function Attendance() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="daily" data-testid="tab-daily">{tr("tabDaily")}</TabsTrigger>
+          <TabsTrigger value="board" data-testid="tab-board">{trp("tabBoard")}</TabsTrigger>
+          <TabsTrigger value="movements" data-testid="tab-movements">{trp("tabMovements")}</TabsTrigger>
+          <TabsTrigger value="permissions" data-testid="tab-permissions">{trp("tabPermissions")}</TabsTrigger>
+          <TabsTrigger value="violations" data-testid="tab-violations">{trp("tabViolations")}</TabsTrigger>
           <TabsTrigger value="monthly" data-testid="tab-monthly">{tr("tabMonthly")}</TabsTrigger>
+          <TabsTrigger value="approval" data-testid="tab-approval">{trp("tabApproval")}</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="board"><DailyBoard date={date} /></TabsContent>
+        <TabsContent value="movements"><MovementsTab date={date} /></TabsContent>
+        <TabsContent value="permissions"><PermissionsTab date={date} /></TabsContent>
+        <TabsContent value="violations"><ViolationsTab date={date} /></TabsContent>
+        <TabsContent value="approval"><ApprovalTab date={date} /></TabsContent>
 
         <TabsContent value="daily" className="space-y-3">
           <div className="rounded-lg border bg-card p-3 flex flex-wrap items-center gap-2">

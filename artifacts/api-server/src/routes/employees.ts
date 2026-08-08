@@ -12,6 +12,7 @@ import {
   dateOrNull, requireDate, assertDateOrder, moneyOrZero, requirePositiveMoney,
   intOrDefault, emailOrNull, mobileOrNull, idNumberOrNull, timeOrNull, respondHrError,
 } from "../lib/hrValidate.js";
+import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -631,6 +632,8 @@ router.post("/attendance", async (req, res) => {
     const b = req.body || {};
     if (!b.employeeId || !b.date) { res.status(400).json({ error: "الموظف والتاريخ مطلوبان" }); return; }
     const date = requireDate(b.date, "تاريخ الحضور");
+    await assertDayOpen(cid, date);
+    await assertPeriodNotTransferred(cid, date);
     const checkIn = timeOrNull(b.checkIn, "وقت الحضور");
     const checkOut = timeOrNull(b.checkOut, "وقت الانصراف");
     const { worked, overtime } = calcWorkedHours(checkIn ?? undefined, checkOut ?? undefined);
@@ -663,6 +666,11 @@ router.put("/attendance/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const b = req.body || {};
+    const [existingAtt] = await db.select({ date: employeeAttendanceTable.date }).from(employeeAttendanceTable)
+      .where(and(eq(employeeAttendanceTable.id, id), eq(employeeAttendanceTable.companyId, cid)));
+    if (!existingAtt) { res.status(404).json({ error: "سجل الحضور غير موجود" }); return; }
+    await assertDayOpen(cid, existingAtt.date);
+    await assertPeriodNotTransferred(cid, existingAtt.date);
     const checkIn = timeOrNull(b.checkIn, "وقت الحضور");
     const checkOut = timeOrNull(b.checkOut, "وقت الانصراف");
     const { worked, overtime } = calcWorkedHours(checkIn ?? undefined, checkOut ?? undefined);
@@ -683,10 +691,16 @@ router.put("/attendance/:id", async (req, res) => {
 router.delete("/attendance/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    const [attRow] = await db.select({ date: employeeAttendanceTable.date }).from(employeeAttendanceTable)
+      .where(and(eq(employeeAttendanceTable.id, Number(req.params.id)), eq(employeeAttendanceTable.companyId, cid)));
+    if (attRow) {
+      await assertDayOpen(cid, attRow.date);
+      await assertPeriodNotTransferred(cid, attRow.date);
+    }
     await db.delete(employeeAttendanceTable)
       .where(and(eq(employeeAttendanceTable.id, Number(req.params.id)), eq(employeeAttendanceTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.post("/attendance/bulk", async (req, res) => {
@@ -695,6 +709,8 @@ router.post("/attendance/bulk", async (req, res) => {
     const { date: rawDate, records } = req.body as any;
     if (!rawDate || !Array.isArray(records)) { res.status(400).json({ error: "التاريخ والسجلات مطلوبة" }); return; }
     const d = requireDate(rawDate, "تاريخ الحضور");
+    await assertDayOpen(cid, d);
+    await assertPeriodNotTransferred(cid, d);
     const out: any[] = [];
     for (const r of records) {
       if (!r.employeeId) continue;

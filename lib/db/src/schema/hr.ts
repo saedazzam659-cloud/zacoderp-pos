@@ -78,6 +78,21 @@ export const employeeContractsTable = pgTable("employee_contracts", {
   transportAllow: decimal("transport_allow", { precision: 12, scale: 2 }).default("0"),
   otherAllow:     decimal("other_allow", { precision: 12, scale: 2 }).default("0"),
   workingHours:   integer("working_hours").default(8),
+  // ─── Attendance & time-management contract fields (وثيقة الحضور والانصراف) ──
+  // Schedule is read from the contract — NOT re-entered daily. All ADDITIVE.
+  shiftId:            integer("shift_id"),            // FK → attendance_shifts (soft)
+  workStart:          text("work_start"),              // "08:00" — overrides shift when set
+  workEnd:            text("work_end"),                // "16:00"
+  weeklyHours:        decimal("weekly_hours", { precision: 5, scale: 2 }),
+  workDaysPerWeek:    integer("work_days_per_week"),
+  restDays:           text("rest_days"),               // JSON [5,6] = Fri,Sat (0=Sun)
+  lateGraceMin:       integer("late_grace_min"),       // فترة سماح التأخير
+  earlyGraceMin:      integer("early_grace_min"),      // فترة سماح الانصراف المبكر
+  overtimeMinMinutes: integer("overtime_min_minutes"), // الحد الأدنى لاحتساب الإضافي
+  overtimePolicy:     text("overtime_policy"),         // none | after_shift | after_daily_hours
+  permissionMonthlyMinutes: integer("permission_monthly_minutes"), // رصيد الاستئذان الشهري
+  permissionMaxPerRequestMinutes: integer("permission_max_per_request_minutes"),
+  permissionAllowExceed: boolean("permission_allow_exceed"),
   probationDays:  integer("probation_days").default(90),
   noticePeriod:   integer("notice_period_days").default(60),
   vacationDays:   integer("vacation_days").default(21),
@@ -101,6 +116,17 @@ export const employeeAttendanceTable = pgTable("employee_attendance", {
   lateMinutes:  integer("late_minutes").default(0),
   status:       text("status").notNull().default("present"),
   notes:        text("notes"),
+  // ─── Derived time-management buckets (engine-computed, additive) ─────
+  // Rule 16 (عدم التكرار): every scheduled minute lands in EXACTLY ONE
+  // bucket — worked, paid permission, unpaid permission, late, early
+  // leave, or missing. The engine recomputes these from raw movements.
+  earlyLeaveMinutes:      integer("early_leave_minutes"),
+  breakMinutes:           integer("break_minutes"),
+  permissionPaidMinutes:  integer("permission_paid_minutes"),
+  permissionUnpaidMinutes:integer("permission_unpaid_minutes"),
+  missingMinutes:         integer("missing_minutes"),
+  netHours:               decimal("net_hours", { precision: 6, scale: 2 }),
+  calcSource:             text("calc_source"),   // engine | manual
   aiMethod:     text("ai_method"),
   aiConfidenceIn: decimal("ai_confidence_in", { precision: 5, scale: 4 }),
   aiConfidenceOut: decimal("ai_confidence_out", { precision: 5, scale: 4 }),
@@ -363,6 +389,124 @@ export const mudadSalaryBatchLinesTable = pgTable("mudad_salary_batch_lines", {
   status:          text("status").notNull().default("pending"), // sent | rejected | pending | excluded
   rejectionReason: text("rejection_reason"),
   createdAt:       timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── Attendance Shifts (الورديات) ─────────────────────────────────────────────
+// Morning / evening / night / flexible shifts, incl. cross-midnight ones.
+// Contracts point at a shift; per-contract workStart/workEnd override it.
+export const attendanceShiftsTable = pgTable("attendance_shifts", {
+  id:             serial("id").primaryKey(),
+  companyId:      integer("company_id").references(() => companiesTable.id).notNull(),
+  name:           text("name").notNull(),
+  startTime:      text("start_time").notNull(),  // "08:00"
+  endTime:        text("end_time").notNull(),    // "16:00" — may be < startTime (تعبر منتصف الليل)
+  crossesMidnight:boolean("crosses_midnight").notNull().default(false),
+  breakMinutes:   integer("break_minutes").notNull().default(0),
+  lateGraceMin:   integer("late_grace_min").notNull().default(0),
+  earlyGraceMin:  integer("early_grace_min").notNull().default(0),
+  overtimeMinMinutes: integer("overtime_min_minutes").notNull().default(0),
+  restDays:       text("rest_days"),              // JSON [5,6]
+  active:         boolean("active").notNull().default(true),
+  notes:          text("notes"),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+  updatedAt:      timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ─── Attendance Movements (السجل اليومي للحركات) ─────────────────────────────
+// EVERY punch is a row: device, mobile app, manual entry, API. The daily
+// attendance row is DERIVED from these; recalc never mutates raw movements.
+// Duplicate-punch protection: UNIQUE (employee, date, time, type) — importers
+// and devices must insert with ON CONFLICT DO NOTHING (اكتشاف البصمات المكررة).
+export const attendanceMovementsTable = pgTable("attendance_movements", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:   integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  date:         date("date").notNull(),
+  time:         text("time").notNull(),           // "HH:MM"
+  type:         text("type").notNull(),           // in | out
+  source:       text("source").notNull().default("manual"), // device | mobile | manual | api | other
+  deviceId:     text("device_id"),
+  location:     text("location"),
+  // Link to the exit permission this OUT/IN pair belongs to (خروج استئذان) —
+  // set automatically when an approved permission window covers the punch.
+  exitPermissionId: integer("exit_permission_id"),
+  enteredBy:    integer("entered_by"),
+  editReason:   text("edit_reason"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  uqPunch: unique("uq_att_movement_punch").on(t.employeeId, t.date, t.time, t.type),
+}));
+
+// ─── Exit Permissions (استئذان الخروج) ───────────────────────────────────────
+// Full cycle: draft → pending → approved/rejected → (cancelled/expired).
+// An APPROVED permission window is excluded from lateness / early-leave /
+// missing-hours so the same minutes are NEVER double-counted (قاعدة 16).
+export const exitPermissionsTable = pgTable("exit_permissions", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:   integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  date:         date("date").notNull(),
+  startTime:    text("start_time").notNull(),     // "12:00"
+  endTime:      text("end_time").notNull(),       // "13:00"
+  minutes:      integer("minutes").notNull(),     // derived, stored for reporting
+  permissionType: text("permission_type").notNull().default("personal"), // personal | official | medical | other
+  paid:         boolean("paid").notNull().default(true),
+  reason:       text("reason"),
+  notes:        text("notes"),
+  status:       text("status").notNull().default("pending"), // draft|pending|approved|rejected|cancelled|expired
+  approverId:   integer("approver_id"),
+  decidedBy:    integer("decided_by"),
+  decidedAt:    timestamp("decided_at"),
+  decisionNote: text("decision_note"),
+  createdBy:    integer("created_by"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ─── Attendance Day Locks (اعتماد/قفل اليوم) ─────────────────────────────────
+// One row per company+date. approved = HR signed the day off; locked = no
+// further edits (movements/permissions/manual rows) without reopen.
+export const attendanceDayLocksTable = pgTable("attendance_day_locks", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").references(() => companiesTable.id).notNull(),
+  date:         date("date").notNull(),
+  status:       text("status").notNull().default("approved"), // approved | locked
+  lockedBy:     integer("locked_by"),
+  lockedAt:     timestamp("locked_at").defaultNow().notNull(),
+  reopenedBy:   integer("reopened_by"),
+  reopenedAt:   timestamp("reopened_at"),
+  notes:        text("notes"),
+}, (t) => ({
+  uqDay: unique("uq_att_day_lock").on(t.companyId, t.date),
+}));
+
+// ─── Attendance → Payroll transfers (منع الترحيل المكرر) ─────────────────────
+// One row per company+period ("YYYY-MM"). The UNIQUE constraint is the ONLY
+// thing standing between payroll and a double transfer — never remove it.
+export const attendancePayrollTransfersTable = pgTable("attendance_payroll_transfers", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").references(() => companiesTable.id).notNull(),
+  period:       text("period").notNull(),          // "2026-08"
+  summary:      text("summary"),                   // JSON snapshot of per-employee totals
+  transferredBy:integer("transferred_by"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  uqPeriod: unique("uq_att_payroll_transfer").on(t.companyId, t.period),
+}));
+
+// ─── Attendance Audit Log (سجل التدقيق) ──────────────────────────────────────
+export const attendanceAuditTable = pgTable("attendance_audit", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").references(() => companiesTable.id).notNull(),
+  userId:       integer("user_id"),
+  action:       text("action").notNull(),          // create|update|delete|approve|reject|lock|reopen|recalc|transfer
+  entity:       text("entity").notNull(),          // movement|permission|attendance|day_lock|payroll_transfer|shift
+  entityId:     integer("entity_id"),
+  oldValue:     text("old_value"),
+  newValue:     text("new_value"),
+  reason:       text("reason"),
+  ip:           text("ip"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
 });
 
 export const employeeLeavesTable = pgTable("employee_leaves", {
