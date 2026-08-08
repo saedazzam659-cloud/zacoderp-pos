@@ -203,7 +203,11 @@ async function onBroadcaster(ws: WebSocket, url: URL) {
   const sameCompany = u.companyId != null && u.companyId === session.companyId;
   const allowed = u.role === "superadmin"
     || (sameCompany && (u.id === session.trainerUserId || u.role === "admin"));
-  if (!allowed) { send(ws, { type: "error", message: "غير مصرح" }); ws.close(4403, "forbidden"); return; }
+  if (!allowed) {
+    logger.warn({ sessionId, userId: u.id, role: u.role }, "trainingP2P: broadcaster rejected (forbidden)");
+    send(ws, { type: "error", message: "غير مصرح" }); ws.close(4403, "forbidden"); return;
+  }
+  logger.info({ sessionId, userId: u.id }, "trainingP2P: broadcaster connected");
 
   let room = rooms.get(sessionId);
   if (!room) {
@@ -225,6 +229,7 @@ async function onBroadcaster(ws: WebSocket, url: URL) {
     if (!r || r.broadcaster !== ws) return;
 
     switch (msg?.type) {
+      case "ping": { send(ws, { type: "pong" }); break; }
       case "signal": {
         const target = r.viewers.get(String(msg.to));
         if (target) send(target.ws, { type: "signal", from: "__root__", data: msg.data });
@@ -259,6 +264,7 @@ async function onBroadcaster(ws: WebSocket, url: URL) {
   ws.on("close", () => {
     const r = rooms.get(sessionId);
     if (!r || r.broadcaster !== ws) return;
+    logger.info({ sessionId }, "trainingP2P: broadcaster disconnected");
     r.broadcaster = null;
     for (const v of r.viewers.values()) {
       v.parentId = null; v.children.clear();
@@ -313,6 +319,7 @@ async function onViewer(ws: WebSocket, url: URL) {
     if (!r || !me) return;
 
     switch (msg?.type) {
+      case "ping": { send(ws, { type: "pong" }); break; }
       case "signal": {
         const to = String(msg.to ?? "");
         // مسموح فقط: الأب أو أحد الأبناء (يمنع التجسس على أي peer آخر)

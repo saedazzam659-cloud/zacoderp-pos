@@ -32,16 +32,33 @@ class SignalSocket {
   ws: WebSocket | null = null;
   onMessage: (msg: any) => void = () => {};
   onClose: () => void = () => {};
+  onOpen: () => void = () => {};
   private closed = false;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   connect(url: string) {
+    this.stopPing();
     const ws = new WebSocket(url);
     this.ws = ws;
-    ws.onmessage = (ev) => {
-      try { this.onMessage(JSON.parse(String(ev.data))); } catch { /* ignore */ }
+    ws.onopen = () => {
+      if (this.closed) return;
+      // keep-alive: وسيط النشر يقطع اتصالات WS الخاملة — نرسل ping كل 25 ثانية
+      this.stopPing();
+      this.pingTimer = setInterval(() => this.send({ type: "ping" }), 25000);
+      this.onOpen();
     };
-    ws.onclose = () => { if (!this.closed) this.onClose(); };
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(String(ev.data));
+        if (msg?.type === "pong") return;
+        this.onMessage(msg);
+      } catch { /* ignore */ }
+    };
+    ws.onclose = () => { this.stopPing(); if (!this.closed) this.onClose(); };
     ws.onerror = () => { /* onclose يتكفل */ };
+  }
+  private stopPing() {
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
   }
   send(msg: Json) {
     if (this.ws?.readyState === WebSocket.OPEN) {
@@ -50,6 +67,7 @@ class SignalSocket {
   }
   close() {
     this.closed = true;
+    this.stopPing();
     try { this.ws?.close(); } catch { /* ignore */ }
     this.ws = null;
   }
@@ -89,11 +107,27 @@ export class P2PBroadcaster {
   onChat: (m: P2PChatMsg) => void = () => {};
   onHand: (h: P2PHand, up: boolean) => void = () => {};
   onError: (msg: string) => void = () => {};
+  /** حالة اتصال قناة البث الموزّع — للعرض في واجهة المدرب. */
+  onStatus: (s: "connected" | "reconnecting") => void = () => {};
+
+  private stopped = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   start(sessionId: number) {
-    const auth = localStorage.getItem("zatca_token") ?? "";
     this.sock.onMessage = (msg) => void this.handle(msg);
-    this.sock.onClose = () => { /* المدرب يقفل الصفحة أو ينهي — لا إعادة اتصال تلقائي */ };
+    this.sock.onOpen = () => this.onStatus("connected");
+    // انقطاع الشبكة أو قطع الوسيط — أعد الاتصال تلقائيًا ما دام المدرب داخل الغرفة
+    this.sock.onClose = () => {
+      if (this.stopped) return;
+      this.onStatus("reconnecting");
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = setTimeout(() => { if (!this.stopped) this.dial(sessionId); }, 2000);
+    };
+    this.dial(sessionId);
+  }
+
+  private dial(sessionId: number) {
+    const auth = localStorage.getItem("zatca_token") ?? "";
     this.sock.connect(`${wsBase()}?role=broadcaster&session=${sessionId}&auth=${encodeURIComponent(auth)}`);
   }
 
@@ -161,6 +195,8 @@ export class P2PBroadcaster {
   }
 
   stop() {
+    this.stopped = true;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     for (const [, pc] of this.children) { try { pc.close(); } catch { /* ignore */ } }
     this.children.clear();
     this.sock.close();
@@ -194,7 +230,20 @@ export class P2PViewer {
     this.timeoutMs = timeoutMs;
     this.onState("connecting");
     this.sock.onMessage = (msg) => void this.handle(msg);
-    this.sock.onClose = () => { if (!this.stopped) this.fail("انقطع الاتصال بالخادم"); };
+    this.sock.onClose = () => {
+      if (this.stopped) return;
+      // إن كنا ما زلنا ننتظر البث (لا فيديو بعد) فأعد الاتصال بصمت بدل الفشل —
+      // وسيط النشر قد يقطع الاتصال الخامل أثناء الانتظار الطويل
+      if (this.remoteStream.getTracks().length === 0) {
+        this.clearPlayTimer();
+        this.onState("waiting");
+        setTimeout(() => {
+          if (!this.stopped) this.sock.connect(`${wsBase()}?role=viewer&token=${encodeURIComponent(publicToken)}&name=${encodeURIComponent(name)}`);
+        }, 2000);
+        return;
+      }
+      this.fail("انقطع الاتصال بالخادم");
+    };
     this.sock.connect(`${wsBase()}?role=viewer&token=${encodeURIComponent(publicToken)}&name=${encodeURIComponent(name)}`);
     // لا مؤقّت فشل هنا — يبدأ فقط عند parent-assigned (أي عندما يكون المدرب متصلًا فعلًا)
   }

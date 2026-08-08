@@ -58,6 +58,7 @@ export default function TrainingRoom() {
   // البث الموزّع P2P (يعمل تلقائيًا عندما تكون الجلسة برابط عام)
   const p2pRef = useRef<P2PBroadcaster | null>(null);
   const [p2pCount, setP2pCount] = useState(0);
+  const [p2pStatus, setP2pStatus] = useState<"connected" | "reconnecting">("reconnecting");
   const [p2pChat, setP2pChat] = useState<P2PChatMsg[]>([]);
   const [p2pHands, setP2pHands] = useState<P2PHand[]>([]);
   const [p2pInput, setP2pInput] = useState("");
@@ -158,6 +159,7 @@ export default function TrainingRoom() {
       ? (prev.some(x => x.peerId === h.peerId) ? prev : [...prev, h])
       : prev.filter(x => x.peerId !== h.peerId));
     eng.onError = (m) => toast({ title: m, variant: "destructive" });
+    eng.onStatus = setP2pStatus;
     eng.start(live.session.id);
     p2pRef.current = eng;
     return () => {
@@ -219,6 +221,9 @@ export default function TrainingRoom() {
                 <Share2 className="h-3.5 w-3.5 text-emerald-600" />
                 البث الموزّع (الرابط العام)
                 <Badge variant="outline" className="gap-1"><Users className="h-3 w-3" /> {p2pCount} مشاهد</Badge>
+                {p2pStatus === "connected"
+                  ? <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-600 text-white" data-testid="badge-p2p-status">متصل</Badge>
+                  : <Badge variant="destructive" className="gap-1 animate-pulse" data-testid="badge-p2p-status">جارٍ الاتصال…</Badge>}
               </div>
               {p2pHands.length > 0 && (
                 <div className="flex items-center gap-1.5 flex-wrap">
