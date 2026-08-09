@@ -90,6 +90,7 @@ const EMPTY = {
   currencyCode: "", exchangeRate: "1", notes: "",
   discountAmount: "0",
   priceIncludesVat: false,
+  postVariance: false,
   inventoryAccountId: "", taxAccountId: "", discountAccountId: "",
 };
 
@@ -429,6 +430,7 @@ export default function PurchaseReturns() {
         notes:        full.notes ?? "",
         discountAmount: String(full.discountAmount ?? "0"),
         priceIncludesVat: !!full.priceIncludesVat,
+        postVariance: !!full.postVariance,
         inventoryAccountId: full.inventoryAccountId ? String(full.inventoryAccountId) : "",
         taxAccountId:       full.taxAccountId       ? String(full.taxAccountId)       : "",
         discountAccountId:  full.discountAccountId  ? String(full.discountAccountId)  : "",
@@ -478,6 +480,7 @@ export default function PurchaseReturns() {
         notes:        full.notes ?? "",
         discountAmount: String(full.discountAmount ?? "0"),
         priceIncludesVat: !!full.priceIncludesVat,
+        postVariance: !!full.postVariance,
         inventoryAccountId: full.inventoryAccountId ? String(full.inventoryAccountId) : "",
         taxAccountId:       full.taxAccountId       ? String(full.taxAccountId)       : "",
         discountAccountId:  full.discountAccountId  ? String(full.discountAccountId)  : "",
@@ -615,6 +618,8 @@ export default function PurchaseReturns() {
     if (!invId || !user || !currencies.length) return;
     prefilledRef.current = true;
     if (params.get("newDraft") === "1") newDraftInvoiceIdRef.current = invId;
+    // &variance=1 من بوباب الإرجاع — يرحّل المخزون بتكلفته الفعلية مع سطر فروق.
+    if (params.get("variance") === "1") setForm((p: any) => ({ ...p, postVariance: true }));
     loadInvoiceIntoForm(invId, { openForm: true });
   }, [user, currencies.length]);
 
@@ -854,6 +859,7 @@ export default function PurchaseReturns() {
       taxAccountId:       form.taxAccountId       ? Number(form.taxAccountId)       : null,
       discountAccountId:  form.discountAccountId  ? Number(form.discountAccountId)  : null,
       taxId: headerTaxId ? Number(headerTaxId) : null,
+      postVariance: !!form.postVariance,
       discountAmount: docDiscountAmt.toFixed(2),
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
@@ -1653,6 +1659,22 @@ ${sections}
                     </SelectItem>
                   </SelectContent>
                 </Select>
+              </Field>
+              <Field label="قيد فروق الأسعار">
+                <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={!!form.postVariance}
+                    onChange={(e) => setForm((p: any) => ({ ...p, postVariance: e.target.checked }))}
+                    data-testid="checkbox-post-variance"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {form.postVariance
+                      ? "المخزون بتكلفته الفعلية والفرق على حساب فروق الأسعار"
+                      : "القيد بقيمة المستند (بدون سطر فروق)"}
+                  </span>
+                </label>
               </Field>
               <Field label={tr("notes")}><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>

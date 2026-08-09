@@ -94,6 +94,8 @@ export default function EmbeddedReturnsTab({
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [mode, setMode] = useState<ReturnMode>("partial");
+  // قيد فروق الأسعار (مرتجع المشتريات فقط) — الافتراضي OFF = قيد بقيمة المستند.
+  const [withVariance, setWithVariance] = useState(false);
 
   const { data: allReturns = [], isLoading } = useQuery<any[]>({
     queryKey: ["embedded-returns", kind, companyId, invoiceId],
@@ -123,7 +125,8 @@ export default function EmbeddedReturnsTab({
   }
 
   function go() {
-    const base = `${cfg.returnsPath}?fromInvoice=${invoiceId}`;
+    const vr = kind === "purchase" && withVariance ? "&variance=1" : "";
+    const base = `${cfg.returnsPath}?fromInvoice=${invoiceId}${vr}`;
     if (mode === "partial") navigate(base);
     else if (mode === "full") navigate(`${base}&full=1`);
     else navigate(`${base}&full=1&newDraft=1`);
@@ -241,6 +244,26 @@ export default function EmbeddedReturnsTab({
               );
             })}
           </div>
+
+          {kind === "purchase" && (
+            <label className="flex items-center gap-2 rounded-lg border p-3 text-sm cursor-pointer select-none hover:bg-muted/40">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-primary"
+                checked={withVariance}
+                onChange={(e) => setWithVariance(e.target.checked)}
+                data-testid="checkbox-return-variance"
+              />
+              <span>
+                <span className="block font-medium">قيد فروق الأسعار</span>
+                <span className="block text-xs text-muted-foreground mt-0.5">
+                  {withVariance
+                    ? "سيُرحَّل المخزون بتكلفته الفعلية ويُسجَّل الفرق على حساب فروق الأسعار"
+                    : "الافتراضي: القيد بقيمة المستند — المورد مدين بالإجمالي، المخزون والضريبة دائن (بدون سطر فروق)"}
+                </span>
+              </span>
+            </label>
+          )}
 
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>إلغاء</Button>

@@ -246,6 +246,11 @@ export const purchaseReturnsTable = pgTable("purchase_returns", {
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
   taxId:         integer("tax_id"),
+  // When TRUE the posting JE credits inventory at ACTUAL stock-out cost and
+  // routes the doc-vs-cost delta to the purchase_return.variance account.
+  // Default FALSE = conventional JE: Cr inventory at DOCUMENT value (net),
+  // no variance line.
+  postVariance:  boolean("post_variance").notNull().default(false),
   status:        text("status").notNull().default("draft"),
   inventoryAccountId: integer("inventory_account_id"),
   taxAccountId:       integer("tax_account_id"),

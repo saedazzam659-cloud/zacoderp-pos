@@ -2813,7 +2813,7 @@ router.post("/purchase-returns", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, supplierInvoiceNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
-            inventoryAccountId, taxAccountId, discountAccountId, taxId } = req.body;
+            inventoryAccountId, taxAccountId, discountAccountId, taxId, postVariance } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
@@ -2865,6 +2865,7 @@ router.post("/purchase-returns", async (req, res) => {
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       taxId:              taxId ? Number(taxId) : null,
+      postVariance: postVariance === true || postVariance === "true",
       status: "draft", notes: notes || null,
     }).returning();
     if (lines?.length) {
@@ -2900,7 +2901,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
     // docNumber is intentionally not destructured — immutable on edit.
     const { supplierInvoiceNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
-            inventoryAccountId, taxAccountId, discountAccountId, taxId } = req.body;
+            inventoryAccountId, taxAccountId, discountAccountId, taxId, postVariance } = req.body;
     const [existing] = await db.select().from(purchaseReturnsTable)
       .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
@@ -2927,6 +2928,10 @@ router.put("/purchase-returns/:id", async (req, res) => {
       vatAmount: String(vatAmount || "0"),
       discountAmount: String(discountAmount || "0"),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
+      // Preserve the stored flag when the field is absent (partial PUT).
+      postVariance: postVariance === undefined
+        ? existing.postVariance
+        : (postVariance === true || postVariance === "true"),
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
@@ -3070,6 +3075,9 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     // Keyed by "warehouseId|costCenterCode" — the OPTIONAL per-line cost center
     // splits the inventory credit per cost center; "" falls back to header cc.
     const inventoryByWarehouse: Record<string, number> = {};
+    // Same keys, but at DOCUMENT line value (net of discount, excl VAT) —
+    // used for the conventional no-variance JE (the default).
+    const docNetByWarehouse: Record<string, number> = {};
     // Cross-line bucket consumption — duplicate (item, warehouse) lines in
     // the same return must share a batch's returnable headroom. Without
     // this, both lines would see the same `alreadyByBucket` snapshot and
@@ -3200,6 +3208,9 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
       const lineRemovedCost = parts.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
       const whCcKey = `${line.warehouseId}|${(((line as any).costCenter ?? "") as string).toString().trim()}`;
       inventoryByWarehouse[whCcKey] = (inventoryByWarehouse[whCcKey] ?? 0) + lineRemovedCost;
+      // Parallel accumulation at DOCUMENT value (net of discount, excl VAT) —
+      // used when the return posts WITHOUT a variance line (default).
+      docNetByWarehouse[whCcKey] = (docNetByWarehouse[whCcKey] ?? 0) + paidLineValue;
 
       const wac = qty > 0 ? lineRemovedCost / qty : costUnit;
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, wac);
@@ -3257,7 +3268,8 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     if (!counterpartyAccountId) missing.push(ret.paymentType === "cash" ? "حساب الخزنة" : ret.paymentType === "bank" ? "الحساب البنكي" : "حساب المورد");
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
-    for (const [key, amt] of Object.entries(inventoryByWarehouse)) {
+    // Check BOTH maps — the JE may credit at actual cost OR doc value.
+    for (const [key, amt] of Object.entries({ ...inventoryByWarehouse, ...docNetByWarehouse })) {
       if (amt <= 0) continue;
       const wid = Number(key.split("|")[0]);
       if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
@@ -3278,10 +3290,34 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     // account. Sub-cent drift (≤ 0.01 SAR) is silently nudged into the
     // last inventory line instead of forcing the user to wire a variance
     // account just for rounding.
-    const goodsCostTotal = Object.values(inventoryByWarehouse).reduce((s, v) => s + v, 0);
+    // Two posting flavors (per-return flag, default OFF = conventional):
+    //   * postVariance=false → Cr inventory at DOCUMENT value (net) per
+    //     warehouse — supplier DR gross, inventory CR net, VAT CR. No
+    //     variance account needed; GL follows the document.
+    //   * postVariance=true  → Cr inventory at ACTUAL stock-out cost and
+    //     route the doc-vs-cost delta to the variance account (old behavior).
+    const useVariance = (ret as any).postVariance === true;
+    let creditBaseByWh = useVariance ? inventoryByWarehouse : docNetByWarehouse;
+    if (!useVariance) {
+      // paidLineValue is the RAW discounted line value — with price-includes-
+      // VAT it is gross, and header discount/tax modes can also skew it.
+      // Scale ALL buckets proportionally so their sum equals the document
+      // subtotal (net of VAT) — never dump the difference into one bucket.
+      const rawTotal = Object.values(docNetByWarehouse).reduce((s, v) => s + v, 0);
+      if (rawTotal <= 0 && subtotal > 0.01) {
+        throw new Error("لا يمكن ترحيل المرتجع بقيمة المستند: لا توجد بنود مخزنية (صنف + مستودع) تحمل قيمة. حدّد الصنف والمستودع على البنود أو فعّل قيد فروق الأسعار.");
+      }
+      if (rawTotal > 0 && Math.abs(rawTotal - subtotal) > 0.005) {
+        const scale = subtotal / rawTotal;
+        creditBaseByWh = Object.fromEntries(
+          Object.entries(docNetByWarehouse).map(([k, v]) => [k, Math.round(v * scale * 100) / 100]),
+        );
+      }
+    }
+    const goodsCostTotal = Object.values(creditBaseByWh).reduce((s, v) => s + v, 0);
     const varianceDelta  = subtotal - goodsCostTotal; // >0 → CR variance (refund > cost = gain); <0 → DR variance (refund < cost = loss)
     const VARIANCE_NUDGE_THRESHOLD = 0.01;
-    const needsVarianceLine = Math.abs(varianceDelta) > VARIANCE_NUDGE_THRESHOLD;
+    const needsVarianceLine = useVariance && Math.abs(varianceDelta) > VARIANCE_NUDGE_THRESHOLD;
     if (needsVarianceLine && !varianceAccId) {
       missing.push(`حساب فروق سعر مرتجع المشتريات (الفرق = ${varianceDelta.toFixed(2)} ر.س — اربط الحساب من /admin/accounting-mappings تحت "مرتجع المشتريات")`);
     }
@@ -3289,8 +3325,9 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
       throw new Error(`يجب تحديد الحسابات التالية قبل الترحيل: ${missing.join("، ")}`);
     }
 
-    // Build inventory credits at actual cost; nudge sub-cent drift only.
-    const inventoryCreditByWh: Record<string, number> = { ...inventoryByWarehouse };
+    // Build inventory credits; nudge residual drift into the last line so
+    // the JE balances (doc-value mode: only sub-cent rounding remains).
+    const inventoryCreditByWh: Record<string, number> = { ...creditBaseByWh };
     if (!needsVarianceLine && Math.abs(varianceDelta) > 0) {
       // Sub-cent rounding — push the leftover into the last inventory line
       // so the JE still balances without needing a variance account.

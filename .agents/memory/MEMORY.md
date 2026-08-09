@@ -154,3 +154,4 @@
 - [Embedded invoice payments](embedded-invoice-payments.md) — inline multi-method form: one voucher per line (existing series), retry-safe done-markers prevent duplicate vouchers, currencyCode→currencyId resolved client-side.
 - [Attendance-plus engine](attendance-plus-engine.md) — bucket partition must sum to schedule span using RAW late/early (grace only suppresses reporting); dedupe/transfer-once via UNIQUE; lock guards shared with legacy CRUD; advisory-locked permission approve.
 - [Company template defaults](company-template-defaults.md) — new tenants seeded from template company 10 (settings/sequences/COA); party accounts excluded via refs + container rule + name pattern; zero-COA fallback to default seed.
+- [Purchase return JE two flavors](purchase-return-je-flavors.md) — post_variance flag: default OFF = Cr inventory at DOC net (scale buckets to subtotal, never dump into last); ON = actual cost + variance line.
