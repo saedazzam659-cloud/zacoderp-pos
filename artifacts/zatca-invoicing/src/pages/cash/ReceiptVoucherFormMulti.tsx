@@ -441,14 +441,18 @@ export default function ReceiptVoucherFormMulti() {
     if (!form.entityId) return [];
     const cid_filter = Number(form.entityId);
     return (salesInvoices as any[])
-      .filter((inv: any) => Number(inv.customerId) === cid_filter && inv.status !== "cancelled")
+      .filter((inv: any) =>
+        Number(inv.customerId) === cid_filter && inv.status !== "cancelled"
+        // مسدَّدة بالكامل؟ تبقى ظاهرة فقط إن كانت مرتبطة بسطر حالي (تعديل سند قديم).
+        && (!(inv.remainingAmount != null && Number(inv.remainingAmount) <= 0.01)
+          || form.lines.some((l: any) => String(l.salesInvoiceId ?? "") === String(inv.id))))
       .map((inv: any) => ({
         value: String(inv.id),
         label: inv.docNumber ?? `SI-${inv.id}`,
         description: `${inv.invoiceDate} • ${fmt2(inv.totalAmount || 0)} ${inv.currencyCode || "SAR"}`,
         code: inv.status,
       }));
-  }, [salesInvoices, form.entityId]);
+  }, [salesInvoices, form.entityId, form.lines]);
 
   // Account name lookup for JE preview line labels.
   function accountName(aid: string): string {

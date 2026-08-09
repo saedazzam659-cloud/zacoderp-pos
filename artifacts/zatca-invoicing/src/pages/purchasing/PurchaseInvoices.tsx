@@ -187,7 +187,7 @@ export default function PurchaseInvoices() {
     { key: "total",    label: t("purchasingPages.purchaseInvoices.cols.total"),              type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) },
     { key: "discount", label: t("purchasingPages.purchaseInvoices.cols.discount", "الخصم"),  type: "num",  valueOf: (r) => Number(r.discountAmount ?? 0) + Number(r.lineDiscountTotal ?? 0) },
     { key: "netAfterDiscount", label: t("common.netAfterDiscount"), type: "num", valueOf: (r) => Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0) },
-    { key: "paystatus",label: t("purchasingPages.purchaseInvoices.cols.paymentStatus"),      type: "text", valueOf: (r) => r.paymentSettlement?.code ?? "" },
+    { key: "paystatus",label: t("purchasingPages.purchaseInvoices.cols.paymentStatus"),      type: "text", valueOf: (r) => r.paymentStatus === "paid" ? "مسدَّدة" : r.paymentStatus === "partial" ? `جزئي ${Number(r.paidAmount ?? 0).toFixed(2)}` : "غير مسدَّدة" },
     { key: "journal",  label: t("purchasingPages.purchaseInvoices.cols.journal"),            type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
     { key: "status",   label: t("purchasingPages.purchaseInvoices.cols.status"),             type: "text", valueOf: (r) => statusLabel(r.status) },
     { key: "createdBy", label: t("purchasingPages.purchaseInvoices.cols.createdBy", "أنشأه"), type: "text", valueOf: (r) => r.createdByName ?? "" },
@@ -835,26 +835,36 @@ ${sections}
                       case "paystatus":
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
-                            {inv.paymentSettlement ? (
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); navigate(`/cash/payment-vouchers/${inv.paymentSettlement.voucherId}`); }}
-                                className={cn(
-                                  "inline-flex items-center gap-1 text-[10px] rounded-full px-2 py-0.5 font-medium border transition-colors",
-                                  inv.paymentSettlement.paymentType === "bank"
-                                    ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
-                                    : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100",
-                                  inv.paymentSettlement.status !== "posted" && "opacity-70",
-                                )}
-                                title={t("purchasingPages.purchaseInvoices.openPaymentVoucher") + ` — ${inv.paymentSettlement.code} • ${fmt(inv.paymentSettlement.amount)}`}
-                                data-testid={`pay-status-${inv.id}`}
-                              >
-                                {inv.paymentSettlement.paymentType === "bank"
-                                  ? t("purchasingPages.purchaseInvoices.paidViaBank")
-                                  : t("purchasingPages.purchaseInvoices.paidViaCash")}
-                                <span className="font-mono opacity-80">• {inv.paymentSettlement.code}</span>
-                              </button>
-                            ) : <span className="text-muted-foreground text-[10px]">—</span>}
+                            {(() => {
+                              {/* حالة السداد الحقيقية (سندات + قيود سداد) من الخادم */}
+                              const ps = (inv as any).paymentStatus as string | undefined;
+                              const chip = (
+                                <span
+                                  className={cn(
+                                    "inline-flex items-center gap-1 text-[10px] rounded-full px-2 py-0.5 font-medium border transition-colors",
+                                    ps === "paid"
+                                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                      : ps === "partial"
+                                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                                        : "bg-muted/40 text-muted-foreground border-transparent",
+                                    inv.paymentSettlement && "hover:opacity-80 cursor-pointer",
+                                  )}
+                                  title={`المسدَّد ${fmt((inv as any).paidAmount ?? 0)} من ${fmt((inv as any).netDueAmount ?? 0)} — المتبقي ${fmt((inv as any).remainingAmount ?? 0)}`}
+                                  data-testid={`pay-status-${inv.id}`}
+                                >
+                                  {ps === "paid" ? "مسدَّدة" : ps === "partial" ? `جزئي ${fmt((inv as any).paidAmount ?? 0)}` : "غير مسدَّدة"}
+                                  {inv.paymentSettlement && <span className="font-mono opacity-80">• {inv.paymentSettlement.code}</span>}
+                                </span>
+                              );
+                              return inv.paymentSettlement ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); navigate(`/cash/payment-vouchers/${inv.paymentSettlement.voucherId}`); }}
+                                >
+                                  {chip}
+                                </button>
+                              ) : chip;
+                            })()}
                           </td>
                         );
                       case "journal":

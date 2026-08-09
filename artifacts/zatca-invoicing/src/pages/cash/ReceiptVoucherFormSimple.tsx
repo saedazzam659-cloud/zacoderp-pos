@@ -400,7 +400,10 @@ export default function ReceiptVoucherFormSimple() {
     if (!form.entityId) return [];
     const sid = Number(form.entityId);
     const list = (salesInvoices as any[])
-      .filter((inv: any) => Number(inv.customerId) === sid && inv.status !== "cancelled")
+      .filter((inv: any) =>
+        Number(inv.customerId) === sid && inv.status !== "cancelled"
+        // الفواتير المسدَّدة بالكامل (سندات + قيود سداد) لا تُعرض للتحصيل مجدداً.
+        && !(inv.remainingAmount != null && Number(inv.remainingAmount) <= 0.01))
       .map((inv: any) => ({
         value: String(inv.id),
         label: inv.docNumber ?? `SI-${inv.id}`,

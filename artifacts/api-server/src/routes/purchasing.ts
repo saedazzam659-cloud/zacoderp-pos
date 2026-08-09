@@ -1080,6 +1080,12 @@ router.get("/purchase-invoices", async (req, res) => {
         lineDiscByInvoice.set(l.invoiceId, (lineDiscByInvoice.get(l.invoiceId) ?? 0) + eff);
       }
     }
+    // حالة السداد الحقيقية (سندات + قيود سداد + روابط جزئية) — batch, no N+1.
+    const { batchInvoiceSettlementStatus } = await import("../lib/invoiceSettlement.js");
+    const payMap = await batchInvoiceSettlementStatus(cid, "purchase", enrichedRows.map(r => ({
+      id: r.id, totalAmount: r.totalAmount, exchangeRate: (r as any).exchangeRate,
+      paymentType: (r as any).paymentType, status: (r as any).status,
+    })));
     const enriched = enrichedRows.map(r => {
       const arr = byInvoice.get(r.id) ?? [];
       const sorted = [...arr].sort((a, b) => {
@@ -1088,8 +1094,13 @@ router.get("/purchase-invoices", async (req, res) => {
         return b.voucherId - a.voucherId;
       });
       const top = sorted[0];
+      const pay = payMap.get(r.id);
       return {
         ...r,
+        paymentStatus:   pay?.paymentStatus ?? "unpaid",
+        paidAmount:      pay?.paidBase ?? 0,
+        remainingAmount: pay?.remainingBase ?? 0,
+        netDueAmount:    pay?.netDueBase ?? 0,
         lineDiscountTotal: (lineDiscByInvoice.get(r.id) ?? 0).toFixed(2),
         paymentSettlement: top ? {
           voucherId:   top.voucherId,

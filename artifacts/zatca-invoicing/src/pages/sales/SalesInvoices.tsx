@@ -532,25 +532,36 @@ export default function SalesInvoices() {
                       <td className="px-3 py-2.5 font-mono text-amber-700">{fmt(inv.vatAmount)}</td>
                       <td className="px-3 py-2.5 font-mono font-semibold">{fmt(inv.totalAmount)}</td>
                       <td className="px-3 py-2.5">
-                        {inv.paymentSettlement ? (
-                          <button
-                            onClick={() => navigate(`/cash/receipt-vouchers/${inv.paymentSettlement.voucherId}`)}
-                            className={cn(
-                              "inline-flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 font-medium border transition-colors",
-                              inv.paymentSettlement.paymentType === "bank"
-                                ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
-                                : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100",
-                              inv.paymentSettlement.status !== "posted" && "opacity-70"
-                            )}
-                            title={`${inv.paymentSettlement.code} • ${fmt(inv.paymentSettlement.amount)}`}
-                            data-testid={`pay-status-${inv.id}`}
-                          >
-                            {inv.paymentSettlement.paymentType === "bank"
-                              ? t("salesInvoices.paidViaBank", "سُدِّد بنكاً")
-                              : t("salesInvoices.paidViaCash", "سُدِّد نقداً")}
-                            <span className="font-mono opacity-80">• {inv.paymentSettlement.code}</span>
-                          </button>
-                        ) : <span className="text-muted-foreground text-xs">—</span>}
+                        {(() => {
+                          {/* حالة السداد الحقيقية (سندات + قيود سداد) من الخادم */}
+                          const ps = (inv as any).paymentStatus as string | undefined;
+                          const chip = (
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 font-medium border transition-colors",
+                                ps === "paid"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : ps === "partial"
+                                    ? "bg-amber-50 text-amber-700 border-amber-200"
+                                    : "bg-muted/40 text-muted-foreground border-transparent",
+                                inv.paymentSettlement && "hover:opacity-80 cursor-pointer",
+                              )}
+                              title={`المسدَّد ${fmt((inv as any).paidAmount ?? 0)} من ${fmt((inv as any).netDueAmount ?? 0)} — المتبقي ${fmt((inv as any).remainingAmount ?? 0)}`}
+                              data-testid={`pay-status-${inv.id}`}
+                            >
+                              {ps === "paid" ? "مسدَّدة" : ps === "partial" ? `جزئي ${fmt((inv as any).paidAmount ?? 0)}` : "غير مسدَّدة"}
+                              {inv.paymentSettlement && <span className="font-mono opacity-80">• {inv.paymentSettlement.code}</span>}
+                            </span>
+                          );
+                          return inv.paymentSettlement ? (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/cash/receipt-vouchers/${inv.paymentSettlement.voucherId}`)}
+                            >
+                              {chip}
+                            </button>
+                          ) : chip;
+                        })()}
                       </td>
                       <td className="px-3 py-2.5">
                         {inv.journalEntryId ? (

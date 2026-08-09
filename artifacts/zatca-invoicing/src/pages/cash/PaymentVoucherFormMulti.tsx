@@ -1569,7 +1569,11 @@ export default function PaymentVoucherForm() {
                                         >
                                           <option value="">— {t(`${NS}.selectInvoicePh`, "اختر الفاتورة")} —</option>
                                           {(purchaseInvoices as any[])
-                                            .filter((pi: any) => String(pi.supplierId ?? "") === l.opSupplierId)
+                                            .filter((pi: any) =>
+                                              String(pi.supplierId ?? "") === l.opSupplierId
+                                              // مسدَّدة بالكامل؟ تبقى فقط إن كانت مختارة في هذا السطر.
+                                              && (!(pi.remainingAmount != null && Number(pi.remainingAmount) <= 0.01)
+                                                || String(pi.id) === String(l.purchaseInvoiceId ?? "")))
                                             .map((pi: any) => (
                                               <option key={pi.id} value={String(pi.id)}>
                                                 {pi.invoiceNumber ?? pi.id} — {fmtNum(Number(pi.total ?? pi.totalAmount ?? 0))}
