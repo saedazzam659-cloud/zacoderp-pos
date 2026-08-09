@@ -229,8 +229,20 @@ router.get("/", async (req, res) => {
     : await db.select().from(receiptVouchersTable)
         .where((branchScope.length || siFilter.length) ? and(...branchScope, ...siFilter) : undefined)
         .orderBy(desc(receiptVouchersTable.createdAt));
+  // A voucher is MULTI iff it actually has allocation LINES — the header
+  // accountId is NOT a reliable discriminator (simple party-mode vouchers
+  // also store accountId = null). Expose canonical `isMulti` to the lists.
+  const rowIds = rows.map((r) => r.id);
+  const multiIds = new Set<number>();
+  if (rowIds.length) {
+    const lineOwners = await db.select({ voucherId: receiptVoucherLinesTable.voucherId })
+      .from(receiptVoucherLinesTable)
+      .where(inArray(receiptVoucherLinesTable.voucherId, rowIds));
+    for (const lo of lineOwners) if (lo.voucherId != null) multiIds.add(lo.voucherId);
+  }
   res.json(rows.map((r) => ({
     ...r,
+    isMulti: multiIds.has(r.id),
     // With an invoice filter: the amount actually applied to THAT invoice —
     // partial links/lines carry their own amount; a bare header link means
     // the full voucher amount (legacy behaviour).

@@ -341,6 +341,33 @@ router.post("/:id/email", async (req: Request, res: Response) => {
 });
 
 // DELETE /api/document-archives/:id — remove the index row (tenant-scoped).
+// PATCH /api/document-archives/rekey — move records archived under a DRAFT
+// docKey (new-form per-mount key) onto the saved voucher/document code so
+// they stay reachable from edit mode after the first save.
+router.patch("/rekey", async (req: Request, res: Response) => {
+  const cid = guard(req, res); if (cid == null) return;
+  const Body = z.object({
+    screenKey: z.string().min(1),
+    oldDocKey: z.string().min(1),
+    newDocKey: z.string().min(1),
+  });
+  const parsed = Body.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
+  const settings = await loadSettings(cid);
+  if (!userAllowed(req, settings)) {
+    res.status(403).json({ error: "ليست لديك صلاحية أرشفة المستندات" });
+    return;
+  }
+  await db.update(documentArchivesTable)
+    .set({ docKey: parsed.data.newDocKey })
+    .where(and(
+      eq(documentArchivesTable.companyId, cid),
+      eq(documentArchivesTable.screenKey, parsed.data.screenKey),
+      eq(documentArchivesTable.docKey, parsed.data.oldDocKey),
+    ));
+  res.json({ ok: true });
+});
+
 router.delete("/:id", async (req: Request, res: Response) => {
   const cid = guard(req, res); if (cid == null) return;
   const settings = await loadSettings(cid);

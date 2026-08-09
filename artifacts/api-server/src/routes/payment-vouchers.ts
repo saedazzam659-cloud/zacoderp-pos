@@ -268,12 +268,21 @@ router.get("/", async (req, res) => {
         .where((branchScope.length || piFilter.length) ? and(...branchScope, ...piFilter) : undefined)
         .orderBy(desc(paymentVouchersTable.createdAt));
 
-  // Multi-line vouchers (header accountId = null) often carry their البيان on
-  // the allocation LINES only — surface it in the list by falling back to the
-  // lines' descriptions when the header description is empty. Also expose
-  // `isMulti` so the list can render a voucher-type column without guessing.
+  // A voucher is MULTI iff it actually has allocation LINES — the header
+  // accountId is NOT a reliable discriminator (simple party-mode vouchers
+  // also store accountId = null). Expose canonical `isMulti` to the lists.
+  const rowIds = rows.map((r) => r.id);
+  const multiIds = new Set<number>();
+  if (rowIds.length) {
+    const lineOwners = await db.select({ voucherId: paymentVoucherLinesTable.voucherId })
+      .from(paymentVoucherLinesTable)
+      .where(inArray(paymentVoucherLinesTable.voucherId, rowIds));
+    for (const lo of lineOwners) if (lo.voucherId != null) multiIds.add(lo.voucherId);
+  }
+  // Multi-line vouchers often carry their البيان on the allocation LINES only
+  // — surface it by falling back to the lines' descriptions when empty.
   const emptyDescMultiIds = rows
-    .filter((r) => r.accountId == null && !(r.description ?? "").trim())
+    .filter((r) => multiIds.has(r.id) && !(r.description ?? "").trim())
     .map((r) => r.id);
   const lineDescByVoucher = new Map<number, string>();
   if (emptyDescMultiIds.length) {
@@ -293,7 +302,7 @@ router.get("/", async (req, res) => {
   }
   res.json(rows.map((r) => ({
     ...r,
-    isMulti: r.accountId == null,
+    isMulti: multiIds.has(r.id),
     description: (r.description ?? "").trim() || lineDescByVoucher.get(r.id) || r.description,
     // With an invoice filter: the amount actually applied to THAT invoice —
     // partial links/lines carry their own amount; a bare header link means
@@ -366,7 +375,7 @@ router.get("/settlement-candidates", async (req, res) => {
         amount: available.toFixed(2), totalAmount: total.toFixed(2),
         exchangeRate: r.exchangeRate, paymentType: r.paymentType,
         status: r.status, description: r.description,
-        isMulti: r.accountId == null,
+        isMulti: multiIds.has(r.id),
       };
     }).filter((r) => parseFloat(r.amount) > 0.005));
   } catch (e: any) { res.status(500).json({ error: e.message }); }

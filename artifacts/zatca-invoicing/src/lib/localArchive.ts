@@ -161,6 +161,20 @@ export function recordArchivedFile(jeKey: string, meta: ArchivedFileMeta): void 
   writeIndex(idx);
 }
 
+/**
+ * Moves every locally-indexed file from a DRAFT key (new-form per-mount key)
+ * onto the saved voucher/document code so it stays reachable in edit mode.
+ */
+export function renameArchivedKey(oldKey: string, newKey: string): void {
+  if (!oldKey || !newKey || oldKey === newKey) return;
+  const idx = readIndex();
+  const moved = idx[oldKey];
+  if (!moved?.length) return;
+  idx[newKey] = [...(idx[newKey] ?? []), ...moved];
+  delete idx[oldKey];
+  writeIndex(idx);
+}
+
 export function removeArchivedFile(jeKey: string, filename: string): void {
   const idx = readIndex();
   if (!idx[jeKey]) return;

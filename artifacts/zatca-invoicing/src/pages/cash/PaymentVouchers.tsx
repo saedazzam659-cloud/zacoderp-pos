@@ -32,7 +32,16 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 //   • navigation to the dedicated form route on add/edit
 // ─────────────────────────────────────────────────────────────────
 
-export default function PaymentVouchers() {
+// variant="multi" renders the dedicated journal for MULTI vouchers
+// (header accountId is NULL); "simple" (default) shows only ordinary ones.
+// Same backend endpoint + mutations — split is presentation-only.
+export function PaymentVouchersMulti() { return <PaymentVouchers variant="multi" />; }
+
+export default function PaymentVouchers({ variant = "simple" }: { variant?: "simple" | "multi" }) {
+  const isMultiList = variant === "multi";
+  // Backend computes canonical isMulti from allocation-line existence —
+  // header accountId is NOT reliable (simple party vouchers also store null).
+  const isMultiRow = (v: any) => v.isMulti === true;
   const { user, token } = useAuth();
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -89,16 +98,20 @@ export default function PaymentVouchers() {
     enabled: !!cid,
   });
 
-  const filtered = (vouchers as any[]).filter((v: any) =>
+  // Scope rows to this journal's kind BEFORE search/stats so the simple and
+  // multi journals never mix.
+  const scoped = (vouchers as any[]).filter((v: any) => isMultiRow(v) === isMultiList);
+  const filtered = scoped.filter((v: any) =>
     v.code?.includes(search) || v.description?.includes(search) || v.entityName?.includes(search)
   );
   const pager = usePagination(filtered);
-  const totalAmount = (vouchers as any[])
+  const totalAmount = scoped
     .filter((v: any) => v.status === "posted")
     .reduce((a: number, v: any) => a + parseFloat(v.amount || "0"), 0);
 
-  function openAdd()  { navigate("/cash/payment-vouchers/new"); }
-  function openEdit(r: any) { navigate(`/cash/payment-vouchers/${r.id}`); }
+  const formBase = isMultiList ? "/cash/payment-vouchers/multi" : "/cash/payment-vouchers";
+  function openAdd()  { navigate(`${formBase}/new`); }
+  function openEdit(r: any) { navigate(`${formBase}/${r.id}`); }
 
   // ── Print a single voucher straight from the list (RAGM layout) ──
   // Multi-allocation vouchers keep their lines server-side, so open the window
@@ -188,7 +201,7 @@ export default function PaymentVouchers() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><ArrowUpCircle className="h-6 w-6 text-red-500" />{t(`${NS}.title`)}</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><ArrowUpCircle className="h-6 w-6 text-red-500" />{t(`${NS}.title`)}{isMultiList && " — عمليات متعددة"}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t(`${NS}.subtitle`)}</p>
         </div>
         <Button onClick={openAdd} className="gap-2"><Plus className="h-4 w-4" />{t(`${NS}.newVoucher`)}</Button>
@@ -196,8 +209,8 @@ export default function PaymentVouchers() {
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: t(`${NS}.totalVouchers`), value: (vouchers as any[]).length, color: "text-primary bg-primary/10" },
-          { label: t(`${NS}.posted`),         value: (vouchers as any[]).filter((v: any) => v.status === "posted").length, color: "text-green-700 bg-green-100" },
+          { label: t(`${NS}.totalVouchers`), value: scoped.length, color: "text-primary bg-primary/10" },
+          { label: t(`${NS}.posted`),         value: scoped.filter((v: any) => v.status === "posted").length, color: "text-green-700 bg-green-100" },
           { label: t(`${NS}.totalAmount`),    value: fmt(totalAmount), color: "text-red-700 bg-red-50" },
         ].map((s, i) => (
           <div key={i} className="rounded-xl border bg-card p-4">
@@ -264,7 +277,7 @@ export default function PaymentVouchers() {
                     {row.refNumber && <p className="text-xs text-muted-foreground">{t(`${NS}.ref`, { value: row.refNumber })}</p>}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    {(row.isMulti ?? row.accountId == null)
+                    {row.isMulti === true
                       ? <span className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">{t(`${NS}.kindMulti`, "متعدد")}</span>
                       : <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">{t(`${NS}.kindSimple`, "عادي")}</span>}
                   </td>
@@ -295,13 +308,13 @@ export default function PaymentVouchers() {
                       {row.status === "draft" ? <>
                         <button onClick={() => printRow(row)} className="p-1.5 rounded hover:bg-slate-100 text-muted-foreground hover:text-slate-700 transition-colors" title={t("cashCommon.print", { defaultValue: "طباعة" })}><Printer className="h-3.5 w-3.5" /></button>
                         <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title={t("cashCommon.edit", { defaultValue: "تعديل (خصائص)" })}><Pencil className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => navigate(`/cash/payment-vouchers/new?from=${row.id}`)} className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors" title="نسخة مماثلة"><Copy className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => navigate(`${formBase}/new?from=${row.id}`)} className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors" title="نسخة مماثلة"><Copy className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title={t(`${NS}.postBtn`)}><Send className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors" title={t("cashCommon.delete")}><Trash2 className="h-3.5 w-3.5" /></button>
                       </> : <>
                         <button onClick={() => printRow(row)} className="p-1.5 rounded hover:bg-slate-100 text-muted-foreground hover:text-slate-700 transition-colors" title={t("cashCommon.print", { defaultValue: "طباعة" })}><Printer className="h-3.5 w-3.5" /></button>
                         <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="عرض / خصائص"><Pencil className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => navigate(`/cash/payment-vouchers/new?from=${row.id}`)} className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors" title="نسخة مماثلة"><Copy className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => navigate(`${formBase}/new?from=${row.id}`)} className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors" title="نسخة مماثلة"><Copy className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setUnpostRow(row)} className="p-1.5 rounded hover:bg-amber-50 text-muted-foreground hover:text-amber-600 transition-colors" title={t(`${NS}.unpostBtn`)}><Undo2 className="h-3.5 w-3.5" /></button>
                       </>}
                     </div>

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { renameArchivedKey } from "@/lib/localArchive";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
@@ -114,6 +115,9 @@ export default function PaymentVoucherForm() {
   // Wouter matches "/new" against ":id" too — guard against opening the
   // create-mode URL in edit mode.
   const rawId  = matchEdit && !isNew ? (params as any).id : null;
+  // Unique per-mount archive key: the stable "PV-new-draft" key made every
+  // NEW voucher show the previous voucher's archived scans/attachments.
+  const newDraftKeyRef = useRef(`PV-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   const editId = rawId && /^\d+$/.test(String(rawId)) ? Number(rawId) : null;
   // "Duplicate" support: `/new?from=123` loads voucher #123 and copies it
   // into a brand-new draft (POST on save, fresh sequence number).
@@ -353,7 +357,9 @@ export default function PaymentVoucherForm() {
   }
 
   // ── Document navigation (prev/next/jump-by-search) ─────────────
-  const navList = vouchers as any[];
+  // Scope prev/next/search navigation to THIS journal's kind (backend
+  // sends canonical isMulti computed from allocation-line existence).
+  const navList = (vouchers as any[]).filter((v: any) => v.isMulti !== true);
   const currentIndex = editId != null
     ? navList.findIndex(v => Number(v.id) === Number(editId))
     : -1;
@@ -567,6 +573,17 @@ export default function PaymentVoucherForm() {
     },
     onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ["payment-vouchers"] });
+      // Files archived while the form was still a NEW draft live under the
+      // per-mount draft key — re-key them onto the saved voucher code so
+      // they stay reachable from edit mode.
+      if (!editId && data?.code) {
+        renameArchivedKey(newDraftKeyRef.current, data.code);
+        fetch(`${API}/api/document-archives/rekey`, {
+          method: "PATCH",
+          headers: { ...h, "Content-Type": "application/json" },
+          body: JSON.stringify({ screenKey: "payment_vouchers", oldDocKey: newDraftKeyRef.current, newDocKey: data.code }),
+        }).catch(() => {});
+      }
       qc.invalidateQueries({ queryKey: ["payment-voucher", data.id] });
       // The purchase-invoices listing surfaces the linked payment, so
       // make sure it refetches after a save that touches a link.
@@ -751,7 +768,7 @@ export default function PaymentVoucherForm() {
 
         <div className="flex items-center gap-2 flex-wrap">
           <JournalScanArchive
-            jeKey={existing?.code ?? (editId ? `PV-${editId}` : "PV-new-draft")}
+            jeKey={existing?.code ?? (editId ? `PV-${editId}` : newDraftKeyRef.current)}
             screenKey="payment_vouchers"
             companyName={user?.company?.nameAr ?? null}
           />

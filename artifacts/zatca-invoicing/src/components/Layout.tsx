@@ -572,8 +572,10 @@ const cashSubNav: NavDef[] = [
   { nameKey: "nav.banks",            href: "/cash/banks",            icon: Landmark,        permKey: "bank_accounts" },
   // Simple receipt/payment vouchers moved to salesSubNav / purchasingSubNav
   // per the user's request; the MULTI variants stay here (routes unchanged).
-  { nameKey: "nav.receiptVouchersMulti", href: "/cash/receipt-vouchers/multi/new", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
-  { nameKey: "nav.paymentVouchersMulti", href: "/cash/payment-vouchers/multi/new", icon: ArrowUpCircle, permKey: "payment_vouchers" },
+  // Multi voucher nav now opens the dedicated JOURNAL (list) of multi
+  // vouchers; the "new" form is reachable from the list's add button.
+  { nameKey: "nav.receiptVouchersMulti", href: "/cash/receipt-vouchers/multi", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
+  { nameKey: "nav.paymentVouchersMulti", href: "/cash/payment-vouchers/multi", icon: ArrowUpCircle, permKey: "payment_vouchers" },
   // transfers: no dedicated module key; gate under cash_boxes.
   { nameKey: "nav.transfers",        href: "/cash/transfers",        icon: ArrowLeftRight,  permKey: "cash_boxes" },
   // Financial transactions (إيداع/سحب/تحويل) — full-page 3-tab UX, same backend.
