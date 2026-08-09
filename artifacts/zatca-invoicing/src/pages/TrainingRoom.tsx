@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,11 +13,10 @@ import {
 } from "@/components/ui/dialog";
 import {
   GraduationCap, Plus, Radio, Copy, Users, PlayCircle, StopCircle,
-  LogIn, ListChecks, Link2, RefreshCw, Loader2, Share2, Hand, Mic, Send,
+  LogIn, ListChecks, Link2, RefreshCw, Loader2,
 } from "lucide-react";
-import LiveRoom from "@/components/livekit/LiveRoom";
-import { trainingApi, type JoinInfo } from "@/lib/liveRoomApi";
-import { P2PBroadcaster, type P2PChatMsg, type P2PHand } from "@/lib/p2pTree";
+import { trainingApi } from "@/lib/liveRoomApi";
+import { useTrainingBroadcast } from "@/contexts/TrainingBroadcastContext";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // قاعة التدريب المباشر — trainer console + trainee join (module: training_room)
@@ -52,19 +51,9 @@ export default function TrainingRoom() {
   const [allowPublic, setAllowPublic] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // غرفة نشطة (مدرب أو متدرب)
-  const [live, setLive] = useState<(JoinInfo & { session: SessionRow; asTrainer: boolean }) | null>(null);
-
-  // البث الموزّع P2P (يعمل تلقائيًا عندما تكون الجلسة برابط عام)
-  const p2pRef = useRef<P2PBroadcaster | null>(null);
-  const [p2pCount, setP2pCount] = useState(0);
-  const [p2pStatus, setP2pStatus] = useState<"connected" | "reconnecting">("reconnecting");
-  // المدرب رجع للقائمة والبث مستمر في الخلفية (الغرفة تبقى محمّلة مخفية)
-  const [minimized, setMinimized] = useState(false);
-  const [p2pChat, setP2pChat] = useState<P2PChatMsg[]>([]);
-  const [p2pHands, setP2pHands] = useState<P2PHand[]>([]);
-  const [p2pInput, setP2pInput] = useState("");
-  const p2pChatBoxRef = useRef<HTMLDivElement>(null);
+  // الغرفة والبث يعيشان على مستوى التطبيق (TrainingBroadcastProvider)
+  // حتى يستمر البث أثناء التنقل بين كل شاشات النظام.
+  const { live, minimized, p2pCount, goLive, restore, endSession: endLiveSession } = useTrainingBroadcast();
 
   // سجل الحضور
   const [attFor, setAttFor] = useState<SessionRow | null>(null);
@@ -78,6 +67,9 @@ export default function TrainingRoom() {
   }, [toast]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // تحديث فوري للقائمة بمجرد إغلاق/مغادرة الغرفة (من أي مكان في التطبيق)
+  useEffect(() => { if (!live) void refresh(); }, [live, refresh]);
 
   // تحديث تلقائي لقائمة الجلسات — حتى يظهر زر «انضمام» للمتدربين فور بدء البث
   useEffect(() => {
@@ -110,21 +102,31 @@ export default function TrainingRoom() {
 
   const startBroadcast = async (s: SessionRow) => {
     // البث ما زال يعمل في الخلفية لنفس الجلسة — عُد إليه دون إعادة اتصال (يحافظ على الكاميرا والمشاهدين)
-    if (live?.asTrainer && live.session.id === s.id) { setMinimized(false); return; }
+    if (live?.asTrainer && live.session.id === s.id) { restore(); return; }
+    // غرفة أخرى ما زالت نشطة — يجب إنهاؤها/مغادرتها أولًا حتى لا تبقى جلسة معلّقة على الخادم
+    if (live) {
+      toast({ title: "لديك بث/جلسة نشطة بالفعل", description: `أنهِ «${live.session.title}» أولًا قبل بدء جلسة أخرى.`, variant: "destructive" });
+      return;
+    }
     setBusyId(s.id);
     try {
       const info = await trainingApi.start(s.id);
-      setLive({ ...info, session: s, asTrainer: true });
+      goLive(info, { id: s.id, title: s.title, allowPublic: s.allowPublic }, true);
       void refresh();
     } catch (e: any) { toast({ title: "تعذّر بدء البث", description: e.message, variant: "destructive" }); }
     finally { setBusyId(null); }
   };
 
   const joinAsTrainee = async (s: SessionRow) => {
+    if (live && live.session.id === s.id) { restore(); return; }
+    if (live) {
+      toast({ title: "لديك جلسة نشطة بالفعل", description: `غادر «${live.session.title}» أولًا قبل الانضمام لجلسة أخرى.`, variant: "destructive" });
+      return;
+    }
     setBusyId(s.id);
     try {
       const info = await trainingApi.join(s.id);
-      setLive({ ...info, session: s, asTrainer: false });
+      goLive(info, { id: s.id, title: s.title, allowPublic: s.allowPublic }, false);
     } catch (e: any) { toast({ title: "تعذّر الانضمام", description: e.message, variant: "destructive" }); }
     finally { setBusyId(null); }
   };
@@ -132,12 +134,9 @@ export default function TrainingRoom() {
   const endSession = async (s: SessionRow) => {
     setBusyId(s.id);
     try {
-      await trainingApi.end(s.id);
-      toast({ title: "تم إنهاء الجلسة" });
-      if (live?.session.id === s.id) { setLive(null); setMinimized(false); }
+      await endLiveSession(s.id);
       void refresh();
-    } catch (e: any) { toast({ title: "تعذّر الإنهاء", description: e.message, variant: "destructive" }); }
-    finally { setBusyId(null); }
+    } finally { setBusyId(null); }
   };
 
   const openAttendance = async (s: SessionRow) => {
@@ -147,133 +146,15 @@ export default function TrainingRoom() {
     finally { setAttLoading(false); }
   };
 
-  const grantMic = useCallback(async (identity: string, allow: boolean) => {
-    if (!live) return;
-    try { await trainingApi.mic(live.session.id, identity, allow); }
-    catch (e: any) { toast({ title: "تعذّر تحديث المايك", description: e.message, variant: "destructive" }); }
-  }, [live, toast]);
-
-  // ── تشغيل/إيقاف البث الموزّع P2P مع دخول/خروج المدرب من الغرفة ──
-  useEffect(() => {
-    if (!live?.asTrainer || !live.session.allowPublic) return;
-    const eng = new P2PBroadcaster();
-    eng.onViewerCount = setP2pCount;
-    eng.onChat = (m) => setP2pChat(prev => [...prev.slice(-199), m]);
-    eng.onHand = (h, up) => setP2pHands(prev => up
-      ? (prev.some(x => x.peerId === h.peerId) ? prev : [...prev, h])
-      : prev.filter(x => x.peerId !== h.peerId));
-    eng.onError = (m) => toast({ title: m, variant: "destructive" });
-    eng.onStatus = setP2pStatus;
-    eng.start(live.session.id);
-    p2pRef.current = eng;
-    return () => {
-      eng.stop();
-      if (p2pRef.current === eng) p2pRef.current = null;
-      setP2pCount(0); setP2pChat([]); setP2pHands([]);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live?.session.id, live?.asTrainer]);
-
-  useEffect(() => {
-    p2pChatBoxRef.current?.scrollTo({ top: p2pChatBoxRef.current.scrollHeight });
-  }, [p2pChat]);
-
-  const sendP2pChat = () => {
-    const text = p2pInput.trim();
-    if (!text || !p2pRef.current) return;
-    p2pRef.current.sendChat(text);
-    setP2pInput("");
-  };
-
   const canManage = (s: SessionRow) =>
     s.trainerUserId === user?.id || user?.role === "admin" || user?.role === "superadmin";
 
   const sorted = useMemo(() =>
     [...rows].sort((a, b) => (a.status === "live" ? -1 : 0) - (b.status === "live" ? -1 : 0)), [rows]);
 
-  // ── داخل الغرفة — تبقى محمّلة (مخفية فقط) عند العودة للقائمة كي يستمر البث ──
-  const p2pActive = !!live && live.asTrainer && live.session.allowPublic;
-  const roomUi = live ? (
-      <div className={minimized ? "hidden" : "p-4 md:p-6 h-[calc(100vh-6rem)] flex flex-col gap-2"}>
-        <div className="flex-1 min-h-0">
-          <LiveRoom
-            token={live.token} wsUrl={live.wsUrl}
-            role={live.asTrainer ? "publisher" : "subscriber"}
-            title={live.session.title}
-            myName={user?.username ?? "مشارك"}
-            canGrantMic={live.asTrainer}
-            onGrantMic={grantMic}
-            autoPublishAv={live.asTrainer}
-            onLocalTracksChanged={p2pActive ? (tracks) => { void p2pRef.current?.setStream(tracks); } : undefined}
-            onLeave={() => {
-              if (live.asTrainer) {
-                // لا نغلق الغرفة — البث يستمر في الخلفية والمدرب يعود بضغطة زر
-                setMinimized(true); void refresh();
-                toast({
-                  title: "البث مستمر في الخلفية",
-                  description: "الكاميرا والبث ما زالا يعملان — استخدم «العودة للبث» للرجوع أو «إنهاء» لإيقاف الجلسة.",
-                });
-              } else {
-                setLive(null); void refresh();
-              }
-            }}
-          />
-        </div>
-        {p2pActive && (
-          <div className="rounded-lg border bg-card p-2 shrink-0">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-2 text-xs font-semibold">
-                <Share2 className="h-3.5 w-3.5 text-emerald-600" />
-                البث الموزّع (الرابط العام)
-                <Badge variant="outline" className="gap-1"><Users className="h-3 w-3" /> {p2pCount} مشاهد</Badge>
-                {p2pStatus === "connected"
-                  ? <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-600 text-white" data-testid="badge-p2p-status">متصل</Badge>
-                  : <Badge variant="destructive" className="gap-1 animate-pulse" data-testid="badge-p2p-status">جارٍ الاتصال…</Badge>}
-              </div>
-              {p2pHands.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] text-amber-700 font-medium flex items-center gap-1">
-                    <Hand className="h-3 w-3" /> أيدي مرفوعة:
-                  </span>
-                  {p2pHands.map(h => (
-                    <Button key={h.peerId} size="sm" variant="outline" className="h-6 px-2 text-[11px] gap-1"
-                      onClick={() => { p2pRef.current?.grantMic(h.peerId); setP2pHands(prev => prev.filter(x => x.peerId !== h.peerId)); }}
-                      data-testid={`btn-p2p-grant-${h.peerId}`}>
-                      <Mic className="h-3 w-3" /> {h.name}
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div ref={p2pChatBoxRef} className="mt-1.5 max-h-24 overflow-y-auto space-y-1">
-              {p2pChat.map((m, i) => (
-                <div key={i} className={`text-[11px] rounded px-2 py-0.5 ${m.fromTrainer ? "bg-emerald-50" : "bg-muted/60"}`}>
-                  <span className="font-semibold">{m.name}: </span>{m.text}
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-1 mt-1.5">
-              <Input value={p2pInput} onChange={e => setP2pInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); sendP2pChat(); } }}
-                placeholder="رسالة لمشاهدي الرابط العام..." className="h-7 text-xs" data-testid="input-p2p-chat" />
-              <Button size="sm" className="h-7 px-2" onClick={sendP2pChat} data-testid="btn-p2p-send"><Send className="h-3 w-3" /></Button>
-            </div>
-          </div>
-        )}
-        {live.asTrainer && (
-          <div className="flex justify-end shrink-0">
-            <Button variant="destructive" size="sm" className="gap-1" onClick={() => endSession(live.session)}>
-              <StopCircle className="h-4 w-4" /> إنهاء الجلسة للجميع
-            </Button>
-          </div>
-        )}
-      </div>
-  ) : null;
-
+  // الغرفة نفسها تُعرض من TrainingBroadcastProvider (فوق كل الصفحات)؛
+  // هنا نعرض القائمة فقط + شريط تذكير عندما يكون البث مصغّرًا.
   return (
-    <>
-    {roomUi}
-    {(!live || minimized) && (
     <div className="space-y-4 p-4 md:p-6">
       {live && minimized && (
         <div className="rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 p-3 flex items-center justify-between gap-3 flex-wrap" data-testid="banner-bg-broadcast">
@@ -283,10 +164,10 @@ export default function TrainingRoom() {
             <Badge variant="outline" className="gap-1"><Users className="h-3 w-3" /> {p2pCount} مشاهد</Badge>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-500" onClick={() => setMinimized(false)} data-testid="btn-restore-broadcast">
+            <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-500" onClick={restore} data-testid="btn-restore-broadcast">
               <PlayCircle className="h-4 w-4" /> العودة للبث
             </Button>
-            <Button size="sm" variant="destructive" className="gap-1" onClick={() => endSession(live.session)}>
+            <Button size="sm" variant="destructive" className="gap-1" onClick={() => { void endLiveSession(live.session.id).then(refresh); }}>
               <StopCircle className="h-4 w-4" /> إنهاء
             </Button>
           </div>
@@ -455,7 +336,5 @@ export default function TrainingRoom() {
         </DialogContent>
       </Dialog>
     </div>
-    )}
-    </>
   );
 }

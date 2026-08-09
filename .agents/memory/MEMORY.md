@@ -133,7 +133,7 @@
 - [SA device-approval public decide](sa-device-approval-public-decide.md) — emailed-link actions need a SEPARATE email secret (hash-stored) + password re-auth; the polling token returned to the untrusted device must never approve.
 - [Trainee module permissions](trainee-module-permissions.md) — shared-mode trainee users.permissions must be RBAC-shaped ({key:{view,…}}) over granular keys; flat boolean map blanks the whole sidebar.
 - [LiveKit live-room engine](livekit-live-room-engine.md) — public join needs App.tsx early-return AND mount-before-zatcaRouter; SA agent authz must bind to call owner, never bare role.
-- [Training P2P relay tree](training-p2p-relay-tree.md) — broadcaster is "__root__" on viewer side (hub must translate from/to); viewer signals only parent/children; reparent with subtree-exclusion; 12s no-stream → LiveKit fallback.
+- [Training P2P relay tree](training-p2p-relay-tree.md) — broadcaster is "__root__" viewer-side; reparent w/ subtree-exclusion; 12s→LiveKit fallback; room+P2P live in app-level TrainingBroadcastProvider so navigation never kills the broadcast (one active room only).
 - [Sequence fiscal-year fallback](sequence-year-fallback.md) — resolution tiers exact period → same-year scoped → universal, via shared helpers used by issuance+peek+branch resolver; UI shows "بدون رقم" not the JE id.
 - [JE sub-series sequences](je-sub-series-sequences.md) — auto-JEs draw via nextJeSubSequence (sub-type series wins, fallback unified journal_entry, no double-draw); branch bucket must resolve against the SAME sequence.
 - [Report route perm scope](report-route-perm-scope.md) — report endpoint inside another module's router must register BEFORE the router-level gate with its own accounting_reports gate.

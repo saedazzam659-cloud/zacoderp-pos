@@ -13,3 +13,9 @@ description: Free mass training broadcast — WebRTC relay tree with LiveKit fal
 ## TURN إلزامي + إعادة محاولة fallback
 - STUN وحده يفشل شبه دائمًا على شبكات الجوال (CGNAT) — ICE config في p2pTree.ts يتضمن TURN مجاني (openrelay.metered.ca 80/443/tcp، بيانات openrelayproject) وإلا لن يرى مشاهد الموبايل البث إطلاقًا.
 - LiveRoom يفرّق الآن onLeave (مغادرة مقصودة) عن onDisconnected (انقطاع من الخادم)؛ صفحة الانضمام العام تعيد المحاولة تلقائيًا حتى 3 مرات عند الانقطاع بدل رمي المستخدم على شاشة الانضمام برسالة خطأ.
+
+## Broadcast survives app-wide navigation (Aug 2026)
+- LiveKit room + P2PBroadcaster live in `TrainingBroadcastProvider` (src/contexts/TrainingBroadcastContext.tsx), mounted in App.tsx above the router — NOT inside the /training-room page. Route changes must never unmount the room.
+- Full room renders as a fixed overlay (z-40, kept mounted with `hidden` when minimized); floating «البث مستمر» bar (z-40, BELOW dialogs at z-50) shows on every page when minimized.
+- Only ONE active room: starting/joining a different session while one is live is blocked in the page (else the old session is orphaned live on the server — replacing `live` disconnects without trainingApi.end).
+- TrainingRoom refreshes its list via `useEffect(() => { if (!live) refresh(); }, [live])` since leave/end can happen from any page.

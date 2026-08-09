@@ -260,6 +260,7 @@ import OnlineStore from "@/pages/online-store/OnlineStore";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ScreenActionsProvider } from "@/contexts/ScreenActionsContext";
 import { CallProvider } from "@/contexts/CallContext";
+import { TrainingBroadcastProvider } from "@/contexts/TrainingBroadcastContext";
 import { Loader2 } from "lucide-react";
 // Inventory
 import InventoryDashboard from "@/pages/inventory/InventoryDashboard";
@@ -1171,6 +1172,7 @@ function App() {
           <AuthProvider>
             <ScreenActionsProvider>
               <CallProvider>
+              <TrainingBroadcastProvider>
               <AppRoutes />
               <CustomerCobrowseWidget />
               {/* نافذة "مكالمة دعم واردة" — تستمع لأحداث SSE من AuthContext */}
@@ -1182,6 +1184,7 @@ function App() {
                   without each page needing to opt in. */}
               <WhatsAppFloat />
               <PwaInstallPrompt />
+              </TrainingBroadcastProvider>
               </CallProvider>
             </ScreenActionsProvider>
           </AuthProvider>
