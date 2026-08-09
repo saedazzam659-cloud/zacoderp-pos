@@ -1360,7 +1360,9 @@
     "purchaseReturnsReport": "Purchase Returns",
     "lcStatement": "Letters of Credit Statement",
     "profitabilityReport": "Profitability Report",
-    "dailyDetailedReport": "Detailed Daily Sales Report"
+    "dailyDetailedReport": "Detailed Daily Sales Report",
+    "salesInvoicePaymentStatus": "Sales Invoice Payments",
+    "purchaseInvoicePaymentStatus": "Purchase Invoice Payments"
   },
   "topbar": {
     "home": "Home",
@@ -9529,5 +9531,38 @@
       "posted": "Posted",
       "cancelled": "Cancelled"
     }
+  },
+  "invoicePaymentStatus": {
+    "purchaseTitle": "Purchase Invoice Payments",
+    "purchaseSubtitle": "Credit invoices — unpaid, partially and fully settled (matches the supplier statement)",
+    "salesTitle": "Sales Invoice Payments",
+    "salesSubtitle": "Credit invoices — unpaid, partially and fully settled (matches the customer statement)",
+    "purchaseFilename": "purchase-invoice-payments",
+    "salesFilename": "sales-invoice-payments",
+    "exportSubtitle": "{{n}} invoices — total remaining {{amount}}",
+    "statusUnpaid": "Unpaid",
+    "statusPartial": "Partially paid",
+    "statusPaid": "Paid",
+    "cardUnpaid": "Unpaid ({{n}}) — remaining",
+    "cardPartial": "Partial ({{n}}) — remaining",
+    "cardPaid": "Fully paid invoices",
+    "cardRemainingTotal": "Total remaining across invoices",
+    "searchPh": "Search by invoice number or supplier...",
+    "searchPhSales": "Search by invoice number or customer...",
+    "fromDate": "From",
+    "toDate": "To",
+    "filterOpen": "Unpaid + partial",
+    "filterAll": "All",
+    "colDocNumber": "Invoice #",
+    "colDate": "Date",
+    "colSupplier": "Supplier",
+    "colCustomer": "Customer",
+    "colNetDue": "Net due",
+    "colPaid": "Paid",
+    "colRemaining": "Remaining",
+    "colProgress": "Paid %",
+    "colStatus": "Status",
+    "noData": "No matching invoices",
+    "totalRow": "Total ({{n}} invoices)"
   }
 }

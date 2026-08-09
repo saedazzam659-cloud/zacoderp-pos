@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { purchaseAnalyticsApi } from "@/lib/purchaseAnalyticsApi";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
@@ -37,30 +36,29 @@ export default function SupplierBalances() {
     { key: "status",         header: t("purchasingReports.supplierBalances.status"),   width: 14 },
   ];
 
-  const { data: suppliers = [] } = useQuery({
-    queryKey: ["suppliers", cid],
+  // أرصدة محسوبة بنفس معادلة كشف حساب المورد حرفياً — من نقطة نهاية واحدة
+  // حتى لا يختلف التقريران أبداً.
+  const { data: balanceRows = [], isLoading } = useQuery({
+    queryKey: ["supplier-statement-balances", cid, branchId],
     queryFn: async () => {
-      const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authHeaders() });
+      const qs = new URLSearchParams();
+      if (cid) qs.set("companyId", String(cid));
+      if (branchId) qs.set("branchId", String(branchId));
+      const r = await fetch(`${API}/api/purchases-analytics/supplier-balances?${qs}`, { headers: authHeaders() });
+      if (!r.ok) throw new Error("failed");
       return r.json();
     },
   });
-  const { data: aging = [], isLoading } = useQuery({
-    queryKey: ["supplier-aging-balances", cid, today, branchId],
-    queryFn: () => purchaseAnalyticsApi.aging(cid, today, branchId),
-  });
-
-  const balBySupplier: Record<number, number> = {};
-  (aging as any[]).forEach(a => { balBySupplier[a.supplierId] = a.total; });
 
   const enriched = useMemo(() =>
-    (suppliers as any[])
-      .map(s => ({ ...s, balance: balBySupplier[s.id] ?? 0 }))
+    (Array.isArray(balanceRows) ? balanceRows as any[] : [])
+      .map(s => ({ ...s, id: s.supplierId }))
       .filter(s =>
         (filter === "all" ? true : filter === "credit" ? s.balance > 0 : s.balance < 0) &&
         (!search || s.nameAr?.includes(search) || s.nameEn?.toLowerCase().includes(search.toLowerCase()) || s.phone?.includes(search))
       )
       .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance)),
-    [suppliers, aging, search, filter]
+    [balanceRows, search, filter]
   );
 
   const totalCredit = enriched.filter(s => s.balance > 0).reduce((sum, s) => sum + s.balance, 0);

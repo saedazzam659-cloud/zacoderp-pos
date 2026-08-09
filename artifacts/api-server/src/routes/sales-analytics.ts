@@ -12,6 +12,8 @@ import {
   stockLedgerTable,
   itemsTable,
   journalEntriesTable,
+  receiptVoucherLinesTable,
+  settlementLinksTable,
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, asc, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
@@ -2332,6 +2334,203 @@ router.get("/free-returns", async (req, res) => {
   } catch (e: any) {
     req.log?.error({ err: e }, "free-returns failed");
     res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * أرصدة العملاء — bulk closing balances computed with EXACTLY the same
+ * formula as the customer statement (كشف حساب العميل):
+ *   balance = posted credit invoices − posted credit returns − posted receipt vouchers
+ * Display-only customers excluded (same as statement).
+ */
+router.get("/customer-balances", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
+    const { from, to } = req.query as Record<string, string>;
+    const dr = (col: any) => [
+      ...(from ? [gte(col, from)] : []),
+      ...(to   ? [lte(col, to)]   : []),
+    ];
+
+    const custs = await db.select({
+      id: customersTable.id, nameAr: customersTable.nameAr, nameEn: customersTable.nameEn,
+      phone: customersTable.phone,
+      includeInStatements: customersTable.includeInStatements,
+    }).from(customersTable).where(eq(customersTable.companyId, cid));
+
+    const [invRows, retRows, recRows] = await Promise.all([
+      db.select({ ccid: salesInvoicesTable.customerId, s: sql<string>`coalesce(sum(${salesInvoicesTable.totalAmount}), 0)` })
+        .from(salesInvoicesTable)
+        .where(and(
+          eq(salesInvoicesTable.companyId, cid),
+          eq(salesInvoicesTable.status, "posted"),
+          eq(salesInvoicesTable.paymentType, "credit"),
+          ...dr(salesInvoicesTable.invoiceDate),
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
+        ))
+        .groupBy(salesInvoicesTable.customerId),
+      db.select({ ccid: salesReturnsTable.customerId, s: sql<string>`coalesce(sum(${salesReturnsTable.totalAmount}), 0)` })
+        .from(salesReturnsTable)
+        .where(and(
+          eq(salesReturnsTable.companyId, cid),
+          eq(salesReturnsTable.status, "posted"),
+          eq(salesReturnsTable.paymentType, "credit"),
+          ...dr(salesReturnsTable.returnDate),
+          ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
+        ))
+        .groupBy(salesReturnsTable.customerId),
+      db.select({ ccid: receiptVouchersTable.entityId, s: sql<string>`coalesce(sum(${receiptVouchersTable.amount}), 0)` })
+        .from(receiptVouchersTable)
+        .where(and(
+          eq(receiptVouchersTable.companyId, cid),
+          eq(receiptVouchersTable.entityType, "customer"),
+          eq(receiptVouchersTable.status, "posted"),
+          ...dr(receiptVouchersTable.date),
+          ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
+        ))
+        .groupBy(receiptVouchersTable.entityId),
+    ]);
+
+    const invBy = new Map(invRows.map(r => [r.ccid, Number(r.s)]));
+    const retBy = new Map(retRows.map(r => [r.ccid, Number(r.s)]));
+    const recBy = new Map(recRows.map(r => [r.ccid, Number(r.s)]));
+
+    const out = custs
+      .filter(c => c.includeInStatements !== false)
+      .map(c => ({
+        customerId: c.id, nameAr: c.nameAr, nameEn: c.nameEn, phone: c.phone,
+        balance: (invBy.get(c.id) ?? 0) - (retBy.get(c.id) ?? 0) - (recBy.get(c.id) ?? 0),
+      }));
+    res.json(out);
+  } catch (e) {
+    console.error("customer-balances:", e);
+    res.status(500).json({ error: "فشل حساب أرصدة العملاء" });
+  }
+});
+
+/**
+ * تقرير حالة سداد فواتير المبيعات — posted CREDIT invoices with paid /
+ * remaining / status. Same aggregation as the purchases version, with
+ * receipt vouchers / settlement links / legacy JE header links; POSTED
+ * sources only; base currency; remaining vs net due (total − returns).
+ */
+router.get("/invoice-payment-status", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json({ rows: [] }); return; }
+    const bid = getBid(req);
+    const { from, to } = req.query as Record<string, string>;
+
+    const invConds: any[] = [
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.status, "posted"),
+      eq(salesInvoicesTable.paymentType, "credit"),
+      ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
+    ];
+    if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
+    if (to)   invConds.push(lte(salesInvoicesTable.invoiceDate, to));
+    const invs = await db.select({
+      id: salesInvoicesTable.id,
+      docNumber: salesInvoicesTable.docNumber,
+      date: salesInvoicesTable.invoiceDate,
+      customerId: salesInvoicesTable.customerId,
+      total: salesInvoicesTable.totalAmount,
+      rate:  salesInvoicesTable.exchangeRate,
+    }).from(salesInvoicesTable).where(and(...invConds));
+    if (!invs.length) { res.json({ rows: [] }); return; }
+    const ids = invs.map(i => i.id);
+
+    const [custRows, retRows, lineRows, headerRows, linkVRows, linkJRows, legacyJeRows] = await Promise.all([
+      db.select({ id: customersTable.id, nameAr: customersTable.nameAr, nameEn: customersTable.nameEn })
+        .from(customersTable).where(eq(customersTable.companyId, cid)),
+      db.select({ invId: salesReturnsTable.invoiceId, s: sql<string>`coalesce(sum(${salesReturnsTable.totalAmount} * coalesce(${salesReturnsTable.exchangeRate}, 1)), 0)` })
+        .from(salesReturnsTable)
+        .where(and(eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"), inArray(salesReturnsTable.invoiceId, ids)))
+        .groupBy(salesReturnsTable.invoiceId),
+      db.select({
+        invId: receiptVoucherLinesTable.salesInvoiceId,
+        voucherId: receiptVoucherLinesTable.voucherId,
+        s: sql<string>`coalesce(sum(${receiptVoucherLinesTable.amount} * coalesce(${receiptVouchersTable.exchangeRate}, 1)), 0)`,
+      }).from(receiptVoucherLinesTable)
+        .innerJoin(receiptVouchersTable, eq(receiptVoucherLinesTable.voucherId, receiptVouchersTable.id))
+        .where(and(eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted"), inArray(receiptVoucherLinesTable.salesInvoiceId, ids)))
+        .groupBy(receiptVoucherLinesTable.salesInvoiceId, receiptVoucherLinesTable.voucherId),
+      db.select({
+        id: receiptVouchersTable.id, invId: receiptVouchersTable.salesInvoiceId,
+        amount: receiptVouchersTable.amount, rate: receiptVouchersTable.exchangeRate,
+      }).from(receiptVouchersTable)
+        .where(and(eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted"), inArray(receiptVouchersTable.salesInvoiceId, ids))),
+      db.select({
+        invId: settlementLinksTable.salesInvoiceId,
+        s: sql<string>`coalesce(sum(${settlementLinksTable.amount} * coalesce(${receiptVouchersTable.exchangeRate}, 1)), 0)`,
+      }).from(settlementLinksTable)
+        .innerJoin(receiptVouchersTable, eq(settlementLinksTable.sourceId, receiptVouchersTable.id))
+        .where(and(
+          eq(settlementLinksTable.companyId, cid),
+          eq(settlementLinksTable.sourceType, "receipt_voucher"),
+          eq(receiptVouchersTable.status, "posted"),
+          inArray(settlementLinksTable.salesInvoiceId, ids)))
+        .groupBy(settlementLinksTable.salesInvoiceId),
+      db.select({
+        invId: settlementLinksTable.salesInvoiceId,
+        s: sql<string>`coalesce(sum(${settlementLinksTable.amount} * coalesce(${journalEntriesTable.exchangeRate}, 1)), 0)`,
+      }).from(settlementLinksTable)
+        .innerJoin(journalEntriesTable, eq(settlementLinksTable.sourceId, journalEntriesTable.id))
+        .where(and(
+          eq(settlementLinksTable.companyId, cid),
+          eq(settlementLinksTable.sourceType, "je"),
+          eq(journalEntriesTable.status, "posted"),
+          inArray(settlementLinksTable.salesInvoiceId, ids)))
+        .groupBy(settlementLinksTable.salesInvoiceId),
+      db.select({
+        invId: journalEntriesTable.salesInvoiceId,
+        s: sql<string>`coalesce(sum(${journalEntriesTable.settlementAmount} * coalesce(${journalEntriesTable.exchangeRate}, 1)), 0)`,
+      }).from(journalEntriesTable)
+        .where(and(
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+          sql`${journalEntriesTable.settlementAmount} IS NOT NULL`,
+          inArray(journalEntriesTable.salesInvoiceId, ids)))
+        .groupBy(journalEntriesTable.salesInvoiceId),
+    ]);
+
+    const custBy = new Map(custRows.map(c => [c.id, c]));
+    const paid = new Map<number, number>();
+    const addPaid = (invId: number | null, v: number) => {
+      if (invId == null) return;
+      paid.set(invId, (paid.get(invId) ?? 0) + v);
+    };
+    const lineLinkedVouchers = new Set<number>();
+    for (const r of lineRows) { lineLinkedVouchers.add(r.voucherId); addPaid(r.invId, Number(r.s)); }
+    for (const h of headerRows) {
+      if (lineLinkedVouchers.has(h.id)) continue;
+      addPaid(h.invId, (parseFloat(String(h.amount)) || 0) * (parseFloat(String(h.rate)) || 1));
+    }
+    for (const r of linkVRows) addPaid(r.invId, Number(r.s));
+    for (const r of linkJRows) addPaid(r.invId, Number(r.s));
+    for (const r of legacyJeRows) addPaid(r.invId, Number(r.s));
+    const retBy = new Map(retRows.map(r => [r.invId, Number(r.s)]));
+
+    const rows = invs.map(i => {
+      const totalBase = (parseFloat(String(i.total)) || 0) * (parseFloat(String(i.rate)) || 1);
+      const returns = retBy.get(i.id) ?? 0;
+      const netDue = Math.max(0, totalBase - returns);
+      const p = Math.min(paid.get(i.id) ?? 0, netDue);
+      const remaining = Math.max(0, netDue - p);
+      const status = remaining <= 0.01 && netDue > 0 ? "paid" : p > 0.005 ? "partial" : "unpaid";
+      const cust = custBy.get(i.customerId as number);
+      return {
+        id: i.id, docNumber: i.docNumber, date: i.date, customerId: i.customerId,
+        customerNameAr: cust?.nameAr ?? null, customerNameEn: cust?.nameEn ?? null,
+        total: totalBase, returns, netDue, paid: p, remaining, status,
+      };
+    });
+    res.json({ rows });
+  } catch (e) {
+    console.error("invoice-payment-status:", e);
+    res.status(500).json({ error: "فشل تحميل تقرير سداد الفواتير" });
   }
 });
 

@@ -1355,7 +1355,9 @@
     "purchaseReturnsReport": "مرتجعات المشتريات",
     "lcStatement": "كشف حساب الاعتمادات",
     "profitabilityReport": "تقرير الربحية",
-    "dailyDetailedReport": "تقرير مبيعات تفصيلي يومي"
+    "dailyDetailedReport": "تقرير مبيعات تفصيلي يومي",
+    "salesInvoicePaymentStatus": "سداد فواتير المبيعات",
+    "purchaseInvoicePaymentStatus": "سداد فواتير المشتريات"
   },
   "topbar": {
     "home": "الرئيسية",
@@ -9607,5 +9609,38 @@
       "posted": "مُرحَّل",
       "cancelled": "ملغي"
     }
+  },
+  "invoicePaymentStatus": {
+    "purchaseTitle": "سداد فواتير المشتريات",
+    "purchaseSubtitle": "الفواتير الآجلة غير المسددة والمسددة جزئياً وكلياً — مطابقة لكشف حساب المورد",
+    "salesTitle": "سداد فواتير المبيعات",
+    "salesSubtitle": "الفواتير الآجلة غير المسددة والمسددة جزئياً وكلياً — مطابقة لكشف حساب العميل",
+    "purchaseFilename": "سداد-فواتير-المشتريات",
+    "salesFilename": "سداد-فواتير-المبيعات",
+    "exportSubtitle": "{{n}} فاتورة — إجمالي المتبقي {{amount}}",
+    "statusUnpaid": "غير مسددة",
+    "statusPartial": "مسددة جزئياً",
+    "statusPaid": "مسددة",
+    "cardUnpaid": "غير مسددة ({{n}}) — المتبقي",
+    "cardPartial": "مسددة جزئياً ({{n}}) — المتبقي",
+    "cardPaid": "فواتير مسددة بالكامل",
+    "cardRemainingTotal": "إجمالي المتبقي على كل الفواتير",
+    "searchPh": "بحث برقم الفاتورة أو اسم المورد...",
+    "searchPhSales": "بحث برقم الفاتورة أو اسم العميل...",
+    "fromDate": "من تاريخ",
+    "toDate": "إلى تاريخ",
+    "filterOpen": "غير المسددة + الجزئية",
+    "filterAll": "الكل",
+    "colDocNumber": "رقم الفاتورة",
+    "colDate": "التاريخ",
+    "colSupplier": "المورد",
+    "colCustomer": "العميل",
+    "colNetDue": "صافي المستحق",
+    "colPaid": "المسدد",
+    "colRemaining": "المتبقي",
+    "colProgress": "نسبة السداد",
+    "colStatus": "الحالة",
+    "noData": "لا توجد فواتير مطابقة",
+    "totalRow": "الإجمالي ({{n}} فاتورة)"
   }
 }

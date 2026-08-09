@@ -353,6 +353,7 @@ import ProfitabilityReport  from "@/pages/sales/reports/ProfitabilityReport";
 import CustomerStatement    from "@/pages/sales/reports/CustomerStatement";
 import CustomerStatementDetailed from "@/pages/sales/reports/CustomerStatementDetailed";
 import CustomerBalances     from "@/pages/sales/reports/CustomerBalances";
+import SalesInvoicePaymentStatus from "@/pages/sales/reports/SalesInvoicePaymentStatus";
 import AgingReport          from "@/pages/sales/reports/AgingReport";
 import SalesByCustomer      from "@/pages/sales/reports/SalesByCustomer";
 import SalesByItem          from "@/pages/sales/reports/SalesByItem";
@@ -368,6 +369,7 @@ import PurchaseReportsHub      from "@/pages/purchasing/reports/PurchaseReportsH
 import SupplierStatement       from "@/pages/purchasing/reports/SupplierStatement";
 import SupplierStatementDetailed from "@/pages/purchasing/reports/SupplierStatementDetailed";
 import SupplierBalances        from "@/pages/purchasing/reports/SupplierBalances";
+import PurchaseInvoicePaymentStatus from "@/pages/purchasing/reports/PurchaseInvoicePaymentStatus";
 import SupplierAgingReport     from "@/pages/purchasing/reports/SupplierAgingReport";
 import PurchasesBySupplier     from "@/pages/purchasing/reports/PurchasesBySupplier";
 import PurchasesByItem         from "@/pages/purchasing/reports/PurchasesByItem";
@@ -1072,6 +1074,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/reports/customer-statement" module="sales_reports"  component={CustomerStatement} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/customer-statement-detailed" module="sales_reports"  component={CustomerStatementDetailed} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/customer-balances"  module="sales_reports"  component={CustomerBalances} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/invoice-payment-status" module="sales_reports" component={SalesInvoicePaymentStatus} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/aging"              module="sales_reports"  component={AgingReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-customer"  module="sales_reports"  component={SalesByCustomer} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-item"      module="sales_reports"  component={SalesByItem} />}
@@ -1087,6 +1090,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement"   module="suppliers"          component={SupplierStatement} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement-detailed"   module="suppliers"          component={SupplierStatementDetailed} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-balances"    module="suppliers"          component={SupplierBalances} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/invoice-payment-status" module="purchase_invoices" component={PurchaseInvoicePaymentStatus} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/aging"                module="purchase_invoices"  component={SupplierAgingReport} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-supplier" module="purchase_invoices" component={PurchasesBySupplier} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-item"    module="purchase_invoices"  component={PurchasesByItem} />}

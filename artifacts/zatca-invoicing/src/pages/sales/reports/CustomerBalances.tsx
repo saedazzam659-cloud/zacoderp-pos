@@ -57,9 +57,12 @@ export default function CustomerBalances() {
   const { data: balances = [], isLoading } = useQuery({
     queryKey: ["customer-balances", cid, branchId, from, to],
     queryFn: async () => {
-      const base = cid ? `${API}/api/customers/balances?companyId=${cid}` : `${API}/api/customers/balances`;
+      // أرصدة محسوبة بنفس معادلة كشف حساب العميل حرفياً — حتى لا يختلف
+      // التقريران أبداً (فواتير آجلة − مرتجعات آجلة − سندات قبض، المرحّل فقط).
+      const base = cid ? `${API}/api/sales-analytics/customer-balances?companyId=${cid}` : `${API}/api/sales-analytics/customer-balances`;
       const r = await fetch(withParams(base, { branchId, from, to }), { headers: authHeaders() });
-      return r.json();
+      const d = await r.json();
+      return Array.isArray(d) ? d : [];
     },
   });
 
@@ -100,8 +103,12 @@ export default function CustomerBalances() {
     (!search || row.nameAr?.includes(search) || row.nameEn?.toLowerCase().includes(search.toLowerCase()) || row.phone?.includes(search));
 
   const enriched = useMemo(() => {
-    const customerRows = (customers as any[])
-      .map(c => ({ ...c, rowKey: `c-${c.id}`, isSister: false, balance: balByCustomer[c.id] ?? 0 }));
+    // نبني الصفوف من نقطة النهاية نفسها (المطابقة لكشف الحساب) حتى لا يظهر
+    // عميل «للعرض فقط» استبعدته النقطة؛ قائمة العملاء تُستخدم للإثراء فقط (المدينة).
+    const custById: Record<number, any> = {};
+    (customers as any[]).forEach(c => { custById[c.id] = c; });
+    const customerRows = (balances as any[])
+      .map(b => ({ ...custById[b.customerId], ...b, id: b.customerId, rowKey: `c-${b.customerId}`, isSister: false, balance: Number(b.balance) || 0 }));
     const sisterRows = (sisters as any[])
       .map(s => ({ ...s, rowKey: `s-${s.id}`, isSister: true, city: null, balance: balBySister[s.id] ?? 0 }));
     return [...customerRows, ...sisterRows]

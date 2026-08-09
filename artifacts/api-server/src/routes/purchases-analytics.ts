@@ -8,6 +8,8 @@ import {
   cashBoxesTable,
   bankAccountsTable,
   journalEntriesTable, journalEntryLinesTable,
+  paymentVoucherLinesTable,
+  settlementLinksTable,
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, lt, asc, inArray, notInArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
@@ -1070,6 +1072,239 @@ router.get("/returns-by-supplier", async (req, res) => {
       };
     }).sort((a, b) => b.totalAmount - a.totalAmount));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * أرصدة الموردين — bulk closing balances computed with EXACTLY the same
+ * formula as the supplier statement (كشف حساب المورد), so the two reports
+ * can never disagree:
+ *   balance = posted credit non-LC invoices − posted credit returns
+ *           − posted payment vouchers + direct JE net (credit − debit)
+ * Direct JE lines are attributed only through UNSHARED supplier AP accounts
+ * (same rule as fetchSupplierDirectJeLines). Display-only suppliers excluded.
+ */
+router.get("/supplier-balances", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
+    const { from, to } = req.query as Record<string, string>;
+    const dr = (col: any) => [
+      ...(from ? [gte(col, from)] : []),
+      ...(to   ? [lte(col, to)]   : []),
+    ];
+
+    const sups = await db.select({
+      id: suppliersTable.id, nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn,
+      phone: suppliersTable.phone, accountId: suppliersTable.accountId,
+      includeInStatements: suppliersTable.includeInStatements,
+    }).from(suppliersTable).where(eq(suppliersTable.companyId, cid));
+
+    const [invRows, retRows, payRows] = await Promise.all([
+      db.select({ sid: purchaseInvoicesTable.supplierId, s: sql<string>`coalesce(sum(${purchaseInvoicesTable.totalAmount}), 0)` })
+        .from(purchaseInvoicesTable)
+        .where(and(
+          eq(purchaseInvoicesTable.companyId, cid),
+          eq(purchaseInvoicesTable.status, "posted"),
+          eq(purchaseInvoicesTable.paymentType, "credit"),
+          sql`${purchaseInvoicesTable.lcId} IS NULL`,
+          ...dr(purchaseInvoicesTable.invoiceDate),
+          ...branchScopeSpread(req, purchaseInvoicesTable.branchId, bid),
+        ))
+        .groupBy(purchaseInvoicesTable.supplierId),
+      db.select({ sid: purchaseReturnsTable.supplierId, s: sql<string>`coalesce(sum(${purchaseReturnsTable.totalAmount}), 0)` })
+        .from(purchaseReturnsTable)
+        .where(and(
+          eq(purchaseReturnsTable.companyId, cid),
+          eq(purchaseReturnsTable.status, "posted"),
+          eq(purchaseReturnsTable.paymentType, "credit"),
+          ...dr(purchaseReturnsTable.returnDate),
+          ...branchScopeSpread(req, purchaseReturnsTable.branchId, bid),
+        ))
+        .groupBy(purchaseReturnsTable.supplierId),
+      db.select({ sid: paymentVouchersTable.entityId, s: sql<string>`coalesce(sum(${paymentVouchersTable.amount}), 0)` })
+        .from(paymentVouchersTable)
+        .where(and(
+          eq(paymentVouchersTable.companyId, cid),
+          eq(paymentVouchersTable.entityType, "supplier"),
+          eq(paymentVouchersTable.status, "posted"),
+          ...dr(paymentVouchersTable.date),
+          ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
+        ))
+        .groupBy(paymentVouchersTable.entityId),
+    ]);
+
+    // Direct JE lines per UNSHARED supplier AP account (same exclusion list
+    // as the statement's fetchSupplierDirectJeLines).
+    const acctCount = new Map<number, number>();
+    for (const s of sups) if (s.accountId) acctCount.set(s.accountId, (acctCount.get(s.accountId) ?? 0) + 1);
+    const soleAccts = [...acctCount.entries()].filter(([, n]) => n === 1).map(([a]) => a);
+    const jeByAcct = new Map<number, number>();
+    if (soleAccts.length) {
+      const jeRows = await db.select({
+        acct: journalEntryLinesTable.accountId,
+        s: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)`,
+      }).from(journalEntryLinesTable)
+        .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+        .where(and(
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+          inArray(journalEntryLinesTable.accountId, soleAccts),
+          notInArray(journalEntriesTable.entryType, [...SUPPLIER_DOC_ENTRY_TYPES]),
+          ...dr(journalEntriesTable.entryDate),
+          ...branchScopeSpread(req, journalEntriesTable.branchId, bid),
+        ))
+        .groupBy(journalEntryLinesTable.accountId);
+      for (const r of jeRows) jeByAcct.set(r.acct as number, Number(r.s));
+    }
+
+    const invBy = new Map(invRows.map(r => [r.sid, Number(r.s)]));
+    const retBy = new Map(retRows.map(r => [r.sid, Number(r.s)]));
+    const payBy = new Map(payRows.map(r => [r.sid, Number(r.s)]));
+
+    const out = sups
+      .filter(s => s.includeInStatements !== false)
+      .map(s => ({
+        supplierId: s.id, nameAr: s.nameAr, nameEn: s.nameEn, phone: s.phone,
+        balance: (invBy.get(s.id) ?? 0) - (retBy.get(s.id) ?? 0) - (payBy.get(s.id) ?? 0)
+               + (s.accountId ? (jeByAcct.get(s.accountId) ?? 0) : 0),
+      }));
+    res.json(out);
+  } catch (e) {
+    console.error("supplier-balances:", e);
+    res.status(500).json({ error: "فشل حساب أرصدة الموردين" });
+  }
+});
+
+/**
+ * تقرير حالة سداد فواتير المشتريات — posted CREDIT invoices with paid /
+ * remaining / status (unpaid | partial | paid). Paid amount aggregates, in
+ * BASE currency, POSTED sources only:
+ *   • payment-voucher LINES linked to the invoice (amount + taxAmount)
+ *   • header-linked POSTED vouchers that have no invoice lines
+ *   • partial settlement links (سداد جزئي) from posted vouchers / JEs
+ *   • legacy JE header links (journal_entries.purchase_invoice_id + settlement_amount)
+ * Remaining is measured against net due = invoice total − its returns.
+ */
+router.get("/invoice-payment-status", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json({ rows: [] }); return; }
+    const bid = getBid(req);
+    const { from, to } = req.query as Record<string, string>;
+
+    const invConds: any[] = [
+      eq(purchaseInvoicesTable.companyId, cid),
+      eq(purchaseInvoicesTable.status, "posted"),
+      eq(purchaseInvoicesTable.paymentType, "credit"),
+      sql`${purchaseInvoicesTable.lcId} IS NULL`,
+      ...branchScopeSpread(req, purchaseInvoicesTable.branchId, bid),
+    ];
+    if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
+    if (to)   invConds.push(lte(purchaseInvoicesTable.invoiceDate, to));
+    const invs = await db.select({
+      id: purchaseInvoicesTable.id,
+      docNumber: purchaseInvoicesTable.docNumber,
+      supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
+      date: purchaseInvoicesTable.invoiceDate,
+      supplierId: purchaseInvoicesTable.supplierId,
+      total: purchaseInvoicesTable.totalAmount,
+      rate:  purchaseInvoicesTable.exchangeRate,
+    }).from(purchaseInvoicesTable).where(and(...invConds));
+    if (!invs.length) { res.json({ rows: [] }); return; }
+    const ids = invs.map(i => i.id);
+
+    const [supRows, retRows, lineRows, headerRows, linkVRows, linkJRows, legacyJeRows] = await Promise.all([
+      db.select({ id: suppliersTable.id, nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+        .from(suppliersTable).where(eq(suppliersTable.companyId, cid)),
+      db.select({ invId: purchaseReturnsTable.invoiceId, s: sql<string>`coalesce(sum(${purchaseReturnsTable.totalAmount} * coalesce(${purchaseReturnsTable.exchangeRate}, 1)), 0)` })
+        .from(purchaseReturnsTable)
+        .where(and(eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.status, "posted"), inArray(purchaseReturnsTable.invoiceId, ids)))
+        .groupBy(purchaseReturnsTable.invoiceId),
+      db.select({
+        invId: paymentVoucherLinesTable.purchaseInvoiceId,
+        voucherId: paymentVoucherLinesTable.voucherId,
+        s: sql<string>`coalesce(sum((${paymentVoucherLinesTable.amount} + coalesce(${paymentVoucherLinesTable.taxAmount}, 0)) * coalesce(${paymentVouchersTable.exchangeRate}, 1)), 0)`,
+      }).from(paymentVoucherLinesTable)
+        .innerJoin(paymentVouchersTable, eq(paymentVoucherLinesTable.voucherId, paymentVouchersTable.id))
+        .where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted"), inArray(paymentVoucherLinesTable.purchaseInvoiceId, ids)))
+        .groupBy(paymentVoucherLinesTable.purchaseInvoiceId, paymentVoucherLinesTable.voucherId),
+      db.select({
+        id: paymentVouchersTable.id, invId: paymentVouchersTable.purchaseInvoiceId,
+        amount: paymentVouchersTable.amount, rate: paymentVouchersTable.exchangeRate,
+      }).from(paymentVouchersTable)
+        .where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted"), inArray(paymentVouchersTable.purchaseInvoiceId, ids))),
+      db.select({
+        invId: settlementLinksTable.purchaseInvoiceId,
+        s: sql<string>`coalesce(sum(${settlementLinksTable.amount} * coalesce(${paymentVouchersTable.exchangeRate}, 1)), 0)`,
+      }).from(settlementLinksTable)
+        .innerJoin(paymentVouchersTable, eq(settlementLinksTable.sourceId, paymentVouchersTable.id))
+        .where(and(
+          eq(settlementLinksTable.companyId, cid),
+          eq(settlementLinksTable.sourceType, "payment_voucher"),
+          eq(paymentVouchersTable.status, "posted"),
+          inArray(settlementLinksTable.purchaseInvoiceId, ids)))
+        .groupBy(settlementLinksTable.purchaseInvoiceId),
+      db.select({
+        invId: settlementLinksTable.purchaseInvoiceId,
+        s: sql<string>`coalesce(sum(${settlementLinksTable.amount} * coalesce(${journalEntriesTable.exchangeRate}, 1)), 0)`,
+      }).from(settlementLinksTable)
+        .innerJoin(journalEntriesTable, eq(settlementLinksTable.sourceId, journalEntriesTable.id))
+        .where(and(
+          eq(settlementLinksTable.companyId, cid),
+          eq(settlementLinksTable.sourceType, "je"),
+          eq(journalEntriesTable.status, "posted"),
+          inArray(settlementLinksTable.purchaseInvoiceId, ids)))
+        .groupBy(settlementLinksTable.purchaseInvoiceId),
+      db.select({
+        invId: journalEntriesTable.purchaseInvoiceId,
+        s: sql<string>`coalesce(sum(${journalEntriesTable.settlementAmount} * coalesce(${journalEntriesTable.exchangeRate}, 1)), 0)`,
+      }).from(journalEntriesTable)
+        .where(and(
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+          sql`${journalEntriesTable.settlementAmount} IS NOT NULL`,
+          inArray(journalEntriesTable.purchaseInvoiceId, ids)))
+        .groupBy(journalEntriesTable.purchaseInvoiceId),
+    ]);
+
+    const supBy = new Map(supRows.map(s => [s.id, s]));
+    const paid = new Map<number, number>();
+    const addPaid = (invId: number | null, v: number) => {
+      if (invId == null) return;
+      paid.set(invId, (paid.get(invId) ?? 0) + v);
+    };
+    const lineLinkedVouchers = new Set<number>();
+    for (const r of lineRows) { lineLinkedVouchers.add(r.voucherId); addPaid(r.invId, Number(r.s)); }
+    for (const h of headerRows) {
+      if (lineLinkedVouchers.has(h.id)) continue;
+      addPaid(h.invId, (parseFloat(String(h.amount)) || 0) * (parseFloat(String(h.rate)) || 1));
+    }
+    for (const r of linkVRows) addPaid(r.invId, Number(r.s));
+    for (const r of linkJRows) addPaid(r.invId, Number(r.s));
+    for (const r of legacyJeRows) addPaid(r.invId, Number(r.s));
+    const retBy = new Map(retRows.map(r => [r.invId, Number(r.s)]));
+
+    const rows = invs.map(i => {
+      const totalBase = (parseFloat(String(i.total)) || 0) * (parseFloat(String(i.rate)) || 1);
+      const returns = retBy.get(i.id) ?? 0;
+      const netDue = Math.max(0, totalBase - returns);
+      const p = Math.min(paid.get(i.id) ?? 0, netDue);
+      const remaining = Math.max(0, netDue - p);
+      const status = remaining <= 0.01 && netDue > 0 ? "paid" : p > 0.005 ? "partial" : "unpaid";
+      const sup = supBy.get(i.supplierId as number);
+      return {
+        id: i.id, docNumber: i.docNumber, supplierInvoiceNumber: i.supplierInvoiceNumber,
+        date: i.date, supplierId: i.supplierId,
+        supplierNameAr: sup?.nameAr ?? null, supplierNameEn: sup?.nameEn ?? null,
+        total: totalBase, returns, netDue, paid: p, remaining, status,
+      };
+    });
+    res.json({ rows });
+  } catch (e) {
+    console.error("invoice-payment-status:", e);
+    res.status(500).json({ error: "فشل تحميل تقرير سداد الفواتير" });
+  }
 });
 
 export default router;
