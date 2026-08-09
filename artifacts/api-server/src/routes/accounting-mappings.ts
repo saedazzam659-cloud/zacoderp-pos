@@ -11,7 +11,7 @@ import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js"
 
 const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   purchase_invoice:      ["inventory", "vat_input", "payable", "discount"],
-  purchase_return:       ["inventory", "vat_input", "payable", "discount"],
+  purchase_return:       ["inventory", "vat_input", "payable", "discount", "variance"],
   supplier_settlement:   ["payable", "cash", "bank", "discount"],
   sales_invoice:         ["receivable", "revenue", "vat_output", "cogs", "inventory", "discount"],
   pos_invoice:           ["cash", "bank", "receivable", "revenue", "vat_output", "cogs", "inventory", "discount"],
