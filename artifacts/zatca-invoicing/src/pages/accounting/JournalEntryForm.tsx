@@ -56,6 +56,25 @@ const ENTRY_TYPES = [
   { value: "depreciation", label: "قيد إهلاك" },
 ];
 
+// ── القيود الخاصة (نوع القيد) ──────────────────────────────────────
+// A create-mode-only selector that turns the JE screen into the unified
+// entry point for special manual entries. Each kind REUSES an existing
+// module's endpoint after the JE saves — no business logic is duplicated:
+//   opening        → entryType="opening" (نفس آلية الأرصدة الافتتاحية)
+//   fixed_asset    → POST /fixed-assets/assets  (sourceType=journal_entry)
+//   prepaid/…      → POST /adjustments type=prepaid (محرك التسويات الشهرية)
+//   accrued/…      → POST /adjustments type=accrued (استحقاق بفترة واحدة)
+const SPECIAL_KINDS = [
+  { value: "normal",           label: "قيد عادي" },
+  { value: "opening",          label: "قيد افتتاحي" },
+  { value: "fixed_asset",      label: "قيد أصل ثابت" },
+  { value: "prepaid_expense",  label: "قيد مصروف مقدم" },
+  { value: "deferred_revenue", label: "قيد إيراد مقدم" },
+  { value: "accrued_expense",  label: "قيد مصروف مستحق" },
+  { value: "accrued_revenue",  label: "قيد إيراد مستحق" },
+];
+const ADJ_KINDS = ["prepaid_expense", "deferred_revenue", "accrued_expense", "accrued_revenue"];
+
 // Auto-generated journal entries (created from sales/purchase invoices,
 // vouchers, settlements, stock moves, payroll, etc.) MUST NOT be edited
 // directly from this form — the source document is the single source of
@@ -155,6 +174,10 @@ export default function JournalEntryForm() {
   const [description,  setDescription]  = useState("");
   const [entryType,    setEntryType]    = useState("general");
   const [branchId,     setBranchId]     = useState("");
+  // ── نوع القيد (القيود الخاصة) — create mode only ──────────────────
+  const [specialKind, setSpecialKind] = useState("normal");
+  const [spec, setSpec] = useState<Record<string, string>>({});
+  const setSpecF = (k: string, v: string) => setSpec(p => ({ ...p, [k]: v }));
   const [lines,        setLines]        = useState<JournalLine[]>([newLine(), newLine()]);
   // ── سداد فاتورة آجلة عن طريق القيد ────────────────────────────────
   // Seeded from query params when the user arrives from the invoice's
@@ -274,13 +297,12 @@ export default function JournalEntryForm() {
     enabled:  !!sourceId,
   });
 
-  // Live fixed assets already created FROM this entry (sold/scrapped
-  // excluded server-side) — drives the "عرض الأصل المرتبط" buttons below.
-  const { data: jeLinkedAssets = [] } = useQuery<any[]>({
-    queryKey: ["je-fa-by-source", editId, cid],
-    enabled: editId != null,
+  // مجموعات الأصول الثابتة — تُحمَّل فقط عند اختيار "قيد أصل ثابت".
+  const { data: faGroups = [] } = useQuery<any[]>({
+    queryKey: ["fa-groups", cid],
+    enabled: !!user && specialKind === "fixed_asset",
     queryFn: async () => {
-      const url = `${API}/api/fixed-assets/assets/by-source?sourceType=journal_entry&sourceDocumentId=${editId}${cid ? `&companyId=${cid}` : ""}`;
+      const url = `${API}/api/fixed-assets/groups${cid ? `?companyId=${cid}` : ""}`;
       const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const j = r.ok ? await r.json() : [];
       return Array.isArray(j) ? j : [];
@@ -1181,6 +1203,81 @@ export default function JournalEntryForm() {
     }),
   });
 
+  // ── تنفيذ خطوة القيد الخاص بعد الحفظ ────────────────────────────────
+  // يعيد استخدام نقاط النهاية الحالية كما هي:
+  //   fixed_asset → POST /api/fixed-assets/assets (sourceType=journal_entry،
+  //                 الخادم يفرض skipAcquisitionJe فلا يتكرر قيد الاقتناء)
+  //   prepaid/deferred/accrued → POST /api/adjustments (محرك التسويات)
+  async function runSpecialAfterSave(jeId: number, jeDoc: string, kind: string, s: Record<string, string>) {
+    const post = async (path: string, body: any) => {
+      const r = await fetch(`${API}${path}${cid ? `?companyId=${cid}` : ""}`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error ?? `فشل الطلب (${r.status})`);
+      return j;
+    };
+    try {
+      if (kind === "fixed_asset") {
+        const asset = await post("/api/fixed-assets/assets", {
+          companyId: cid,
+          nameAr: s.faName.trim(),
+          code: (s.faCode ?? "").trim() || undefined,
+          groupId: s.faGroupId ? Number(s.faGroupId) : null,
+          purchaseDate: s.faPurchaseDate || entryDate,
+          depreciationStart: s.faDepStart || entryDate,
+          lifeYears: s.faLifeYears || "5",
+          depreciationMethod: s.faMethod || "straight_line",
+          scrapValue: s.faScrap || "0",
+          purchaseValue: String(totalDebit || 0),
+          branchId: branchId ? Number(branchId) : null,
+          costCenterId: s.faCostCenterId ? Number(s.faCostCenterId) : null,
+          sourceType: "journal_entry",
+          sourceDocumentId: jeId,
+          acquisitionJeNo: jeDoc || null,
+        });
+        toast({ title: "تم إنشاء الأصل الثابت", description: `الأصل ${asset?.code ?? ""} مرتبط بالقيد ${jeDoc || `#${jeId}`}` });
+      } else if (ADJ_KINDS.includes(kind)) {
+        const isPrepaid = kind === "prepaid_expense" || kind === "deferred_revenue";
+        const start = (isPrepaid ? s.adjStart : s.adjDue) || entryDate;
+        let end = start;
+        if (isPrepaid) {
+          // حساب تاريخ النهاية بإضافة (الأشهر−1) مع تثبيت اليوم داخل الشهر
+          // الناتج — تفادياً لقفزة نهاية الشهر (31 → الشهر التالي).
+          const months = Number(s.adjMonths ?? "12");
+          const [y, m, dd] = start.split("-").map(Number);
+          const total = (m - 1) + (months - 1);
+          const ny = y + Math.floor(total / 12);
+          const nm = total % 12;                      // 0-based
+          const lastDay = new Date(ny, nm + 1, 0).getDate();
+          const day = Math.min(dd, lastDay);
+          end = `${ny}-${String(nm + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        }
+        const label = SPECIAL_KINDS.find(k => k.value === kind)?.label ?? kind;
+        await post("/api/adjustments", {
+          type: isPrepaid ? "prepaid" : "accrued",
+          name: `${label} — قيد ${jeDoc || `#${jeId}`}`,
+          expenseAccountId: Number(s.adjDebitAccountId),
+          contraAccountId: Number(s.adjCreditAccountId),
+          totalAmount: s.adjAmount ? Number(s.adjAmount) : totalDebit,
+          startDate: start,
+          endDate: end,
+          costCenterId: s.adjCostCenterId ? Number(s.adjCostCenterId) : null,
+          notes: `مرتبط بالقيد المحاسبي رقم ${jeDoc || jeId} (#${jeId})`,
+        });
+        toast({ title: "تم إنشاء جدول التسويات", description: `مرتبط بالقيد ${jeDoc || `#${jeId}`} — الترحيل الشهري تلقائي.` });
+      }
+    } catch (e: any) {
+      toast({
+        title: "حُفظ القيد لكن خطوة الربط فشلت",
+        description: `${e?.message ?? "خطأ غير متوقع"} — يمكنك إنشاءها يدوياً من الموديول المعني.`,
+        variant: "destructive",
+      });
+    }
+  }
+
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
       // Single-shot create on Save for new entries. The server consumes the
@@ -1191,6 +1288,12 @@ export default function JournalEntryForm() {
     },
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
+      // ── القيود الخاصة: تنفيذ خطوة الربط بعد حفظ القيد ──────────────
+      // نلتقط القيم الآن (قبل إعادة تهيئة النموذج أدناه) ثم ننادي نقطة
+      // النهاية الحالية للموديول المعني — لا تكرار لأي منطق عمل.
+      if (isNew && saved?.id && specialKind !== "normal" && specialKind !== "opening") {
+        void runSpecialAfterSave(Number(saved.id), saved?.docNumber ?? docNumber, specialKind, { ...spec });
+      }
       // Show the JUST-saved doc number prominently in the toast so the user
       // sees confirmation of what was just created/updated.
       const savedDoc = saved?.docNumber ?? docNumber;
@@ -1242,6 +1345,8 @@ export default function JournalEntryForm() {
         setSettleAmountAuto(false);
         if (defaultCurrency?.code) setCurrency(defaultCurrency.code);
         setLines([newLine(), newLine()]);
+        setSpecialKind("normal");
+        setSpec({});
         setActiveTab("header");
         setDocNumber("");
         // Re-peek the next sequence number so the badge instantly shows
@@ -1331,6 +1436,49 @@ export default function JournalEntryForm() {
     // mutation's own isPending is the render-time guard; this is the
     // same-tick guard.
     if (saveMutation.isPending || savingRef.current) return;
+    // ── التحقق من بيانات القيد الخاص قبل الحفظ (حتى لا يُحفظ القيد
+    //    بينما تفشل خطوة الربط بعده) ─────────────────────────────────
+    if (isNew && specialKind === "fixed_asset") {
+      if (!(spec.faName ?? "").trim()) {
+        toast({ title: "اسم الأصل مطلوب", description: "أدخل اسم الأصل الثابت في لوحة «قيد أصل ثابت» أو غيّر نوع القيد إلى عادي.", variant: "destructive" });
+        return;
+      }
+      if (!(totalDebit > 0)) {
+        toast({ title: "قيمة الشراء غير صالحة", description: "قيمة الأصل تُؤخذ من إجمالي مدين القيد — أدخل سطور القيد أولاً.", variant: "destructive" });
+        return;
+      }
+      const life = Number(spec.faLifeYears ?? "5");
+      if (!(life > 0)) {
+        toast({ title: "العمر الإنتاجي غير صالح", variant: "destructive" });
+        return;
+      }
+      const scrap = Number(spec.faScrap ?? "0");
+      if (!(scrap >= 0) || scrap >= totalDebit) {
+        toast({ title: "القيمة التخريدية غير صالحة", description: "يجب أن تكون صفراً أو أكبر وأقل من قيمة الأصل.", variant: "destructive" });
+        return;
+      }
+    }
+    if (isNew && ADJ_KINDS.includes(specialKind)) {
+      if (!spec.adjDebitAccountId || !spec.adjCreditAccountId) {
+        toast({ title: "حسابا التسوية مطلوبان", description: "اختر الحسابين في لوحة القيد الخاص أو غيّر نوع القيد إلى عادي.", variant: "destructive" });
+        return;
+      }
+      if (spec.adjDebitAccountId === spec.adjCreditAccountId) {
+        toast({ title: "الحسابان متطابقان", description: "يجب أن يختلف الحساب المدين عن الدائن.", variant: "destructive" });
+        return;
+      }
+      const months = Number(spec.adjMonths ?? "12");
+      if ((specialKind === "prepaid_expense" || specialKind === "deferred_revenue") &&
+          (!Number.isInteger(months) || months < 1 || months > 120)) {
+        toast({ title: "عدد الأشهر غير صالح", description: "أدخل عدداً صحيحاً من 1 إلى 120.", variant: "destructive" });
+        return;
+      }
+      const amt = spec.adjAmount ? Number(spec.adjAmount) : totalDebit;
+      if (!(amt > 0)) {
+        toast({ title: "مبلغ التسوية غير صالح", variant: "destructive" });
+        return;
+      }
+    }
     savingRef.current = true;
     saveMutation.mutate({
       companyId:    cid,
@@ -2117,6 +2265,32 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                     </Select>
                   </div>
                 )}
+                {isNew && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">نوع القيد</Label>
+                    <Select
+                      value={specialKind}
+                      onValueChange={v => {
+                        setSpecialKind(v);
+                        setSpec({});
+                        // القيد الافتتاحي يعاد استخدام نوعه الحالي "opening"
+                        // (نفس آلية شاشة الأرصدة الافتتاحية) — بقية الأنواع
+                        // لا تغيّر نوع القيد المحاسبي نفسه.
+                        if (v === "opening") setEntryType("opening");
+                        else if (entryType === "opening") setEntryType("general");
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-sm" data-testid="select-special-kind">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SPECIAL_KINDS.map(k => (
+                          <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 {fp.isVisible("branch") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">
@@ -2718,61 +2892,152 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
       </Tabs>
       </fieldset>
 
-      {/* ─── إنشاء أصل ثابت من هذا القيد (SAP-style) ──────────────
-          For a SAVED entry: list the debit lines whose account is an
-          asset-type POSTING account and offer a one-click "create fixed
-          asset" per line, prefilled from the entry. If an asset was already
-          created from this entry (live, not sold/scrapped), show a link to
-          it instead — the backend enforces one live asset per source line. */}
-      {editId != null && (() => {
-        const dbLines: any[] = Array.isArray((existing as any)?.lines) ? (existing as any).lines : [];
-        const candidates = dbLines.filter((l) => {
-          if (!(Number(l.debit ?? 0) > 0)) return false;
-          const a = acctMap.get(Number(l.accountId));
-          return a && a.accountType === "asset" && a.isPosting !== false;
-        });
-        if (!candidates.length) return null;
-        return (
-          <div className="rounded-xl border-2 border-teal-200 bg-teal-50/40 p-3 space-y-2">
-            <div className="flex items-center gap-2">
-              <Landmark className="h-4 w-4 text-teal-700" />
-              <span className="text-sm font-bold text-teal-800">الأصول الثابتة المرتبطة بالقيد</span>
-              <span className="text-[11px] text-teal-600">أنشئ بطاقة أصل ثابت من سطر مدين لحساب أصول — دون قيد اقتناء جديد.</span>
-            </div>
-            {candidates.map((l) => {
-              const a = acctMap.get(Number(l.accountId));
-              const linked = (jeLinkedAssets as any[]).find((x) => Number(x.sourceLineId) === Number(l.id))
-                ?? (jeLinkedAssets as any[]).find((x) => x.sourceLineId == null)
-                ?? null;
-              return (
-                <div key={`fa-${l.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-white px-3 py-2">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="font-mono text-[10px] bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded">{a?.code}</span>
-                    <span className="font-medium">{a?.nameAr ?? a?.nameEn ?? `#${l.accountId}`}</span>
-                    <span className="text-muted-foreground">{l.description ?? ""}</span>
-                    <span dir="ltr" className="font-mono font-semibold">{fmt2(Number(l.debit ?? 0))}</span>
-                  </div>
-                  {linked ? (
-                    <Button type="button" variant="outline" size="sm"
-                      className="h-7 gap-1 border-teal-300 text-xs text-teal-700"
-                      onClick={() => navigate("/fixed-assets/assets")}
-                      data-testid={`button-view-linked-asset-${l.id}`}>
-                      عرض الأصل المرتبط ({linked.code ?? `#${linked.id}`})
-                    </Button>
-                  ) : (
-                    <Button type="button" size="sm"
-                      className="h-7 gap-1 bg-teal-600 text-xs hover:bg-teal-700"
-                      onClick={() => navigate(`/fixed-assets/assets?source=journal_entry&docId=${editId}&lineId=${l.id}`)}
-                      data-testid={`button-create-asset-${l.id}`}>
-                      إنشاء أصل ثابت
-                    </Button>
-                  )}
-                </div>
-              );
-            })}
+      {/* ─── القيود الخاصة: لوحة نوع القيد (وضع الإنشاء فقط) ──────────
+          الأصول/التسويات تُنشأ عبر نقاط النهاية الحالية بعد حفظ القيد —
+          لا تكرار لأي منطق. لوحة "الأصول المرتبطة" القديمة في وضع
+          التعديل أُزيلت بناءً على طلب المستخدم. */}
+      {isNew && specialKind !== "normal" && (
+        <div className="rounded-xl border-2 border-teal-200 bg-teal-50/40 p-3 space-y-3" data-testid="panel-special-kind">
+          <div className="flex items-center gap-2">
+            <Landmark className="h-4 w-4 text-teal-700" />
+            <span className="text-sm font-bold text-teal-800">
+              {SPECIAL_KINDS.find(k => k.value === specialKind)?.label}
+            </span>
+            <span className="text-[11px] text-teal-600">
+              {specialKind === "opening"
+                ? "سيُحفظ القيد بنوع «قيد افتتاحي» بنفس آلية الأرصدة الافتتاحية الحالية."
+                : specialKind === "fixed_asset"
+                  ? "بعد حفظ القيد يُنشأ الأصل في موديول الأصول الثابتة مرتبطاً بالقيد — دون قيد اقتناء جديد."
+                  : "بعد حفظ القيد يُنشأ جدول التسويات في محرك التسويات الحالي مرتبطاً بالقيد."}
+            </span>
           </div>
-        );
-      })()}
+
+          {specialKind === "fixed_asset" && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">اسم الأصل *</Label>
+                <Input className="h-8 text-sm" value={spec.faName ?? ""} onChange={e => setSpecF("faName", e.target.value)} data-testid="input-fa-name" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">كود الأصل (اختياري)</Label>
+                <Input className="h-8 text-sm" value={spec.faCode ?? ""} onChange={e => setSpecF("faCode", e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">المجموعة</Label>
+                <Select value={spec.faGroupId ?? "__none"} onValueChange={v => setSpecF("faGroupId", v === "__none" ? "" : v)}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">— بدون —</SelectItem>
+                    {(faGroups as any[]).map((g: any) => (
+                      <SelectItem key={g.id} value={String(g.id)}>{g.nameAr ?? g.name ?? `#${g.id}`}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">تاريخ الشراء</Label>
+                <SmartDateInput value={spec.faPurchaseDate ?? entryDate} onChange={v => setSpecF("faPurchaseDate", v)} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">تاريخ بدء الإهلاك</Label>
+                <SmartDateInput value={spec.faDepStart ?? entryDate} onChange={v => setSpecF("faDepStart", v)} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">العمر الإنتاجي (سنوات)</Label>
+                <Input className="h-8 text-sm" dir="ltr" inputMode="decimal" value={spec.faLifeYears ?? "5"} onChange={e => setSpecF("faLifeYears", e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">طريقة الإهلاك</Label>
+                <Select value={spec.faMethod ?? "straight_line"} onValueChange={v => setSpecF("faMethod", v)}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="straight_line">قسط ثابت</SelectItem>
+                    <SelectItem value="declining_balance">قسط متناقص</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">القيمة التخريدية</Label>
+                <Input className="h-8 text-sm" dir="ltr" inputMode="decimal" value={spec.faScrap ?? "0"} onChange={e => setSpecF("faScrap", e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">مركز التكلفة</Label>
+                <Select value={spec.faCostCenterId ?? "__none"} onValueChange={v => setSpecF("faCostCenterId", v === "__none" ? "" : v)}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">— بدون —</SelectItem>
+                    {(costCentersList as any[]).filter((c: any) => c.isActive !== false).map((c: any) => (
+                      <SelectItem key={c.id} value={String(c.id)}>{c.nameAr ?? c.name ?? `#${c.id}`}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1 col-span-2">
+                <Label className="text-xs">قيمة الشراء</Label>
+                <Input className="h-8 text-sm bg-muted/40" dir="ltr" readOnly value={fmt2(totalDebit)} title="تُؤخذ تلقائياً من إجمالي مدين القيد" />
+              </div>
+            </div>
+          )}
+
+          {ADJ_KINDS.includes(specialKind) && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="space-y-1 col-span-2">
+                <Label className="text-xs">
+                  {/* هذا الحساب يُقيَّد مديناً في قيود التسوية الشهرية */}
+                  {specialKind === "prepaid_expense" ? "حساب المصروف (يُحمَّل شهرياً — مدين) *"
+                    : specialKind === "deferred_revenue" ? "حساب الإيراد المقدم (يُخفَّض شهرياً — مدين) *"
+                    : specialKind === "accrued_expense" ? "حساب المصروف (مدين) *"
+                    : "حساب الإيراد المستحق (مدين) *"}
+                </Label>
+                <AccountCombobox value={spec.adjDebitAccountId ?? ""} onValueChange={v => setSpecF("adjDebitAccountId", v)} />
+              </div>
+              <div className="space-y-1 col-span-2">
+                <Label className="text-xs">
+                  {/* وهذا الحساب يُقيَّد دائناً في قيود التسوية الشهرية */}
+                  {specialKind === "prepaid_expense" ? "حساب المصروف المقدم (يُخفَّض شهرياً — دائن) *"
+                    : specialKind === "deferred_revenue" ? "حساب الإيراد (يُعترف به شهرياً — دائن) *"
+                    : specialKind === "accrued_expense" ? "حساب المصروف المستحق (دائن) *"
+                    : "حساب الإيراد (دائن) *"}
+                </Label>
+                <AccountCombobox value={spec.adjCreditAccountId ?? ""} onValueChange={v => setSpecF("adjCreditAccountId", v)} />
+              </div>
+              {(specialKind === "prepaid_expense" || specialKind === "deferred_revenue") ? (
+                <>
+                  <div className="space-y-1">
+                    <Label className="text-xs">تاريخ بداية الاستهلاك *</Label>
+                    <SmartDateInput value={spec.adjStart ?? entryDate} onChange={v => setSpecF("adjStart", v)} className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">عدد الأشهر *</Label>
+                    <Input className="h-8 text-sm" dir="ltr" inputMode="numeric" value={spec.adjMonths ?? "12"} onChange={e => setSpecF("adjMonths", e.target.value)} />
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-1">
+                  <Label className="text-xs">تاريخ الاستحقاق *</Label>
+                  <SmartDateInput value={spec.adjDue ?? entryDate} onChange={v => setSpecF("adjDue", v)} className="h-8 text-sm" />
+                </div>
+              )}
+              <div className="space-y-1">
+                <Label className="text-xs">المبلغ (افتراضياً إجمالي المدين)</Label>
+                <Input className="h-8 text-sm" dir="ltr" inputMode="decimal" placeholder={fmt2(totalDebit)} value={spec.adjAmount ?? ""} onChange={e => setSpecF("adjAmount", e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">مركز التكلفة</Label>
+                <Select value={spec.adjCostCenterId ?? "__none"} onValueChange={v => setSpecF("adjCostCenterId", v === "__none" ? "" : v)}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">— بدون —</SelectItem>
+                    {(costCentersList as any[]).filter((c: any) => c.isActive !== false).map((c: any) => (
+                      <SelectItem key={c.id} value={String(c.id)}>{c.nameAr ?? c.name ?? `#${c.id}`}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ─── Action buttons ─────────────────────────────────────── */}
       <div className="flex flex-wrap gap-3 justify-start items-center pb-4">
