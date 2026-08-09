@@ -330,10 +330,34 @@ router.get("/settlement-candidates", async (req, res) => {
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.supplierId == null) { res.json([]); return; }
     const branchScope = multiBranchScopeSpread(req, paymentVouchersTable.branchId, req.query.branchIds ?? req.query.branchId);
+    // السندات المتعددة قد لا تحمل جهة في الرأس (entity_id NULL) — المورد يظهر
+    // على سطر التوزيع عبر حسابه. نطابق عندها بحساب المورد، بشرط ألا يكون
+    // الحساب مشتركاً بين أكثر من مورد (قاعدة «مورد عام»).
+    let supAcct: number | null = null;
+    {
+      const [supRow] = await db.select({ accountId: suppliersTable.accountId })
+        .from(suppliersTable)
+        .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
+      supAcct = supRow?.accountId ?? null;
+      if (supAcct != null) {
+        const [shared] = await db.select({ n: sql<string>`COUNT(*)` }).from(suppliersTable)
+          .where(and(eq(suppliersTable.companyId, cid), eq(suppliersTable.accountId, supAcct)));
+        if ((parseInt(String(shared?.n)) || 0) > 1) supAcct = null;
+      }
+    }
+    const entityMatch = supAcct != null
+      ? or(
+          eq(paymentVouchersTable.entityId, inv.supplierId),
+          and(
+            sql`${paymentVouchersTable.entityId} IS NULL`,
+            sql`EXISTS (SELECT 1 FROM payment_voucher_lines pl WHERE pl.voucher_id = ${paymentVouchersTable.id} AND pl.account_id = ${supAcct})`,
+          ),
+        )
+      : eq(paymentVouchersTable.entityId, inv.supplierId);
     const rows = await db.select().from(paymentVouchersTable)
       .where(and(
         eq(paymentVouchersTable.companyId, cid),
-        eq(paymentVouchersTable.entityId, inv.supplierId),
+        entityMatch,
         sql`${paymentVouchersTable.purchaseInvoiceId} IS NULL`,
         ...branchScope,
       ))
@@ -373,9 +397,34 @@ router.get("/settlement-candidates", async (req, res) => {
       .from(paymentVoucherLinesTable)
       .where(inArray(paymentVoucherLinesTable.voucherId, ids));
     for (const lo of anyLineOwners) if (lo.voucherId != null) candMultiIds.add(lo.voucherId);
+    // للسندات بلا جهة في الرأس: الأساس = مجموع سطور حساب المورد فقط (صافي+ضريبة)،
+    // والمستهلَك من السطور يقتصر على سطور المورد المرتبطة بفواتير.
+    const partyBase = new Map<number, { total: number; linked: number }>();
+    const nullEntityIds = rows.filter((r) => r.entityId == null).map((r) => r.id);
+    if (supAcct != null && nullEntityIds.length) {
+      const plRows = await db.select({
+        voucherId: paymentVoucherLinesTable.voucherId,
+        total: sql<string>`SUM(${paymentVoucherLinesTable.amount} + ${paymentVoucherLinesTable.taxAmount})`,
+        linked: sql<string>`SUM(CASE WHEN ${paymentVoucherLinesTable.purchaseInvoiceId} IS NOT NULL THEN ${paymentVoucherLinesTable.amount} + ${paymentVoucherLinesTable.taxAmount} ELSE 0 END)`,
+      }).from(paymentVoucherLinesTable)
+        .where(and(
+          inArray(paymentVoucherLinesTable.voucherId, nullEntityIds),
+          eq(paymentVoucherLinesTable.accountId, supAcct),
+        ))
+        .groupBy(paymentVoucherLinesTable.voucherId);
+      for (const r of plRows) if (r.voucherId != null) partyBase.set(Number(r.voucherId), {
+        total: parseFloat(String(r.total)) || 0,
+        linked: parseFloat(String(r.linked)) || 0,
+      });
+    }
+    const linksOnly = new Map<number, number>();
+    for (const r of linkRows) linksOnly.set(Number(r.sourceId), parseFloat(String(r.sum)) || 0);
     res.json(rows.map((r) => {
-      const total = parseFloat(String(r.amount)) || 0;
-      const available = total - (consumed.get(r.id) ?? 0);
+      const pb = r.entityId == null ? partyBase.get(r.id) : undefined;
+      const total = pb ? pb.total : (parseFloat(String(r.amount)) || 0);
+      const available = pb
+        ? pb.total - pb.linked - (linksOnly.get(r.id) ?? 0)
+        : total - (consumed.get(r.id) ?? 0);
       return {
         id: r.id, code: r.code, date: r.date,
         amount: available.toFixed(2), totalAmount: total.toFixed(2),
@@ -434,7 +483,33 @@ router.post("/:id/apply-settlement", async (req, res) => {
         .from(purchaseInvoicesTable)
         .where(and(eq(purchaseInvoicesTable.id, invId), eq(purchaseInvoicesTable.companyId, cid), ...iBranchScope));
       if (!inv) throw Object.assign(new Error("الفاتورة غير موجودة"), { httpStatus: 404 });
-      if (inv.supplierId == null || Number(v.entityId) !== Number(inv.supplierId)) {
+      // سند بلا جهة في الرأس (متعدد): يُقبل إذا كانت سطوره تضرب حساب المورد
+      // غير المشترك — الأساس المتاح حينها = مجموع سطور المورد فقط.
+      let partyLinesTotalDoc: number | null = null;
+      let partyLinesLinkedDoc = 0;
+      if (v.entityId == null) {
+        if (inv.supplierId == null) throw Object.assign(new Error("السند ليس على مورد هذه الفاتورة"), { httpStatus: 400 });
+        const [supRow] = await tx.select({ accountId: suppliersTable.accountId })
+          .from(suppliersTable)
+          .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
+        let supAcct = supRow?.accountId ?? null;
+        if (supAcct != null) {
+          const [shared] = await tx.select({ n: sql<string>`COUNT(*)` }).from(suppliersTable)
+            .where(and(eq(suppliersTable.companyId, cid), eq(suppliersTable.accountId, supAcct)));
+          if ((parseInt(String(shared?.n)) || 0) > 1) supAcct = null;
+        }
+        if (supAcct == null) throw Object.assign(new Error("السند ليس على مورد هذه الفاتورة"), { httpStatus: 400 });
+        const [pl] = await tx.select({
+          total: sql<string>`COALESCE(SUM(${paymentVoucherLinesTable.amount} + ${paymentVoucherLinesTable.taxAmount}), 0)`,
+          linked: sql<string>`COALESCE(SUM(CASE WHEN ${paymentVoucherLinesTable.purchaseInvoiceId} IS NOT NULL THEN ${paymentVoucherLinesTable.amount} + ${paymentVoucherLinesTable.taxAmount} ELSE 0 END), 0)`,
+        }).from(paymentVoucherLinesTable)
+          .where(and(eq(paymentVoucherLinesTable.voucherId, vid), eq(paymentVoucherLinesTable.accountId, supAcct)));
+        partyLinesTotalDoc = parseFloat(String(pl?.total)) || 0;
+        partyLinesLinkedDoc = parseFloat(String(pl?.linked)) || 0;
+        if (partyLinesTotalDoc <= 0.005) {
+          throw Object.assign(new Error("السند ليس على مورد هذه الفاتورة"), { httpStatus: 400 });
+        }
+      } else if (inv.supplierId == null || Number(v.entityId) !== Number(inv.supplierId)) {
         throw Object.assign(new Error("السند ليس على مورد هذه الفاتورة"), { httpStatus: 400 });
       }
 
@@ -455,9 +530,12 @@ router.post("/:id/apply-settlement", async (req, res) => {
       }
 
       // سداد جزئي: available = voucher amount − invoice-linked allocation
-      // lines − partial links already consumed (any invoice).
+      // lines − partial links already consumed (any invoice). للسند بلا جهة:
+      // الأساس سطور حساب المورد فقط، والمستهلَك من السطور سطور المورد المرتبطة.
       const linksConsumedDoc = await sumConsumedFromSource(cid, "payment_voucher", vid, tx);
-      const availableDoc = vAmountDoc - lineConsumedDoc - linksConsumedDoc;
+      const availableDoc = partyLinesTotalDoc != null
+        ? partyLinesTotalDoc - partyLinesLinkedDoc - linksConsumedDoc
+        : vAmountDoc - lineConsumedDoc - linksConsumedDoc;
       if (availableDoc <= 0.005) {
         throw Object.assign(new Error("استُهلك مبلغ هذا السند بالكامل في سدادات سابقة — لا يوجد متبقٍّ متاح"), { httpStatus: 409 });
       }
