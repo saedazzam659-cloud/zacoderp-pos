@@ -367,6 +367,12 @@ router.get("/settlement-candidates", async (req, res) => {
     const consumed = new Map<number, number>();
     for (const r of lineRows) consumed.set(Number(r.voucherId), (consumed.get(Number(r.voucherId)) ?? 0) + (parseFloat(String(r.sum)) || 0));
     for (const r of linkRows) consumed.set(Number(r.sourceId), (consumed.get(Number(r.sourceId)) ?? 0) + (parseFloat(String(r.sum)) || 0));
+    // multi = يملك سطور توزيع (كان يُشار هنا لمتغير خارج النطاق → 500 دائم).
+    const candMultiIds = new Set<number>();
+    const anyLineOwners = await db.select({ voucherId: paymentVoucherLinesTable.voucherId })
+      .from(paymentVoucherLinesTable)
+      .where(inArray(paymentVoucherLinesTable.voucherId, ids));
+    for (const lo of anyLineOwners) if (lo.voucherId != null) candMultiIds.add(lo.voucherId);
     res.json(rows.map((r) => {
       const total = parseFloat(String(r.amount)) || 0;
       const available = total - (consumed.get(r.id) ?? 0);
@@ -375,7 +381,7 @@ router.get("/settlement-candidates", async (req, res) => {
         amount: available.toFixed(2), totalAmount: total.toFixed(2),
         exchangeRate: r.exchangeRate, paymentType: r.paymentType,
         status: r.status, description: r.description,
-        isMulti: multiIds.has(r.id),
+        isMulti: candMultiIds.has(r.id),
       };
     }).filter((r) => parseFloat(r.amount) > 0.005));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
