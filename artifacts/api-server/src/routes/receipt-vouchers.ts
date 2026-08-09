@@ -18,7 +18,8 @@ import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
-import { sumSettlementJEs, acquireSettlementLock, sumVouchersForInvoice, invoiceNetDueBase } from "../lib/invoiceSettlement.js";
+import { sumSettlementJEs, acquireSettlementLock, acquireSourceLock, sumVouchersForInvoice, sumConsumedFromSource, sumPartialLinksForInvoice, invoiceNetDueBase } from "../lib/invoiceSettlement.js";
+import { settlementLinksTable } from "@workspace/db";
 
 const router = Router();
 router.use(extractAuth);
@@ -195,12 +196,27 @@ router.get("/", async (req, res) => {
   // the param is absent the query is unchanged.
   const rawSiId = req.query.salesInvoiceId ? parseInt(req.query.salesInvoiceId as string) : NaN;
   const siFilter: any[] = [];
+  // Per-invoice applied amounts (سداد جزئي): lines + partial links carry their
+  // own amount; a bare header link counts the FULL voucher amount.
+  const appliedByVoucher = new Map<number, number>();
   if (Number.isInteger(rawSiId) && rawSiId > 0) {
-    const lineVoucherIds = await db
-      .selectDistinct({ voucherId: receiptVoucherLinesTable.voucherId })
+    const lineRows = await db
+      .select({ voucherId: receiptVoucherLinesTable.voucherId, amount: receiptVoucherLinesTable.amount })
       .from(receiptVoucherLinesTable)
       .where(eq(receiptVoucherLinesTable.salesInvoiceId, rawSiId));
-    const vIds = lineVoucherIds.map((r) => r.voucherId).filter((n): n is number => n != null);
+    const linkRows = await db
+      .select({ voucherId: settlementLinksTable.sourceId, amount: settlementLinksTable.amount })
+      .from(settlementLinksTable)
+      .where(and(
+        eq(settlementLinksTable.sourceType, "receipt_voucher"),
+        eq(settlementLinksTable.salesInvoiceId, rawSiId),
+      ));
+    for (const r of [...lineRows, ...linkRows]) {
+      const k = Number(r.voucherId);
+      if (!k) continue;
+      appliedByVoucher.set(k, (appliedByVoucher.get(k) ?? 0) + (parseFloat(String(r.amount)) || 0));
+    }
+    const vIds = [...appliedByVoucher.keys()];
     const linkOr = vIds.length
       ? or(eq(receiptVouchersTable.salesInvoiceId, rawSiId), inArray(receiptVouchersTable.id, vIds))
       : eq(receiptVouchersTable.salesInvoiceId, rawSiId);
@@ -213,7 +229,15 @@ router.get("/", async (req, res) => {
     : await db.select().from(receiptVouchersTable)
         .where((branchScope.length || siFilter.length) ? and(...branchScope, ...siFilter) : undefined)
         .orderBy(desc(receiptVouchersTable.createdAt));
-  res.json(rows);
+  res.json(rows.map((r) => ({
+    ...r,
+    // With an invoice filter: the amount actually applied to THAT invoice —
+    // partial links/lines carry their own amount; a bare header link means
+    // the full voucher amount (legacy behaviour).
+    ...(Number.isInteger(rawSiId) && rawSiId > 0 ? {
+      appliedForInvoice: (appliedByVoucher.get(r.id) ?? (Number(r.salesInvoiceId) === rawSiId ? (parseFloat(String(r.amount)) || 0) : 0)).toFixed(2),
+    } : {}),
+  })));
 });
 
 // ─── Settlement candidates (سندات قبض غير مرتبطة بأي فاتورة) ────────────────
@@ -243,21 +267,43 @@ router.get("/settlement-candidates", async (req, res) => {
       .orderBy(desc(receiptVouchersTable.id))
       .limit(100);
     if (!rows.length) { res.json([]); return; }
-    // Exclude vouchers whose allocation LINES already settle some invoice —
-    // those are spoken for; adding a header link on top would double-count.
-    const linked = await db.selectDistinct({ voucherId: receiptVoucherLinesTable.voucherId })
-      .from(receiptVoucherLinesTable)
+    // سداد جزئي: available = header amount − invoice-linked allocation lines
+    // − partial settlement links. Candidates keep showing while any residual
+    // remains; `amount` returned is the REMAINING available amount.
+    const ids = rows.map((r) => r.id);
+    const lineRows = await db.select({
+      voucherId: receiptVoucherLinesTable.voucherId,
+      sum: sql<string>`SUM(${receiptVoucherLinesTable.amount})`,
+    }).from(receiptVoucherLinesTable)
       .where(and(
-        inArray(receiptVoucherLinesTable.voucherId, rows.map((r) => r.id)),
+        inArray(receiptVoucherLinesTable.voucherId, ids),
         sql`${receiptVoucherLinesTable.salesInvoiceId} IS NOT NULL`,
-      ));
-    const busy = new Set(linked.map((r) => r.voucherId));
-    res.json(rows.filter((r) => !busy.has(r.id)).map((r) => ({
-      id: r.id, code: r.code, date: r.date, amount: r.amount,
-      exchangeRate: r.exchangeRate, paymentType: r.paymentType,
-      status: r.status, description: r.description,
-      isMulti: r.accountId == null,
-    })));
+      ))
+      .groupBy(receiptVoucherLinesTable.voucherId);
+    const linkRows = await db.select({
+      sourceId: settlementLinksTable.sourceId,
+      sum: sql<string>`SUM(${settlementLinksTable.amount})`,
+    }).from(settlementLinksTable)
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "receipt_voucher"),
+        inArray(settlementLinksTable.sourceId, ids),
+      ))
+      .groupBy(settlementLinksTable.sourceId);
+    const consumed = new Map<number, number>();
+    for (const r of lineRows) consumed.set(Number(r.voucherId), (consumed.get(Number(r.voucherId)) ?? 0) + (parseFloat(String(r.sum)) || 0));
+    for (const r of linkRows) consumed.set(Number(r.sourceId), (consumed.get(Number(r.sourceId)) ?? 0) + (parseFloat(String(r.sum)) || 0));
+    res.json(rows.map((r) => {
+      const total = parseFloat(String(r.amount)) || 0;
+      const available = total - (consumed.get(r.id) ?? 0);
+      return {
+        id: r.id, code: r.code, date: r.date,
+        amount: available.toFixed(2), totalAmount: total.toFixed(2),
+        exchangeRate: r.exchangeRate, paymentType: r.paymentType,
+        status: r.status, description: r.description,
+        isMulti: r.accountId == null,
+      };
+    }).filter((r) => parseFloat(r.amount) > 0.005));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -282,22 +328,23 @@ router.post("/:id/apply-settlement", async (req, res) => {
 
     const out = await db.transaction(async (tx) => {
       await acquireSettlementLock(tx, cid, "sales", invId);
+      await acquireSourceLock(tx, cid, "receipt_voucher", vid);
 
       const [v] = await tx.select().from(receiptVouchersTable)
         .where(and(eq(receiptVouchersTable.id, vid), eq(receiptVouchersTable.companyId, cid), ...vBranchScope));
       if (!v) throw Object.assign(new Error("السند غير موجود"), { httpStatus: 404 });
       if (v.salesInvoiceId != null) {
-        throw Object.assign(new Error("هذا السند مرتبط بفاتورة بالفعل"), { httpStatus: 409 });
+        throw Object.assign(new Error("هذا السند مرتبط بفاتورة من رأس السند بالفعل"), { httpStatus: 409 });
       }
-      const [lineLink] = await tx.select({ id: receiptVoucherLinesTable.id })
+      // Allocation LINES linked to invoices consume part of the voucher —
+      // they no longer block; their amounts are subtracted from المتاح below.
+      const invLineRows = await tx.select({ amount: receiptVoucherLinesTable.amount })
         .from(receiptVoucherLinesTable)
         .where(and(
           eq(receiptVoucherLinesTable.voucherId, vid),
           sql`${receiptVoucherLinesTable.salesInvoiceId} IS NOT NULL`,
-        )).limit(1);
-      if (lineLink) {
-        throw Object.assign(new Error("بنود هذا السند مرتبطة بفاتورة بالفعل"), { httpStatus: 409 });
-      }
+        ));
+      const lineConsumedDoc = invLineRows.reduce((s, r) => s + (parseFloat(String(r.amount)) || 0), 0);
 
       const [inv] = await tx.select({ customerId: salesInvoicesTable.customerId })
         .from(salesInvoicesTable)
@@ -317,36 +364,39 @@ router.post("/:id/apply-settlement", async (req, res) => {
       if (remainingBase <= 0.005) {
         throw Object.assign(new Error("الفاتورة مسدَّدة بالكامل — لا يوجد متبقٍّ"), { httpStatus: 409 });
       }
-      const vBase = (parseFloat(String(v.amount)) || 0) * (parseFloat(String(v.exchangeRate)) || 1);
-      if (vBase <= 0.005) {
+      const vRate = parseFloat(String(v.exchangeRate)) || 1;
+      const vAmountDoc = parseFloat(String(v.amount)) || 0;
+      if (vAmountDoc <= 0.005) {
         throw Object.assign(new Error("مبلغ السند يجب أن يكون أكبر من صفر"), { httpStatus: 400 });
       }
-      // Header link counts the FULL voucher amount — no clamping possible.
-      if (vBase > remainingBase + 0.01) {
-        throw Object.assign(new Error(
-          `مبلغ السند (${vBase.toFixed(2)}) يتجاوز المتبقّي من الفاتورة (${Math.max(0, remainingBase).toFixed(2)}) — لا يمكن ربطه كاملاً. استخدم سنداً بمبلغ أقل أو سجّل دفعة جديدة بالمبلغ المتبقّي.`,
-        ), { httpStatus: 409 });
-      }
 
-      // Atomic claim — the invoice advisory lock does NOT serialize two
-      // requests applying the SAME voucher to DIFFERENT invoices, so the
-      // update must be conditional on the link still being NULL.
-      const claimed = await tx.update(receiptVouchersTable)
-        .set({ salesInvoiceId: invId })
-        .where(and(
-          eq(receiptVouchersTable.id, vid),
-          eq(receiptVouchersTable.companyId, cid),
-          sql`${receiptVouchersTable.salesInvoiceId} IS NULL`,
-        ))
-        .returning({ id: receiptVouchersTable.id });
-      if (!claimed.length) {
-        throw Object.assign(new Error("هذا السند ارتبط بفاتورة أخرى للتوّ — حدّث الصفحة"), { httpStatus: 409 });
+      // سداد جزئي: available = voucher amount − invoice-linked allocation
+      // lines − partial links already consumed (any invoice).
+      const linksConsumedDoc = await sumConsumedFromSource(cid, "receipt_voucher", vid, tx);
+      const availableDoc = vAmountDoc - lineConsumedDoc - linksConsumedDoc;
+      if (availableDoc <= 0.005) {
+        throw Object.assign(new Error("استُهلك مبلغ هذا السند بالكامل في سدادات سابقة — لا يوجد متبقٍّ متاح"), { httpStatus: 409 });
       }
+      const availableBase = availableDoc * vRate;
 
-      const remainingAfter = Math.max(0, remainingBase - vBase);
+      // Clamp to the remaining due — الباقي من السند يبقى متاحاً لفواتير أخرى.
+      const appliedBase = Math.min(availableBase, remainingBase);
+      const appliedDoc = vRate > 0 ? appliedBase / vRate : appliedBase;
+
+      await tx.insert(settlementLinksTable).values({
+        companyId: cid,
+        sourceType: "receipt_voucher",
+        sourceId: vid,
+        salesInvoiceId: invId,
+        amount: appliedDoc.toFixed(2),
+        createdBy: (req as any).authUser?.id ?? null,
+      });
+
+      const remainingAfter = Math.max(0, remainingBase - appliedBase);
       return {
-        applied: Number(vBase.toFixed(2)),
+        applied: Number(appliedDoc.toFixed(2)),
         remainingAfter: Number(remainingAfter.toFixed(2)),
+        sourceRemaining: Number(Math.max(0, availableDoc - appliedDoc).toFixed(2)),
         partial: remainingAfter > 0.005,
       };
     });
@@ -370,6 +420,37 @@ router.post("/:id/unlink-settlement", async (req, res) => {
       .from(receiptVouchersTable)
       .where(and(eq(receiptVouchersTable.id, vid), eq(receiptVouchersTable.companyId, cid), ...vBranchScope));
     if (!v) { res.status(404).json({ error: "السند غير موجود" }); return; }
+
+    // Partial-link unlink: an explicit linkId removes ONE settlement link row.
+    const linkId = req.body?.linkId != null ? Number(req.body.linkId) : null;
+    if (linkId != null) {
+      if (!Number.isInteger(linkId) || linkId <= 0) { res.status(400).json({ error: "linkId غير صحيح" }); return; }
+      const deleted = await db.delete(settlementLinksTable)
+        .where(and(
+          eq(settlementLinksTable.id, linkId),
+          eq(settlementLinksTable.companyId, cid),
+          eq(settlementLinksTable.sourceType, "receipt_voucher"),
+          eq(settlementLinksTable.sourceId, vid),
+        )).returning({ id: settlementLinksTable.id });
+      if (!deleted.length) { res.status(404).json({ error: "رابط السداد غير موجود" }); return; }
+      res.json({ ok: true });
+      return;
+    }
+
+    // Fallback: no linkId but an invoice id given → remove ALL partial links
+    // between this voucher and that invoice (the UI lists vouchers, not links).
+    const invId = req.body?.salesInvoiceId != null ? Number(req.body.salesInvoiceId) : null;
+    if (v.sid == null && invId != null && Number.isInteger(invId) && invId > 0) {
+      const deleted = await db.delete(settlementLinksTable)
+        .where(and(
+          eq(settlementLinksTable.companyId, cid),
+          eq(settlementLinksTable.sourceType, "receipt_voucher"),
+          eq(settlementLinksTable.sourceId, vid),
+          eq(settlementLinksTable.salesInvoiceId, invId),
+        )).returning({ id: settlementLinksTable.id });
+      if (deleted.length) { res.json({ ok: true }); return; }
+    }
+
     if (v.sid == null) { res.status(409).json({ error: "السند غير مرتبط بفاتورة من رأس السند — البنود المرتبطة تُدار من شاشة السند نفسه" }); return; }
     await db.update(receiptVouchersTable)
       .set({ salesInvoiceId: null })
@@ -566,7 +647,11 @@ async function assertNoSalesOvercollection(
       existing += (parseFloat(String(v.amount)) || 0) * (parseFloat(String(v.vRate)) || 1);
     }
 
-    // Plus manual journal entries linked as settlements (draft + posted).
+    // Plus PARTIAL settlement links from other receipt vouchers (سداد جزئي).
+    existing += await sumPartialLinksForInvoice(cid, "sales", invId, "receipt_voucher");
+
+    // Plus manual journal entries linked as settlements (draft + posted) —
+    // sumSettlementJEs already includes JE-sourced partial links.
     existing += await sumSettlementJEs(cid, "sales", invId);
 
     const remaining = netDue - existing;
@@ -730,6 +815,22 @@ router.put("/:id", async (req, res) => {
   // When `lines` is present, header amount is derived from them; a legacy
   // caller (no `lines`) keeps sending its own `amount`.
   const headerAmount = lines ? receiptLinesTotal(lines).toFixed(2) : d.amount;
+
+  // سداد جزئي: partial settlement links already consumed from THIS voucher
+  // must still fit under the edited amount (net of new invoice-linked lines).
+  {
+    const linksConsumed = await sumConsumedFromSource(cid, "receipt_voucher", id);
+    if (linksConsumed > 0.005) {
+      const newTotal = parseFloat(String(headerAmount ?? "0")) || 0;
+      const newLineAlloc = (lines ?? [])
+        .filter((l) => l.salesInvoiceId)
+        .reduce((s, l) => s + l.amount, 0);
+      if (newLineAlloc + linksConsumed > newTotal + 0.005) {
+        res.status(400).json({ error: `لا يمكن تخفيض السند: ${linksConsumed.toFixed(2)} منه مستهلك كسداد جزئي لفواتير — فُكّ الارتباط أولاً` });
+        return;
+      }
+    }
+  }
 
   // Settlement race guard — same advisory-lock re-check as on create,
   // excluding THIS voucher's own old amounts.

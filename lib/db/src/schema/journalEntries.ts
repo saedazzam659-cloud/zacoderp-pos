@@ -44,6 +44,25 @@ export const journalEntriesTable = pgTable("journal_entries", {
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 });
 
+// ─── Partial settlement links (سداد جزئي متعدد الفواتير) ─────────────────────
+// A manual JE / receipt voucher / payment voucher can settle SEVERAL invoices,
+// each link consuming part of the source document's amount. The legacy header
+// links above (salesInvoiceId/purchaseInvoiceId + settlementAmount on JEs,
+// header FK on vouchers) remain valid and keep counting — this table is
+// ADDITIVE. `amount` is in the SOURCE document's currency; base = amount ×
+// source exchangeRate. Exactly one of the two invoice FKs is set per row.
+export const settlementLinksTable = pgTable("settlement_links", {
+  id:                serial("id").primaryKey(),
+  companyId:         integer("company_id").notNull(),
+  sourceType:        text("source_type").notNull(), // "je" | "receipt_voucher" | "payment_voucher"
+  sourceId:          integer("source_id").notNull(),
+  salesInvoiceId:    integer("sales_invoice_id"),
+  purchaseInvoiceId: integer("purchase_invoice_id"),
+  amount:            numeric("amount", { precision: 18, scale: 2 }).notNull(),
+  createdBy:         integer("created_by"),
+  createdAt:         timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ─── Journal-entry number reservations (reuse-on-unpost→repost) ──────────────
 // When a source document (invoice / return / voucher / …) is UNPOSTED, its
 // linked journal entry is deleted (drafts have zero report impact). Before that

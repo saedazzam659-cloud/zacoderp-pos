@@ -25,10 +25,12 @@ import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAud
 import { describeDevice } from "../lib/deviceFingerprint.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import {
-  assertJeSettlementAllowed, acquireSettlementLock,
+  assertJeSettlementAllowed, acquireSettlementLock, acquireSourceLock,
   invoiceNetDueBase, sumVouchersForInvoice, sumSettlementJEs,
+  sumConsumedFromSource,
   type SettlementKind,
 } from "../lib/invoiceSettlement.js";
+import { settlementLinksTable } from "@workspace/db";
 import { customersTable, suppliersTable } from "@workspace/db";
 
 // ── سداد فاتورة عن طريق القيد ─────────────────────────────────────────────
@@ -432,7 +434,39 @@ router.get("/for-invoice", async (req, res) => {
         sql`${journalEntriesTable.settlementAmount} IS NOT NULL`,
       ))
       .orderBy(desc(journalEntriesTable.id));
-    res.json(rows);
+
+    // Plus PARTIAL settlement links (سداد جزئي) — one row per link so the
+    // tab shows the exact amount consumed by THIS invoice, with `linkId`
+    // for per-link unlink.
+    const linkInvCol = sid ? settlementLinksTable.salesInvoiceId : settlementLinksTable.purchaseInvoiceId;
+    const linkRows = await db.select({
+      linkId:       settlementLinksTable.id,
+      amount:       settlementLinksTable.amount,
+      id:           journalEntriesTable.id,
+      docNumber:    journalEntriesTable.docNumber,
+      entryDate:    journalEntriesTable.entryDate,
+      description:  journalEntriesTable.description,
+      status:       journalEntriesTable.status,
+      currency:     journalEntriesTable.currency,
+      exchangeRate: journalEntriesTable.exchangeRate,
+    }).from(settlementLinksTable)
+      .innerJoin(journalEntriesTable, eq(settlementLinksTable.sourceId, journalEntriesTable.id))
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "je"),
+        eq(linkInvCol, linkId),
+      ))
+      .orderBy(desc(settlementLinksTable.id));
+    res.json([
+      ...rows,
+      ...linkRows.map((r) => ({
+        id: r.id, docNumber: r.docNumber, entryDate: r.entryDate,
+        description: r.description, status: r.status, currency: r.currency,
+        exchangeRate: r.exchangeRate,
+        settlementAmount: r.amount,
+        linkId: r.linkId,
+      })),
+    ]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -520,34 +554,58 @@ router.get("/settlement-candidates", async (req, res) => {
       ? sql<string>`SUM(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit})`
       : sql<string>`SUM(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit})`;
     const rows = await db.select({
-      id:           journalEntriesTable.id,
-      docNumber:    journalEntriesTable.docNumber,
-      entryDate:    journalEntriesTable.entryDate,
-      description:  journalEntriesTable.description,
-      status:       journalEntriesTable.status,
-      currency:     journalEntriesTable.currency,
-      exchangeRate: journalEntriesTable.exchangeRate,
-      amount:       amountExpr,
+      id:               journalEntriesTable.id,
+      docNumber:        journalEntriesTable.docNumber,
+      entryDate:        journalEntriesTable.entryDate,
+      description:      journalEntriesTable.description,
+      status:           journalEntriesTable.status,
+      currency:         journalEntriesTable.currency,
+      exchangeRate:     journalEntriesTable.exchangeRate,
+      settlementAmount: journalEntriesTable.settlementAmount,
+      amount:           amountExpr,
     }).from(journalEntriesTable)
       .innerJoin(journalEntryLinesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
       .where(and(
         eq(journalEntriesTable.companyId, cid),
         eq(journalEntriesTable.entryType, "general"),
-        sql`${journalEntriesTable.salesInvoiceId} IS NULL`,
-        sql`${journalEntriesTable.purchaseInvoiceId} IS NULL`,
         eq(journalEntryLinesTable.accountId, partyAccountId),
       ))
       .groupBy(
         journalEntriesTable.id, journalEntriesTable.docNumber,
         journalEntriesTable.entryDate, journalEntriesTable.description,
         journalEntriesTable.status, journalEntriesTable.currency,
-        journalEntriesTable.exchangeRate,
+        journalEntriesTable.exchangeRate, journalEntriesTable.settlementAmount,
       )
       .having(sql`${kind === "sales"
         ? sql`SUM(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit})`
         : sql`SUM(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit})`} > 0.005`)
       .orderBy(desc(journalEntriesTable.id));
-    res.json(rows);
+
+    // Partial-consumption model (سداد جزئي): a JE is a candidate as long as
+    // its party-line amount is not fully consumed by (legacy header
+    // settlement_amount) + (partial settlement links). `amount` returned is
+    // the REMAINING available amount, in the entry's currency.
+    if (!rows.length) { res.json([]); return; }
+    const linkRows = await db.select({
+      sourceId: settlementLinksTable.sourceId,
+      sum: sql<string>`SUM(${settlementLinksTable.amount})`,
+    }).from(settlementLinksTable)
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "je"),
+        inArray(settlementLinksTable.sourceId, rows.map((r) => r.id)),
+      ))
+      .groupBy(settlementLinksTable.sourceId);
+    const consumedBy = new Map<number, number>(
+      linkRows.map((r) => [Number(r.sourceId), parseFloat(String(r.sum)) || 0]));
+    const out = rows.map((r) => {
+      const party = parseFloat(String(r.amount)) || 0;
+      const consumed = (parseFloat(String(r.settlementAmount)) || 0) + (consumedBy.get(r.id) ?? 0);
+      const available = party - consumed;
+      const { settlementAmount: _sa, ...rest } = r as any;
+      return { ...rest, amount: available.toFixed(2), totalAmount: party.toFixed(2) };
+    }).filter((r) => parseFloat(r.amount) > 0.005);
+    res.json(out);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -628,9 +686,41 @@ router.get("/open-invoices", async (req, res) => {
       ))
       .groupBy(jeLink as any);
 
+    // Partial settlement links (سداد جزئي): JE-sourced links count into jeBy;
+    // voucher-sourced links count into vBy. Link amounts are in the SOURCE's
+    // currency → convert with the source's exchange rate.
+    const linkInvCol = kind === "sales" ? settlementLinksTable.salesInvoiceId : settlementLinksTable.purchaseInvoiceId;
+    const jeLinkRows = await db.select({
+      invoiceId: linkInvCol as any,
+      sum: sql<string>`SUM(${settlementLinksTable.amount} * ${journalEntriesTable.exchangeRate})`,
+    }).from(settlementLinksTable)
+      .innerJoin(journalEntriesTable, eq(settlementLinksTable.sourceId, journalEntriesTable.id))
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "je"),
+        inArray(linkInvCol as any, ids),
+      ))
+      .groupBy(linkInvCol as any);
+    const vLinkType = kind === "sales" ? "receipt_voucher" : "payment_voucher";
+    const vLinkRows = await db.select({
+      invoiceId: linkInvCol as any,
+      sum: sql<string>`SUM(${settlementLinksTable.amount} * ${(vTable as any).exchangeRate})`,
+    }).from(settlementLinksTable)
+      .innerJoin(vTable as any, eq(settlementLinksTable.sourceId, (vTable as any).id))
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, vLinkType),
+        inArray(linkInvCol as any, ids),
+      ))
+      .groupBy(linkInvCol as any);
+
     const num = (v: any) => parseFloat(String(v)) || 0;
     const retBy = new Map<number, number>(retRows.map((r: any) => [Number(r.invoiceId), num(r.sum)]));
     const jeBy  = new Map<number, number>(jeRows.map((r: any) => [Number(r.invoiceId), num(r.sum)]));
+    for (const r of jeLinkRows as any[]) {
+      const k = Number(r.invoiceId);
+      jeBy.set(k, (jeBy.get(k) ?? 0) + num(r.sum));
+    }
     // Vouchers: line rows authoritative; a header-linked voucher counts its
     // full amount ONLY when it has no line rows for THAT SAME invoice
     // (mirrors sumVouchersForInvoice — the skip is per (voucher, invoice)
@@ -646,6 +736,10 @@ router.get("/open-invoices", async (req, res) => {
       const k = Number(v.invoiceId);
       if (linePairs.has(`${Number(v.id)}:${k}`)) continue;
       vBy.set(k, (vBy.get(k) ?? 0) + num(v.amount) * (num(v.vRate) || 1));
+    }
+    for (const r of vLinkRows as any[]) {
+      const k = Number(r.invoiceId);
+      vBy.set(k, (vBy.get(k) ?? 0) + num(r.sum));
     }
 
     const out = invs.map((inv: any) => {
@@ -684,13 +778,11 @@ router.post("/:id/apply-settlement", async (req, res) => {
 
     const out = await db.transaction(async (tx) => {
       await acquireSettlementLock(tx, cid, kind, invId);
+      await acquireSourceLock(tx, cid, "je", jeId);
 
       const [je] = await tx.select().from(journalEntriesTable)
         .where(and(eq(journalEntriesTable.id, jeId), eq(journalEntriesTable.companyId, cid)));
       if (!je) throw Object.assign(new Error("القيد غير موجود"), { httpStatus: 404 });
-      if (je.salesInvoiceId != null || je.purchaseInvoiceId != null) {
-        throw Object.assign(new Error("هذا القيد مرتبط بفاتورة بالفعل"), { httpStatus: 409 });
-      }
       if ((je.entryType ?? "general") !== "general") {
         throw Object.assign(new Error("لا يمكن استخدام قيد نظامي (مولَّد من مستند) كسداد — القيود اليدوية فقط"), { httpStatus: 400 });
       }
@@ -729,26 +821,41 @@ router.post("/:id/apply-settlement", async (req, res) => {
       if (jeAmountDoc <= 0.005) {
         throw Object.assign(new Error("هذا القيد لا يحتوي على مبلغ سداد على حساب العميل/المورد لهذه الفاتورة"), { httpStatus: 400 });
       }
-      const jeAmountBase = jeAmountDoc * rate;
 
-      // Clamp to the remaining due — سداد أكبر من الفاتورة ممنوع.
-      const appliedBase = Math.min(jeAmountBase, remainingBase);
+      // سداد جزئي: available = party-line amount − legacy header settlement −
+      // partial links already consumed from this JE (any invoice).
+      const legacyConsumed = parseFloat(String(je.settlementAmount ?? "0")) || 0;
+      const linksConsumed = await sumConsumedFromSource(cid, "je", jeId, tx);
+      const availableDoc = jeAmountDoc - legacyConsumed - linksConsumed;
+      if (availableDoc <= 0.005) {
+        throw Object.assign(new Error("استُهلك مبلغ هذا القيد بالكامل في سدادات سابقة — لا يوجد متبقٍّ متاح"), { httpStatus: 409 });
+      }
+      const availableBase = availableDoc * rate;
+
+      // Clamp to the remaining due — سداد أكبر من الفاتورة ممنوع. الباقي من
+      // القيد يبقى متاحاً لفواتير أخرى (لا يختفي).
+      const appliedBase = Math.min(availableBase, remainingBase);
       const appliedDoc = rate > 0 ? appliedBase / rate : appliedBase;
 
-      await tx.update(journalEntriesTable).set({
+      await tx.insert(settlementLinksTable).values({
+        companyId: cid,
+        sourceType: "je",
+        sourceId: jeId,
         salesInvoiceId:    kind === "sales" ? invId : null,
         purchaseInvoiceId: kind === "purchase" ? invId : null,
-        settlementAmount:  appliedDoc.toFixed(2),
-        updatedAt: new Date(),
-      }).where(eq(journalEntriesTable.id, jeId));
+        amount: appliedDoc.toFixed(2),
+        createdBy: (req as any).authUser?.id ?? null,
+      });
 
       const remainingAfter = Math.max(0, remainingBase - appliedBase);
+      const sourceLeftDoc = Math.max(0, availableDoc - appliedDoc);
       return {
         applied: Number(appliedDoc.toFixed(2)),
         appliedBase: Number(appliedBase.toFixed(2)),
         remainingAfter: Number(remainingAfter.toFixed(2)),
+        sourceRemaining: Number(sourceLeftDoc.toFixed(2)),
         partial: remainingAfter > 0.005,
-        clamped: jeAmountBase > remainingBase + 0.005,
+        clamped: availableBase > remainingBase + 0.005,
       };
     });
     res.json(out);
@@ -763,6 +870,24 @@ router.post("/:id/unlink-settlement", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const jeId = Number(req.params.id);
     if (!Number.isInteger(jeId) || jeId <= 0) { res.status(400).json({ error: "معرّف القيد غير صحيح" }); return; }
+
+    // Partial-link unlink: an explicit linkId removes ONE partial settlement
+    // link row (the JE amount becomes available again).
+    const linkId = req.body?.linkId != null ? Number(req.body.linkId) : null;
+    if (linkId != null) {
+      if (!Number.isInteger(linkId) || linkId <= 0) { res.status(400).json({ error: "linkId غير صحيح" }); return; }
+      const deleted = await db.delete(settlementLinksTable)
+        .where(and(
+          eq(settlementLinksTable.id, linkId),
+          eq(settlementLinksTable.companyId, cid),
+          eq(settlementLinksTable.sourceType, "je"),
+          eq(settlementLinksTable.sourceId, jeId),
+        )).returning({ id: settlementLinksTable.id });
+      if (!deleted.length) { res.status(404).json({ error: "رابط السداد غير موجود" }); return; }
+      res.json({ ok: true });
+      return;
+    }
+
     const [je] = await db.select({
       id: journalEntriesTable.id,
       sid: journalEntriesTable.salesInvoiceId,

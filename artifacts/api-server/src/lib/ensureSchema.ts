@@ -400,6 +400,26 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS journal_entries_company_created_idx ON journal_entries (company_id, created_at DESC)` },
     { label: "journal_entry_lines_entry_idx",
       sql:   `CREATE INDEX IF NOT EXISTS journal_entry_lines_entry_idx ON journal_entry_lines (entry_id)` },
+    // ─── Partial settlement links (سداد جزئي — قيود وسندات ↔ فواتير) ─────────
+    // Additive to the legacy header links; see schema/journalEntries.ts.
+    { label: "settlement_links table",
+      sql:   `CREATE TABLE IF NOT EXISTS settlement_links (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_id INTEGER NOT NULL,
+                sales_invoice_id INTEGER,
+                purchase_invoice_id INTEGER,
+                amount NUMERIC(18,2) NOT NULL,
+                created_by INTEGER,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+              )` },
+    { label: "settlement_links source idx",
+      sql:   `CREATE INDEX IF NOT EXISTS settlement_links_source_idx ON settlement_links (company_id, source_type, source_id)` },
+    { label: "settlement_links sales inv idx",
+      sql:   `CREATE INDEX IF NOT EXISTS settlement_links_sales_idx ON settlement_links (company_id, sales_invoice_id)` },
+    { label: "settlement_links purchase inv idx",
+      sql:   `CREATE INDEX IF NOT EXISTS settlement_links_purchase_idx ON settlement_links (company_id, purchase_invoice_id)` },
     // ─── Voucher allocation lines (multi-allocation model, see schema/cash.ts).
     // Created here because ensureColumns only ALTERs existing tables. Legacy
     // single-`amount` vouchers keep posting without any line rows. Idempotent.

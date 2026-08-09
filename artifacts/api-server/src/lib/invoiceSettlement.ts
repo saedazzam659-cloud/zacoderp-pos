@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { journalEntriesTable } from "@workspace/db";
+import { journalEntriesTable, settlementLinksTable } from "@workspace/db";
 import {
   salesInvoicesTable,
   salesReturnsTable,
@@ -40,6 +40,80 @@ export async function acquireSettlementLock(
 
 export type SettlementKind = "sales" | "purchase";
 
+export type SettlementSourceType = "je" | "receipt_voucher" | "payment_voucher";
+
+/** روابط السداد الجزئي — sum of PARTIAL settlement links from the given
+ *  source doc types against the invoice, in BASE currency (link amount is in
+ *  the source's currency × the source's exchange rate). Additive to the
+ *  legacy header links. */
+export async function sumPartialLinksForInvoice(
+  cid: number,
+  kind: SettlementKind,
+  invoiceId: number,
+  sourceType: SettlementSourceType,
+): Promise<number> {
+  const invCol = kind === "sales"
+    ? settlementLinksTable.salesInvoiceId
+    : settlementLinksTable.purchaseInvoiceId;
+  if (sourceType === "je") {
+    const rows = await db.select({
+      amount: settlementLinksTable.amount,
+      rate:   journalEntriesTable.exchangeRate,
+    }).from(settlementLinksTable)
+      .innerJoin(journalEntriesTable, eq(settlementLinksTable.sourceId, journalEntriesTable.id))
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "je"),
+        eq(invCol, invoiceId),
+      ));
+    return rows.reduce((s, r) => s + (parseFloat(String(r.amount)) || 0) * (parseFloat(String(r.rate)) || 1), 0);
+  }
+  const vTable = sourceType === "receipt_voucher" ? receiptVouchersTable : paymentVouchersTable;
+  const rows = await db.select({
+    amount: settlementLinksTable.amount,
+    rate:   (vTable as any).exchangeRate,
+  }).from(settlementLinksTable)
+    .innerJoin(vTable as any, eq(settlementLinksTable.sourceId, (vTable as any).id))
+    .where(and(
+      eq(settlementLinksTable.companyId, cid),
+      eq(settlementLinksTable.sourceType, sourceType),
+      eq(invCol, invoiceId),
+    ));
+  return rows.reduce((s, r: any) => s + (parseFloat(String(r.amount)) || 0) * (parseFloat(String(r.rate)) || 1), 0);
+}
+
+/** Total already CONSUMED from a source document across ALL its partial
+ *  links (both invoice kinds), in the SOURCE document's currency. */
+export async function sumConsumedFromSource(
+  cid: number,
+  sourceType: SettlementSourceType,
+  sourceId: number,
+  dbx: any = db,
+): Promise<number> {
+  const rows = await dbx.select({ amount: settlementLinksTable.amount })
+    .from(settlementLinksTable)
+    .where(and(
+      eq(settlementLinksTable.companyId, cid),
+      eq(settlementLinksTable.sourceType, sourceType),
+      eq(settlementLinksTable.sourceId, sourceId),
+    ));
+  return rows.reduce((s: number, r: any) => s + (parseFloat(String(r.amount)) || 0), 0);
+}
+
+/** Serialize concurrent consumption of the SAME source document (a JE or
+ *  voucher being applied to two invoices at once). Negative source id keys
+ *  keep this namespace disjoint from the invoice locks above. MUST be called
+ *  inside a transaction, AFTER acquireSettlementLock (consistent order). */
+export async function acquireSourceLock(
+  tx: any,
+  cid: number,
+  sourceType: SettlementSourceType,
+  sourceId: number,
+): Promise<void> {
+  const t = sourceType === "je" ? 0 : sourceType === "receipt_voucher" ? 1 : 2;
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid * 4 + 3}, ${-(sourceId * 4 + t)})`);
+}
+
 /** Sum of settlement JEs linked to the given invoice, in BASE currency.
  *  Draft + posted both count (same policy as vouchers). */
 export async function sumSettlementJEs(
@@ -61,10 +135,13 @@ export async function sumSettlementJEs(
     amount: journalEntriesTable.settlementAmount,
     rate:   journalEntriesTable.exchangeRate,
   }).from(journalEntriesTable).where(and(...conds));
-  return rows.reduce(
+  const legacy = rows.reduce(
     (s, r) => s + (parseFloat(String(r.amount)) || 0) * (parseFloat(String(r.rate)) || 1),
     0,
   );
+  // Partial links are NEVER excluded — they are prior, committed consumption
+  // of the invoice even when they come from the same JE being re-applied.
+  return legacy + await sumPartialLinksForInvoice(cid, kind, invoiceId, "je");
 }
 
 /** Sum of receipt/payment vouchers (draft + posted, header-linked or
@@ -108,6 +185,9 @@ export async function sumVouchersForInvoice(
     if (lineLinked.has(v.id)) continue;
     existing += (parseFloat(String(v.amount)) || 0) * (parseFloat(String(v.vRate)) || 1);
   }
+  // Plus partial settlement links (سداد جزئي من سند موجود).
+  existing += await sumPartialLinksForInvoice(
+    cid, kind, invoiceId, kind === "sales" ? "receipt_voucher" : "payment_voucher");
   return existing;
 }
 

@@ -139,7 +139,9 @@ export default function InvoicePaymentsTab({
       const res = await fetch(`${API}/api/receipt-vouchers/${vId}/unlink-settlement`, {
         method: "POST",
         headers: { ...authH, "Content-Type": "application/json" },
-        body: JSON.stringify({ companyId }),
+        // salesInvoiceId lets the server remove PARTIAL links (سداد جزئي)
+        // when the voucher isn't header-linked.
+        body: JSON.stringify({ companyId, salesInvoiceId: invoiceId }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "فشل فكّ الارتباط");
@@ -175,11 +177,12 @@ export default function InvoicePaymentsTab({
 
   // فكّ ارتباط قيد سداد (يزيل احتسابه من المُحصَّل دون حذف القيد).
   const unlinkMut = useMutation({
-    mutationFn: async (jeId: number) => {
+    mutationFn: async ({ jeId, linkId }: { jeId: number; linkId?: number }) => {
       const res = await fetch(`${API}/api/journal-entries/${jeId}/unlink-settlement`, {
         method: "POST",
         headers: { ...authH, "Content-Type": "application/json" },
-        body: JSON.stringify({ companyId }),
+        // linkId → remove ONE partial settlement link; absent → legacy header unlink.
+        body: JSON.stringify({ companyId, ...(linkId ? { linkId } : {}) }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "فشل فكّ الارتباط");
@@ -209,6 +212,9 @@ export default function InvoicePaymentsTab({
     };
     const postedRows = (vouchers as any[]).filter(v => v.status === "posted");
     const draftRows = (vouchers as any[]).filter(v => v.status !== "posted");
+    // Amount a voucher contributes to THIS invoice — partial links/lines carry
+    // their own amount (appliedForInvoice); fall back to the full amount.
+    const vAmt = (v: any) => v.appliedForInvoice != null ? (Number(v.appliedForInvoice) || 0) : (Number(v.amount) || 0);
     // Settlement JEs count with the same posted/draft split as vouchers.
     const jePosted = (settleJes as any[])
       .filter(j => j.status === "posted")
@@ -216,8 +222,8 @@ export default function InvoicePaymentsTab({
     const jePending = (settleJes as any[])
       .filter(j => j.status !== "posted")
       .reduce((s, j) => s + toDoc(Number(j.settlementAmount) || 0, j.exchangeRate), 0);
-    const collected = postedRows.reduce((s, v) => s + toDoc(Number(v.amount) || 0, v.exchangeRate), 0) + jePosted;
-    const pending = draftRows.reduce((s, v) => s + toDoc(Number(v.amount) || 0, v.exchangeRate), 0) + jePending;
+    const collected = postedRows.reduce((s, v) => s + toDoc(vAmt(v), v.exchangeRate), 0) + jePosted;
+    const pending = draftRows.reduce((s, v) => s + toDoc(vAmt(v), v.exchangeRate), 0) + jePending;
     const returns = (allReturns as any[])
       .filter(r => String(r.invoiceId ?? r.salesInvoiceId) === String(invoiceId))
       .reduce((s, r) => s + toDoc(Number(r.totalAmount) || 0, r.exchangeRate), 0);
@@ -399,7 +405,12 @@ export default function InvoicePaymentsTab({
                   <TableCell className="text-xs font-medium" dir="ltr">{v.code ?? `#${v.id}`}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap" dir="ltr">{v.date ? String(v.date).slice(0, 10) : "—"}</TableCell>
                   <TableCell className="text-xs">{paymentTypeLabel(v.paymentType)}</TableCell>
-                  <TableCell className="text-xs text-end" dir="ltr">{fmt(Number(v.amount) || 0)}</TableCell>
+                  <TableCell className="text-xs text-end" dir="ltr">
+                    {fmt(v.appliedForInvoice != null ? Number(v.appliedForInvoice) || 0 : Number(v.amount) || 0)}
+                    {v.appliedForInvoice != null && Math.abs((Number(v.appliedForInvoice) || 0) - (Number(v.amount) || 0)) > 0.005 && (
+                      <span className="text-[10px] text-muted-foreground"> / {fmt(Number(v.amount) || 0)}</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-xs">
                     <Badge variant={v.status === "posted" ? "default" : "secondary"} className="text-[10px]">
                       {v.status === "posted" ? "مرحّل" : "مسودّة"}
@@ -414,7 +425,7 @@ export default function InvoicePaymentsTab({
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                       </Button>
-                      {Number(v.salesInvoiceId) === Number(invoiceId) && (
+                      {(Number(v.salesInvoiceId) === Number(invoiceId) || v.appliedForInvoice != null) && (
                         <Button
                           variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600"
                           disabled={unlinkVoucherMut.isPending}
@@ -456,7 +467,7 @@ export default function InvoicePaymentsTab({
                 )}
                 {(settleJes as any[]).map((j: any) => (
                   <TableRow
-                    key={j.id}
+                    key={j.linkId ? `link-${j.linkId}` : `je-${j.id}`}
                     className="cursor-pointer hover:bg-muted/40"
                     onDoubleClick={() => navigate(`/accounting/journals/${j.id}`)}
                     data-testid={`settlement-je-row-${j.id}`}
@@ -482,7 +493,7 @@ export default function InvoicePaymentsTab({
                         <Button
                           variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600"
                           disabled={unlinkMut.isPending}
-                          onClick={(e) => { e.stopPropagation(); unlinkMut.mutate(j.id); }}
+                          onClick={(e) => { e.stopPropagation(); unlinkMut.mutate({ jeId: j.id, linkId: j.linkId }); }}
                           title="فكّ ارتباط القيد بالفاتورة (يزيل احتسابه من المُحصَّل دون حذف القيد)"
                           data-testid={`btn-unlink-je-${j.id}`}
                         >
@@ -522,18 +533,20 @@ export default function InvoicePaymentsTab({
                   <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">جارِ التحميل…</TableCell></TableRow>
                 )}
                 {(voucherCandidates as any[]).map((v: any) => {
-                  const vAmt = Number(v.amount) || 0;
-                  // Server cap is in BASE currency and counts drafts too —
-                  // mirror it: voucher base vs (available × invoice rate).
-                  const vBase = vAmt * (Number(v.exchangeRate) || 1);
-                  const availableBase = summary.available * (Number(invoiceExchangeRate) || 1);
-                  const tooBig = vBase > availableBase + 0.01;
+                  // `amount` من الخادم = المتاح المتبقّي من السند (سداد جزئي).
+                  const vAvail = Number(v.amount) || 0;
+                  const vTotal = Number(v.totalAmount ?? v.amount) || 0;
                   return (
                     <TableRow key={v.id} data-testid={`voucher-candidate-row-${v.id}`}>
                       <TableCell className="text-xs font-medium" dir="ltr">{v.code ?? `#${v.id}`}</TableCell>
                       <TableCell className="text-xs whitespace-nowrap" dir="ltr">{v.date ? String(v.date).slice(0, 10) : "—"}</TableCell>
                       <TableCell className="text-xs">{paymentTypeLabel(v.paymentType)}</TableCell>
-                      <TableCell className="text-xs text-end" dir="ltr">{fmt(vAmt)}</TableCell>
+                      <TableCell className="text-xs text-end" dir="ltr">
+                        {fmt(vAvail)}
+                        {Math.abs(vTotal - vAvail) > 0.005 && (
+                          <span className="text-[10px] text-muted-foreground"> / {fmt(vTotal)}</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-xs">
                         <Badge variant={v.status === "posted" ? "default" : "secondary"} className="text-[10px]">
                           {v.status === "posted" ? "مرحّل" : "مسودّة"}
@@ -542,13 +555,11 @@ export default function InvoicePaymentsTab({
                       <TableCell>
                         <Button
                           size="sm" variant="outline" className="h-7 px-2 text-xs"
-                          disabled={applyVoucherMut.isPending || summary.available <= 0.005 || tooBig}
+                          disabled={applyVoucherMut.isPending || summary.available <= 0.005}
                           onClick={() => applyVoucherMut.mutate(v.id)}
                           title={summary.available <= 0.005
                             ? "الفاتورة مسدَّدة بالكامل (بما فيها المسودّات)"
-                            : tooBig
-                              ? `مبلغ السند يتجاوز المتبقّي المتاح (${fmt(summary.available)}) — يُحتسب السند كاملاً ولا يمكن تجزئته`
-                              : "إضافة هذا السند كسداد — يُحتسب مبلغه كاملاً ولا يُنشئ سنداً جديداً"}
+                            : "إضافة هذا السند كسداد — يُحتسب حتى المتبقّي فقط والباقي من السند يبقى متاحاً"}
                           data-testid={`btn-apply-voucher-${v.id}`}
                         >
                           <Plus className="h-3.5 w-3.5" />
