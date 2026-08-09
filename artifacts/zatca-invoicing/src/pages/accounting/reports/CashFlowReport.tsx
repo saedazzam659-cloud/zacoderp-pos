@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearch, useLocation } from "wouter";
@@ -75,6 +75,23 @@ const SUMMARY_NOTE_META: Record<string, { label: string; labelEn: string; desc: 
   out_other:        { label: "مدفوعات أخرى من الأنشطة التشغيلية",                        labelEn: "Other Payments made from Operating Activities", desc: "أي مدفوعات تشغيلية أخرى لم تُدرج في البنود السابقة" },
 };
 
+// ── قائمة التدفقات النقدية (النموذج السنوي — تشغيلية/استثمارية/تمويلية) ────
+// Mirrors the user's yearly Excel model: the same 16 classified notes grouped
+// into A) operating, B) investing, C) financing sections, with two actual
+// columns (selected period + full fiscal year). Pure re-grouping of the same
+// backend summary — no new classification logic.
+type StatementSection = { id: string; title: string; titleEn: string; keys: string[] };
+const STATEMENT_IN_SECTIONS: StatementSection[] = [
+  { id: "in_op",  title: "أ) التدفقات النقدية من الأنشطة التشغيلية",  titleEn: "A) Cash from Operating Activities", keys: ["in_sales", "in_interest", "in_other"] },
+  { id: "in_inv", title: "ب) التدفقات النقدية من الأنشطة الاستثمارية", titleEn: "B) Cash from Investing Activities", keys: ["in_fixed_assets", "in_investments"] },
+  { id: "in_fin", title: "ج) التدفقات النقدية من الأنشطة التمويلية",  titleEn: "C) Cash from Financing Activities", keys: ["in_debt"] },
+];
+const STATEMENT_OUT_SECTIONS: StatementSection[] = [
+  { id: "out_op",  title: "أ) التدفقات النقدية في الأنشطة التشغيلية",  titleEn: "A) Cash for Operating Activities", keys: ["out_suppliers", "out_payroll", "out_tax", "out_government", "out_other"] },
+  { id: "out_inv", title: "ب) التدفقات النقدية في الأنشطة الاستثمارية", titleEn: "B) Cash for Investing Activities", keys: ["out_fixed_assets", "out_investments"] },
+  { id: "out_fin", title: "ج) التدفقات النقدية في الأنشطة التمويلية",  titleEn: "C) Cash for Financing Activities", keys: ["out_loans", "out_dividends", "out_shareholders"] },
+];
+
 function typeTone(k?: string | null): string {
   const key = k ?? "";
   if (key.startsWith("sales") || key === "pos_sale")
@@ -137,8 +154,9 @@ export default function CashFlowReport() {
   const [costCenterIds, setCostCenterIds] = useState<number[]>([]);
   const ccCsv = costCenterIds.length ? [...costCenterIds].sort((a, b) => a - b).join(",") : "";
   const [searched, setSearched] = useState(false);
+  // "statement" = yearly cash-flow statement (النموذج السنوي — تشغيلية/استثمارية/تمويلية);
   // "summary" = one-page partner schedule (نموذج جدول رقم 3); "detail" = full movement grid.
-  const [view, setView] = useState<"summary" | "detail">("summary");
+  const [view, setView] = useState<"statement" | "summary" | "detail">("summary");
 
   // Deep-link + browser-back re-hydration (same pattern as AccountStatement).
   const searchString = useSearch();
@@ -150,7 +168,7 @@ export default function CashFlowReport() {
     const b = p.get("branchId"); const a = p.get("accountId");
     const cur = p.get("currencyId"); const cc = p.get("costCenterId");
     const v = p.get("view");
-    if (v === "detail" || v === "summary") setView(v);
+    if (v === "detail" || v === "summary" || v === "statement") setView(v);
     if (f) setFromDate(f);
     if (tt) setToDate(tt);
     if (b) setBranchId(Number(b));
@@ -258,6 +276,47 @@ export default function CashFlowReport() {
     enabled: searched,
   });
 
+  // ── Full-fiscal-year query (النموذج السنوي: عمود «كل العام») ───────────
+  // Fiscal year containing toDate (company fiscal years may not be calendar
+  // years — e.g. Aug→Jul). Fallback: calendar year of toDate.
+  const { data: fiscalYears = [] } = useQuery<any[]>({
+    queryKey: ["fiscal-years", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/accounting-reports/fiscal-years?companyId=${cid}` : `${API}/api/accounting-reports/fiscal-years`;
+      const r = await fetch(url, { headers });
+      // Fail loudly on auth/server errors — a silent [] would wrongly fall
+      // back to the calendar year for companies with a non-calendar fiscal year.
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error ?? "تعذّر تحميل السنوات المالية"); }
+      const j = await r.json();
+      return Array.isArray(j) ? j : [];
+    },
+    enabled: !!user && view === "statement",
+  });
+  const yearRange = useMemo(() => {
+    const ref = toDate || today;
+    const fy = fiscalYears.find((y: any) =>
+      String(y.startDate).slice(0, 10) <= ref && ref <= String(y.endDate).slice(0, 10));
+    if (fy) return { from: String(fy.startDate).slice(0, 10), to: String(fy.endDate).slice(0, 10) };
+    return { from: `${ref.slice(0, 4)}-01-01`, to: `${ref.slice(0, 4)}-12-31` };
+  }, [fiscalYears, toDate, today]);
+  const { data: yearData } = useQuery<CashFlowResponse>({
+    queryKey: ["cash-flow-report-year", cid, yearRange.from, yearRange.to, branchId, accountId, currencyId, ccCsv],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (cid)        params.set("companyId", String(cid));
+      params.set("fromDate", yearRange.from);
+      params.set("toDate",   yearRange.to);
+      if (branchId)   params.set("branchId", String(branchId));
+      if (accountId)  params.set("accountId", accountId);
+      if (currencyId) params.set("currencyId", currencyId);
+      if (ccCsv)      params.set("costCenterId", ccCsv);
+      const res = await fetch(`${API}/api/accounting-reports/cash-flow?${params}`, { headers });
+      if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
+      return res.json();
+    },
+    enabled: searched && view === "statement",
+  });
+
   const opening  = data?.opening ?? 0;
   const inflows  = data?.totals?.inflows  ?? 0;
   const outflows = data?.totals?.outflows ?? 0;
@@ -284,6 +343,60 @@ export default function CashFlowReport() {
   // still equals opening + (summaryIn − summaryOut) because transfers cancel.
   const summaryNet     = summaryInTotal - summaryOutTotal;
   const summaryClosing = opening + summaryNet;
+
+  // ── Yearly statement (النموذج السنوي) computations ─────────────────────
+  const periodAmt = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const n of summaryNotes) m.set(n.key, n.amount);
+    return m;
+  }, [summaryNotes]);
+  const yearAmt = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const n of (yearData?.summary ?? [])) m.set(n.key, n.amount);
+    return m;
+  }, [yearData]);
+  const yearOpening = yearData?.opening ?? 0;
+  const sumKeys = (m: Map<string, number>, keys: string[]) => keys.reduce((s, k) => s + (m.get(k) ?? 0), 0);
+  const stInTotalPeriod  = STATEMENT_IN_SECTIONS.reduce((s, sec) => s + sumKeys(periodAmt, sec.keys), 0);
+  const stOutTotalPeriod = STATEMENT_OUT_SECTIONS.reduce((s, sec) => s + sumKeys(periodAmt, sec.keys), 0);
+  const stInTotalYear    = STATEMENT_IN_SECTIONS.reduce((s, sec) => s + sumKeys(yearAmt, sec.keys), 0);
+  const stOutTotalYear   = STATEMENT_OUT_SECTIONS.reduce((s, sec) => s + sumKeys(yearAmt, sec.keys), 0);
+  const stClosingPeriod  = opening + stInTotalPeriod - stOutTotalPeriod;
+  const stClosingYear    = yearOpening + stInTotalYear - stOutTotalYear;
+
+  const STATEMENT_EXPORT_COLS = [
+    { key: "label",   header: "البيان", width: 55 },
+    { key: "labelEn", header: "Amount in SR", width: 55 },
+    { key: "period",  header: `الفعلي من ${fromDate} إلى ${toDate}`, width: 20, numFmt: moneyFmt },
+    { key: "year",    header: `الفعلي كل العام (${yearRange.from} → ${yearRange.to})`, width: 20, numFmt: moneyFmt },
+  ];
+  const statementExportRows = useMemo(() => {
+    const rows: any[] = [];
+    rows.push({ label: "النقد المتاح في بداية الفترة", labelEn: "Cash Available - Beginning Balance", period: opening, year: yearOpening });
+    rows.push({ label: "التدفقات النقدية الواردة", labelEn: "Cash Inflow", period: "", year: "" });
+    for (const sec of STATEMENT_IN_SECTIONS) {
+      rows.push({ label: sec.title, labelEn: sec.titleEn, period: "", year: "" });
+      for (const k of sec.keys) {
+        const meta = SUMMARY_NOTE_META[k];
+        rows.push({ label: meta?.label ?? k, labelEn: meta?.labelEn ?? "", period: periodAmt.get(k) ?? 0, year: yearAmt.get(k) ?? 0 });
+      }
+    }
+    rows.push({ label: "إجمالي التدفقات النقدية الواردة", labelEn: "Total Cash Inflow", period: stInTotalPeriod, year: stInTotalYear });
+    rows.push({ label: "التدفقات النقدية الصادرة", labelEn: "Cash Outflow", period: "", year: "" });
+    for (const sec of STATEMENT_OUT_SECTIONS) {
+      rows.push({ label: sec.title, labelEn: sec.titleEn, period: "", year: "" });
+      for (const k of sec.keys) {
+        const meta = SUMMARY_NOTE_META[k];
+        rows.push({ label: meta?.label ?? k, labelEn: meta?.labelEn ?? "", period: -(periodAmt.get(k) ?? 0), year: -(yearAmt.get(k) ?? 0) });
+      }
+    }
+    rows.push({ label: "إجمالي التدفقات النقدية الصادرة", labelEn: "Total Cash OutFlow", period: -stOutTotalPeriod, year: -stOutTotalYear });
+    return rows;
+  }, [periodAmt, yearAmt, opening, yearOpening, stInTotalPeriod, stInTotalYear, stOutTotalPeriod, stOutTotalYear]);
+  const statementExportTotalsRow = {
+    label: "النقد المتاح في نهاية الفترة", labelEn: "Cash Available at Period End",
+    period: stClosingPeriod, year: stClosingYear,
+  };
 
   const SUMMARY_EXPORT_COLS = [
     { key: "no",     header: "م", width: 6 },
@@ -460,7 +573,16 @@ export default function CashFlowReport() {
           </p>
         </div>
         <div className="flex gap-2">
-          {searched && (view === "summary" ? !!data : rows.length > 0) && (view === "summary" ? (
+          {searched && view === "statement" && !!data && (
+            <ExportButtons
+              rows={statementExportRows}
+              columns={STATEMENT_EXPORT_COLS}
+              filename={`cash-flow-statement-${fromDate}-${toDate}`}
+              title={`قائمة التدفقات النقدية — الفترة من ${fromDate} إلى ${toDate} وكل العام (${yearRange.from} → ${yearRange.to})`}
+              totalsRow={statementExportTotalsRow}
+            />
+          )}
+          {searched && view !== "statement" && (view === "summary" ? !!data : rows.length > 0) && (view === "summary" ? (
             <>
               <ExportButtons
                 rows={summaryExportRows}
@@ -502,6 +624,17 @@ export default function CashFlowReport() {
           )}
         >
           ملخص (نموذج الشركاء)
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("statement")}
+          data-testid="tab-cashflow-statement"
+          className={cn(
+            "px-4 py-1.5 rounded-md text-sm font-semibold transition-colors",
+            view === "statement" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          قائمة التدفقات (النموذج السنوي)
         </button>
         <button
           type="button"
@@ -676,6 +809,98 @@ export default function CashFlowReport() {
           </table>
           <div className="border-t px-4 py-2 text-[11px] text-muted-foreground">
             ملاحظة عامة: البنود غير المنطبقة تظهر بقيمة صفر وفق متطلبات النموذج — وتُراجع نتيجة التصنيف الآلي من العرض التفصيلي قبل الإرسال.
+          </div>
+        </div>
+      )}
+
+      {/* Yearly cash-flow statement (النموذج السنوي — تشغيلية/استثمارية/تمويلية) */}
+      {searched && !isLoading && view === "statement" && data && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="border-b bg-muted/40 px-4 py-3">
+            <h2 className="font-bold">قائمة التدفقات النقدية — الفترة من {fromDate} إلى {toDate}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              مبوّبة حسب الأنشطة (تشغيلية / استثمارية / تمويلية) — عمود «كل العام» يغطي السنة المالية من {yearRange.from} إلى {yearRange.to} — التحويلات الداخلية بين الصناديق والبنوك مستبعدة
+            </p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/60 text-xs text-muted-foreground">
+                <th className="px-3 py-2 text-start">البيان</th>
+                <th className="px-3 py-2 text-end w-40">الفعلي<div className="font-normal">{fromDate} → {toDate}</div></th>
+                <th className="px-3 py-2 text-end w-40">الفعلي — كل العام<div className="font-normal">{yearRange.from} → {yearRange.to}</div></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b bg-amber-50/50 font-bold" data-testid="statement-row-opening">
+                <td className="px-3 py-2">النقد المتاح في بداية الفترة <span className="text-[11px] font-normal text-muted-foreground">Cash Available - Beginning Balance</span></td>
+                <td className={cn("px-3 py-2 text-end font-mono tabular-nums", opening >= 0 ? "text-primary" : "text-destructive")}>{fmt(opening)}</td>
+                <td className={cn("px-3 py-2 text-end font-mono tabular-nums", yearOpening >= 0 ? "text-primary" : "text-destructive")}>{fmt(yearOpening)}</td>
+              </tr>
+              <tr className="border-b bg-emerald-50/60 font-bold"><td className="px-3 py-2" colSpan={3}>التدفقات النقدية الواردة <span className="text-[11px] font-normal text-muted-foreground">Cash Inflow</span></td></tr>
+              {STATEMENT_IN_SECTIONS.map(sec => (
+                <Fragment key={sec.id}>
+                  <tr className="border-b bg-muted/30 font-semibold text-emerald-800">
+                    <td className="px-3 py-1.5" colSpan={3}>{sec.title} <span className="text-[11px] font-normal text-muted-foreground">{sec.titleEn}</span></td>
+                  </tr>
+                  {sec.keys.map(k => {
+                    const meta = SUMMARY_NOTE_META[k];
+                    const p = periodAmt.get(k) ?? 0; const y = yearAmt.get(k) ?? 0;
+                    return (
+                      <tr key={k} className={cn("border-b", p === 0 && y === 0 && "text-muted-foreground/70")} data-testid={`statement-row-${k}`}>
+                        <td className="px-3 py-1.5 ps-7">
+                          {meta?.label ?? k}
+                          {meta?.labelEn && <div className="text-[11px] text-muted-foreground">{meta.labelEn}</div>}
+                        </td>
+                        <td className="px-3 py-1.5 text-end font-mono tabular-nums text-emerald-700">{fmt(p)}</td>
+                        <td className="px-3 py-1.5 text-end font-mono tabular-nums text-emerald-700">{fmt(y)}</td>
+                      </tr>
+                    );
+                  })}
+                </Fragment>
+              ))}
+              <tr className="border-b bg-emerald-50 font-bold" data-testid="statement-row-in-total">
+                <td className="px-3 py-2">إجمالي التدفقات النقدية الواردة <span className="text-[11px] font-normal text-muted-foreground">Total Cash Inflow</span></td>
+                <td className="px-3 py-2 text-end font-mono tabular-nums text-emerald-700">{fmt(stInTotalPeriod)}</td>
+                <td className="px-3 py-2 text-end font-mono tabular-nums text-emerald-700">{fmt(stInTotalYear)}</td>
+              </tr>
+              <tr className="border-b bg-rose-50/60 font-bold"><td className="px-3 py-2" colSpan={3}>التدفقات النقدية الصادرة <span className="text-[11px] font-normal text-muted-foreground">Cash Outflow</span></td></tr>
+              {STATEMENT_OUT_SECTIONS.map(sec => (
+                <Fragment key={sec.id}>
+                  <tr className="border-b bg-muted/30 font-semibold text-rose-800">
+                    <td className="px-3 py-1.5" colSpan={3}>{sec.title} <span className="text-[11px] font-normal text-muted-foreground">{sec.titleEn}</span></td>
+                  </tr>
+                  {sec.keys.map(k => {
+                    const meta = SUMMARY_NOTE_META[k];
+                    const p = periodAmt.get(k) ?? 0; const y = yearAmt.get(k) ?? 0;
+                    return (
+                      <tr key={k} className={cn("border-b", p === 0 && y === 0 && "text-muted-foreground/70")} data-testid={`statement-row-${k}`}>
+                        <td className="px-3 py-1.5 ps-7">
+                          {meta?.label ?? k}
+                          {meta?.labelEn && <div className="text-[11px] text-muted-foreground">{meta.labelEn}</div>}
+                        </td>
+                        <td className="px-3 py-1.5 text-end font-mono tabular-nums text-rose-700">{p ? `(${fmt(p)})` : fmt(0)}</td>
+                        <td className="px-3 py-1.5 text-end font-mono tabular-nums text-rose-700">{y ? `(${fmt(y)})` : fmt(0)}</td>
+                      </tr>
+                    );
+                  })}
+                </Fragment>
+              ))}
+              <tr className="border-b bg-rose-50 font-bold" data-testid="statement-row-out-total">
+                <td className="px-3 py-2">إجمالي التدفقات النقدية الصادرة <span className="text-[11px] font-normal text-muted-foreground">Total Cash OutFlow</span></td>
+                <td className="px-3 py-2 text-end font-mono tabular-nums text-rose-700">{stOutTotalPeriod ? `(${fmt(stOutTotalPeriod)})` : fmt(0)}</td>
+                <td className="px-3 py-2 text-end font-mono tabular-nums text-rose-700">{stOutTotalYear ? `(${fmt(stOutTotalYear)})` : fmt(0)}</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr className="bg-blue-50/60 font-bold" data-testid="statement-row-closing">
+                <td className="px-3 py-2">النقد المتاح في نهاية الفترة <span className="text-[11px] font-normal text-muted-foreground">Cash Available at Period End</span></td>
+                <td className={cn("px-3 py-2 text-end font-mono tabular-nums", stClosingPeriod >= 0 ? "text-primary" : "text-destructive")}>{fmt(stClosingPeriod)}</td>
+                <td className={cn("px-3 py-2 text-end font-mono tabular-nums", stClosingYear >= 0 ? "text-primary" : "text-destructive")}>{fmt(stClosingYear)}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <div className="border-t px-4 py-2 text-[11px] text-muted-foreground">
+            التصنيف آلي حسب الحساب المقابل ونوع القيد (نفس تصنيف الملخص) — تُراجع النتيجة من العرض التفصيلي عند الحاجة.
           </div>
         </div>
       )}

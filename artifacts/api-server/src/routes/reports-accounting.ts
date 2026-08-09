@@ -1482,6 +1482,29 @@ ${JSON.stringify(historical, null, 2)}
   }
 });
 
+// ─── Fiscal years (read-only, report-scoped) ────────────────────────────────
+// The cash-flow statement view needs the company's fiscal-year ranges for its
+// "full year" column. /api/fiscal/years is gated by the separate "accounts"
+// module permission, which report-only users may lack — so expose a minimal
+// read-only copy here under the report gate (id + dates only, no periods).
+router.get("/fiscal-years", async (req: Request, res: Response) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const rows = await db.select({
+      id: fiscalYearsTable.id,
+      name: fiscalYearsTable.name,
+      startDate: fiscalYearsTable.startDate,
+      endDate: fiscalYearsTable.endDate,
+    }).from(fiscalYearsTable)
+      .where(eq(fiscalYearsTable.companyId, cid))
+      .orderBy(asc(fiscalYearsTable.startDate));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message ?? "خطأ" });
+  }
+});
+
 // ─── Cash Flow Report (تقرير التدفقات النقدية) ────────────────────────────────
 // JE-based cash flow over the treasury accounts (cash boxes + bank accounts):
 // opening balance before the period, every posted JE line that touched a

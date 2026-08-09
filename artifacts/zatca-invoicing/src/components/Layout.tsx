@@ -118,9 +118,9 @@ function groupVisible(user: any, moduleKeys: string[]): boolean {
 // Module key sets per sidebar group. Keep in sync with the subNav arrays
 // below — if a permKey is added/removed from a subNav, mirror it here so
 // the parent group hides correctly when no children are accessible.
-const SALES_GROUP_PERMS         = ["customers","sales_invoices","sales_quotations","sales_returns","sales_settlements","sales_reps","sales_reports","customer_notes","zatca_bridge","zatca_report"];
+const SALES_GROUP_PERMS         = ["customers","sales_invoices","sales_quotations","sales_returns","sales_settlements","sales_reps","sales_reports","customer_notes","zatca_bridge","zatca_report","receipt_vouchers"];
 const SALES_REPORTS_PERMS       = ["sales_reports"];
-const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_returns","supplier_settlements","supplier_notes"];
+const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_returns","supplier_settlements","supplier_notes","payment_vouchers"];
 const PURCHASING_REPORTS_PERMS  = ["suppliers","purchase_invoices","purchase_returns"];
 const CASH_GROUP_PERMS          = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
 const CASH_REPORTS_PERMS        = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
@@ -513,6 +513,10 @@ const purchasingSubNav: NavDef[] = [
   { nameKey: "nav.supplierCreditNotes",  href: "/purchasing/supplier-credit-notes", icon: FileText, permKey: "supplier_notes" },
   { nameKey: "nav.supplierDebitNotes",   href: "/purchasing/supplier-debit-notes",  icon: FileText, permKey: "supplier_notes" },
   { nameKey: "nav.supplierSettlements",  href: "/purchasing/settlements",     icon: Banknote,     permKey: "supplier_settlements" },
+  // سند الصرف العادي — moved here from النقد والبنوك per the user's request
+  // (easier for purchasing users). Same route + permKey, no logic change;
+  // the MULTI payment voucher stays in cashSubNav.
+  { nameKey: "nav.paymentVouchers",      href: "/cash/payment-vouchers",      icon: ArrowUpCircle, permKey: "payment_vouchers" },
 ];
 const salesSubNav: NavDef[] = [
   { nameKey: "nav.customers",            href: "/customers",         icon: Users,           permKey: "customers" },
@@ -527,6 +531,10 @@ const salesSubNav: NavDef[] = [
   { nameKey: "nav.customerCreditNotes",  href: "/sales/customer-credit-notes", icon: FileText, permKey: "customer_notes" },
   { nameKey: "nav.customerDebitNotes",   href: "/sales/customer-debit-notes",  icon: FileText, permKey: "customer_notes" },
   { nameKey: "nav.customerSettlements",  href: "/sales/settlements", icon: ArrowDownCircle, permKey: "sales_settlements" },
+  // سند القبض العادي — moved here from النقد والبنوك per the user's request
+  // (easier for sales users). Same route + permKey, no logic change; the
+  // MULTI receipt voucher stays in cashSubNav.
+  { nameKey: "nav.receiptVouchers",      href: "/cash/receipt-vouchers", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
   // Note: nav.zatcaBridge and nav.zatcaReport were moved out of this group
   // into zatcaGroupSubNav (the "ربط ZATCA" group) per the user's request —
   // they belong with the ZATCA integration screens, not the sales cycle.
@@ -562,9 +570,9 @@ const reportsSubNav: NavDef[] = [
 const cashSubNav: NavDef[] = [
   { nameKey: "nav.cashBoxes",        href: "/cash/boxes",            icon: Wallet,          permKey: "cash_boxes" },
   { nameKey: "nav.banks",            href: "/cash/banks",            icon: Landmark,        permKey: "bank_accounts" },
-  { nameKey: "nav.receiptVouchers",  href: "/cash/receipt-vouchers", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
+  // Simple receipt/payment vouchers moved to salesSubNav / purchasingSubNav
+  // per the user's request; the MULTI variants stay here (routes unchanged).
   { nameKey: "nav.receiptVouchersMulti", href: "/cash/receipt-vouchers/multi/new", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
-  { nameKey: "nav.paymentVouchers",  href: "/cash/payment-vouchers", icon: ArrowUpCircle,   permKey: "payment_vouchers" },
   { nameKey: "nav.paymentVouchersMulti", href: "/cash/payment-vouchers/multi/new", icon: ArrowUpCircle, permKey: "payment_vouchers" },
   // transfers: no dedicated module key; gate under cash_boxes.
   { nameKey: "nav.transfers",        href: "/cash/transfers",        icon: ArrowLeftRight,  permKey: "cash_boxes" },

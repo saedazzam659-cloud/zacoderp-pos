@@ -736,7 +736,7 @@ export default function ReceiptVoucherFormMulti() {
       ref={formRef}
       onKeyDownCapture={handleFormKeyDownCapture}
       onKeyDown={handleFormKeyDown}
-      className="p-6 space-y-5 max-w-6xl mx-auto pb-24"
+      className="p-6 space-y-5 pb-24"
       dir={isRtl ? "rtl" : "ltr"}
       data-testid="receipt-voucher-form"
     >
