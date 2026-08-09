@@ -146,6 +146,9 @@ export default function ReceiptVoucherFormSimple() {
   // "party"   → settle against a supplier (default, legacy behaviour)
   // "account" → settle against a general GL account picked from the tree
   const [entityMode, setEntityMode] = useState<"party" | "account">("party");
+  // Active section tab — the three form sections render as tabs (RTL:
+  // right→left = بيانات السند ← الطرف والمبلغ ← المراجع والبيان).
+  const [activeTab, setActiveTab] = useState<"header" | "party" | "refs">("header");
 
   // ── Sequence preview for new vouchers ───────────────────────────
   const seqPeek = useNextSequenceNumber("receipt_voucher", isNew, undefined, undefined, form.paymentType);
@@ -775,12 +778,36 @@ export default function ReceiptVoucherFormSimple() {
       )}
 
       {/* ─── Two-column body: form + live preview ─────────────── */}
+      {/* ─── Section tabs (outside the disabled fieldset so a POSTED voucher
+           can still be browsed tab-by-tab) ─────────────────────── */}
+      <div className="inline-flex rounded-lg border bg-muted/30 p-0.5 print:hidden" role="tablist" data-testid="rv-section-tabs">
+        {([
+          { k: "header", label: t(`${NS}.section_header`, "بيانات السند") },
+          { k: "party",  label: t(`${NS}.section_customer`, "العميل والمبلغ") },
+          { k: "refs",   label: t(`${NS}.section_refs`, "المراجع والبيان") },
+        ] as const).map(tb => (
+          <button
+            key={tb.k} type="button" role="tab" aria-selected={activeTab === tb.k}
+            onClick={() => setActiveTab(tb.k)}
+            data-testid={`rv-tab-${tb.k}`}
+            className={cn(
+              "px-4 h-8 rounded-md text-xs transition",
+              activeTab === tb.k
+                ? "bg-background shadow-sm font-semibold"
+                : "text-muted-foreground hover:text-foreground font-medium",
+            )}
+          >
+            {tb.label}
+          </button>
+        ))}
+      </div>
+
       <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
           {/* ── Left column: SINGLE-TAB form ──────────────────── */}
           <div className="space-y-4">
             {/* Section: Header */}
-            <Card className="border-2">
+            <Card className={cn("border-2", activeTab !== "header" && "hidden")}>
               <CardHeader className="py-3 px-4 border-b bg-muted/30">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <FileText className="h-4 w-4 text-amber-700" />
@@ -930,7 +957,7 @@ export default function ReceiptVoucherFormSimple() {
             </Card>
 
             {/* Section: Customer + Amount */}
-            <Card className="border-2 border-green-100">
+            <Card className={cn("border-2 border-green-100", activeTab !== "party" && "hidden")}>
               <CardHeader className="py-3 px-4 border-b bg-green-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-900">
                   <User2 className="h-4 w-4" />
@@ -1065,7 +1092,17 @@ export default function ReceiptVoucherFormSimple() {
                           <SearchCombobox
                             items={invoiceItems}
                             value={form.salesInvoiceId}
-                            onValueChange={v => setForm(p => ({ ...p, salesInvoiceId: v }))}
+                            onValueChange={v => {
+                              // اختيار الفاتورة يعبّئ المبلغ تلقائياً من إجمالي
+                              // الفاتورة (أو المتبقي إن توفر) لتفادي أخطاء الإدخال.
+                              const inv = (salesInvoices as any[]).find((x: any) => String(x.id) === v);
+                              const auto = Number(inv?.remainingAmount ?? inv?.totalAmount ?? 0);
+                              setForm(p => ({
+                                ...p,
+                                salesInvoiceId: v,
+                                ...(v && auto > 0 ? { amount: auto.toFixed(2) } : {}),
+                              }));
+                            }}
                             placeholder={form.entityId
                               ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
                               : t(`${NS}.pickCustomerFirst`, "اختر المورد أولاً")}
@@ -1097,7 +1134,7 @@ export default function ReceiptVoucherFormSimple() {
             </Card>
 
             {/* Section: References & Notes */}
-            <Card className="border-2 border-slate-100">
+            <Card className={cn("border-2 border-slate-100", activeTab !== "refs" && "hidden")}>
               <CardHeader className="py-3 px-4 border-b bg-slate-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <FileText className="h-4 w-4 text-slate-700" />
