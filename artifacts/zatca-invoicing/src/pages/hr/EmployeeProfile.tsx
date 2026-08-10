@@ -1,15 +1,17 @@
 // ملف الموظف الشامل — Employee Lifecycle Profile
-// تبويبات: نظرة عامة، تعديلات الراتب، النقل والتكليف، التقييمات، جهات الطوارئ،
-// الأسرة والتابعون، المؤهلات، الشهادات، المستندات، السجل الوظيفي، نهاية الخدمة.
-// لا يكرر الشاشات الموجودة (العقود/الحضور/الإجازات/العهد لها شاشاتها) — يضيف
-// الأجزاء الناقصة فقط ويعرض روابط سريعة للأجزاء القائمة.
-import { useMemo, useState } from "react";
+// تبويبات: نظرة عامة، الصورة، تعديلات الراتب، النقل والتكليف، التقييمات، الطوارئ،
+// الأسرة، المؤهلات، الشهادات، المستندات (+أرشفة سحابية/محلية مثل القيود)، السجل، نهاية الخدمة.
+// كل الجداول تستخدم AdvancedReportGrid (نفس جريدات النظام: بحث/فرز/فلاتر/ألوان/ترقيم).
+import React, { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { employeesApi } from "@/lib/employeesApi";
 import { hrCoreApi, type HrSubResource } from "@/lib/hrCoreApi";
 import { fmt2 } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,17 +24,26 @@ import { DateField } from "@/components/ui/date-field";
 import {
   ArrowRight, Plus, Trash2, Pencil, UserRound, Wallet, ArrowLeftRight, Star,
   PhoneCall, Users, GraduationCap, BadgeCheck, FolderOpen, History, DoorOpen,
-  FileSignature, CalendarDays, Package, CheckCircle2,
+  FileSignature, CalendarDays, Package, CheckCircle2, Camera, ImagePlus, Loader2,
 } from "lucide-react";
 
+const API = import.meta.env.VITE_API_URL ?? "";
 const today = () => new Date().toISOString().slice(0, 10);
 const num = (v: any) => Number(v ?? 0) || 0;
 
-// ─── أوصاف الحقول لكل sub-resource (يبني الجدول والنموذج تلقائياً) ────────────
+// صور الموظفين تُخزَّن كمسار /objects/... في التخزين السحابي — تُعرض عبر
+// المسار المحمي مع token في الاستعلام (الـ <img> لا يرسل ترويسة Authorization).
+function photoSrc(u: string | null | undefined, token: string | null): string | null {
+  if (!u) return null;
+  if (u.startsWith("/objects/")) return `${API}/api/storage${u}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  return u;
+}
+
+// ─── أوصاف الحقول لكل sub-resource (يبني الجريدة والنموذج تلقائياً) ──────────
 type FieldDef = { key: string; label: string; type?: "text" | "date" | "number" | "bool" | "textarea"; required?: boolean };
-const SUBS: Record<string, { title: string; icon: any; fields: FieldDef[] }> = {
+const SUBS: Record<string, { title: string; icon: any; unit: string; fields: FieldDef[] }> = {
   "emergency-contacts": {
-    title: "جهات اتصال الطوارئ", icon: PhoneCall,
+    title: "جهات اتصال الطوارئ", icon: PhoneCall, unit: "جهة",
     fields: [
       { key: "name", label: "الاسم", required: true },
       { key: "relation", label: "صلة القرابة" },
@@ -44,7 +55,7 @@ const SUBS: Record<string, { title: string; icon: any; fields: FieldDef[] }> = {
     ],
   },
   "dependents": {
-    title: "الأسرة والتابعون", icon: Users,
+    title: "الأسرة والتابعون", icon: Users, unit: "تابع",
     fields: [
       { key: "name", label: "الاسم", required: true },
       { key: "relation", label: "صلة القرابة" },
@@ -56,7 +67,7 @@ const SUBS: Record<string, { title: string; icon: any; fields: FieldDef[] }> = {
     ],
   },
   "qualifications": {
-    title: "المؤهلات العلمية", icon: GraduationCap,
+    title: "المؤهلات العلمية", icon: GraduationCap, unit: "مؤهل",
     fields: [
       { key: "degree", label: "المؤهل", required: true },
       { key: "specialty", label: "التخصص" },
@@ -66,7 +77,7 @@ const SUBS: Record<string, { title: string; icon: any; fields: FieldDef[] }> = {
     ],
   },
   "certificates": {
-    title: "الشهادات", icon: BadgeCheck,
+    title: "الشهادات", icon: BadgeCheck, unit: "شهادة",
     fields: [
       { key: "name", label: "اسم الشهادة", required: true },
       { key: "issuer", label: "الجهة المانحة" },
@@ -77,7 +88,7 @@ const SUBS: Record<string, { title: string; icon: any; fields: FieldDef[] }> = {
     ],
   },
   "documents": {
-    title: "المستندات", icon: FolderOpen,
+    title: "المستندات", icon: FolderOpen, unit: "مستند",
     fields: [
       { key: "docType", label: "نوع المستند", required: true },
       { key: "docNumber", label: "رقم المستند" },
@@ -88,7 +99,7 @@ const SUBS: Record<string, { title: string; icon: any; fields: FieldDef[] }> = {
     ],
   },
   "evaluations": {
-    title: "التقييمات", icon: Star,
+    title: "التقييمات", icon: Star, unit: "تقييم",
     fields: [
       { key: "evalDate", label: "تاريخ التقييم", type: "date", required: true },
       { key: "periodFrom", label: "الفترة من", type: "date" },
@@ -131,8 +142,14 @@ function FieldInput({ def, value, onChange }: { def: FieldDef; value: any; onCha
   return <Input type="text" inputMode={def.type === "number" ? "decimal" : undefined} value={value ?? ""} onChange={e => onChange(e.target.value)} />;
 }
 
-// ─── تبويب sub-resource عام (جدول + نموذج إضافة/تعديل + حذف) ─────────────────
-function SubTab({ empId, subKey }: { empId: number; subKey: HrSubResource }) {
+// عمود إجراءات موحّد (لا يدخل في الفرز/التجميع/التصدير)
+const actionsCol = (render: (r: any) => React.ReactNode): GridColumn<any> => ({
+  key: "__actions", label: "إجراءات", type: "none", align: "center", width: 110,
+  value: () => "", render,
+});
+
+// ─── تبويب sub-resource عام (جريدة + نموذج إضافة/تعديل + حذف) ────────────────
+function SubTab({ empId, subKey, cid, companyName }: { empId: number; subKey: HrSubResource; cid?: number; companyName?: string | null }) {
   const cfg = SUBS[subKey];
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -154,45 +171,52 @@ function SubTab({ empId, subKey }: { empId: number; subKey: HrSubResource }) {
   });
 
   const rows = (q.data ?? []) as any[];
-  const cols = cfg.fields.filter(f => f.type !== "textarea").slice(0, 6);
+  const columns = useMemo<GridColumn<any>[]>(() => [
+    ...cfg.fields.filter(f => f.type !== "textarea").map<GridColumn<any>>(f => ({
+      key: f.key, label: f.label,
+      type: f.type === "number" ? "num" : "text",
+      align: f.type === "number" ? "end" : "start",
+      value: (r: any) => f.type === "bool" ? (r[f.key] ? "نعم" : "لا") : (r[f.key] ?? ""),
+      render: f.type === "bool"
+        ? (r: any) => (r[f.key] ? <CheckCircle2 className="h-4 w-4 text-emerald-600 inline" /> : <span>—</span>)
+        : undefined,
+    })),
+    actionsCol(r => (
+      <div className="flex gap-1 justify-center">
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditId(r.id); setForm(r); setOpen(true); }} data-testid={`button-edit-${subKey}-${r.id}`}><Pencil className="h-3.5 w-3.5" /></Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" onClick={() => { if (confirm("تأكيد الحذف؟")) delMut.mutate(r.id); }} data-testid={`button-delete-${subKey}-${r.id}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+      </div>
+    )),
+  ], [subKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="space-y-3">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center flex-wrap gap-2">
         <h3 className="font-semibold text-sm flex items-center gap-2"><cfg.icon className="h-4 w-4" />{cfg.title}</h3>
-        <Button size="sm" onClick={() => { setEditId(null); setForm({}); setOpen(true); }} data-testid={`button-add-${subKey}`}>
-          <Plus className="h-4 w-4 ms-1" />إضافة
-        </Button>
-      </div>
-      {q.isLoading ? <Skeleton className="h-24 w-full" /> : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground border rounded-lg p-4 text-center">لا توجد بيانات</p>
-      ) : (
-        <div className="border rounded-lg overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50">
-              <tr>
-                {cols.map(c => <th key={c.key} className="p-2 text-start font-medium">{c.label}</th>)}
-                <th className="p-2 w-20"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.id} className="border-t">
-                  {cols.map(c => (
-                    <td key={c.key} className="p-2">
-                      {c.type === "bool" ? (r[c.key] ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : "—") : (r[c.key] ?? "—")}
-                    </td>
-                  ))}
-                  <td className="p-2">
-                    <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditId(r.id); setForm(r); setOpen(true); }}><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" onClick={() => { if (confirm("تأكيد الحذف؟")) delMut.mutate(r.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="flex items-center gap-2">
+          {subKey === "documents" && (
+            <JournalScanArchive jeKey={`EMP-${empId}`} screenKey="hr_documents" companyName={companyName} />
+          )}
+          <Button size="sm" onClick={() => { setEditId(null); setForm({}); setOpen(true); }} data-testid={`button-add-${subKey}`}>
+            <Plus className="h-4 w-4 ms-1" />إضافة
+          </Button>
         </div>
+      </div>
+      {subKey === "documents" && (
+        <p className="text-xs text-muted-foreground">
+          زر «أرشفة مستند» يرفع صور/ملفات المستندات (كاميرا أو ملف) ويعرضها في نفس الشاشة — تماماً مثل أرشفة القيود المحاسبية والفواتير.
+        </p>
+      )}
+      {q.isLoading ? <Skeleton className="h-24 w-full" /> : (
+        <AdvancedReportGrid
+          slug={`hrEmp_${subKey}`}
+          cid={cid}
+          rows={rows}
+          rowKey={(r: any) => r.id}
+          columns={columns}
+          unitLabel={cfg.unit}
+          emptyMessage="لا توجد بيانات"
+        />
       )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
@@ -219,8 +243,93 @@ function SubTab({ empId, subKey }: { empId: number; subKey: HrSubResource }) {
   );
 }
 
+// ─── تبويب صورة الموظف ───────────────────────────────────────────────────────
+function PhotoTab({ empId, emp }: { empId: number; emp: any }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { token } = useAuth();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const src = photoSrc(emp?.photoUrl, token);
+
+  const saveMut = useMutation({
+    mutationFn: (photoUrl: string | null) => employeesApi.update(empId, { photoUrl }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employee", empId] });
+      qc.invalidateQueries({ queryKey: ["employees"] });
+    },
+    onError: (e: any) => toast({ title: "فشل الحفظ", description: String(e.message ?? e), variant: "destructive" }),
+  });
+
+  const upload = async (file: File) => {
+    if (!file.type.startsWith("image/")) { toast({ title: "الملف يجب أن يكون صورة", variant: "destructive" }); return; }
+    if (file.size > 8 * 1024 * 1024) { toast({ title: "حجم الصورة أكبر من 8MB", variant: "destructive" }); return; }
+    setUploading(true);
+    try {
+      const reqRes = await fetch(`${API}/api/storage/uploads/request-url`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
+      });
+      if (!reqRes.ok) throw new Error(await reqRes.text());
+      const { uploadURL, objectPath } = await reqRes.json();
+      const putRes = await fetch(uploadURL, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      if (!putRes.ok) throw new Error("فشل رفع الصورة إلى التخزين");
+      await saveMut.mutateAsync(objectPath);
+      toast({ title: "تم حفظ صورة الموظف" });
+    } catch (e: any) {
+      toast({ title: "فشل رفع الصورة", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+      if (cameraRef.current) cameraRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col md:flex-row gap-6 items-start">
+        <div className="border rounded-xl p-3 bg-muted/20 w-full md:w-auto flex justify-center">
+          {src ? (
+            <img src={src} alt={emp?.nameAr ?? "صورة الموظف"} className="max-h-80 rounded-lg object-contain" data-testid="img-employee-photo" />
+          ) : (
+            <div className="h-64 w-64 rounded-lg bg-primary/5 flex flex-col items-center justify-center text-muted-foreground gap-2">
+              <UserRound className="h-16 w-16 text-primary/40" />
+              <span className="text-sm">لا توجد صورة بعد</span>
+            </div>
+          )}
+        </div>
+        <div className="space-y-3">
+          <h3 className="font-semibold text-sm flex items-center gap-2"><Camera className="h-4 w-4" />صورة الموظف</h3>
+          <p className="text-xs text-muted-foreground max-w-md">
+            ارفع صورة من الجهاز أو التقطها بالكاميرا مباشرة — تُحفظ في التخزين السحابي للشركة
+            وتظهر هنا وفي رأس ملف الموظف فوراً.
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
+            <input ref={cameraRef} type="file" accept="image/*" capture="user" className="hidden" onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
+            <Button size="sm" onClick={() => fileRef.current?.click()} disabled={uploading} data-testid="button-upload-photo">
+              {uploading ? <Loader2 className="h-4 w-4 ms-1 animate-spin" /> : <ImagePlus className="h-4 w-4 ms-1" />}رفع صورة
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => cameraRef.current?.click()} disabled={uploading} data-testid="button-capture-photo">
+              <Camera className="h-4 w-4 ms-1" />التقاط بالكاميرا
+            </Button>
+            {emp?.photoUrl && (
+              <Button size="sm" variant="outline" className="text-rose-600" disabled={uploading || saveMut.isPending}
+                onClick={() => { if (confirm("إزالة صورة الموظف؟")) saveMut.mutate(null as any); }} data-testid="button-remove-photo">
+                <Trash2 className="h-4 w-4 ms-1" />إزالة الصورة
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── تعديلات الرواتب ─────────────────────────────────────────────────────────
-function SalaryTab({ empId, emp }: { empId: number; emp: any }) {
+function SalaryTab({ empId, emp, cid }: { empId: number; emp: any; cid?: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const q = useQuery({ queryKey: ["hr-core", empId, "salary-adjustments"], queryFn: () => hrCoreApi.salaryAdjustments(empId) });
@@ -243,6 +352,28 @@ function SalaryTab({ empId, emp }: { empId: number; emp: any }) {
   });
   const rows = (q.data ?? []) as any[];
   const curTotal = num(emp?.basicSalary) + num(emp?.housingAllow) + num(emp?.transportAllow) + num(emp?.otherAllow);
+
+  const columns = useMemo<GridColumn<any>[]>(() => [
+    { key: "effectiveDate", label: "تاريخ السريان", type: "text", value: r => r.effectiveDate ?? "" },
+    { key: "prevTotal", label: "السابق", type: "num", align: "end", className: "tabular-nums", value: r => num(r.prevTotal), render: r => <span>{fmt2(num(r.prevTotal))}</span>, totalable: false },
+    { key: "newTotal", label: "الجديد", type: "num", align: "end", className: "tabular-nums font-medium", value: r => num(r.newTotal), render: r => <span>{fmt2(num(r.newTotal))}</span> },
+    { key: "amount", label: "الزيادة", type: "num", align: "end", className: "tabular-nums", value: r => num(r.amount), render: r => <span dir="ltr">{fmt2(num(r.amount))}</span> },
+    { key: "percent", label: "%", type: "num", align: "end", value: r => num(r.percent), render: r => <span dir="ltr">{fmt2(num(r.percent))}%</span> },
+    { key: "reason", label: "السبب", type: "text", value: r => r.reason ?? "" },
+    {
+      key: "status", label: "الحالة", type: "text",
+      value: r => r.status === "applied" ? "مطبَّق" : r.status === "scheduled" ? "مجدول" : "ملغى",
+      render: r => (
+        <Badge variant="outline" className={r.status === "applied" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : r.status === "scheduled" ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-slate-50 text-slate-600"}>
+          {r.status === "applied" ? "مطبَّق" : r.status === "scheduled" ? "مجدول" : "ملغى"}
+        </Badge>
+      ),
+    },
+    actionsCol(r => r.status === "scheduled" ? (
+      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => applyMut.mutate(r.id)}>تطبيق الآن</Button>
+    ) : <span />),
+  ], []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center">
@@ -259,41 +390,12 @@ function SalaryTab({ empId, emp }: { empId: number; emp: any }) {
           }); setOpen(true);
         }} data-testid="button-add-salary-adjustment"><Plus className="h-4 w-4 ms-1" />تعديل راتب</Button>
       </div>
-      {q.isLoading ? <Skeleton className="h-24 w-full" /> : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground border rounded-lg p-4 text-center">لا توجد تعديلات — الراتب السابق يُحفظ دائماً ولا يُستبدل</p>
-      ) : (
-        <div className="border rounded-lg overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50"><tr>
-              <th className="p-2 text-start">تاريخ السريان</th><th className="p-2 text-start">السابق</th>
-              <th className="p-2 text-start">الجديد</th><th className="p-2 text-start">الزيادة</th>
-              <th className="p-2 text-start">%</th><th className="p-2 text-start">السبب</th>
-              <th className="p-2 text-start">الحالة</th><th className="p-2 w-24"></th>
-            </tr></thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.id} className="border-t">
-                  <td className="p-2">{r.effectiveDate}</td>
-                  <td className="p-2">{fmt2(num(r.prevTotal))}</td>
-                  <td className="p-2 font-medium">{fmt2(num(r.newTotal))}</td>
-                  <td className="p-2" dir="ltr">{fmt2(num(r.amount))}</td>
-                  <td className="p-2" dir="ltr">{fmt2(num(r.percent))}%</td>
-                  <td className="p-2">{r.reason ?? "—"}</td>
-                  <td className="p-2">
-                    <Badge variant="outline" className={r.status === "applied" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}>
-                      {r.status === "applied" ? "مطبَّق" : r.status === "scheduled" ? "مجدول" : "ملغى"}
-                    </Badge>
-                  </td>
-                  <td className="p-2">
-                    {r.status === "scheduled" && (
-                      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => applyMut.mutate(r.id)}>تطبيق الآن</Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {q.isLoading ? <Skeleton className="h-24 w-full" /> : (
+        <AdvancedReportGrid
+          slug="hrEmp_salaryAdj" cid={cid}
+          rows={rows} rowKey={(r: any) => r.id} columns={columns}
+          unitLabel="تعديل" emptyMessage="لا توجد تعديلات — الراتب السابق يُحفظ دائماً ولا يُستبدل"
+        />
       )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
@@ -324,7 +426,7 @@ function SalaryTab({ empId, emp }: { empId: number; emp: any }) {
 }
 
 // ─── النقل والتكليف ──────────────────────────────────────────────────────────
-function TransfersTab({ empId, emp }: { empId: number; emp: any }) {
+function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const q = useQuery({ queryKey: ["hr-core", empId, "transfers"], queryFn: () => hrCoreApi.transfers(empId) });
@@ -356,6 +458,40 @@ function TransfersTab({ empId, emp }: { empId: number; emp: any }) {
     const o = parse(s);
     return [o.department && `إدارة: ${o.department}`, o.jobTitle && `وظيفة: ${o.jobTitle}`, o.branchId && `فرع: ${o.branchId}`].filter(Boolean).join(" · ") || "—";
   };
+
+  const columns = useMemo<GridColumn<any>[]>(() => [
+    {
+      key: "moveType", label: "النوع", type: "text",
+      value: r => MOVE_LABEL[r.moveType] ?? r.moveType,
+      render: r => (
+        <span>{MOVE_LABEL[r.moveType] ?? r.moveType}{r.isTemporary && <Badge variant="outline" className="ms-1 text-[10px]">مؤقت</Badge>}</span>
+      ),
+    },
+    { key: "from", label: "من", type: "text", value: r => fmtSnap(r.prevValue), className: "text-xs" },
+    { key: "to", label: "إلى", type: "text", value: r => fmtSnap(r.newValue), className: "text-xs" },
+    { key: "effectiveFrom", label: "السريان", type: "text", value: r => r.effectiveFrom ?? "" },
+    { key: "effectiveTo", label: "حتى", type: "text", value: r => r.effectiveTo ?? "—" },
+    { key: "reason", label: "السبب", type: "text", value: r => r.reason ?? "" },
+    {
+      key: "status", label: "الحالة", type: "text",
+      value: r => r.status === "applied" ? "مطبَّقة" : r.status === "scheduled" ? "مجدولة" : r.status === "ended" ? "منتهية" : "ملغاة",
+      render: r => (
+        <Badge variant="outline" className={
+          r.status === "applied" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+          : r.status === "scheduled" ? "bg-amber-50 text-amber-700 border-amber-200"
+          : "bg-slate-50 text-slate-600 border-slate-200"}>
+          {r.status === "applied" ? "مطبَّقة" : r.status === "scheduled" ? "مجدولة" : r.status === "ended" ? "منتهية" : "ملغاة"}
+        </Badge>
+      ),
+    },
+    actionsCol(r => (
+      <div className="flex gap-1 justify-center">
+        {r.status === "scheduled" && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => applyMut.mutate(r.id)}>تطبيق</Button>}
+        {r.isTemporary && r.status !== "ended" && r.status !== "cancelled" && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => endMut.mutate(r.id)}>إنهاء</Button>}
+      </div>
+    )),
+  ], []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center">
@@ -364,48 +500,12 @@ function TransfersTab({ empId, emp }: { empId: number; emp: any }) {
           <Plus className="h-4 w-4 ms-1" />حركة جديدة
         </Button>
       </div>
-      {q.isLoading ? <Skeleton className="h-24 w-full" /> : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground border rounded-lg p-4 text-center">لا توجد حركات</p>
-      ) : (
-        <div className="border rounded-lg overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50"><tr>
-              <th className="p-2 text-start">النوع</th><th className="p-2 text-start">من</th>
-              <th className="p-2 text-start">إلى</th><th className="p-2 text-start">السريان</th>
-              <th className="p-2 text-start">حتى</th><th className="p-2 text-start">السبب</th>
-              <th className="p-2 text-start">الحالة</th><th className="p-2 w-28"></th>
-            </tr></thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.id} className="border-t">
-                  <td className="p-2">
-                    {MOVE_LABEL[r.moveType] ?? r.moveType}
-                    {r.isTemporary && <Badge variant="outline" className="ms-1 text-[10px]">مؤقت</Badge>}
-                  </td>
-                  <td className="p-2 text-xs">{fmtSnap(r.prevValue)}</td>
-                  <td className="p-2 text-xs">{fmtSnap(r.newValue)}</td>
-                  <td className="p-2">{r.effectiveFrom}</td>
-                  <td className="p-2">{r.effectiveTo ?? "—"}</td>
-                  <td className="p-2">{r.reason ?? "—"}</td>
-                  <td className="p-2">
-                    <Badge variant="outline" className={
-                      r.status === "applied" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : r.status === "scheduled" ? "bg-amber-50 text-amber-700 border-amber-200"
-                      : "bg-slate-50 text-slate-600 border-slate-200"}>
-                      {r.status === "applied" ? "مطبَّقة" : r.status === "scheduled" ? "مجدولة" : r.status === "ended" ? "منتهية" : "ملغاة"}
-                    </Badge>
-                  </td>
-                  <td className="p-2">
-                    <div className="flex gap-1 justify-end">
-                      {r.status === "scheduled" && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => applyMut.mutate(r.id)}>تطبيق</Button>}
-                      {r.isTemporary && r.status !== "ended" && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => endMut.mutate(r.id)}>إنهاء</Button>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {q.isLoading ? <Skeleton className="h-24 w-full" /> : (
+        <AdvancedReportGrid
+          slug="hrEmp_transfers" cid={cid}
+          rows={rows} rowKey={(r: any) => r.id} columns={columns}
+          unitLabel="حركة" emptyMessage="لا توجد حركات"
+        />
       )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
@@ -553,7 +653,7 @@ function TerminationTab({ empId }: { empId: number }) {
 }
 
 // ─── السجل الوظيفي ───────────────────────────────────────────────────────────
-function HistoryTab({ empId }: { empId: number }) {
+function HistoryTab({ empId, cid }: { empId: number; cid?: number }) {
   const q = useQuery({ queryKey: ["hr-core", empId, "history"], queryFn: () => hrCoreApi.history(empId) });
   const rows = (q.data ?? []) as any[];
   const fmtVal = (s: any) => {
@@ -563,29 +663,23 @@ function HistoryTab({ empId }: { empId: number }) {
       return Object.entries(o).map(([k, v]) => `${k}: ${v}`).join(" · ");
     } catch { return String(s); }
   };
-  return q.isLoading ? <Skeleton className="h-32 w-full" /> : rows.length === 0 ? (
-    <p className="text-sm text-muted-foreground border rounded-lg p-4 text-center">لا توجد أحداث بعد — كل تعديل راتب أو نقل أو تقييم أو نهاية خدمة يُسجَّل هنا تلقائياً</p>
-  ) : (
-    <div className="border rounded-lg overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/50"><tr>
-          <th className="p-2 text-start">التاريخ</th><th className="p-2 text-start">الحدث</th>
-          <th className="p-2 text-start">القيمة السابقة</th><th className="p-2 text-start">القيمة الجديدة</th>
-          <th className="p-2 text-start">السبب</th>
-        </tr></thead>
-        <tbody>
-          {rows.map(r => (
-            <tr key={r.id} className="border-t">
-              <td className="p-2 whitespace-nowrap">{r.eventDate}</td>
-              <td className="p-2"><Badge variant="outline">{HISTORY_LABEL[r.eventType] ?? r.eventType}</Badge></td>
-              <td className="p-2 text-xs text-muted-foreground">{fmtVal(r.prevValue)}</td>
-              <td className="p-2 text-xs">{fmtVal(r.newValue)}</td>
-              <td className="p-2 text-xs">{r.reason ?? "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+  const columns = useMemo<GridColumn<any>[]>(() => [
+    { key: "eventDate", label: "التاريخ", type: "text", value: r => r.eventDate ?? "", className: "whitespace-nowrap" },
+    {
+      key: "eventType", label: "الحدث", type: "text",
+      value: r => HISTORY_LABEL[r.eventType] ?? r.eventType,
+      render: r => <Badge variant="outline">{HISTORY_LABEL[r.eventType] ?? r.eventType}</Badge>,
+    },
+    { key: "prevValue", label: "القيمة السابقة", type: "text", value: r => fmtVal(r.prevValue), className: "text-xs text-muted-foreground" },
+    { key: "newValue", label: "القيمة الجديدة", type: "text", value: r => fmtVal(r.newValue), className: "text-xs" },
+    { key: "reason", label: "السبب", type: "text", value: r => r.reason ?? "", className: "text-xs" },
+  ], []); // eslint-disable-line react-hooks/exhaustive-deps
+  return q.isLoading ? <Skeleton className="h-32 w-full" /> : (
+    <AdvancedReportGrid
+      slug="hrEmp_history" cid={cid}
+      rows={rows} rowKey={(r: any) => r.id} columns={columns}
+      unitLabel="حدث" emptyMessage="لا توجد أحداث بعد — كل تعديل راتب أو نقل أو تقييم أو نهاية خدمة يُسجَّل هنا تلقائياً"
+    />
   );
 }
 
@@ -593,9 +687,13 @@ function HistoryTab({ empId }: { empId: number }) {
 export default function EmployeeProfile() {
   const [, params] = useRoute("/hr/employees/:id/profile");
   const empId = Number(params?.id);
+  const { user, token } = useAuth();
+  const cid = (user as any)?.company?.id as number | undefined;
+  const companyName = ((user as any)?.company?.nameAr ?? (user as any)?.company?.name ?? null) as string | null;
   const empQ = useQuery({ queryKey: ["employee", empId], queryFn: () => employeesApi.get(empId), enabled: !!empId });
   const emp = empQ.data as any;
   const [tab, setTab] = useState("overview");
+  const headerSrc = photoSrc(emp?.photoUrl, token);
 
   const STATUS_LABEL: Record<string, string> = {
     active: "على رأس العمل", probation: "تحت التجربة", vacation: "إجازة",
@@ -609,9 +707,15 @@ export default function EmployeeProfile() {
         <Link href="/hr/employees"><Button variant="ghost" size="icon"><ArrowRight className="h-4 w-4" /></Button></Link>
         {empQ.isLoading ? <Skeleton className="h-10 w-64" /> : (
           <>
-            <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
-              {emp?.photoUrl ? <img src={emp.photoUrl} alt="" className="h-full w-full object-cover" /> : <UserRound className="h-5 w-5 text-primary" />}
-            </div>
+            <button
+              type="button"
+              className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden ring-offset-background hover:ring-2 hover:ring-primary/30 transition"
+              onClick={() => setTab("photo")}
+              title="صورة الموظف"
+              data-testid="button-header-photo"
+            >
+              {headerSrc ? <img src={headerSrc} alt="" className="h-full w-full object-cover" /> : <UserRound className="h-5 w-5 text-primary" />}
+            </button>
             <div>
               <h1 className="text-lg font-bold">{emp?.nameAr}</h1>
               <div className="text-xs text-muted-foreground">
@@ -631,6 +735,7 @@ export default function EmployeeProfile() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap h-auto justify-start">
           <TabsTrigger value="overview"><UserRound className="h-3.5 w-3.5 ms-1" />نظرة عامة</TabsTrigger>
+          <TabsTrigger value="photo" data-testid="tab-photo"><Camera className="h-3.5 w-3.5 ms-1" />الصورة</TabsTrigger>
           <TabsTrigger value="salary"><Wallet className="h-3.5 w-3.5 ms-1" />تعديلات الراتب</TabsTrigger>
           <TabsTrigger value="transfers"><ArrowLeftRight className="h-3.5 w-3.5 ms-1" />النقل والتكليف</TabsTrigger>
           <TabsTrigger value="evaluations"><Star className="h-3.5 w-3.5 ms-1" />التقييمات</TabsTrigger>
@@ -662,12 +767,13 @@ export default function EmployeeProfile() {
             </div>
           )}
         </TabsContent>
-        <TabsContent value="salary" className="mt-4"><SalaryTab empId={empId} emp={emp} /></TabsContent>
-        <TabsContent value="transfers" className="mt-4"><TransfersTab empId={empId} emp={emp} /></TabsContent>
+        <TabsContent value="photo" className="mt-4"><PhotoTab empId={empId} emp={emp} /></TabsContent>
+        <TabsContent value="salary" className="mt-4"><SalaryTab empId={empId} emp={emp} cid={cid} /></TabsContent>
+        <TabsContent value="transfers" className="mt-4"><TransfersTab empId={empId} emp={emp} cid={cid} /></TabsContent>
         {(["evaluations", "emergency-contacts", "dependents", "qualifications", "certificates", "documents"] as HrSubResource[]).map(k => (
-          <TabsContent key={k} value={k} className="mt-4"><SubTab empId={empId} subKey={k} /></TabsContent>
+          <TabsContent key={k} value={k} className="mt-4"><SubTab empId={empId} subKey={k} cid={cid} companyName={companyName} /></TabsContent>
         ))}
-        <TabsContent value="history" className="mt-4"><HistoryTab empId={empId} /></TabsContent>
+        <TabsContent value="history" className="mt-4"><HistoryTab empId={empId} cid={cid} /></TabsContent>
         <TabsContent value="termination" className="mt-4"><TerminationTab empId={empId} /></TabsContent>
       </Tabs>
     </div>

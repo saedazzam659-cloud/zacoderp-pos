@@ -53,6 +53,7 @@ const ARCHIVE_SCREENS: { key: string; label: string }[] = [
   { key: "payment_vouchers", label: "سندات الصرف" },
   { key: "customers",        label: "العملاء" },
   { key: "suppliers",        label: "الموردون" },
+  { key: "hr_documents",     label: "مستندات الموظفين" },
 ];
 
 const ARCHIVE_MODES: { value: ArchiveMode; label: string; desc: string; icon: typeof Cloud }[] = [
