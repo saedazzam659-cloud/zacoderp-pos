@@ -473,6 +473,7 @@ export default function Employees() {
                           <td className="px-3 py-2.5">
                             <div className="flex items-center justify-end gap-1">
                               <Button size="sm" variant="ghost" onClick={() => openEdit(e)} className="h-8 w-8 p-0"><Pencil className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" onClick={() => { window.location.href = `/hr/employees/${e.id}/profile`; }} className="h-8 px-2 gap-1 text-xs" data-testid={`button-profile-${e.id}`}><IdCard className="h-3.5 w-3.5" />ملف</Button>
                               <Button size="sm" variant="ghost" onClick={() => { window.location.href = `/hr/employees/${e.id}/contracts`; }} className="h-8 px-2 gap-1 text-xs"><FileSignature className="h-3.5 w-3.5" />{tr("btnContracts")}</Button>
                               <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive" onClick={() => { if (confirm(tr("deleteConfirm", { name: pickName(e.nameAr, e.nameEn) }))) remove.mutate(e.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                             </div>

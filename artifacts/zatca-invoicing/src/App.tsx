@@ -139,6 +139,7 @@ import Onboarding from "@/pages/Onboarding";
 // HR
 import Employees from "@/pages/hr/Employees";
 import EmployeeContracts from "@/pages/hr/EmployeeContracts";
+import EmployeeProfile from "@/pages/hr/EmployeeProfile";
 import Attendance from "@/pages/hr/Attendance";
 import EmployeeLoans from "@/pages/hr/EmployeeLoans";
 import EmployeeCustodies from "@/pages/hr/EmployeeCustodies";
@@ -782,6 +783,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/hr" component={HrHub} />}
             {!isSuperAdmin && <PermRoute path="/hr/employees"               module="hr_employees"   component={Employees} />}
             {!isSuperAdmin && <PermRoute path="/hr/employees/:id/contracts" module="hr_employees"   component={EmployeeContracts} />}
+            {!isSuperAdmin && <PermRoute path="/hr/employees/:id/profile"   module="hr_employees"   component={EmployeeProfile} />}
             {!isSuperAdmin && <PermRoute path="/hr/contracts"               module="hr_employees"   component={AllContracts} />}
             {!isSuperAdmin && <PermRoute path="/hr/attendance"              module="hr_attendance"  component={Attendance} />}
             {!isSuperAdmin && <PermRoute path="/hr/loans"                   module="hr_loans"       component={EmployeeLoans} />}

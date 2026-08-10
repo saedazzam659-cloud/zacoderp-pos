@@ -525,3 +525,209 @@ export const employeeLeavesTable = pgTable("employee_leaves", {
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HR Core extension (دورة حياة الموظف الكاملة) — additive tables:
+// org catalogs, salary-adjustment history, transfers/assignments,
+// evaluations, emergency contacts, dependents, qualifications,
+// certificates, document repository, unified employee history and
+// termination records. All tables are created in ensureSchema.ts
+// (ensureColumns only ALTERs existing tables, never CREATEs).
+// Rule: historical rows are NEVER deleted when employee data changes.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── الهيكل التنظيمي: الإدارات/الأقسام (شجرية عبر parentId) ─────────────────
+export const hrDepartmentsTable = pgTable("hr_departments", {
+  id:         serial("id").primaryKey(),
+  companyId:  integer("company_id").references(() => companiesTable.id).notNull(),
+  name:       text("name").notNull(),
+  parentId:   integer("parent_id"),                 // إدارة أعلى (قسم داخل إدارة)
+  managerEmployeeId: integer("manager_employee_id").references(() => employeesTable.id),
+  isActive:   boolean("is_active").notNull().default(true),
+  notes:      text("notes"),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── الوظائف / المسميات الوظيفية ────────────────────────────────────────────
+export const hrPositionsTable = pgTable("hr_positions", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").references(() => companiesTable.id).notNull(),
+  title:        text("title").notNull(),
+  departmentId: integer("department_id").references(() => hrDepartmentsTable.id),
+  isActive:     boolean("is_active").notNull().default(true),
+  notes:        text("notes"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── تعديلات الرواتب — سجل تاريخي، الراتب السابق لا يُستبدل أبداً ────────────
+export const employeeSalaryAdjustmentsTable = pgTable("employee_salary_adjustments", {
+  id:            serial("id").primaryKey(),
+  companyId:     integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:    integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  adjustmentDate: date("adjustment_date").notNull(),
+  effectiveDate: date("effective_date").notNull(),
+  prevBasic:     decimal("prev_basic",  { precision: 12, scale: 2 }).notNull().default("0"),
+  newBasic:      decimal("new_basic",   { precision: 12, scale: 2 }).notNull().default("0"),
+  prevTotal:     decimal("prev_total",  { precision: 12, scale: 2 }).notNull().default("0"),
+  newTotal:      decimal("new_total",   { precision: 12, scale: 2 }).notNull().default("0"),
+  amount:        decimal("amount",      { precision: 12, scale: 2 }).notNull().default("0"),
+  percent:       decimal("percent",     { precision: 7,  scale: 3 }).notNull().default("0"),
+  newHousing:    decimal("new_housing", { precision: 12, scale: 2 }),
+  newTransport:  decimal("new_transport",{ precision: 12, scale: 2 }),
+  newOther:      decimal("new_other",   { precision: 12, scale: 2 }),
+  reason:        text("reason"),
+  decisionRef:   text("decision_ref"),               // قرار التعديل
+  status:        text("status").notNull().default("applied"), // applied|scheduled|cancelled
+  notes:         text("notes"),
+  createdBy:     integer("created_by"),
+  createdAt:     timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── النقل والتكليف — حركة وظيفية بتاريخ سريان، لا تعديل مباشر صامت ─────────
+export const employeeTransfersTable = pgTable("employee_transfers", {
+  id:            serial("id").primaryKey(),
+  companyId:     integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:    integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  moveType:      text("move_type").notNull(),        // transfer|assignment|promotion|job_change|branch_change|department_change|location_change|project_change|manager_change
+  prevValue:     text("prev_value"),                 // JSON snapshot للبيانات السابقة
+  newValue:      text("new_value"),                  // JSON للبيانات الجديدة
+  decisionDate:  date("decision_date"),
+  effectiveFrom: date("effective_from").notNull(),
+  effectiveTo:   date("effective_to"),               // للتكليف المؤقت فقط
+  isTemporary:   boolean("is_temporary").notNull().default(false),
+  reason:        text("reason"),
+  approvedBy:    text("approved_by"),                // جهة الاعتماد
+  status:        text("status").notNull().default("applied"), // applied|scheduled|ended|cancelled
+  notes:         text("notes"),
+  createdBy:     integer("created_by"),
+  createdAt:     timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── تقييم الأداء ───────────────────────────────────────────────────────────
+export const employeeEvaluationsTable = pgTable("employee_evaluations", {
+  id:             serial("id").primaryKey(),
+  companyId:      integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:     integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  periodFrom:     date("period_from"),
+  periodTo:       date("period_to"),
+  evaluator:      text("evaluator"),
+  evalDate:       date("eval_date").notNull(),
+  score:          decimal("score", { precision: 6, scale: 2 }),
+  maxScore:       decimal("max_score", { precision: 6, scale: 2 }).default("100"),
+  result:         text("result"),                    // ممتاز/جيد جداً/...
+  strengths:      text("strengths"),
+  weaknesses:     text("weaknesses"),
+  recommendations: text("recommendations"),
+  nextEvalDate:   date("next_eval_date"),
+  notes:          text("notes"),
+  createdBy:      integer("created_by"),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── جهات اتصال الطوارئ ─────────────────────────────────────────────────────
+export const employeeEmergencyContactsTable = pgTable("employee_emergency_contacts", {
+  id:         serial("id").primaryKey(),
+  companyId:  integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId: integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  name:       text("name").notNull(),
+  relation:   text("relation"),
+  phone:      text("phone"),
+  phone2:     text("phone2"),
+  address:    text("address"),
+  email:      text("email"),
+  isPrimary:  boolean("is_primary").notNull().default(false),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── أفراد الأسرة والتابعون ─────────────────────────────────────────────────
+export const employeeDependentsTable = pgTable("employee_dependents", {
+  id:              serial("id").primaryKey(),
+  companyId:       integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:      integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  name:            text("name").notNull(),
+  relation:        text("relation"),
+  birthDate:       date("birth_date"),
+  gender:          text("gender"),
+  idNumber:        text("id_number"),
+  benefitsEligible: boolean("benefits_eligible").notNull().default(false), // مستحق للمزايا/التأمين
+  notes:           text("notes"),
+  createdAt:       timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── المؤهلات العلمية ───────────────────────────────────────────────────────
+export const employeeQualificationsTable = pgTable("employee_qualifications", {
+  id:          serial("id").primaryKey(),
+  companyId:   integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:  integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  degree:      text("degree").notNull(),              // المؤهل
+  specialty:   text("specialty"),
+  institution: text("institution"),
+  gradYear:    text("grad_year"),
+  grade:       text("grade"),
+  attachmentUrl: text("attachment_url"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── الشهادات المهنية (بتاريخ انتهاء وتنبيه) ─────────────────────────────────
+export const employeeCertificatesTable = pgTable("employee_certificates", {
+  id:          serial("id").primaryKey(),
+  companyId:   integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:  integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  name:        text("name").notNull(),
+  issuer:      text("issuer"),
+  certNumber:  text("cert_number"),
+  issueDate:   date("issue_date"),
+  expiryDate:  date("expiry_date"),
+  attachmentUrl: text("attachment_url"),
+  notes:       text("notes"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── مستودع مستندات الموظف ──────────────────────────────────────────────────
+export const employeeDocumentsTable = pgTable("employee_documents", {
+  id:         serial("id").primaryKey(),
+  companyId:  integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId: integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  docType:    text("doc_type").notNull(),             // هوية/عقد/مؤهل/خبرة/تأمين/...
+  docNumber:  text("doc_number"),
+  issueDate:  date("issue_date"),
+  expiryDate: date("expiry_date"),
+  fileUrl:    text("file_url"),
+  notes:      text("notes"),
+  createdBy:  integer("created_by"),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── السجل الوظيفي الموحّد — append-only، يُكتب من كل عملية HR جوهرية ────────
+export const employeeHistoryTable = pgTable("employee_history", {
+  id:         serial("id").primaryKey(),
+  companyId:  integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId: integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  eventType:  text("event_type").notNull(),           // hire|salary_adjustment|transfer|assignment|promotion|evaluation|contract|status_change|termination|...
+  eventDate:  date("event_date").notNull(),
+  prevValue:  text("prev_value"),
+  newValue:   text("new_value"),
+  reason:     text("reason"),
+  refTable:   text("ref_table"),
+  refId:      integer("ref_id"),
+  userId:     integer("user_id"),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── نهاية الخدمة — سجل رسمي (ملف الموظف لا يُحذف أبداً) ─────────────────────
+export const employeeTerminationsTable = pgTable("employee_terminations", {
+  id:              serial("id").primaryKey(),
+  companyId:       integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:      integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  terminationType: text("termination_type").notNull(), // resignation|contract_end|termination|dismissal|retirement|other
+  reason:          text("reason"),
+  lastWorkDay:     date("last_work_day").notNull(),
+  settlementDone:  boolean("settlement_done").notNull().default(false), // تسوية المستحقات
+  custodyReturned: boolean("custody_returned").notNull().default(false),
+  accessClosed:    boolean("access_closed").notNull().default(false),
+  documentsUrl:    text("documents_url"),
+  notes:           text("notes"),
+  status:          text("status").notNull().default("active"), // active|cancelled
+  createdBy:       integer("created_by"),
+  createdAt:       timestamp("created_at").defaultNow().notNull(),
+});
