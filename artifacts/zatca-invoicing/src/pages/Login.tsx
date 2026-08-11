@@ -59,6 +59,22 @@ export default function Login() {
   const { login, setSession } = useAuth();
   const { toast } = useToast();
 
+  // ── Agent-domain branding ─────────────────────────────────────────────
+  // When the login page is served from a registered agent (reseller)
+  // domain, we show the AGENT's system name + logo instead of the Zacode
+  // brand, and we hide self-signup entirely (server also blocks /register
+  // for agent hosts). Best-effort — any failure falls back to default brand.
+  const [agentBrand, setAgentBrand] = useState<{ isAgentDomain: boolean; brandName?: string | null; brandLogoUrl?: string | null; brandColor?: string | null } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE}/api/branding?host=${encodeURIComponent(window.location.hostname)}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (alive && j?.isAgentDomain) setAgentBrand(j); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const isAgentDomain = !!agentBrand?.isAgentDomain;
+
   // After a successful login we usually go to the home dashboard, but if
   // the user got here via a deep-link redirect (e.g. opened
   // /accounting in a fresh tab while logged out), App.tsx forwards
@@ -450,14 +466,16 @@ export default function Login() {
                 substitute the local compliance summary from countries.ts. */}
             <div className="text-center lg:text-start">
               <img
-                src={`${import.meta.env.BASE_URL}favicon.svg`}
-                alt="زاكود Zacode"
+                src={isAgentDomain && agentBrand?.brandLogoUrl ? agentBrand.brandLogoUrl : `${import.meta.env.BASE_URL}favicon.svg`}
+                alt={isAgentDomain ? (agentBrand?.brandName ?? "") : "زاكود Zacode"}
                 width={56}
                 height={56}
-                className="inline-block h-14 w-14 rounded-2xl mb-3 shadow-lg"
+                className="inline-block h-14 w-14 rounded-2xl mb-3 shadow-lg object-contain bg-white"
                 data-testid="login-brand-mark"
               />
-              <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{t("auth.appName")}</h1>
+              <h1 className="text-2xl lg:text-3xl font-bold text-foreground">
+                {isAgentDomain && agentBrand?.brandName ? agentBrand.brandName : t("auth.appName")}
+              </h1>
               <p className="text-muted-foreground mt-1 text-sm">{t("auth.appSubtitle")}</p>
               <p className="text-xs text-muted-foreground mt-2" data-testid="login-country-welcome">
                 مرحباً بزوّارنا من {countryInfo.nameAr} — العملة الافتراضية {countryInfo.currency.nameAr} ({countryInfo.currency.symbol}).
@@ -557,13 +575,13 @@ export default function Login() {
               <div className="relative flex items-center gap-3">
                 <div className="h-14 w-14 rounded-2xl bg-white/95 p-2 shadow-lg ring-1 ring-white/40 shrink-0">
                   <img
-                    src={`${import.meta.env.BASE_URL}favicon.svg`}
-                    alt="زاكود"
-                    className="h-full w-full"
+                    src={isAgentDomain && agentBrand?.brandLogoUrl ? agentBrand.brandLogoUrl : `${import.meta.env.BASE_URL}favicon.svg`}
+                    alt={isAgentDomain ? (agentBrand?.brandName ?? "") : "زاكود"}
+                    className="h-full w-full object-contain"
                   />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[11px] font-bold tracking-widest text-white/80 uppercase">ZacodERP</p>
+                  <p className="text-[11px] font-bold tracking-widest text-white/80 uppercase">{isAgentDomain ? (agentBrand?.brandName ?? "") : "ZacodERP"}</p>
                   <h1 className="text-xl font-extrabold leading-tight truncate">أهلاً بعودتك 👋</h1>
                   <p className="text-xs text-white/85 mt-0.5">سجّل دخولك للمتابعة</p>
                 </div>
@@ -937,7 +955,7 @@ export default function Login() {
           )}
 
           {/* Footer (hide for blocked) */}
-          {step === "creds" && !isSuperAdminFlow && (
+          {step === "creds" && !isSuperAdminFlow && !isAgentDomain && (
             <div className="text-center text-sm text-muted-foreground border-t pt-4 space-y-2">
               <div>
                 {t("auth.noAccount")}{" "}

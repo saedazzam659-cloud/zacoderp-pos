@@ -4,6 +4,12 @@ import * as schema from "./schema";
 
 const { Pool } = pg;
 
+// Re-exported so downstream packages (api-server) can open SHORT-LIVED pools
+// against EXTERNAL databases (agent instances) without depending on "pg"
+// directly — pg is a dependency of this package only.
+export const PgPool = Pool;
+export type PgPoolType = InstanceType<typeof Pool>;
+
 if (!process.env.DATABASE_URL) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?",

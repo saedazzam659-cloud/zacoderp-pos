@@ -958,6 +958,44 @@ export function resolveDefaultCurrency(country: string, currencyOverride?: strin
 
 // POST /api/auth/register
 // Creates: company + subscription + admin user
+//
+// Agent-domain protection: self-signup is BLOCKED on any registered agent
+// (reseller) domain — companies for agents are created exclusively from the
+// SuperAdmin panel. Server-side enforcement (not just a hidden UI link);
+// a superadmin bearer token is exempt so the SA panel keeps working even
+// through an agent host.
+router.post("/register", async (req, res, next) => {
+  try {
+    const { lookupAgentByHost } = await import("./agentInstances.js");
+    const { normalizeHost } = await import("../middleware/domainResolver.js");
+    const fwd = req.headers["x-forwarded-host"];
+    const host = normalizeHost((Array.isArray(fwd) ? fwd[0] : fwd) || req.headers.host);
+    const agent = await lookupAgentByHost(host);
+    if (agent) {
+      const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+      let isSuperAdmin = false;
+      if (bearer) {
+        try {
+          const { resolveBearerToken } = await import("../middleware/auth.js");
+          const resolved = await resolveBearerToken(bearer);
+          isSuperAdmin = !!resolved && (resolved as any).user?.role === "superadmin";
+        } catch { /* fall through to block */ }
+      }
+      if (!isSuperAdmin) {
+        const { db } = await import("@workspace/db");
+        const { agentSecurityEventsTable } = await import("@workspace/db");
+        await db.insert(agentSecurityEventsTable).values({
+          agentId: agent.id, eventType: "register_blocked",
+          detail: { note: "محاولة إنشاء حساب من دومين وكيل" }, host,
+          ip: (Array.isArray(req.headers["x-forwarded-for"]) ? req.headers["x-forwarded-for"][0] : req.headers["x-forwarded-for"])?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null,
+        }).catch(() => {});
+        res.status(403).json({ error: "إنشاء الحسابات غير متاح من هذا النطاق — تواصل مع مزوّد النظام" });
+        return;
+      }
+    }
+  } catch { /* never break registration on the main domain over this guard */ }
+  next();
+});
 router.post("/register", async (req, res) => {
   const {
     // Company fields

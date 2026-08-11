@@ -1,0 +1,93 @@
+import { pgTable, serial, integer, text, boolean, timestamp, jsonb, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { usersTable } from "./users";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Agent Instances — «سيرفرات الوكلاء» (SuperAdmin-only platform module).
+//
+// Each reseller/agent runs a hosted instance on their OWN domain + server:
+//   • their PostgreSQL database (external, connection string encrypted here)
+//   • a frontend-only (or thin-shell) build that talks to the CENTRAL API
+//   • a signed license bound to domain + installation id, with heartbeat
+//   • login-page branding (system name + logo) per agent domain
+//   • tamper/security events (fingerprint mismatch, unknown domain/IP, …)
+//
+// Secrets (SSH credentials, DB connection string) are stored AES-256-GCM
+// encrypted (lib/encryption.ts) and are NEVER returned by the API — only
+// set/replace + masked status flags.
+// ─────────────────────────────────────────────────────────────────────────
+export const agentInstancesTable = pgTable("agent_instances", {
+  id:        serial("id").primaryKey(),
+  name:      text("name").notNull(),                    // اسم الوكيل
+  contactPhone: text("contact_phone"),
+  contactEmail: text("contact_email"),
+
+  // Normalised main host (lowercase, no scheme/port). Globally unique.
+  domain:    text("domain").notNull(),
+  // Optional extra domains/subdomains (normalised strings).
+  extraDomains: jsonb("extra_domains"),
+
+  // active | suspended
+  status:    text("status").notNull().default("active"),
+  // frontend_only (React build + central API)  |  full_shell (thin backend shell)
+  mode:      text("mode").notNull().default("frontend_only"),
+
+  // Identity & license
+  installationId:   text("installation_id").notNull(),  // opaque unique id baked into the instance
+  licenseKey:       text("license_key"),                // signed key (HMAC) — shown to SA, verified server-side
+  licenseExpiresAt: timestamp("license_expires_at"),
+  maxCompanies:     integer("max_companies"),
+
+  // External PostgreSQL (agent's server) — encrypted, write-only via API.
+  dbUrlEnc:      text("db_url_enc"),
+  dbStatus:      text("db_status").notNull().default("not_configured"), // not_configured | ok | error | initialized
+  dbLastCheckAt: timestamp("db_last_check_at"),
+  dbLastError:   text("db_last_error"),
+  // HMAC fingerprint planted into the agent DB at init; verified on every check.
+  dbFingerprint: text("db_fingerprint"),
+
+  // SSH access for future deploys — encrypted, write-only.
+  sshHost:      text("ssh_host"),
+  sshPort:      integer("ssh_port"),
+  sshUser:      text("ssh_user"),
+  sshSecretEnc: text("ssh_secret_enc"),                 // key or password
+  sshStatus:    text("ssh_status").notNull().default("not_configured"),
+  sshLastCheckAt: timestamp("ssh_last_check_at"),
+
+  // Branding shown on the agent-domain login page.
+  brandName:    text("brand_name"),
+  brandLogoUrl: text("brand_logo_url"),
+  brandColor:   text("brand_color"),
+
+  // Runtime health
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  lastSeenIp:      text("last_seen_ip"),
+  deployedVersion: text("deployed_version"),
+
+  notes:     text("notes"),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  domainUniq: uniqueIndex("agent_instances_domain_uniq").on(t.domain),
+  installUniq: uniqueIndex("agent_instances_install_uniq").on(t.installationId),
+}));
+
+// Tamper / security events per agent instance (or unmatched attempts, agentId null).
+export const agentSecurityEventsTable = pgTable("agent_security_events", {
+  id:        serial("id").primaryKey(),
+  agentId:   integer("agent_id").references(() => agentInstancesTable.id, { onDelete: "cascade" }),
+  // e.g. db_fingerprint_mismatch | unknown_domain | license_expired | license_mismatch
+  //      | register_blocked | heartbeat_suspended | unknown_installation
+  eventType: text("event_type").notNull(),
+  detail:    jsonb("detail"),
+  host:      text("host"),
+  ip:        text("ip"),
+  resolved:  boolean("resolved").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  agentIdx: index("agent_security_events_agent_idx").on(t.agentId),
+  typeIdx:  index("agent_security_events_type_idx").on(t.eventType),
+}));
+
+export type AgentInstance = typeof agentInstancesTable.$inferSelect;
+export type AgentSecurityEvent = typeof agentSecurityEventsTable.$inferSelect;

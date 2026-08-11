@@ -87,3 +87,4 @@ export * from "./devCloud";
 export * from "./devStudio";
 export * from "./trainees";
 export * from "./trainingRoom";
+export * from "./agentInstances";

@@ -160,6 +160,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.offlineLicenses",      href: "/admin/offline-licenses",   icon: KeyRound },
   { nameKey: "nav.downloadCodes",        href: "/admin/download-codes",     icon: KeyRound },
   { nameKey: "nav.domains",              href: "/admin/domains",            icon: Globe },
+  { nameKey: "nav.agentServers",         href: "/admin/agent-servers",      icon: Server },
   { nameKey: "nav.emailChannels",        href: "/admin/email-channels",     icon: Mail },
   { nameKey: "nav.backupOperations",     href: "/admin/backups",            icon: HardDrive },
   { nameKey: "nav.securityCenter",       href: "/admin/security",           icon: ShieldCheck },

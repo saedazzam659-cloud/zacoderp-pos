@@ -132,6 +132,7 @@ import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
 import traineeRequestsRouter from "./trainee-requests";
 import domainsRouter from "./domains";
+import agentInstancesRouter, { agentPublicRouter } from "./agentInstances";
 import devCloudAdminRouter from "./dev-cloud-admin";
 import { devStudioRouter, devStudioAdminRouter } from "./dev-studio";
 import extensionsRouter from "../extensions/index.js";
@@ -163,6 +164,12 @@ router.use("/admin/ai-controls", adminAiControlsRouter);
 router.use("/admin/db-stats", adminDbStatsRouter);
 router.use("/admin/gateway-clients", gatewayClientsRouter);
 router.use("/admin/domains", domainsRouter);
+// Agent Instances (سيرفرات الوكلاء) — SA-gated admin router + public
+// branding/heartbeat endpoints. Public routes mounted here (before the
+// path-less zatcaRouter's global auth catch-all) so agent login pages can
+// fetch branding without a token.
+router.use("/admin/agent-instances", agentInstancesRouter);
+router.use(agentPublicRouter);
 // Reseller (Agent) management — Task #237. Both routers MUST be mounted BEFORE
 // the path-less zatcaRouter: the reseller portal uses its own bearer token
 // (absent from usersTable) and would otherwise be 401-ed by zatca's global
