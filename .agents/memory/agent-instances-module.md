@@ -31,4 +31,6 @@ Brand identity UX: logo is stored as a data URL in brandLogoUrl but MUST travel 
 
 Email delivery: POST /:id/email-package emails the setup kit + license/install codes (+ schema-only db-init.sql for full_shell) via lib/email sendEmail attachments. Package holds agent secrets (proxy token, license key) → sending to an email ≠ stored contactEmail requires confirmOverride:true (409 needsConfirm otherwise), updates contactEmail, and both actions are audit-logged.
 
+SA panel is FULLY blocked on agent domains, two layers: backend — agentDataSourceRouter stamps `req.agentDomainHit`, then blockSuperadminOnAgentDomains 404s `/admin/*` + `/auth/superadmin` (+ security event `sa_panel_blocked`); frontend — App.tsx useIsAgentDomain (module-cached /api/branding) forces rawIsSuperAdmin=false, hiding all SA routes/menus. The hook must stay ABOVE AppRoutes' early returns (hooks rule).
+
 Deferred: cross-DB leak integration tests + ALS-inheritance audit for request-spawned background work.

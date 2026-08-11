@@ -191,6 +191,9 @@ export async function agentDataSourceRouter(req: Request, res: any, next: (err?:
     const host = await resolveAgentRequestHost(req);
     const hit = await lookupAgentByHost(host);
     if (!hit) { next(); return; }
+    // Stamp the request so downstream guards (e.g. superadmin-panel block)
+    // can tell it arrived via a registered agent domain.
+    (req as any).agentDomainHit = { id: hit.id, domain: hit.domain };
     if (AGENT_PUBLIC_PATHS.some(p => req.path === p || req.path.startsWith(p + "/"))) { next(); return; }
     if (hit.status !== "active") {
       res.status(403).json({ error: "هذه النسخة موقوفة — تواصل مع مزوّد النظام", agentSuspended: true });
@@ -205,6 +208,18 @@ export async function agentDataSourceRouter(req: Request, res: any, next: (err?:
     }
     next();
   } catch (e) { next(e); }
+}
+
+/**
+ * لوحة السوبر أدمن ممنوعة نهائيًا من دومينات الوكلاء: أي طلب لمسارات
+ * /api/admin/* قادم عبر دومين وكيل مسجّل يُرفض 404 (لا نكشف حتى وجود
+ * المسار) ويُسجَّل كتنبيه أمان. تعمل فوق ختم agentDataSourceRouter.
+ */
+export function blockSuperadminOnAgentDomains(req: Request, res: any, next: (err?: unknown) => void): void {
+  const hit = (req as any).agentDomainHit as { id: number; domain: string } | undefined;
+  if (!hit) { next(); return; }
+  void logAgentEvent(hit.id, "sa_panel_blocked", { path: req.path, method: req.method }, req);
+  res.status(404).json({ error: "غير موجود" });
 }
 
 /** Returns the first domain in `candidates` already owned (MAIN OR extra) by a DIFFERENT instance. */

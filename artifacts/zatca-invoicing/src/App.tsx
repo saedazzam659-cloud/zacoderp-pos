@@ -502,9 +502,33 @@ function safeRedirectTarget(raw: string | null | undefined): string | null {
   return v;
 }
 
+// نسخ الوكلاء بدون لوحة سوبر أدمن نهائيًا — كاش على مستوى الموديول حتى
+// لا يُستعلم /api/branding إلا مرة واحدة لكل جلسة.
+let __agentDomainCache: boolean | null = null;
+let __agentDomainPromise: Promise<boolean> | null = null;
+function fetchIsAgentDomain(): Promise<boolean> {
+  if (!__agentDomainPromise) {
+    const base = import.meta.env.VITE_API_URL ?? "";
+    __agentDomainPromise = fetch(`${base}/api/branding?host=${encodeURIComponent(window.location.hostname)}`)
+      .then(r => r.json())
+      .then(j => (__agentDomainCache = !!j?.isAgentDomain))
+      .catch(() => (__agentDomainCache = false));
+  }
+  return __agentDomainPromise;
+}
+function useIsAgentDomain(): boolean {
+  const [v, setV] = useState<boolean>(__agentDomainCache ?? false);
+  useEffect(() => {
+    if (__agentDomainCache == null) fetchIsAgentDomain().then(setV);
+  }, []);
+  return v;
+}
+
 function AppRoutes() {
   const { isAuthenticated, loading, user, actingCompanyId } = useAuth() as any;
   const [location] = useLocation();
+  // يجب أن يبقى هذا الهوك قبل أي early-return (قاعدة الهوكس).
+  const isAgentDomain = useIsAgentDomain();
   // Auto check-in for users explicitly assigned to a tracking zone — runs
   // once per page lifetime, silently skips users with no zone assignment.
   useAutoCheckinOnLogin();
@@ -615,7 +639,9 @@ function AppRoutes() {
   // to FALSE so all `!isSuperAdmin` tenant routes (Dashboard, Sales,
   // Inventory, …) take over the same paths and the SA actually sees the
   // company's UI instead of the SA shell.
-  const rawIsSuperAdmin = user?.role === "superadmin";
+  // نسخ الوكلاء بدون لوحة سوبر أدمن نهائيًا: على دومين وكيل مسجّل تُخفى
+  // كل مسارات/قوائم السوبر أدمن (والباك اند يحجب /api/admin/* أيضًا).
+  const rawIsSuperAdmin = user?.role === "superadmin" && !isAgentDomain;
   const isSuperAdmin = rawIsSuperAdmin && !actingCompanyId;
 
   // Reseller (Agent) portal — a wholly separate, self-contained shell with its

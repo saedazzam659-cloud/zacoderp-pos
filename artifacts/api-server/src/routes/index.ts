@@ -132,7 +132,7 @@ import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
 import traineeRequestsRouter from "./trainee-requests";
 import domainsRouter from "./domains";
-import agentInstancesRouter, { agentPublicRouter, agentDataSourceRouter } from "./agentInstances";
+import agentInstancesRouter, { agentPublicRouter, agentDataSourceRouter, blockSuperadminOnAgentDomains } from "./agentInstances";
 import devCloudAdminRouter from "./dev-cloud-admin";
 import { devStudioRouter, devStudioAdminRouter } from "./dev-studio";
 import extensionsRouter from "../extensions/index.js";
@@ -149,6 +149,10 @@ router.use(resolveDomainCompany);
 // served from the AGENT's external PostgreSQL (or 403 when suspended).
 // Must run before any data-touching route; public branding/heartbeat exempt.
 router.use(agentDataSourceRouter);
+// لوحة السوبر أدمن ممنوعة نهائيًا من دومينات الوكلاء (نسخ الوكلاء بدون
+// لوحة تحكم مركزية): أي /admin/* عبر دومين وكيل → 404 + تنبيه أمان.
+router.use("/admin", blockSuperadminOnAgentDomains);
+router.use("/auth/superadmin", blockSuperadminOnAgentDomains);
 
 router.use(healthRouter);
 router.use("/auth", authRouter);
