@@ -217,7 +217,16 @@ export default function CompanyNew() {
     }
     for (const a of agentsQ.data ?? []) {
       for (const dom of [a.domain, ...(a.extraDomains ?? [])]) {
-        if (!dom || seen.has(dom)) continue;
+        if (!dom) continue;
+        if (seen.has(dom)) {
+          // Same domain exists in the central domains screen too (e.g. an
+          // agent's main domain registered as a multi-company main). Keep ONE
+          // combobox entry (duplicate values break selection) but show BOTH
+          // identities on its label.
+          const existing = items.find((it) => it.value === dom);
+          if (existing && !existing.label.includes("وكيل:")) existing.label = `${existing.label} — وكيل: ${a.name}`;
+          continue;
+        }
         seen.add(dom);
         items.push({ value: dom, label: `${dom} — وكيل: ${a.name}` });
       }
