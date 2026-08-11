@@ -982,9 +982,10 @@ router.post("/register", async (req, res, next) => {
         } catch { /* fall through to block */ }
       }
       if (!isSuperAdmin) {
-        const { db } = await import("@workspace/db");
-        const { agentSecurityEventsTable } = await import("@workspace/db");
-        await db.insert(agentSecurityEventsTable).values({
+        // centralDb: security events live in the CENTRAL registry — never in
+        // the agent DB the ALS proxy may have routed this request to.
+        const { centralDb, agentSecurityEventsTable } = await import("@workspace/db");
+        await centralDb.insert(agentSecurityEventsTable).values({
           agentId: agent.id, eventType: "register_blocked",
           detail: { note: "محاولة إنشاء حساب من دومين وكيل" }, host,
           ip: (Array.isArray(req.headers["x-forwarded-for"]) ? req.headers["x-forwarded-for"][0] : req.headers["x-forwarded-for"])?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null,
@@ -995,6 +996,36 @@ router.post("/register", async (req, res, next) => {
     }
   } catch { /* never break registration on the main domain over this guard */ }
   next();
+});
+// SA-only: create the company ON AN AGENT'S external DB. When the SuperAdmin
+// panel sends `agentInstanceId`, the whole registration handler runs inside
+// runWithExternalDb, so the company/subscription/admin-user rows land in the
+// agent's PostgreSQL. Non-SA callers get a hard 403 (never silently ignored).
+router.post("/register", async (req, res, next) => {
+  const agentInstanceId = Number((req.body as any)?.agentInstanceId);
+  if (!agentInstanceId || !Number.isFinite(agentInstanceId)) { next(); return; }
+  try {
+    const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+    const resolved = bearer ? await resolveBearerToken(bearer) : null;
+    if (!resolved || (resolved as any).user?.role !== "superadmin") {
+      res.status(403).json({ error: "إنشاء شركة على سيرفر وكيل متاح للمشرف العام فقط" });
+      return;
+    }
+    // centralDb: the agent registry must be read from the CENTRAL DB even if
+    // this request already runs inside an agent ALS context.
+    const { centralDb, runWithExternalDb, agentInstancesTable } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+    const [inst] = await centralDb.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, agentInstanceId)).limit(1);
+    if (!inst) { res.status(404).json({ error: "الوكيل غير موجود" }); return; }
+    if (inst.status !== "active") { res.status(403).json({ error: "هذا الوكيل موقوف" }); return; }
+    if (inst.dbStatus !== "initialized" || !inst.dbUrlEnc) {
+      res.status(400).json({ error: "قاعدة بيانات الوكيل غير مهيأة بعد — هيّئها من شاشة سيرفرات الوكلاء" });
+      return;
+    }
+    const { getAgentDbContext } = await import("../lib/agentDb.js");
+    const ctx = getAgentDbContext(inst.id, inst.dbUrlEnc);
+    runWithExternalDb(ctx, () => next());
+  } catch (e) { next(e); }
 });
 router.post("/register", async (req, res) => {
   const {

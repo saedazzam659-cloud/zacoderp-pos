@@ -2672,3 +2672,13 @@ export function ensureSchemaUpToDate(): Promise<void> {
   if (!healPromise) healPromise = runHeal();
   return healPromise;
 }
+
+/**
+ * NON-memoized heal pass for EXTERNAL databases (agent instances).
+ * Call inside `runWithExternalDb(ctx, ...)` so the proxied `db`/`pool`
+ * point at the agent's PostgreSQL. Never touches the boot-time single-flight
+ * promise (which is bound to the central DB).
+ */
+export function runSchemaHealOnActiveDb(): Promise<void> {
+  return runHeal();
+}

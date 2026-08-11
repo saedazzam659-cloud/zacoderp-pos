@@ -22,7 +22,11 @@
 // Explicit superadmin role check on the router — mirrors routes/domains.ts.
 
 import { Router, type Request } from "express";
-import { db } from "@workspace/db";
+// Control-plane module: ALL registry reads/writes here must hit the CENTRAL
+// DB even when the request is running inside an agent-DB ALS context (an
+// agent's cloned DB has an empty registry — following the proxy would
+// silently disable suspend/register-block enforcement).
+import { centralDb as db } from "@workspace/db";
 import { agentInstancesTable, agentSecurityEventsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -99,7 +103,10 @@ async function logAgentEvent(agentId: number | null, eventType: string, detail: 
 
 // ── Agent-host lookup (used by /register blocking + public branding) ───────
 // 60s TTL cache: host → agent row (or null).
-type AgentHostHit = { id: number; status: string; brandName: string | null; brandLogoUrl: string | null; brandColor: string | null } | null;
+type AgentHostHit = {
+  id: number; status: string; dbStatus: string; dbUrlEnc: string | null;
+  brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
+} | null;
 const hostCache = new Map<string, { hit: AgentHostHit; expires: number }>();
 
 export function clearAgentHostCache(): void { hostCache.clear(); }
@@ -114,13 +121,17 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
     const rows = await db.select({
       id: agentInstancesTable.id, status: agentInstancesTable.status,
       domain: agentInstancesTable.domain, extraDomains: agentInstancesTable.extraDomains,
+      dbStatus: agentInstancesTable.dbStatus, dbUrlEnc: agentInstancesTable.dbUrlEnc,
       brandName: agentInstancesTable.brandName, brandLogoUrl: agentInstancesTable.brandLogoUrl,
       brandColor: agentInstancesTable.brandColor,
     }).from(agentInstancesTable);
     for (const r of rows) {
       const extras = Array.isArray(r.extraDomains) ? (r.extraDomains as string[]) : [];
       if (r.domain === host || extras.includes(host)) {
-        hit = { id: r.id, status: r.status, brandName: r.brandName, brandLogoUrl: r.brandLogoUrl, brandColor: r.brandColor };
+        hit = {
+          id: r.id, status: r.status, dbStatus: r.dbStatus, dbUrlEnc: r.dbUrlEnc,
+          brandName: r.brandName, brandLogoUrl: r.brandLogoUrl, brandColor: r.brandColor,
+        };
         break;
       }
     }
@@ -129,7 +140,39 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
   return hit;
 }
 
-/** Returns the first domain in `candidates` already owned (main OR extra) by a DIFFERENT instance. */
+// ── Agent datasource routing middleware ────────────────────────────────────
+// Mounted early in routes/index.ts. When a request arrives from a registered
+// agent domain:
+//   • suspended agent → 403 for everything except public branding/heartbeat
+//     (instant kill-switch, server-side);
+//   • active + initialized external DB → the WHOLE request runs inside
+//     runWithExternalDb, so every `db`/`pool` usage anywhere in the handler
+//     chain hits the agent's PostgreSQL instead of the central one;
+//   • active but DB not initialized yet → central DB (setup phase).
+const AGENT_PUBLIC_PATHS = ["/branding", "/agent/heartbeat"];
+export async function agentDataSourceRouter(req: Request, res: any, next: (err?: unknown) => void): Promise<void> {
+  try {
+    const fwd = req.headers["x-forwarded-host"];
+    const host = normalizeHost((Array.isArray(fwd) ? fwd[0] : fwd) || req.headers.host);
+    const hit = await lookupAgentByHost(host);
+    if (!hit) { next(); return; }
+    if (AGENT_PUBLIC_PATHS.some(p => req.path === p || req.path.startsWith(p + "/"))) { next(); return; }
+    if (hit.status !== "active") {
+      res.status(403).json({ error: "هذه النسخة موقوفة — تواصل مع مزوّد النظام", agentSuspended: true });
+      return;
+    }
+    if (hit.dbStatus === "initialized" && hit.dbUrlEnc) {
+      const { getAgentDbContext } = await import("../lib/agentDb.js");
+      const ctx = getAgentDbContext(hit.id, hit.dbUrlEnc);
+      const { runWithExternalDb } = await import("@workspace/db");
+      runWithExternalDb(ctx, () => next());
+      return;
+    }
+    next();
+  } catch (e) { next(e); }
+}
+
+/** Returns the first domain in `candidates` already owned (MAIN OR extra) by a DIFFERENT instance. */
 async function findDomainConflict(candidates: string[], excludeId: number | null): Promise<string | null> {
   const rows = await db.select({
     id: agentInstancesTable.id, domain: agentInstancesTable.domain, extraDomains: agentInstancesTable.extraDomains,
@@ -265,6 +308,10 @@ router.put("/:id", async (req, res) => {
 
   const [row] = await db.update(agentInstancesTable).set(patch).where(eq(agentInstancesTable.id, id)).returning();
   clearAgentHostCache();
+  if (patch.dbUrlEnc !== undefined) {
+    const { evictAgentDb } = await import("../lib/agentDb.js");
+    evictAgentDb(id);
+  }
   res.json(publicRow(row));
 });
 
@@ -274,6 +321,8 @@ router.delete("/:id", async (req, res) => {
   if (!id) { res.status(400).json({ error: "بيانات غير صالحة" }); return; }
   await db.delete(agentInstancesTable).where(eq(agentInstancesTable.id, id));
   clearAgentHostCache();
+  const { evictAgentDb } = await import("../lib/agentDb.js");
+  evictAgentDb(id);
   res.json({ ok: true });
 });
 
@@ -336,6 +385,47 @@ router.post("/:id/init-db", async (req, res) => {
   try {
     const fingerprint = expectedFingerprint(inst.installationId, inst.domain);
     await withAgentPool(inst.dbUrlEnc, async (pool) => {
+      // 1) Fresh DB → copy the FULL central schema (structure only, zero
+      //    data) via pg_dump --schema-only. ensureSchema alone can't do this:
+      //    it only ALTERs existing tables / creates extraSteps tables.
+      const fresh = await pool.query(
+        `SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='companies'`,
+      ).then(r => r.rows.length === 0);
+      if (fresh) {
+        const { execFile } = await import("node:child_process");
+        const dumpSql = await new Promise<string>((resolve, reject) => {
+          execFile("pg_dump", [
+            "--schema-only", "--no-owner", "--no-privileges", "--no-comments",
+            process.env.DATABASE_URL!,
+          ], { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+            if (err) reject(new Error(`pg_dump غير متاح أو فشل: ${String(stderr || err.message).slice(0, 200)}`));
+            else resolve(stdout);
+          });
+        });
+        // Strip psql meta-commands (\restrict etc. in newer pg_dump) — the
+        // dump is applied through the pg driver, not psql. Apply inside ONE
+        // transaction so a mid-dump failure leaves the agent DB untouched.
+        const cleaned = dumpSql.split("\n").filter(l => !l.startsWith("\\")).join("\n");
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query(cleaned);
+          await client.query("COMMIT");
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw e;
+        } finally {
+          client.release();
+        }
+      }
+      // 2) Reconcile drift (enums/columns/extraSteps) with a NON-memoized
+      //    heal pass routed at the agent DB via the ALS datasource proxy.
+      const { runWithExternalDb } = await import("@workspace/db");
+      const { drizzle } = await import("drizzle-orm/node-postgres");
+      const schemaMod = await import("@workspace/db/schema");
+      const agentDrizzle = drizzle(pool as any, { schema: schemaMod as any });
+      const { runSchemaHealOnActiveDb } = await import("../lib/ensureSchema.js");
+      await runWithExternalDb({ db: agentDrizzle as any, pool: pool as any }, () => runSchemaHealOnActiveDb());
       // Refuse to overwrite a foreign installation's fingerprint.
       try {
         const fp = await pool.query("SELECT installation_id FROM zacod_installation WHERE id = 1");
@@ -364,6 +454,14 @@ router.post("/:id/init-db", async (req, res) => {
     res.json({ ok: true, fingerprintPlanted: true });
   } catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 500);
+    // Fail CLOSED: a failed (re-)init must never leave dbStatus=initialized,
+    // or routed traffic keeps flowing into a half-built database.
+    await db.update(agentInstancesTable).set({
+      dbStatus: "error", dbLastCheckAt: new Date(), dbLastError: msg, updatedAt: new Date(),
+    }).where(eq(agentInstancesTable.id, id)).catch(() => {});
+    clearAgentHostCache();
+    const { evictAgentDb } = await import("../lib/agentDb.js");
+    evictAgentDb(id);
     res.status(502).json({ error: "فشلت التهيئة", detail: msg });
   }
 });
@@ -409,6 +507,8 @@ router.post("/:id/suspend", async (req, res) => {
   await db.update(agentInstancesTable).set({ status: "suspended", updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
   await logAgentEvent(id, "suspended_by_admin", { by: (req as any).authUser?.username ?? null }, req);
   clearAgentHostCache();
+  const { evictAgentDb } = await import("../lib/agentDb.js");
+  evictAgentDb(id);
   res.json({ ok: true });
 });
 router.post("/:id/activate", async (req, res) => {

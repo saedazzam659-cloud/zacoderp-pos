@@ -16,6 +16,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
@@ -164,6 +165,21 @@ export default function CompanyNew() {
   // modules) + `selectedNavOff` (per-screen visibility) to /api/auth/register.
   const [customMode, setCustomMode] = useState(false);
   const [customPicker, setCustomPicker] = useState<ModulePickerValue>({ moduleKeys: [], navOff: [] });
+  // Optional: create this company on an AGENT's external server/DB instead of
+  // the central platform ("central" = default). Only initialized+active agents
+  // are selectable; the backend re-validates.
+  const [agentTarget, setAgentTarget] = useState<string>("central");
+  const agentsQ = useQuery<any[]>({
+    queryKey: ["agent-instances-companynew"],
+    queryFn: async () => {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const r = await fetch(`${BASE}/api/admin/agent-instances`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+  const selectableAgents = (agentsQ.data ?? []).filter(a => a.status === "active" && a.dbStatus === "initialized");
 
   // Live industry catalog from the SuperAdmin-managed table.
   // Falls back to an empty list on error so the rest of the page
@@ -256,6 +272,7 @@ export default function CompanyNew() {
           industryName,
           serialNumber: combinedSerial,
           selectedIndustries,
+          ...(agentTarget !== "central" ? { agentInstanceId: Number(agentTarget) } : {}),
           // مخصص mode only: granular menu grants + per-screen visibility off.
           ...(customMode ? {
             selectedModules: deriveModulesFromMenuKeys(customPicker.moduleKeys),
@@ -289,6 +306,27 @@ export default function CompanyNew() {
           <p className="text-muted-foreground mt-1">سجّل بيانات منشأتك للبدء بإصدار الفواتير الإلكترونية المتوافقة مع هيئة الزكاة والدخل والجمارك</p>
         </div>
       </div>
+
+      {/* Deployment target: central platform (default) or an agent server */}
+      {selectableAgents.length > 0 && (
+        <div className="rounded-lg border bg-card p-4 flex flex-col md:flex-row md:items-center gap-3">
+          <div className="flex-1">
+            <div className="font-semibold text-sm">وجهة إنشاء الشركة</div>
+            <div className="text-xs text-muted-foreground mt-0.5">افتراضيًا تُنشأ الشركة على المنصة المركزية — اختر وكيلًا لإنشائها على سيرفره وقاعدة بياناته الخاصة</div>
+          </div>
+          <Select value={agentTarget} onValueChange={setAgentTarget}>
+            <SelectTrigger className="w-full md:w-72" data-testid="select-agent-target">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="central">المنصة المركزية (افتراضي)</SelectItem>
+              {selectableAgents.map((a) => (
+                <SelectItem key={a.id} value={String(a.id)}>{a.name} — {a.domain}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {/* Steps overview */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">

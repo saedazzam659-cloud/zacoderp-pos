@@ -14,4 +14,11 @@ Rules:
 - Fingerprint/license are HMAC(SESSION_SECRET)-derived and deterministic — re-derivable, never stored plaintext-secret.
 - **Why:** agents get builds, never source; central API is the only logic holder, so every trust decision must be enforced server-side here.
 
-Deferred (phase 2+): per-request host→external-DB query routing, CompanyNew agent-domain field, SSH deploy engine.
+Phase 2 (datasource routing) — done:
+- `lib/db` exports `db`/`pool` as **AsyncLocalStorage proxies**: `runWithExternalDb(ctx, fn)` routes every db/pool usage in the async chain to an external PostgreSQL; `createExternalDb(url)` factory; `centralDb`/`centralPool` are the NON-proxied control-plane accessors.
+- **Control-plane reads (agent registry, security events, host lookup, register guard) MUST use `centralDb`** — an agent's cloned DB has an empty registry, so proxied reads would silently disable suspend/register-block enforcement.
+- `agentDataSourceRouter` (mounted after resolveDomainCompany): agent domain + active + dbStatus=initialized → whole request wrapped in runWithExternalDb; suspended → 403 (branding/heartbeat exempt). Pools cached per agent in lib/agentDb.ts keyed by encrypted URL blob; **evictAgentDb on URL change/delete/suspend**.
+- init-db: fresh agent DB gets `pg_dump --schema-only` of central applied in ONE transaction (strip `\\`-meta lines — pg driver, not psql), then a NON-memoized heal pass `runSchemaHealOnActiveDb()` (ensureSchemaUpToDate is boot-single-flight and bound to central — never reuse it for external DBs). **Failure fails CLOSED: dbStatus=error + evict**, or routed traffic hits a half-built DB.
+- /register accepts `agentInstanceId` (superadmin bearer ONLY → company created inside the agent DB); CompanyNew has a "وجهة إنشاء الشركة" selector.
+
+Deferred (phase 3, proposed as follow-ups): SSH deploy engine, cross-DB leak integration tests + ALS-inheritance audit for request-spawned background work, agent heartbeat client kit.

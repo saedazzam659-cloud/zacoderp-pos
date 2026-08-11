@@ -132,7 +132,7 @@ import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
 import traineeRequestsRouter from "./trainee-requests";
 import domainsRouter from "./domains";
-import agentInstancesRouter, { agentPublicRouter } from "./agentInstances";
+import agentInstancesRouter, { agentPublicRouter, agentDataSourceRouter } from "./agentInstances";
 import devCloudAdminRouter from "./dev-cloud-admin";
 import { devStudioRouter, devStudioAdminRouter } from "./dev-studio";
 import extensionsRouter from "../extensions/index.js";
@@ -145,6 +145,10 @@ const router: IRouter = Router();
 // req.domainCompanyId (FALLBACK only; see auth.ts resolveCompanyId). Mounted
 // first so it runs for every /api request; it never throws or blocks.
 router.use(resolveDomainCompany);
+// Agent datasource routing — requests from a registered agent domain are
+// served from the AGENT's external PostgreSQL (or 403 when suspended).
+// Must run before any data-touching route; public branding/heartbeat exempt.
+router.use(agentDataSourceRouter);
 
 router.use(healthRouter);
 router.use("/auth", authRouter);
