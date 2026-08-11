@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -1052,6 +1052,9 @@ router.post("/register", async (req, res) => {
     price: priceOverride,
     // Admin user
     username, email, password,
+    // Optional: bind a custom domain / agent sub-domain to the new company
+    // (creates/updates a company_domains row — central platform only).
+    bindDomain,
   } = req.body;
 
   if (!nameAr || !vatNumber || !crNumber || !username || !password) {
@@ -1400,6 +1403,53 @@ router.post("/register", async (req, res) => {
     return res.status(500).json({ error: "تعذّر إنشاء كود الشركة. يرجى المحاولة مرة أخرى." });
   }
 
+  // Optional domain binding (SA "add company" wizard). Central-platform
+  // companies only: when the company is created on an AGENT database
+  // (agentInstanceId), host→agent routing already serves it and a central
+  // company_domains row would point at the wrong companyId — skip it.
+  // SECURITY: bindDomain is SuperAdmin-only. /register is also the PUBLIC
+  // self-signup endpoint — an anonymous registrant must never be able to
+  // claim/preempt a domain mapping (host-routing takeover).
+  let domainBindWarning: string | null = null;
+  const wantsAgentDb = Number((req.body as any)?.agentInstanceId) > 0;
+  if (typeof bindDomain === "string" && bindDomain.trim() && !callerIsSuperAdmin) {
+    domainBindWarning = "ربط النطاق متاح للمشرف العام فقط — تم تجاهله";
+  } else if (typeof bindDomain === "string" && bindDomain.trim() && !wantsAgentDb) {
+    const host = bindDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/\.+$/, "");
+    if (!/^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)+$/.test(host) || host.length > 253) {
+      domainBindWarning = `النطاق غير صالح: ${host.slice(0, 60)} — لم يتم الربط`;
+    } else {
+      try {
+        const [existing] = await db.select().from(companyDomainsTable).where(eq(companyDomainsTable.domain, host)).limit(1);
+        if (existing?.isMain) {
+          domainBindWarning = "النطاق الرئيسي متعدد الشركات لا يُربط بشركة واحدة";
+        } else if (existing && existing.companyId != null) {
+          domainBindWarning = `النطاق ${host} مربوط بشركة أخرى — لم يتم الربط`;
+        } else {
+          if (existing) {
+            await db.update(companyDomainsTable)
+              .set({ companyId: company.id, isPrimary: true, status: "active" })
+              .where(eq(companyDomainsTable.id, existing.id));
+          } else {
+            await db.insert(companyDomainsTable).values({
+              domain: host, companyId: company.id, isMain: false, isPrimary: true, status: "active",
+              notes: "أُنشئ تلقائيًا عند إضافة الشركة",
+            } as any);
+          }
+          // Fresh company → no other primaries to demote; just make the new
+          // mapping resolvable immediately (resolver caches misses for a TTL).
+          const { clearDomainCache } = await import("../middleware/domainResolver.js");
+          clearDomainCache();
+        }
+      } catch (err) {
+        req.log?.error?.({ err, host, companyId: company.id }, "register: domain binding failed");
+        domainBindWarning = "تعذّر ربط النطاق — اربطه يدويًا من شاشة النطاقات";
+      }
+    }
+  } else if (typeof bindDomain === "string" && bindDomain.trim() && wantsAgentDb) {
+    domainBindWarning = "الشركة على سيرفر وكيل — التوجيه يتم عبر دومين الوكيل نفسه، لا حاجة لربط مركزي";
+  }
+
   // Seed the default currency for the new company. The currency code is
   // derived from the country (SA→SAR, AE→AED, …) unless the client sent an
   // explicit `currency` override. Failures here are logged but do NOT roll
@@ -1522,6 +1572,7 @@ router.post("/register", async (req, res) => {
       token: sessionToken,
       sessionId,
       user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role, companyId: company.id, company, subscription },
+      ...(domainBindWarning ? { domainBindWarning } : {}),
     });
   } else {
     // Self-registered: pending approval. We surface the freshly-generated

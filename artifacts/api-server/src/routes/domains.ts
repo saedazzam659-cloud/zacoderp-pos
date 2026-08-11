@@ -53,7 +53,9 @@ const STATUS = ["pending", "active", "disabled"] as const;
 
 const createSchema = z.object({
   domain: z.string().min(3).max(255),
-  companyId: z.number().int().positive().optional(),
+  // The add-dialog sends companyId:null for main (multi-company) domains —
+  // must accept null, not just undefined, or the whole POST 400s "bad payload".
+  companyId: z.number().int().positive().nullable().optional(),
   isMain: z.boolean().optional(),
   isPrimary: z.boolean().optional(),
   status: z.enum(STATUS).optional(),

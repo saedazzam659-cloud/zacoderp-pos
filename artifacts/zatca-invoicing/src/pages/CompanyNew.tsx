@@ -181,6 +181,40 @@ export default function CompanyNew() {
   });
   const selectableAgents = (agentsQ.data ?? []).filter(a => a.status === "active" && a.dbStatus === "initialized");
 
+  // ── Optional domain binding ── searchable combobox of candidate domains:
+  // central domains screen (unbound rows) + agent main/extra domains. A free
+  // text field also accepts any sub-domain (e.g. shop1.tafrah.com.sa).
+  const [bindDomain, setBindDomain] = useState<string>("");
+  const [bindDomainCustom, setBindDomainCustom] = useState<string>("");
+  const domainsQ = useQuery<any[]>({
+    queryKey: ["admin-domains-companynew"],
+    queryFn: async () => {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const r = await fetch(`${BASE}/api/admin/domains`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+  const domainItems: ComboboxItem[] = (() => {
+    const seen = new Set<string>();
+    const items: ComboboxItem[] = [];
+    for (const d of domainsQ.data ?? []) {
+      if (d.isMain || !d.domain || seen.has(d.domain)) continue;
+      seen.add(d.domain);
+      items.push({ value: d.domain, label: d.companyId ? `${d.domain} — مربوط بشركة (${d.companyName ?? d.companyId})` : `${d.domain} — نطاق حر` });
+    }
+    for (const a of agentsQ.data ?? []) {
+      for (const dom of [a.domain, ...(a.extraDomains ?? [])]) {
+        if (!dom || seen.has(dom)) continue;
+        seen.add(dom);
+        items.push({ value: dom, label: `${dom} — وكيل: ${a.name}` });
+      }
+    }
+    return items;
+  })();
+  const effectiveBindDomain = bindDomainCustom.trim() || bindDomain;
+
   // Live industry catalog from the SuperAdmin-managed table.
   // Falls back to an empty list on error so the rest of the page
   // still renders — the manual `industryName` text field below remains
@@ -273,6 +307,7 @@ export default function CompanyNew() {
           serialNumber: combinedSerial,
           selectedIndustries,
           ...(agentTarget !== "central" ? { agentInstanceId: Number(agentTarget) } : {}),
+          ...(effectiveBindDomain ? { bindDomain: effectiveBindDomain } : {}),
           // مخصص mode only: granular menu grants + per-screen visibility off.
           ...(customMode ? {
             selectedModules: deriveModulesFromMenuKeys(customPicker.moduleKeys),
@@ -284,6 +319,9 @@ export default function CompanyNew() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "حدث خطأ");
       toast({ title: "تمت الإضافة بنجاح", description: "تمت إضافة الشركة والمستخدم الإداري بنجاح." });
+      if (data.domainBindWarning) {
+        toast({ title: "تنبيه ربط النطاق", description: data.domainBindWarning, variant: "destructive" });
+      }
       queryClient.invalidateQueries({ queryKey: ["companies"] });
       setLocation(`/companies/${data.user.companyId}`);
     } catch (err: any) {
@@ -327,6 +365,39 @@ export default function CompanyNew() {
           </Select>
         </div>
       )}
+
+      {/* Optional domain / sub-domain binding — searchable combobox of the
+          central domains screen + agent domains, plus free sub-domain typing. */}
+      <div className="rounded-lg border bg-card p-4 flex flex-col gap-3">
+        <div>
+          <div className="font-semibold text-sm">ربط الشركة بدومين / ساب دومين (اختياري)</div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            اختر دومينًا من شاشة النطاقات أو دومين وكيل، أو اكتب ساب دومين يدويًا (مثال: shop1.tafrah.com.sa). يُسجَّل الربط تلقائيًا في شاشة النطاقات.
+          </div>
+        </div>
+        <div className="flex flex-col md:flex-row gap-3">
+          <div className="w-full md:w-80">
+            <SearchCombobox
+              items={domainItems}
+              value={bindDomain}
+              onValueChange={(v: string) => { setBindDomain(v); setBindDomainCustom(""); }}
+              placeholder="ابحث واختر دومينًا…"
+              data-testid="combobox-bind-domain"
+            />
+          </div>
+          <Input
+            dir="ltr"
+            className="w-full md:w-80"
+            placeholder="أو اكتب دومين/ساب دومين يدويًا"
+            value={bindDomainCustom}
+            onChange={(e) => { setBindDomainCustom(e.target.value); if (e.target.value.trim()) setBindDomain(""); }}
+            data-testid="input-bind-domain-custom"
+          />
+        </div>
+        {effectiveBindDomain && (
+          <div className="text-xs text-muted-foreground">سيُربط: <span dir="ltr" className="font-mono">{effectiveBindDomain}</span></div>
+        )}
+      </div>
 
       {/* Steps overview */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">

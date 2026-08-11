@@ -46,3 +46,9 @@ a null `companyId` naturally yields no `req.domainCompanyId`, i.e. no scoping.
 `x-forwarded-host`/`host` through `normalizeHost`, and keep any host→tenant mapping
 as a fallback after explicit + impersonation context. Operational note: trust of
 `x-forwarded-host` assumes the shared edge proxy sets it.
+
+## Domain binding at company creation (bindDomain)
+- /api/auth/register accepts optional `bindDomain` — but it is the PUBLIC self-signup endpoint too: the binding MUST be gated on callerIsSuperAdmin or an anonymous registrant can hijack host→company routing.
+- Domains-screen create schema must accept `companyId: null` (frontend sends null for main domains) — plain `.optional()` 400s "bad payload".
+- After any company_domains write, call clearDomainCache() or the resolver's negative cache hides the new mapping for the TTL.
+- Agent-DB-target companies (agentInstanceId) are NOT centrally bound — host→agent routing already serves them; central companyId would mismatch.
