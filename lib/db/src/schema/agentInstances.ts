@@ -63,6 +63,16 @@ export const agentInstancesTable = pgTable("agent_instances", {
   lastSeenIp:      text("last_seen_ip"),
   deployedVersion: text("deployed_version"),
 
+  // SSH deploy engine (phase 3)
+  deployStatus: text("deploy_status").notNull().default("never"), // never | deploying | ok | error
+  deployLog:    text("deploy_log"),
+  lastDeployAt: timestamp("last_deploy_at"),
+  // Pinned SSH host-key fingerprint (TOFU on first deploy, verified after).
+  sshHostKeyFp: text("ssh_host_key_fp"),
+  // High-entropy rotatable per-agent proxy secret (encrypted at rest) — the
+  // agent's reverse proxy presents it to prove the original request host.
+  proxySecretEnc: text("proxy_secret_enc"),
+
   notes:     text("notes"),
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),

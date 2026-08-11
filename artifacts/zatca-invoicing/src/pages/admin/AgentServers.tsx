@@ -19,7 +19,7 @@ import { DateField } from "@/components/ui/date-field";
 import {
   Server, Plus, Pencil, Trash2, Database, KeyRound, ShieldAlert, Globe,
   Plug, Loader2, CheckCircle2, XCircle, Ban, Play, Copy, Palette, RefreshCw,
-  HeartPulse, AlertTriangle,
+  HeartPulse, AlertTriangle, UploadCloud, FileDown,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -34,6 +34,7 @@ type Agent = {
   sshHost: string | null; sshPort: number | null; sshUser: string | null; sshSecretSet: boolean; sshStatus: string; sshLastCheckAt: string | null;
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
   lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
+  deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
   notes: string | null; createdAt: string;
 };
 
@@ -93,6 +94,8 @@ export default function AgentServers() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
   const [busy, setBusy] = useState<string | null>(null); // "<action>-<id>"
+  const [logView, setLogView] = useState<{ title: string; text: string } | null>(null);
+  const [kitView, setKitView] = useState<{ agent: string; kit: any } | null>(null);
   const isEdit = form.id > 0;
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
 
@@ -139,6 +142,36 @@ export default function AgentServers() {
       toast({ title: `${label}: تم بنجاح`, description: j.version ?? (j.licenseKey ? `المفتاح: ${j.licenseKey}` : undefined) });
     } catch (e: any) {
       toast({ title: `${label}: فشل`, description: String(e.message ?? e), variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
+  async function openSetupKit(a: Agent) {
+    setBusy(`kit-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/setup-kit`, { headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل");
+      setKitView({ agent: a.name, kit: j });
+    } catch (e: any) {
+      toast({ title: "حزمة التهيئة: فشل", description: String(e.message ?? e), variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
+  async function deployNow(a: Agent) {
+    if (!confirm(`نشر التهيئة على سيرفر «${a.name}» عبر SSH؟\nسيتم تثبيت الوكيل العكسي (Caddy) ونبض الترخيص وربط الدومين بالمنصة.`)) return;
+    setBusy(`deploy-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/deploy`, { method: "POST", headers });
+      const j = await r.json().catch(() => ({}));
+      invalidate();
+      if (!r.ok) {
+        setLogView({ title: `سجل النشر — ${a.name}`, text: j.log ?? j.detail ?? j.error ?? "فشل" });
+        throw new Error(j.error ?? "فشل النشر");
+      }
+      setLogView({ title: `سجل النشر — ${a.name}`, text: j.log ?? "" });
+      toast({ title: "تم النشر بنجاح" });
+    } catch (e: any) {
+      toast({ title: "النشر: فشل", description: String(e.message ?? e), variant: "destructive" });
     } finally { setBusy(null); }
   }
 
@@ -257,10 +290,26 @@ export default function AgentServers() {
                   <div className="text-xs text-muted-foreground flex items-center gap-1"><Server className="h-3.5 w-3.5" />السيرفر (SSH)</div>
                   <div dir="ltr" className="text-xs">{a.sshHost ? `${a.sshUser ?? "?"}@${a.sshHost}:${a.sshPort ?? 22}` : "—"}</div>
                   {a.sshStatus === "ok" ? statusPill(true, "يمكن الوصول", "") : a.sshStatus === "error" ? statusPill(false, "", "غير متاح") : statusPill(null, "", "")}
-                  <div className="pt-1">
+                  <div className="text-[11px]">
+                    النشر: {a.deployStatus === "ok" ? <Badge className="text-[10px] h-4 px-1 bg-emerald-600">ناجح</Badge>
+                      : a.deployStatus === "error" ? <Badge variant="destructive" className="text-[10px] h-4 px-1">فشل</Badge>
+                      : a.deployStatus === "deploying" ? <Badge variant="secondary" className="text-[10px] h-4 px-1">جارٍ…</Badge>
+                      : <span className="text-muted-foreground">لم يُنشر</span>}
+                    {a.lastDeployAt && <span className="text-muted-foreground ms-1">{fmtDate(a.lastDeployAt)}</span>}
+                  </div>
+                  <div className="flex flex-wrap gap-1 pt-1">
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || busy === `test-ssh-${a.id}`} onClick={() => action(a.id, "test-ssh", "فحص السيرفر")}>
                       {busy === `test-ssh-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3 ms-1" />}اختبار الوصول
                     </Button>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}`} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
+                      {busy === `deploy-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <UploadCloud className="h-3 w-3 ms-1" />}نشر
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.licenseKey || busy === `kit-${a.id}`} onClick={() => openSetupKit(a)} data-testid={`button-kit-${a.id}`}>
+                      {busy === `kit-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3 ms-1" />}حزمة التهيئة
+                    </Button>
+                    {a.deployLog && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setLogView({ title: `سجل النشر — ${a.name}`, text: a.deployLog! })}>السجل</Button>
+                    )}
                   </div>
                 </div>
 
@@ -349,6 +398,47 @@ export default function AgentServers() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* ── سجل النشر ── */}
+      <Dialog open={!!logView} onOpenChange={(o) => !o && setLogView(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>{logView?.title}</DialogTitle></DialogHeader>
+          <pre dir="ltr" className="text-[11px] bg-muted rounded-lg p-3 whitespace-pre-wrap break-all max-h-[60vh] overflow-y-auto">{logView?.text || "—"}</pre>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── حزمة التهيئة ── */}
+      <Dialog open={!!kitView} onOpenChange={(o) => !o && setKitView(null)}>
+        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>حزمة التهيئة — {kitView?.agent}</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            للتركيب اليدوي: نزّل سكربت التثبيت وشغّله كـ root على سيرفر الوكيل — يثبّت الوكيل العكسي (Caddy)، يربط الدومين بالمنصة، ويفعّل نبض الترخيص كل 5 دقائق. زر «نشر» ينفّذ نفس السكربت تلقائيًا عبر SSH.
+          </p>
+          {kitView && (
+            <div className="space-y-3">
+              {[
+                { name: "install.sh", label: "سكربت التثبيت (شغّله كـ root)", text: kitView.kit.installScript },
+                { name: "config.json", label: "ملف الإعدادات", text: JSON.stringify(kitView.kit.config, null, 2) },
+                { name: "Caddyfile", label: "إعداد الوكيل العكسي", text: kitView.kit.caddyfile },
+              ].map((f) => (
+                <div key={f.name} className="border rounded-lg p-3 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold">{f.label} <code className="text-[10px] text-muted-foreground" dir="ltr">{f.name}</code></div>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="sm" className="h-6 text-[11px]" onClick={() => { navigator.clipboard.writeText(f.text); toast({ title: "نُسخ" }); }}><Copy className="h-3 w-3 ms-1" />نسخ</Button>
+                      <Button variant="ghost" size="sm" className="h-6 text-[11px]" onClick={() => {
+                        const url = URL.createObjectURL(new Blob([f.text], { type: "text/plain" }));
+                        const el = document.createElement("a"); el.href = url; el.download = f.name; el.click(); URL.revokeObjectURL(url);
+                      }}><FileDown className="h-3 w-3 ms-1" />تنزيل</Button>
+                    </div>
+                  </div>
+                  <pre dir="ltr" className="text-[10px] bg-muted rounded p-2 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{f.text}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── نموذج إضافة/تعديل ── */}
       <Dialog open={showForm} onOpenChange={setShowForm}>

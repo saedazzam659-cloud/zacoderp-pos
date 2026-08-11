@@ -21,4 +21,10 @@ Phase 2 (datasource routing) — done:
 - init-db: fresh agent DB gets `pg_dump --schema-only` of central applied in ONE transaction (strip `\\`-meta lines — pg driver, not psql), then a NON-memoized heal pass `runSchemaHealOnActiveDb()` (ensureSchemaUpToDate is boot-single-flight and bound to central — never reuse it for external DBs). **Failure fails CLOSED: dbStatus=error + evict**, or routed traffic hits a half-built DB.
 - /register accepts `agentInstanceId` (superadmin bearer ONLY → company created inside the agent DB); CompanyNew has a "وجهة إنشاء الشركة" selector.
 
-Deferred (phase 3, proposed as follow-ups): SSH deploy engine, cross-DB leak integration tests + ALS-inheritance audit for request-spawned background work, agent heartbeat client kit.
+Phase 3 (SSH deploy + setup kit) — done:
+- `/:id/setup-kit` + `/:id/deploy`: generated idempotent root bootstrap (Caddy reverse proxy agent-domain→central origin, /opt/zacod config + heartbeat cron every 5min with 403→stop-caddy kill-switch). Bootstrap is HARD-FAIL: caddy install/validate/enable/is-active must all succeed before `ZACOD_BOOTSTRAP_DONE`; API stores ok only on exit 0 + marker.
+- **Original-host proof**: edge proxies overwrite X-Forwarded-Host, so the deployed Caddyfile sends `X-Zacod-Agent-Host` + `X-Zacod-Agent-Token` = per-agent random 64-hex secret (encrypted at rest, rotatable via /:id/rotate-proxy-token, NEVER HMAC-derived from a shared key). `resolveAgentRequestHost` verifies via timingSafeEqual against the cached host hit; mismatch logs `proxy_token_mismatch` and falls back to standard headers.
+- Deploy safety invariants: **domains are interpolated into a root shell heredoc + Caddyfile → assertSafeDomain (strict DNS regex) on create/update AND kit generation**; atomic deploy claim (conditional UPDATE, stale `deploying` >10min reclaimable); SSH output capped 64KB; **SSH host-key pinned** (TOFU on first successful deploy → sshHostKeyFp, mismatch aborts + security event); deploy failure fails closed to deployStatus=error.
+- publicRow must keep stripping proxySecretEnc + sshHostKeyFp (presence flag proxyTokenSet only).
+
+Deferred: cross-DB leak integration tests + ALS-inheritance audit for request-spawned background work.

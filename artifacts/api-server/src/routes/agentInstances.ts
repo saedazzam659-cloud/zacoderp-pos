@@ -28,11 +28,11 @@ import { Router, type Request } from "express";
 // silently disable suspend/register-block enforcement).
 import { centralDb as db } from "@workspace/db";
 import { agentInstancesTable, agentSecurityEventsTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, or, ne, lt } from "drizzle-orm";
 import { z } from "zod/v4";
 import { PgPool, type PgPoolType } from "@workspace/db";
 import net from "node:net";
-import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { extractAuth } from "../middleware/auth.js";
 import { normalizeHost } from "../middleware/domainResolver.js";
 import { encryptSecret, decryptSecret } from "../lib/encryption.js";
@@ -106,6 +106,7 @@ async function logAgentEvent(agentId: number | null, eventType: string, detail: 
 type AgentHostHit = {
   id: number; status: string; dbStatus: string; dbUrlEnc: string | null;
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
+  proxyToken: string | null; // decrypted per-agent proxy secret (null = not issued)
 } | null;
 const hostCache = new Map<string, { hit: AgentHostHit; expires: number }>();
 
@@ -123,7 +124,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
       domain: agentInstancesTable.domain, extraDomains: agentInstancesTable.extraDomains,
       dbStatus: agentInstancesTable.dbStatus, dbUrlEnc: agentInstancesTable.dbUrlEnc,
       brandName: agentInstancesTable.brandName, brandLogoUrl: agentInstancesTable.brandLogoUrl,
-      brandColor: agentInstancesTable.brandColor,
+      brandColor: agentInstancesTable.brandColor, proxySecretEnc: agentInstancesTable.proxySecretEnc,
     }).from(agentInstancesTable);
     for (const r of rows) {
       const extras = Array.isArray(r.extraDomains) ? (r.extraDomains as string[]) : [];
@@ -131,6 +132,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
         hit = {
           id: r.id, status: r.status, dbStatus: r.dbStatus, dbUrlEnc: r.dbUrlEnc,
           brandName: r.brandName, brandLogoUrl: r.brandLogoUrl, brandColor: r.brandColor,
+          proxyToken: r.proxySecretEnc ? decryptSecret(r.proxySecretEnc) : null,
         };
         break;
       }
@@ -150,10 +152,43 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
 //     chain hits the agent's PostgreSQL instead of the central one;
 //   • active but DB not initialized yet → central DB (setup phase).
 const AGENT_PUBLIC_PATHS = ["/branding", "/agent/heartbeat"];
+
+/**
+ * Effective host for agent resolution. Two sources, in trust order:
+ *  1. X-Zacod-Agent-Host + X-Zacod-Agent-Token — set by the agent's reverse
+ *     proxy (deployed Caddyfile). REQUIRED because edge proxies overwrite
+ *     X-Forwarded-Host with the central domain. Trusted ONLY when the token
+ *     matches the agent's stored high-entropy proxy secret (rotatable,
+ *     encrypted at rest, issued per instance — never derived from a shared
+ *     signing key).
+ *  2. X-Forwarded-Host / Host — same trust boundary as domainResolver.
+ */
+export async function resolveAgentRequestHost(req: Request): Promise<string | null> {
+  const claimed = req.headers["x-zacod-agent-host"];
+  const token = req.headers["x-zacod-agent-token"];
+  if (typeof claimed === "string" && typeof token === "string" && token.length >= 32) {
+    const h = normalizeHost(claimed);
+    if (h) {
+      const hit = await lookupAgentByHost(h);
+      const expected = hit?.proxyToken;
+      if (expected) {
+        try {
+          const a = Buffer.from(token); const b = Buffer.from(expected);
+          if (a.length === b.length && timingSafeEqual(a, b)) return h;
+        } catch { /* fall through */ }
+      }
+      // Claimed-but-unverified → fall through to the standard headers and
+      // record the attempt (forged proxy headers are a tamper signal).
+      void logAgentEvent(hit?.id ?? null, "proxy_token_mismatch", { claimedHost: h }, req);
+    }
+  }
+  const fwd = req.headers["x-forwarded-host"];
+  return normalizeHost((Array.isArray(fwd) ? fwd[0] : fwd) || req.headers.host);
+}
+
 export async function agentDataSourceRouter(req: Request, res: any, next: (err?: unknown) => void): Promise<void> {
   try {
-    const fwd = req.headers["x-forwarded-host"];
-    const host = normalizeHost((Array.isArray(fwd) ? fwd[0] : fwd) || req.headers.host);
+    const host = await resolveAgentRequestHost(req);
     const hit = await lookupAgentByHost(host);
     if (!hit) { next(); return; }
     if (AGENT_PUBLIC_PATHS.some(p => req.path === p || req.path.startsWith(p + "/"))) { next(); return; }
@@ -198,13 +233,14 @@ router.use((req, res, next) => {
 
 /** Public projection — secrets replaced with set/masked flags. */
 function publicRow(r: typeof agentInstancesTable.$inferSelect) {
-  const { dbUrlEnc, sshSecretEnc, ...rest } = r;
+  const { dbUrlEnc, sshSecretEnc, proxySecretEnc, sshHostKeyFp: _fp, ...rest } = r as any;
   // Secrets are STRICTLY write-only: only boolean presence flags leave the
   // server — never the ciphertext and never any plaintext fragment.
   return {
     ...rest,
     dbUrlSet: !!dbUrlEnc,
     sshSecretSet: !!sshSecretEnc,
+    proxyTokenSet: !!proxySecretEnc,
   };
 }
 
@@ -243,6 +279,8 @@ router.post("/", async (req, res) => {
   const domain = normalizeHost(d.domain);
   if (!domain) { res.status(400).json({ error: "الدومين غير صالح" }); return; }
   const extras = (d.extraDomains ?? []).map(x => normalizeHost(x)).filter((x): x is string => !!x && x !== domain);
+  try { assertSafeDomain(domain); extras.forEach(assertSafeDomain); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 120) }); return; }
   const conflict = await findDomainConflict([domain, ...extras], null);
   if (conflict) { res.status(409).json({ error: `الدومين ${conflict} مسجّل لوكيل آخر` }); return; }
 
@@ -286,11 +324,14 @@ router.put("/:id", async (req, res) => {
   if (d.domain !== undefined) {
     const domain = normalizeHost(d.domain);
     if (!domain) { res.status(400).json({ error: "الدومين غير صالح" }); return; }
+    try { assertSafeDomain(domain); } catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 120) }); return; }
     patch.domain = domain;
   }
   if (d.extraDomains !== undefined) {
     const main = (patch.domain as string) ?? existing.domain;
-    patch.extraDomains = (d.extraDomains ?? []).map(x => normalizeHost(x)).filter((x): x is string => !!x && x !== main);
+    const extras = (d.extraDomains ?? []).map(x => normalizeHost(x)).filter((x): x is string => !!x && x !== main);
+    try { extras.forEach(assertSafeDomain); } catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 120) }); return; }
+    patch.extraDomains = extras;
   }
   // Domain ownership must be unique across ALL instances (main + extras),
   // otherwise branding/register-blocking attribution is nondeterministic.
@@ -518,6 +559,237 @@ router.post("/:id/activate", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Phase 3: setup kit + SSH deploy engine ─────────────────────────────────
+
+/** Central platform origin used by deployed agents (proxy target + heartbeat). */
+function resolveCentralOrigin(): string {
+  const domains = (process.env.REPLIT_DOMAINS ?? "").split(",").map(d => d.trim()).filter(Boolean);
+  const prodDomain = process.env.NODE_ENV === "production" && domains.length
+    ? `https://${domains.find(d => !/\.replit\.(app|dev)$/i.test(d)) ?? domains[0]}` : "";
+  const c = process.env.PUBLIC_BASE_URL || prodDomain
+    || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "");
+  return c.replace(/\/+$/, "");
+}
+
+/** Strict DNS hostname validation — these values are interpolated into a
+ *  root-executed shell script and a Caddyfile, so anything outside plain
+ *  hostname syntax is rejected outright (heredoc/shell injection guard). */
+function assertSafeDomain(domain: string): void {
+  if (!/^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)+$/.test(domain) || domain.length > 253) {
+    throw new Error(`دومين غير صالح: ${domain.slice(0, 60)}`);
+  }
+}
+
+/** Ensure the instance has a high-entropy rotatable proxy secret; returns the
+ *  plaintext token. Generated once, stored encrypted, rotatable on demand. */
+async function ensureProxySecret(inst: typeof agentInstancesTable.$inferSelect): Promise<string> {
+  if (inst.proxySecretEnc) {
+    const t = decryptSecret(inst.proxySecretEnc);
+    if (t) return t;
+  }
+  const token = randomBytes(32).toString("hex");
+  await db.update(agentInstancesTable)
+    .set({ proxySecretEnc: encryptSecret(token), updatedAt: new Date() })
+    .where(eq(agentInstancesTable.id, inst.id));
+  clearAgentHostCache();
+  return token;
+}
+
+async function buildSetupKit(inst: typeof agentInstancesTable.$inferSelect) {
+  assertSafeDomain(inst.domain);
+  const origin = resolveCentralOrigin();
+  // Validate before interpolating into the root script.
+  const originUrl = new URL(origin);
+  if (originUrl.protocol !== "https:" && originUrl.protocol !== "http:") throw new Error("أصل المنصة غير صالح");
+  const proxyToken = await ensureProxySecret(inst);
+  if (!/^[a-f0-9]{64}$/.test(proxyToken)) throw new Error("رمز الوكيل غير صالح — أعد توليده");
+  const config = {
+    domain: inst.domain,
+    installationId: inst.installationId,
+    licenseKey: inst.licenseKey ?? "",
+    fingerprint: inst.dbFingerprint ?? "",
+    centralOrigin: origin,
+    heartbeatUrl: `${origin}/api/agent/heartbeat`,
+  };
+  const heartbeatScript = `#!/usr/bin/env bash
+# zacod agent heartbeat — validates license/identity with the central platform.
+# On a definitive 403 (suspended / revoked license) the local proxy is stopped.
+CFG=/opt/zacod/config.json
+URL=$(grep -o '"heartbeatUrl": *"[^"]*"' $CFG | cut -d'"' -f4)
+BODY=$(printf '{"installationId":"%s","licenseKey":"%s","domain":"%s","fingerprint":"%s"}' \\
+  "$(grep -o '"installationId": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
+  "$(grep -o '"licenseKey": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
+  "$(grep -o '"domain": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
+  "$(grep -o '"fingerprint": *"[^"]*"' $CFG | cut -d'"' -f4)")
+CODE=$(curl -s -o /tmp/zacod_hb.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$BODY" "$URL")
+if [ "$CODE" = "403" ]; then
+  touch /opt/zacod/SUSPENDED
+  systemctl stop caddy 2>/dev/null || true
+elif [ "$CODE" = "200" ] && [ -f /opt/zacod/SUSPENDED ]; then
+  rm -f /opt/zacod/SUSPENDED
+  systemctl start caddy 2>/dev/null || true
+fi
+`;
+  const caddyfile = `${inst.domain} {
+  reverse_proxy ${origin} {
+    header_up Host {upstream_hostport}
+    header_up X-Zacod-Agent-Host ${inst.domain}
+    header_up X-Zacod-Agent-Token ${proxyToken}
+  }
+}
+`;
+  const installScript = `#!/usr/bin/env bash
+# zacod agent bootstrap — idempotent. Run as root on the agent server.
+set -e
+mkdir -p /opt/zacod
+cat > /opt/zacod/config.json <<'ZACOD_CFG'
+${JSON.stringify(config, null, 2)}
+ZACOD_CFG
+cat > /opt/zacod/heartbeat.sh <<'ZACOD_HB'
+${heartbeatScript}
+ZACOD_HB
+chmod 700 /opt/zacod/heartbeat.sh; chmod 600 /opt/zacod/config.json
+( crontab -l 2>/dev/null | grep -v zacod-heartbeat ; echo "*/5 * * * * /opt/zacod/heartbeat.sh # zacod-heartbeat" ) | crontab -
+# Caddy is REQUIRED — any failure below aborts the script (set -e) so the
+# central API records the deploy as failed instead of a silent half-install.
+if ! command -v caddy >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -y
+    apt-get install -y caddy
+  else
+    echo "ERROR: apt-get not found — install caddy manually" >&2
+    exit 1
+  fi
+fi
+mkdir -p /etc/caddy
+cat > /etc/caddy/Caddyfile <<'ZACOD_CADDY'
+${caddyfile}
+ZACOD_CADDY
+caddy validate --config /etc/caddy/Caddyfile
+systemctl enable caddy
+systemctl reload caddy || systemctl restart caddy
+sleep 2
+systemctl is-active --quiet caddy
+/opt/zacod/heartbeat.sh || true
+echo "ZACOD_BOOTSTRAP_DONE"
+`;
+  return { config, heartbeatScript, caddyfile, installScript };
+}
+
+// GET /:id/setup-kit — config + scripts for manual installation.
+router.get("/:id/setup-kit", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!inst.licenseKey) { res.status(400).json({ error: "أصدر ترخيصًا أولًا" }); return; }
+  try { res.json(await buildSetupKit(inst)); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 200) }); }
+});
+
+// POST /:id/rotate-proxy-token — invalidate the current proxy secret. The
+// agent must be re-deployed (or the kit re-installed) afterwards.
+router.post("/:id/rotate-proxy-token", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  await db.update(agentInstancesTable)
+    .set({ proxySecretEnc: encryptSecret(randomBytes(32).toString("hex")), updatedAt: new Date() })
+    .where(eq(agentInstancesTable.id, id));
+  clearAgentHostCache();
+  await logAgentEvent(id, "proxy_token_rotated", { by: (req as any).authUser?.username ?? null }, req);
+  res.json({ ok: true, note: "أعد النشر أو أعد تثبيت حزمة التهيئة ليعمل الدومين" });
+});
+
+// POST /:id/deploy — run the bootstrap script on the agent server over SSH.
+router.post("/:id/deploy", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) { res.status(400).json({ error: "أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا" }); return; }
+  if (!inst.licenseKey) { res.status(400).json({ error: "أصدر ترخيصًا أولًا" }); return; }
+  if (inst.deployStatus === "deploying") { res.status(409).json({ error: "يوجد نشر جارٍ بالفعل" }); return; }
+  try { await assertProbeTargetAllowed(inst.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+
+  const secret = decryptSecret(inst.sshSecretEnc);
+  if (!secret) { res.status(400).json({ error: "تعذّر فك تشفير بيانات الدخول" }); return; }
+  let installScript: string;
+  try { ({ installScript } = await buildSetupKit(inst)); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 200) }); return; }
+
+  // Atomic claim: only ONE request may flip status → deploying. A stale
+  // "deploying" older than 10 minutes is treated as abandoned and reclaimable.
+  const staleBefore = new Date(Date.now() - 10 * 60_000);
+  const claimed = await db.update(agentInstancesTable)
+    .set({ deployStatus: "deploying", updatedAt: new Date() })
+    .where(and(
+      eq(agentInstancesTable.id, id),
+      or(ne(agentInstancesTable.deployStatus, "deploying"), lt(agentInstancesTable.updatedAt, staleBefore)),
+    )).returning({ id: agentInstancesTable.id });
+  if (!claimed.length) { res.status(409).json({ error: "يوجد نشر جارٍ بالفعل" }); return; }
+
+  const log: string[] = [];
+  const finish = async (ok: boolean, tail: string) => {
+    log.push(tail);
+    await db.update(agentInstancesTable).set({
+      deployStatus: ok ? "ok" : "error",
+      deployLog: log.join("\n").slice(-8000),
+      lastDeployAt: new Date(),
+      sshStatus: ok ? "ok" : inst.sshStatus,
+      updatedAt: new Date(),
+    }).where(eq(agentInstancesTable.id, id)).catch(() => {});
+  };
+
+  try {
+    const { Client } = await import("ssh2");
+    const { createHash } = await import("node:crypto");
+    const isKey = /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(secret);
+    const MAX_OUT = 64_000; // cap collected output — remote can't exhaust memory
+    let seenHostKeyFp = "";
+    const result = await new Promise<{ code: number; out: string }>((resolve, reject) => {
+      const conn = new Client();
+      const timer = setTimeout(() => { conn.end(); reject(new Error("انتهت مهلة الاتصال/التنفيذ (180 ثانية)")); }, 180_000);
+      conn.on("ready", () => {
+        log.push(`[ssh] connected to ${inst.sshHost}:${inst.sshPort ?? 22} as ${inst.sshUser} (hostkey ${seenHostKeyFp.slice(0, 16)}…)`);
+        conn.exec("bash -s", (err, stream) => {
+          if (err) { clearTimeout(timer); conn.end(); reject(err); return; }
+          let out = "";
+          const add = (d: Buffer) => { if (out.length < MAX_OUT) out += d.toString().slice(0, MAX_OUT - out.length); };
+          stream.on("data", add);
+          stream.stderr.on("data", add);
+          stream.on("close", (code: number) => { clearTimeout(timer); conn.end(); resolve({ code: code ?? 1, out }); });
+          stream.end(installScript);
+        });
+      });
+      conn.on("error", (e) => { clearTimeout(timer); reject(e); });
+      conn.connect({
+        host: inst.sshHost!, port: inst.sshPort ?? 22, username: inst.sshUser!,
+        ...(isKey ? { privateKey: secret } : { password: secret }),
+        readyTimeout: 15_000,
+        // Host-key pinning: TOFU on first deploy, strict verification after.
+        hostVerifier: (key: Buffer) => {
+          seenHostKeyFp = `SHA256:${createHash("sha256").update(key).digest("base64")}`;
+          if (!inst.sshHostKeyFp) return true; // first contact — pinned below on success
+          if (inst.sshHostKeyFp === seenHostKeyFp) return true;
+          void logAgentEvent(id, "ssh_hostkey_mismatch", { expected: inst.sshHostKeyFp, got: seenHostKeyFp });
+          return false;
+        },
+      });
+    });
+    const ok = result.code === 0 && result.out.includes("ZACOD_BOOTSTRAP_DONE");
+    if (ok && !inst.sshHostKeyFp && seenHostKeyFp) {
+      await db.update(agentInstancesTable).set({ sshHostKeyFp: seenHostKeyFp })
+        .where(eq(agentInstancesTable.id, id)).catch(() => {});
+    }
+    await finish(ok, result.out.slice(-6000));
+    if (ok) res.json({ ok: true, log: log.join("\n").slice(-8000) });
+    else res.status(502).json({ error: "فشل النشر — راجع السجل", log: log.join("\n").slice(-8000) });
+  } catch (e: any) {
+    await finish(false, `[error] ${String(e?.message ?? e).slice(0, 400)}`);
+    res.status(502).json({ error: "فشل النشر", detail: String(e?.message ?? e).slice(0, 400) });
+  }
+});
+
 // ── Security events ────────────────────────────────────────────────────────
 
 router.get("/security-events", async (_req, res) => {
@@ -551,7 +823,7 @@ export const agentPublicRouter = Router();
 
 // GET /api/branding?host=... — light login-page branding for agent domains.
 agentPublicRouter.get("/branding", async (req, res) => {
-  const host = normalizeHost(typeof req.query.host === "string" ? req.query.host : String(req.headers["x-forwarded-host"] ?? req.headers.host ?? ""));
+  const host = typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
   const hit = await lookupAgentByHost(host);
   if (!hit) { res.json({ isAgentDomain: false }); return; }
   res.json({

@@ -966,10 +966,8 @@ export function resolveDefaultCurrency(country: string, currencyOverride?: strin
 // through an agent host.
 router.post("/register", async (req, res, next) => {
   try {
-    const { lookupAgentByHost } = await import("./agentInstances.js");
-    const { normalizeHost } = await import("../middleware/domainResolver.js");
-    const fwd = req.headers["x-forwarded-host"];
-    const host = normalizeHost((Array.isArray(fwd) ? fwd[0] : fwd) || req.headers.host);
+    const { lookupAgentByHost, resolveAgentRequestHost } = await import("./agentInstances.js");
+    const host = await resolveAgentRequestHost(req);
     const agent = await lookupAgentByHost(host);
     if (agent) {
       const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
