@@ -196,13 +196,24 @@ export default function CompanyNew() {
     },
     staleTime: 60_000,
   });
+  const [bindSubLabel, setBindSubLabel] = useState<string>("");
+  const mainDomainSet = new Set<string>(
+    (domainsQ.data ?? []).filter((d: any) => d.isMain && d.domain).map((d: any) => d.domain as string),
+  );
   const domainItems: ComboboxItem[] = (() => {
     const seen = new Set<string>();
     const items: ComboboxItem[] = [];
     for (const d of domainsQ.data ?? []) {
-      if (d.isMain || !d.domain || seen.has(d.domain)) continue;
+      if (!d.domain || seen.has(d.domain)) continue;
       seen.add(d.domain);
-      items.push({ value: d.domain, label: d.companyId ? `${d.domain} — مربوط بشركة (${d.companyName ?? d.companyId})` : `${d.domain} — نطاق حر` });
+      items.push({
+        value: d.domain,
+        label: d.isMain
+          ? `${d.domain} — رئيسي (اكتب اسم الساب دومين بعد الاختيار)`
+          : d.companyId
+            ? `${d.domain} — مربوط بشركة (${d.companyName ?? d.companyId})`
+            : `${d.domain} — نطاق حر`,
+      });
     }
     for (const a of agentsQ.data ?? []) {
       for (const dom of [a.domain, ...(a.extraDomains ?? [])]) {
@@ -213,7 +224,12 @@ export default function CompanyNew() {
     }
     return items;
   })();
-  const effectiveBindDomain = bindDomainCustom.trim() || bindDomain;
+  const selectedIsMain = !!bindDomain && mainDomainSet.has(bindDomain);
+  const effectiveBindDomain =
+    bindDomainCustom.trim() ||
+    (selectedIsMain
+      ? (bindSubLabel.trim() ? `${bindSubLabel.trim().toLowerCase()}.${bindDomain}` : "")
+      : bindDomain);
 
   // Live industry catalog from the SuperAdmin-managed table.
   // Falls back to an empty list on error so the rest of the page
@@ -380,11 +396,23 @@ export default function CompanyNew() {
             <SearchCombobox
               items={domainItems}
               value={bindDomain}
-              onValueChange={(v: string) => { setBindDomain(v); setBindDomainCustom(""); }}
+              onValueChange={(v: string) => { setBindDomain(v); setBindDomainCustom(""); setBindSubLabel(""); }}
               placeholder="ابحث واختر دومينًا…"
               data-testid="combobox-bind-domain"
             />
           </div>
+          {selectedIsMain && (
+            <div className="flex items-center gap-1" dir="ltr">
+              <Input
+                className="w-40"
+                placeholder="shop1"
+                value={bindSubLabel}
+                onChange={(e) => setBindSubLabel(e.target.value.replace(/[^a-zA-Z0-9-]/g, ""))}
+                data-testid="input-bind-sub-label"
+              />
+              <span className="text-sm text-muted-foreground font-mono">.{bindDomain}</span>
+            </div>
+          )}
           <Input
             dir="ltr"
             className="w-full md:w-80"
