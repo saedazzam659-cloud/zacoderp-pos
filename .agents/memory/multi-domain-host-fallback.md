@@ -52,3 +52,7 @@ as a fallback after explicit + impersonation context. Operational note: trust of
 - Domains-screen create schema must accept `companyId: null` (frontend sends null for main domains) — plain `.optional()` 400s "bad payload".
 - After any company_domains write, call clearDomainCache() or the resolver's negative cache hides the new mapping for the TTL.
 - Agent-DB-target companies (agentInstanceId) are NOT centrally bound — host→agent routing already serves them; central companyId would mismatch.
+
+## «النطاق الموطن» (home domain restriction)
+- companies.home_domain_id (nullable int, no FK — circular import) points at a MAIN company_domains row. Set at registration when SA binds a main domain (no company_domains write — main rows must stay multi-company).
+- /login enforces via homeDomainBlocked(): request host (x-forwarded-host first, normalizeHost) matched against active MAIN domain rows; mismatch → generic 401 + audit. Applies to BOTH the companyCode path AND the code-less trainee path (trainee branch was a bypass until covered). Unregistered hosts (zacoderp.com/dev) unrestricted; SA path untouched. Fail-open on DB errors.

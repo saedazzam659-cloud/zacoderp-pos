@@ -330,6 +330,12 @@ export const companiesTable = pgTable("companies", {
   // ensureSchema run; intentionally nullable here so a company created
   // before the column existed can be patched without blocking writes.
   code: text("code"),
+  // «النطاق الموطن» — optional FK (plain integer, no .references() to avoid a
+  // circular import with companyDomains.ts) to a MAIN multi-company domain row
+  // in company_domains. When set, LOGIN via that main domain is RESTRICTED to
+  // companies homed to it (agent-like behavior, but data stays central).
+  // NULL = company logs in from any unrestricted/platform domain.
+  homeDomainId: integer("home_domain_id"),
 });
 
 export const insertCompanySchema = createInsertSchema(companiesTable).omit({ id: true, createdAt: true, updatedAt: true });

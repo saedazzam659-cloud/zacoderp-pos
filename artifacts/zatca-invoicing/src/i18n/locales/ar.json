@@ -702,6 +702,7 @@
     "downloadCodes": "أكواد تثبيت POS",
     "domains": "إدارة النطاقات",
     "agentServers": "سيرفرات الوكلاء",
+    "externalDbs": "قواعد البيانات الخارجية",
     "emailChannels": "إيميلات الإرسال",
     "backupOperations": "مركز عمليات النسخ الاحتياطي",
     "securityCenter": "مركز الأمان المركزي",

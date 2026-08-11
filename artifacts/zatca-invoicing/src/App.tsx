@@ -23,6 +23,7 @@ import PosDevices from "@/pages/admin/PosDevices";
 import OfflineLicenses from "@/pages/admin/OfflineLicenses";
 import DownloadCodes from "@/pages/admin/DownloadCodes";
 import Domains from "@/pages/admin/Domains";
+import ExternalDatabases from "@/pages/admin/ExternalDatabases";
 import AgentServers from "@/pages/admin/AgentServers";
 import EmailChannels from "@/pages/admin/EmailChannels";
 import Download from "@/pages/Download";
@@ -722,6 +723,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/offline-licenses" component={OfflineLicenses} />}
             {isSuperAdmin && <Route path="/admin/download-codes" component={DownloadCodes} />}
             {isSuperAdmin && <Route path="/admin/domains" component={Domains} />}
+            {isSuperAdmin && <Route path="/admin/external-databases" component={ExternalDatabases} />}
             {isSuperAdmin && <Route path="/admin/agent-servers" component={AgentServers} />}
             {isSuperAdmin && <Route path="/admin/email-channels" component={EmailChannels} />}
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}

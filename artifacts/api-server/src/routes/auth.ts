@@ -6,6 +6,30 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import dnsPromises from "node:dns/promises";
 import { writeAudit } from "../middleware/permissions.js";
+import { normalizeHost } from "../middleware/domainResolver.js";
+
+// «النطاق الموطن» — true when the request arrives on a REGISTERED main
+// multi-company domain the company is NOT homed to. Unregistered hosts
+// (platform/dev domains) never block. Fail-open on lookup errors so a DB
+// hiccup can't lock everyone out.
+async function homeDomainBlocked(req: { headers: Record<string, unknown> }, companyHomeDomainId: number | null): Promise<boolean> {
+  try {
+    const rawHost = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string) || "";
+    const host = normalizeHost(rawHost);
+    if (!host) return false;
+    const [mainRow] = await db.select({ id: companyDomainsTable.id })
+      .from(companyDomainsTable)
+      .where(and(
+        eq(companyDomainsTable.domain, host),
+        eq(companyDomainsTable.isMain, true),
+        eq(companyDomainsTable.status, "active"),
+      )).limit(1);
+    return !!mainRow && companyHomeDomainId !== mainRow.id;
+  } catch (e) {
+    console.error("[login] home-domain check failed (fail-open):", e);
+    return false;
+  }
+}
 import { resolveBearerToken } from "../middleware/auth.js";
 import { runEndOfSessionHooks, loadSessionSettings } from "../lib/workSessionReport.js";
 import { listSessionsForUser } from "./sessions.js";
@@ -123,7 +147,7 @@ router.post("/login", async (req, res) => {
     : "";
   let tenantCompanyId: number | null = null;
   if (trimmedCode) {
-    const [co] = await db.select({ id: companiesTable.id })
+    const [co] = await db.select({ id: companiesTable.id, homeDomainId: companiesTable.homeDomainId })
       .from(companiesTable)
       .where(eq(companiesTable.code, trimmedCode));
     if (!co) {
@@ -135,6 +159,21 @@ router.post("/login", async (req, res) => {
         module: "auth", action: "denied",
         method: "POST", path: "/api/auth/login", statusCode: 401,
         ip, userAgent: ua, metadata: { reason: "unknown_company_code" },
+      });
+      res.status(401).json({ error: "كود الشركة أو اسم المستخدم أو كلمة المرور غير صحيحة" });
+      return;
+    }
+    // «النطاق الموطن» restriction: when the request arrives on a REGISTERED
+    // main multi-company domain, only companies HOMED to that domain may log
+    // in from it (agent-like isolation, data stays central). Unregistered
+    // hosts (platform/dev domains) stay unrestricted.
+    if (await homeDomainBlocked(req, co.homeDomainId ?? null)) {
+      await writeAudit({
+        userId: null, username: String(username).slice(0, 80),
+        role: null, companyId: co.id,
+        module: "auth", action: "denied",
+        method: "POST", path: "/api/auth/login", statusCode: 401,
+        ip, userAgent: ua, metadata: { reason: "home_domain_mismatch" },
       });
       res.status(401).json({ error: "كود الشركة أو اسم المستخدم أو كلمة المرور غير صحيحة" });
       return;
@@ -167,6 +206,14 @@ router.post("/login", async (req, res) => {
         eq(usersTable.isTrainee, true),
       ));
     if (trainee?.companyId) {
+      // «النطاق الموطن» — trainees must respect the same restriction as
+      // code-based logins (their company may be homed to another domain).
+      const [traineeCo] = await db.select({ homeDomainId: companiesTable.homeDomainId })
+        .from(companiesTable).where(eq(companiesTable.id, trainee.companyId));
+      if (await homeDomainBlocked(req, traineeCo?.homeDomainId ?? null)) {
+        res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+        return;
+      }
       tenantCompanyId = trainee.companyId;
       // Normalize to the stored casing so the exact-match user select below
       // finds the row regardless of how the trainee typed their email.
@@ -1422,7 +1469,12 @@ router.post("/register", async (req, res) => {
       try {
         const [existing] = await db.select().from(companyDomainsTable).where(eq(companyDomainsTable.domain, host)).limit(1);
         if (existing?.isMain) {
-          domainBindWarning = "النطاق الرئيسي متعدد الشركات لا يُربط بشركة واحدة";
+          // Main multi-company domain → «النطاق الموطن»: the company is HOMED
+          // to it (agent-like login restriction, data stays central). The
+          // domain row itself stays main/multi-company — no companyId bind.
+          await db.update(companiesTable)
+            .set({ homeDomainId: existing.id })
+            .where(eq(companiesTable.id, company.id));
         } else if (existing && existing.companyId != null) {
           domainBindWarning = `النطاق ${host} مربوط بشركة أخرى — لم يتم الربط`;
         } else {

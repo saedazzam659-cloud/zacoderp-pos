@@ -209,7 +209,7 @@ export default function CompanyNew() {
       items.push({
         value: d.domain,
         label: d.isMain
-          ? `${d.domain} — رئيسي (اكتب اسم الساب دومين بعد الاختيار)`
+          ? `${d.domain} — رئيسي متعدد الشركات (الشركة ستُنسب له)`
           : d.companyId
             ? `${d.domain} — مربوط بشركة (${d.companyName ?? d.companyId})`
             : `${d.domain} — نطاق حر`,
@@ -225,10 +225,13 @@ export default function CompanyNew() {
     return items;
   })();
   const selectedIsMain = !!bindDomain && mainDomainSet.has(bindDomain);
+  // Main domain selected directly → the company is HOMED to it (login from
+  // that domain restricted to its companies). An optional sub-label instead
+  // binds a dedicated sub-domain (e.g. shop1.tafrah.com.sa).
   const effectiveBindDomain =
     bindDomainCustom.trim() ||
-    (selectedIsMain
-      ? (bindSubLabel.trim() ? `${bindSubLabel.trim().toLowerCase()}.${bindDomain}` : "")
+    (selectedIsMain && bindSubLabel.trim()
+      ? `${bindSubLabel.trim().toLowerCase()}.${bindDomain}`
       : bindDomain);
 
   // Live industry catalog from the SuperAdmin-managed table.
@@ -405,7 +408,7 @@ export default function CompanyNew() {
             <div className="flex items-center gap-1" dir="ltr">
               <Input
                 className="w-40"
-                placeholder="shop1"
+                placeholder="ساب دومين (اختياري)"
                 value={bindSubLabel}
                 onChange={(e) => setBindSubLabel(e.target.value.replace(/[^a-zA-Z0-9-]/g, ""))}
                 data-testid="input-bind-sub-label"
@@ -423,7 +426,11 @@ export default function CompanyNew() {
           />
         </div>
         {effectiveBindDomain && (
-          <div className="text-xs text-muted-foreground">سيُربط: <span dir="ltr" className="font-mono">{effectiveBindDomain}</span></div>
+          <div className="text-xs text-muted-foreground">
+            {selectedIsMain && !bindDomainCustom.trim() && !bindSubLabel.trim()
+              ? <>ستُنسب الشركة للنطاق المتعدد <span dir="ltr" className="font-mono">{effectiveBindDomain}</span> — الدخول منه يقتصر على شركاته فقط</>
+              : <>سيُربط: <span dir="ltr" className="font-mono">{effectiveBindDomain}</span></>}
+          </div>
         )}
       </div>
 

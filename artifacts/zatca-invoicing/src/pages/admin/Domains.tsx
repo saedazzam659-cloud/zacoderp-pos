@@ -225,7 +225,7 @@ export default function Domains() {
                   {rows.map((d) => (
                     <tr key={d.id} className="border-t hover:bg-slate-50/50">
                       <td className="p-3 font-mono font-semibold">{d.domain}</td>
-                      <td className="p-3">{d.isMain ? <Badge className="bg-blue-100 text-blue-700">رئيسي (متعدد الشركات)</Badge> : (d.companyName || <span className="text-muted-foreground">—</span>)}</td>
+                      <td className="p-3">{d.isMain ? <Badge className="bg-blue-100 text-blue-700">رئيسي ({(d as any).homedCount > 0 ? `${(d as any).homedCount} شركة منسوبة` : "متعدد الشركات"})</Badge> : (d.companyName || <span className="text-muted-foreground">—</span>)}</td>
                       <td className="p-3 font-mono text-xs">{d.companyCode || "—"}</td>
                       <td className="p-3">
                         {d.isPrimary

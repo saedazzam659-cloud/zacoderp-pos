@@ -10,7 +10,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { companyDomainsTable, companiesTable } from "@workspace/db";
-import { eq, and, desc, ne } from "drizzle-orm";
+import { eq, and, desc, ne, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth } from "../middleware/auth.js";
 import { clearDomainCache, normalizeHost } from "../middleware/domainResolver.js";
@@ -42,6 +42,8 @@ router.get("/", async (_req, res) => {
     lastCheckResult: companyDomainsTable.lastCheckResult,
     notes: companyDomainsTable.notes,
     createdAt: companyDomainsTable.createdAt,
+    // «النطاق الموطن» — how many companies are homed to this main domain.
+    homedCount: sql<number>`(SELECT COUNT(*)::int FROM companies c WHERE c.home_domain_id = ${companyDomainsTable.id})`,
   })
     .from(companyDomainsTable)
     .leftJoin(companiesTable, eq(companiesTable.id, companyDomainsTable.companyId))

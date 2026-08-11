@@ -4,6 +4,11 @@ import { and, eq, desc } from "drizzle-orm";
 import { Readable } from "node:stream";
 import crypto from "node:crypto";
 import { db } from "@workspace/db";
+import { getRoutedDb } from "../lib/externalDbRouting.js";
+
+// All document_archives ROW operations go through the platform storage
+// routing (may live on an external DB). Company policy reads stay central.
+const adb = () => getRoutedDb("document_archive");
 import { documentArchivesTable, companiesTable } from "@workspace/db";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage.js";
@@ -97,7 +102,7 @@ router.post("/", async (req: Request, res: Response) => {
     return;
   }
   const u = req.authUser!;
-  const [row] = await db
+  const [row] = await (await adb())
     .insert(documentArchivesTable)
     .values({
       companyId: cid,
@@ -136,7 +141,7 @@ router.get("/", async (req: Request, res: Response) => {
     res.json([]);
     return;
   }
-  const rows = await db
+  const rows = await (await adb())
     .select()
     .from(documentArchivesTable)
     .where(
@@ -191,7 +196,7 @@ router.post("/:id/share-link", async (req: Request, res: Response) => {
   const cid = guard(req, res); if (cid == null) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
-  const [row] = await db
+  const [row] = await (await adb())
     .select()
     .from(documentArchivesTable)
     .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)));
@@ -217,7 +222,7 @@ router.post("/:id/share-link", async (req: Request, res: Response) => {
 router.get("/shared/:token", async (req: Request, res: Response) => {
   const id = verifyShareToken(String(req.params.token ?? ""));
   if (id == null) { res.status(403).json({ error: "الرابط غير صالح أو منتهي الصلاحية" }); return; }
-  const [row] = await db
+  const [row] = await (await adb())
     .select()
     .from(documentArchivesTable)
     .where(eq(documentArchivesTable.id, id));
@@ -253,7 +258,7 @@ router.get("/:id/download", async (req: Request, res: Response) => {
     res.status(400).json({ error: "معرّف غير صالح" });
     return;
   }
-  const [row] = await db
+  const [row] = await (await adb())
     .select()
     .from(documentArchivesTable)
     .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)));
@@ -305,7 +310,7 @@ router.post("/:id/email", async (req: Request, res: Response) => {
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const parsed = ArchiveEmailBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات البريد غير صحيحة" }); return; }
-  const [row] = await db
+  const [row] = await (await adb())
     .select()
     .from(documentArchivesTable)
     .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)));
@@ -358,7 +363,7 @@ router.patch("/rekey", async (req: Request, res: Response) => {
     res.status(403).json({ error: "ليست لديك صلاحية أرشفة المستندات" });
     return;
   }
-  await db.update(documentArchivesTable)
+  await (await adb()).update(documentArchivesTable)
     .set({ docKey: parsed.data.newDocKey })
     .where(and(
       eq(documentArchivesTable.companyId, cid),
@@ -380,7 +385,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: "معرّف غير صالح" });
     return;
   }
-  const deleted = await db
+  const deleted = await (await adb())
     .delete(documentArchivesTable)
     .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)))
     .returning({ id: documentArchivesTable.id });

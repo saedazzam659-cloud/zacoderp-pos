@@ -15,6 +15,7 @@ import { z } from "zod";
 import { and, eq, desc, sql, gte, lte, count } from "drizzle-orm";
 import { Readable } from "node:stream";
 import { db } from "@workspace/db";
+import { getRoutedDb } from "../lib/externalDbRouting.js";
 import {
   deliveryReceiptDocumentsTable,
   deliveryReceiptDocumentLinesTable,
@@ -123,7 +124,9 @@ async function writeAudit(
 }
 
 async function attachmentCount(cid: number, docId: number): Promise<number> {
-  const [row] = await db
+  // Archive rows may live on an external routed DB — same routing as the
+  // main document-archives module.
+  const [row] = await (await getRoutedDb("document_archive"))
     .select({ n: count() })
     .from(documentArchivesTable)
     .where(and(

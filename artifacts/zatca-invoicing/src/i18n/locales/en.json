@@ -702,6 +702,7 @@
     "downloadCodes": "POS Install Codes",
     "domains": "Domain Management",
     "agentServers": "Agent Servers",
+    "externalDbs": "External Databases",
     "emailChannels": "Sender Emails",
     "backupOperations": "Backup Operations",
     "securityCenter": "Security Center",
