@@ -263,6 +263,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ScreenActionsProvider } from "@/contexts/ScreenActionsContext";
 import { CallProvider } from "@/contexts/CallContext";
 import { TrainingBroadcastProvider } from "@/contexts/TrainingBroadcastContext";
+import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 // Inventory
 import InventoryDashboard from "@/pages/inventory/InventoryDashboard";
