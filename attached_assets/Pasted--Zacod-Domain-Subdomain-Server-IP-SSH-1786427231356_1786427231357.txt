@@ -1,0 +1,113 @@
+خطوات تنفيذ وتسليم Zacod للعميل
+بيانات العميل
+اسم العميل/الوكيل.
+Domain أو Subdomain.
+Server IP.
+SSH Port.
+SSH Username.
+SSH Key أو Password مؤقتة.
+Database بيانات PostgreSQL.
+تجهيز السيرفر
+التأكد من Linux.
+تحديث النظام.
+تثبيت Node.js.
+تثبيت PostgreSQL إذا كانت Database على نفس السيرفر.
+تثبيت Nginx.
+تثبيت PM2.
+تجهيز Firewall.
+تجهيز SSL.
+إنشاء Instance من لوحة SuperAdmin في Zacod:
+إنشاء Agent/Instance.
+إنشاء Installation ID.
+ربط Domain أو Subdomain.
+إنشاء License Key.
+تحديد الإصدار.
+تحديد Database الخاصة بالوكيل.
+إرسال النسخة لا يتم إرسال Source Code الأصلي.
+يتم إرسال Production Build:
+React Production Build.
+Node.js Production Build.
+Configuration الخاصة بالـ Instance.
+التثبيت من لوحة SuperAdmin:
+الاتصال بسيرفر العميل عبر SSH.
+رفع Backend.
+رفع Frontend.
+إعداد Nginx.
+إعداد PM2.
+ربط PostgreSQL.
+تشغيل الخدمات.
+اختبار النظام.
+حماية النسخة ربط الـ Instance بـ:
+Installation ID.
+Domain.
+License.
+Server/Installation Identity.
+ويتم التحقق من الترخيص من Backend، وليس من React فقط.
+تشغيل النظام Domain العميل → Nginx → React → Node.js API → PostgreSQL الخاصة بالعميل.
+بعد نجاح التشغيل تظهر في لوحة Zacod:
+✓ Instance Active ✓ Domain Verified ✓ License Active ✓ Backend Connected ✓ Frontend Active ✓ Database Connected
+التحديثات المستقبلية لا يتم إعادة التسطيب.
+عند تطوير Zacod:
+Development → Build → Publish Version → Update Server → Agent/Updater → Backend Update → Frontend Update → Database Migration عند الحاجة.
+قاعدة مهمة العميل لا يحصل على Source Code الأصلي، ولا يملك صلاحية إنشاء Instance أو License أو إصدار جديد.
+أنت كـ SuperAdmin ومالك النظام تتحكم في: Installation Licensing Domains Versions Updates Database Migrations
+وبذلك كل عميل لديه Instance مستقلة، بينما تطوير Zacod يتم مركزياً.
+
+
+
+
+
+
+
+
+
+مراحل تنفيذ Zacod — Instance العميل مع API مركزي
+تجهيز Zacod المركزي
+React Frontend.
+Node.js + TypeScript Backend.
+PostgreSQL.
+API مركزي على: api.zacoderp.com
+نظام License وInstallation لكل وكيل.
+تجهيز Instance العميل
+تثبيت React Production Build فقط على سيرفر العميل.
+لا يتم إرسال Source Code الأصلي.
+لا يحتاج العميل إلى Backend كامل.
+ربط الـ Frontend بـ API المركزي.
+تسجيل الـ Instance من لوحة SuperAdmin:
+إنشاء Agent ID.
+إنشاء Installation ID.
+تسجيل Domain/Subdomain.
+إنشاء License.
+تحديد Database الخاصة بالوكيل.
+ربط قاعدة البيانات
+العميل يجهز PostgreSQL على سيرفره.
+يتم إنشاء Database مستقلة للوكيل.
+يتم إعطاء Zacod طريقة اتصال آمنة بها.
+يتم اختبار الاتصال من النظام.
+تسجيل الدخول المستخدم يدخل من Domain العميل:
+Domain → React → api.zacoderp.com → التحقق من License + Domain + Installation → تحديد Company Code → الاتصال بقاعدة بيانات الوكيل → تسجيل الدخول.
+تشغيل النظام الـ React عند العميل يعرض النظام، بينما العمليات الأساسية تتم من خلال API المركزي عند Zacod.
+التحديثات عند تطوير Zacod:
+تطوير → Build → Publish API/Backend → التحديث يظهر فوراً لجميع الوكلاء.
+أما تحديث React: → يتم نشر Build جديد → الـ Instance عند العميل تسحب الإصدار الجديد أو يتم تحديثها مركزياً.
+Database Migration عند وجود تعديل في قاعدة البيانات:
+إنشاء Migration Version.
+تحديد الوكلاء المطلوب تحديثهم.
+تنفيذ Migration على Database كل وكيل.
+تسجيل Database Version.
+عدم التأثير على قواعد الوكلاء الآخرين.
+الحماية
+License لكل Installation.
+ربط License بالدومين.
+Installation ID.
+Digital Signature.
+التحقق من الترخيص من Backend.
+عدم وضع أسرار أو Connection Strings داخل React.
+عزل بيانات كل وكيل.
+النتيجة النهائية
+Client Server: React + Database
+Zacod Server: Node.js + TypeScript API + License + Deployment
+والاتصال:
+Client Domain → React → api.zacoderp.com → Agent Database
+وبذلك يظل الـ Backend الأساسي والسورس الحساس عند Zacod، وأي تطوير في الـ Backend يظهر مركزياً لجميع الوكلاء.
+
