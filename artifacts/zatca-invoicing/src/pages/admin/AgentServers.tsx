@@ -19,10 +19,42 @@ import { DateField } from "@/components/ui/date-field";
 import {
   Server, Plus, Pencil, Trash2, Database, KeyRound, ShieldAlert, Globe,
   Plug, Loader2, CheckCircle2, XCircle, Ban, Play, Copy, Palette, RefreshCw,
-  HeartPulse, AlertTriangle, UploadCloud, FileDown,
+  HeartPulse, AlertTriangle, UploadCloud, FileDown, Mail,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
+
+// جريدة ألوان جاهزة لهوية الوكيل
+const BRAND_PALETTE = [
+  "#0f766e", "#0e7490", "#1d4ed8", "#4f46e5", "#7c3aed", "#a21caf",
+  "#be123c", "#dc2626", "#ea580c", "#d97706", "#ca8a04", "#65a30d",
+  "#16a34a", "#059669", "#334155", "#111827",
+];
+
+// يقرأ ملف صورة ويصغّرها (≤512px) ويرجع data URL — يحافظ على الشفافية.
+async function fileToLogoDataUrl(file: File): Promise<string> {
+  if (!/^image\/(png|jpeg|webp|svg\+xml)$/.test(file.type)) throw new Error("اختر صورة PNG أو JPG أو WEBP");
+  if (file.size > 3 * 1024 * 1024) throw new Error("حجم الصورة يجب ألا يتجاوز 3MB");
+  const raw = await new Promise<string>((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result));
+    r.onerror = () => rej(new Error("تعذّرت قراءة الملف"));
+    r.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error("ملف الصورة غير صالح"));
+    i.src = raw;
+  });
+  const MAX = 512;
+  const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
 
 type Agent = {
   id: number; name: string; contactPhone: string | null; contactEmail: string | null;
@@ -95,6 +127,9 @@ export default function AgentServers() {
   const [form, setForm] = useState({ ...emptyForm });
   const [busy, setBusy] = useState<string | null>(null); // "<action>-<id>"
   const [logView, setLogView] = useState<{ title: string; text: string } | null>(null);
+  const [showLogoDialog, setShowLogoDialog] = useState(false);
+  const [logoDrag, setLogoDrag] = useState(false);
+  const [emailPkg, setEmailPkg] = useState<{ agent: Agent; email: string } | null>(null);
   const [kitView, setKitView] = useState<{ agent: string; kit: any } | null>(null);
   const isEdit = form.id > 0;
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
@@ -113,10 +148,19 @@ export default function AgentServers() {
         mode: form.mode,
         maxCompanies: form.maxCompanies ? Number(form.maxCompanies) : null,
         licenseExpiresAt: form.licenseExpiresAt || null,
-        brandName: form.brandName || null, brandLogoUrl: form.brandLogoUrl || null, brandColor: form.brandColor || null,
+        brandName: form.brandName || null, brandColor: form.brandColor || null,
         sshHost: form.sshHost || null, sshPort: form.sshPort ? Number(form.sshPort) : null, sshUser: form.sshUser || null,
         notes: form.notes || null,
       };
+      // اللوجو: الـ WAF في الإنتاج يمنع data: URIs داخل جسم الطلب — نرسل
+      // base64 + mime منفصلين ويعيد السيرفر بناء الرابط.
+      const logo = form.brandLogoUrl.trim();
+      if (logo.startsWith("data:")) {
+        const m = logo.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+        if (m) { payload.brandLogoMime = m[1]; payload.brandLogoB64 = m[2]; }
+      } else {
+        payload.brandLogoUrl = logo || null;
+      }
       // Secrets: send ONLY when a new value was typed (never echo back).
       if (form.dbUrl.trim()) payload.dbUrl = form.dbUrl.trim();
       if (form.sshSecret.trim()) payload.sshSecret = form.sshSecret.trim();
@@ -307,6 +351,9 @@ export default function AgentServers() {
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.licenseKey || busy === `kit-${a.id}`} onClick={() => openSetupKit(a)} data-testid={`button-kit-${a.id}`}>
                       {busy === `kit-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3 ms-1" />}حزمة التهيئة
                     </Button>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.licenseKey} onClick={() => setEmailPkg({ agent: a, email: a.contactEmail ?? "" })} data-testid={`button-email-pkg-${a.id}`}>
+                      <Mail className="h-3 w-3 ms-1" />إرسال بالإيميل
+                    </Button>
                     {a.deployLog && (
                       <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setLogView({ title: `سجل النشر — ${a.name}`, text: a.deployLog! })}>السجل</Button>
                     )}
@@ -440,6 +487,88 @@ export default function AgentServers() {
         </DialogContent>
       </Dialog>
 
+      {/* ── إرسال حزمة التسطيب بالإيميل ── */}
+      <Dialog open={!!emailPkg} onOpenChange={(o) => !o && setEmailPkg(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>إرسال حزمة التسطيب — {emailPkg?.agent.name}</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            تُرسل رسالة إلى إيميل الوكيل تحتوي: سكربت التثبيت + الإعدادات + إعداد الوكيل العكسي + نبض الترخيص + مفتاح الترخيص وأكواد التسطيب{emailPkg?.agent.mode === "full_shell" ? " + نسخة قاعدة البيانات الابتدائية (هيكل بدون بيانات)" : ""}. الملفات مربوطة بدومين الوكيل ولا تعمل على غيره.
+          </p>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">إيميل الوكيل</label>
+            <Input dir="ltr" type="email" placeholder="agent@example.com" value={emailPkg?.email ?? ""} onChange={e => setEmailPkg(p => p ? { ...p, email: e.target.value } : p)} data-testid="input-pkg-email" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEmailPkg(null)}>إلغاء</Button>
+            <Button disabled={!emailPkg?.email.trim() || busy === `emailpkg-${emailPkg?.agent.id}`} onClick={async () => {
+              if (!emailPkg) return;
+              const target = emailPkg.email.trim().toLowerCase();
+              const storedEmail = (emailPkg.agent.contactEmail ?? "").trim().toLowerCase();
+              let confirmOverride = false;
+              if (storedEmail && target !== storedEmail) {
+                if (!confirm(`الإيميل مختلف عن إيميل الوكيل المسجّل (${storedEmail}).\nالحزمة تحتوي مفاتيح سرية خاصة بالوكيل — تأكيد الإرسال إلى ${target}؟ سيُحدَّث الإيميل المسجّل أيضًا.`)) return;
+                confirmOverride = true;
+              }
+              setBusy(`emailpkg-${emailPkg.agent.id}`);
+              try {
+                const r = await fetch(`${API}/api/admin/agent-instances/${emailPkg.agent.id}/email-package`, {
+                  method: "POST", headers, body: JSON.stringify({ email: target, confirmOverride }),
+                });
+                const j = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(j.error ?? "فشل الإرسال");
+                toast({ title: "تم الإرسال", description: `أُرسلت الحزمة إلى ${j.sentTo}` });
+                setEmailPkg(null); invalidate();
+              } catch (e: any) {
+                toast({ title: "فشل الإرسال", description: String(e.message ?? e), variant: "destructive" });
+              } finally { setBusy(null); }
+            }} data-testid="button-send-pkg-email">
+              {busy === `emailpkg-${emailPkg?.agent.id}` && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}
+              <Mail className="h-4 w-4 ms-1" />إرسال
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── رفع اللوجو ── */}
+      <Dialog open={showLogoDialog} onOpenChange={setShowLogoDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>رفع لوجو الوكيل</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">يظهر اللوجو على صفحة الدخول عند دومين الوكيل. تُصغَّر الصورة تلقائيًا (بحد أقصى 512px).</p>
+          <label
+            onDragOver={e => { e.preventDefault(); setLogoDrag(true); }}
+            onDragLeave={() => setLogoDrag(false)}
+            onDrop={async e => {
+              e.preventDefault(); setLogoDrag(false);
+              const f = e.dataTransfer.files?.[0];
+              if (!f) return;
+              try { set("brandLogoUrl", await fileToLogoDataUrl(f)); setShowLogoDialog(false); }
+              catch (err: any) { toast({ title: "فشل رفع اللوجو", description: String(err.message ?? err), variant: "destructive" }); }
+            }}
+            className={`block border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${logoDrag ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"}`}
+            data-testid="dropzone-logo"
+          >
+            <UploadCloud className="h-8 w-8 mx-auto mb-2 text-muted-foreground/60" />
+            <div className="text-sm">اسحب الصورة هنا أو اضغط للاختيار</div>
+            <div className="text-[11px] text-muted-foreground mt-1">PNG / JPG / WEBP — حتى 3MB</div>
+            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={async e => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              try { set("brandLogoUrl", await fileToLogoDataUrl(f)); setShowLogoDialog(false); }
+              catch (err: any) { toast({ title: "فشل رفع اللوجو", description: String(err.message ?? err), variant: "destructive" }); }
+            }} data-testid="input-logo-file" />
+          </label>
+          {form.brandLogoUrl && <img src={form.brandLogoUrl} alt="" className="h-16 mx-auto rounded border bg-white object-contain p-1" />}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">أو رابط مباشر للوجو</label>
+            <Input dir="ltr" placeholder="https://..." value={form.brandLogoUrl.startsWith("data:") ? "" : form.brandLogoUrl} onChange={e => set("brandLogoUrl", e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowLogoDialog(false)}>إغلاق</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── نموذج إضافة/تعديل ── */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
@@ -502,9 +631,39 @@ export default function AgentServers() {
                 تظهر على صفحة الدخول عند دومين الوكيل بدل هوية النظام الرئيسية — وصفحة دخوله تعرض <b>تسجيل الدخول فقط</b> (إنشاء الحساب ممنوع من دومين الوكيل تلقائيًا).
               </div>
               <div><label className="text-xs text-muted-foreground block mb-1">اسم النظام عند الوكيل</label><Input value={form.brandName} onChange={e => set("brandName", e.target.value)} data-testid="input-agent-brandname" /></div>
-              <div><label className="text-xs text-muted-foreground block mb-1">لون أساسي (اختياري)</label><Input dir="ltr" placeholder="#0f766e" value={form.brandColor} onChange={e => set("brandColor", e.target.value)} /></div>
-              <div className="col-span-2"><label className="text-xs text-muted-foreground block mb-1">رابط اللوجو</label><Input dir="ltr" placeholder="https://..." value={form.brandLogoUrl} onChange={e => set("brandLogoUrl", e.target.value)} /></div>
-              {form.brandLogoUrl && <img src={form.brandLogoUrl} alt="" className="h-16 rounded border bg-white object-contain p-1" />}
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">لون أساسي (اختياري)</label>
+                <div className="flex items-center gap-2">
+                  <input type="color" className="h-9 w-10 rounded border cursor-pointer bg-white p-0.5" value={/^#[0-9a-fA-F]{6}$/.test(form.brandColor) ? form.brandColor : "#0f766e"} onChange={e => set("brandColor", e.target.value)} data-testid="input-agent-color-picker" />
+                  <Input dir="ltr" placeholder="#0f766e" value={form.brandColor} onChange={e => set("brandColor", e.target.value)} />
+                </div>
+                {/* جريدة ألوان جاهزة */}
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {BRAND_PALETTE.map(c => (
+                    <button key={c} type="button" title={c} onClick={() => set("brandColor", c)}
+                      className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${form.brandColor.toLowerCase() === c ? "border-slate-900 ring-2 ring-offset-1 ring-slate-400" : "border-white shadow"}`}
+                      style={{ backgroundColor: c }} data-testid={`swatch-${c.slice(1)}`} />
+                  ))}
+                </div>
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-muted-foreground block mb-1">اللوجو</label>
+                <div className="flex items-center gap-3">
+                  {form.brandLogoUrl
+                    ? <img src={form.brandLogoUrl} alt="" className="h-16 w-16 rounded-lg border bg-white object-contain p-1" />
+                    : <div className="h-16 w-16 rounded-lg border border-dashed flex items-center justify-center text-muted-foreground"><UploadCloud className="h-6 w-6 opacity-40" /></div>}
+                  <div className="space-y-1.5">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setShowLogoDialog(true)} data-testid="button-upload-logo">
+                      <UploadCloud className="h-4 w-4 ms-1" />{form.brandLogoUrl ? "تغيير اللوجو" : "رفع لوجو"}
+                    </Button>
+                    {form.brandLogoUrl && (
+                      <Button type="button" variant="ghost" size="sm" className="text-rose-600 h-7" onClick={() => set("brandLogoUrl", "")}>
+                        <Trash2 className="h-3.5 w-3.5 ms-1" />إزالة
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </TabsContent>
           </Tabs>
           <DialogFooter>

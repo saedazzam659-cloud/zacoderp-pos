@@ -267,6 +267,10 @@ const upsertSchema = z.object({
   sshSecret: z.string().max(10000).nullish(),
   brandName: z.string().max(200).nullish(),
   brandLogoUrl: z.string().max(1000).nullish(),
+  // Uploaded logo: raw base64 + mime (the prod edge WAF blocks `data:` URIs
+  // inside request bodies — the data URL is rebuilt server-side).
+  brandLogoB64: z.string().regex(/^[A-Za-z0-9+/=]+$/).max(800_000).nullish(),
+  brandLogoMime: z.enum(["image/png", "image/jpeg", "image/webp"]).nullish(),
   brandColor: z.string().max(20).nullish(),
   notes: z.string().max(2000).nullish(),
 });
@@ -295,7 +299,11 @@ router.post("/", async (req, res) => {
     dbUrlEnc: d.dbUrl ? encryptSecret(d.dbUrl) : null,
     sshHost: d.sshHost ?? null, sshPort: d.sshPort ?? null, sshUser: d.sshUser ?? null,
     sshSecretEnc: d.sshSecret ? encryptSecret(d.sshSecret) : null,
-    brandName: d.brandName ?? null, brandLogoUrl: d.brandLogoUrl ?? null, brandColor: d.brandColor ?? null,
+    brandName: d.brandName ?? null,
+    brandLogoUrl: d.brandLogoB64 && d.brandLogoMime
+      ? `data:${d.brandLogoMime};base64,${d.brandLogoB64}`
+      : (d.brandLogoUrl ?? null),
+    brandColor: d.brandColor ?? null,
     notes: d.notes ?? null,
     createdByUserId: (req as any).authUser?.id ?? null,
   }).returning();
@@ -317,6 +325,8 @@ router.put("/:id", async (req, res) => {
   for (const k of ["contactPhone", "contactEmail", "brandName", "brandLogoUrl", "brandColor", "notes", "sshHost", "sshUser"] as const) {
     if (d[k] !== undefined) patch[k] = d[k] ?? null;
   }
+  // Uploaded logo wins over a plain URL when both are present.
+  if (d.brandLogoB64 && d.brandLogoMime) patch.brandLogoUrl = `data:${d.brandLogoMime};base64,${d.brandLogoB64}`;
   if (d.sshPort !== undefined) patch.sshPort = d.sshPort ?? null;
   if (d.mode !== undefined) patch.mode = d.mode;
   if (d.maxCompanies !== undefined) patch.maxCompanies = d.maxCompanies ?? null;
@@ -684,6 +694,93 @@ router.get("/:id/setup-kit", async (req, res) => {
   if (!inst.licenseKey) { res.status(400).json({ error: "أصدر ترخيصًا أولًا" }); return; }
   try { res.json(await buildSetupKit(inst)); }
   catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 200) }); }
+});
+
+// POST /:id/email-package — send the full setup package to the agent's
+// email: install script + config + Caddyfile + heartbeat + license/install
+// codes, plus (full_shell) an initial DB schema dump. Uses the system's
+// configured email senders.
+router.post("/:id/email-package", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!inst.licenseKey) { res.status(400).json({ error: "أصدر ترخيصًا أولًا" }); return; }
+  const email = String(req.body?.email ?? inst.contactEmail ?? "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { res.status(400).json({ error: "أدخل بريدًا صالحًا" }); return; }
+  // الحزمة تحتوي أسرار الوكيل (مفتاح الترخيص + رمز البروكسي) — الإرسال لغير
+  // الإيميل المسجّل يتطلب تأكيدًا صريحًا، ويُحدَّث الإيميل المسجّل بعده.
+  const stored = (inst.contactEmail ?? "").trim().toLowerCase();
+  if (stored && email !== stored && req.body?.confirmOverride !== true) {
+    res.status(409).json({ error: "الإيميل مختلف عن إيميل الوكيل المسجّل", needsConfirm: true, storedEmail: stored });
+    return;
+  }
+  if (email !== stored) {
+    await db.update(agentInstancesTable).set({ contactEmail: email, updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+    await logAgentEvent(id, "contact_email_changed", { from: stored || null, to: email, by: (req as any).authUser?.username ?? null }, req);
+  }
+
+  let kit: Awaited<ReturnType<typeof buildSetupKit>>;
+  try { kit = await buildSetupKit(inst); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 200) }); return; }
+
+  const attachments: { filename: string; content: string | Buffer; contentType?: string }[] = [
+    { filename: "install.sh", content: kit.installScript, contentType: "text/x-shellscript" },
+    { filename: "config.json", content: JSON.stringify(kit.config, null, 2), contentType: "application/json" },
+    { filename: "Caddyfile", content: kit.caddyfile, contentType: "text/plain" },
+    { filename: "heartbeat.sh", content: kit.heartbeatScript, contentType: "text/x-shellscript" },
+  ];
+
+  // full_shell: attach the initial database schema (structure only, no data).
+  if (inst.mode === "full_shell" && process.env.DATABASE_URL) {
+    try {
+      const { execFile } = await import("node:child_process");
+      const dumpSql = await new Promise<string>((resolve, reject) => {
+        execFile("pg_dump", [
+          "--schema-only", "--no-owner", "--no-privileges", "--no-comments",
+          process.env.DATABASE_URL!,
+        ], { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+          if (err) reject(new Error(String(stderr || err.message).slice(0, 200)));
+          else resolve(stdout);
+        });
+      });
+      attachments.push({ filename: "db-init.sql", content: dumpSql, contentType: "application/sql" });
+    } catch (e: any) {
+      // Don't block the whole send — DB init can also run via زر «تهيئة قاعدة البيانات».
+      attachments.push({ filename: "db-init-README.txt", content: `تعذّر توليد نسخة قاعدة البيانات تلقائيًا (${String(e?.message ?? e)}). استخدم زر «تهيئة قاعدة البيانات» من لوحة التحكم بدلًا من ذلك.` });
+    }
+  }
+
+  const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+  const html = `
+    <div dir="rtl" style="font-family:Tahoma,Arial,sans-serif; line-height:1.9;">
+      <h2 style="margin:0 0 8px;">حزمة تسطيب نسخة الوكيل — ${esc(inst.name)}</h2>
+      <p>مرفق مع هذه الرسالة كل ملفات التسطيب الخاصة بدومين <b dir="ltr">${esc(inst.domain)}</b>.</p>
+      <table style="border-collapse:collapse; font-size:13px;" border="1" cellpadding="6">
+        <tr><td><b>نوع النسخة</b></td><td>${inst.mode === "full_shell" ? "نسخة قشرة كاملة (فرونت + باك قشرة)" : "واجهة فقط + API مركزي"}</td></tr>
+        <tr><td><b>مفتاح الترخيص</b></td><td dir="ltr" style="font-family:monospace;">${esc(inst.licenseKey)}</td></tr>
+        <tr><td><b>معرّف التنصيب</b></td><td dir="ltr" style="font-family:monospace;">${esc(inst.installationId)}</td></tr>
+        ${inst.licenseExpiresAt ? `<tr><td><b>انتهاء الترخيص</b></td><td dir="ltr">${new Date(inst.licenseExpiresAt).toISOString().slice(0, 10)}</td></tr>` : ""}
+      </table>
+      <h3>خطوات التسطيب على السيرفر:</h3>
+      <ol>
+        <li>ارفع الملفات المرفقة إلى السيرفر (مثلًا في <span dir="ltr">/root/zacod-setup</span>).</li>
+        <li>نفّذ: <span dir="ltr" style="font-family:monospace; background:#f1f5f9; padding:2px 6px; border-radius:4px;">bash install.sh</span> بصلاحية root.</li>
+        <li>السكربت يثبّت الوكيل العكسي ويربط الدومين ويشغّل نبض الترخيص تلقائيًا (كل 5 دقائق).</li>
+        ${inst.mode === "full_shell" ? "<li>لقاعدة البيانات: نفّذ <span dir='ltr' style='font-family:monospace;'>db-init.sql</span> على قاعدة PostgreSQL فارغة، أو استخدم زر «تهيئة قاعدة البيانات» من لوحة التحكم المركزية.</li>" : ""}
+      </ol>
+      <p style="color:#64748b; font-size:12px;">هذه الملفات تحتوي مفاتيح خاصة بهذا الوكيل فقط، وهي مربوطة بدومينه ولا تعمل على أي دومين آخر. عند إيقاف الوكيل من لوحة التحكم تتوقف نسخته تلقائيًا خلال دقائق.</p>
+    </div>`;
+
+  const { sendEmail } = await import("../lib/email.js");
+  const r = await sendEmail({
+    to: email,
+    subject: `حزمة تسطيب نسخة الوكيل — ${inst.name} (${inst.domain})`,
+    html,
+    attachments,
+  });
+  if (!r.ok) { res.status(502).json({ error: `فشل إرسال البريد: ${r.reason ?? "غير معروف"}` }); return; }
+  await logAgentEvent(id, "package_emailed", { to: email, by: (req as any).authUser?.username ?? null, files: attachments.map(a => a.filename) }, req);
+  res.json({ ok: true, sentTo: email, files: attachments.map(a => a.filename) });
 });
 
 // POST /:id/rotate-proxy-token — invalidate the current proxy secret. The

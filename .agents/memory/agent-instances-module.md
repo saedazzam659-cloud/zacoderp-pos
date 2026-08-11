@@ -27,4 +27,8 @@ Phase 3 (SSH deploy + setup kit) — done:
 - Deploy safety invariants: **domains are interpolated into a root shell heredoc + Caddyfile → assertSafeDomain (strict DNS regex) on create/update AND kit generation**; atomic deploy claim (conditional UPDATE, stale `deploying` >10min reclaimable); SSH output capped 64KB; **SSH host-key pinned** (TOFU on first successful deploy → sshHostKeyFp, mismatch aborts + security event); deploy failure fails closed to deployStatus=error.
 - publicRow must keep stripping proxySecretEnc + sshHostKeyFp (presence flag proxyTokenSet only).
 
+Brand identity UX: logo is stored as a data URL in brandLogoUrl but MUST travel as separate brandLogoB64+brandLogoMime fields (prod WAF blocks `data:` URIs in bodies; server rebuilds); edit-form save must re-split an echoed data URL the same way. Color palette + native picker in الهوية tab.
+
+Email delivery: POST /:id/email-package emails the setup kit + license/install codes (+ schema-only db-init.sql for full_shell) via lib/email sendEmail attachments. Package holds agent secrets (proxy token, license key) → sending to an email ≠ stored contactEmail requires confirmOverride:true (409 needsConfirm otherwise), updates contactEmail, and both actions are audit-logged.
+
 Deferred: cross-DB leak integration tests + ALS-inheritance audit for request-spawned background work.
