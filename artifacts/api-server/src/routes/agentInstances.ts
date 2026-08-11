@@ -293,7 +293,12 @@ const upsertSchema = z.object({
 // POST /api/admin/agent-instances
 router.post("/", async (req, res) => {
   const p = upsertSchema.safeParse(req.body);
-  if (!p.success) { res.status(400).json({ error: "بيانات غير صالحة", detail: p.error.issues }); return; }
+  if (!p.success) {
+    const first = p.error.issues[0];
+    console.warn("[agent-instances] create validation failed:", JSON.stringify(p.error.issues).slice(0, 500));
+    res.status(400).json({ error: `بيانات غير صالحة — الحقل: ${first?.path?.join(".") || "?"} (${first?.message || ""})`, detail: p.error.issues });
+    return;
+  }
   const d = p.data;
   const domain = normalizeHost(d.domain);
   if (!domain) { res.status(400).json({ error: "الدومين غير صالح" }); return; }
@@ -330,7 +335,12 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const p = upsertSchema.partial().safeParse(req.body);
-  if (!id || !p.success) { res.status(400).json({ error: "بيانات غير صالحة" }); return; }
+  if (!id || !p.success) {
+    const first = p.success ? null : p.error.issues[0];
+    if (first) console.warn("[agent-instances] update validation failed:", JSON.stringify(p.success ? [] : p.error.issues).slice(0, 500));
+    res.status(400).json({ error: first ? `بيانات غير صالحة — الحقل: ${first.path?.join(".") || "?"} (${first.message || ""})` : "بيانات غير صالحة" });
+    return;
+  }
   const d = p.data;
   const [existing] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
