@@ -219,6 +219,31 @@ router.delete("/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── Domain activation setup info. Returns the platform host + its resolved
+// A-record IPs so the UI can show "point your domain here" instructions and
+// the check can compare the custom domain's DNS against the platform's.
+function platformHost(): string {
+  const base = process.env.PUBLIC_BASE_URL;
+  if (base) {
+    try { return new URL(base.includes("://") ? base : `https://${base}`).hostname; } catch { /* fall through */ }
+  }
+  const rd = (process.env.REPLIT_DOMAINS || "").split(",")[0]?.trim();
+  return rd || "zacoderp.com";
+}
+
+function resolve4Safe(host: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    dns.resolve4(host, (err, addrs) => resolve(err ? [] : addrs));
+  });
+}
+
+// GET /api/admin/domains/setup-info — platform host + IPs for DNS instructions.
+router.get("/setup-info", async (_req, res) => {
+  const host = platformHost();
+  const addresses = await resolve4Safe(host);
+  res.json({ platformHost: host, addresses });
+});
+
 // ─── Read-only domain check (DNS / SSL / reachability). Best-effort: every
 // probe is wrapped so the endpoint always returns 200 with a result object,
 // never throws. Results are persisted on the row for the UI's "last check".
@@ -275,10 +300,14 @@ router.post("/:id/check", async (req, res) => {
   if (!row) { res.status(404).json({ error: "not found" }); return; }
 
   const host = normalizeHost(row.domain) || row.domain;
-  const [dnsRes, sslRes] = await Promise.all([checkDns(host), checkSsl(host)]);
+  const [dnsRes, sslRes, platformIps] = await Promise.all([
+    checkDns(host), checkSsl(host), resolve4Safe(platformHost()),
+  ]);
+  // Does the custom domain point at the same servers as the platform?
+  const matchesPlatform = platformIps.length > 0 && (dnsRes.addresses ?? []).some((a) => platformIps.includes(a));
   // Reachability = DNS resolves AND the TLS handshake produced a certificate.
   const reachable = dnsRes.ok && sslRes.ok;
-  const result = { checkedAt: new Date().toISOString(), dns: dnsRes, ssl: sslRes, reachable };
+  const result = { checkedAt: new Date().toISOString(), dns: dnsRes, ssl: sslRes, reachable, matchesPlatform, platformIps };
 
   await db.update(companyDomainsTable)
     .set({ lastCheckAt: new Date(), lastCheckResult: result, updatedAt: new Date() })

@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Globe, Plus, Trash2, Pencil, RefreshCw, Search, Activity, Star,
-  ShieldCheck, ShieldAlert, Loader2, CheckCircle2, XCircle,
+  ShieldCheck, ShieldAlert, Loader2, CheckCircle2, XCircle, Copy, Wrench,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -29,6 +29,8 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 type CheckResult = {
   checkedAt: string;
   reachable: boolean;
+  matchesPlatform?: boolean;
+  platformIps?: string[];
   dns: { ok: boolean; addresses?: string[]; error?: string };
   ssl: { ok: boolean; validFrom?: string; validTo?: string; daysRemaining?: number; issuer?: string; error?: string };
 } | null;
@@ -81,11 +83,35 @@ export default function Domains() {
   });
 
   const [showForm, setShowForm] = useState(false);
+  const [setupDomain, setSetupDomain] = useState<Domain | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
   const [search, setSearch] = useState("");
   const [checking, setChecking] = useState<number | null>(null);
 
   const isEdit = form.id > 0;
+
+  // Platform host + resolved A-record IPs for the activation instructions.
+  const setupInfoQ = useQuery<{ platformHost: string; addresses: string[] }>({
+    queryKey: ["admin-domains-setup-info"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/domains/setup-info`, { headers });
+      if (!r.ok) throw new Error("فشل تحميل بيانات الإعداد");
+      return r.json();
+    },
+    enabled: setupDomain != null,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  function copyText(text: string) {
+    if (!navigator.clipboard) {
+      toast({ title: "تعذر النسخ — انسخ يدوياً", description: text, variant: "destructive" });
+      return;
+    }
+    navigator.clipboard.writeText(text).then(
+      () => toast({ title: "تم النسخ", description: text }),
+      () => toast({ title: "تعذر النسخ", variant: "destructive" }),
+    );
+  }
 
   function openCreate() { setForm({ ...emptyForm }); setShowForm(true); }
   function openEdit(d: Domain) {
@@ -247,6 +273,9 @@ export default function Domains() {
                       </td>
                       <td className="p-3">
                         <div className="flex items-center gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => setSetupDomain(d)} title="تعليمات التفعيل">
+                            <Wrench className="h-4 w-4 text-violet-600" />
+                          </Button>
                           <Button size="sm" variant="ghost" onClick={() => runCheck(d)} disabled={checking === d.id} title="فحص النطاق">
                             {checking === d.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4 text-blue-600" />}
                           </Button>
@@ -266,6 +295,89 @@ export default function Domains() {
           )}
         </CardContent>
       </Card>
+
+      {/* تعليمات تفعيل النطاق — DNS setup steps + live check result */}
+      <Dialog open={setupDomain != null} onOpenChange={(v) => { if (!v) setSetupDomain(null); }}>
+        <DialogContent dir="rtl" className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>تفعيل النطاق: <span className="font-mono" dir="ltr">{setupDomain?.domain}</span></DialogTitle>
+            <DialogDescription>اتبع الخطوات التالية ليفتح النطاق على النظام مباشرة.</DialogDescription>
+          </DialogHeader>
+          {setupDomain && (
+            <div className="space-y-4 text-sm">
+              <div className="rounded-lg border p-3 space-y-1">
+                <p className="font-semibold">١ — اربط النطاق في إعدادات النشر (Replit)</p>
+                <p className="text-muted-foreground text-xs">
+                  من صفحة النشر (Publishing) في Replit اختر «Link a domain» وأدخل
+                  {" "}<span className="font-mono" dir="ltr">{setupDomain.domain}</span>.
+                  ستحصل على سجلّين خاصين بالنطاق: سجل A وسجل TXT للتحقق.
+                </p>
+              </div>
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="font-semibold">٢ — أضف السجلات عند مزوّد النطاق (DNS)</p>
+                <p className="text-muted-foreground text-xs">
+                  في لوحة تحكم النطاق أضف سجل A باسم <span className="font-mono">@</span> يشير إلى عنوان الخادم،
+                  وسجل TXT بالقيمة التي ظهرت في Replit. للاسترشاد، خوادم المنصة الحالية
+                  ({setupInfoQ.data?.platformHost ?? "..."}):
+                </p>
+                {setupInfoQ.isLoading && <p className="text-xs text-muted-foreground">جاري جلب عناوين الخوادم...</p>}
+                {(setupInfoQ.data?.addresses ?? []).map((ip) => (
+                  <div key={ip} className="flex items-center justify-between rounded bg-slate-50 px-2 py-1">
+                    <span className="font-mono text-xs" dir="ltr">A &nbsp;@&nbsp; → &nbsp;{ip}</span>
+                    <Button size="sm" variant="ghost" onClick={() => copyText(ip)} title="نسخ">
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                {setupInfoQ.data && setupInfoQ.data.addresses.length === 0 && (
+                  <p className="text-xs text-amber-600">تعذر جلب عناوين الخوادم الآن — استخدم سجل A الظاهر في Replit.</p>
+                )}
+              </div>
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="font-semibold">٣ — تأكد أن الحالة «مفعّل» ثم افحص</p>
+                <p className="text-muted-foreground text-xs">
+                  انتشار DNS قد يستغرق حتى 48 ساعة. بعدها اضغط «فحص الآن» — إذا ظهر أن النطاق يشير
+                  لخوادم المنصة وشهادة SSL صالحة فالنطاق جاهز ويفتح على النظام.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => runCheck(setupDomain)} disabled={checking === setupDomain.id}>
+                    {checking === setupDomain.id ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Activity className="ml-1 h-4 w-4" />}
+                    فحص الآن
+                  </Button>
+                  {setupDomain.status !== "active" && (
+                    <Badge className={STATUS_CLS[setupDomain.status]}>الحالة: {STATUS_LABEL[setupDomain.status]} — عدّل الحالة إلى «مفعّل»</Badge>
+                  )}
+                </div>
+                {(() => {
+                  const cur = (listQ.data ?? []).find((x) => x.id === setupDomain.id)?.lastCheckResult;
+                  if (!cur) return null;
+                  return (
+                    <div className="rounded bg-slate-50 p-2 space-y-1 text-xs">
+                      <p className="flex items-center gap-1">
+                        {cur.dns.ok ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <XCircle className="h-3.5 w-3.5 text-rose-600" />}
+                        DNS: {cur.dns.ok ? <span className="font-mono" dir="ltr">{(cur.dns.addresses ?? []).join(", ")}</span> : (cur.dns.error || "لا يوجد")}
+                      </p>
+                      {cur.matchesPlatform != null && (
+                        <p className="flex items-center gap-1">
+                          {cur.matchesPlatform ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <XCircle className="h-3.5 w-3.5 text-rose-600" />}
+                          {cur.matchesPlatform ? "النطاق يشير إلى خوادم المنصة" : "النطاق لا يشير إلى خوادم المنصة بعد"}
+                        </p>
+                      )}
+                      <p className="flex items-center gap-1">
+                        {cur.ssl.ok ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <XCircle className="h-3.5 w-3.5 text-rose-600" />}
+                        SSL: {cur.ssl.ok ? `صالحة${cur.ssl.daysRemaining != null ? ` (${cur.ssl.daysRemaining} يوم)` : ""}` : (cur.ssl.error || "لا توجد شهادة")}
+                      </p>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSetupDomain(null)}>إغلاق</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent dir="rtl">
