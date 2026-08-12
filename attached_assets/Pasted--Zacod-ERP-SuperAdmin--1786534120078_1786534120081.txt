@@ -1,0 +1,247 @@
+تطوير شاشة إضافة الوكلاء — نظام Zacod ERP
+الهدف: تطوير شاشة إضافة الوكيل بحيث يستطيع SuperAdmin من خلالها تجهيز سيرفر الوكيل بالكامل، إنشاء قاعدة البيانات، تثبيت الـ Instance، ربط الدومين، وتشغيل النظام دون تدخل الوكيل في عملية التسطيب.
+1. بيانات الوكيل
+كود الوكيل.
+اسم الوكيل.
+اسم الشركة.
+الدولة.
+بيانات التواصل.
+البريد الإلكتروني.
+حالة الوكيل: فعال / متوقف.
+Partner ID يتم إنشاؤه تلقائيًا.
+2. بيانات السيرفر
+يتم إدخالها بواسطة SuperAdmin:
+Server IP.
+SSH Port.
+SSH Username.
+SSH Password أو SSH Private Key.
+نوع نظام التشغيل.
+Server Status.
+إمكانية اختبار الاتصال بالسيرفر قبل بدء التسطيب.
+بيانات الدخول تستخدم للتنفيذ فقط ولا يتم تخزين كلمة المرور بشكل مكشوف.
+3. بيانات الدومين
+Domain الرئيسي للوكيل.
+Subdomain اختياري.
+إمكانية اختيار أكثر من Domain/Subdomain حسب سياسة الوكيل.
+ربط Domain بالـ Partner ID.
+التحقق من توجيه DNS إلى IP السيرفر.
+إعداد SSL تلقائيًا.
+دعم HTTP → HTTPS.
+4. إعداد Instance
+يتم إنشاؤها تلقائيًا:
+Installation ID.
+Partner ID.
+License Key.
+Domain Binding.
+Instance Status.
+Version.
+Installation Date.
+آخر اتصال.
+Database Version.
+ويتم ربط الـ Instance بالوكيل والدومين والسيرفر.
+5. تجهيز السيرفر تلقائيًا
+بعد الضغط على بدء التجهيز والتسطيب تقوم الشاشة بتنفيذ الخطوات آليًا:
+اختبار SSH.
+فحص نظام Linux.
+فحص CPU / RAM / Disk.
+تحديث الحزم المطلوبة.
+تثبيت Node.js حسب الإصدار المعتمد.
+تثبيت Nginx.
+تثبيت PM2 عند الحاجة.
+تثبيت PostgreSQL إذا كانت قاعدة البيانات على نفس السيرفر.
+تجهيز Firewall.
+تجهيز مجلدات النظام والصلاحيات.
+إعداد الخدمات المطلوبة.
+6. إنشاء قاعدة بيانات الوكيل
+من نفس الشاشة:
+إنشاء Database مستقلة للوكيل.
+إنشاء Database User مستقل.
+إنشاء Password قوية وعشوائية.
+تطبيق صلاحيات المستخدم على Database الخاصة به فقط.
+تسجيل بيانات الاتصال بشكل آمن في نظام Zacod.
+مثال:
+Partner: AGENT-001
+
+Database:
+zacod_agent_001
+
+Database User:
+zacod_agent_001_user
+ولا يتم استخدام Database مشتركة بين الوكلاء.
+7. تجهيز قاعدة البيانات
+بدل الاعتماد على Backup ثابت فقط، يفضل تنفيذ:
+Create Database
+        ↓
+Schema / Migrations
+        ↓
+Master Data
+        ↓
+Default Settings
+        ↓
+Partner Configuration
+        ↓
+Company Configuration
+        ↓
+Database Version
+مع إمكانية استخدام Backup/Restore عند الحاجة.
+8. تثبيت نسخة الوكيل
+ترسل الشاشة تلقائيًا الـ Production Package المطلوب:
+Frontend/Loader.
+Agent أو الخدمات المطلوبة.
+ملفات Configuration.
+Installation ID.
+License Configuration.
+ولا يتم إرسال Source Code الأصلي أو ملفات التطوير.
+9. إعداد Nginx
+الشاشة تنشئ Configuration تلقائيًا:
+Domain
+   ↓
+Nginx
+   ↓
+Frontend / Instance
+وتطبق إعدادات الأمان والـ HTTPS.
+10. ربط الـ API المركزي
+يتم إعداد:
+Instance
+   ↓
+api.zacoderp.com
+مع تسجيل:
+Partner ID.
+Installation ID.
+License.
+Domain.
+API Configuration.
+ولا يتم وضع مفاتيح Zacod السرية داخل Frontend.
+11. إعداد الـ White Label
+من شاشة الوكيل:
+اسم النظام الظاهر.
+Logo.
+Favicon.
+Primary Color.
+Secondary Color.
+Login Background.
+بيانات التواصل.
+اسم الوكيل.
+Domain.
+ويظل Core Zacod واحدًا لجميع الوكلاء.
+12. تشغيل وفحص النظام
+بعد انتهاء التسطيب تقوم الشاشة بعمل Automatic Health Check:
+SSH Connected.
+Nginx Running.
+Node/Agent Running.
+PM2 Running.
+PostgreSQL Connected.
+Database Exists.
+Database Version.
+Domain Connected.
+SSL Active.
+API Connected.
+License Valid.
+Installation Active.
+ثم تظهر:
+Installation Completed Successfully
+13. شاشة متابعة الوكيل
+بعد التسطيب تظهر:
+Partner: AGENT-001
+Domain: agent-domain.com
+Installation: INS-0001
+
+Server: Online
+Frontend: Online
+Database: Connected
+API: Connected
+SSL: Active
+License: Active
+Version: 1.x.x
+
+Last Check: ...
+مع أزرار:
+اختبار الاتصال.
+إعادة التشغيل.
+تحديث Instance.
+تحديث Database.
+تنفيذ Migration.
+تغيير Domain.
+إصدار/تجديد License.
+إيقاف/تفعيل Instance.
+عرض Logs.
+عرض Deployment History.
+14. سجل عمليات التسطيب
+يتم تسجيل كل عملية قام بها SuperAdmin:
+Date
+User
+Partner
+Server
+Installation
+Action
+Result
+Error Message
+Duration
+مثال:
+✓ SSH Connected
+✓ Node.js Ready
+✓ Nginx Ready
+✓ PostgreSQL Ready
+✓ Database Created
+✓ Database Migrated
+✓ Instance Installed
+✓ SSL Configured
+✓ API Connected
+✓ License Activated
+15. التحديثات المستقبلية
+لا يحتاج الوكيل إلى إعادة التسطيب.
+من Zacod:
+New Version
+     ↓
+SuperAdmin
+     ↓
+Deployment Manager
+     ↓
+Agent Instances
+     ↓
+Update
+     ↓
+Health Check
+مع الاحتفاظ بإصدار كل وكيل وإمكانية Rollback عند حدوث مشكلة.
+16. الحماية
+كل وكيل له Partner ID مستقل.
+كل Installation لها Installation ID مستقل.
+كل Domain مربوط بالـ Installation.
+كل Database مستقلة.
+License موقعة رقميًا.
+عدم تخزين كلمات المرور بشكل مكشوف.
+عدم إرسال Source Code الأصلي.
+عدم وضع Database Credentials داخل React.
+تسجيل جميع عمليات Deployment.
+صلاحيات SuperAdmin فقط لتنفيذ التسطيب.
+الوكيل لا يستطيع تنفيذ Installation بنفسه.
+النتيجة النهائية
+يصبح سير العمل عندك:
+SuperAdmin
+    ↓
+إضافة الوكيل
+    ↓
+إدخال IP + SSH
+    ↓
+إدخال Domain
+    ↓
+اختبار السيرفر
+    ↓
+تجهيز Linux
+    ↓
+إنشاء PostgreSQL Database
+    ↓
+تحميل Schema + Data
+    ↓
+تثبيت Instance
+    ↓
+إعداد Nginx + SSL
+    ↓
+ربط api.zacoderp.com
+    ↓
+تفعيل License
+    ↓
+Health Check
+    ↓
+Instance جاهزة للعمل
+وبالتالي الوكيل لا يحتاج أن يقوم بأي تسطيب بنفسه؛ أنت كـ SuperAdmin تنفذ العملية بالكامل من شاشة إضافة الوكلاء، بينما تظل قاعدة بيانات الوكيل على سيرفره، والـ Core والتطوير والتحديثات تحت سيطرة Zacod.
