@@ -3,7 +3,7 @@
 // الترخيص والتعطيل الفوري، هوية الوكيل (اسم + لوجو) على صفحة دخول دومينه،
 // وتنبيهات الأمان (بصمة الداتابيز، دومين غير معروف، محاولات تسجيل...).
 // الأسرار (رابط الداتابيز، SSH) تُرسل للحفظ فقط ولا تُعرض بعد الحفظ.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -59,7 +59,7 @@ async function fileToLogoDataUrl(file: File): Promise<string> {
 type Agent = {
   id: number; name: string; contactPhone: string | null; contactEmail: string | null;
   domain: string; extraDomains: string[] | null;
-  status: "active" | "suspended"; mode: "frontend_only" | "full_shell";
+  status: "active" | "suspended"; mode: "frontend_only" | "full_shell" | "full";
   installationId: string; licenseKey: string | null; licenseExpiresAt: string | null;
   maxCompanies: number | null;
   dbUrlSet: boolean; dbStatus: string; dbLastCheckAt: string | null; dbLastError: string | null;
@@ -219,6 +219,34 @@ export default function AgentServers() {
     } finally { setBusy(null); }
   }
 
+  // ── التسطيب الكامل بضغطة واحدة ──
+  const [provisionAgentId, setProvisionAgentId] = useState<number | null>(null);
+  const provisionAgent = (listQ.data ?? []).find(x => x.id === provisionAgentId) ?? null;
+  const anyDeploying = (listQ.data ?? []).some(x => x.deployStatus === "deploying");
+  // سجل حي: أثناء أي تسطيب جارٍ حدّث القائمة كل 3 ثوانٍ.
+  useEffect(() => {
+    if (!anyDeploying) return;
+    const t = setInterval(() => qc.invalidateQueries({ queryKey: ["agent-instances"] }), 3000);
+    return () => clearInterval(t);
+  }, [anyDeploying, qc]);
+
+  async function provisionNow(a: Agent) {
+    const what = a.mode === "full"
+      ? "سيتم: فحص السيرفر، تثبيت PostgreSQL وإنشاء قاعدة البيانات، تثبيت Caddy والنبض، تهيئة السكيما والبصمة، تثبيت التطبيق الكامل كخدمة مع محدّث تلقائي."
+      : "سيتم: فحص السيرفر، تثبيت PostgreSQL وإنشاء قاعدة البيانات، تثبيت Caddy والنبض، تهيئة السكيما والبصمة.";
+    if (!confirm(`تسطيب كامل على سيرفر «${a.name}» عبر SSH؟\n${what}`)) return;
+    setBusy(`provision-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/provision`, { method: "POST", headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل");
+      setProvisionAgentId(a.id);
+      invalidate();
+    } catch (e: any) {
+      toast({ title: "التسطيب الكامل: فشل", description: String(e.message ?? e), variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
   function openCreate() { setForm({ ...emptyForm }); setShowForm(true); }
   function openEdit(a: Agent) {
     setForm({
@@ -288,7 +316,7 @@ export default function AgentServers() {
                       {a.status === "active"
                         ? <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">نشط</Badge>
                         : <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200"><Ban className="h-3 w-3 ms-1" />موقوف</Badge>}
-                      <Badge variant="outline" className="text-[10px]">{a.mode === "frontend_only" ? "واجهة فقط + API مركزي" : "نسخة قشرة كاملة"}</Badge>
+                      <Badge variant="outline" className="text-[10px]">{a.mode === "full" ? "نسخة كاملة (مستقلة)" : a.mode === "frontend_only" ? "واجهة فقط + API مركزي" : "نسخة قشرة كاملة"}</Badge>
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1" dir="ltr">
                       <Globe className="h-3 w-3" />{a.domain}
@@ -322,7 +350,7 @@ export default function AgentServers() {
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.dbUrlSet || busy === `test-db-${a.id}`} onClick={() => action(a.id, "test-db", "فحص الاتصال")}>
                       {busy === `test-db-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3 ms-1" />}اختبار
                     </Button>
-                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.dbUrlSet || busy === `init-db-${a.id}`} onClick={() => {
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.dbUrlSet || busy === `init-db-${a.id}` || a.deployStatus === "deploying"} onClick={() => {
                       if (confirm("تهيئة قاعدة بيانات الوكيل وزرع بصمة التركيب؟")) action(a.id, "init-db", "التهيئة");
                     }}>
                       {busy === `init-db-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}تهيئة + بصمة
@@ -345,7 +373,10 @@ export default function AgentServers() {
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || busy === `test-ssh-${a.id}`} onClick={() => action(a.id, "test-ssh", "فحص السيرفر")}>
                       {busy === `test-ssh-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3 ms-1" />}اختبار الوصول
                     </Button>
-                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}`} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
+                    <Button size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || busy === `provision-${a.id}` || a.deployStatus === "deploying"} onClick={() => provisionNow(a)} data-testid={`button-provision-${a.id}`}>
+                      {busy === `provision-${a.id}` || a.deployStatus === "deploying" ? <Loader2 className="h-3 w-3 animate-spin ms-1" /> : <UploadCloud className="h-3 w-3 ms-1" />}تسطيب كامل
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}` || a.deployStatus === "deploying"} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
                       {busy === `deploy-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <UploadCloud className="h-3 w-3 ms-1" />}نشر
                     </Button>
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.licenseKey || busy === `kit-${a.id}`} onClick={() => openSetupKit(a)} data-testid={`button-kit-${a.id}`}>
@@ -451,6 +482,24 @@ export default function AgentServers() {
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{logView?.title}</DialogTitle></DialogHeader>
           <pre dir="ltr" className="text-[11px] bg-muted rounded-lg p-3 whitespace-pre-wrap break-all max-h-[60vh] overflow-y-auto">{logView?.text || "—"}</pre>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── التسطيب الكامل — سجل حي ── */}
+      <Dialog open={!!provisionAgent} onOpenChange={(o) => !o && setProvisionAgentId(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {provisionAgent?.deployStatus === "deploying" && <Loader2 className="h-4 w-4 animate-spin" />}
+              التسطيب الكامل — {provisionAgent?.name}
+              {provisionAgent?.deployStatus === "ok" && <Badge className="bg-emerald-600">اكتمل ✔</Badge>}
+              {provisionAgent?.deployStatus === "error" && <Badge variant="destructive">فشل</Badge>}
+            </DialogTitle>
+          </DialogHeader>
+          <pre dir="rtl" className="text-[11px] bg-muted rounded-lg p-3 whitespace-pre-wrap break-all max-h-[60vh] overflow-y-auto">{provisionAgent?.deployLog || "جارٍ البدء…"}</pre>
+          {provisionAgent?.deployStatus === "deploying" && (
+            <p className="text-xs text-muted-foreground">قد تستغرق العملية عدة دقائق (تثبيت PostgreSQL/Node لأول مرة). يمكنك إغلاق النافذة والعودة لاحقًا — السجل محفوظ.</p>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -595,6 +644,7 @@ export default function AgentServers() {
                   <SelectContent>
                     <SelectItem value="frontend_only">واجهة فقط + API مركزي (موصى به)</SelectItem>
                     <SelectItem value="full_shell">نسخة قشرة كاملة (فرونت + باك قشرة)</SelectItem>
+                    <SelectItem value="full">نسخة كاملة — تعمل بدون API المركزي (تحديث تلقائي مع كل نشر)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

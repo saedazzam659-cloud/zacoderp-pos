@@ -148,4 +148,5 @@
 - [Attendance-plus engine](attendance-plus-engine.md) — bucket partition must sum to schedule span using RAW late/early (grace only suppresses reporting); dedupe/transfer-once via UNIQUE; lock guards shared with legacy CRUD; advisory-locked permission approve.
 - [Company template defaults](company-template-defaults.md) — new tenants seeded from template company 10 (settings/sequences/COA); party accounts excluded via refs + container rule + name pattern; zero-COA fallback to default seed.
 - [Purchase return JE two flavors](purchase-return-je-flavors.md) — post_variance flag: default OFF = Cr inventory at DOC net (scale buckets to subtotal, never dump into last); ON = actual cost + variance line.
+- [Agent full edition + provisioning](agent-full-edition-provisioning.md) — mode=full runs the whole bundle locally; release=tar of own dist; shell-safety validators + claim-before-mint + loopback DB URL.
 - [External DB storage routing](external-db-storage-routing.md) — SA-only module routing (archive first); tables self-created via lazy DDL (ensureSchema won't); route EVERY consumer incl. delivery-receipt counts.

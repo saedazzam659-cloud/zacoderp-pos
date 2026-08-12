@@ -271,7 +271,7 @@ const upsertSchema = z.object({
   contactEmail: z.string().max(200).nullish(),
   domain: z.string().min(3).max(255),
   extraDomains: z.array(z.string().min(3).max(255)).max(20).nullish(),
-  mode: z.enum(["frontend_only", "full_shell"]).optional(),
+  mode: z.enum(["frontend_only", "full_shell", "full"]).optional(),
   maxCompanies: z.number().int().positive().nullish(),
   licenseExpiresAt: z.string().nullish(),           // ISO date
   // Secrets — write-only. Empty string / undefined = keep existing.
@@ -452,15 +452,14 @@ router.post("/:id/test-db", async (req, res) => {
   }
 });
 
-// POST /:id/init-db — run full schema creation on the agent DB + plant fingerprint.
-router.post("/:id/init-db", async (req, res) => {
-  const id = Number(req.params.id);
-  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
-  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
-  if (!inst.dbUrlEnc) { res.status(400).json({ error: "لم يتم إدخال رابط قاعدة البيانات بعد" }); return; }
-  try {
-    const fingerprint = expectedFingerprint(inst.installationId, inst.domain);
-    await withAgentPool(inst.dbUrlEnc, async (pool) => {
+/** Core of init-db: full schema copy + heal + fingerprint planting on the
+ *  agent DB. Shared by the init-db route and the one-click provision pipeline.
+ *  On success updates dbStatus=initialized; throws on failure (caller must
+ *  fail closed). */
+async function initAgentDatabaseCore(inst: typeof agentInstancesTable.$inferSelect): Promise<string> {
+  if (!inst.dbUrlEnc) throw new Error("لم يتم إدخال رابط قاعدة البيانات بعد");
+  const fingerprint = expectedFingerprint(inst.installationId, inst.domain);
+  await withAgentPool(inst.dbUrlEnc, async (pool) => {
       // 1) Fresh DB → copy the FULL central schema (structure only, zero
       //    data) via pg_dump --schema-only. ensureSchema alone can't do this:
       //    it only ALTERs existing tables / creates extraSteps tables.
@@ -523,21 +522,37 @@ router.post("/:id/init-db", async (req, res) => {
          ON CONFLICT (id) DO UPDATE SET installation_id = $1, fingerprint = $2`,
         [inst.installationId, fingerprint],
       );
-    });
-    await db.update(agentInstancesTable).set({
-      dbStatus: "initialized", dbFingerprint: fingerprint, dbLastCheckAt: new Date(), dbLastError: null, updatedAt: new Date(),
-    }).where(eq(agentInstancesTable.id, id));
+  });
+  await db.update(agentInstancesTable).set({
+    dbStatus: "initialized", dbFingerprint: fingerprint, dbLastCheckAt: new Date(), dbLastError: null, updatedAt: new Date(),
+  }).where(eq(agentInstancesTable.id, inst.id));
+  return fingerprint;
+}
+
+/** Fail-closed bookkeeping shared by init-db + provision. */
+async function markInitDbFailed(id: number, msg: string): Promise<void> {
+  // Fail CLOSED: a failed (re-)init must never leave dbStatus=initialized,
+  // or routed traffic keeps flowing into a half-built database.
+  await db.update(agentInstancesTable).set({
+    dbStatus: "error", dbLastCheckAt: new Date(), dbLastError: msg, updatedAt: new Date(),
+  }).where(eq(agentInstancesTable.id, id)).catch(() => {});
+  clearAgentHostCache();
+  const { evictAgentDb } = await import("../lib/agentDb.js");
+  evictAgentDb(id);
+}
+
+// POST /:id/init-db — run full schema creation on the agent DB + plant fingerprint.
+router.post("/:id/init-db", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!inst.dbUrlEnc) { res.status(400).json({ error: "لم يتم إدخال رابط قاعدة البيانات بعد" }); return; }
+  try {
+    await initAgentDatabaseCore(inst);
     res.json({ ok: true, fingerprintPlanted: true });
   } catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 500);
-    // Fail CLOSED: a failed (re-)init must never leave dbStatus=initialized,
-    // or routed traffic keeps flowing into a half-built database.
-    await db.update(agentInstancesTable).set({
-      dbStatus: "error", dbLastCheckAt: new Date(), dbLastError: msg, updatedAt: new Date(),
-    }).where(eq(agentInstancesTable.id, id)).catch(() => {});
-    clearAgentHostCache();
-    const { evictAgentDb } = await import("../lib/agentDb.js");
-    evictAgentDb(id);
+    await markInitDbFailed(id, msg);
     res.status(502).json({ error: "فشلت التهيئة", detail: msg });
   }
 });
@@ -665,7 +680,14 @@ elif [ "$CODE" = "200" ] && [ -f /opt/zacod/SUSPENDED ]; then
   systemctl start caddy 2>/dev/null || true
 fi
 `;
-  const caddyfile = `${inst.domain} {
+  // «full» edition runs the whole app locally — Caddy fronts the local app
+  // (TLS + kill-switch via heartbeat) instead of proxying to the central API.
+  const caddyfile = inst.mode === "full"
+    ? `${inst.domain} {
+  reverse_proxy 127.0.0.1:8080
+}
+`
+    : `${inst.domain} {
   reverse_proxy ${origin} {
     header_up Host {upstream_hostport}
     header_up X-Zacod-Agent-Host ${inst.domain}
@@ -781,7 +803,7 @@ router.post("/:id/email-package", async (req, res) => {
       <h2 style="margin:0 0 8px;">حزمة تسطيب نسخة الوكيل — ${esc(inst.name)}</h2>
       <p>مرفق مع هذه الرسالة كل ملفات التسطيب الخاصة بدومين <b dir="ltr">${esc(inst.domain)}</b>.</p>
       <table style="border-collapse:collapse; font-size:13px;" border="1" cellpadding="6">
-        <tr><td><b>نوع النسخة</b></td><td>${inst.mode === "full_shell" ? "نسخة قشرة كاملة (فرونت + باك قشرة)" : "واجهة فقط + API مركزي"}</td></tr>
+        <tr><td><b>نوع النسخة</b></td><td>${inst.mode === "full" ? "نسخة كاملة (تعمل بدون API المركزي)" : inst.mode === "full_shell" ? "نسخة قشرة كاملة (فرونت + باك قشرة)" : "واجهة فقط + API مركزي"}</td></tr>
         <tr><td><b>مفتاح الترخيص</b></td><td dir="ltr" style="font-family:monospace;">${esc(inst.licenseKey)}</td></tr>
         <tr><td><b>معرّف التنصيب</b></td><td dir="ltr" style="font-family:monospace;">${esc(inst.installationId)}</td></tr>
         ${inst.licenseExpiresAt ? `<tr><td><b>انتهاء الترخيص</b></td><td dir="ltr">${new Date(inst.licenseExpiresAt).toISOString().slice(0, 10)}</td></tr>` : ""}
@@ -821,6 +843,63 @@ router.post("/:id/rotate-proxy-token", async (req, res) => {
   await logAgentEvent(id, "proxy_token_rotated", { by: (req as any).authUser?.username ?? null }, req);
   res.json({ ok: true, note: "أعد النشر أو أعد تثبيت حزمة التهيئة ليعمل الدومين" });
 });
+
+/** Run a root bash script on the agent server over SSH (shared by deploy +
+ *  the one-click provision pipeline). Host-key pinning: TOFU on first contact
+ *  (pinned on success by the caller via the returned fingerprint), strict
+ *  verification afterwards. Output capped so the remote can't exhaust memory. */
+async function sshRunScript(
+  inst: typeof agentInstancesTable.$inferSelect,
+  script: string,
+  opts?: { timeoutMs?: number },
+): Promise<{ code: number; out: string; hostKeyFp: string }> {
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) throw new Error("أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا");
+  const secret = decryptSecret(inst.sshSecretEnc);
+  if (!secret) throw new Error("تعذّر فك تشفير بيانات الدخول");
+  const { Client } = await import("ssh2");
+  const { createHash } = await import("node:crypto");
+  const isKey = /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(secret);
+  const MAX_OUT = 64_000;
+  const timeoutMs = opts?.timeoutMs ?? 180_000;
+  let seenHostKeyFp = "";
+  const result = await new Promise<{ code: number; out: string }>((resolve, reject) => {
+    const conn = new Client();
+    const timer = setTimeout(() => { conn.end(); reject(new Error(`انتهت مهلة الاتصال/التنفيذ (${Math.round(timeoutMs / 1000)} ثانية)`)); }, timeoutMs);
+    conn.on("ready", () => {
+      conn.exec("bash -s", (err, stream) => {
+        if (err) { clearTimeout(timer); conn.end(); reject(err); return; }
+        let out = "";
+        const add = (d: Buffer) => { if (out.length < MAX_OUT) out += d.toString().slice(0, MAX_OUT - out.length); };
+        stream.on("data", add);
+        stream.stderr.on("data", add);
+        stream.on("close", (code: number) => { clearTimeout(timer); conn.end(); resolve({ code: code ?? 1, out }); });
+        stream.end(script);
+      });
+    });
+    conn.on("error", (e) => { clearTimeout(timer); reject(e); });
+    conn.connect({
+      host: inst.sshHost!, port: inst.sshPort ?? 22, username: inst.sshUser!,
+      ...(isKey ? { privateKey: secret } : { password: secret }),
+      readyTimeout: 15_000,
+      hostVerifier: (key: Buffer) => {
+        seenHostKeyFp = `SHA256:${createHash("sha256").update(key).digest("base64")}`;
+        if (!inst.sshHostKeyFp) return true; // first contact — pinned by caller on success
+        if (inst.sshHostKeyFp === seenHostKeyFp) return true;
+        void logAgentEvent(inst.id, "ssh_hostkey_mismatch", { expected: inst.sshHostKeyFp, got: seenHostKeyFp });
+        return false;
+      },
+    });
+  });
+  return { ...result, hostKeyFp: seenHostKeyFp };
+}
+
+/** Persist the TOFU host-key pin after a successful script run. */
+async function pinHostKey(inst: typeof agentInstancesTable.$inferSelect, fp: string): Promise<void> {
+  if (!inst.sshHostKeyFp && fp) {
+    await db.update(agentInstancesTable).set({ sshHostKeyFp: fp }).where(eq(agentInstancesTable.id, inst.id)).catch(() => {});
+    (inst as any).sshHostKeyFp = fp; // later steps in the same pipeline verify strictly
+  }
+}
 
 // POST /:id/deploy — run the bootstrap script on the agent server over SSH.
 router.post("/:id/deploy", async (req, res) => {
@@ -863,46 +942,10 @@ router.post("/:id/deploy", async (req, res) => {
   };
 
   try {
-    const { Client } = await import("ssh2");
-    const { createHash } = await import("node:crypto");
-    const isKey = /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(secret);
-    const MAX_OUT = 64_000; // cap collected output — remote can't exhaust memory
-    let seenHostKeyFp = "";
-    const result = await new Promise<{ code: number; out: string }>((resolve, reject) => {
-      const conn = new Client();
-      const timer = setTimeout(() => { conn.end(); reject(new Error("انتهت مهلة الاتصال/التنفيذ (180 ثانية)")); }, 180_000);
-      conn.on("ready", () => {
-        log.push(`[ssh] connected to ${inst.sshHost}:${inst.sshPort ?? 22} as ${inst.sshUser} (hostkey ${seenHostKeyFp.slice(0, 16)}…)`);
-        conn.exec("bash -s", (err, stream) => {
-          if (err) { clearTimeout(timer); conn.end(); reject(err); return; }
-          let out = "";
-          const add = (d: Buffer) => { if (out.length < MAX_OUT) out += d.toString().slice(0, MAX_OUT - out.length); };
-          stream.on("data", add);
-          stream.stderr.on("data", add);
-          stream.on("close", (code: number) => { clearTimeout(timer); conn.end(); resolve({ code: code ?? 1, out }); });
-          stream.end(installScript);
-        });
-      });
-      conn.on("error", (e) => { clearTimeout(timer); reject(e); });
-      conn.connect({
-        host: inst.sshHost!, port: inst.sshPort ?? 22, username: inst.sshUser!,
-        ...(isKey ? { privateKey: secret } : { password: secret }),
-        readyTimeout: 15_000,
-        // Host-key pinning: TOFU on first deploy, strict verification after.
-        hostVerifier: (key: Buffer) => {
-          seenHostKeyFp = `SHA256:${createHash("sha256").update(key).digest("base64")}`;
-          if (!inst.sshHostKeyFp) return true; // first contact — pinned below on success
-          if (inst.sshHostKeyFp === seenHostKeyFp) return true;
-          void logAgentEvent(id, "ssh_hostkey_mismatch", { expected: inst.sshHostKeyFp, got: seenHostKeyFp });
-          return false;
-        },
-      });
-    });
+    const result = await sshRunScript(inst, installScript);
+    log.push(`[ssh] connected to ${inst.sshHost}:${inst.sshPort ?? 22} as ${inst.sshUser} (hostkey ${result.hostKeyFp.slice(0, 16)}…)`);
     const ok = result.code === 0 && result.out.includes("ZACOD_BOOTSTRAP_DONE");
-    if (ok && !inst.sshHostKeyFp && seenHostKeyFp) {
-      await db.update(agentInstancesTable).set({ sshHostKeyFp: seenHostKeyFp })
-        .where(eq(agentInstancesTable.id, id)).catch(() => {});
-    }
+    if (ok) await pinHostKey(inst, result.hostKeyFp);
     await finish(ok, result.out.slice(-6000));
     if (ok) res.json({ ok: true, log: log.join("\n").slice(-8000) });
     else res.status(502).json({ error: "فشل النشر — راجع السجل", log: log.join("\n").slice(-8000) });
@@ -910,6 +953,263 @@ router.post("/:id/deploy", async (req, res) => {
     await finish(false, `[error] ${String(e?.message ?? e).slice(0, 400)}`);
     res.status(502).json({ error: "فشل النشر", detail: String(e?.message ?? e).slice(0, 400) });
   }
+});
+
+// ── One-click full provisioning ────────────────────────────────────────────
+//
+// POST /:id/provision — runs the whole setup pipeline on the agent server
+// over SSH, with zero involvement from the agent:
+//   1) فحص السيرفر (نظام/معالج/ذاكرة/قرص)
+//   2) تثبيت PostgreSQL + إنشاء قاعدة ومستخدم (إن لم تكن قاعدة مسجّلة)
+//   3) تثبيت بوابة الدخول (Caddy + نبض الترخيص)
+//   4) تهيئة قاعدة البيانات (نسخ السكيما + زرع البصمة)
+//   5) نسخة كاملة فقط: تثبيت Node + التطبيق كخدمة + محدّث تلقائي
+//   6) فحص نهائي
+// Responds immediately ({started:true}); progress is streamed into deployLog
+// (the UI polls the list while deployStatus === "deploying").
+
+function shQ(s: string): string {
+  // Single-quote for bash. Values we interpolate are validated/hex, but keep
+  // a hard guard anyway.
+  if (s.includes("'")) throw new Error("قيمة غير صالحة للتنفيذ الآمن");
+  return `'${s}'`;
+}
+
+/** Values interpolated into root SSH scripts MUST be shell-metacharacter-free.
+ *  Hostnames/domains: letters, digits, dot, dash. Rejects everything else
+ *  (command substitution, backticks, $, quotes, spaces...). */
+function assertShellSafeHostLike(v: string, label: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$/.test(v)) throw new Error(`${label} يحتوي رموزًا غير مسموحة`);
+}
+/** DATABASE_URL written into the env file: strict allow-list of URL chars. */
+function assertShellSafeDbUrl(v: string): void {
+  if (!/^postgres(ql)?:\/\/[A-Za-z0-9_.:@/%?&=-]+$/.test(v)) throw new Error("رابط قاعدة البيانات غير صالح لبيئة التشغيل");
+}
+
+async function runProvision(instIn: typeof agentInstancesTable.$inferSelect): Promise<void> {
+  let inst = instIn;
+  const log: string[] = [];
+  const save = async (status?: "ok" | "error") => {
+    await db.update(agentInstancesTable).set({
+      deployLog: log.join("\n").slice(-8000),
+      ...(status ? { deployStatus: status, lastDeployAt: new Date(), sshStatus: status === "ok" ? "ok" : inst.sshStatus } : {}),
+      updatedAt: new Date(),
+    }).where(eq(agentInstancesTable.id, inst.id)).catch(() => {});
+  };
+  const step = async (title: string) => { log.push(`\n■ ${title}`); await save(); };
+  const runSsh = async (script: string, marker: string, timeoutMs: number) => {
+    const r = await sshRunScript(inst, script, { timeoutMs });
+    log.push(r.out.slice(-3000));
+    if (r.code !== 0 || !r.out.includes(marker)) throw new Error("فشلت الخطوة — راجع السجل أعلاه");
+    await pinHostKey(inst, r.hostKeyFp);
+  };
+  const reload = async () => {
+    const [row] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, inst.id)).limit(1);
+    if (row) inst = row;
+  };
+
+  try {
+    // Shell-safety gate: everything interpolated into root scripts.
+    assertShellSafeHostLike(inst.sshHost ?? "", "مضيف SSH");
+    assertShellSafeHostLike(inst.domain ?? "", "الدومين");
+    // 1) server check
+    await step("1/6 فحص السيرفر");
+    await runSsh(`set -e
+. /etc/os-release 2>/dev/null || true
+echo "OS: \${PRETTY_NAME:-unknown}"
+echo "CPU: $(nproc 2>/dev/null || echo ?) cores"
+echo "RAM: $(free -m 2>/dev/null | awk '/Mem:/{print $2}' ) MB"
+echo "Disk: $(df -h / | tail -1 | awk '{print $4}') free"
+[ "$(id -u)" = "0" ] || { echo "ERROR: يجب الدخول بمستخدم root"; exit 1; }
+command -v apt-get >/dev/null 2>&1 || { echo "ERROR: يدعم التسطيب التلقائي أوبونتو/ديبيان فقط (apt-get غير موجود)"; exit 1; }
+echo ZACOD_CHECK_OK`, "ZACOD_CHECK_OK", 60_000);
+
+    // 2) PostgreSQL + DB creation (only when no DB registered yet)
+    await step("2/6 قاعدة البيانات PostgreSQL");
+    if (inst.dbUrlEnc) {
+      log.push("قاعدة بيانات مسجّلة مسبقًا — تخطّي الإنشاء.");
+    } else {
+      const dbUser = `zacod_a${inst.id}`;
+      const dbName = `zacod_agent_${inst.id}`;
+      const dbPass = randomBytes(24).toString("hex");
+      await runSsh(`set -e
+export DEBIAN_FRONTEND=noninteractive
+if ! command -v psql >/dev/null 2>&1; then apt-get update -y >/dev/null; apt-get install -y postgresql >/dev/null; fi
+systemctl enable postgresql >/dev/null 2>&1 || true
+systemctl start postgresql
+PGRUN() { if command -v runuser >/dev/null 2>&1; then runuser -u postgres -- "$@"; else sudo -u postgres "$@"; fi; }
+PGHBA=$(PGRUN psql -tAc "SHOW hba_file" | tr -d ' ')
+PGRUN psql -qc "ALTER SYSTEM SET listen_addresses = '*'"
+PGRUN psql -qc "ALTER SYSTEM SET password_encryption = 'scram-sha-256'"
+grep -q "# zacod ${dbUser}$" "$PGHBA" || echo "host ${dbName} ${dbUser} 0.0.0.0/0 scram-sha-256 # zacod ${dbUser}" >> "$PGHBA"
+systemctl restart postgresql
+PGRUN psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${dbUser}'" | grep -q 1 || PGRUN psql -qc "CREATE ROLE ${dbUser} LOGIN"
+PGRUN psql -qc "ALTER ROLE ${dbUser} LOGIN PASSWORD '${dbPass}'"
+PGRUN psql -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}'" | grep -q 1 || PGRUN createdb -O ${dbUser} ${dbName}
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then ufw allow 5432/tcp >/dev/null || true; fi
+echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
+      // Save the URL centrally, then verify connectivity (retry without TLS
+      // if the server has no SSL configured).
+      const baseUrl = `postgres://${dbUser}:${dbPass}@${inst.sshHost}:5432/${dbName}`;
+      let savedUrl = baseUrl;
+      const trySave = async (url: string) => {
+        await db.update(agentInstancesTable).set({ dbUrlEnc: encryptSecret(url), dbStatus: "not_configured", dbLastError: null, updatedAt: new Date() })
+          .where(eq(agentInstancesTable.id, inst.id));
+        clearAgentHostCache();
+        const { evictAgentDb } = await import("../lib/agentDb.js");
+        evictAgentDb(inst.id);
+        await reload();
+        await withAgentPool(inst.dbUrlEnc!, (pool) => pool.query("SELECT 1"));
+      };
+      try { await trySave(baseUrl); }
+      catch (e: any) {
+        if (/SSL|ssl/.test(String(e?.message ?? ""))) { savedUrl = `${baseUrl}?sslmode=disable`; await trySave(savedUrl); }
+        else throw e;
+      }
+      log.push(`تم إنشاء قاعدة البيانات ${dbName} والمستخدم ${dbUser} وحفظ الرابط مشفّرًا. (${savedUrl.includes("sslmode=disable") ? "بدون تشفير نقل" : "اتصال مشفّر"})`);
+    }
+
+    // 3) gateway bootstrap (Caddy + heartbeat) — mode-aware Caddyfile
+    await step("3/6 بوابة الدخول والنبض (Caddy)");
+    await reload();
+    const { installScript } = await buildSetupKit(inst);
+    await runSsh(installScript, "ZACOD_BOOTSTRAP_DONE", 300_000);
+
+    // 4) schema init + fingerprint
+    await step("4/6 تهيئة قاعدة البيانات (السكيما + البصمة)");
+    await reload();
+    try {
+      await initAgentDatabaseCore(inst);
+      log.push("تمت التهيئة وزرع البصمة.");
+    } catch (e: any) {
+      await markInitDbFailed(inst.id, String(e?.message ?? e).slice(0, 500));
+      throw e;
+    }
+
+    // 5) full edition: the app itself
+    if (inst.mode === "full") {
+      await step("5/6 تثبيت التطبيق (نسخة كاملة)");
+      await reload();
+      const origin = resolveCentralOrigin();
+      // The app runs ON the DB server — connect via loopback (no network
+      // round-trip, no TLS dependency), while central keeps the public URL.
+      const storedDbUrl = decryptSecret(inst.dbUrlEnc!) ?? "";
+      assertShellSafeDbUrl(storedDbUrl);
+      let localDbUrl = storedDbUrl;
+      try {
+        const u = new URL(storedDbUrl);
+        if (u.hostname === inst.sshHost) { u.hostname = "127.0.0.1"; u.searchParams.delete("sslmode"); localDbUrl = u.toString().replace(/\?$/, ""); }
+      } catch { /* keep stored URL as-is */ }
+      assertShellSafeDbUrl(localDbUrl);
+      const q = `installationId=${encodeURIComponent(inst.installationId)}&licenseKey=${encodeURIComponent(inst.licenseKey ?? "")}`;
+      const manifestUrl = `${origin}/api/agent/release/manifest?${q}`;
+      const bundleUrl = `${origin}/api/agent/release/bundle?${q}`;
+      // Warm the bundle cache before the agent curls it.
+      const { getReleaseInfo } = await import("../lib/agentRelease.js");
+      const rel = await getReleaseInfo();
+      log.push(`إصدار الحزمة: ${rel.version} (${Math.round(rel.sizeBytes / 1024 / 1024)}MB)`);
+      const updater = `#!/usr/bin/env bash
+set -e
+[ -f /opt/zacod/SUSPENDED ] && exit 0
+MAN=$(curl -fsS ${shQ(manifestUrl)}) || exit 0
+VER=$(echo "$MAN" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+CUR=$(cat /opt/zacod/app/VERSION 2>/dev/null || echo none)
+{ [ -n "$VER" ] && [ "$VER" != "$CUR" ]; } || exit 0
+curl -fsSL ${shQ(bundleUrl)} -o /tmp/zacod-app.tgz
+rm -rf /opt/zacod/app.new && mkdir -p /opt/zacod/app.new
+tar -xzf /tmp/zacod-app.tgz -C /opt/zacod/app.new
+echo "$VER" > /opt/zacod/app.new/VERSION
+rm -rf /opt/zacod/app.old; [ -d /opt/zacod/app ] && mv /opt/zacod/app /opt/zacod/app.old; mv /opt/zacod/app.new /opt/zacod/app
+systemctl restart zacod-app
+`;
+      await runSsh(`set -e
+export DEBIAN_FRONTEND=noninteractive
+NEED_NODE=1
+if command -v node >/dev/null 2>&1; then MAJ=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0); [ "$MAJ" -ge 20 ] && NEED_NODE=0; fi
+if [ "$NEED_NODE" = "1" ]; then curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null; apt-get install -y nodejs >/dev/null; fi
+echo "Node: $(node -v)"
+mkdir -p /opt/zacod
+curl -fsSL ${shQ(bundleUrl)} -o /tmp/zacod-app.tgz
+rm -rf /opt/zacod/app.new && mkdir -p /opt/zacod/app.new
+tar -xzf /tmp/zacod-app.tgz -C /opt/zacod/app.new
+echo ${shQ(rel.version)} > /opt/zacod/app.new/VERSION
+if [ -f /opt/zacod/app.env ] && grep -q '^SESSION_SECRET=' /opt/zacod/app.env; then SS=$(grep '^SESSION_SECRET=' /opt/zacod/app.env | cut -d= -f2-); else SS=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \\n'); fi
+{ echo "NODE_ENV=production"; echo "PORT=8080"; echo "DATABASE_URL=${localDbUrl}"; echo "SESSION_SECRET=$SS"; echo "PUBLIC_BASE_URL=https://${inst.domain}"; } > /opt/zacod/app.env
+chmod 600 /opt/zacod/app.env
+rm -rf /opt/zacod/app.old; [ -d /opt/zacod/app ] && mv /opt/zacod/app /opt/zacod/app.old; mv /opt/zacod/app.new /opt/zacod/app
+NODE_BIN=$(command -v node)
+cat > /etc/systemd/system/zacod-app.service <<EOF
+[Unit]
+Description=Zacod ERP (full edition)
+After=network.target postgresql.service
+[Service]
+EnvironmentFile=/opt/zacod/app.env
+ExecStart=$NODE_BIN --enable-source-maps /opt/zacod/app/index.mjs
+WorkingDirectory=/opt/zacod/app
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+EOF
+cat > /opt/zacod/update.sh <<'ZACOD_UPD'
+${updater}
+ZACOD_UPD
+chmod 700 /opt/zacod/update.sh
+( crontab -l 2>/dev/null | grep -v zacod-update ; echo "*/10 * * * * /opt/zacod/update.sh # zacod-update" ) | crontab -
+systemctl daemon-reload
+systemctl enable zacod-app >/dev/null 2>&1
+systemctl restart zacod-app
+for i in $(seq 1 12); do sleep 5; CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ || echo 000); [ "$CODE" != "000" ] && break; done
+echo "HTTP local: $CODE"
+[ "$CODE" != "000" ] || { echo "ERROR: التطبيق لم يستجب محليًا"; journalctl -u zacod-app -n 40 --no-pager 2>/dev/null | tail -40; exit 1; }
+echo ZACOD_APP_DONE`, "ZACOD_APP_DONE", 300_000);
+    } else {
+      await step("5/6 تثبيت التطبيق");
+      log.push("النسخة ليست «كاملة» — لا يلزم تثبيت تطبيق محلي (يُخدَم من المنصة المركزية).");
+    }
+
+    // 6) final health
+    await step("6/6 الفحص النهائي");
+    await reload();
+    await withAgentPool(inst.dbUrlEnc!, (pool) => pool.query("SELECT 1"));
+    log.push("قاعدة البيانات تستجيب. اكتمل التسطيب بنجاح ✔");
+    log.push(`تذكير: وجّه دومين ${inst.domain} (سجل A) إلى IP السيرفر ليصدر Caddy شهادة SSL تلقائيًا.`);
+    await save("ok");
+    await logAgentEvent(inst.id, "provisioned", { mode: inst.mode }, undefined as any);
+  } catch (e: any) {
+    log.push(`\n✖ فشل التسطيب: ${String(e?.message ?? e).slice(0, 400)}`);
+    await save("error");
+  }
+}
+
+router.post("/:id/provision", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) { res.status(400).json({ error: "أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا" }); return; }
+  try { await assertProbeTargetAllowed(inst.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+  // Claim FIRST (atomic — only one provision/deploy runs), then mint the
+  // license inside the lease so a concurrent request can't overwrite the key
+  // the pipeline is using.
+  const staleBefore = new Date(Date.now() - 30 * 60_000);
+  const claimed = await db.update(agentInstancesTable)
+    .set({ deployStatus: "deploying", deployLog: "بدء التسطيب الكامل…", updatedAt: new Date() })
+    .where(and(
+      eq(agentInstancesTable.id, id),
+      or(ne(agentInstancesTable.deployStatus, "deploying"), lt(agentInstancesTable.updatedAt, staleBefore)),
+    )).returning({ id: agentInstancesTable.id });
+  if (!claimed.length) { res.status(409).json({ error: "يوجد نشر/تسطيب جارٍ بالفعل" }); return; }
+  // Auto-mint a license if missing — zero-step policy (post-claim).
+  if (!inst.licenseKey) {
+    inst.licenseKey = mintLicenseKey(inst.installationId, inst.domain);
+    await db.update(agentInstancesTable).set({ licenseKey: inst.licenseKey, updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+  }
+  // Re-read the claimed row so the pipeline works off fresh state.
+  const [fresh] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  await logAgentEvent(id, "provision_started", { by: (req as any).authUser?.username ?? null, mode: inst.mode }, req);
+  res.json({ ok: true, started: true });
+  void runProvision(fresh ?? inst);
 });
 
 // ── Security events ────────────────────────────────────────────────────────
@@ -953,6 +1253,49 @@ agentPublicRouter.get("/branding", async (req, res) => {
     suspended: hit.status !== "active",
     brandName: hit.brandName, brandLogoUrl: hit.brandLogoUrl, brandColor: hit.brandColor,
   });
+});
+
+// ── Release channel for «full» edition agents ──────────────────────────────
+// Authenticated by installationId + licenseKey (same trust model as the
+// heartbeat). Suspended/expired agents get 403 — the kill-switch also stops
+// updates.
+async function authReleaseRequest(req: any, res: any): Promise<typeof agentInstancesTable.$inferSelect | null> {
+  const installationId = typeof req.query.installationId === "string" ? req.query.installationId : "";
+  const licenseKey = typeof req.query.licenseKey === "string" ? req.query.licenseKey : "";
+  if (!installationId || !licenseKey) { res.status(400).json({ error: "bad_request" }); return null; }
+  const [inst] = await db.select().from(agentInstancesTable)
+    .where(eq(agentInstancesTable.installationId, installationId)).limit(1);
+  if (!inst || !inst.licenseKey || inst.licenseKey !== licenseKey) {
+    await logAgentEvent(inst?.id ?? null, "release_auth_failed", { installationId: installationId.slice(0, 64) }, req);
+    res.status(403).json({ error: "forbidden" }); return null;
+  }
+  if (inst.mode !== "full") { res.status(403).json({ error: "not_full_edition" }); return null; }
+  if (inst.status !== "active") { res.status(403).json({ error: "suspended" }); return null; }
+  if (inst.licenseExpiresAt && new Date(inst.licenseExpiresAt) < new Date()) { res.status(403).json({ error: "license_expired" }); return null; }
+  return inst;
+}
+
+agentPublicRouter.get("/agent/release/manifest", async (req, res) => {
+  const inst = await authReleaseRequest(req, res);
+  if (!inst) return;
+  try {
+    const { getReleaseInfo } = await import("../lib/agentRelease.js");
+    const rel = await getReleaseInfo();
+    res.json({ version: rel.version, sizeBytes: rel.sizeBytes });
+  } catch (e: any) { res.status(503).json({ error: String(e?.message ?? e).slice(0, 200) }); }
+});
+
+agentPublicRouter.get("/agent/release/bundle", async (req, res) => {
+  const inst = await authReleaseRequest(req, res);
+  if (!inst) return;
+  try {
+    const { getReleaseInfo } = await import("../lib/agentRelease.js");
+    const rel = await getReleaseInfo();
+    await logAgentEvent(inst.id, "release_downloaded", { version: rel.version }, req);
+    res.setHeader("Content-Type", "application/gzip");
+    res.setHeader("Content-Disposition", `attachment; filename="zacod-app-${rel.version}.tgz"`);
+    res.sendFile(rel.tarPath);
+  } catch (e: any) { res.status(503).json({ error: String(e?.message ?? e).slice(0, 200) }); }
 });
 
 // POST /api/agent/heartbeat — instance validation. Body:
