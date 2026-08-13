@@ -86,6 +86,11 @@ const BILLING_OPTIONS: ComboboxItem[] = [
 const companySchema = z.object({
   nameAr: z.string().min(2, { message: "اسم الشركة مطلوب" }),
   nameEn: z.string().optional(),
+  // كود الشركة اليدوي (اختياري): أرقام أو حروف إنجليزية، حتى 15 خانة.
+  // يُترك فارغًا ليتولّد تلقائيًا (ZTC-رقم).
+  companyCode: z.string().trim().max(15, { message: "الحد الأقصى 15 خانة" })
+    .regex(/^[A-Za-z0-9]*$/, { message: "أرقام أو حروف إنجليزية فقط — بدون مسافات أو رموز" })
+    .optional(),
   vatNumber: z.string().length(15, { message: "الرقم الضريبي يجب أن يكون 15 رقماً" }),
   crNumber: z.string().min(5, { message: "رقم السجل التجاري مطلوب" }),
   city: z.string().min(2, { message: "المدينة مطلوبة" }),
@@ -265,7 +270,7 @@ export default function CompanyNew() {
   const form = useForm<z.infer<typeof companySchema>>({
     resolver: zodResolver(companySchema),
     defaultValues: {
-      nameAr: "", nameEn: "", vatNumber: "", crNumber: "",
+      nameAr: "", nameEn: "", companyCode: "", vatNumber: "", crNumber: "",
       city: "", district: "", street: "", buildingNumber: "", postalCode: "",
       additionalNumber: "", phone: "", country: "SA", industryName: "",
       invoiceType: "both", isSandbox: true,
@@ -345,7 +350,14 @@ export default function CompanyNew() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "حدث خطأ");
+      if (!res.ok) {
+        // كود شركة مكرر/غير صالح → خطأ مباشر تحت الحقل + تمرير إليه.
+        if (data.field === "companyCode") {
+          form.setError("companyCode", { type: "server", message: data.error ?? "كود الشركة مستخدم من قبل" });
+          document.querySelector('[data-testid="input-company-code"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        throw new Error(data.error ?? "حدث خطأ");
+      }
       toast({ title: "تمت الإضافة بنجاح", description: "تمت إضافة الشركة والمستخدم الإداري بنجاح." });
       if (data.domainBindWarning) {
         toast({ title: "تنبيه ربط النطاق", description: data.domainBindWarning, variant: "destructive" });
@@ -504,6 +516,35 @@ export default function CompanyNew() {
                         <br /><ExampleBadge text="AlNajah Trading Company" />
                       </FormDescription>
                       <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="companyCode"
+                  render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                      <FormLabel>كود الشركة <span className="text-muted-foreground text-xs">(اختياري — يتولّد تلقائيًا إن تُرك فارغًا)</span></FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="مثال: 1 أو 1234 أو AB325567"
+                          dir="ltr"
+                          className="text-left font-mono"
+                          maxLength={15}
+                          data-testid="input-company-code"
+                          {...field}
+                          onChange={e => {
+                            field.onChange(e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase());
+                            form.clearErrors("companyCode");
+                          }}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        الكود الذي تدخله الشركة عند تسجيل الدخول — أرقام أو حروف إنجليزية فقط (حتى 15 خانة)، ولا يمكن تكراره بين شركتين.
+                        <br /><ExampleBadge text="1 · 1234 · 325567 · ZC15" />
+                      </FormDescription>
+                      <FormMessage className="font-semibold" />
                     </FormItem>
                   )}
                 />

@@ -219,6 +219,25 @@ export default function AgentServers() {
     } finally { setBusy(null); }
   }
 
+  // ── الحذف الكامل من سيرفر الوكيل (حماية الملكية الفكرية) ──
+  const [wipeAgent, setWipeAgent] = useState<Agent | null>(null);
+  async function wipeNow(a: Agent) {
+    setWipeAgent(null);
+    setBusy(`wipe-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/wipe`, { method: "POST", headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل");
+      invalidate();
+      setLogView({ title: `سجل الحذف الكامل — ${a.name}`, text: j.log ?? "" });
+      toast(j.wiped
+        ? { title: "تم الحذف الكامل من السيرفر", description: "أُزيلت كل برامج وملفات zacoderp وأُلغي الترخيص." }
+        : { title: "تم إلغاء الترخيص وتعطيل النسخة", description: "تعذّر الوصول للسيرفر عبر SSH — النسخة ستتوقف تلقائيًا مع أول نبض.", variant: "destructive" });
+    } catch (e: any) {
+      toast({ title: "الحذف الكامل: فشل", description: String(e.message ?? e), variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
   // ── التسطيب الكامل بضغطة واحدة ──
   const [provisionAgentId, setProvisionAgentId] = useState<number | null>(null);
   const provisionAgent = (listQ.data ?? []).find(x => x.id === provisionAgentId) ?? null;
@@ -413,6 +432,11 @@ export default function AgentServers() {
                         }}><Ban className="h-3 w-3 ms-1" />تعطيل</Button>
                       : <Button variant="outline" size="sm" className="h-7 text-xs text-emerald-700" disabled={busy === `activate-${a.id}`} onClick={() => action(a.id, "activate", "التفعيل")}>
                           <Play className="h-3 w-3 ms-1" />تفعيل</Button>}
+                    <Button variant="destructive" size="sm" className="h-7 text-xs"
+                      disabled={busy === `wipe-${a.id}` || a.deployStatus === "deploying"}
+                      onClick={() => setWipeAgent(a)} data-testid={`button-wipe-${a.id}`}>
+                      {busy === `wipe-${a.id}` ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <Trash2 className="h-3 w-3 ms-1" />}حذف التسطيب
+                    </Button>
                   </div>
                 </div>
 
@@ -482,6 +506,35 @@ export default function AgentServers() {
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{logView?.title}</DialogTitle></DialogHeader>
           <pre dir="ltr" className="text-[11px] bg-muted rounded-lg p-3 whitespace-pre-wrap break-all max-h-[60vh] overflow-y-auto">{logView?.text || "—"}</pre>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── تأكيد الحذف الكامل من سيرفر الوكيل ── */}
+      <Dialog open={!!wipeAgent} onOpenChange={(o) => !o && setWipeAgent(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <ShieldAlert className="h-5 w-5" />هل تريد حذف كامل البيانات؟
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <p>سيتم حذف <b>كل ما تم تسطيبه</b> على سيرفر «{wipeAgent?.name}» نهائيًا:</p>
+            <ul className="list-disc pr-5 text-xs text-muted-foreground space-y-1">
+              <li>التطبيق الكامل وخدمته (zacod-app) وكل الملفات في /opt/zacod</li>
+              <li>الوكيل العكسي (Caddy) وإعداداته</li>
+              <li>نبض الترخيص والمحدّث التلقائي (cron)</li>
+              <li>قاعدة البيانات والدور اللذان أنشأهما التسطيب</li>
+            </ul>
+            <p className="text-xs font-semibold text-destructive">
+              يُلغى الترخيص فورًا — وحتى لو غيّر الوكيل بيانات الدخول للسيرفر وتعذّر الاتصال، ستتوقف نسخته تلقائيًا مع أول نبض قادم (حماية للملكية الفكرية).
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setWipeAgent(null)} data-testid="button-wipe-cancel">إلغاء</Button>
+            <Button variant="destructive" onClick={() => wipeAgent && wipeNow(wipeAgent)} data-testid="button-wipe-confirm">
+              <Trash2 className="h-4 w-4 ms-1" />موافق — احذف الكل
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

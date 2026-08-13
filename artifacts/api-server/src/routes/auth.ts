@@ -1102,6 +1102,9 @@ router.post("/register", async (req, res) => {
     // Optional: bind a custom domain / agent sub-domain to the new company
     // (creates/updates a company_domains row — central platform only).
     bindDomain,
+    // Optional MANUAL company code (SuperAdmin-only): letters/digits ≤15.
+    // When omitted the code is auto-generated as ZTC-{id} (legacy behavior).
+    companyCode: manualCompanyCodeRaw,
   } = req.body;
 
   if (!nameAr || !vatNumber || !crNumber || !username || !password) {
@@ -1240,6 +1243,16 @@ router.post("/register", async (req, res) => {
     const token = auth!.slice(7);
     const [caller] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
     callerIsSuperAdmin = caller?.role === "superadmin";
+    // SuperAdmin multi-session/MFA tokens live in super_admin_sessions and are
+    // resolved by resolveBearerToken, not users.sessionToken — check them too
+    // (same resolver the agent-target middleware above already trusts).
+    if (!callerIsSuperAdmin) {
+      try {
+        const { resolveBearerToken } = await import("../middleware/auth.js");
+        const resolved = await resolveBearerToken(token);
+        callerIsSuperAdmin = !!resolved && (resolved as any).user?.role === "superadmin";
+      } catch { /* keep false */ }
+    }
   }
 
   // Companies created by superadmin are immediately active; self-registered are pending
@@ -1398,6 +1411,30 @@ router.post("/register", async (req, res) => {
     req.log?.warn?.({ err: e }, "custom picker → menuPermissions merge failed");
   }
 
+  // ── Manual company code (SuperAdmin-only) ──────────────────────────────
+  // The SuperAdmin add-company form may supply an explicit code (digits or
+  // latin letters, up to 15 chars). Normalized to UPPERCASE because the
+  // login form uppercases the typed code before matching. Public self-signup
+  // must never claim codes → silently ignored for non-SuperAdmin callers.
+  let manualCompanyCode: string | null = null;
+  if (typeof manualCompanyCodeRaw === "string" && manualCompanyCodeRaw.trim() && callerIsSuperAdmin) {
+    const norm = manualCompanyCodeRaw.trim().toUpperCase();
+    if (!/^[A-Z0-9]{1,15}$/.test(norm)) {
+      res.status(400).json({ error: "كود الشركة يجب أن يكون أرقامًا أو حروفًا إنجليزية فقط (حتى 15 خانة)", field: "companyCode" });
+      return;
+    }
+    // Pre-check against the SAME db the company will be inserted into
+    // (central or agent — the ALS proxy already routed `db`). The partial
+    // unique index on companies.code is the race-safe backstop below.
+    const [dup] = await db.select({ id: companiesTable.id }).from(companiesTable)
+      .where(eq(companiesTable.code, norm)).limit(1);
+    if (dup) {
+      res.status(409).json({ error: `كود الشركة «${norm}» مستخدم من قبل لشركة أخرى — اختر كودًا مختلفًا`, field: "companyCode" });
+      return;
+    }
+    manualCompanyCode = norm;
+  }
+
   // Create company
   const [company] = await db.insert(companiesTable).values({
     nameAr,
@@ -1433,7 +1470,7 @@ router.post("/register", async (req, res) => {
   // it. Persistence MUST succeed — the user receives this code in the
   // response and will type it on every login, so a stale/missing DB
   // value would lock them out.
-  const generatedCompanyCode = `ZTC-${company.id}`;
+  const generatedCompanyCode = manualCompanyCode ?? `ZTC-${company.id}`;
   try {
     await db.update(companiesTable)
       .set({ code: generatedCompanyCode })
@@ -1446,6 +1483,12 @@ router.post("/register", async (req, res) => {
       await db.delete(companiesTable).where(eq(companiesTable.id, company.id));
     } catch (delErr) {
       req.log?.error?.({ err: delErr, companyId: company.id }, "company rollback after code-generation failure also failed");
+    }
+    // Unique-index race: another company claimed the manual code between the
+    // pre-check and this UPDATE → friendly 409 instead of a generic 500.
+    const pgCode = (err as any)?.code ?? (err as any)?.cause?.code;
+    if (manualCompanyCode && pgCode === "23505") {
+      return res.status(409).json({ error: `كود الشركة «${manualCompanyCode}» مستخدم من قبل لشركة أخرى — اختر كودًا مختلفًا`, field: "companyCode" });
     }
     return res.status(500).json({ error: "تعذّر إنشاء كود الشركة. يرجى المحاولة مرة أخرى." });
   }

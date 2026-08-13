@@ -602,6 +602,106 @@ router.post("/:id/suspend", async (req, res) => {
   evictAgentDb(id);
   res.json({ ok: true });
 });
+// POST /:id/wipe — الحذف الكامل لكل ما ثبّتناه على سيرفر الوكيل (حماية الملكية
+// الفكرية). يوقف الترخيص فورًا (kill-switch) ثم يحاول عبر SSH إزالة: خدمة
+// التطبيق zacod-app + ملفاتها، /opt/zacod، مهام cron (نبض + محدّث)، Caddy
+// وإعداداته، وقاعدة بيانات/دور PostgreSQL اللذين أنشأهما التسطيب. حتى لو غيّر
+// الوكيل بيانات SSH وفشل الاتصال: الترخيص يُلغى والنبض التالي يكتب SUSPENDED
+// فتتوقف النسخة عن العمل.
+router.post("/:id/wipe", async (req, res) => {
+  const id = Number(req.params.id);
+  // Atomic lease: claim the shared deployStatus='deploying' slot so a
+  // concurrent deploy/provision can't run while we are deleting (and vice
+  // versa — provision/deploy claim the same slot conditionally).
+  const [inst] = await db.update(agentInstancesTable)
+    .set({ deployStatus: "deploying", updatedAt: new Date() })
+    .where(and(eq(agentInstancesTable.id, id), ne(agentInstancesTable.deployStatus, "deploying")))
+    .returning();
+  if (!inst) {
+    const [row] = await db.select({ id: agentInstancesTable.id }).from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+    res.status(row ? 409 : 404).json({ error: row ? "توجد عملية تسطيب/نشر جارية — انتظر انتهاءها أولًا" : "غير موجود" });
+    return;
+  }
+  // Persist a terminal wipe state on EVERY exit path (never leave the lease
+  // held or stale deployed/initialized flags on a wiped/unreachable server).
+  const finish = async (extra: Record<string, unknown>) => {
+    await db.update(agentInstancesTable).set({
+      deployedVersion: null, dbStatus: "not_configured", updatedAt: new Date(), ...extra,
+    }).where(eq(agentInstancesTable.id, id)).catch(() => {});
+  };
+
+  // 1) Kill-switch أولًا وبلا شروط: تعطيل + إلغاء مفتاح الترخيص.
+  await db.update(agentInstancesTable)
+    .set({ status: "suspended", licenseKey: null, updatedAt: new Date() })
+    .where(eq(agentInstancesTable.id, id));
+  await logAgentEvent(id, "suspended_by_admin", { by: (req as any).authUser?.username ?? null, note: "wipe" }, req);
+  clearAgentHostCache();
+  { const { evictAgentDb } = await import("../lib/agentDb.js"); evictAgentDb(id); }
+
+  // 2) المسح عن بُعد (أفضل جهد) — يحتاج بيانات SSH محفوظة.
+  if (!inst.sshHost || !inst.sshSecretEnc) {
+    const msg = "لا توجد بيانات SSH محفوظة — تم تعطيل الترخيص وإلغاء المفتاح فقط؛ نبض النسخة القادم سيوقفها تلقائيًا.";
+    await finish({ deployStatus: "never", deployLog: `— الحذف الكامل —\n${msg}` });
+    res.json({ ok: true, wiped: false, log: msg });
+    return;
+  }
+  try {
+    assertShellSafeHostLike(inst.sshHost, "مضيف SSH");
+    await assertProbeTargetAllowed(inst.sshHost); // SSRF guard — نفس فحص النشر
+  } catch (e: any) {
+    const msg = `تعذّر المسح عبر SSH: ${e?.message ?? e} — تم تعطيل الترخيص وإلغاء المفتاح.`;
+    await finish({ deployStatus: "error", deployLog: `— الحذف الكامل —\n${msg}` });
+    res.json({ ok: true, wiped: false, log: msg });
+    return;
+  }
+
+  // أسماء قاعدة/دور PostgreSQL كما يولّدها «التسطيب الكامل» — قيم ثابتة آمنة.
+  const dbName = `zacod_agent_${id}`;
+  const dbRole = `zacod_a${id}`;
+  const wipeScript = `#!/usr/bin/env bash
+echo "== إيقاف وإزالة تطبيق zacod-app =="
+systemctl stop zacod-app 2>/dev/null || true
+systemctl disable zacod-app 2>/dev/null || true
+rm -f /etc/systemd/system/zacod-app.service
+systemctl daemon-reload 2>/dev/null || true
+echo "== إزالة المهام المجدولة (نبض + محدّث) =="
+( crontab -l 2>/dev/null | grep -v 'zacod-heartbeat' | grep -v 'zacod-update' ) | crontab - 2>/dev/null || true
+echo "== حذف ملفات /opt/zacod بالكامل =="
+rm -rf /opt/zacod
+echo "== إزالة Caddy وإعداداته =="
+systemctl stop caddy 2>/dev/null || true
+systemctl disable caddy 2>/dev/null || true
+if command -v apt-get >/dev/null 2>&1; then apt-get purge -y caddy >/dev/null 2>&1 || true; fi
+rm -rf /etc/caddy
+echo "== حذف قاعدة البيانات والدور =="
+if command -v psql >/dev/null 2>&1; then
+  sudo -u postgres psql -c 'DROP DATABASE IF EXISTS ${dbName};' 2>/dev/null || true
+  sudo -u postgres psql -c 'DROP ROLE IF EXISTS ${dbRole};' 2>/dev/null || true
+fi
+rm -f /tmp/zacod-app.tgz
+echo "== التحقق من اكتمال الحذف =="
+LEFT=""
+[ -e /opt/zacod ] && LEFT="$LEFT /opt/zacod"
+[ -e /etc/systemd/system/zacod-app.service ] && LEFT="$LEFT zacod-app.service"
+crontab -l 2>/dev/null | grep -q 'zacod-' && LEFT="$LEFT cron"
+if [ -n "$LEFT" ]; then echo "WARNING: بقايا لم تُحذف:$LEFT"; echo "ZACOD_WIPE_PARTIAL"; else echo "ZACOD_WIPE_DONE"; fi
+`;
+  try {
+    const r = await sshRunScript(inst, wipeScript, { timeoutMs: 240_000 });
+    // النجاح = وصل السكربت للنهاية *و* لم يجد أي بقايا (الفحص أعلاه).
+    const done = r.code === 0 && r.out.includes("ZACOD_WIPE_DONE");
+    await finish({
+      deployStatus: done ? "never" : "error",
+      deployLog: `— سجل الحذف الكامل —\n${r.out.slice(-7000)}`,
+    });
+    res.json({ ok: true, wiped: done, log: r.out.slice(-7000) || (done ? "تم الحذف الكامل." : "لم يكتمل المسح — راجع السجل.") });
+  } catch (e: any) {
+    const msg = `تعذّر الاتصال بالسيرفر (${String(e?.message ?? e)}).\nتم تعطيل الترخيص وإلغاء المفتاح — النسخة ستتوقف مع أول نبض قادم.`;
+    await finish({ deployStatus: "error", deployLog: `— الحذف الكامل: فشل الاتصال —\n${msg}` });
+    res.json({ ok: true, wiped: false, log: msg });
+  }
+});
+
 router.post("/:id/activate", async (req, res) => {
   const id = Number(req.params.id);
   await db.update(agentInstancesTable).set({ status: "active", updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
