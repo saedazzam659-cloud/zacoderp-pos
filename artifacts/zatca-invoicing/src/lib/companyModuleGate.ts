@@ -129,6 +129,22 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office"]);
 
+// FROZEN legacy baseline of gate keys that keep the old "missing = allowed"
+// default (snapshot 2026-08). Any gate key added AFTER this snapshot defaults
+// OFF when absent — new platform modules never auto-appear for existing
+// companies until a SuperAdmin enables them from صلاحيات القوائم.
+// ⚠️ DO NOT add new module keys here. Keep in sync with
+// LEGACY_DEFAULT_ON_GATE_KEYS in api-server middleware/permissions.ts.
+const LEGACY_DEFAULT_ON_GATE_KEYS = new Set<string>([
+  "accounting_maintenance", "accounting_reports", "accounts", "ai_tools",
+  "cash_module", "chat", "company_maintenance", "contracting", "crm",
+  "delivery_receipt_docs", "field_service", "fixed_assets", "hospital",
+  "hotel", "hr_module", "installments", "inventory_reports", "maintenance",
+  "pos", "production", "purchases_module", "reports", "safety",
+  "sales_module", "sales_reports", "security_events", "seo_dashboard",
+  "sessions", "training_room", "user_tracking", "voice_assistant", "zatca",
+]);
+
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `permKey`. Mirrors parsePerms semantics in
 // MenuPermissions.tsx — missing JSON, missing key, or unparseable JSON all
@@ -141,7 +157,8 @@ export function companyAllowsModule(user: any, permKey?: string): boolean {
   if (!permKey) return true;
   const gateKey = COMPANY_MODULE_GATE[permKey];
   if (!gateKey) return true;
-  const defaultOff = MODULE_GATE_DEFAULT_OFF.has(gateKey);
+  const defaultOff = MODULE_GATE_DEFAULT_OFF.has(gateKey)
+    || !LEGACY_DEFAULT_ON_GATE_KEYS.has(gateKey);
   const raw = user?.company?.menuPermissions;
   if (raw == null) return !defaultOff;
   let parsed: Record<string, boolean>;

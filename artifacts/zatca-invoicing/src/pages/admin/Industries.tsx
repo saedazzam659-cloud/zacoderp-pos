@@ -20,7 +20,7 @@ import {
   CheckSquare, Square, FolderCog, Upload, Download, FileSpreadsheet, AlertTriangle, X,
 } from "lucide-react";
 import {
-  MENU_ITEMS, SECTIONS, MENU_ITEM_BY_KEY, SECTION_THEME,
+  MENU_ITEMS, SECTIONS, MENU_ITEM_BY_KEY, SECTION_THEME, MODULE_GROUPS,
 } from "@/lib/menuItems";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
@@ -39,6 +39,9 @@ type IndustryRow = {
   nameEn: string;
   emoji: string;
   recommendedModuleKeys: string[];
+  // Route paths hidden for NEW companies of this activity (become
+  // `nav:<path>=false` at registration). Editable per-module below.
+  hiddenNavPaths?: string[];
   sortOrder: number;
   isActive: boolean;
   // Per-industry default templates (uploaded by SuperAdmin) — applied
@@ -57,6 +60,7 @@ const EMPTY_FORM: FormState = {
   nameEn: "",
   emoji: "🏢",
   recommendedModuleKeys: [],
+  hiddenNavPaths: [],
   sortOrder: 0,
   isActive: true,
 };
@@ -172,6 +176,18 @@ export default function Industries() {
       recommendedModuleKeys: has
         ? editing.recommendedModuleKeys.filter(k => k !== key)
         : [...editing.recommendedModuleKeys, key],
+    });
+  };
+
+  // Toggle a single SCREEN's visibility for this activity. Checked =
+  // visible (default); unchecked = path goes into hiddenNavPaths and the
+  // registration handler writes `nav:<path>=false` for new companies.
+  const toggleNavPathInForm = (path: string) => {
+    if (!editing) return;
+    const cur = editing.hiddenNavPaths ?? [];
+    setEditing({
+      ...editing,
+      hiddenNavPaths: cur.includes(path) ? cur.filter(p => p !== path) : [...cur, path],
     });
   };
 
@@ -332,6 +348,7 @@ export default function Industries() {
         setEditing={setEditing}
         toggleMenuKeyInForm={toggleMenuKeyInForm}
         toggleSectionInForm={toggleSectionInForm}
+        toggleNavPathInForm={toggleNavPathInForm}
         saveMut={saveMut}
       />
 
@@ -373,12 +390,13 @@ export default function Industries() {
 // a static catalog) — no server fetch is needed.
 // ─────────────────────────────────────────────────────────────────────
 function IndustryEditDialog({
-  editing, setEditing, toggleMenuKeyInForm, toggleSectionInForm, saveMut,
+  editing, setEditing, toggleMenuKeyInForm, toggleSectionInForm, toggleNavPathInForm, saveMut,
 }: {
   editing: FormState | null;
   setEditing: (s: FormState | null) => void;
   toggleMenuKeyInForm: (key: string) => void;
   toggleSectionInForm: (section: string) => void;
+  toggleNavPathInForm: (path: string) => void;
   saveMut: ReturnType<typeof useMutation<any, any, FormState, any>>;
 }) {
   // Local search inside the picker — filters items by Arabic label, key,
@@ -582,6 +600,80 @@ function IndustryEditDialog({
                 كل صلاحية محدَّدة هنا ستُفعَّل تلقائياً في «صلاحيات القوائم» للشركة الجديدة عند اختيار هذا النشاط في صفحة التسجيل.
               </div>
             </div>
+
+            {/* ── شاشات كل موديل (إظهار/إخفاء لكل شاشة) ─────────────────
+                Only modules whose keys are selected above are listed —
+                unchecking a screen hides it for NEW companies of this
+                activity (nav:<path>=false), and it can be re-enabled later
+                per-company from شاشة صلاحيات القوائم. */}
+            {(() => {
+              const selectedGroups = MODULE_GROUPS.filter(g =>
+                g.moduleKeys.some(k => editing.recommendedModuleKeys.includes(k)));
+              if (selectedGroups.length === 0) return null;
+              const hidden = editing.hiddenNavPaths ?? [];
+              return (
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label className="flex items-center justify-between">
+                    <span>
+                      شاشات الموديلات المُفعَّلة
+                      <span className="text-xs text-muted-foreground mr-2 font-normal">
+                        (المخفي: {hidden.length} شاشة — غير المحدَّد لا يظهر للشركات الجديدة)
+                      </span>
+                    </span>
+                    {hidden.length > 0 && (
+                      <Button
+                        type="button" size="sm" variant="ghost" className="h-7 text-xs"
+                        onClick={() => setEditing({ ...editing, hiddenNavPaths: [] })}
+                      >
+                        إظهار كل الشاشات
+                      </Button>
+                    )}
+                  </Label>
+                  <div className="border rounded-lg p-3 max-h-80 overflow-y-auto space-y-3" data-testid="ind-screens-picker">
+                    {selectedGroups.map(g => {
+                      const hiddenInGroup = g.screens.filter(s => hidden.includes(s.path)).length;
+                      return (
+                        <div key={g.key}>
+                          <div className="flex items-center justify-between mb-1.5 px-1">
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-muted inline-flex items-center gap-1">
+                              {g.emoji} {g.label}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              يظهر {g.screens.length - hiddenInGroup}/{g.screens.length}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {g.screens.map(s => {
+                              const visible = !hidden.includes(s.path);
+                              return (
+                                <button
+                                  type="button"
+                                  key={s.path}
+                                  data-testid={`screen-pick-${s.path}`}
+                                  onClick={() => toggleNavPathInForm(s.path)}
+                                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border-2 transition ${
+                                    visible
+                                      ? "border-primary bg-primary/10 text-primary font-medium"
+                                      : "border-border bg-card text-muted-foreground line-through hover:border-primary/40"
+                                  }`}
+                                  title={s.path}
+                                >
+                                  {visible && <Check className="h-3 w-3" />}
+                                  {s.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    الشاشة غير المحدَّدة تُخفى تلقائياً عن أي شركة جديدة بهذا النشاط، ويمكن إظهارها لاحقاً لكل شركة من «صلاحيات القوائم».
+                  </div>
+                </div>
+              );
+            })()}
 
             <div className="md:col-span-2 flex items-center gap-3 pt-2 border-t">
               <Switch

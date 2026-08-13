@@ -115,6 +115,30 @@ export const SECTIONS: string[] = Array.from(new Set(MENU_ITEMS.map(m => m.secti
 
 // Quick lookup helpers — kept here so callers don't need to repeat the
 // `Map.from(MENU_ITEMS)` boilerplate.
+// ── FROZEN legacy default-ON baseline ────────────────────────────────
+// Menu-permission keys that existed BEFORE the "new modules default OFF"
+// policy (2026-08). For companies whose saved menu_permissions JSON lacks
+// a key: keys in this set stay default-ALLOWED (legacy behavior); any key
+// added to the catalog AFTER this snapshot defaults to DENIED until a
+// SuperAdmin explicitly enables it from صلاحيات القوائم.
+// ⚠️ DO NOT add new module keys to this list — that would re-open the
+// auto-enable leak this baseline exists to close. Keep in sync with
+// LEGACY_DEFAULT_ON_GATE_KEYS in api-server middleware/permissions.ts.
+export const LEGACY_DEFAULT_ON_MENU_KEYS: ReadonlySet<string> = new Set([
+  "dashboard", "invoices", "customers", "suppliers", "reports",
+  "inventory_mobile", "inventory_reports", "sister_companies",
+  "customer_notes", "supplier_notes", "sales_module", "sales_reports",
+  "purchases_module", "purchases_reports", "pos", "cash_module",
+  "cash_reports", "accounts", "accounting_reports", "accounting_maintenance",
+  "hr_module", "contracting", "production", "safety", "maintenance",
+  "hotel", "hospital", "crm", "fixed_assets", "security_events",
+  "seo_dashboard", "online_store", "field_service", "ai_tools",
+  "voice_assistant", "sessions", "chat", "company_maintenance",
+  "installments", "user_tracking", "zatca", "multi_link",
+  "delivery_receipt_docs", "training_room", "small", "medium", "large",
+  // "office" intentionally excluded — already default-OFF.
+]);
+
 export const MENU_ITEM_BY_KEY: Record<string, MenuItem> = Object.fromEntries(
   MENU_ITEMS.map(m => [m.key, m]),
 );

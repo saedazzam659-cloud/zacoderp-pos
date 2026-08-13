@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
+import { LEGACY_DEFAULT_ON_MENU_KEYS } from "@/lib/menuItems";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import CheckInWidget from "@/components/CheckInWidget";
@@ -875,10 +876,17 @@ function CashReportsNavGroup({
 // accounting_maintenance, seo_dashboard) stays invisible in the
 // sidebar even though the admin sees it as enabled — and because the
 // UI diff is zero, the Save button is disabled and the admin can't
-// even persist the new key. So the runtime treats any property NOT
-// explicitly set to `false` as allowed, which keeps strict allow-list
-// semantics for explicit denials while letting newly-added catalog
-// keys auto-enable for legacy tenants.
+// even persist the new key.
+//
+// NEW-MODULE POLICY (2026-08): the blanket "missing = allowed" default
+// is now limited to the FROZEN legacy baseline
+// (LEGACY_DEFAULT_ON_MENU_KEYS in lib/menuItems.ts). A module key added
+// to the catalog AFTER that snapshot resolves to DENIED when missing —
+// new platform modules never auto-appear for existing companies; a
+// SuperAdmin must enable them from صلاحيات القوائم. Screens INSIDE an
+// already-enabled module still auto-appear (the nav:<path> overlay
+// stays default-on). MenuPermissions.tsx mirrors the same default so
+// the editor and the runtime agree.
 function parseMenuPerms(raw: string | null | undefined): Record<string, boolean> {
   let parsed: Record<string, boolean> = {};
   try { parsed = JSON.parse(raw ?? "{}") || {}; } catch { parsed = {}; }
@@ -886,9 +894,12 @@ function parseMenuPerms(raw: string | null | undefined): Record<string, boolean>
   return new Proxy(parsed, {
     get: (target, prop) => {
       if (typeof prop !== "string") return Reflect.get(target, prop);
-      // Explicit `false` wins; everything else (true / undefined / null)
-      // resolves to true so missing catalog keys default to allowed.
-      return target[prop] === false ? false : true;
+      const v = target[prop];
+      if (v === false) return false;      // explicit deny always wins
+      if (v === true) return true;        // explicit grant
+      // Missing key: legacy-baseline keys stay allowed; post-baseline
+      // keys (new modules) default to denied.
+      return LEGACY_DEFAULT_ON_MENU_KEYS.has(prop);
     },
   });
 }

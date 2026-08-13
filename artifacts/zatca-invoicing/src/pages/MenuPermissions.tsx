@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  MENU_ITEMS, MENU_ITEM_BY_KEY, MODULE_GROUPS, screenKey,
+  MENU_ITEMS, MENU_ITEM_BY_KEY, MODULE_GROUPS, screenKey, LEGACY_DEFAULT_ON_MENU_KEYS,
 } from "@/lib/menuItems";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -44,8 +44,15 @@ const EXTRA_KEYS = MENU_ITEMS.map(m => m.key).filter(k => !GROUPED_MODULE_KEYS.h
 // and permissions.ts (backend).
 const DEFAULT_OFF_KEYS = new Set<string>(["office"]);
 
+// Default for a key ABSENT from the saved JSON: legacy-baseline keys stay
+// enabled (old behavior); keys added to the catalog AFTER the 2026-08
+// snapshot default OFF — mirrors parseMenuPerms (Layout.tsx) and the
+// backend gate so the editor and runtime always agree.
 const DEFAULT_PERMISSIONS: Record<string, boolean> = MENU_ITEMS.reduce(
-  (acc, m) => { acc[m.key] = !DEFAULT_OFF_KEYS.has(m.key); return acc; },
+  (acc, m) => {
+    acc[m.key] = LEGACY_DEFAULT_ON_MENU_KEYS.has(m.key) && !DEFAULT_OFF_KEYS.has(m.key);
+    return acc;
+  },
   {} as Record<string, boolean>,
 );
 

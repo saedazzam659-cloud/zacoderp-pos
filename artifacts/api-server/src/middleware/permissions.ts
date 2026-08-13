@@ -157,6 +157,24 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office"]);
 
+// FROZEN legacy baseline (snapshot 2026-08): gate keys that keep the old
+// "missing = allowed" fallback. Any gate key added to COMPANY_MODULE_GATE
+// AFTER this snapshot defaults OFF when absent from a company's saved
+// menu_permissions — new platform modules must be explicitly enabled per
+// company by a SuperAdmin (صلاحيات القوائم). Screens INSIDE an enabled
+// module are unaffected (nav:* is frontend-only and stays default-on).
+// ⚠️ DO NOT add new module keys here — that re-opens the auto-enable leak.
+// Keep in sync with LEGACY_DEFAULT_ON_GATE_KEYS in companyModuleGate.ts.
+const LEGACY_DEFAULT_ON_GATE_KEYS = new Set<string>([
+  "accounting_maintenance", "accounting_reports", "accounts", "ai_tools",
+  "cash_module", "chat", "company_maintenance", "contracting", "crm",
+  "delivery_receipt_docs", "field_service", "fixed_assets", "hospital",
+  "hotel", "hr_module", "installments", "inventory_reports", "maintenance",
+  "pos", "production", "purchases_module", "reports", "safety",
+  "sales_module", "sales_reports", "security_events", "seo_dashboard",
+  "sessions", "training_room", "user_tracking", "voice_assistant", "zatca",
+]);
+
 // True when the company has NOT explicitly disabled the high-level module
 // associated with `module`. Mirrors companyAllowsModule() in Layout.tsx —
 // missing keys, missing JSON, and unparseable JSON all default to "allowed"
@@ -165,7 +183,8 @@ const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office"
 export function companyAllowsModule(authUser: any, module: string): boolean {
   const gateKey = COMPANY_MODULE_GATE[module];
   if (!gateKey) return true;
-  const defaultOff = MODULE_GATE_DEFAULT_OFF.has(gateKey);
+  const defaultOff = MODULE_GATE_DEFAULT_OFF.has(gateKey)
+    || !LEGACY_DEFAULT_ON_GATE_KEYS.has(gateKey);
   const mp = authUser?.companyMenuPermissions;
   if (!mp || typeof mp !== "object") return !defaultOff;
   return defaultOff ? mp[gateKey] === true : mp[gateKey] !== false;

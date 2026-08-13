@@ -24,6 +24,17 @@ export const industriesTable = pgTable("industries", {
     .$type<string[]>()
     .notNull()
     .default([]),
+  // Per-SCREEN exclusions for this activity: route paths (e.g.
+  // "/sales/customer-credit-notes") that must be HIDDEN for companies
+  // created with this industry, even though the owning module key is
+  // granted. Applied at registration as `nav:<path>=false` entries in
+  // companies.menu_permissions (visibility-only; module API gate is
+  // untouched). SuperAdmin can re-show any screen later from the
+  // per-company صلاحيات القوائم screen.
+  hiddenNavPaths: jsonb("hidden_nav_paths")
+    .$type<string[]>()
+    .notNull()
+    .default([]),
   // ── Per-industry default templates (SuperAdmin uploads) ────────────
   // Applied automatically when a NEW company picks this industry at
   // registration. Re-uploads REPLACE the stored template fully.

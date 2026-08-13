@@ -46,6 +46,22 @@ function normaliseModuleKeys(raw: unknown): string[] {
   return filterCanonicalKeys(raw);
 }
 
+// Per-screen exclusions: keep only sane route paths ("/x/y", no spaces,
+// bounded length), dedupe, cap the list so a hostile payload can't bloat
+// the row. These become `nav:<path>=false` on newly registered companies.
+function normaliseNavPaths(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const p of raw) {
+    if (typeof p !== "string") continue;
+    const s = p.trim();
+    if (!s.startsWith("/") || s.length > 200 || /\s/.test(s)) continue;
+    if (!out.includes(s)) out.push(s);
+    if (out.length >= 500) break;
+  }
+  return out;
+}
+
 // GET /api/admin/industries — full list (admin only)
 //
 // Heavy template payloads (`coaTemplate`, `mappingsTemplate` JSON arrays)
@@ -62,6 +78,7 @@ router.get("/", requireSuperAdmin, async (_req, res) => {
       nameEn:                      industriesTable.nameEn,
       emoji:                       industriesTable.emoji,
       recommendedModuleKeys:       industriesTable.recommendedModuleKeys,
+      hiddenNavPaths:              industriesTable.hiddenNavPaths,
       sortOrder:                   industriesTable.sortOrder,
       isActive:                    industriesTable.isActive,
       coaTemplateRowCount:         industriesTable.coaTemplateRowCount,
@@ -87,6 +104,7 @@ router.get("/public", async (_req, res) => {
       nameEn:                industriesTable.nameEn,
       emoji:                 industriesTable.emoji,
       recommendedModuleKeys: industriesTable.recommendedModuleKeys,
+      hiddenNavPaths:        industriesTable.hiddenNavPaths,
       sortOrder:             industriesTable.sortOrder,
     }).from(industriesTable)
       .where(eq(industriesTable.isActive, true))
@@ -116,6 +134,7 @@ router.post("/", requireSuperAdmin, async (req, res) => {
       nameEn: String(req.body?.nameEn ?? "").trim(),
       emoji: String(req.body?.emoji ?? "🏢").trim() || "🏢",
       recommendedModuleKeys: normaliseModuleKeys(req.body?.recommendedModuleKeys),
+      hiddenNavPaths: normaliseNavPaths(req.body?.hiddenNavPaths),
       sortOrder: Number.isFinite(Number(req.body?.sortOrder)) ? Number(req.body.sortOrder) : 0,
       isActive: req.body?.isActive === false ? false : true,
     }).returning();
@@ -158,6 +177,9 @@ router.put("/:id", requireSuperAdmin, async (req, res) => {
       recommendedModuleKeys: req.body?.recommendedModuleKeys !== undefined
         ? normaliseModuleKeys(req.body.recommendedModuleKeys)
         : existing.recommendedModuleKeys,
+      hiddenNavPaths: req.body?.hiddenNavPaths !== undefined
+        ? normaliseNavPaths(req.body.hiddenNavPaths)
+        : existing.hiddenNavPaths,
       sortOrder: req.body?.sortOrder !== undefined && Number.isFinite(Number(req.body.sortOrder))
         ? Number(req.body.sortOrder) : existing.sortOrder,
       isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : existing.isActive,

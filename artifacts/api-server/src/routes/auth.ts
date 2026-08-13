@@ -1333,6 +1333,7 @@ router.post("/register", async (req, res) => {
       const { inArray, and } = await import("drizzle-orm");
       const rows = await db.select({
         keys: industriesTable.recommendedModuleKeys,
+        hiddenNav: industriesTable.hiddenNavPaths,
       }).from(industriesTable).where(and(
         inArray(industriesTable.code, codes),
         eq(industriesTable.isActive, true),
@@ -1359,6 +1360,16 @@ router.post("/register", async (req, res) => {
       // sidebar because their keys were merely absent rather than denied.
       for (const k of CANONICAL_MENU_PERMISSION_KEYS) {
         if (granted[k] !== true) granted[k] = false;
+      }
+      // Per-SCREEN exclusions from the industry (شاشة أنواع الأنشطة):
+      // hide a path only when EVERY selected industry hides it — picking
+      // a second activity that allows the screen must win (OR semantics,
+      // mirroring the module-key union above). Visibility-only.
+      if (rows.length > 0) {
+        const lists = rows.map(r => (Array.isArray(r.hiddenNav) ? r.hiddenNav : [])
+          .filter((p: unknown): p is string => typeof p === "string" && p.startsWith("/")));
+        const hiddenEverywhere = (lists[0] ?? []).filter(p => lists.every(l => l.includes(p)));
+        for (const p of hiddenEverywhere) granted[`nav:${p}`] = false;
       }
       resolvedMenuPermissions = JSON.stringify(granted);
     }
