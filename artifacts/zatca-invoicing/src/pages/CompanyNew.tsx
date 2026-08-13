@@ -93,11 +93,13 @@ const companySchema = z.object({
     .optional(),
   vatNumber: z.string().length(15, { message: "الرقم الضريبي يجب أن يكون 15 رقماً" }),
   crNumber: z.string().min(5, { message: "رقم السجل التجاري مطلوب" }),
-  city: z.string().min(2, { message: "المدينة مطلوبة" }),
+  // العنوان الوطني اختياري هنا — تُستكمل بياناته من داخل الشركة نفسها
+  // (شاشة الإعدادات) بعد الإنشاء؛ قسمه مخفي في هذه الشاشة.
+  city: z.string().optional(),
   district: z.string().optional(),
-  street: z.string().min(2, { message: "الشارع مطلوب" }),
-  buildingNumber: z.string().min(1, { message: "رقم المبنى مطلوب" }),
-  postalCode: z.string().min(5, { message: "الرمز البريدي مطلوب" }),
+  street: z.string().optional(),
+  buildingNumber: z.string().optional(),
+  postalCode: z.string().optional(),
   additionalNumber: z.string().optional(),
   phone: z.string().optional(),
   country: z.string().default("SA"),
@@ -118,6 +120,10 @@ const companySchema = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
 });
+
+// إظهار/إخفاء قسمي «العنوان الوطني» و«إعدادات ZATCA والفواتير» في شاشة
+// إضافة الشركة — مخفيان لأن بياناتهما تُستكمل من داخل الشركة نفسها.
+const HIDDEN_SECTIONS = false;
 
 function InfoBox({ children }: { children: React.ReactNode }) {
   return (
@@ -459,9 +465,7 @@ export default function CompanyNew() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         {[
           { n: "1", label: "البيانات الأساسية", desc: "اسم الشركة والأرقام الرسمية" },
-          { n: "2", label: "العنوان الوطني", desc: "عنوان المنشأة الرسمي" },
-          { n: "3", label: "إعدادات ZATCA", desc: "ربط الجهاز وبيئة العمل" },
-          { n: "4", label: "المستخدم والاشتراك", desc: "حساب الإدارة وخطة الاشتراك" },
+          { n: "2", label: "المستخدم والاشتراك", desc: "حساب الإدارة وخطة الاشتراك" },
         ].map((s) => (
           <div key={s.n} className="flex items-start gap-3 p-3 rounded-lg border bg-card">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">{s.n}</span>
@@ -738,6 +742,10 @@ export default function CompanyNew() {
             </CardContent>
           </Card>
 
+          {/* ─── Sections 2 & 3 (العنوان الوطني + إعدادات ZATCA) مخفية بطلب المستخدم:
+               تُستكمل هذه البيانات من داخل الشركة نفسها بعد الإنشاء.
+               أعد HIDDEN_SECTIONS إلى true لإظهارها مجددًا. ─── */}
+          {HIDDEN_SECTIONS && (<>
           {/* ─── Section 2: Address ─── */}
           <Card>
             <SectionHeader icon={MapPin} title="العنوان الوطني" description="عنوان المنشأة وفق نظام العنوان الوطني السعودي (WASL)" />
@@ -1123,6 +1131,8 @@ export default function CompanyNew() {
               </div>
             </CardContent>
           </Card>
+
+          </>)}
 
           {/* ─── Section 4: Admin User + Subscription ─── */}
           <Card>
