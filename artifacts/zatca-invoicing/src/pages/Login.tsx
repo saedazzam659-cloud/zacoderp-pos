@@ -517,6 +517,8 @@ export default function Login() {
               </div>
             </div>
 
+            {/* Marketing cards — hidden entirely on agent (white-label) domains */}
+            {!isAgentDomain && (<>
             {/* Tagline / parent product intro */}
             <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
@@ -590,6 +592,7 @@ export default function Login() {
                 </p>
               </div>
             </div>
+            </>)}
           </aside>
 
           {/* ─── FORM COLUMN ──────────────────────────────────────────── */}
@@ -644,7 +647,7 @@ export default function Login() {
             <p className="text-sm text-muted-foreground mt-1">
               {step === "creds" && (isSuperAdminFlow
                 ? t("auth.sa.subtitle", "هذا حساب صلاحياته عالية، نطبق تحققًا متعدد الطبقات.")
-                : t("auth.loginSubtitle"))}
+                : brandize(t("auth.loginSubtitle")))}
               {step === "otp" && t("auth.sa.otpSubtitle", "أدخل الرمز المُرسل إلى بريدك المسجل.")}
               {step === "device-approval" && t("auth.sa.deviceSubtitle", "أرسلنا رابط الموافقة إلى بريدك. اعتمد الجهاز من جهاز موثوق ثم عد إلى هنا.")}
               {step === "recovery-code" && t("auth.sa.recoverySubtitle", "أدخل أحد رموز الاسترجاع المخزنة لديك.")}
