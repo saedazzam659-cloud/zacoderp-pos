@@ -37,6 +37,19 @@ const DISMISS_KEY = "whatsapp_float_dismissed";
 export default function WhatsAppFloat() {
   const { isAuthenticated } = useAuth();
   const [open, setOpen] = useState(false);
+  // Agent (white-label reseller) domains must never show the Zacode
+  // WhatsApp/phone CTA — it's the upstream vendor's contact line, not the
+  // reseller's. Default HIDDEN until the branding probe confirms the host
+  // is NOT an agent domain, so reseller pages never flash the bubble.
+  const [showOnHost, setShowOnHost] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/branding?host=${encodeURIComponent(window.location.hostname)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive && !j?.isAgentDomain) setShowOnHost(true); })
+      .catch(() => { /* fail closed on agent-unknown: keep hidden */ });
+    return () => { alive = false; };
+  }, []);
   const [dismissed, setDismissed] = useState<boolean>(() => {
     if (typeof sessionStorage === "undefined") return false;
     return sessionStorage.getItem(DISMISS_KEY) === "1";
