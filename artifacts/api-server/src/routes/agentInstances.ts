@@ -978,8 +978,16 @@ chmod 700 /opt/zacod/heartbeat.sh; chmod 600 /opt/zacod/config.json
 # central API records the deploy as failed instead of a silent half-install.
 if ! command -v caddy >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y caddy
+    # caddy ليس في مستودعات أوبنتو/دبيان الافتراضية — أضف المستودع الرسمي أولاً.
+    if ! apt-get install -y caddy 2>/dev/null; then
+      apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+      curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
+      apt-get update -y
+      apt-get install -y caddy
+    fi
   else
     echo "ERROR: apt-get not found — install caddy manually" >&2
     exit 1
