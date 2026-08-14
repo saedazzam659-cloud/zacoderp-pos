@@ -1069,19 +1069,50 @@ async function sshRunScript(
   const MAX_OUT = 64_000;
   const timeoutMs = opts?.timeoutMs ?? 180_000;
   let seenHostKeyFp = "";
+  const isRoot = inst.sshUser === "root";
   const result = await new Promise<{ code: number; out: string }>((resolve, reject) => {
     const conn = new Client();
     const timer = setTimeout(() => { conn.end(); reject(new Error(`انتهت مهلة الاتصال/التنفيذ (${Math.round(timeoutMs / 1000)} ثانية)`)); }, timeoutMs);
-    conn.on("ready", () => {
-      conn.exec("bash -s", (err, stream) => {
-        if (err) { clearTimeout(timer); conn.end(); reject(err); return; }
-        let out = "";
-        const add = (d: Buffer) => { if (out.length < MAX_OUT) out += d.toString().slice(0, MAX_OUT - out.length); };
-        stream.on("data", add);
-        stream.stderr.on("data", add);
-        stream.on("close", (code: number) => { clearTimeout(timer); conn.end(); resolve({ code: code ?? 1, out }); });
-        stream.end(script);
+    // ينفّذ أمرًا واحدًا على القناة ويعيد المخرجات وكود الخروج.
+    const runOnce = (cmd: string, stdin: string, prefixStdin?: string) =>
+      new Promise<{ code: number; out: string }>((res2, rej2) => {
+        conn.exec(cmd, (err, stream) => {
+          if (err) { rej2(err); return; }
+          let out = "";
+          const add = (d: Buffer) => { if (out.length < MAX_OUT) out += d.toString().slice(0, MAX_OUT - out.length); };
+          stream.on("data", add);
+          stream.stderr.on("data", add);
+          stream.on("close", (code: number) => res2({ code: code ?? 1, out }));
+          if (prefixStdin) stream.write(prefixStdin);
+          stream.end(stdin);
+        });
       });
+    conn.on("ready", () => {
+      void (async () => {
+        try {
+          let r: { code: number; out: string };
+          if (isRoot) {
+            r = await runOnce("bash -s", script);
+          } else {
+            // المستخدم ليس root — نرفع الصلاحيات عبر sudo تلقائيًا.
+            // أولًا: هل sudo متاح دون كلمة مرور؟
+            const probe = await runOnce("sudo -n true 2>/dev/null; echo RC=$?", "");
+            const passwordless = /RC=0/.test(probe.out);
+            if (passwordless) {
+              r = await runOnce("sudo bash -s", script);
+            } else if (!isKey) {
+              // sudo يطلب كلمة المرور — نمررها عبر stdin (نفس كلمة مرور SSH).
+              r = await runOnce("sudo -S -p '' bash -s", script, secret + "\n");
+              if (r.code !== 0 && /(incorrect password|sorry, try again|not in the sudoers)/i.test(r.out)) {
+                throw new Error(`المستخدم «${inst.sshUser}» لا يملك صلاحيات sudo كافية أو كلمة مرور sudo مختلفة — استخدم root أو أضف المستخدم إلى sudoers`);
+              }
+            } else {
+              throw new Error(`المستخدم «${inst.sshUser}» يدخل بمفتاح لكن sudo يطلب كلمة مرور — استخدم root أو فعّل NOPASSWD للمستخدم`);
+            }
+          }
+          clearTimeout(timer); conn.end(); resolve(r);
+        } catch (e) { clearTimeout(timer); conn.end(); reject(e); }
+      })();
     });
     conn.on("error", (e) => { clearTimeout(timer); reject(e); });
     conn.connect({
