@@ -103,12 +103,16 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   const id = parseInt(req.params.id);
+  const isHomingOnly =
+    (req.body as any)?.homeDomainId !== undefined &&
+    Object.keys(req.body ?? {}).every((k) => k === "homeDomainId");
   const parsed = UpdateCompanyBody.safeParse(req.body);
-  if (!parsed.success) {
+  if (!parsed.success && !isHomingOnly) {
     res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
     return;
   }
-  const data = parsed.data;
+  // A homing-only request carries no company fields — apply only the home patch.
+  const data = parsed.success ? parsed.data : {};
   // «النطاق الموطن» — SuperAdmin-only: home/unhome the company on a gateway
   // domain (main or agent). Sent outside UpdateCompanyBody so tenant admins
   // can never self-modify their login-isolation domain.
