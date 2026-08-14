@@ -153,4 +153,5 @@
 - [Purchase return JE two flavors](purchase-return-je-flavors.md) — post_variance flag: default OFF = Cr inventory at DOC net (scale buckets to subtotal, never dump into last); ON = actual cost + variance line.
 - [Agent full edition + provisioning](agent-full-edition-provisioning.md) — mode=full runs the whole bundle locally; release=tar of own dist; shell-safety validators + claim-before-mint + loopback DB URL.
 - [Mobile companion app](mobile-companion-app.md) — Expo app calls api-server directly; branchId+customer+warehouseId mandatory on sales create, invoiceType is derived server-side, vouchers need explicit /post.
+- [Agent-server SSH rescue from dev](agent-server-ssh-from-dev.md) — banned prod IP: dev workspace IP differs; decrypt ssh_secret_enc (SESSION_SECRET shared) + sshpass unban; install script whitelists via $SSH_CONNECTION.
 - [External DB storage routing](external-db-storage-routing.md) — SA-only module routing (archive first); tables self-created via lazy DDL (ensureSchema won't); route EVERY consumer incl. delivery-receipt counts.
