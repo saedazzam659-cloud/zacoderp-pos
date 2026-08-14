@@ -1426,8 +1426,19 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
     await step("4/6 تهيئة قاعدة البيانات (السكيما + البصمة)");
     await reload();
     try {
-      await initAgentDatabaseCore(inst);
+      const plantedFp = await initAgentDatabaseCore(inst);
       log.push("تمت التهيئة وزرع البصمة.");
+      // config.json was written in step 3 BEFORE the fingerprint existed, so the
+      // heartbeat would send fingerprint:"" → 403 db_fingerprint_mismatch → the
+      // kill-switch stops Caddy every 5 minutes (site flaps up/down). Sync the
+      // planted fingerprint into the on-server config now. fp is hex-only (safe
+      // to inline in a heredoc-free python one-liner via env var).
+      await runSsh(
+        `ZFP=${shQ(plantedFp)} python3 -c "import json,os; p='/opt/zacod/config.json'; c=json.load(open(p)); c['fingerprint']=os.environ['ZFP']; json.dump(c,open(p,'w'),indent=2,ensure_ascii=False)" && rm -f /opt/zacod/SUSPENDED && echo ZACOD_FP_SYNCED`,
+        "ZACOD_FP_SYNCED",
+        60_000,
+      );
+      log.push("تمت مزامنة البصمة إلى config.json على السيرفر.");
     } catch (e: any) {
       await markInitDbFailed(inst.id, String(e?.message ?? e).slice(0, 500));
       throw e;
