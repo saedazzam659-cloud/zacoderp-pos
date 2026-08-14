@@ -113,6 +113,14 @@ import { DateField } from "@/components/ui/date-field";
 // Drives header, per-column filter row, and footer alignment. Keys match the
 // `colFilters` state and the `matchCol()` matcher below.
 type ColType = "text" | "num" | "none";
+// Creation channel label — 'جوال' when the mobile companion app created the
+// doc (source_channel column), 'POS' when linked to a POS session, else web.
+function docSourceLabel(inv: any): string {
+  if (inv?.sourceChannel === "mobile") return "جوال";
+  if (inv?.posSessionId) return "POS";
+  return "ويب";
+}
+
 const COLUMNS: ReadonlyArray<{ key: string; label: string; type: ColType; align?: "start" | "center" | "end" }> = [
   { key: "_sel",       label: "",           type: "none",   align: "center" },
   { key: "_idx",       label: "#",          type: "none",   align: "center" },
@@ -136,6 +144,7 @@ const COLUMNS: ReadonlyArray<{ key: string; label: string; type: ColType; align?
   { key: "je",         label: "القيد",      type: "text",   align: "center" },
   { key: "zatca",      label: "ZATCA",      type: "text",   align: "center" },
   { key: "status",     label: "الحالة",     type: "text",   align: "center" },
+  { key: "source",     label: "المصدر",     type: "text",   align: "center" },
   { key: "createdBy",  label: "أنشأه",       type: "text",   align: "center" },
   { key: "postedBy",   label: "رحّله",       type: "text",   align: "center" },
   { key: "notes",      label: "ملاحظات",    type: "text",   align: "start"  },
@@ -1260,6 +1269,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           case "je":         cellValue = inv.journalEntryId ? `JE-${inv.journalEntryId}` : ""; break;
           case "zatca":      cellValue = inv.zatcaStatus ?? ""; break;
           case "status":     cellValue = STATUS_AR[inv.status] ?? inv.status ?? ""; break;
+          case "source":     cellValue = docSourceLabel(inv); break;
           case "notes":      cellValue = inv.notes ?? ""; break;
           case "createdBy":  cellValue = inv.createdByName ?? ""; break;
           case "postedBy":   cellValue = inv.postedByName ?? ""; break;
@@ -1297,6 +1307,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       case "je":         return { v: Number(inv.journalEntryId ?? 0),                isNum: true  };
       case "zatca":      return { v: inv.zatcaStatus ?? "",                          isNum: false };
       case "status":     return { v: inv.status ?? "",                               isNum: false };
+      case "source":     return { v: docSourceLabel(inv),                            isNum: false };
       case "createdBy":  return { v: inv.createdByName ?? "",                        isNum: false };
       case "postedBy":   return { v: inv.postedByName ?? "",                         isNum: false };
       case "notes":      return { v: inv.notes ?? "",                                isNum: false };
@@ -1635,7 +1646,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     const header = [
       "#","رقم الفاتورة","التاريخ","العميل","الرقم الضريبي","هاتف العميل","الفرع","المندوب",
       "نوع الدفع","العملة","الكمية المجانية","المجموع","الخصم","الضريبة","الإجمالي","العمولة",
-      "حالة السداد","القيد","ZATCA","الحالة","ملاحظات",
+      "حالة السداد","القيد","ZATCA","الحالة","المصدر","ملاحظات",
     ];
     const rows = filtered.map((inv: any, idx: number) => [
       idx + 1,
@@ -1658,6 +1669,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       inv.journalEntryId ? `JE-${inv.journalEntryId}` : "—",
       inv.zatcaStatus ?? "—",
       inv.status,
+      docSourceLabel(inv),
       (inv.notes ?? "").replace(/[\r\n,]/g, " "),
     ]);
     const csv = [header, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -1869,6 +1881,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       { header: "الإجمالي",          key: "totalAmount",  width: 14 },
       { header: "الإجمالي بعد الخصم", key: "netAfterDiscount", width: 16 },
       { header: "الحالة",            key: "statusLabel",  width: 10 },
+      { header: "المصدر",            key: "sourceLabel",  width: 10 },
       { header: "أنشأه",              key: "createdByName", width: 14 },
       { header: "رحّله",              key: "postedByName",  width: 14 },
     ];
@@ -1892,6 +1905,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       totalAmount:  fmt(inv.totalAmount),
       netAfterDiscount: fmt(Number(inv.totalAmount ?? 0) - Number(inv.vatAmount ?? 0)),
       statusLabel:  STATUS[inv.status]?.label ?? inv.status,
+      sourceLabel:  docSourceLabel(inv),
       createdByName: inv.createdByName ?? "",
       postedByName:  inv.postedByName ?? "",
     }));
@@ -1920,6 +1934,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       totalAmount:  fmt(sumTot),
       netAfterDiscount: fmt(sumTot - sumVat),
       statusLabel:  "",
+      sourceLabel:  "",
       createdByName: "",
       postedByName:  "",
     };
@@ -2887,6 +2902,19 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                             <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", st.cls)}>{st.label}</span>
                           </td>
                         );
+                      case "source": {
+                        const src = docSourceLabel(inv);
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <span className={cn(
+                              "inline-flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 font-medium border",
+                              src === "جوال" ? "bg-violet-50 text-violet-700 border-violet-200"
+                                : src === "POS" ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-slate-50 text-slate-600 border-slate-200",
+                            )}>{src}</span>
+                          </td>
+                        );
+                      }
                       case "createdBy":
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">

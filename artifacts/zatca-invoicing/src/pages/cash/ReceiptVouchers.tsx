@@ -247,15 +247,16 @@ export default function ReceiptVouchers({ variant = "simple" }: { variant?: "sim
                 <th className="h-9 px-4 text-start font-medium hidden md:table-cell">{t(`${NS}.colMethod`)}</th>
                 <th className="h-9 px-4 text-start font-medium">{t(`${NS}.colAmount`)}</th>
                 <th className="h-9 px-4 text-center font-medium hidden lg:table-cell">{t(`${NS}.colJournalNo`)}</th>
+                <th className="h-9 px-4 text-center font-medium hidden md:table-cell">المصدر</th>
                 <th className="h-9 px-4 text-center font-medium">{t(`${NS}.colStatus`)}</th>
                 <th className="h-9 px-4 text-center font-medium w-28">{t(`${NS}.colActions`)}</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? Array.from({ length: 4 }).map((_, i) => (
-                <tr key={i} className="border-b"><td colSpan={8} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>
+                <tr key={i} className="border-b"><td colSpan={9} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>
               )) : filtered.length === 0 ? (
-                <tr><td colSpan={8} className="py-14 text-center text-muted-foreground">
+                <tr><td colSpan={9} className="py-14 text-center text-muted-foreground">
                   <ArrowDownCircle className="h-8 w-8 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">{search ? t("cashCommon.noResults") : t(`${NS}.noVouchers`)}</p>
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />{t(`${NS}.newVoucher`)}</Button>}
@@ -290,6 +291,13 @@ export default function ReceiptVouchers({ variant = "simple" }: { variant?: "sim
                     {row.journalEntryId
                       ? <a href={`${import.meta.env.BASE_URL}accounting/journals/${row.journalEntryId}?tab=lines`} className="text-xs font-mono text-primary hover:underline" title={t(`${NS}.viewJournal`)}>JE-{row.journalEntryId}</a>
                       : <span className="text-xs text-muted-foreground">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-center hidden md:table-cell">
+                    <span className={row.sourceChannel === "mobile"
+                      ? "inline-flex items-center text-xs text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full"
+                      : "inline-flex items-center text-xs text-muted-foreground bg-muted/30 border px-2 py-0.5 rounded-full"}>
+                      {row.sourceChannel === "mobile" ? "جوال" : "ويب"}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-center">
                     {row.status === "posted"

@@ -18,3 +18,9 @@ description: Contracts and traps for artifacts/mobile — the Arabic ERP compani
 - **Print/share**: `lib/print.ts` ports web template-14 (tafqeet, lineFigures/tax-mode math, phase-1 TLV QR). No `btoa` — own base64+UTF8 encoders (Hermes-safe); QR via `qrcode` `toString(...,{type:'svg'})` (pure JS). expo-print/expo-sharing; web fallback opens the PDF URL.
 - **Reports screens**: `app/report/[kind].tsx` (trial-balance / balance-sheet / income-statement / vat). VAT response nests values at `outputTax.total.vat` / `inputTax.total.vat` (NOT flat). Balance-sheet credit-nature balances arrive NEGATIVE — render Math.abs like the web report.
 - **Security fix found here**: `/api/accounting-reports/*` and `/api/reports/vat-declaration*` only required auth — now router-gated with `requirePermission("accounting_reports"|"vat_declaration","view")`. Any new mobile screen hitting an "internal" report route must verify the route enforces its module perm server-side, not just UI card hiding.
+
+## Source-channel column (المصدر)
+- `source_channel` nullable text on sales_invoices/sales_returns/receipt_vouchers; set to 'mobile' at CREATE only when `x-app-channel: mobile` header present; never touched by edit/post/unpost (narrow patches preserve it); conversions leave it null (= web).
+- Web label derivation: invoices جوال if sourceChannel==='mobile', else POS if posSessionId, else ويب; returns/vouchers جوال/ويب only.
+- Grid wiring gotcha: SalesAuditGrid CSV + buildExportColumns/Rows/Totals are hard-coded separately from COLUMNS — new columns must be added there too; SalesReturns CSV derives from COLUMNS but its Excel/PDF builders are hard-coded.
+- lib/db emits declaration-only dist; after schema edits run `pnpm exec tsc -b lib/db` from root or api-server tsc sees stale types (TS2769 on inserts).

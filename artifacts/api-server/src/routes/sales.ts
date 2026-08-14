@@ -986,6 +986,8 @@ router.post("/sales-invoices", async (req, res) => {
       totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
+      // Creation channel — 'mobile' when the companion app created the doc.
+      sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
       posSessionId: null, // set below after validation
       // Manual session (admin-created) the user is currently working under,
       // resolved by extractAuth from the trusted x-session-id header. Null when
@@ -2195,6 +2197,8 @@ router.post("/sales-returns", async (req, res) => {
       discountAmount: discR.toFixed(2),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft", notes: notes || null,
+      // Creation channel — 'mobile' when the companion app created the doc.
+      sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
       // Manual session (admin-created) the user is currently working under,
       // resolved by extractAuth from the trusted x-session-id header.
       sessionId: (req as any).manualSessionId ?? null,

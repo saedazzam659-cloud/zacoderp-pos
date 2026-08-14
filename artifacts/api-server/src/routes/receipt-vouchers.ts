@@ -850,6 +850,8 @@ router.post("/", async (req, res) => {
     entityType:    "customer",
     entityId,
     entityName:    d.entityName    ?? null,
+    // Creation channel — 'mobile' when the companion app created the voucher.
+    sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
     // Multi-line vouchers keep the header override null (lines carry the
     // allocation accounts); legacy single-account callers still honor it.
     accountId:     lines ? null : (d.accountId ? parseInt(d.accountId) : null),

@@ -69,6 +69,8 @@ export const receiptVouchersTable = pgTable("receipt_vouchers", {
   entityType:    cashEntityTypeEnum("entity_type").notNull().default("customer"),
   entityId:      integer("entity_id"),
   entityName:    text("entity_name"),
+  // Creation channel: 'mobile' from the companion app, null = web.
+  sourceChannel: text("source_channel"),
   accountId:     integer("account_id").references(() => accountsTable.id),
   amount:        numeric("amount", { precision: 15, scale: 2 }).notNull().default("0"),
   currencyId:    integer("currency_id").references(() => currenciesTable.id),

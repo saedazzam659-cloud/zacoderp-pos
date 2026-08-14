@@ -67,6 +67,9 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   // (cost center CODE, not id) and to survive cost-center renames.
   costCenter:     text("cost_center"),
   posSessionId:   integer("pos_session_id"),
+  // Creation channel: 'mobile' when created from the mobile companion app
+  // (x-app-channel header), null/absent = web. POS is derived from posSessionId.
+  sourceChannel:  text("source_channel"),
   // Manual (admin-created) session this invoice was recorded under, if any.
   // Soft reference to sessions.id (kept nullable; no FK to allow purging).
   sessionId:      integer("session_id"),
@@ -143,6 +146,8 @@ export const salesReturnsTable = pgTable("sales_returns", {
   customerId:   integer("customer_id").references(() => customersTable.id),
   invoiceId:    integer("invoice_id").references(() => salesInvoicesTable.id),
   paymentType:  text("payment_type").notNull().default("credit"),
+  // Creation channel: 'mobile' from the companion app, null = web.
+  sourceChannel: text("source_channel"),
   cashBoxId:    integer("cash_box_id"),
   bankAccountId: integer("bank_account_id"),
   currencyCode: text("currency_code").notNull().default("SAR"),

@@ -1349,6 +1349,7 @@ export default function SalesReturns() {
     { key: "netAfterDiscount", label: t("common.netAfterDiscount"), type: "num", valueOf: (r) => Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0) },
     { key: "journal",  label: t("salesReturns.colJournal"),      type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
     { key: "status",   label: t("salesReturns.colStatus"),       type: "text", valueOf: (r) => statusLabel(r.status) },
+    { key: "source",   label: "المصدر",                          type: "text", valueOf: (r) => (r.sourceChannel === "mobile" ? "جوال" : "ويب") },
     { key: "_act",     label: t("salesReturns.colActions"),      type: "none", valueOf: () => "" },
   ];
   const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key);
@@ -1601,6 +1602,7 @@ ${source.map((r: any, i: number) => {
     { header: "الضريبة",          key: "vatAmount",   width: 12, numFmt: "#,##0.00" },
     { header: "الإجمالي",         key: "totalAmount", width: 14, numFmt: "#,##0.00" },
     { header: "الحالة",           key: "status",      width: 10 },
+    { header: "المصدر",           key: "sourceLabel", width: 10 },
   ]);
   const buildExportRows = (source: any[] = filteredReturns) =>
     source.map((r: any, idx: number) => ({
@@ -1614,6 +1616,7 @@ ${source.map((r: any, i: number) => {
       vatAmount: Number(r.vatAmount ?? 0),
       totalAmount: Number(r.totalAmount ?? 0),
       status: r.status === "posted" ? "مرحّل" : r.status === "voided" || r.status === "cancelled" ? "ملغى" : "مسودة",
+      sourceLabel: r.sourceChannel === "mobile" ? "جوال" : "ويب",
     }));
   const buildExportTotals = (source: any[] = filteredReturns) => ({
     _idx: "",
@@ -1626,6 +1629,7 @@ ${source.map((r: any, i: number) => {
     vatAmount: source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0),
     totalAmount: source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0),
     status: "",
+    sourceLabel: "",
   });
   const exportFilenameBase = () => `sales-returns-${today()}`;
   const exportXlsx = () => {
@@ -2915,6 +2919,15 @@ ${sections}
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", stCls)}>{statusLabel(r.status)}</span>
+                          </td>
+                        );
+                      case "source":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <span className={cn(
+                              "inline-flex items-center text-[10px] rounded-full px-1.5 py-0.5 font-medium border",
+                              r.sourceChannel === "mobile" ? "bg-violet-50 text-violet-700 border-violet-200" : "bg-slate-50 text-slate-600 border-slate-200",
+                            )}>{r.sourceChannel === "mobile" ? "جوال" : "ويب"}</span>
                           </td>
                         );
                       case "_act":
