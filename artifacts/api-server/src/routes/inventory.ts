@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -242,8 +243,8 @@ router.get("/warehouses", async (req, res) => {
 
 router.post("/warehouses", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, accountId, isDefault } = req.body;
-  if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المخزن مطلوبان" }); return; }
+  const { code: rawCode, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, accountId, isDefault } = req.body;
+  if (!nameAr) { res.status(400).json({ error: "اسم المخزن مطلوب" }); return; }
   // Plan-based cap. Re-checked on every POST so SuperAdmin upgrades take
   // effect immediately. Returns the limit + used count in the body so the
   // frontend can render an actionable message instead of a generic error.
@@ -263,6 +264,7 @@ router.post("/warehouses", async (req, res) => {
   const branchCheck = await assertWarehouseBranchWritable(req, branchId, cid);
   if (!branchCheck.ok) { res.status(branchCheck.status).json({ error: branchCheck.error }); return; }
   const existing = await db.select().from(warehousesTable).where(eq(warehousesTable.companyId, cid));
+  const code = String(rawCode ?? "").trim() || nextEntityCode("WH", existing.map(w => w.code));
   if (existing.some(w => w.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمخزن آخر` }); return;
   }
@@ -443,11 +445,12 @@ router.get("/item-groups/next-account-auto", async (req, res) => {
 
 router.post("/item-groups", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn } = req.body;
-  if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المجموعة مطلوبان" }); return; }
+  const { code: rawCode, nameAr, nameEn } = req.body;
+  if (!nameAr) { res.status(400).json({ error: "اسم المجموعة مطلوب" }); return; }
   const routing = parseGroupRouting(req.body);
   if (routing.error) { res.status(400).json({ error: routing.error }); return; }
   const existing = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  const code = String(rawCode ?? "").trim() || nextEntityCode("GRP", existing.map(g => g.code));
   if (existing.some(g => g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
   }
@@ -571,9 +574,10 @@ router.get("/brands", async (req, res) => {
 
 router.post("/brands", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr } = req.body ?? {};
-  if (!code || !nameAr) { res.status(400).json({ error: "كود واسم العلامة التجارية مطلوبان" }); return; }
+  const { code: rawCode, nameAr } = req.body ?? {};
+  if (!nameAr) { res.status(400).json({ error: "اسم العلامة التجارية مطلوب" }); return; }
   const existing = await db.select().from(brandsTable).where(eq(brandsTable.companyId, cid));
+  const code = String(rawCode ?? "").trim() || nextEntityCode("BRD", existing.map(b => b.code));
   if (existing.some(b => b.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لعلامة تجارية أخرى` }); return;
   }
@@ -753,9 +757,10 @@ router.get("/units", async (req, res) => {
 
 router.post("/units", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, conversionFactor } = req.body;
-  if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الوحدة مطلوبان" }); return; }
+  const { code: rawCode, nameAr, nameEn, conversionFactor } = req.body;
+  if (!nameAr) { res.status(400).json({ error: "اسم الوحدة مطلوب" }); return; }
   const existing = await db.select().from(unitsTable).where(eq(unitsTable.companyId, cid));
+  const code = String(rawCode ?? "").trim() || nextEntityCode("UNT", existing.map(u => u.code));
   if (existing.some(u => u.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لوحدة أخرى` }); return;
   }
@@ -1013,9 +1018,11 @@ function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|
 
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
-  if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
+  const { code: rawCode, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
+  if (!nameAr) { res.status(400).json({ error: "اسم الصنف مطلوب" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
+  // كود الصنف اختياري — إن تُرك فارغاً يُولَّد تلقائياً بمتابعة أعلى رقم موجود.
+  const code = String(rawCode ?? "").trim() || nextEntityCode("ITM", existing.map(i => i.code));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
   }

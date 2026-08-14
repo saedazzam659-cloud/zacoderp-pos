@@ -98,7 +98,7 @@ export default function BrandManagement() {
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
-          saveDisabled={!form.code || !form.nameAr}
+          saveDisabled={!form.nameAr}
           saveLabel={t("common.save") as string}
         >
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">

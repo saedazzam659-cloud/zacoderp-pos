@@ -101,7 +101,7 @@ export default function CustomerGroups() {
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
-          saveDisabled={!form.code || !form.nameAr}
+          saveDisabled={!form.nameAr}
           saveLabel={editId ? tr("saveEdit") : tr("saveAdd")}
         >
           <FormGrid>

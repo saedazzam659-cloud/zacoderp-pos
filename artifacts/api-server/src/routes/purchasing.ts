@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -333,8 +334,13 @@ router.get("/supplier-groups", async (req, res) => {
 router.post("/supplier-groups", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { code, nameAr, nameEn, discountPercent, notes, isActive } = req.body;
-    if (!code || !nameAr) { res.status(400).json({ error: "الكود والاسم مطلوبان" }); return; }
+    const { code: rawCode, nameAr, nameEn, discountPercent, notes, isActive } = req.body;
+    if (!nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
+    const existingGroups = await db.select({ code: supplierGroupsTable.code }).from(supplierGroupsTable).where(eq(supplierGroupsTable.companyId, cid));
+    const code = String(rawCode ?? "").trim() || nextEntityCode("SG", existingGroups.map(g => g.code));
+    if (existingGroups.some(g => g.code?.trim().toLowerCase() === code.toLowerCase())) {
+      res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
+    }
     const [row] = await db.insert(supplierGroupsTable).values({
       companyId: cid, code, nameAr, nameEn: nameEn || null,
       discountPercent: discountPercent || "0", notes: notes || null,

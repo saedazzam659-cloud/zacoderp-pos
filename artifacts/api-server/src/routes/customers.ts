@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { db } from "@workspace/db";
 import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable, accountsTable } from "@workspace/db";
 import { and, asc, eq, sql, gte, lte } from "drizzle-orm";
@@ -130,8 +131,13 @@ router.post("/customer-groups", async (req, res) => {
   try {
     const cid = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
-    const { code, nameAr, nameEn, notes, isActive } = req.body;
-    if (!code || !nameAr) { res.status(400).json({ error: "الكود والاسم مطلوبان" }); return; }
+    const { code: rawCode, nameAr, nameEn, notes, isActive } = req.body;
+    if (!nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
+    const existingGroups = await db.select({ code: customerGroupsTable.code }).from(customerGroupsTable).where(eq(customerGroupsTable.companyId, cid));
+    const code = String(rawCode ?? "").trim() || nextEntityCode("CG", existingGroups.map(g => g.code));
+    if (existingGroups.some(g => g.code?.trim().toLowerCase() === code.toLowerCase())) {
+      res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
+    }
     const [row] = await db.insert(customerGroupsTable).values({
       companyId: cid, code, nameAr, nameEn: nameEn || null,
       notes: notes || null, isActive: isActive ?? true,

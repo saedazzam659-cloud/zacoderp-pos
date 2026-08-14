@@ -90,39 +90,6 @@ export default function Warehouses() {
     setErrors({});
   }
 
-  // Auto-generate the next sequential warehouse code based on existing codes.
-  // Detects the dominant prefix (e.g. "WH-") and numeric width (e.g. 2 digits)
-  // from existing warehouses and produces the next number. Falls back to
-  // "WH-01" when there are no warehouses yet.
-  function generateNextCode(): string {
-    const existing = (warehouses as any[]).map(w => String(w.code || "")).filter(Boolean);
-    if (existing.length === 0) return "WH-01";
-    const re = /^(.*?)(\d+)$/;
-    let bestPrefix = "WH-";
-    let bestWidth = 2;
-    let maxNum = 0;
-    const prefixCounts: Record<string, number> = {};
-    for (const c of existing) {
-      const m = c.match(re);
-      if (!m) continue;
-      const [, prefix, num] = m;
-      prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
-    }
-    bestPrefix = Object.entries(prefixCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "WH-";
-    for (const c of existing) {
-      const m = c.match(re);
-      if (!m) continue;
-      const [, prefix, num] = m;
-      if (prefix === bestPrefix) {
-        const n = parseInt(num, 10);
-        if (n > maxNum) maxNum = n;
-        if (num.length > bestWidth) bestWidth = num.length;
-      }
-    }
-    const next = maxNum + 1;
-    return `${bestPrefix}${String(next).padStart(bestWidth, "0")}`;
-  }
-
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     // Validate required: nameAr only. Code is auto-generated when missing
@@ -139,7 +106,8 @@ export default function Warehouses() {
       return;
     }
     setErrors({});
-    const codeFinal = String(form.code || "").trim() || generateNextCode();
+    // كود فارغ → يُولَّد على السيرفر (WH-0001) — السيرفر هو المصدر الوحيد للتوليد.
+    const codeFinal = String(form.code || "").trim();
     const payload = {
       ...form,
       code:          codeFinal,

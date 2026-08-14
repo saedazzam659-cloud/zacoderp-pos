@@ -1431,7 +1431,7 @@ export default function Items() {
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
-          saveDisabled={!form.code || !form.nameAr}
+          saveDisabled={!form.nameAr}
           saveLabel={editId ? t("pages.items.saveEdit") : t("pages.items.addItem")}
         >
           <div className="flex flex-col lg:flex-row gap-6" dir="rtl">
@@ -1462,7 +1462,7 @@ export default function Items() {
             </TabsList>
             <TabsContent value="basic" className="mt-0 space-y-6">
               <FormGrid cols={3}>
-                <Field label={t("pages.items.itemCode")} required><Input placeholder="ITM-001" dir="ltr" className="text-left" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} /></Field>
+                <Field label={t("pages.items.itemCode")} hint={t("pages.items.itemCodeAutoHint", "اتركه فارغاً ليُولَّد تلقائياً (ITM-0001)")}><Input placeholder={t("pages.items.itemCodeAutoPlaceholder", "تلقائي — أو اكتب كوداً خاصاً")} dir="ltr" className="text-left" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} /></Field>
                 <Field label={t("pages.items.nameAr")} required><Input placeholder={t("pages.items.nameAr")} value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} /></Field>
                 <Field label={t("pages.items.nameEn")}><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
                 <Field label={t("pages.items.barcode")}><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
