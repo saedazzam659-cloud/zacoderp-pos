@@ -65,15 +65,36 @@ export default function Login() {
   // brand, and we hide self-signup entirely (server also blocks /register
   // for agent hosts). Best-effort — any failure falls back to default brand.
   const [agentBrand, setAgentBrand] = useState<{ isAgentDomain: boolean; brandName?: string | null; brandLogoUrl?: string | null; brandColor?: string | null } | null>(null);
+  // Tracks whether the branding probe finished (either way). App-download
+  // badges must NOT render until we KNOW the host is not an agent domain —
+  // otherwise they'd flash on reseller login pages while /api/branding is
+  // still in flight.
+  const [brandingResolved, setBrandingResolved] = useState(false);
   useEffect(() => {
     let alive = true;
     fetch(`${API_BASE}/api/branding?host=${encodeURIComponent(window.location.hostname)}`)
       .then(r => (r.ok ? r.json() : null))
       .then(j => { if (alive && j?.isAgentDomain) setAgentBrand(j); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (alive) setBrandingResolved(true); });
     return () => { alive = false; };
   }, []);
   const isAgentDomain = !!agentBrand?.isAgentDomain;
+
+  // ── Mobile app download links (login-page badges) ────────────────────
+  // Public endpoint; rows exist only after SuperAdmin configures them in
+  // إدارة أجهزة POS ← الإصدارات. Missing platform → its badge is hidden.
+  const [mobileApps, setMobileApps] = useState<{ platform: string; latestVersion: string; downloadUrl: string }[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE}/api/public/download/mobile-apps`)
+      .then(r => (r.ok ? r.json() : []))
+      .then(j => { if (alive && Array.isArray(j)) setMobileApps(j); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const androidApp = mobileApps.find(a => a.platform === "android");
+  const iosApp = mobileApps.find(a => a.platform === "ios");
 
   // After a successful login we usually go to the home dashboard, but if
   // the user got here via a deep-link redirect (e.g. opened
@@ -977,6 +998,51 @@ export default function Login() {
             </div>
           )}
         </div>
+
+              {/* Mobile app download badges — stacked, shown only when the
+                  SuperAdmin configured links (hidden on agent domains). */}
+              {step === "creds" && brandingResolved && !isAgentDomain && (androidApp || iosApp) && (
+                <div className="mt-6 flex flex-col items-center gap-2" data-testid="login-app-downloads">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Smartphone className="h-3.5 w-3.5" />
+                    حمّل تطبيق الجوال وأصدر فواتيرك من أي مكان
+                  </p>
+                  <div className="flex flex-col gap-2 w-full max-w-[240px]">
+                    {androidApp && (
+                      <a
+                        href={androidApp.downloadUrl}
+                        target="_blank" rel="noreferrer"
+                        data-testid="login-download-android"
+                        className="flex items-center gap-3 rounded-xl bg-gray-900 text-white px-4 py-2.5 hover:bg-gray-800 transition-colors shadow-md"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="currentColor" aria-hidden>
+                          <path d="M3.6 1.8 13.7 12 3.6 22.2c-.3-.3-.5-.8-.5-1.3V3.1c0-.5.2-1 .5-1.3Zm11.5 8.8 2.6-2.6-11-6.3c-.4-.2-.8-.3-1.2-.2l9.6 9.1Zm3.9 1.4 2.3 1.3c.9.5.9 1.8 0 2.3l-2.3 1.3-2.9-2.4 2.9-2.5Zm-3.9 3.5-9.6 9.1c.4.1.8 0 1.2-.2l11-6.3-2.6-2.6Z"/>
+                        </svg>
+                        <span className="text-start leading-tight">
+                          <span className="block text-[10px] opacity-80">متوفر لأجهزة</span>
+                          <span className="block text-sm font-semibold">Android</span>
+                        </span>
+                      </a>
+                    )}
+                    {iosApp && (
+                      <a
+                        href={iosApp.downloadUrl}
+                        target="_blank" rel="noreferrer"
+                        data-testid="login-download-ios"
+                        className="flex items-center gap-3 rounded-xl bg-gray-900 text-white px-4 py-2.5 hover:bg-gray-800 transition-colors shadow-md"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="currentColor" aria-hidden>
+                          <path d="M16.4 12.9c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.8-3.5.8-.7 0-1.9-.8-3.1-.8-1.6 0-3.1.9-3.9 2.4-1.7 2.9-.4 7.2 1.2 9.5.8 1.2 1.7 2.5 3 2.4 1.2 0 1.7-.8 3.1-.8 1.4 0 1.9.8 3.1.8 1.3 0 2.1-1.2 2.9-2.3.9-1.3 1.3-2.6 1.3-2.7-.1 0-2.6-1-2.7-4Zm-2.5-7.2c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.8 1.4-.6.7-1.2 1.9-1 3 1.1.1 2.1-.6 2.8-1.4Z"/>
+                        </svg>
+                        <span className="text-start leading-tight">
+                          <span className="block text-[10px] opacity-80">متوفر لأجهزة</span>
+                          <span className="block text-sm font-semibold">iPhone — iOS</span>
+                        </span>
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <p className="text-center text-xs text-muted-foreground mt-6">
                 © 2026 {t("auth.appName")} — {t("auth.rights")}

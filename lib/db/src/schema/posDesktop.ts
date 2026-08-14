@@ -103,6 +103,20 @@ export const downloadReleasesTable = pgTable("download_releases", {
   countryPlatformIdx: index("download_releases_country_platform_idx").on(t.countryCode, t.platform, t.isActive),
 }));
 
+// ─── Mobile app releases (Android APK / iOS store link) ──────────────
+// One row per platform. Drives the login-page download buttons AND the
+// in-app forced-update gate (minVersion). Managed by SuperAdmin.
+export const mobileAppReleasesTable = pgTable("mobile_app_releases", {
+  id: serial("id").primaryKey(),
+  platform: text("platform").notNull(), // 'android' | 'ios' (UNIQUE via DDL index)
+  latestVersion: text("latest_version").notNull().default("1.0.0"),
+  minVersion: text("min_version").notNull().default("1.0.0"),
+  downloadUrl: text("download_url").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // ─── Standalone (offline-only) licenses — Task #199 ──────────────────
 // These are NOT tied to a cloud company. SuperAdmin generates a key
 // + a signed JSON file (Ed25519). The customer drops the file into

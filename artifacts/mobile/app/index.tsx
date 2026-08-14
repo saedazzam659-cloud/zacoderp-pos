@@ -4,6 +4,8 @@ import { Redirect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { useColors } from '@/hooks/useColors';
 
+// NOTE: the forced-update gate lives in app/_layout.tsx (UpdateGate) so
+// deep links into any route are covered — do not re-add it here.
 export default function Index() {
   const { user, loading } = useAuth();
   const c = useColors();

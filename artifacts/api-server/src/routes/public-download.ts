@@ -4,7 +4,7 @@
 
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { downloadReleasesTable } from "@workspace/db";
+import { downloadReleasesTable, mobileAppReleasesTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { getPublicKeyInfo } from "../lib/offlineLicenseSigner.js";
 
@@ -64,6 +64,21 @@ router.get("/countries", async (_req, res) => {
     .from(downloadReleasesTable)
     .where(eq(downloadReleasesTable.isActive, true));
   res.json(rows.map((r) => r.countryCode));
+});
+
+// GET /api/public/download/mobile-apps
+// Used by BOTH the login-page download buttons and the mobile app's
+// startup forced-update gate. Public, cache-friendly.
+router.get("/mobile-apps", async (_req, res) => {
+  const rows = await db.select().from(mobileAppReleasesTable)
+    .where(eq(mobileAppReleasesTable.isActive, true));
+  res.set("Cache-Control", "public, max-age=300");
+  res.json(rows.map((r) => ({
+    platform: r.platform,
+    latestVersion: r.latestVersion,
+    minVersion: r.minVersion,
+    downloadUrl: r.downloadUrl,
+  })));
 });
 
 export default router;

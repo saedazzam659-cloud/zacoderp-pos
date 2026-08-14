@@ -1,4 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Linking, Pressable, Text, View } from 'react-native';
+import { checkForcedUpdate, currentAppVersion, type UpdateCheck } from '@/lib/appUpdate';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -19,6 +21,37 @@ import * as SplashScreen from 'expo-splash-screen';
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+
+// Forced-update gate sits ABOVE the router so deep links can't bypass it.
+// Fail-open (offline/server error ⇒ app works normally); while checking we
+// render the router immediately — the gate replaces it only when required.
+function UpdateGate({ children }: { children: React.ReactNode }) {
+  const [update, setUpdate] = useState<UpdateCheck | null>(null);
+  useEffect(() => {
+    let alive = true;
+    checkForcedUpdate().then((r) => { if (alive) setUpdate(r); });
+    return () => { alive = false; };
+  }, []);
+
+  if (update?.required) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', padding: 32, gap: 12 }}>
+        <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', textAlign: 'center' }}>يتوفر تحديث مطلوب</Text>
+        <Text style={{ fontSize: 14, color: '#555', textAlign: 'center', lineHeight: 22 }}>
+          إصدارك الحالي ({currentAppVersion()}) لم يعد مدعوماً.{'\n'}
+          حدّث التطبيق إلى الإصدار {update.latestVersion} للمتابعة.
+        </Text>
+        <Pressable
+          onPress={() => Linking.openURL(update.downloadUrl)}
+          style={{ backgroundColor: '#0f766e', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32, marginTop: 8 }}
+        >
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>تحديث التطبيق الآن</Text>
+        </Pressable>
+      </View>
+    );
+  }
+  return <>{children}</>;
+}
 
 function RootLayoutNav() {
   return (
@@ -57,7 +90,9 @@ export default function RootLayout() {
           <GestureHandlerRootView>
             <KeyboardProvider>
               <AuthProvider>
-                <RootLayoutNav />
+                <UpdateGate>
+                  <RootLayoutNav />
+                </UpdateGate>
               </AuthProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>

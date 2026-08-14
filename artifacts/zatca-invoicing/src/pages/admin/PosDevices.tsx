@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -759,6 +759,8 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
   });
 
   return (
+    <div className="space-y-4">
+    <MobileAppsCard headers={headers} />
     <Card><CardContent className="p-4 space-y-3">
       <div className="flex justify-between items-center gap-2">
         <p className="text-sm text-muted-foreground">روابط تنزيل المثبّت لكل دولة. استخدم رمز <code>ALL</code> كرابط احتياطي عام. النظام يتزامن تلقائياً مع GitHub كل ساعة.</p>
@@ -827,6 +829,82 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </CardContent></Card>
+    </div>
+  );
+}
+
+// ─── Mobile apps card — android/ios download links + versions that
+//     drive the login-page badges and the in-app forced-update gate. ──
+type MobileAppRow = { platform: string; latestVersion: string; minVersion: string; downloadUrl: string; isActive: boolean };
+function MobileAppsCard({ headers }: { headers: Record<string, string> }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const empty = { latestVersion: "1.0.0", minVersion: "1.0.0", downloadUrl: "", isActive: true };
+  const [forms, setForms] = useState<Record<string, typeof empty>>({ android: { ...empty }, ios: { ...empty } });
+
+  const appsQ = useQuery<MobileAppRow[]>({
+    queryKey: ["mobile-app-releases"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/pos-devices/mobile-apps`, { headers });
+      if (!r.ok) throw new Error("فشل تحميل روابط تطبيقات الجوال");
+      return r.json();
+    },
+  });
+  useEffect(() => {
+    if (!appsQ.data) return;
+    setForms((prev) => {
+      const next = { ...prev };
+      for (const row of appsQ.data!) {
+        next[row.platform] = {
+          latestVersion: row.latestVersion, minVersion: row.minVersion,
+          downloadUrl: row.downloadUrl, isActive: row.isActive,
+        };
+      }
+      return next;
+    });
+  }, [appsQ.data]);
+
+  const saveMut = useMutation({
+    mutationFn: async (platform: string) => {
+      const r = await fetch(`${API}/api/admin/pos-devices/mobile-apps/${platform}`, {
+        method: "PUT", headers, body: JSON.stringify(forms[platform]),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "فشل الحفظ");
+    },
+    onSuccess: () => { toast({ title: "تم الحفظ" }); qc.invalidateQueries({ queryKey: ["mobile-app-releases"] }); },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
+  const setF = (p: string, patch: Partial<typeof empty>) =>
+    setForms((prev) => ({ ...prev, [p]: { ...prev[p], ...patch } }));
+
+  return (
+    <Card><CardContent className="p-4 space-y-3">
+      <p className="text-sm font-medium">تطبيقات الجوال (أزرار التحميل في شاشة الدخول + التحديث الإجباري داخل التطبيق)</p>
+      <p className="text-xs text-muted-foreground">«أدنى إصدار مسموح» يجبر المستخدمين الأقدم على التحديث عند فتح التطبيق. اترك الرابط فارغاً لإخفاء زر المنصة من شاشة الدخول.</p>
+      <div className="grid md:grid-cols-2 gap-4">
+        {(["android", "ios"] as const).map((p) => (
+          <div key={p} className="border rounded-lg p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <Badge variant="outline">{p === "android" ? "Android" : "iOS"}</Badge>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input type="checkbox" checked={forms[p].isActive} onChange={(e) => setF(p, { isActive: e.target.checked })} />
+                <span>نشط</span>
+              </label>
+            </div>
+            <div><Label className="text-xs">رابط التحميل (متجر أو APK)</Label>
+              <Input dir="ltr" value={forms[p].downloadUrl} onChange={(e) => setF(p, { downloadUrl: e.target.value })} placeholder="https://…" data-testid={`mobile-app-url-${p}`} /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">أحدث إصدار</Label>
+                <Input dir="ltr" value={forms[p].latestVersion} onChange={(e) => setF(p, { latestVersion: e.target.value })} placeholder="1.0.0" /></div>
+              <div><Label className="text-xs">أدنى إصدار مسموح</Label>
+                <Input dir="ltr" value={forms[p].minVersion} onChange={(e) => setF(p, { minVersion: e.target.value })} placeholder="1.0.0" /></div>
+            </div>
+            <Button size="sm" onClick={() => saveMut.mutate(p)} disabled={!forms[p].downloadUrl || saveMut.isPending} data-testid={`mobile-app-save-${p}`}>حفظ</Button>
+          </div>
+        ))}
+      </div>
     </CardContent></Card>
   );
 }

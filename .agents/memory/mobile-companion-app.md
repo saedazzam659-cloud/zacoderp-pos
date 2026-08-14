@@ -24,3 +24,9 @@ description: Contracts and traps for artifacts/mobile — the Arabic ERP compani
 - Web label derivation: invoices جوال if sourceChannel==='mobile', else POS if posSessionId, else ويب; returns/vouchers جوال/ويب only.
 - Grid wiring gotcha: SalesAuditGrid CSV + buildExportColumns/Rows/Totals are hard-coded separately from COLUMNS — new columns must be added there too; SalesReturns CSV derives from COLUMNS but its Excel/PDF builders are hard-coded.
 - lib/db emits declaration-only dist; after schema edits run `pnpm exec tsc -b lib/db` from root or api-server tsc sees stale types (TS2769 on inserts).
+
+## Forced-update gate + login download badges
+- `mobile_app_releases` (one row per platform android/ios) drives BOTH the zacoderp login-page download badges and the in-app forced-update gate; SA manages it from إدارة أجهزة POS ← الإصدارات; public read = `/api/public/download/mobile-apps`.
+- The update gate lives in mobile `app/_layout.tsx` (UpdateGate ABOVE the router) — putting it in `app/index.tsx` is bypassable by deep links. Fail-open on network errors.
+- Login badges must wait for `/api/branding` to RESOLVE before rendering (`brandingResolved` state) or they flash on agent/reseller domains; agent domains never show them.
+- Server validates versions as dotted numerics (mobile comparator zeroes non-numeric segments like "v2.0.0") and requires https downloadUrl (it feeds public anchors + Linking.openURL).

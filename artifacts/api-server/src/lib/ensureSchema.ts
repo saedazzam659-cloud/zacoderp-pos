@@ -1814,6 +1814,20 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "download_releases_country_platform_idx",
       sql:   `CREATE INDEX IF NOT EXISTS download_releases_country_platform_idx ON download_releases (country_code, platform, is_active)` },
 
+    { label: "create mobile_app_releases table",
+      sql:   `CREATE TABLE IF NOT EXISTS mobile_app_releases (
+        id                 SERIAL PRIMARY KEY,
+        platform           TEXT NOT NULL,
+        latest_version     TEXT NOT NULL DEFAULT '1.0.0',
+        min_version        TEXT NOT NULL DEFAULT '1.0.0',
+        download_url       TEXT NOT NULL,
+        is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "mobile_app_releases_platform_uq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS mobile_app_releases_platform_uq ON mobile_app_releases (platform)` },
+
     // ─── OSH / Safety module (see lib/db/src/schema/safety.ts). ISO 45001 core:
     // risk register + hierarchy of controls, incident management + 5-Whys, and
     // CAPA. No journal entries (operational, not financial). CREATE here because

@@ -5,7 +5,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   deviceLicensesTable, posDevicesTable, syncQueueLogTable,
-  downloadReleasesTable, companiesTable,
+  downloadReleasesTable, mobileAppReleasesTable, companiesTable,
 } from "@workspace/db";
 import { eq, and, desc, sql, isNull } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -267,6 +267,50 @@ router.delete("/releases/:id", async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad id" }); return; }
   await db.delete(downloadReleasesTable).where(eq(downloadReleasesTable.id, id));
   res.json({ ok: true });
+});
+
+// ─── Mobile app releases (android / ios) — login-page buttons + in-app
+//     forced-update gate. One row per platform, upsert-style PUT. ─────
+router.get("/mobile-apps", async (_req, res) => {
+  const rows = await db.select().from(mobileAppReleasesTable);
+  res.json(rows);
+});
+
+// Versions must be plain dotted numerics (the mobile comparator treats
+// non-numeric segments as 0, so "v2.0.0" would compare as 0.0.0).
+const VERSION_RE = /^\d+(\.\d+){0,3}$/;
+const cmpVer = (a: string, b: string) => {
+  const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0, y = pb[i] ?? 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+};
+const mobileAppSchema = z.object({
+  latestVersion: z.string().regex(VERSION_RE, "version must be dotted numbers e.g. 1.2.0"),
+  minVersion: z.string().regex(VERSION_RE, "version must be dotted numbers e.g. 1.2.0"),
+  // https only — this URL lands in public login anchors AND native
+  // Linking.openURL; never allow javascript:/custom schemes.
+  downloadUrl: z.string().url().refine((u) => u.startsWith("https://"), "downloadUrl must be https"),
+  isActive: z.boolean().default(true),
+});
+router.put("/mobile-apps/:platform", async (req, res) => {
+  const platform = String(req.params.platform);
+  if (platform !== "android" && platform !== "ios") { res.status(400).json({ error: "platform must be android or ios" }); return; }
+  const parsed = mobileAppSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "bad payload", details: parsed.error.issues }); return; }
+  if (cmpVer(parsed.data.minVersion, parsed.data.latestVersion) > 0) {
+    res.status(400).json({ error: "أدنى إصدار مسموح لا يمكن أن يكون أعلى من أحدث إصدار" }); return;
+  }
+  const [row] = await db.insert(mobileAppReleasesTable)
+    .values({ platform, ...parsed.data })
+    .onConflictDoUpdate({
+      target: mobileAppReleasesTable.platform,
+      set: { ...parsed.data, updatedAt: new Date() },
+    })
+    .returning();
+  res.json(row);
 });
 
 // Manual "sync now" trigger — mirrors the hourly scheduler one-shot.
