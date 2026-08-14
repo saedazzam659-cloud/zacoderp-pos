@@ -979,6 +979,18 @@ ${heartbeatScript}
 ZACOD_HB
 chmod 700 /opt/zacod/heartbeat.sh; chmod 600 /opt/zacod/config.json
 ( crontab -l 2>/dev/null | grep -v zacod-heartbeat ; echo "*/5 * * * * /opt/zacod/heartbeat.sh # zacod-heartbeat" ) | crontab -
+# حصانة دائمة ضد حظر fail2ban: أضف عنوان المنصة المتصلة حاليًا إلى القائمة
+# البيضاء وفك أي حظر قائم — فلا تتعطل التحديثات المستقبلية بعد اليوم.
+if command -v fail2ban-client >/dev/null 2>&1; then
+  PLATFORM_IP=$(echo "$SSH_CONNECTION" | awk '{print $1}')
+  if [ -n "$PLATFORM_IP" ]; then
+    mkdir -p /etc/fail2ban/jail.d
+    printf '[DEFAULT]\nignoreip = 127.0.0.1/8 ::1 %s\n' "$PLATFORM_IP" > /etc/fail2ban/jail.d/zacod-whitelist.conf
+    fail2ban-client reload >/dev/null 2>&1 || systemctl restart fail2ban 2>/dev/null || true
+    fail2ban-client unban --all >/dev/null 2>&1 || true
+    echo "تمت إضافة عنوان المنصة ($PLATFORM_IP) إلى القائمة البيضاء لـ fail2ban."
+  fi
+fi
 # Caddy is REQUIRED — any failure below aborts the script (set -e) so the
 # central API records the deploy as failed instead of a silent half-install.
 if ! command -v caddy >/dev/null 2>&1; then
