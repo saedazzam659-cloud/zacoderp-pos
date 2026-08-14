@@ -34,3 +34,5 @@ Email delivery: POST /:id/email-package emails the setup kit + license/install c
 SA panel is FULLY blocked on agent domains, two layers: backend — agentDataSourceRouter stamps `req.agentDomainHit`, then blockSuperadminOnAgentDomains 404s `/admin/*` + `/auth/superadmin` (+ security event `sa_panel_blocked`); frontend — App.tsx useIsAgentDomain (module-cached /api/branding) forces rawIsSuperAdmin=false, hiding all SA routes/menus. The hook must stay ABOVE AppRoutes' early returns (hooks rule).
 
 Deferred: cross-DB leak integration tests + ALS-inheritance audit for request-spawned background work.
+
+Domain diagnostics: POST /:id/check-domains (read-only, no state writes) — per domain: assertProbeTargetAllowed, DNS, onServer = intersect(domain IPs, sshHost IPs), HTTPS liveness+latency. **The HTTPS probe must PIN the connection to the pre-validated IP via node:https custom `lookup` (servername=domain for SNI) — plain fetch re-resolves DNS = rebinding SSRF.** IP literals detected via net.isIP, never regex heuristics.

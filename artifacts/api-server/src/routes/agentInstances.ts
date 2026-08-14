@@ -32,6 +32,7 @@ import { eq, desc, and, or, ne, lt } from "drizzle-orm";
 import { z } from "zod/v4";
 import { PgPool, type PgPoolType } from "@workspace/db";
 import net from "node:net";
+import { request as httpsRequest } from "node:https";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { extractAuth } from "../middleware/auth.js";
 import { normalizeHost } from "../middleware/domainResolver.js";
@@ -577,6 +578,88 @@ router.post("/:id/test-ssh", async (req, res) => {
   }).where(eq(agentInstancesTable.id, id));
   if (reachable) res.json({ ok: true, host: inst.sshHost, port });
   else res.status(502).json({ error: `تعذّر الوصول إلى ${inst.sshHost}:${port}` });
+});
+
+// POST /:id/check-domains — read-only diagnostics for the agent's domains.
+// For each domain (main + extras): DNS resolution, whether it points at the
+// agent's own server (sshHost IPs), and an HTTPS liveness probe with latency.
+// Purely additive — never mutates instance state.
+router.post("/:id/check-domains", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+
+  const domains = [inst.domain, ...((inst.extraDomains as string[] | null) ?? [])]
+    .map(d => String(d ?? "").trim().toLowerCase()).filter(Boolean).slice(0, 21);
+  if (domains.length === 0) { res.status(400).json({ error: "لا توجد نطاقات مسجّلة" }); return; }
+
+  // Resolve the agent server's own IPs once (from sshHost) for comparison.
+  let serverIps: string[] = [];
+  if (inst.sshHost) {
+    try {
+      if (net.isIP(inst.sshHost)) serverIps = [inst.sshHost];
+      else serverIps = (await dnsLookup(inst.sshHost, { all: true })).map(a => a.address);
+    } catch { /* unresolved server host → onServer stays unknown */ }
+  }
+
+  const checkOne = async (domain: string) => {
+    const out: {
+      domain: string; ips: string[]; dnsOk: boolean;
+      onServer: boolean | null; live: boolean; httpStatus: number | null;
+      latencyMs: number | null; error: string | null;
+    } = { domain, ips: [], dnsOk: false, onServer: null, live: false, httpStatus: null, latencyMs: null, error: null };
+    // SSRF guard — same policy as every other probe on this router.
+    try { await assertProbeTargetAllowed(domain); }
+    catch (e: any) { out.error = String(e?.message ?? "عنوان غير مسموح"); return out; }
+    try {
+      out.ips = (await dnsLookup(domain, { all: true })).map(a => a.address);
+      out.dnsOk = out.ips.length > 0;
+    } catch { out.error = "تعذّر تحليل DNS للنطاق"; }
+    if (out.dnsOk && serverIps.length > 0) out.onServer = out.ips.some(ip => serverIps.includes(ip));
+    if (out.dnsOk) {
+      // DNS-rebinding safety: re-check the resolved addresses, then PIN the
+      // HTTPS connection to the first vetted IP via a custom lookup — fetch()
+      // would re-resolve the name, so it must not be used here. servername
+      // stays the domain so TLS SNI/verification behave normally.
+      const isBlockedIp = (ip: string) =>
+        /^127\./.test(ip) || ip === "0.0.0.0" || /^169\.254\./.test(ip) ||
+        ip === "::1" || ip === "::" || /^fe80:/i.test(ip) || /^::ffff:127\./i.test(ip);
+      if (out.ips.some(isBlockedIp)) { out.error = "هذا العنوان غير مسموح"; return out; }
+      const pinnedIp = out.ips[0];
+      const t0 = Date.now();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const probe = httpsRequest({
+            host: domain, servername: domain, port: 443, path: "/", method: "GET", timeout: 8000,
+            lookup: ((_h: string, opts: any, cb: any) => {
+              const fam = net.isIP(pinnedIp);
+              if (typeof opts === "function") { opts(null, pinnedIp, fam); return; }
+              if (opts?.all) cb(null, [{ address: pinnedIp, family: fam }]);
+              else cb(null, pinnedIp, fam);
+            }) as any,
+          }, (resp) => {
+            // Any HTTP response (even 4xx/5xx) proves the domain serves traffic.
+            out.latencyMs = Date.now() - t0;
+            out.httpStatus = resp.statusCode ?? null;
+            out.live = true;
+            resp.resume();
+            resolve();
+          });
+          probe.on("timeout", () => probe.destroy(new Error("probe-timeout")));
+          probe.on("error", reject);
+          probe.end();
+        });
+      } catch (e: any) {
+        out.latencyMs = Date.now() - t0;
+        out.error = String(e?.message ?? "").includes("probe-timeout")
+          ? "انتهت مهلة الاتصال (8 ثوان)" : "تعذّر الاتصال عبر HTTPS";
+      }
+    }
+    return out;
+  };
+
+  const results = await Promise.all(domains.map(checkOne));
+  res.json({ ok: true, serverHost: inst.sshHost ?? null, serverIps, results, checkedAt: new Date().toISOString() });
 });
 
 // ── License / kill-switch ──────────────────────────────────────────────────

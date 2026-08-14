@@ -87,6 +87,16 @@ const EVENT_LABEL: Record<string, string> = {
   heartbeat_suspended: "نبض من نسخة موقوفة",
 };
 
+type DomainCheckRow = {
+  domain: string; ips: string[]; dnsOk: boolean;
+  onServer: boolean | null; live: boolean; httpStatus: number | null;
+  latencyMs: number | null; error: string | null;
+};
+type DomainCheckResp = {
+  ok: boolean; serverHost: string | null; serverIps: string[];
+  results: DomainCheckRow[]; checkedAt: string;
+};
+
 const emptyForm = {
   id: 0, name: "", contactPhone: "", contactEmail: "", domain: "", extraDomainsText: "",
   mode: "frontend_only", maxCompanies: "", licenseExpiresAt: "",
@@ -131,6 +141,8 @@ export default function AgentServers() {
   const [logoDrag, setLogoDrag] = useState(false);
   const [emailPkg, setEmailPkg] = useState<{ agent: Agent; email: string } | null>(null);
   const [kitView, setKitView] = useState<{ agent: string; kit: any } | null>(null);
+  // فحص النطاقات — نتائج DNS + HTTPS لكل نطاقات الوكيل (إضافة قراءة فقط).
+  const [domainCheck, setDomainCheck] = useState<{ agent: Agent; loading: boolean; data?: DomainCheckResp } | null>(null);
   const isEdit = form.id > 0;
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
 
@@ -187,6 +199,19 @@ export default function AgentServers() {
     } catch (e: any) {
       toast({ title: `${label}: فشل`, description: String(e.message ?? e), variant: "destructive" });
     } finally { setBusy(null); }
+  }
+
+  async function checkDomains(a: Agent) {
+    setDomainCheck({ agent: a, loading: true });
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/check-domains`, { method: "POST", headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل الفحص");
+      setDomainCheck({ agent: a, loading: false, data: j });
+    } catch (e: any) {
+      setDomainCheck(null);
+      toast({ title: "فحص النطاقات: فشل", description: String(e.message ?? e), variant: "destructive" });
+    }
   }
 
   async function openSetupKit(a: Agent) {
@@ -340,6 +365,14 @@ export default function AgentServers() {
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1" dir="ltr">
                       <Globe className="h-3 w-3" />{a.domain}
                       {(a.extraDomains?.length ?? 0) > 0 && <span className="opacity-60">+{a.extraDomains!.length}</span>}
+                      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2 ms-2"
+                        disabled={domainCheck?.loading && domainCheck.agent.id === a.id}
+                        onClick={() => checkDomains(a)} data-testid={`button-check-domains-${a.id}`}>
+                        {domainCheck?.loading && domainCheck.agent.id === a.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <Plug className="h-3 w-3 ms-1" />}
+                        فحص النطاقات
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -586,6 +619,58 @@ export default function AgentServers() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── فحص النطاقات ── */}
+      <Dialog open={!!domainCheck} onOpenChange={(o) => !o && setDomainCheck(null)}>
+        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>فحص النطاقات — {domainCheck?.agent.name}</DialogTitle></DialogHeader>
+          {domainCheck?.loading ? (
+            <div className="py-10 text-center text-muted-foreground">
+              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin" />
+              جارٍ فحص النطاقات (DNS + HTTPS)…
+            </div>
+          ) : domainCheck?.data ? (
+            <div className="space-y-3">
+              <div className="text-xs text-muted-foreground" dir="rtl">
+                سيرفر الوكيل: <span dir="ltr">{domainCheck.data.serverHost ?? "غير مُدخل"}</span>
+                {domainCheck.data.serverIps.length > 0 && <span dir="ltr" className="ms-1">({domainCheck.data.serverIps.join(", ")})</span>}
+              </div>
+              {domainCheck.data.results.map((r) => (
+                <div key={r.domain} className="border rounded-lg p-3 space-y-2" data-testid={`domain-check-${r.domain}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="font-medium text-sm flex items-center gap-1.5" dir="ltr"><Globe className="h-3.5 w-3.5" />{r.domain}</div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {r.live
+                        ? <Badge className="bg-emerald-600 text-white"><CheckCircle2 className="h-3 w-3 ms-1" />مفعل</Badge>
+                        : <Badge variant="destructive"><XCircle className="h-3 w-3 ms-1" />غير مفعل</Badge>}
+                      {r.onServer === true && <Badge className="bg-emerald-600 text-white">على سيرفر الوكيل</Badge>}
+                      {r.onServer === false && <Badge variant="destructive">خارج سيرفر الوكيل</Badge>}
+                      {r.onServer === null && <Badge variant="secondary">السيرفر غير محدد</Badge>}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-3 flex-wrap" dir="ltr">
+                    {r.ips.length > 0 && <span>IP: {r.ips.join(", ")}</span>}
+                    {r.latencyMs != null && r.live && (
+                      <span className={r.latencyMs < 500 ? "text-emerald-600" : r.latencyMs < 2000 ? "text-amber-600" : "text-rose-600"}>
+                        ⏱ {r.latencyMs} ms
+                      </span>
+                    )}
+                    {r.httpStatus != null && <span>HTTP {r.httpStatus}</span>}
+                  </div>
+                  {r.error && <div className="text-[11px] text-rose-600">{r.error}</div>}
+                  {!r.dnsOk && !r.error && <div className="text-[11px] text-rose-600">النطاق غير مسجّل في DNS</div>}
+                </div>
+              ))}
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] text-muted-foreground">آخر فحص: {fmtDate(domainCheck.data.checkedAt)}</div>
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => checkDomains(domainCheck.agent)}>
+                  <RefreshCw className="h-3 w-3 ms-1" />إعادة الفحص
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 
