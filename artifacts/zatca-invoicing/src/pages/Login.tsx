@@ -502,8 +502,11 @@ export default function Login() {
                 data-testid="login-brand-mark"
               />
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">
-                {isAgentDomain && agentBrand?.brandName ? agentBrand.brandName : t("auth.appName")}
+                {brandingResolved ? (isAgentDomain && agentBrand?.brandName ? agentBrand.brandName : t("auth.appName")) : "\u00A0"}
               </h1>
+              {/* Subtitle + country welcome + compliance pill — Zacode
+                  marketing copy, hidden entirely on agent domains. */}
+              {brandingResolved && !isAgentDomain && (<>
               <p className="text-muted-foreground mt-1 text-sm">{t("auth.appSubtitle")}</p>
               <p className="text-xs text-muted-foreground mt-2" data-testid="login-country-welcome">
                 مرحباً بزوّارنا من {countryInfo.nameAr} — العملة الافتراضية {countryInfo.currency.nameAr} ({countryInfo.currency.symbol}).
@@ -515,10 +518,13 @@ export default function Login() {
                 <ShieldCheck className="h-3 w-3" />
                 {visitorCountry === "SA" ? t("auth.zatcaCompliant") : countryInfo.policyAr}
               </div>
+              </>)}
             </div>
 
-            {/* Marketing cards — hidden entirely on agent (white-label) domains */}
-            {!isAgentDomain && (<>
+            {/* Marketing cards — hidden entirely on agent (white-label) domains.
+                Also hidden until the branding probe resolves, so reseller
+                pages never flash the Zacode marketing content. */}
+            {brandingResolved && !isAgentDomain && (<>
             {/* Tagline / parent product intro */}
             <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
@@ -612,7 +618,7 @@ export default function Login() {
                   />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[11px] font-bold tracking-widest text-white/80 uppercase">{isAgentDomain ? (agentBrand?.brandName ?? "") : "ZacodERP"}</p>
+                  <p className="text-[11px] font-bold tracking-widest text-white/80 uppercase">{brandingResolved ? (isAgentDomain ? (agentBrand?.brandName ?? "") : "ZacodERP") : "\u00A0"}</p>
                   <h1 className="text-xl font-extrabold leading-tight truncate">أهلاً بعودتك 👋</h1>
                   <p className="text-xs text-white/85 mt-0.5">سجّل دخولك للمتابعة</p>
                 </div>
@@ -647,7 +653,7 @@ export default function Login() {
             <p className="text-sm text-muted-foreground mt-1">
               {step === "creds" && (isSuperAdminFlow
                 ? t("auth.sa.subtitle", "هذا حساب صلاحياته عالية، نطبق تحققًا متعدد الطبقات.")
-                : brandize(t("auth.loginSubtitle")))}
+                : (brandingResolved ? brandize(t("auth.loginSubtitle")) : "\u00A0"))}
               {step === "otp" && t("auth.sa.otpSubtitle", "أدخل الرمز المُرسل إلى بريدك المسجل.")}
               {step === "device-approval" && t("auth.sa.deviceSubtitle", "أرسلنا رابط الموافقة إلى بريدك. اعتمد الجهاز من جهاز موثوق ثم عد إلى هنا.")}
               {step === "recovery-code" && t("auth.sa.recoverySubtitle", "أدخل أحد رموز الاسترجاع المخزنة لديك.")}
@@ -1055,7 +1061,7 @@ export default function Login() {
               )}
 
               <p className="text-center text-xs text-muted-foreground mt-6">
-                © 2026 {brandize(t("auth.appName"))} — {t("auth.rights")}
+                {brandingResolved ? <>© 2026 {brandize(t("auth.appName"))} — {t("auth.rights")}</> : "\u00A0"}
               </p>
             </main>
           </div>
