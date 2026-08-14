@@ -408,10 +408,15 @@ router.delete("/:id", async (req, res) => {
 async function withAgentPool<T>(dbUrlEnc: string, fn: (pool: PgPoolType) => Promise<T>): Promise<T> {
   const url = decryptSecret(dbUrlEnc);
   if (!url) throw new Error("لا يوجد رابط اتصال محفوظ");
-  try { await assertProbeTargetAllowed(new URL(url).hostname); }
+  let hostname: string;
+  try { hostname = new URL(url).hostname; }
+  catch {
+    throw new Error("رابط الاتصال غير صالح — يجب أن يكون بصيغة postgres://user:pass@host:5432/dbname (عدّل الرابط من قلم التعديل أو احذفه ليُنشأ تلقائيًا عند التسطيب)");
+  }
+  try { await assertProbeTargetAllowed(hostname); }
   catch (e: any) {
     if (String(e?.message ?? "").includes("غير مسموح")) throw e;
-    throw new Error("رابط الاتصال غير صالح");
+    throw new Error(`تعذّر التحقق من مضيف قاعدة البيانات (${hostname}) — تأكد من صحة العنوان`);
   }
   const pool = new PgPool({ connectionString: url, max: 2, connectionTimeoutMillis: 8000, ssl: url.includes("sslmode=disable") ? undefined : { rejectUnauthorized: false } });
   try { return await fn(pool); } finally { await pool.end().catch(() => {}); }
@@ -1345,9 +1350,20 @@ echo ZACOD_CHECK_OK`, "ZACOD_CHECK_OK", 60_000);
 
     // 2) PostgreSQL + DB creation (only when no DB registered yet)
     await step("2/6 قاعدة البيانات PostgreSQL");
-    if (inst.dbUrlEnc) {
+    // الرابط المحفوظ يُعتمد فقط إذا كان رابط PostgreSQL صالحًا فعلاً —
+    // رابط تالف (إدخال يدوي خاطئ) كان يعطّل الخطوة 4 لاحقًا.
+    const storedDbUrlOk = (() => {
+      if (!inst.dbUrlEnc) return false;
+      const raw = decryptSecret(inst.dbUrlEnc) ?? "";
+      try {
+        const u = new URL(raw);
+        return (u.protocol === "postgres:" || u.protocol === "postgresql:") && !!u.hostname;
+      } catch { return false; }
+    })();
+    if (storedDbUrlOk) {
       log.push("قاعدة بيانات مسجّلة مسبقًا — تخطّي الإنشاء.");
     } else {
+      if (inst.dbUrlEnc) log.push("الرابط المحفوظ غير صالح — سيتم إنشاء قاعدة بيانات جديدة على السيرفر وحفظ رابطها تلقائيًا.");
       const dbUser = `zacod_a${inst.id}`;
       const dbName = `zacod_agent_${inst.id}`;
       const dbPass = randomBytes(24).toString("hex");
