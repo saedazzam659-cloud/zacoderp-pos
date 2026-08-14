@@ -62,3 +62,8 @@ as a fallback after explicit + impersonation context. Operational note: trust of
 - homeDomainBlocked: homed company logs in ONLY from its home domain; unhomed companies are blocked on gateway hosts (is_main rows + agent domains). Dangling home pointer fails OPEN by choice (availability; prod DB agent-read-only).
 - /register bindDomain and companies PUT homeDomainId both HOME (companies.home_domain_id) on gateway domains and heal stale companyId/isPrimary binds; keep their agent-domain predicates in lockstep and CASE-INSENSITIVE incl. extra_domains (jsonb_array_elements_text + lower, not @> containment).
 - companies PUT homing is SA-only, gateway-domains-only (is_main or agent), sent OUTSIDE UpdateCompanyBody; UI lives in SA CompanyDetails «النطاق الموطن».
+
+## Agent external-DB routing vs company creation (2026-08)
+- An agent with db_status=initialized + db_url_enc serves its OWN PostgreSQL for every request on its domain (agentDataSourceRouter/runWithExternalDb). A company created centrally can NEVER log in from that domain — homing is irrelevant there. Companies for such agents must be created via /register with agentInstanceId (SA wizard «وجهة إنشاء الشركة»).
+- /register bindDomain now warns (and skips homing) when the bound domain belongs to an initialized-DB agent without agentInstanceId; CompanyNew auto-selects the agent target when its domain is picked.
+- homeDomainBlocked must resolve the host via resolveAgentRequestHost (token-verified X-Zacod-Agent-Host) — agent proxies rewrite Host/X-Forwarded-Host to the central domain.

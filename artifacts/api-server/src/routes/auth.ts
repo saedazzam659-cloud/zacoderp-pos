@@ -14,8 +14,12 @@ import { normalizeHost } from "../middleware/domainResolver.js";
 // hiccup can't lock everyone out.
 async function homeDomainBlocked(req: { headers: Record<string, unknown> }, companyHomeDomainId: number | null): Promise<boolean> {
   try {
-    const rawHost = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string) || "";
-    const host = normalizeHost(rawHost);
+    // Agent reverse proxies rewrite Host/X-Forwarded-Host to the CENTRAL
+    // domain and carry the true host in the token-verified
+    // X-Zacod-Agent-Host header — resolve through the shared helper or a
+    // homed company gets blocked from its own home domain.
+    const { resolveAgentRequestHost } = await import("./agentInstances.js");
+    const host = await resolveAgentRequestHost(req as any);
     if (!host) return false;
     // ── Homed company → may log in ONLY from its home domain ──────────────
     // This is the full-isolation rule: a company homed to an agent/main
@@ -1559,7 +1563,7 @@ router.post("/register", async (req, res) => {
         // company must be HOMED to them, never single-company-bound (binding
         // hijacks the agent's host routing for every other tenant).
         const agentHit: any = await db.execute(sql`
-          SELECT id FROM agent_instances
+          SELECT id, db_status, (db_url_enc IS NOT NULL) AS has_db FROM agent_instances
            WHERE lower(domain) = ${host}
               OR EXISTS (
                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(extra_domains::jsonb, '[]'::jsonb)) d
@@ -1567,8 +1571,17 @@ router.post("/register", async (req, res) => {
                  )
            LIMIT 1
         `);
-        const isAgentDomain = !!(((agentHit as { rows?: any[] }).rows ?? agentHit)?.[0]);
-        if (existing?.isMain || isAgentDomain) {
+        const agentRow = (((agentHit as { rows?: any[] }).rows ?? agentHit) ?? [])[0];
+        const isAgentDomain = !!agentRow;
+        if (isAgentDomain && agentRow.db_status === "initialized" && agentRow.has_db) {
+          // The agent serves its OWN database — a centrally-created company
+          // can never log in from this domain. Don't home it (that would
+          // strand it out of the central platform too); tell the SA to
+          // recreate the company with وجهة الإنشاء = the agent server.
+          domainBindWarning =
+            `النطاق ${host} يخص وكيلًا بقاعدة بيانات مستقلة — الشركة أُنشئت على المنصة المركزية ولن تعمل من هذا الدومين. ` +
+            `أعد إنشاءها مع اختيار الوكيل من «وجهة إنشاء الشركة».`;
+        } else if (existing?.isMain || isAgentDomain) {
           // Main multi-company domain → «النطاق الموطن»: the company is HOMED
           // to it (agent-like login restriction, data stays central). The
           // domain row itself stays main/multi-company — no companyId bind.

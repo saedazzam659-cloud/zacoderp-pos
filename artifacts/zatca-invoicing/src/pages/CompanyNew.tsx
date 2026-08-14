@@ -248,6 +248,21 @@ export default function CompanyNew() {
     return items;
   })();
   const selectedIsMain = !!bindDomain && mainDomainSet.has(bindDomain);
+  // ── Agent-domain safety net ── an initialized agent serves its OWN database,
+  // so a company bound to its domain MUST be created ON that agent (وجهة
+  // الإنشاء), not centrally — otherwise login from the domain finds nothing.
+  const boundLower = (bindDomainCustom.trim() || bindDomain).toLowerCase();
+  const matchedAgent = boundLower
+    ? selectableAgents.find((a) =>
+        [a.domain, ...(a.extraDomains ?? [])].some(
+          (d: string) => d && (d.toLowerCase() === boundLower || boundLower.endsWith("." + d.toLowerCase())),
+        ),
+      )
+    : undefined;
+  useEffect(() => {
+    if (matchedAgent && agentTarget === "central") setAgentTarget(String(matchedAgent.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchedAgent?.id]);
   // Main domain selected directly → the company is HOMED to it (login from
   // that domain restricted to its companies). An optional sub-label instead
   // binds a dedicated sub-domain (e.g. shop1.tafrah.com.sa).
@@ -468,6 +483,11 @@ export default function CompanyNew() {
             data-testid="input-bind-domain-custom"
           />
         </div>
+        {matchedAgent && (
+          <div className="text-xs rounded-md border border-amber-300 bg-amber-50 text-amber-800 p-2" data-testid="warning-agent-domain">
+            هذا دومين وكيل بقاعدة بيانات مستقلة ({matchedAgent.name}) — تم ضبط «وجهة إنشاء الشركة» على هذا الوكيل تلقائيًا حتى تُنشأ الشركة على سيرفره ويعمل الدخول من الدومين.
+          </div>
+        )}
         {effectiveBindDomain && (
           <div className="text-xs text-muted-foreground">
             {selectedIsMain && !bindDomainCustom.trim() && !bindSubLabel.trim()
