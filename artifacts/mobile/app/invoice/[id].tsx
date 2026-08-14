@@ -18,6 +18,7 @@ import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { money, qty as fq, todayISO, showDate } from '@/lib/format';
 import { onScan, clearScan } from '@/lib/scanBus';
+import { printInvoice, shareInvoicePdf } from '@/lib/print';
 import { useAuth } from '@/contexts/AuthContext';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
@@ -315,6 +316,30 @@ export default function InvoiceForm() {
     }
   };
 
+  // Print / share (posted invoices only) — قالب 14 «الأصلي» مع QR زاتكا
+  const [printing, setPrinting] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const doPrint = async (share: boolean) => {
+    if (!loadedDoc) return;
+    share ? setSharing(true) : setPrinting(true);
+    try {
+      const input = {
+        doc: loadedDoc,
+        lines: Array.isArray(loadedDoc.lines) ? loadedDoc.lines : [],
+        customer,
+        company: user?.company ?? {},
+        logoUrl: null,
+      };
+      if (share) await shareInvoicePdf(input);
+      else await printInvoice(input);
+    } catch (e: any) {
+      notify('خطأ', typeof e === 'string' ? e : e?.message ?? 'تعذّرت الطباعة');
+    } finally {
+      setPrinting(false);
+      setSharing(false);
+    }
+  };
+
   const Seg = ({ options, value, onChange }: { options: { v: string; l: string }[]; value: string; onChange: (v: any) => void }) => (
     <View style={{ flexDirection: 'row-reverse', backgroundColor: c.muted, borderRadius: 12, padding: 3 }}>
       {options.map((o) => (
@@ -595,7 +620,11 @@ export default function InvoiceForm() {
                 <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft" />
               </View>
             ) : (
-              <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>هذه الفاتورة صادرة — للعرض فقط.</Text></Card>
+              <View style={{ gap: 10 }}>
+                <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>هذه الفاتورة صادرة — للعرض فقط.</Text></Card>
+                <Btn title="طباعة الفاتورة" icon="printer" loading={printing} onPress={() => doPrint(false)} testID="button-print" />
+                <Btn title="مشاركة PDF (واتساب / بريد)" icon="share-2" kind="outline" loading={sharing} onPress={() => doPrint(true)} testID="button-share" />
+              </View>
             )}
           </ScrollView>
         )}

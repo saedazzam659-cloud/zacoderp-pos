@@ -116,7 +116,7 @@ function validIsoDate(s: string): boolean {
 // invoices) and input VAT (purchase invoices − purchase returns) from the
 // canonical accounting tables, all gated to status='posted' (or 'issued'
 // for legacy ZATCA invoices). Drafts and cancelled docs are excluded.
-router.get("/vat-declaration", async (req, res) => {
+router.get("/vat-declaration", requirePermission("vat_declaration", "view"), async (req, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
   if (!from || !to) { res.status(400).json({ error: "from و to مطلوبان (YYYY-MM-DD)" }); return; }
   if (!validIsoDate(from) || !validIsoDate(to)) {
@@ -526,7 +526,7 @@ function classifyOne(base: number, vat: number): Bucket3 {
   return "exempt";
 }
 
-router.get("/vat-declaration/details", async (req, res) => {
+router.get("/vat-declaration/details", requirePermission("vat_declaration", "view"), async (req, res) => {
   const { from, to, bucket } = req.query as { from?: string; to?: string; bucket?: string };
   if (!from || !to || !bucket) { res.status(400).json({ error: "from و to و bucket مطلوبة" }); return; }
   if (!validIsoDate(from) || !validIsoDate(to)) { res.status(400).json({ error: "صيغة التاريخ غير صحيحة" }); return; }

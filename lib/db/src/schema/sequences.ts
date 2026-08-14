@@ -56,6 +56,12 @@ export const SEQUENCE_TX_TYPES = [
   "sales_invoice_foreign",
   "sales_return_foreign",
   "pos_receipt",
+  // Mobile-app numbering sub-types (opt-in). When the request arrives from the
+  // mobile companion app (x-app-channel: mobile) and a company binds a
+  // sequence to one of these, the document draws its number from it — taking
+  // PRECEDENCE over the payment/foreign split. ZATCA ICV/PIH is NEVER split.
+  "sales_invoice_mobile",
+  "receipt_voucher_mobile",
   // Production & Manufacturing — production_order is already issued by the
   // backend via nextSequenceNumber, declaring it here closes the type drift.
   "production_order",

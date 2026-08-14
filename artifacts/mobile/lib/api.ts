@@ -60,7 +60,13 @@ export async function api<T = unknown>(
 ): Promise<T> {
   const domain = await getDomain();
   const token = await getToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  // x-app-channel lets the server route mobile documents onto their own
+  // numbering series (sales_invoice_mobile / receipt_voucher_mobile) when
+  // the company configured one in مسلسل الحركات.
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-app-channel': 'mobile',
+  };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   let res: Response;

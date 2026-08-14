@@ -27,6 +27,7 @@ function RootLayoutNav() {
       <Stack.Screen name="login" />
       <Stack.Screen name="invoice/[id]" />
       <Stack.Screen name="voucher/new" />
+      <Stack.Screen name="report/[kind]" />
       <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
     </Stack>
   );

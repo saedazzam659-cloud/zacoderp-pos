@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { Platform, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
@@ -10,7 +11,8 @@ import { useColors } from '@/hooks/useColors';
 import { Card, ErrorBox } from '@/components/ui';
 
 export default function Summary() {
-  const { companyId } = useAuth();
+  const { companyId, can } = useAuth();
+  const router = useRouter();
   const c = useColors();
   const insets = useSafeAreaInsets();
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
@@ -65,11 +67,38 @@ export default function Summary() {
             <Stat icon="file-text" label="إجمالي الفواتير" value={String(stats.total)} />
             <Stat icon="edit-3" label="مسودات" value={String(stats.draftCount)} />
           </View>
-          <Card style={{ gap: 6 }}>
-            <Text style={{ fontSize: 13, color: c.mutedForeground, textAlign: 'right' }}>
-              التقارير المالية التفصيلية (ميزانية، أرباح وخسائر، إقرار الضريبة) متاحة من النظام الرئيسي على الويب، وستضاف للتطبيق في التحديث القادم.
-            </Text>
-          </Card>
+          {can('accounting_reports', 'view') || can('vat_declaration', 'view') ? (
+            <View style={{ gap: 10 }}>
+              <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', textAlign: 'right', color: c.foreground, marginTop: 4 }}>التقارير المالية</Text>
+              {[
+                ...(can('accounting_reports', 'view')
+                  ? [
+                      { kind: 'trial-balance', label: 'ميزان المراجعة', icon: 'bar-chart-2' as const },
+                      { kind: 'balance-sheet', label: 'قائمة المركز المالي', icon: 'layers' as const },
+                      { kind: 'income-statement', label: 'قائمة الدخل (أرباح وخسائر)', icon: 'trending-up' as const },
+                    ]
+                  : []),
+                ...(can('vat_declaration', 'view') ? [{ kind: 'vat', label: 'الإقرار الضريبي', icon: 'percent' as const }] : []),
+              ].map((r) => (
+                <Pressable
+                  key={r.kind}
+                  testID={`report-${r.kind}`}
+                  onPress={() => router.push(`/report/${r.kind}` as any)}
+                  style={({ pressed }) => ({ backgroundColor: c.card, borderRadius: 12, borderWidth: 1, borderColor: c.border, padding: 14, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, opacity: pressed ? 0.7 : 1 })}
+                >
+                  <Feather name={r.icon} size={18} color={c.primary} />
+                  <Text style={{ flex: 1, textAlign: 'right', fontSize: 14, fontFamily: 'Inter_500Medium', color: c.foreground }}>{r.label}</Text>
+                  <Feather name="chevron-left" size={16} color={c.mutedForeground} />
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <Card>
+              <Text style={{ fontSize: 13, color: c.mutedForeground, textAlign: 'right' }}>
+                لا تملك صلاحية عرض التقارير المالية — تواصل مع مدير النظام.
+              </Text>
+            </Card>
+          )}
         </ScrollView>
       )}
     </View>

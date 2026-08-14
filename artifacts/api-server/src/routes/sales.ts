@@ -946,6 +946,18 @@ router.post("/sales-invoices", async (req, res) => {
           docDate:  invoiceDate,
         });
       }
+      // Mobile-app sales (x-app-channel: mobile) prefer the dedicated
+      // "sales_invoice_mobile" series when the company configured one.
+      // Falls through to the normal payment/foreign split otherwise.
+      // The ZATCA ICV/PIH chain stays unified regardless of the channel.
+      if (fromSeq == null && String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile") {
+        fromSeq = await nextSequenceNumber(cid, "sales_invoice_mobile", {
+          userId:   req.authUser?.id ?? null,
+          refTable: "sales_invoices",
+          branchId: branchId ? Number(branchId) : null,
+          docDate:  invoiceDate,
+        });
+      }
       if (fromSeq == null) {
         fromSeq = await nextSequenceForPayment(cid, "sales_invoice", pType, {
           userId:   req.authUser?.id ?? null,

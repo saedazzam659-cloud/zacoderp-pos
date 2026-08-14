@@ -77,7 +77,7 @@ export const SEQUENCE_MODULES: SequenceModule[] = [
     label: "المبيعات",
     txTypes: [
       "sales_quotation", "sales_order",
-      "sales_invoice", "sales_invoice_cash", "sales_invoice_credit", "sales_invoice_bank", "sales_invoice_foreign",
+      "sales_invoice", "sales_invoice_cash", "sales_invoice_credit", "sales_invoice_bank", "sales_invoice_foreign", "sales_invoice_mobile",
       "sales_return", "sales_return_cash", "sales_return_credit", "sales_return_bank", "sales_return_foreign",
       "pos_receipt",
     ],
@@ -102,7 +102,7 @@ export const SEQUENCE_MODULES: SequenceModule[] = [
     label: "المحاسبة والخزينة",
     txTypes: [
       "journal_entry",
-      "receipt_voucher", "receipt_voucher_cash", "receipt_voucher_bank",
+      "receipt_voucher", "receipt_voucher_cash", "receipt_voucher_bank", "receipt_voucher_mobile",
       "payment_voucher", "payment_voucher_cash", "payment_voucher_bank",
       "cost_center", "fixed_asset", "cash_transfer",
     ],

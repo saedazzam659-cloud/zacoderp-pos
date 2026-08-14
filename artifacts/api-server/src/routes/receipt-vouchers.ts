@@ -795,7 +795,18 @@ router.post("/", async (req, res) => {
   if (d.code) {
     code = String(d.code);
   } else {
-    const seq = await nextSequenceForPayment(cid, "receipt_voucher", d.paymentType || "cash", {
+    // Mobile-app vouchers (x-app-channel: mobile) prefer the dedicated
+    // "receipt_voucher_mobile" series when configured, else the normal split.
+    let mobileSeq: string | null = null;
+    if (String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile") {
+      mobileSeq = await nextSequenceNumber(cid, "receipt_voucher_mobile", {
+        branchId: d.branchId ? parseInt(d.branchId) : null,
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "receipt_vouchers",
+        docDate:  d.date ?? null,
+      });
+    }
+    const seq = mobileSeq ?? await nextSequenceForPayment(cid, "receipt_voucher", d.paymentType || "cash", {
       branchId: d.branchId ? parseInt(d.branchId) : null,
       userId:   (req as any).authUser?.id ?? null,
       refTable: "receipt_vouchers",

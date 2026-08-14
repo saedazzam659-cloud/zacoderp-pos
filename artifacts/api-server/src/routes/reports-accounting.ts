@@ -20,6 +20,7 @@ import {
 } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/permissions.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -74,6 +75,11 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   if (!(req as any).authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
 });
+// Module permission gate — the web UI only shows these reports to users with
+// accounting_reports:view, but the routes themselves were reachable by ANY
+// authenticated user (found when the mobile app added direct report screens).
+// Superadmin/admin bypasses live inside requirePermission.
+router.use(requirePermission("accounting_reports", "view"));
 
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);

@@ -3864,6 +3864,8 @@
       "sales_return_credit": "Sales Return - Credit",
       "sales_return_bank": "Sales Return - Bank",
       "sales_invoice_foreign": "Sales Invoice - Foreign",
+      "sales_invoice_mobile": "Sales Invoice - Mobile",
+      "receipt_voucher_mobile": "Receipt Voucher - Mobile",
       "sales_return_foreign": "Sales Return - Foreign",
       "purchase_return_cash": "Purchase Return - Cash",
       "purchase_return_credit": "Purchase Return - Credit",
