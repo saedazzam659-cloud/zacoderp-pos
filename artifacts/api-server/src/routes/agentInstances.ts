@@ -604,6 +604,66 @@ router.post("/:id/test-ssh", async (req, res) => {
   res.json({ ok: true, host: inst.sshHost, port, auth: false, note: "تم فحص الوصول فقط — أدخل المستخدم وكلمة المرور لاختبار الدخول الفعلي" });
 });
 
+// POST /:id/check-ban — هل سيرفر الوكيل حاظر عنوان المنصة (fail2ban ونحوه)؟
+// يقارن منفذ SSH بمنافذ الويب (443/80) على نفس السيرفر: لو الويب يستجيب
+// وSSH «مهلة» فهذا نمط الحظر الكلاسيكي (fail2ban يسقط الحزم بصمت).
+// قراءة فقط — لا يغيّر أي حالة، ولا يحاول تسجيل دخول (حتى لا يجدّد الحظر).
+router.post("/:id/check-ban", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!inst.sshHost) { res.status(400).json({ error: "لم يتم إدخال بيانات السيرفر بعد" }); return; }
+  try { await assertProbeTargetAllowed(inst.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+
+  const sshPort = inst.sshPort ?? 22;
+  const probe = (port: number, timeoutMs = 7000) =>
+    new Promise<{ port: number; state: "open" | "refused" | "timeout"; ms: number }>((resolve) => {
+      const t0 = Date.now();
+      const sock = net.connect({ host: inst.sshHost!, port, timeout: timeoutMs });
+      const done = (state: "open" | "refused" | "timeout") => { sock.destroy(); resolve({ port, state, ms: Date.now() - t0 }); };
+      sock.on("connect", () => done("open"));
+      sock.on("timeout", () => done("timeout"));
+      sock.on("error", (err: any) => done(err?.code === "ECONNREFUSED" ? "refused" : "timeout"));
+    });
+
+  const [ssh, https443, http80] = await Promise.all([probe(sshPort), probe(443), probe(80)]);
+  const webAlive = https443.state !== "timeout" || http80.state !== "timeout";
+
+  let verdict: "no_ban" | "likely_ban" | "ssh_down" | "host_down";
+  let title: string; let detail: string;
+  if (ssh.state === "open") {
+    verdict = "no_ban";
+    title = "لا يوجد حظر — منفذ SSH مفتوح ويستجيب";
+    detail = `منفذ ${sshPort} فتح خلال ${ssh.ms} مللي ثانية. لو «اختبار الوصول» يفشل رغم ذلك فالمشكلة في اسم المستخدم/كلمة المرور وليست حظرًا.`;
+  } else if (ssh.state === "timeout" && webAlive) {
+    verdict = "likely_ban";
+    title = "الأرجح أن عنوان المنصة محظور على السيرفر (fail2ban)";
+    detail = `السيرفر حي (الويب يستجيب على ${https443.state !== "timeout" ? "443" : "80"}) لكن منفذ SSH ${sshPort} لا يرد إطلاقًا — هذا النمط يعني إسقاط الحزم بصمت، وهو سلوك fail2ban بعد محاولات دخول فاشلة. مدة الحظر الافتراضية 10 دقائق وقد تصل لساعة أو أكثر حسب الإعداد.`;
+  } else if (ssh.state === "refused" ) {
+    verdict = "ssh_down";
+    title = "المنفذ يرفض الاتصال — خدمة SSH متوقفة أو المنفذ تغيّر";
+    detail = `السيرفر رد بـ«رفض» على المنفذ ${sshPort} (ليس حظرًا — الحظر عادةً صمت تام). تأكد أن sshd يعمل وأن المنفذ ${sshPort} هو الصحيح: ss -tlnp | grep sshd`;
+  } else {
+    verdict = "host_down";
+    title = "السيرفر كله لا يستجيب (SSH والويب)";
+    detail = "لا يمكن الجزم بالحظر — إما السيرفر مطفأ/معلّق، أو جدار ناري يمنع كل شيء، أو مشكلة شبكة عند المزود. جرّب من لوحة تحكم المزود (VNC/Console).";
+  }
+
+  res.json({
+    verdict, title, detail,
+    probes: [
+      { label: `SSH (${sshPort})`, ...ssh },
+      { label: "HTTPS (443)", ...https443 },
+      { label: "HTTP (80)", ...http80 },
+    ],
+    checkedAt: new Date().toISOString(),
+    unbanHint: verdict === "likely_ban"
+      ? "من كونسول المزود: fail2ban-client unban --all  (أو انتظر انتهاء مدة الحظر ثم أعد المحاولة مرة واحدة فقط — كل محاولة فاشلة تجدد الحظر)"
+      : null,
+  });
+});
+
 // POST /:id/check-domains — read-only diagnostics for the agent's domains.
 // For each domain (main + extras): DNS resolution, whether it points at the
 // agent's own server (sshHost IPs), and an HTTPS liveness probe with latency.

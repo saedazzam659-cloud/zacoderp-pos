@@ -143,6 +143,8 @@ export default function AgentServers() {
   const [kitView, setKitView] = useState<{ agent: string; kit: any } | null>(null);
   // فحص النطاقات — نتائج DNS + HTTPS لكل نطاقات الوكيل (إضافة قراءة فقط).
   const [domainCheck, setDomainCheck] = useState<{ agent: Agent; loading: boolean; data?: DomainCheckResp } | null>(null);
+  // فحص الحظر — هل سيرفر الوكيل حاظر عنوان المنصة (fail2ban)؟
+  const [banCheck, setBanCheck] = useState<{ agent: Agent; loading: boolean; data?: any } | null>(null);
   const isEdit = form.id > 0;
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
 
@@ -211,6 +213,19 @@ export default function AgentServers() {
     } catch (e: any) {
       setDomainCheck(null);
       toast({ title: "فحص النطاقات: فشل", description: String(e.message ?? e), variant: "destructive" });
+    }
+  }
+
+  async function checkBan(a: Agent) {
+    setBanCheck({ agent: a, loading: true });
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/check-ban`, { method: "POST", headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل الفحص");
+      setBanCheck({ agent: a, loading: false, data: j });
+    } catch (e: any) {
+      setBanCheck(null);
+      toast({ title: "فحص الحظر: فشل", description: String(e.message ?? e), variant: "destructive" });
     }
   }
 
@@ -372,6 +387,14 @@ export default function AgentServers() {
                           ? <Loader2 className="h-3 w-3 animate-spin" />
                           : <Plug className="h-3 w-3 ms-1" />}
                         فحص النطاقات
+                      </Button>
+                      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2"
+                        disabled={!a.sshHost || (banCheck?.loading && banCheck.agent.id === a.id)}
+                        onClick={() => checkBan(a)} data-testid={`button-check-ban-${a.id}`}>
+                        {banCheck?.loading && banCheck.agent.id === a.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <Ban className="h-3 w-3 ms-1" />}
+                        فحص الحظر
                       </Button>
                     </div>
                   </div>
@@ -743,6 +766,55 @@ export default function AgentServers() {
               <div className="flex items-center justify-between">
                 <div className="text-[11px] text-muted-foreground">آخر فحص: {fmtDate(domainCheck.data.checkedAt)}</div>
                 <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => checkDomains(domainCheck.agent)}>
+                  <RefreshCw className="h-3 w-3 ms-1" />إعادة الفحص
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── فحص الحظر ── */}
+      <Dialog open={!!banCheck} onOpenChange={(o) => !o && setBanCheck(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>فحص الحظر — {banCheck?.agent.name}</DialogTitle></DialogHeader>
+          {banCheck?.loading ? (
+            <div className="py-10 text-center text-muted-foreground">
+              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin" />
+              جارٍ فحص منافذ السيرفر (SSH + الويب)…
+            </div>
+          ) : banCheck?.data ? (
+            <div className="space-y-3" data-testid="ban-check-result">
+              <div className={`border rounded-lg p-3 ${banCheck.data.verdict === "no_ban" ? "bg-emerald-50 border-emerald-200" : banCheck.data.verdict === "likely_ban" ? "bg-amber-50 border-amber-300" : "bg-rose-50 border-rose-200"}`}>
+                <div className="font-medium text-sm flex items-center gap-1.5">
+                  {banCheck.data.verdict === "no_ban"
+                    ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    : banCheck.data.verdict === "likely_ban"
+                      ? <Ban className="h-4 w-4 text-amber-600" />
+                      : <XCircle className="h-4 w-4 text-rose-600" />}
+                  {banCheck.data.title}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{banCheck.data.detail}</div>
+                {banCheck.data.unbanHint && (
+                  <div className="text-[11px] mt-2 p-2 rounded bg-white border font-mono" dir="ltr">{banCheck.data.unbanHint}</div>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                {banCheck.data.probes?.map((p: any) => (
+                  <div key={p.label} className="border rounded-lg p-2">
+                    <div className="text-[11px] text-muted-foreground" dir="ltr">{p.label}</div>
+                    <div className="text-xs font-medium mt-0.5">
+                      {p.state === "open" ? <span className="text-emerald-600">مفتوح</span>
+                        : p.state === "refused" ? <span className="text-amber-600">يرفض</span>
+                        : <span className="text-rose-600">صمت (مهلة)</span>}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground" dir="ltr">{p.ms} ms</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] text-muted-foreground">آخر فحص: {fmtDate(banCheck.data.checkedAt)}</div>
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => checkBan(banCheck.agent)}>
                   <RefreshCw className="h-3 w-3 ms-1" />إعادة الفحص
                 </Button>
               </div>
