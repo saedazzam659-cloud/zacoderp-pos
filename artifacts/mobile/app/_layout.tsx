@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { Linking, Pressable, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, Text, View } from 'react-native';
+
+// في نسخ الإنتاج: أي خطأ JS قاتل يغلق التطبيق فورًا بلا رسالة — نلتقطه
+// ونعرضه في تنبيه حتى يمكن تشخيصه من جهاز المستخدم مباشرة.
+if (!__DEV__) {
+  const g: any = globalThis as any;
+  const prev = g.ErrorUtils?.getGlobalHandler?.();
+  g.ErrorUtils?.setGlobalHandler?.((e: any, isFatal?: boolean) => {
+    try { Alert.alert('خطأ في التطبيق', String(e?.message ?? e).slice(0, 500)); } catch {}
+    try { prev?.(e, isFatal); } catch {}
+  });
+}
 import { checkForcedUpdate, currentAppVersion, type UpdateCheck } from '@/lib/appUpdate';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
