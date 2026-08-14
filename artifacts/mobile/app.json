@@ -16,7 +16,18 @@
     "ios": {
       "supportsTablet": false
     },
-    "android": {},
+    "android": {
+      "package": "com.zacoderp.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "9a250573-c77d-4f22-a3fd-7e2dbfdd1656"
+      }
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
