@@ -1,0 +1,77 @@
+import React, { useMemo } from 'react';
+import { Platform, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
+import { Feather } from '@expo/vector-icons';
+import { api } from '@/lib/api';
+import { money } from '@/lib/format';
+import { useAuth } from '@/contexts/AuthContext';
+import { useColors } from '@/hooks/useColors';
+import { Card, ErrorBox } from '@/components/ui';
+
+export default function Summary() {
+  const { companyId } = useAuth();
+  const c = useColors();
+  const insets = useSafeAreaInsets();
+  const topInset = Platform.OS === 'web' ? 67 : insets.top;
+
+  const q = useQuery({
+    queryKey: ['sales-invoices', companyId],
+    queryFn: () => api<any[]>(`/api/sales/sales-invoices?companyId=${companyId}`),
+    enabled: !!companyId,
+  });
+
+  const stats = useMemo(() => {
+    const list = Array.isArray(q.data) ? q.data : [];
+    const now = new Date();
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const today = `${ym}-${String(now.getDate()).padStart(2, '0')}`;
+    let todayTotal = 0, todayCount = 0, monthTotal = 0, monthCount = 0, draftCount = 0;
+    for (const r of list) {
+      const d = String(r.invoiceDate ?? '').slice(0, 10);
+      const amt = parseFloat(r.totalAmount ?? 0) || 0;
+      if (r.status === 'draft') draftCount++;
+      if (d === today) { todayTotal += amt; todayCount++; }
+      if (d.startsWith(ym)) { monthTotal += amt; monthCount++; }
+    }
+    return { todayTotal, todayCount, monthTotal, monthCount, draftCount, total: list.length };
+  }, [q.data]);
+
+  const Stat = ({ icon, label, value, sub }: { icon: keyof typeof Feather.glyphMap; label: string; value: string; sub?: string }) => (
+    <Card style={{ flex: 1, gap: 8 }}>
+      <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+        <Feather name={icon} size={16} color={c.primary} />
+        <Text style={{ fontSize: 12, color: c.mutedForeground }}>{label}</Text>
+      </View>
+      <Text style={{ fontSize: 19, fontFamily: 'Inter_700Bold', textAlign: 'right', color: c.foreground }}>{value}</Text>
+      {sub ? <Text style={{ fontSize: 11, color: c.mutedForeground, textAlign: 'right' }}>{sub}</Text> : null}
+    </Card>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: c.background }}>
+      <View style={{ backgroundColor: c.primary, paddingTop: topInset + 10, paddingBottom: 16, paddingHorizontal: 16 }}>
+        <Text style={{ color: '#fff', fontSize: 19, fontFamily: 'Inter_700Bold', textAlign: 'right' }}>ملخص المبيعات</Text>
+      </View>
+      {q.isError ? (
+        <ErrorBox text={(q.error as Error)?.message ?? 'فشل تحميل البيانات'} onRetry={() => q.refetch()} />
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+          <View style={{ flexDirection: 'row-reverse', gap: 12 }}>
+            <Stat icon="sun" label="مبيعات اليوم" value={money(stats.todayTotal)} sub={`${stats.todayCount} فاتورة`} />
+            <Stat icon="calendar" label="مبيعات الشهر" value={money(stats.monthTotal)} sub={`${stats.monthCount} فاتورة`} />
+          </View>
+          <View style={{ flexDirection: 'row-reverse', gap: 12 }}>
+            <Stat icon="file-text" label="إجمالي الفواتير" value={String(stats.total)} />
+            <Stat icon="edit-3" label="مسودات" value={String(stats.draftCount)} />
+          </View>
+          <Card style={{ gap: 6 }}>
+            <Text style={{ fontSize: 13, color: c.mutedForeground, textAlign: 'right' }}>
+              التقارير المالية التفصيلية (ميزانية، أرباح وخسائر، إقرار الضريبة) متاحة من النظام الرئيسي على الويب، وستضاف للتطبيق في التحديث القادم.
+            </Text>
+          </Card>
+        </ScrollView>
+      )}
+    </View>
+  );
+}
