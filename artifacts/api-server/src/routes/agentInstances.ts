@@ -998,10 +998,23 @@ cat > /etc/caddy/Caddyfile <<'ZACOD_CADDY'
 ${caddyfile}
 ZACOD_CADDY
 caddy validate --config /etc/caddy/Caddyfile
+# حرّر المنفذين 80/443 من أي خدمة ويب أخرى قد تمنع Caddy من الإقلاع.
+for svc in nginx apache2 httpd lighttpd; do
+  if systemctl is-active --quiet "$svc" 2>/dev/null; then
+    echo "إيقاف الخدمة المتعارضة: $svc"
+    systemctl stop "$svc" || true
+    systemctl disable "$svc" 2>/dev/null || true
+  fi
+done
 systemctl enable caddy
-systemctl reload caddy || systemctl restart caddy
+systemctl restart caddy
 sleep 2
-systemctl is-active --quiet caddy
+if ! systemctl is-active --quiet caddy; then
+  echo "✖ خدمة Caddy لم تعمل — تفاصيل الخطأ:" >&2
+  journalctl -u caddy -n 40 --no-pager 2>/dev/null | tail -n 40 >&2 || true
+  (command -v ss >/dev/null 2>&1 && ss -ltnp | grep -E ':80 |:443 ' || true) >&2
+  exit 1
+fi
 /opt/zacod/heartbeat.sh || true
 echo "ZACOD_BOOTSTRAP_DONE"
 `;

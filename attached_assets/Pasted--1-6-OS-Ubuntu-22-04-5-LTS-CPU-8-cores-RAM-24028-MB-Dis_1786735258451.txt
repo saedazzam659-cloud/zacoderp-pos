@@ -1,0 +1,66 @@
+■ 1/6 فحص السيرفر
+OS: Ubuntu 22.04.5 LTS
+CPU: 8 cores
+RAM: 24028 MB
+Disk: 180G free
+ZACOD_CHECK_OK
+
+
+■ 2/6 قاعدة البيانات PostgreSQL
+قاعدة بيانات مسجّلة مسبقًا — تخطّي الإنشاء.
+
+■ 3/6 بوابة الدخول والنبض (Caddy)
+formation...
+The following packages were automatically installed and are no longer required:
+  libintl-perl libintl-xs-perl libmodule-find-perl libmodule-scandeps-perl
+  libproc-processtable-perl libsort-naturally-perl
+Use 'apt autoremove' to remove them.
+The following NEW packages will be installed:
+  caddy
+0 upgraded, 1 newly installed, 0 to remove and 18 not upgraded.
+Need to get 17.3 MB of archives.
+After this operation, 48.6 MB of additional disk space will be used.
+Get:1 https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version/main amd64 caddy amd64 2.11.4 [17.3 MB]
+Fetched 17.3 MB in 0s (41.0 MB/s)
+Selecting previously unselected package caddy.
+(Reading database ... 
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 114055 files and directories currently installed.)
+Preparing to unpack .../caddy_2.11.4_amd64.deb ...
+Unpacking caddy (2.11.4) ...
+Setting up caddy (2.11.4) ...
+Created symlink /etc/systemd/system/multi-user.target.wants/caddy.service → /lib/systemd/system/caddy.service.
+Processing triggers for man-db (2.10.2-1) ...
+{"level":"info","ts":1786735200.0075924,"msg":"using config from file","file":"/etc/caddy/Caddyfile"}
+{"level":"warn","ts":1786735200.0083046,"logger":"caddyfile","msg":"Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"}
+{"level":"info","ts":1786735200.0098898,"msg":"adapted config to JSON","adapter":"caddyfile"}
+{"level":"warn","ts":1786735200.0099273,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/caddy/Caddyfile","line":2}
+{"level":"info","ts":1786735200.0105305,"logger":"http.auto_https","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+{"level":"info","ts":1786735200.0105639,"logger":"http.auto_https","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+{"level":"info","ts":1786735200.0109174,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x6c294d55080"}
+Valid configuration
+{"level":"info","ts":1786735200.0110757,"logger":"http","msg":"servers shutting down with eternal grace period"}
+{"level":"info","ts":1786735200.0111964,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0x6c294d55080"}
+caddy.service is not active, cannot reload.
+
+
+✖ فشل التسطيب: فشلت الخطوة — راجع السجل أعلاه
