@@ -195,6 +195,9 @@ export default function CompanyNew() {
   // ── Optional domain binding ── searchable combobox of candidate domains:
   // central domains screen (unbound rows) + agent main/extra domains. A free
   // text field also accepts any sub-domain (e.g. shop1.tafrah.com.sa).
+  // نوع النسخة: عادية = سلوك الإنشاء الحالي بلا تغيير، ديمو = زرع بيانات
+  // أساسية جاهزة (فرع/مخزن/وحدة/مجموعة/صنف/عميل نقدي/مورد محلي) على السيرفر.
+  const [edition, setEdition] = useState<"normal" | "demo">("normal");
   const [bindDomain, setBindDomain] = useState<string>("");
   const [bindDomainCustom, setBindDomainCustom] = useState<string>("");
   const domainsQ = useQuery<any[]>({
@@ -343,6 +346,7 @@ export default function CompanyNew() {
         body: JSON.stringify({
           ...values,
           industryName,
+          edition,
           serialNumber: combinedSerial,
           selectedIndustries,
           ...(agentTarget !== "central" ? { agentInstanceId: Number(agentTarget) } : {}),
@@ -422,6 +426,18 @@ export default function CompanyNew() {
           </div>
         </div>
         <div className="flex flex-col md:flex-row gap-3">
+          {/* نوع النسخة: عادية (سلوك اليوم كما هو) أو ديمو (بيانات تجريبية جاهزة) */}
+          <div className="w-full md:w-56">
+            <Select value={edition} onValueChange={(v) => setEdition(v as "normal" | "demo")}>
+              <SelectTrigger data-testid="select-edition">
+                <SelectValue placeholder="نوع النسخة" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="normal">نسخة عادية</SelectItem>
+                <SelectItem value="demo">نسخة ديمو (بيانات جاهزة)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div className="w-full md:w-80">
             <SearchCombobox
               items={domainItems}

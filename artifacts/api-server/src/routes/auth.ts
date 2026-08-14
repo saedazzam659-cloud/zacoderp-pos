@@ -1078,6 +1078,10 @@ router.post("/register", async (req, res) => {
     nameAr, nameEn, vatNumber, crNumber, phone,
     city, district, street, buildingNumber, postalCode, country,
     currency,
+    // "normal" (default — exactly today's behavior) or "demo" — demo seeds
+    // starter master data (branch/warehouse/unit/group/item/customer/supplier)
+    // right after the template defaults so the tenant can invoice immediately.
+    edition,
     industryName, invoiceType,
     // New: multi-industry list + per-module selection from the redesigned
     // registration wizard Step 1. Both are optional; legacy clients that
@@ -1651,6 +1655,23 @@ router.post("/register", async (req, res) => {
     req.log?.info?.({ companyId: company.id, applied: r.applied }, "company template defaults");
   } catch (err) {
     req.log?.warn?.({ err, companyId: company.id }, "company template defaults failed");
+  }
+
+  // ── DEMO EDITION SEED ──────────────────────────────────────────────
+  // Runs AFTER the template/COA seed so the ledger-minting helpers find
+  // their parent accounts. Fail-safe: never blocks registration.
+  // SA-ONLY: `edition` is client-supplied and /register is also the PUBLIC
+  // signup endpoint — anonymous callers must not be able to trigger the
+  // seeding work, so the flag is honored only for superadmin callers.
+  if (edition === "demo" && callerIsSuperAdmin) {
+    try {
+      const { seedDemoCompanyData } = await import("../lib/seedDemoCompanyData.js");
+      const cur = resolveDefaultCurrency(country ?? "SA", currency);
+      const r = await seedDemoCompanyData(company.id, { country: country ?? "SA", currencyCode: cur.code }, req.log as any);
+      req.log?.info?.({ companyId: company.id, seeded: r.seeded }, "demo edition seed complete");
+    } catch (err) {
+      req.log?.warn?.({ err, companyId: company.id }, "demo edition seed failed");
+    }
   }
 
   // Hash password + create admin user (inactive until superadmin approves)
