@@ -99,6 +99,19 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   // companies, invoice intake, ZATCA dispatch, CSID management,
   // reports). Single permission key gates the entire sidebar group.
   "multi_link",
+  // ── وحدات كانت ناقصة من الكتالوج (2026-08) ──
+  // These keys existed in the web MENU_ITEMS catalog but were missing
+  // here, so the registration explicit-deny fill skipped them and the
+  // sidebar Proxy defaulted them to "allowed" — freshly registered
+  // tenants saw these modules even when the chosen industry preset
+  // never granted them. Keep both catalogs in sync.
+  "delivery_receipt_docs",
+  "safety",
+  "voice_assistant",
+  "sessions",
+  "company_maintenance",
+  "office",
+  "training_room",
 ]);
 
 // Convenience helper: drop unknown keys, dedupe, preserve order.

@@ -314,6 +314,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/sales/reports/payment-mix", label: "تقرير طرق الدفع (AI)", report: true },
       { path: "/sales/reports/daily-detailed", label: "تقرير مبيعات تفصيلي يومي", report: true },
       { path: "/sales/reports/profitability", label: "تقرير الربحية", report: true },
+      { path: "/sales/reports/invoice-payment-status", label: "حالة سداد فواتير المبيعات", report: true },
     ],
   },
   {
@@ -340,6 +341,8 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/purchasing/reports/top-suppliers", label: "أكبر الموردين", report: true },
       { path: "/purchasing/reports/returns", label: "مرتجعات المشتريات", report: true },
       { path: "/purchasing/reports/lc-statement", label: "كشف حساب الاعتمادات", report: true },
+      { path: "/purchasing/reports/invoice-payment-status", label: "حالة سداد فواتير المشتريات", report: true },
+      { path: "/purchasing/reports/purchases-vat-register", label: "سجل المشتريات المحلية بضريبة القيمة المضافة", report: true },
     ],
   },
   {
@@ -357,6 +360,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/inventory/adjustments", label: "التسوية المخزنية" },
       { path: "/inventory/counts", label: "الجرد المخزني" },
       { path: "/inventory/offers", label: "العروض" },
+      { path: "/inventory/brands", label: "العلامات التجارية" },
       { path: "/inventory/reports", label: "كل التقارير", report: true },
       { path: "/inventory/reports/stock-balance", label: "رصيد المخزون", report: true },
       { path: "/inventory/reports/stock-ledger", label: "دفتر حركة المخزون", report: true },
@@ -407,6 +411,8 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/cash/banks", label: "البنوك" },
       { path: "/cash/receipt-vouchers", label: "سندات القبض" },
       { path: "/cash/payment-vouchers", label: "سندات الصرف" },
+      { path: "/cash/receipt-vouchers/multi", label: "سند قبض متعدد" },
+      { path: "/cash/payment-vouchers/multi", label: "سند صرف متعدد" },
       { path: "/cash/transfers", label: "التحويلات" },
       { path: "/cash/financial-transactions", label: "المعاملات المالية" },
       { path: "/cash/reports", label: "كل التقارير", report: true },
@@ -429,6 +435,8 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/accounting/fiscal-periods", label: "الفترات المالية" },
       { path: "/accounting/journals", label: "القيود المحاسبية" },
       { path: "/accounting/posting-center", label: "مركز الترحيل" },
+      { path: "/accounting/adjustments", label: "التسويات (مقدمات/مستحقات)" },
+      { path: "/accounting/opening-balances", label: "الأرصدة الافتتاحية" },
       { path: "/accounting/maintenance", label: "الصيانة المحاسبية وميزان المراجعة" },
       { path: "/accounting/standards", label: "المعايير المحاسبية" },
       { path: "/accounting/reports/account-statement", label: "كشف حساب", report: true },
@@ -439,6 +447,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/accounting/reports/cash-flow", label: "تقرير التدفقات النقدية", report: true },
       { path: "/accounting/reports/forecast-income-statement", label: "قائمة دخل تقديرية (AI)", report: true },
       { path: "/accounting/reports/tax-declaration", label: "الإقرار الضريبي", report: true },
+      { path: "/accounting/reports/adjustments-schedule", label: "جدول التسويات", report: true },
     ],
   },
   {
@@ -458,6 +467,8 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/hr/attendance", label: "الحضور والانصراف" },
       { path: "/hr/face", label: "الحضور بالذكاء الاصطناعي" },
       { path: "/hr/loans", label: "السلف والعُهد" },
+      { path: "/hr/custody", label: "عُهد الموظفين" },
+      { path: "/hr/mudad", label: "مدد — حماية الأجور" },
       { path: "/hr/payroll", label: "مسيرات الرواتب" },
       { path: "/hr/end-of-service", label: "مكافأة نهاية الخدمة" },
       { path: "/hr/calculators", label: "حاسبات الموارد البشرية" },
@@ -582,6 +593,9 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/fixed-assets", label: "لوحة الأصول الثابتة" },
       { path: "/fixed-assets/assets", label: "سجل الأصول" },
       { path: "/fixed-assets/categories", label: "فئات الأصول" },
+      { path: "/fixed-assets/groups", label: "مجموعات الأصول" },
+      { path: "/fixed-assets/movement-schedule", label: "جدول حركة الأصول" },
+      { path: "/fixed-assets/settings", label: "إعدادات الأصول الثابتة" },
       { path: "/fixed-assets/maintenance", label: "صيانة الأصول" },
       { path: "/fixed-assets/transfers", label: "نقل الأصول" },
       { path: "/fixed-assets/depreciation", label: "الإهلاك" },
@@ -605,6 +619,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/security/live", label: "العرض المباشر" },
       { path: "/security/ai", label: "الذكاء الأمني" },
       { path: "/security/reports", label: "تقارير الأمن", report: true },
+      { path: "/security/notification-rules", label: "قواعد التنبيهات" },
     ],
   },
   {
@@ -620,6 +635,19 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
     key: "companyMaintenance", label: "مركز استيراد وتصدير البيانات", emoji: "🗄️", moduleKeys: ["company_maintenance"],
     screens: [
       { path: "/settings/data-io", label: "استيراد وتصدير البيانات" },
+    ],
+  },
+  {
+    key: "voiceAssistant", label: "إعدادات المساعد الصوتي", emoji: "🎙️", moduleKeys: ["voice_assistant"],
+    screens: [
+      { path: "/voice-assistant/settings", label: "إعدادات المساعد الصوتي" },
+    ],
+  },
+  {
+    key: "sessions", label: "الجلسات", emoji: "🕒", moduleKeys: ["sessions"],
+    screens: [
+      { path: "/sessions", label: "إدارة الجلسات" },
+      { path: "/work-sessions", label: "جلسات العمل" },
     ],
   },
 ];

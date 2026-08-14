@@ -668,9 +668,6 @@ export default function Login() {
                     disabled={step === "blocked"}
                     data-testid="login-company-code"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    الكود المُرسل لك بعد إنشاء حساب الشركة (يبدأ بـ ZTC-). اتركه فارغاً إن كنت سوبر أدمن.
-                  </p>
                 </div>
               )}
 
