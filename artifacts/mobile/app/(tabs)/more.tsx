@@ -71,6 +71,8 @@ export default function More() {
 
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
         <Card style={{ paddingVertical: 4 }}>
+          <RowItem icon="file-text" title="سندات القبض" onPress={() => router.push('/voucher/list' as any)} testID="row-vouchers" />
+          <View style={{ height: 1, backgroundColor: c.border }} />
           <RowItem icon="server" title="إعدادات الخادم" onPress={() => setShowServer(true)} testID="row-server-settings" />
           <View style={{ height: 1, backgroundColor: c.border }} />
           <RowItem icon="log-out" title="تسجيل الخروج" onPress={doLogout} danger testID="row-logout" />

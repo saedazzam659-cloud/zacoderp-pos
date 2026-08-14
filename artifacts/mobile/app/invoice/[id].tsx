@@ -63,7 +63,7 @@ export default function InvoiceForm() {
   const invoiceId = isNew ? null : Number(id);
   const router = useRouter();
   const qc = useQueryClient();
-  const { companyId, user } = useAuth();
+  const { companyId, user, can } = useAuth();
   const c = useColors();
   const insets = useSafeAreaInsets();
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
@@ -314,6 +314,30 @@ export default function InvoiceForm() {
       setSaving(false);
       setPosting(false);
     }
+  };
+
+  // Unpost — same server-side policy as web (posting-rights matrix enforced by
+  // requireUnpostRight; ZATCA-reported invoices are rejected by the server).
+  const [unposting, setUnposting] = useState(false);
+  const doUnpost = async () => {
+    const go = async () => {
+      setUnposting(true);
+      try {
+        await api(`/api/sales/sales-invoices/${invoiceId}/unpost`, { method: 'PATCH', body: { companyId } });
+        await qc.invalidateQueries({ queryKey: ['sales-invoices'] });
+        await qc.invalidateQueries({ queryKey: ["sales-invoice", invoiceId] });
+        notify('تم', 'تم فك ترحيل الفاتورة — أصبحت مسودة قابلة للتعديل');
+      } catch (e: any) {
+        notify('تعذّر فك الترحيل', typeof e === 'string' ? e : e?.message ?? 'خطأ غير معروف');
+      } finally {
+        setUnposting(false);
+      }
+    };
+    if (Platform.OS === 'web') { go(); return; }
+    Alert.alert('فك الترحيل', 'سيتم عكس القيود وحركات المخزون وتصبح الفاتورة مسودة. متابعة؟', [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'فك الترحيل', style: 'destructive', onPress: go },
+    ]);
   };
 
   // Print / share (posted invoices only) — قالب 14 «الأصلي» مع QR زاتكا
@@ -624,6 +648,9 @@ export default function InvoiceForm() {
                 <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>هذه الفاتورة صادرة — للعرض فقط.</Text></Card>
                 <Btn title="طباعة الفاتورة" icon="printer" loading={printing} onPress={() => doPrint(false)} testID="button-print" />
                 <Btn title="مشاركة PDF (واتساب / بريد)" icon="share-2" kind="outline" loading={sharing} onPress={() => doPrint(true)} testID="button-share" />
+                {can('sales_invoices', 'post') ? (
+                  <Btn title="فك ترحيل الفاتورة" icon="rotate-ccw" kind="destructive" loading={unposting} onPress={doUnpost} testID="button-unpost" />
+                ) : null}
               </View>
             )}
           </ScrollView>
