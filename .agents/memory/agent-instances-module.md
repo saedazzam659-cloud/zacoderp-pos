@@ -36,3 +36,5 @@ SA panel is FULLY blocked on agent domains, two layers: backend — agentDataSou
 Deferred: cross-DB leak integration tests + ALS-inheritance audit for request-spawned background work.
 
 Domain diagnostics: POST /:id/check-domains (read-only, no state writes) — per domain: assertProbeTargetAllowed, DNS, onServer = intersect(domain IPs, sshHost IPs), HTTPS liveness+latency. **The HTTPS probe must PIN the connection to the pre-validated IP via node:https custom `lookup` (servername=domain for SNI) — plain fetch re-resolves DNS = rebinding SSRF.** IP literals detected via net.isIP, never regex heuristics.
+
+esbuild externals trap: api-server prod ships ONLY the bundle (no node_modules) — ssh2 was in build.mjs `external` → prod "Cannot find package 'ssh2'" while dev worked. ssh2 core is pure-JS: bundle it; keep "*.node"/"cpu-features" external (its optional native addons are try/catch-required). Any new dep used by provisioning must NOT be externalized unless truly unbundleable.

@@ -19,7 +19,7 @@ import { DateField } from "@/components/ui/date-field";
 import {
   Server, Plus, Pencil, Trash2, Database, KeyRound, ShieldAlert, Globe,
   Plug, Loader2, CheckCircle2, XCircle, Ban, Play, Copy, Palette, RefreshCw,
-  HeartPulse, AlertTriangle, UploadCloud, FileDown, Mail,
+  HeartPulse, AlertTriangle, UploadCloud, FileDown, Mail, Check,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -582,10 +582,87 @@ export default function AgentServers() {
               {provisionAgent?.deployStatus === "error" && <Badge variant="destructive">فشل</Badge>}
             </DialogTitle>
           </DialogHeader>
-          <pre dir="rtl" className="text-[11px] bg-muted rounded-lg p-3 whitespace-pre-wrap break-all max-h-[60vh] overflow-y-auto">{provisionAgent?.deployLog || "جارٍ البدء…"}</pre>
-          {provisionAgent?.deployStatus === "deploying" && (
-            <p className="text-xs text-muted-foreground">قد تستغرق العملية عدة دقائق (تثبيت PostgreSQL/Node لأول مرة). يمكنك إغلاق النافذة والعودة لاحقًا — السجل محفوظ.</p>
-          )}
+          {(() => {
+            const logText = provisionAgent?.deployLog || "";
+            const status = provisionAgent?.deployStatus;
+            // العناوين الافتراضية للخطوات الست (تُستبدل بما يصل فعليًا من السجل)
+            const defaults = [
+              "فحص السيرفر",
+              "قاعدة البيانات PostgreSQL",
+              "بوابة الدخول والنبض (Caddy)",
+              "تهيئة قاعدة البيانات (السكيما + البصمة)",
+              "تثبيت التطبيق",
+              "الفحص النهائي",
+            ];
+            // اجمع علامات الخطوات "■ n/6 عنوان" من السجل
+            const markers = Array.from(logText.matchAll(/■\s*(\d+)\/(\d+)\s*([^\n]*)/g));
+            const total = markers.length ? Math.max(...markers.map(m => Number(m[2]))) : defaults.length;
+            const titles: string[] = Array.from({ length: total }, (_, i) => defaults[i] ?? `الخطوة ${i + 1}`);
+            for (const m of markers) titles[Number(m[1]) - 1] = m[3].replace(/^\d+\/\d+\s*/, "").trim() || titles[Number(m[1]) - 1];
+            const lastIdx = markers.length ? Math.max(...markers.map(m => Number(m[1]))) - 1 : -1;
+            const stateOf = (i: number): "done" | "active" | "error" | "pending" => {
+              if (i < lastIdx) return "done";
+              if (i === lastIdx) {
+                if (status === "deploying") return "active";
+                if (status === "error") return "error";
+                return "done";
+              }
+              return status === "ok" ? "done" : "pending";
+            };
+            const pct = status === "ok" ? 100
+              : lastIdx < 0 ? 4
+              : Math.round(((lastIdx + (status === "deploying" ? 0.5 : 1)) / total) * 100);
+            return (
+              <div className="space-y-4">
+                {/* شريط التقدم */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{status === "ok" ? "اكتمل التسطيب بنجاح" : status === "error" ? "توقف التسطيب عند خطأ" : "جارٍ التسطيب على سيرفر الوكيل…"}</span>
+                    <span className="tabular-nums font-semibold">{pct}%</span>
+                  </div>
+                  <div className="h-2.5 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ${status === "error" ? "bg-red-500" : status === "ok" ? "bg-emerald-500" : "bg-gradient-to-l from-sky-400 via-blue-500 to-indigo-500 animate-pulse"}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+                {/* الخطوات */}
+                <div className="space-y-0.5">
+                  {titles.map((t, i) => {
+                    const st = stateOf(i);
+                    return (
+                      <div key={i} className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${st === "active" ? "bg-blue-50 dark:bg-blue-950/40" : st === "error" ? "bg-red-50 dark:bg-red-950/40" : ""}`} data-testid={`provision-step-${i + 1}`}>
+                        <div className={`h-6 w-6 shrink-0 rounded-full flex items-center justify-center text-[11px] font-bold
+                          ${st === "done" ? "bg-emerald-500 text-white" : st === "active" ? "bg-blue-500 text-white" : st === "error" ? "bg-red-500 text-white" : "bg-muted text-muted-foreground"}`}>
+                          {st === "done" ? <Check className="h-3.5 w-3.5" /> : st === "active" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : st === "error" ? "!" : i + 1}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-sm ${st === "active" ? "font-semibold text-blue-700 dark:text-blue-300" : st === "error" ? "font-semibold text-red-700 dark:text-red-300" : st === "done" ? "text-foreground" : "text-muted-foreground"}`}>{t}</div>
+                          {st === "active" && <div className="text-[11px] text-muted-foreground">جارٍ التنفيذ الآن…</div>}
+                        </div>
+                        {st === "done" && <span className="text-[11px] text-emerald-600 shrink-0">تم ✔</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* آخر سطر من السجل أثناء التنفيذ */}
+                {status === "deploying" && (() => {
+                  const lines = logText.split("\n").map(s => s.trim()).filter(Boolean);
+                  const last = lines[lines.length - 1];
+                  return last ? <div className="text-[11px] text-muted-foreground bg-muted rounded-md px-3 py-1.5 truncate" dir="rtl">{last}</div> : null;
+                })()}
+                {/* السجل الكامل قابل للطي */}
+                <details className="group" open={status === "error"}>
+                  <summary className="cursor-pointer text-xs text-muted-foreground select-none hover:text-foreground">عرض السجل الكامل</summary>
+                  <pre dir="rtl" className="mt-2 text-[11px] bg-muted rounded-lg p-3 whitespace-pre-wrap break-all max-h-[38vh] overflow-y-auto">{logText || "جارٍ البدء…"}</pre>
+                </details>
+                {status === "deploying" && (
+                  <p className="text-xs text-muted-foreground">قد تستغرق العملية عدة دقائق (تثبيت PostgreSQL/Node لأول مرة). يمكنك إغلاق النافذة والعودة لاحقًا — السجل محفوظ.</p>
+                )}
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 

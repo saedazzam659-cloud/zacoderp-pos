@@ -41,7 +41,11 @@ async function buildAll() {
       "xxhash-addon",
       "bufferutil",
       "utf-8-validate",
-      "ssh2",
+      // "ssh2" — pure-JS core; MUST be bundled. The runtime image ships only
+      // the esbuild bundle (no node_modules), so externalizing it caused
+      // "Cannot find package 'ssh2'" in production (agent full-install SSH).
+      // Its optional native addons stay external via "*.node"/"cpu-features"
+      // and are require()'d inside try/catch, so missing them is fine.
       "cpu-features",
       "dtrace-provider",
       "isolated-vm",
