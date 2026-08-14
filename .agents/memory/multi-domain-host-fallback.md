@@ -56,3 +56,9 @@ as a fallback after explicit + impersonation context. Operational note: trust of
 ## «النطاق الموطن» (home domain restriction)
 - companies.home_domain_id (nullable int, no FK — circular import) points at a MAIN company_domains row. Set at registration when SA binds a main domain (no company_domains write — main rows must stay multi-company).
 - /login enforces via homeDomainBlocked(): request host (x-forwarded-host first, normalizeHost) matched against active MAIN domain rows; mismatch → generic 401 + audit. Applies to BOTH the companyCode path AND the code-less trainee path (trainee branch was a bypass until covered). Unregistered hosts (zacoderp.com/dev) unrestricted; SA path untouched. Fail-open on DB errors.
+
+## Login isolation via home_domain_id (2026-08)
+- Agent gateway domains (agent_instances.domain/extra_domains) are MULTI-company gateways: never single-company-bind them in company_domains (companyId must stay NULL) or host resolution force-routes everyone into one tenant.
+- homeDomainBlocked: homed company logs in ONLY from its home domain; unhomed companies are blocked on gateway hosts (is_main rows + agent domains). Dangling home pointer fails OPEN by choice (availability; prod DB agent-read-only).
+- /register bindDomain and companies PUT homeDomainId both HOME (companies.home_domain_id) on gateway domains and heal stale companyId/isPrimary binds; keep their agent-domain predicates in lockstep and CASE-INSENSITIVE incl. extra_domains (jsonb_array_elements_text + lower, not @> containment).
+- companies PUT homing is SA-only, gateway-domains-only (is_main or agent), sent OUTSIDE UpdateCompanyBody; UI lives in SA CompanyDetails «النطاق الموطن».

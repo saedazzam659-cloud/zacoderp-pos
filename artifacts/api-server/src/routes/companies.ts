@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, cashBoxesTable, bankAccountsTable, accountsTable } from "@workspace/db";
-import { eq, and, isNull, asc } from "drizzle-orm";
+import { eq, and, isNull, asc, sql } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { extractAuth } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
@@ -109,10 +109,70 @@ router.put("/:id", async (req, res) => {
     return;
   }
   const data = parsed.data;
+  // «النطاق الموطن» — SuperAdmin-only: home/unhome the company on a gateway
+  // domain (main or agent). Sent outside UpdateCompanyBody so tenant admins
+  // can never self-modify their login-isolation domain.
+  let homePatch: { homeDomainId?: number | null } = {};
+  const rawHome = (req.body as any)?.homeDomainId;
+  if (rawHome !== undefined) {
+    const u = (req as any).authUser;
+    if (u?.role !== "superadmin") {
+      res.status(403).json({ error: "توطين النطاق متاح للمشرف العام فقط" });
+      return;
+    }
+    if (rawHome === null || rawHome === 0 || rawHome === "") {
+      homePatch = { homeDomainId: null };
+    } else {
+      const hid = Number(rawHome);
+      if (!Number.isInteger(hid) || hid <= 0) {
+        res.status(400).json({ error: "معرّف النطاق غير صالح" });
+        return;
+      }
+      const { companyDomainsTable } = await import("@workspace/db");
+      const [row] = await db.select({
+        id: companyDomainsTable.id,
+        domain: companyDomainsTable.domain,
+        companyId: companyDomainsTable.companyId,
+        isMain: companyDomainsTable.isMain,
+      }).from(companyDomainsTable).where(eq(companyDomainsTable.id, hid)).limit(1);
+      if (!row) {
+        res.status(400).json({ error: "النطاق غير موجود في شاشة النطاقات" });
+        return;
+      }
+      // Homing is only meaningful on GATEWAY hosts: the platform's main
+      // domains or an agent instance's reverse-proxy domain (matched
+      // case-insensitively, including extra_domains entries of any casing —
+      // same predicate as /register's agent-domain detection).
+      const agentHit = await db.execute(sql`
+        SELECT 1 FROM agent_instances
+        WHERE lower(domain) = lower(${row.domain})
+           OR EXISTS (
+             SELECT 1 FROM jsonb_array_elements_text(coalesce(extra_domains, '[]'::jsonb)) AS d(val)
+             WHERE lower(d.val) = lower(${row.domain})
+           )
+        LIMIT 1
+      `);
+      const isAgentDomain = ((agentHit as any).rows?.length ?? 0) > 0;
+      if (!row.isMain && !isAgentDomain) {
+        res.status(400).json({ error: "لا يمكن التوطين إلا على نطاق رئيسي أو نطاق وكيل" });
+        return;
+      }
+      // Heal an earlier mis-bind: gateway (agent) domains must never be
+      // single-company-bound, or host resolution force-logs everyone into
+      // that one company.
+      if (isAgentDomain && row.companyId != null) {
+        await db.update(companyDomainsTable)
+          .set({ companyId: null, isPrimary: false })
+          .where(eq(companyDomainsTable.id, hid));
+      }
+      homePatch = { homeDomainId: hid };
+    }
+  }
   // Refuse to update soft-deleted companies — restoring is the only way
   // to make a trashed tenant editable again.
   const [company] = await db.update(companiesTable).set({
     ...data,
+    ...homePatch,
     updatedAt: new Date(),
   }).where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt))).returning();
   if (!company) {

@@ -17,6 +17,23 @@ async function homeDomainBlocked(req: { headers: Record<string, unknown> }, comp
     const rawHost = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string) || "";
     const host = normalizeHost(rawHost);
     if (!host) return false;
+    // ── Homed company → may log in ONLY from its home domain ──────────────
+    // This is the full-isolation rule: a company homed to an agent/main
+    // domain must NOT be able to sign in from the central platform domain
+    // (or any other host). Dangling pointer → fail-open (legacy behavior).
+    if (companyHomeDomainId != null) {
+      const [home] = await db.select({ domain: companyDomainsTable.domain })
+        .from(companyDomainsTable)
+        .where(eq(companyDomainsTable.id, companyHomeDomainId))
+        .limit(1);
+      if (!home) return false;
+      return normalizeHost(home.domain) !== host;
+    }
+    // ── Unhomed company → blocked on gateway hosts ────────────────────────
+    // Gateway hosts are (a) registered MAIN multi-company domains and
+    // (b) agent proxy domains (agent_instances.domain / extra_domains):
+    // only companies homed to them may log in from them. Unregistered
+    // hosts (platform/dev domains) stay unrestricted.
     const [mainRow] = await db.select({ id: companyDomainsTable.id })
       .from(companyDomainsTable)
       .where(and(
@@ -24,7 +41,18 @@ async function homeDomainBlocked(req: { headers: Record<string, unknown> }, comp
         eq(companyDomainsTable.isMain, true),
         eq(companyDomainsTable.status, "active"),
       )).limit(1);
-    return !!mainRow && companyHomeDomainId !== mainRow.id;
+    if (mainRow) return true;
+    const agentHit: any = await db.execute(sql`
+      SELECT id FROM agent_instances
+       WHERE lower(domain) = ${host}
+          OR EXISTS (
+               SELECT 1 FROM jsonb_array_elements_text(COALESCE(extra_domains::jsonb, '[]'::jsonb)) d
+                WHERE lower(d) = ${host}
+             )
+       LIMIT 1
+    `);
+    const agentRows = (agentHit as { rows?: any[] }).rows ?? agentHit;
+    return !!agentRows?.[0];
   } catch (e) {
     console.error("[login] home-domain check failed (fail-open):", e);
     return false;
@@ -1526,12 +1554,39 @@ router.post("/register", async (req, res) => {
     } else {
       try {
         const [existing] = await db.select().from(companyDomainsTable).where(eq(companyDomainsTable.domain, host)).limit(1);
-        if (existing?.isMain) {
+        // Agent proxy domain? (agent_instances.domain / extra_domains) —
+        // these are multi-company gateways exactly like MAIN domains, so the
+        // company must be HOMED to them, never single-company-bound (binding
+        // hijacks the agent's host routing for every other tenant).
+        const agentHit: any = await db.execute(sql`
+          SELECT id FROM agent_instances
+           WHERE lower(domain) = ${host}
+              OR EXISTS (
+                   SELECT 1 FROM jsonb_array_elements_text(COALESCE(extra_domains::jsonb, '[]'::jsonb)) d
+                    WHERE lower(d) = ${host}
+                 )
+           LIMIT 1
+        `);
+        const isAgentDomain = !!(((agentHit as { rows?: any[] }).rows ?? agentHit)?.[0]);
+        if (existing?.isMain || isAgentDomain) {
           // Main multi-company domain → «النطاق الموطن»: the company is HOMED
           // to it (agent-like login restriction, data stays central). The
           // domain row itself stays main/multi-company — no companyId bind.
+          let rowId = existing?.id;
+          if (!existing) {
+            const [inserted] = await db.insert(companyDomainsTable).values({
+              domain: host, companyId: null, isMain: false, isPrimary: false, status: "active",
+              notes: "دومين وكيل — أُنشئ تلقائيًا للتوطين",
+            } as any).returning({ id: companyDomainsTable.id });
+            rowId = inserted.id;
+          } else if (isAgentDomain && existing.companyId != null) {
+            // Heal an earlier mis-bind: agent domains are multi-company.
+            await db.update(companyDomainsTable)
+              .set({ companyId: null, isPrimary: false, updatedAt: new Date() })
+              .where(eq(companyDomainsTable.id, existing.id));
+          }
           await db.update(companiesTable)
-            .set({ homeDomainId: existing.id })
+            .set({ homeDomainId: rowId })
             .where(eq(companiesTable.id, company.id));
         } else if (existing && existing.companyId != null) {
           domainBindWarning = `النطاق ${host} مربوط بشركة أخرى — لم يتم الربط`;

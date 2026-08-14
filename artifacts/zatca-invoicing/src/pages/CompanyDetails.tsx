@@ -108,6 +108,33 @@ export default function CompanyDetails() {
   const users       = data?.users ?? [];
   const counts      = data?.counts ?? { invoices: 0, customers: 0, suppliers: 0 };
 
+  // «النطاق الموطن» — SA-only: home the company on a gateway (agent/main) domain
+  const { data: domainsData } = useQuery({
+    queryKey: ["admin-domains-for-home"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/domains`, { headers });
+      if (!r.ok) return { domains: [] };
+      return r.json();
+    },
+  });
+  const domainRows: any[] = domainsData?.domains ?? domainsData ?? [];
+  const [homeSel, setHomeSel] = useState<string>("__init__");
+  const homeMutation = useMutation({
+    mutationFn: async (homeDomainId: number | null) => {
+      const res = await fetch(`${API}/api/companies/${id}`, {
+        method: "PUT", headers, body: JSON.stringify({ homeDomainId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "خطأ");
+      return json;
+    },
+    onSuccess: () => {
+      toast({ title: "✓ تم تحديث النطاق الموطن" });
+      qc.invalidateQueries({ queryKey: ["admin-company", id] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   const addUserMutation = useMutation({
     mutationFn: async (body: any) => {
       const res = await fetch(`${API}/api/admin/companies/${id}/users`, {
@@ -284,6 +311,39 @@ export default function CompanyDetails() {
               <InfoRow label="رقم المبنى" value={company.buildingNumber} ltr />
               <InfoRow label="الرمز البريدي" value={company.postalCode} ltr />
               <InfoRow label="الرقم الإضافي" value={company.additionalNumber} ltr />
+            </div>
+          </div>
+          <div className="rounded-xl border bg-card p-5 md:col-span-2">
+            <h3 className="font-semibold mb-1 flex items-center gap-2 text-sm">
+              <Link2 className="h-4 w-4 text-primary" />النطاق الموطن (عزل الدخول)
+            </h3>
+            <p className="text-xs text-muted-foreground mb-3">
+              عند توطين الشركة على نطاق وكيل، لن يستطيع مستخدموها تسجيل الدخول إلا من هذا النطاق فقط — ولن يعمل دخولهم من المنصة المركزية.
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                className="border rounded-md px-3 py-2 text-sm bg-background min-w-[260px]"
+                dir="ltr"
+                value={homeSel === "__init__" ? String(company.homeDomainId ?? "") : homeSel}
+                onChange={e => setHomeSel(e.target.value)}
+              >
+                <option value="">بدون توطين — دخول من أي نطاق</option>
+                {domainRows.map((d: any) => (
+                  <option key={d.id} value={String(d.id)}>{d.domain}</option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                disabled={homeMutation.isPending || homeSel === "__init__"}
+                onClick={() => homeMutation.mutate(homeSel === "" ? null : Number(homeSel))}
+              >
+                حفظ التوطين
+              </Button>
+              {company.homeDomainId != null && (
+                <Badge variant="outline" className="text-xs">
+                  موطّنة حاليًا على نطاق رقم {company.homeDomainId}
+                </Badge>
+              )}
             </div>
           </div>
         </div>
