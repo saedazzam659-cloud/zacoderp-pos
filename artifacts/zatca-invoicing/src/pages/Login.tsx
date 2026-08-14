@@ -80,6 +80,13 @@ export default function Login() {
     return () => { alive = false; };
   }, []);
   const isAgentDomain = !!agentBrand?.isAgentDomain;
+  // On agent domains, every marketing string that mentions the Zacode brand
+  // is rewritten to the agent's own brand name — the reseller's page must
+  // never advertise the upstream platform.
+  const brandize = (s: string) =>
+    isAgentDomain && agentBrand?.brandName
+      ? s.replace(/زاكود المحاسبي|زاكود|ZacodERP|ZACODERP|Zacode/gi, agentBrand.brandName)
+      : s;
 
   // ── Mobile app download links (login-page badges) ────────────────────
   // Public endpoint; rows exist only after SuperAdmin configures them in
@@ -517,7 +524,7 @@ export default function Login() {
                 <span className="text-xs font-bold tracking-wide text-primary uppercase">ZacodERP</span>
               </div>
               <p className="text-sm text-foreground leading-relaxed">
-                {t("auth.intro.lead")}
+                {brandize(t("auth.intro.lead"))}
               </p>
             </div>
 
@@ -1045,7 +1052,7 @@ export default function Login() {
               )}
 
               <p className="text-center text-xs text-muted-foreground mt-6">
-                © 2026 {t("auth.appName")} — {t("auth.rights")}
+                © 2026 {brandize(t("auth.appName"))} — {t("auth.rights")}
               </p>
             </main>
           </div>
