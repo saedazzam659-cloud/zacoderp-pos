@@ -558,7 +558,8 @@ router.post("/:id/init-db", async (req, res) => {
   }
 });
 
-// POST /:id/test-ssh — TCP reachability only (full SSH deploy is a later phase).
+// POST /:id/test-ssh — real SSH login test when credentials are saved
+// (TCP reachability alone used to pass while provisioning failed on auth).
 router.post("/:id/test-ssh", async (req, res) => {
   const id = Number(req.params.id);
   const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
@@ -573,11 +574,34 @@ router.post("/:id/test-ssh", async (req, res) => {
     sock.on("timeout", () => { sock.destroy(); resolve(false); });
     sock.on("error", () => resolve(false));
   });
-  await db.update(agentInstancesTable).set({
-    sshStatus: reachable ? "ok" : "error", sshLastCheckAt: new Date(), updatedAt: new Date(),
-  }).where(eq(agentInstancesTable.id, id));
-  if (reachable) res.json({ ok: true, host: inst.sshHost, port });
-  else res.status(502).json({ error: `تعذّر الوصول إلى ${inst.sshHost}:${port}` });
+  if (!reachable) {
+    await db.update(agentInstancesTable).set({ sshStatus: "error", sshLastCheckAt: new Date(), updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+    res.status(502).json({ error: `تعذّر الوصول إلى ${inst.sshHost}:${port} — تأكد من العنوان والمنفذ` });
+    return;
+  }
+  // المنفذ مفتوح — لو بيانات الدخول محفوظة، جرّب تسجيل الدخول الفعلي.
+  if (inst.sshUser && inst.sshSecretEnc) {
+    try {
+      const r = await sshRunScript(inst, "echo AUTH_OK", { timeoutMs: 25_000 });
+      if (!inst.sshHostKeyFp && r.hostKeyFp) {
+        await db.update(agentInstancesTable).set({ sshHostKeyFp: r.hostKeyFp, updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+      }
+      await db.update(agentInstancesTable).set({ sshStatus: "ok", sshLastCheckAt: new Date(), updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+      res.json({ ok: true, host: inst.sshHost, port, auth: true, user: inst.sshUser });
+      return;
+    } catch (e: any) {
+      const raw = String(e?.message ?? e);
+      const friendly = /authentication methods failed/i.test(raw)
+        ? `المنفذ مفتوح لكن السيرفر رفض تسجيل الدخول للمستخدم «${inst.sshUser}» — تأكد من اسم المستخدم وكلمة المرور/المفتاح`
+        : `المنفذ مفتوح لكن فشل الدخول: ${raw.slice(0, 300)}`;
+      await db.update(agentInstancesTable).set({ sshStatus: "error", sshLastCheckAt: new Date(), updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+      res.status(502).json({ error: friendly });
+      return;
+    }
+  }
+  // لا توجد بيانات دخول محفوظة — فحص الوصول فقط.
+  await db.update(agentInstancesTable).set({ sshStatus: "ok", sshLastCheckAt: new Date(), updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+  res.json({ ok: true, host: inst.sshHost, port, auth: false, note: "تم فحص الوصول فقط — أدخل المستخدم وكلمة المرور لاختبار الدخول الفعلي" });
 });
 
 // POST /:id/check-domains — read-only diagnostics for the agent's domains.
