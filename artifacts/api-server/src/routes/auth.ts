@@ -1381,9 +1381,13 @@ router.post("/register", async (req, res) => {
     const codes = (Array.isArray(selectedIndustries) ? selectedIndustries : [])
       .filter((s: unknown): s is string => typeof s === "string" && s.length > 0);
     if (codes.length > 0) {
-      const { industriesTable } = await import("@workspace/db");
+      // centralDb: the industries catalogue (شاشة أنواع الأنشطة) is PLATFORM
+      // config — when registering a company on an AGENT DB the proxied `db`
+      // would read the agent's (empty) industries table and silently skip
+      // the industry→module bindings. Same trap as plan_configs above.
+      const { industriesTable, centralDb: industriesDb } = await import("@workspace/db");
       const { inArray, and } = await import("drizzle-orm");
-      const rows = await db.select({
+      const rows = await industriesDb.select({
         keys: industriesTable.recommendedModuleKeys,
         hiddenNav: industriesTable.hiddenNavPaths,
       }).from(industriesTable).where(and(
