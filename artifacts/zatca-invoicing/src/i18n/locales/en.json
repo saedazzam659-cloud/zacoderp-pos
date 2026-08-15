@@ -2614,6 +2614,8 @@
     "mobVoucherCreate": "Create receipt voucher",
     "mobCustomersView": "View customers",
     "mobCustomerCreate": "Add new customer",
+    "mobQuotationsView": "View quotations",
+    "mobQuotationCreate": "Create quotation",
     "mobReportsView": "Summary & reports"
   },
   "perms": {

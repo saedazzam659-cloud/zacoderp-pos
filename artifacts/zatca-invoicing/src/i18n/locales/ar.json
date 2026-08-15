@@ -2617,6 +2617,8 @@
     "mobVoucherCreate": "إنشاء سند قبض",
     "mobCustomersView": "عرض العملاء",
     "mobCustomerCreate": "إضافة عميل جديد",
+    "mobQuotationsView": "عرض عروض الأسعار",
+    "mobQuotationCreate": "إنشاء عرض سعر",
     "mobReportsView": "الملخص والتقارير"
   },
   "perms": {

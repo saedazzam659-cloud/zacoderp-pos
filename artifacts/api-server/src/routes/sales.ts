@@ -2935,6 +2935,7 @@ router.get("/sales-quotations", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    if (!(await requireMobilePerm(req, res, cid, "quotations_view", "ليست لديك صلاحية عرض عروض الأسعار من تطبيق الموبايل"))) return;
     const rows = await db.select().from(salesQuotationsTable)
       .where(and(
         eq(salesQuotationsTable.companyId, cid),
@@ -2965,6 +2966,7 @@ router.get("/sales-quotations/:id", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    if (!(await requireMobilePerm(req, res, cid, "quotations_view", "ليست لديك صلاحية عرض عروض الأسعار من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     // Branch-level isolation (mirror of /sales-invoices/:id): a restricted
     // user (viewAllBranches=false) must not fetch a quotation from a branch
@@ -3050,6 +3052,7 @@ router.post("/sales-quotations", async (req, res) => {
 router.put("/sales-quotations/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "quotation_edit", "ليست لديك صلاحية تعديل عروض الأسعار من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId, branchId } = req.body;
@@ -3063,13 +3066,18 @@ router.put("/sales-quotations/:id", async (req, res) => {
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // Branch-scope guard: a restricted user can't edit another branch's
     // quotation (mirror of the by-id read guard).
-    const [scoped] = await db.select({ id: salesQuotationsTable.id }).from(salesQuotationsTable)
+    const [scoped] = await db.select({ id: salesQuotationsTable.id, status: salesQuotationsTable.status }).from(salesQuotationsTable)
       .where(and(
         eq(salesQuotationsTable.id, id),
         eq(salesQuotationsTable.companyId, cid),
         ...branchScopeSpread(req, salesQuotationsTable.branchId, undefined),
       ));
     if (!scoped) { res.status(404).json({ error: "العرض غير موجود" }); return; }
+    // Terminal-state immutability: accepted/rejected/converted quotations are
+    // read-only (the UI enforces this, but it must hold server-side too).
+    if (!["draft", "sent"].includes(String(scoped.status ?? "draft"))) {
+      res.status(400).json({ error: "لا يمكن تعديل عرض سعر مقبول أو مرفوض أو محوّل لفاتورة" }); return;
+    }
     const [q] = await db.update(salesQuotationsTable).set({
       docNumber: docNumber || null, quotationDate,
       branchId: branchId ? Number(branchId) : null,
@@ -3099,6 +3107,7 @@ router.put("/sales-quotations/:id", async (req, res) => {
 router.patch("/sales-quotations/:id/status", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "quotation_edit", "ليست لديك صلاحية تعديل عروض الأسعار من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     const { status } = req.body;
     if (!["draft","sent","accepted","rejected","converted"].includes(status)) {
@@ -3137,6 +3146,9 @@ router.patch("/sales-quotations/:id/status", async (req, res) => {
 router.post("/sales-quotations/:id/convert", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "quotation_edit", "ليست لديك صلاحية تحويل عروض الأسعار من تطبيق الموبايل"))) return;
+    // التحويل ينشئ فاتورة مبيعات — يتطلب أيضاً صلاحية إنشاء الفواتير
+    if (!(await requireMobilePerm(req, res, cid, "invoice_create", "ليست لديك صلاحية إنشاء فاتورة مبيعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     const [q] = await db.select().from(salesQuotationsTable)
       .where(and(
@@ -3188,6 +3200,7 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
 router.delete("/sales-quotations/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "quotation_delete", "ليست لديك صلاحية حذف عروض الأسعار من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     // Branch-scope the delete so a restricted user can't remove another
     // branch's quotation (mirror of the by-id read guard).

@@ -26,6 +26,10 @@
 //   voucher_delete    حذف سند قبض
 //   customer_edit     تعديل عميل
 //   customer_delete   حذف عميل
+//   quotations_view   عرض عروض الأسعار
+//   quotation_create  إنشاء عرض سعر
+//   quotation_edit    تعديل عرض سعر (يشمل تغيير الحالة والتحويل لفاتورة)
+//   quotation_delete  حذف عرض سعر
 
 export type MobilePerms = Record<string, boolean> | null;
 

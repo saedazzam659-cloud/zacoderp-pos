@@ -16,3 +16,10 @@ description: Per-user mobile-channel permission map — key lockstep, session-bo
 - Reusable server gate: api-server `lib/mobileGuard.ts → requireMobilePerm(req,res,companyId,key,msg)` — returns false AFTER writing 403; caller must `return`. Applied on PUT/DELETE of sales-invoices, sales-returns, receipt-vouchers, customers. Web callers pass (session_channel + x-app-channel both checked; single-session token rotation makes channel binding safe).
 - Web Users.tsx matrix: MOBILE_PERM_KEYS rows carry optional editKey/deleteKey → 3 checkbox columns; ALL_MOBILE_KEYS flatMap drives seed/deny-all.
 - Mobile UX rule from review: delete must be reachable when only *_delete is granted — render the delete button in the read-only/edit-denied branch too, never only inside the editable branch.
+
+## Quotation keys + mobile-channel RBAC fallback (2026-08)
+- New keys: quotations_view / quotation_create / quotation_edit / quotation_delete (edit covers status-change + convert; convert ALSO requires invoice_create — it mints a sales invoice).
+- Generic web RBAC (`requirePermission`/pathRbac) blocked mobile users («صلاحيات غير كافية … sales_invoices»). Fix: permGuard in api-server middleware/permissions.ts falls back to `mobileChannelAllowed()` via MOBILE_MODULE_KEYS (must stay in lockstep with mobilePerms.ts known-keys + web Users.tsx MOBILE_PERM_KEYS).
+- ESCALATION GUARD: the fallback GRANTS what web RBAC denied, so it requires DB sessionChannel==='mobile' AND a NON-NULL mobilePermissions set. NULL (= all-allowed back-compat) grants only in the restricting guard requireMobilePerm, never in the fallback — otherwise spoofing x-app-channel at login bypasses web RBAC.
+- Quotation GET list/detail also carry requireMobilePerm(quotations_view) (web/desktop callers pass through). PUT enforces terminal-state immutability server-side (only draft/sent editable).
+- Quotations list API returns no customerName — mobile list resolves it client-side from /api/customers.

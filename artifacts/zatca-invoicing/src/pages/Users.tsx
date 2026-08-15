@@ -154,6 +154,8 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "voucher_create",     labelKey: "users.mobVoucherCreate" },
   { key: "customers_view",     labelKey: "users.mobCustomersView", editKey: "customer_edit", deleteKey: "customer_delete" },
   { key: "customer_create",    labelKey: "users.mobCustomerCreate" },
+  { key: "quotations_view",    labelKey: "users.mobQuotationsView", editKey: "quotation_edit", deleteKey: "quotation_delete" },
+  { key: "quotation_create",   labelKey: "users.mobQuotationCreate" },
   { key: "reports_view",       labelKey: "users.mobReportsView" },
 ];
 

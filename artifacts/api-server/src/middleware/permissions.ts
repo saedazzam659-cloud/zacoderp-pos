@@ -1,6 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
+import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { auditLogTable } from "@workspace/db";
+import { auditLogTable, usersTable } from "@workspace/db";
+import { mobilePermAllowed } from "../lib/mobilePerms.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Granular permission middleware
@@ -230,8 +232,44 @@ export function canAccessModule(authUser: any, module: string, action: PermActio
   return userActionAllowed(authUser, module, action);
 }
 
+// Mobile-companion sessions are governed by users.mobile_permissions (NULL =
+// allowed), not by the web RBAC map — a sales rep who may create invoices from
+// the phone typically has NO sales_invoices.create in the web map. When the
+// bearer session was minted through the mobile channel (users.session_channel
+// = 'mobile' — set at login, single-session, never header-trusted for grants)
+// the module/action pairs below defer to the mobile permission key instead of
+// hard-denying. Keep in lockstep with src/lib/mobilePerms.ts known keys.
+const MOBILE_MODULE_KEYS: Record<string, Partial<Record<PermAction, string>>> = {
+  sales_invoices:   { view: "invoices_view",  create: "invoice_create",  edit: "invoice_edit",  delete: "invoice_delete",  post: "invoice_create" },
+  sales_returns:    { view: "returns_view",   create: "return_create",   edit: "return_edit",   delete: "return_delete",   post: "return_create" },
+  receipt_vouchers: { view: "vouchers_view",  create: "voucher_create",  edit: "voucher_edit",  delete: "voucher_delete",  post: "voucher_create" },
+  customers:        { view: "customers_view", create: "customer_create", edit: "customer_edit", delete: "customer_delete" },
+  sales_quotations: { view: "quotations_view", create: "quotation_create", edit: "quotation_edit", delete: "quotation_delete" },
+};
+
+async function mobileChannelAllowed(u: any, module: string, action: PermAction): Promise<boolean> {
+  const key = MOBILE_MODULE_KEYS[module]?.[action];
+  if (!key) return false;
+  try {
+    const [row] = await db.select({
+      mobilePermissions: usersTable.mobilePermissions,
+      sessionChannel: usersTable.sessionChannel,
+      role: usersTable.role,
+    }).from(usersTable)
+      .where(and(eq(usersTable.id, Number(u.id)), eq(usersTable.companyId, Number(u.companyId))));
+    if (!row || row.sessionChannel !== "mobile") return false;
+    // Escalation guard: this path GRANTS access that web RBAC denied, so it
+    // requires an EXPLICIT admin-configured mobile permission set. NULL
+    // mobilePermissions (= "all allowed" back-compat default used by the
+    // restricting guard requireMobilePerm) must NOT grant here — otherwise a
+    // web user could spoof x-app-channel at login and bypass web RBAC.
+    if (row.mobilePermissions == null) return false;
+    return mobilePermAllowed({ role: row.role, mobilePermissions: row.mobilePermissions }, key);
+  } catch { return false; }
+}
+
 export function requirePermission(module: string, action: PermAction) {
-  return function permGuard(req: Request, res: Response, next: NextFunction) {
+  return async function permGuard(req: Request, res: Response, next: NextFunction) {
     const u = req.authUser;
     if (!u) { res.status(401).json({ error: "غير مصرح" }); return; }
     // Superadmin (platform operator) bypasses every gate.
@@ -252,6 +290,8 @@ export function requirePermission(module: string, action: PermAction) {
     }
     // Per-action map + admin / POS / sales-rep bypasses.
     if (userActionAllowed(u, module, action)) { next(); return; }
+    // Mobile-channel session → defer to the mobile permission key.
+    if (await mobileChannelAllowed(u, module, action)) { next(); return; }
     // Fire-and-forget denial audit (don't block the response)
     void writeAudit({
       userId: u.id, username: u.username, role: u.role, companyId: u.companyId,

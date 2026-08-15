@@ -151,6 +151,12 @@ export default function More() {
               <View style={{ height: 1, backgroundColor: c.border }} />
             </>
           ) : null}
+          {mp('quotations_view') ? (
+            <>
+              <RowItem icon="tag" title="عروض الأسعار" onPress={() => router.push('/quotations' as any)} testID="row-quotations" />
+              <View style={{ height: 1, backgroundColor: c.border }} />
+            </>
+          ) : null}
           <RowItem
             icon={offlineOn ? 'wifi-off' : 'download-cloud'}
             title={offlineBusy ? 'جارٍ التنزيل/المزامنة…' : offlineOn ? 'وضع الأوف لاين: مفعّل (اضغط للإيقاف)' : 'تفعيل وضع الأوف لاين'}
