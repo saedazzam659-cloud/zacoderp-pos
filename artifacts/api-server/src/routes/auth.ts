@@ -1186,8 +1186,14 @@ router.post("/register", async (req, res) => {
   // here without a code deploy. We fall back to a sane minimum (100 SAR)
   // only if the plan row genuinely cannot be found, which would indicate
   // a misconfigured DB rather than a missing override.
+  // centralDb: plan/module pricing is PLATFORM configuration and lives only
+  // in the central DB. Agent-targeted registrations run inside
+  // runWithExternalDb, where the proxied `db` points at the agent's own
+  // PostgreSQL (which has no plan_configs rows) — reading via `db` there
+  // 400s every agent-destined registration with «الباقة المحددة غير صالحة».
+  const { centralDb: pricingDb } = await import("@workspace/db");
   const planKeyForPricing = plan ?? "starter";
-  const [planRow] = await db.select({
+  const [planRow] = await pricingDb.select({
     monthlyPrice:         planConfigsTable.monthlyPrice,
     annualPrice:          planConfigsTable.annualPrice,
     includedModulesCount: planConfigsTable.includedModulesCount,
@@ -1224,7 +1230,8 @@ router.post("/register", async (req, res) => {
     const wantedKeys = selectedModules
       .filter((k: unknown): k is string => typeof k === "string");
     if (wantedKeys.length > 0) {
-      const moduleRows = await db.select({
+      // centralDb: modules are platform config too (see plan lookup above).
+      const moduleRows = await pricingDb.select({
         key:          modulesTable.key,
         monthlyPrice: modulesTable.monthlyPrice,
       }).from(modulesTable)
