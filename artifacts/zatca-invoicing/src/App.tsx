@@ -525,12 +525,28 @@ function useIsAgentDomain(): boolean {
   }, []);
   return v;
 }
+// نفس الهوك لكن يميّز «غير معروف بعد» (null) عن «ليس دومين وكيل» (false) —
+// تحتاجه صفحات التسويق حتى لا تومض الصفحة الرئيسية قبل قرار التحويل للدخول.
+function useIsAgentDomainNullable(): boolean | null {
+  const [v, setV] = useState<boolean | null>(__agentDomainCache);
+  useEffect(() => {
+    if (__agentDomainCache == null) fetchIsAgentDomain().then(setV);
+  }, []);
+  return v;
+}
+// المسارات التسويقية العامة — على دومين الوكيل تُحوَّل كلها إلى /login
+// (نسخة الوكيل تعرض تسجيل الدخول فقط، بدون صفحة الهبوط والباقات).
+const MARKETING_PATHS = new Set([
+  "/", "/pos-system", "/pricing", "/compare", "/why-zacod", "/download", "/install",
+]);
+const isMarketingPath = (loc: string) => MARKETING_PATHS.has(loc) || loc.startsWith("/blog/");
 
 function AppRoutes() {
   const { isAuthenticated, loading, user, actingCompanyId } = useAuth() as any;
   const [location] = useLocation();
   // يجب أن يبقى هذا الهوك قبل أي early-return (قاعدة الهوكس).
   const isAgentDomain = useIsAgentDomain();
+  const agentDomainState = useIsAgentDomainNullable();
   // Auto check-in for users explicitly assigned to a tracking zone — runs
   // once per page lifetime, silently skips users with no zone assignment.
   useAutoCheckinOnLogin();
@@ -578,6 +594,12 @@ function AppRoutes() {
   // is what lets Google index 404 responses with proper noindex headers
   // and lets crawlers reach the marketing pages without auth.
   if (!isAuthenticated) {
+    // نسخة الوكيل: لا صفحات تسويق إطلاقًا — أي مسار تسويقي يذهب لتسجيل الدخول.
+    // ننتظر قرار «هل هذا دومين وكيل؟» قبل عرض الصفحة الرئيسية حتى لا تومض.
+    if (isMarketingPath(location)) {
+      if (agentDomainState === null) return <LoadingScreen />;
+      if (agentDomainState) return <Redirect to="/login" />;
+    }
     if (location === "/") return <Home />;
     if (location === "/pos-system") return <PosLanding />;
     // Reseller (Agent) portal login — a distinct identity (resellers table),
