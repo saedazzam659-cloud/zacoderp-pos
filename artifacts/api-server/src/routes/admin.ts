@@ -1336,7 +1336,29 @@ router.get("/companies/deleted", requireSuperAdmin, async (_req, res) => {
     .from(companiesTable)
     .where(sql`${companiesTable.deletedAt} IS NOT NULL`)
     .orderBy(desc(companiesTable.deletedAt));
-  res.json(rows);
+  // Merge agent-DB recycle bins — companies soft-deleted on full_shell agent
+  // servers live in the agent's own DB, tagged so the UI can route restore /
+  // permanent-delete back through `?agent=`.
+  const merged: any[] = [...rows];
+  try {
+    const { listInitializedAgents } = await import("../lib/agentScope.js");
+    const { getAgentDbContext } = await import("../lib/agentDb.js");
+    const { runWithExternalDb } = await import("@workspace/db");
+    for (const agent of await listInitializedAgents()) {
+      try {
+        const agentRows = await runWithExternalDb(getAgentDbContext(agent.id, agent.dbUrlEnc), async () =>
+          db.select().from(companiesTable)
+            .where(sql`${companiesTable.deletedAt} IS NOT NULL`)
+            .orderBy(desc(companiesTable.deletedAt)));
+        for (const r of agentRows) merged.push({ ...r, agentInstanceId: agent.id, agentName: agent.name });
+      } catch (e: any) {
+        console.error("[admin/companies/deleted] agent DB unreachable:", agent.id, e?.message ?? e);
+      }
+    }
+  } catch (e: any) {
+    console.error("[admin/companies/deleted] agent merge failed:", e?.message ?? e);
+  }
+  res.json(merged);
 });
 
 // POST /api/admin/companies/:id/restore — undo a soft delete. Clears
@@ -1344,6 +1366,8 @@ router.get("/companies/deleted", requireSuperAdmin, async (_req, res) => {
 // user explicitly to avoid silently re-opening a session that may have
 // been suspended for a reason).
 router.post("/companies/:id/restore", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
   const id = parseInt(req.params.id);
   if (!Number.isFinite(id) || id <= 0) {
     res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
@@ -1358,6 +1382,7 @@ router.post("/companies/:id/restore", requireSuperAdmin, async (req, res) => {
   }
   emitSessionRefresh(id, "company_changed", { op: "restore" });
   res.json({ ok: true, company });
+  });
 });
 
 // DELETE /api/admin/companies/:id/permanent — irreversible cascade delete.
@@ -1365,6 +1390,8 @@ router.post("/companies/:id/restore", requireSuperAdmin, async (req, res) => {
 // the trash step by accident.
 router.delete("/companies/:id/permanent", requireSuperAdmin, async (req, res) => {
   try {
+    const { runWithAgentScope } = await import("../lib/agentScope.js");
+    await runWithAgentScope(req, res, async () => {
     const id = parseInt(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
       res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
@@ -1378,6 +1405,7 @@ router.delete("/companies/:id/permanent", requireSuperAdmin, async (req, res) =>
     }
     await deleteCompanyWithRelations(id);
     res.status(204).send();
+    });
   } catch (err: any) {
     res.status(500).json({ error: "فشل الحذف النهائي: " + (err.message ?? "خطأ غير متوقع") });
   }

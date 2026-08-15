@@ -24,7 +24,14 @@ type DeletedCompany = {
   vatNumber?: string | null;
   status?: string | null;
   deletedAt?: string | null;
+  // Set when the company lives on an agent server's own DB — restore /
+  // permanent-delete must carry `?agent=` so the backend routes there.
+  agentInstanceId?: number | null;
+  agentName?: string | null;
 };
+
+const agentQS = (agent?: number | null) => (agent ? `?agent=${agent}` : "");
+const rowKey = (c: DeletedCompany) => `${c.agentInstanceId ?? "c"}:${c.id}`;
 
 const DELETED_KEY = ["admin", "companies", "deleted"];
 
@@ -65,10 +72,10 @@ export default function DeletedCompanies() {
   const [purgeTarget, setPurgeTarget] = useState<DeletedCompany | null>(null);
 
   const restore = useMutation({
-    mutationFn: (id: number) =>
-      jsonFetch<{ ok: true }>(`${API}/api/admin/companies/${id}/restore`, { method: "POST" }),
-    onSuccess: (_d, id) => {
-      const name = rows.find(r => r.id === id)?.nameAr ?? "";
+    mutationFn: (c: DeletedCompany) =>
+      jsonFetch<{ ok: true }>(`${API}/api/admin/companies/${c.id}/restore${agentQS(c.agentInstanceId)}`, { method: "POST" }),
+    onSuccess: (_d, c) => {
+      const name = c.nameAr ?? "";
       toast({ title: "تم الإرجاع", description: `أُعيدت شركة "${name}" إلى مكانها. يجب إعادة تفعيل المستخدمين يدوياً.` });
       qc.invalidateQueries({ queryKey: DELETED_KEY });
       qc.invalidateQueries({ queryKey: ["companies"] });
@@ -81,10 +88,10 @@ export default function DeletedCompanies() {
   });
 
   const purge = useMutation({
-    mutationFn: (id: number) =>
-      jsonFetch<void>(`${API}/api/admin/companies/${id}/permanent`, { method: "DELETE" }),
-    onSuccess: (_d, id) => {
-      const name = rows.find(r => r.id === id)?.nameAr ?? "";
+    mutationFn: (c: DeletedCompany) =>
+      jsonFetch<void>(`${API}/api/admin/companies/${c.id}/permanent${agentQS(c.agentInstanceId)}`, { method: "DELETE" }),
+    onSuccess: (_d, c) => {
+      const name = c.nameAr ?? "";
       toast({
         title: "حذف نهائي",
         description: `حُذفت شركة "${name}" وكل بياناتها بشكل لا يمكن التراجع عنه.`,
@@ -172,9 +179,14 @@ export default function DeletedCompanies() {
                 </td></tr>
               )}
               {!isLoading && !error && filtered.map(c => (
-                <tr key={c.id} className="border-t hover:bg-muted/20">
+                <tr key={rowKey(c)} className="border-t hover:bg-muted/20">
                   <td className="px-4 py-3">
-                    <div className="font-medium">{c.nameAr}</div>
+                    <div className="font-medium flex items-center gap-1.5 flex-wrap">
+                      {c.nameAr}
+                      {c.agentInstanceId && (
+                        <span className="text-[10px] bg-violet-100 text-violet-800 border border-violet-300 rounded px-1">وكيل: {c.agentName ?? c.agentInstanceId}</span>
+                      )}
+                    </div>
                     {c.nameEn && <div className="text-xs text-muted-foreground">{c.nameEn}</div>}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs">{c.vatNumber ?? "—"}</td>
@@ -236,7 +248,7 @@ export default function DeletedCompanies() {
           <AlertDialogFooter className="flex-row-reverse gap-2">
             <AlertDialogCancel>إلغاء</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => restoreTarget && restore.mutate(restoreTarget.id)}
+              onClick={() => restoreTarget && restore.mutate(restoreTarget)}
               disabled={restore.isPending}
               className="gap-2"
             >
@@ -266,7 +278,7 @@ export default function DeletedCompanies() {
           <AlertDialogFooter className="flex-row-reverse gap-2">
             <AlertDialogCancel>إلغاء</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => purgeTarget && purge.mutate(purgeTarget.id)}
+              onClick={() => purgeTarget && purge.mutate(purgeTarget)}
               disabled={purge.isPending}
               className="bg-destructive hover:bg-destructive/90 text-destructive-foreground gap-2"
             >
