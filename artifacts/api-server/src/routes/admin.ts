@@ -1468,10 +1468,21 @@ router.post("/companies/:id/users", requireSuperAdmin, async (req, res) => {
   if (existing) { res.status(409).json({ error: "اسم المستخدم موجود مسبقاً في هذه الشركة" }); return; }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const [newUser] = await db.insert(usersTable).values({
-    username, email: email ?? null, passwordHash, companyId, role, isActive: true,
-  }).returning({ id: usersTable.id, username: usersTable.username, email: usersTable.email, role: usersTable.role, isActive: usersTable.isActive, createdAt: usersTable.createdAt });
-  res.status(201).json({ ok: true, user: newUser });
+  // Raw column-list INSERT on purpose: drizzle's .values() names EVERY schema
+  // column (filling `default`), which breaks on agent DBs whose users table
+  // predates newer platform columns (mobile_permissions, …). Inserting only
+  // the core columns works on any agent schema version AND centrally.
+  try {
+    const inserted = await db.execute(sql`
+      INSERT INTO users (username, email, password_hash, company_id, role, is_active)
+      VALUES (${username}, ${email ?? null}, ${passwordHash}, ${companyId}, ${role}, TRUE)
+      RETURNING id, username, email, role, is_active AS "isActive", created_at AS "createdAt"
+    `);
+    const newUser = (Array.isArray(inserted) ? inserted[0] : (inserted as any).rows?.[0]) ?? null;
+    res.status(201).json({ ok: true, user: newUser });
+  } catch (e: any) {
+    res.status(500).json({ error: "فشل إنشاء المستخدم: " + String(e?.message ?? e).slice(0, 200) });
+  }
   });
 });
 
@@ -1494,7 +1505,10 @@ router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) =
     const updates: Record<string, any> = { updatedAt: new Date() };
     if (isActive != null) updates.isActive = isActive;
     if (password) updates.passwordHash = await bcrypt.hash(password, 12);
-    const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId)).returning();
+    // Restrict RETURNING to core columns — a bare .returning() names every
+    // schema column and breaks on older agent DBs missing newer columns.
+    const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId))
+      .returning({ id: usersTable.id, username: usersTable.username, email: usersTable.email, role: usersTable.role, isActive: usersTable.isActive, companyId: usersTable.companyId });
     if (updated?.companyId != null) {
       emitSessionRefresh(updated.companyId, "permissions_changed", { op: "user-update", userId });
     }
