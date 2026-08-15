@@ -207,7 +207,9 @@ export default function SalesReturnForm() {
   }, [docQ.data, loadedDoc]);
 
   const isPosted = loadedDoc && loadedDoc.status && loadedDoc.status !== 'draft';
-  const readOnly = !!isPosted || (!!loadedDoc && !isNew);
+  // مسودة محفوظة: تُعدَّل من التطبيق لمن يملك صلاحية return_edit
+  const isEditingSaved = !!loadedDoc && !isNew && !isPosted;
+  const readOnly = !!isPosted || (isEditingSaved && !mp('return_edit'));
 
   const totals = useMemo(() => {
     let subtotal = 0, vat = 0;
@@ -295,8 +297,14 @@ export default function SalesReturnForm() {
         notes: notes.trim(),
         lines: bodyLines,
       };
-      const created = await api<any>('/api/sales/sales-returns', { method: 'POST', body });
-      const newId = created?.id;
+      let newId: number | null;
+      if (isEditingSaved && returnId) {
+        await api(`/api/sales/sales-returns/${returnId}?companyId=${companyId}`, { method: 'PUT', body });
+        newId = returnId;
+      } else {
+        const created = await api<any>('/api/sales/sales-returns', { method: 'POST', body });
+        newId = created?.id;
+      }
       if (thenPost && newId) {
         await api(`/api/sales/sales-returns/${newId}/post`, { method: 'PATCH', body: { companyId } });
       }
@@ -309,6 +317,30 @@ export default function SalesReturnForm() {
       setSaving(false);
       setPosting(false);
     }
+  };
+
+  // حذف مرتجع (مسودة فقط — السيرفر يرفض المرحّل)
+  const [deleting, setDeleting] = useState(false);
+  const doDelete = async () => {
+    if (!returnId) return;
+    const go = async () => {
+      setDeleting(true);
+      try {
+        await api(`/api/sales/sales-returns/${returnId}?companyId=${companyId}`, { method: 'DELETE' });
+        qc.invalidateQueries({ queryKey: ['sales-returns', companyId] });
+        notify('تم', 'تم حذف المرتجع');
+        router.back();
+      } catch (e: any) {
+        notify('تعذّر الحذف', typeof e === 'string' ? e : e?.message ?? 'خطأ غير معروف');
+      } finally {
+        setDeleting(false);
+      }
+    };
+    if (Platform.OS === 'web') { go(); return; }
+    Alert.alert('حذف المرتجع', 'سيتم حذف المرتجع نهائياً. متابعة؟', [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'حذف', style: 'destructive', onPress: go },
+    ]);
   };
 
   const Seg = ({ options, value, onChange }: { options: { v: string; l: string }[]; value: string; onChange: (v: any) => void }) => (
@@ -441,11 +473,19 @@ export default function SalesReturnForm() {
               <>
                 <Btn title="حفظ وترحيل المرتجع" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post-return" />
                 <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft-return" />
+                {isEditingSaved && mp('return_delete') ? (
+                  <Btn title="حذف المرتجع" icon="trash-2" kind="destructive" loading={deleting} onPress={doDelete} testID="button-delete-return" />
+                ) : null}
               </>
             )}
           </View>
         ) : (
-          <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>{isPosted ? 'هذا المرتجع مرحّل — للعرض فقط.' : 'مرتجع محفوظ — التعديل من النظام الرئيسي.'}</Text></Card>
+          <View style={{ gap: 10 }}>
+            <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>{isPosted ? 'هذا المرتجع مرحّل — للعرض فقط.' : 'ليست لديك صلاحية تعديل المرتجعات من التطبيق.'}</Text></Card>
+            {!isPosted && loadedDoc && mp('return_delete') ? (
+              <Btn title="حذف المرتجع" icon="trash-2" kind="destructive" loading={deleting} onPress={doDelete} testID="button-delete-return" />
+            ) : null}
+          </View>
         )}
       </ScrollView>
 

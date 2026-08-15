@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
+import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { db } from "@workspace/db";
 import {
   receiptVouchersTable, receiptVoucherLinesTable,
@@ -881,6 +882,7 @@ router.put("/:id", async (req, res) => {
   // Multi-tenant guard — fetch by (id, cid) so cross-tenant updates 404.
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+  if (!(await requireMobilePerm(req, res, cid, "voucher_edit", "ليست لديك صلاحية تعديل السندات من تطبيق الموبايل"))) return;
   const [existing] = await db.select().from(receiptVouchersTable)
     .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
@@ -1033,6 +1035,7 @@ router.delete("/:id", async (req, res) => {
   const [existing] = await db.select().from(receiptVouchersTable)
     .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!(await requireMobilePerm(req, res, cid, "voucher_delete", "ليست لديك صلاحية حذف السندات من تطبيق الموبايل"))) return;
   if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن حذف سند مرحّل" }); return; }
   await db.delete(receiptVouchersTable)
     .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));

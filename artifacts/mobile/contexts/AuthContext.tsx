@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, setToken, getToken } from '@/lib/api';
+import { clearAllOfflineData } from '@/lib/offline';
 
 export interface CompanyInfo {
   id: number;
@@ -74,6 +75,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await setToken(null);
+    // أمان تعدد المستخدمين على نفس الجهاز: مسح كاش الأوف لاين وصندوق الصادر
+    await clearAllOfflineData().catch(() => {});
     setUser(null);
   }, []);
 

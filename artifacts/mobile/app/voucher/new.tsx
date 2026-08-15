@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -14,7 +14,8 @@ import { Btn, Card, Field } from '@/components/ui';
 export default function NewVoucher() {
   const router = useRouter();
   const qc = useQueryClient();
-  const params = useLocalSearchParams<{ invoiceId?: string; customerId?: string }>();
+  const params = useLocalSearchParams<{ invoiceId?: string; customerId?: string; editId?: string }>();
+  const editId = params.editId ? Number(params.editId) : null;
   const { companyId } = useAuth();
   const { mp } = useMobilePerms();
   const c = useColors();
@@ -49,6 +50,26 @@ export default function NewVoucher() {
     enabled: !!companyId,
   });
 
+  // وضع التعديل: تحميل سند المسودة الحالي
+  const editQ = useQuery({
+    queryKey: ['receipt-voucher', editId],
+    queryFn: () => api<any>(`/api/receipt-vouchers/${editId}?companyId=${companyId}`),
+    enabled: !!companyId && !!editId,
+  });
+  const [editLoaded, setEditLoaded] = useState(false);
+  useEffect(() => {
+    const v: any = editQ.data;
+    if (!v || !v.id || editLoaded) return;
+    setEditLoaded(true);
+    setCustomerId(v.entityId ?? null);
+    setAmount(String(parseFloat(v.amount ?? 0) || ''));
+    setDate(String(v.voucherDate ?? v.date ?? '').slice(0, 10) || todayISO());
+    setPaymentType(v.paymentType === 'bank' ? 'bank' : 'cash');
+    setCashBoxId(v.cashBoxId ?? null);
+    setBankAccountId(v.bankAccountId ?? null);
+    setDescription(v.description ?? '');
+  }, [editQ.data, editLoaded]);
+
   const customers = Array.isArray(customersQ.data) ? customersQ.data : [];
   const cashBoxes = Array.isArray(cashBoxesQ.data) ? cashBoxesQ.data : [];
   const banks = Array.isArray(banksQ.data) ? banksQ.data : [];
@@ -62,26 +83,31 @@ export default function NewVoucher() {
     if (paymentType === 'bank' && !bankAccountId) { setError('اختر الحساب البنكي'); return; }
     setBusy(true); setError('');
     try {
-      const created = await api<any>('/api/receipt-vouchers', {
-        method: 'POST',
-        body: {
-          companyId,
-          entityType: 'customer',
-          entityId: customerId,
-          salesInvoiceId: params.invoiceId ? Number(params.invoiceId) : undefined,
-          date,
-          amount: amt,
-          paymentType,
-          cashBoxId: paymentType === 'cash' ? cashBoxId : undefined,
-          bankAccountId: paymentType === 'bank' ? bankAccountId : undefined,
-          description: description || undefined,
-        },
-      });
-      const newId = created?.id ?? created?.voucher?.id;
-      if (newId) {
+      const body = {
+        companyId,
+        entityType: 'customer',
+        entityId: customerId,
+        salesInvoiceId: params.invoiceId ? Number(params.invoiceId) : undefined,
+        date,
+        amount: amt,
+        paymentType,
+        cashBoxId: paymentType === 'cash' ? cashBoxId : undefined,
+        bankAccountId: paymentType === 'bank' ? bankAccountId : undefined,
+        description: description || undefined,
+      };
+      let newId: number | null;
+      if (editId) {
+        await api(`/api/receipt-vouchers/${editId}?companyId=${companyId}`, { method: 'PUT', body });
+        newId = editId;
+      } else {
+        const created = await api<any>('/api/receipt-vouchers', { method: 'POST', body });
+        newId = created?.id ?? created?.voucher?.id;
+      }
+      if (newId && !editId) {
         // vouchers are created as drafts — post so the receipt hits the ledger
         await api(`/api/receipt-vouchers/${newId}/post`, { method: 'POST', body: { companyId } });
       }
+      qc.invalidateQueries({ queryKey: ['receipt-vouchers'] });
       qc.invalidateQueries({ queryKey: ['invoice-vouchers'] });
       if (Platform.OS !== 'web') Alert.alert('تم', 'تم حفظ سند القبض');
       router.back();
@@ -105,7 +131,7 @@ export default function NewVoucher() {
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
       <View style={{ backgroundColor: c.primary, paddingTop: topInset + 10, paddingBottom: 14, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={{ color: '#fff', fontSize: 17, fontFamily: 'Inter_700Bold' }}>سند قبض جديد</Text>
+        <Text style={{ color: '#fff', fontSize: 17, fontFamily: 'Inter_700Bold' }}>{editId ? 'تعديل سند قبض' : 'سند قبض جديد'}</Text>
         <Pressable onPress={() => router.back()} hitSlop={10}><Feather name="x" size={22} color="#fff" /></Pressable>
       </View>
 
@@ -139,10 +165,10 @@ export default function NewVoucher() {
           <Field label="البيان" value={description} onChangeText={setDescription} multiline />
         </Card>
         {error ? <Text style={{ color: c.destructive, textAlign: 'right', fontSize: 13 }}>{error}</Text> : null}
-        {mp('voucher_create') ? (
+        {mp(editId ? 'voucher_edit' : 'voucher_create') ? (
           <Btn title="حفظ السند" onPress={save} loading={busy} icon="check" testID="button-save-voucher" />
         ) : (
-          <Card><Text style={{ textAlign: 'right', color: c.destructive }}>ليست لديك صلاحية إنشاء سند قبض من التطبيق — تواصل مع مدير النظام.</Text></Card>
+          <Card><Text style={{ textAlign: 'right', color: c.destructive }}>{editId ? 'ليست لديك صلاحية تعديل السندات من التطبيق — تواصل مع مدير النظام.' : 'ليست لديك صلاحية إنشاء سند قبض من التطبيق — تواصل مع مدير النظام.'}</Text></Card>
         )}
       </ScrollView>
 

@@ -141,27 +141,33 @@ type PostingPerms = Record<string, { post: boolean; unpost: boolean }>;
 // Mirrors api-server lib/mobilePerms.ts. Semantics: unchecked = explicitly
 // denied; checked (or never saved) = allowed. Admin/superadmin always bypass.
 // Keys cover every feature of the Expo companion app.
-const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string }> = [
-  { key: "invoices_view",      labelKey: "users.mobInvoicesView" },
+// editKey / deleteKey add the تعديل / حذف columns on entity rows.
+const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string; deleteKey?: string }> = [
+  { key: "invoices_view",      labelKey: "users.mobInvoicesView", editKey: "invoice_edit", deleteKey: "invoice_delete" },
   { key: "invoice_create",     labelKey: "users.mobInvoiceCreate" },
   { key: "invoice_edit_price", labelKey: "users.mobInvoiceEditPrice" },
   { key: "invoice_print",      labelKey: "users.mobInvoicePrint" },
   { key: "invoice_whatsapp",   labelKey: "users.mobInvoiceWhatsapp" },
-  { key: "returns_view",       labelKey: "users.mobReturnsView" },
+  { key: "returns_view",       labelKey: "users.mobReturnsView", editKey: "return_edit", deleteKey: "return_delete" },
   { key: "return_create",      labelKey: "users.mobReturnCreate" },
-  { key: "vouchers_view",      labelKey: "users.mobVouchersView" },
+  { key: "vouchers_view",      labelKey: "users.mobVouchersView", editKey: "voucher_edit", deleteKey: "voucher_delete" },
   { key: "voucher_create",     labelKey: "users.mobVoucherCreate" },
-  { key: "customers_view",     labelKey: "users.mobCustomersView" },
+  { key: "customers_view",     labelKey: "users.mobCustomersView", editKey: "customer_edit", deleteKey: "customer_delete" },
   { key: "customer_create",    labelKey: "users.mobCustomerCreate" },
   { key: "reports_view",       labelKey: "users.mobReportsView" },
 ];
+
+// Every storable key (feature keys + edit/delete keys) — keep deny-all and
+// seeding in lockstep with the server's known-keys list.
+const ALL_MOBILE_KEYS: string[] = MOBILE_PERM_KEYS.flatMap(d =>
+  [d.key, d.editKey, d.deleteKey].filter((k): k is string => !!k));
 
 type MobilePerms = Record<string, boolean>;
 
 // Seed the matrix: every feature checked (allowed) unless explicitly denied.
 const seedMobilePerms = (stored?: Record<string, boolean> | null): MobilePerms => {
   const out: MobilePerms = {};
-  for (const d of MOBILE_PERM_KEYS) out[d.key] = stored?.[d.key] !== false;
+  for (const k of ALL_MOBILE_KEYS) out[k] = stored?.[k] !== false;
   return out;
 };
 
@@ -1427,7 +1433,7 @@ export default function Users() {
                   <Button type="button" variant="outline" size="sm" data-testid="btn-mobile-none"
                     onClick={() => setForm(f => {
                       const next: MobilePerms = {};
-                      MOBILE_PERM_KEYS.forEach(d => { next[d.key] = false; });
+                      ALL_MOBILE_KEYS.forEach(k => { next[k] = false; });
                       return { ...f, mobilePermissions: next };
                     })}>
                     {t("users.postingDenyAll")}
@@ -1439,25 +1445,29 @@ export default function Users() {
                     <thead className="bg-muted/60">
                       <tr>
                         <th className="text-start px-3 py-2 font-medium">{t("users.mobileFeatureCol")}</th>
-                        <th className="text-center px-3 py-2 font-medium w-28">{t("users.mobileAllowedCol")}</th>
+                        <th className="text-center px-3 py-2 font-medium w-24">{t("users.mobileAllowedCol")}</th>
+                        <th className="text-center px-3 py-2 font-medium w-24">{t("users.mobileEditCol")}</th>
+                        <th className="text-center px-3 py-2 font-medium w-24">{t("users.mobileDeleteCol")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {MOBILE_PERM_KEYS.map(d => {
-                        const checked = form.mobilePermissions[d.key] !== false;
+                        const cell = (key?: string) => key ? (
+                          <Checkbox
+                            checked={form.mobilePermissions[key] !== false}
+                            data-testid={`mobile-perm-${key}`}
+                            onCheckedChange={(v) => setForm(f => ({
+                              ...f,
+                              mobilePermissions: { ...f.mobilePermissions, [key]: !!v },
+                            }))}
+                          />
+                        ) : <span className="text-muted-foreground/50">—</span>;
                         return (
                           <tr key={d.key} className="border-t hover:bg-muted/30">
                             <td className="px-3 py-1.5">{t(d.labelKey)}</td>
-                            <td className="text-center px-3 py-1.5">
-                              <Checkbox
-                                checked={checked}
-                                data-testid={`mobile-perm-${d.key}`}
-                                onCheckedChange={(v) => setForm(f => ({
-                                  ...f,
-                                  mobilePermissions: { ...f.mobilePermissions, [d.key]: !!v },
-                                }))}
-                              />
-                            </td>
+                            <td className="text-center px-3 py-1.5">{cell(d.key)}</td>
+                            <td className="text-center px-3 py-1.5">{cell(d.editKey)}</td>
+                            <td className="text-center px-3 py-1.5">{cell(d.deleteKey)}</td>
                           </tr>
                         );
                       })}

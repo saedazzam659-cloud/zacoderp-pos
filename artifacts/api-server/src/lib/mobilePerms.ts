@@ -18,6 +18,14 @@
 //   customers_view    عرض العملاء
 //   customer_create   إضافة عميل
 //   reports_view      الملخص والتقارير
+//   invoice_edit      تعديل فاتورة مبيعات محفوظة
+//   invoice_delete    حذف فاتورة مبيعات
+//   return_edit       تعديل مرتجع مبيعات
+//   return_delete     حذف مرتجع مبيعات
+//   voucher_edit      تعديل سند قبض
+//   voucher_delete    حذف سند قبض
+//   customer_edit     تعديل عميل
+//   customer_delete   حذف عميل
 
 export type MobilePerms = Record<string, boolean> | null;
 

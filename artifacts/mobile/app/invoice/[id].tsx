@@ -392,6 +392,29 @@ export default function InvoiceForm() {
     }
   };
 
+  // حذف فاتورة (مسودة فقط — السيرفر يرفض المرحّلة/المعتمدة من زاتكا)
+  const [deleting, setDeleting] = useState(false);
+  const doDelete = async () => {
+    const go = async () => {
+      setDeleting(true);
+      try {
+        await api(`/api/sales/sales-invoices/${invoiceId}?companyId=${companyId}`, { method: 'DELETE' });
+        qc.invalidateQueries({ queryKey: ['sales-invoices', companyId] });
+        notify('تم', 'تم حذف الفاتورة');
+        router.back();
+      } catch (e: any) {
+        notify('تعذّر الحذف', typeof e === 'string' ? e : e?.message ?? 'خطأ غير معروف');
+      } finally {
+        setDeleting(false);
+      }
+    };
+    if (Platform.OS === 'web') { go(); return; }
+    Alert.alert('حذف الفاتورة', 'سيتم حذف الفاتورة نهائياً. متابعة؟', [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'حذف', style: 'destructive', onPress: go },
+    ]);
+  };
+
   // Unpost — same server-side policy as web (posting-rights matrix enforced by
   // requireUnpostRight; ZATCA-reported invoices are rejected by the server).
   const [unposting, setUnposting] = useState(false);
@@ -658,6 +681,18 @@ export default function InvoiceForm() {
                     </View>
                     {inCart ? (
                       <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+                        {!readOnly && mp('invoice_edit_price') ? (
+                          <TextInput
+                            testID={`input-cart-price-${item.id}`}
+                            defaultValue={String(inCart.unitPrice)}
+                            keyboardType="decimal-pad"
+                            onEndEditing={(e) => {
+                              const v = parseFloat(String(e.nativeEvent.text).replace(/[^\d.]/g, ''));
+                              if (Number.isFinite(v)) setLinePrice(item.id, v);
+                            }}
+                            style={{ minWidth: 64, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
+                          />
+                        ) : null}
                         <Pressable onPress={() => setLineQty(item.id, inCart.qty + 1)} style={{ backgroundColor: c.primary, borderRadius: 8, padding: 6 }}>
                           <Feather name="plus" size={14} color="#fff" />
                         </Pressable>
@@ -778,10 +813,20 @@ export default function InvoiceForm() {
             {!readOnly ? (
               isNew && !mp('invoice_create') ? (
                 <Card><Text style={{ textAlign: 'right', color: c.destructive }}>ليست لديك صلاحية إنشاء فاتورة من التطبيق — تواصل مع مدير النظام.</Text></Card>
+              ) : !isNew && !mp('invoice_edit') ? (
+                <View style={{ gap: 10 }}>
+                  <Card><Text style={{ textAlign: 'right', color: c.destructive }}>ليست لديك صلاحية تعديل الفواتير من التطبيق — تواصل مع مدير النظام.</Text></Card>
+                  {mp('invoice_delete') ? (
+                    <Btn title="حذف الفاتورة" icon="trash-2" kind="destructive" loading={deleting} onPress={doDelete} testID="button-delete-invoice" />
+                  ) : null}
+                </View>
               ) : (
               <View style={{ gap: 10 }}>
                 <Btn title="حفظ وإصدار الفاتورة" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post" />
                 <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft" />
+                {!isNew && mp('invoice_delete') ? (
+                  <Btn title="حذف الفاتورة" icon="trash-2" kind="destructive" loading={deleting} onPress={doDelete} testID="button-delete-invoice" />
+                ) : null}
               </View>
               )
             ) : (

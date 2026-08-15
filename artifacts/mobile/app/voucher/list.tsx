@@ -34,6 +34,27 @@ export default function VoucherList() {
   });
   const rows = Array.isArray(q.data) ? q.data : [];
 
+  // حذف سند (مسودة فقط — السيرفر يرفض المرحّل)
+  const doDelete = (v: any) => {
+    const go = async () => {
+      setBusyId(v.id);
+      try {
+        await api(`/api/receipt-vouchers/${v.id}?companyId=${companyId}`, { method: 'DELETE' });
+        await qc.invalidateQueries({ queryKey: ['receipt-vouchers'] });
+        notify('تم', 'تم حذف السند');
+      } catch (e: any) {
+        notify('تعذّر الحذف', typeof e === 'string' ? e : e?.message ?? 'خطأ غير معروف');
+      } finally {
+        setBusyId(null);
+      }
+    };
+    if (Platform.OS === 'web') { go(); return; }
+    Alert.alert('حذف السند', 'سيتم حذف سند القبض نهائياً. متابعة؟', [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'حذف', style: 'destructive', onPress: go },
+    ]);
+  };
+
   const doUnpost = (v: any) => {
     const go = async () => {
       setBusyId(v.id);
@@ -92,6 +113,28 @@ export default function VoucherList() {
                     {'  ·  '}
                     {posted ? 'مرحّل' : v.status === 'draft' ? 'مسودة' : String(v.status ?? '')}
                   </Text>
+                  <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+                  {!posted && mp('voucher_edit') ? (
+                    <Pressable
+                      testID={`edit-voucher-${v.id}`}
+                      onPress={() => router.push({ pathname: '/voucher/new', params: { editId: String(v.id) } } as any)}
+                      style={({ pressed }) => ({ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: pressed ? c.muted : 'transparent', borderWidth: 1, borderColor: c.primary, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 })}
+                    >
+                      <Feather name="edit-2" size={13} color={c.primary} />
+                      <Text style={{ fontSize: 12, color: c.primary, fontFamily: 'Inter_500Medium' }}>تعديل</Text>
+                    </Pressable>
+                  ) : null}
+                  {!posted && mp('voucher_delete') ? (
+                    <Pressable
+                      testID={`delete-voucher-${v.id}`}
+                      disabled={busyId === v.id}
+                      onPress={() => doDelete(v)}
+                      style={({ pressed }) => ({ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: pressed ? c.muted : 'transparent', borderWidth: 1, borderColor: c.destructive, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, opacity: busyId === v.id ? 0.5 : 1 })}
+                    >
+                      {busyId === v.id ? <ActivityIndicator size="small" color={c.destructive} /> : <Feather name="trash-2" size={13} color={c.destructive} />}
+                      <Text style={{ fontSize: 12, color: c.destructive, fontFamily: 'Inter_500Medium' }}>حذف</Text>
+                    </Pressable>
+                  ) : null}
                   {posted && canUnpost ? (
                     <Pressable
                       testID={`unpost-voucher-${v.id}`}
@@ -103,6 +146,7 @@ export default function VoucherList() {
                       <Text style={{ fontSize: 12, color: c.destructive, fontFamily: 'Inter_500Medium' }}>فك الترحيل</Text>
                     </Pressable>
                   ) : null}
+                  </View>
                 </View>
               </Card>
             );

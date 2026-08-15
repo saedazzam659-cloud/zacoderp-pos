@@ -26,6 +26,7 @@ import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread, intersectBranchRequest } from "../middleware/auth.js";
 import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
+import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { usersTable } from "@workspace/db";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
@@ -1161,6 +1162,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     // Mobile-app rights — same gate as POST (see enforceMobileSalesRights).
+    if (!(await requireMobilePerm(req, res, cid, "invoice_edit", "ليست لديك صلاحية تعديل الفواتير من تطبيق الموبايل"))) return;
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "edit"))) return;
     const id = Number(req.params.id);
     // POSTED-DOC LOCK: a sales invoice that has been posted (status='posted')
@@ -1907,6 +1909,7 @@ router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (r
 router.delete("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "invoice_delete", "ليست لديك صلاحية حذف الفواتير من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     const [inv] = await db.select().from(salesInvoicesTable)
       .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
@@ -2337,6 +2340,7 @@ router.post("/sales-returns", async (req, res) => {
 router.put("/sales-returns/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "return_edit", "ليست لديك صلاحية تعديل المرتجعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     const [existing] = await db.select().from(salesReturnsTable)
       .where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));
@@ -2909,6 +2913,7 @@ router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (re
 router.delete("/sales-returns/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "return_delete", "ليست لديك صلاحية حذف المرتجعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     const [ret] = await db.select().from(salesReturnsTable)
       .where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));

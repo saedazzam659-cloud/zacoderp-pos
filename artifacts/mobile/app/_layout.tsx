@@ -13,6 +13,16 @@ if (!__DEV__) {
 }
 import { checkForcedUpdate, currentAppVersion, type UpdateCheck } from '@/lib/appUpdate';
 import { AppState } from 'react-native';
+import { api, getDomain } from '@/lib/api';
+import { isOfflineEnabled, syncOutbox } from '@/lib/offline';
+
+// مزامنة صادر الأوف لاين إن كان الوضع مفعلاً (single-flight داخلي)
+const trySyncOffline = () => {
+  isOfflineEnabled().then(async (on) => {
+    if (!on) return;
+    syncOutbox(await getDomain(), api).catch(() => {});
+  }).catch(() => {});
+};
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -49,7 +59,12 @@ const queryClient = new QueryClient({
 // تلقائياً (react-query focusManager) — نفس سلوك المتصفح عند العودة للتبويب.
 AppState.addEventListener('change', (s) => {
   focusManager.setFocused(s === 'active');
+  // عودة التطبيق للواجهة = فرصة لمزامنة عمليات الأوف لاين المعلقة
+  if (s === 'active') trySyncOffline();
 });
+
+// محاولة مزامنة دورية كل 60 ثانية أثناء عمل التطبيق
+setInterval(trySyncOffline, 60_000);
 
 // Forced-update gate sits ABOVE the router so deep links can't bypass it.
 // Fail-open (offline/server error ⇒ app works normally); while checking we

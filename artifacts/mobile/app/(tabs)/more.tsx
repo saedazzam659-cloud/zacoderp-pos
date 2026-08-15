@@ -3,7 +3,8 @@ import { Alert, Modal, Platform, Pressable, ScrollView, Text, View } from 'react
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import { getDomain, setDomain, defaultDomain } from '@/lib/api';
+import { api, getDomain, setDomain, defaultDomain } from '@/lib/api';
+import { discardFailed, downloadAll, isOfflineEnabled, lastDownloadAt, outboxCounts, setOfflineEnabled, syncOutbox } from '@/lib/offline';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
@@ -23,6 +24,77 @@ export default function More() {
   useEffect(() => {
     getDomain().then(setDomainState);
   }, [showServer]);
+
+  // ─── وضع الأوف لاين ────────────────────────────────────────────────────
+  const companyId = user?.companyId ?? user?.company?.id;
+  const [offlineOn, setOfflineOn] = useState(false);
+  const [pending, setPending] = useState(0);
+  const [failed, setFailed] = useState(0);
+  const [lastDl, setLastDl] = useState<string | null>(null);
+  const [offlineBusy, setOfflineBusy] = useState(false);
+  const refreshOfflineState = () => {
+    isOfflineEnabled().then(setOfflineOn);
+    getDomain().then(async (d) => {
+      const c = await outboxCounts(d);
+      setPending(c.pending); setFailed(c.failed);
+      setLastDl(await lastDownloadAt(d));
+    });
+  };
+  useEffect(refreshOfflineState, []);
+
+  const toggleOffline = async () => {
+    if (offlineBusy) return;
+    if (offlineOn) {
+      const go = async () => { await setOfflineEnabled(false); refreshOfflineState(); };
+      if (Platform.OS === 'web') { go(); return; }
+      Alert.alert('إيقاف وضع الأوف لاين', 'سيتم مسح النسخة المحلية من البيانات (العمليات المعلقة تبقى وتُزامن). متابعة؟', [
+        { text: 'إلغاء', style: 'cancel' },
+        { text: 'إيقاف', style: 'destructive', onPress: go },
+      ]);
+      return;
+    }
+    if (!companyId) return;
+    setOfflineBusy(true);
+    try {
+      await setOfflineEnabled(true);
+      const r = await downloadAll(await getDomain(), Number(companyId), api);
+      refreshOfflineState();
+      const msg = r.failed.length
+        ? `اكتمل التنزيل جزئياً (${r.ok} قائمة) — تعذّر: ${r.failed.length}. أعد التحديث لاحقاً.`
+        : `تم تنزيل كامل بيانات الشركة (${r.ok} قائمة). يمكنك الآن العمل بدون إنترنت.`;
+      if (Platform.OS === 'web') window.alert(msg); else Alert.alert('وضع الأوف لاين', msg);
+    } catch (e: any) {
+      await setOfflineEnabled(false);
+      const msg = e?.message ?? 'فشل التنزيل — تأكد من الاتصال ثم أعد المحاولة';
+      if (Platform.OS === 'web') window.alert(msg); else Alert.alert('تعذّر التفعيل', msg);
+    } finally {
+      setOfflineBusy(false);
+      refreshOfflineState();
+    }
+  };
+
+  const doManualSync = async () => {
+    if (offlineBusy) return;
+    setOfflineBusy(true);
+    try {
+      const d = await getDomain();
+      const r = await syncOutbox(d, api);
+      if (companyId) await downloadAll(d, Number(companyId), api);
+      refreshOfflineState();
+      const parts: string[] = [];
+      if (r.sent) parts.push(`تمت مزامنة ${r.sent} عملية`);
+      if (r.remaining > 0) parts.push(`متبقٍ ${r.remaining} (سيُعاد إرسالها تلقائياً)`);
+      if (r.failed > 0) parts.push(`${r.failed} عملية فاشلة تحتاج مراجعة`);
+      const msg = parts.length ? parts.join(' — ') : 'تمت المزامنة بالكامل وتحديث النسخة المحلية';
+      if (Platform.OS === 'web') window.alert(msg); else Alert.alert('المزامنة', msg);
+    } catch (e: any) {
+      const msg = e?.message ?? 'تعذّرت المزامنة — تأكد من الاتصال';
+      if (Platform.OS === 'web') window.alert(msg); else Alert.alert('المزامنة', msg);
+    } finally {
+      setOfflineBusy(false);
+      refreshOfflineState();
+    }
+  };
 
   const doLogout = () => {
     const go = async () => { await logout(); router.replace('/login'); };
@@ -79,6 +151,33 @@ export default function More() {
               <View style={{ height: 1, backgroundColor: c.border }} />
             </>
           ) : null}
+          <RowItem
+            icon={offlineOn ? 'wifi-off' : 'download-cloud'}
+            title={offlineBusy ? 'جارٍ التنزيل/المزامنة…' : offlineOn ? 'وضع الأوف لاين: مفعّل (اضغط للإيقاف)' : 'تفعيل وضع الأوف لاين'}
+            onPress={toggleOffline}
+            testID="row-offline-toggle"
+          />
+          {offlineOn ? (
+            <>
+              <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 12, paddingHorizontal: 4, paddingBottom: 6 }}>
+                {lastDl ? `آخر تنزيل: ${String(lastDl).slice(0, 16).replace('T', ' ')}` : ''}
+                {pending > 0 ? `  ·  بانتظار المزامنة: ${pending}` : '  ·  لا عمليات معلقة'}
+                {failed > 0 ? `  ·  فاشلة: ${failed}` : ''}
+              </Text>
+              <RowItem icon="refresh-cw" title="مزامنة وتحديث البيانات الآن" onPress={doManualSync} testID="row-offline-sync" />
+              {failed > 0 ? (
+                <RowItem icon="alert-triangle" danger title={`حذف العمليات الفاشلة (${failed}) — لن تُرسل`} testID="row-offline-discard-failed" onPress={() => {
+                  const go = async () => { await discardFailed(await getDomain()); refreshOfflineState(); };
+                  if (Platform.OS === 'web') { go(); return; }
+                  Alert.alert('حذف العمليات الفاشلة', 'هذه العمليات رفضها الخادم 5 مرات ولن تُرسل. حذفها نهائي — تأكد أنك أدخلتها يدوياً من النظام. متابعة؟', [
+                    { text: 'إلغاء', style: 'cancel' },
+                    { text: 'حذف', style: 'destructive', onPress: go },
+                  ]);
+                }} />
+              ) : null}
+            </>
+          ) : null}
+          <View style={{ height: 1, backgroundColor: c.border }} />
           <RowItem icon="server" title="إعدادات الخادم" onPress={() => setShowServer(true)} testID="row-server-settings" />
           <View style={{ height: 1, backgroundColor: c.border }} />
           <RowItem icon="log-out" title="تسجيل الخروج" onPress={doLogout} danger testID="row-logout" />

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
+import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { db } from "@workspace/db";
 import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable, accountsTable } from "@workspace/db";
 import { and, asc, eq, sql, gte, lte } from "drizzle-orm";
@@ -367,6 +368,7 @@ router.put("/:id", async (req, res) => {
   if (!existing) { res.status(404).json({ error: "Customer not found" }); return; }
   const companyId = resolveCompanyId(req, existing.companyId);
   if (companyId && existing.companyId !== companyId) { res.status(403).json({ error: "غير مصرح" }); return; }
+  if (!(await requireMobilePerm(req, res, existing.companyId, "customer_edit", "ليست لديك صلاحية تعديل العملاء من تطبيق الموبايل"))) return;
 
   // Per-rep IDOR + salesRepId-tamper guards removed alongside the per-rep
   // customer isolation filter (see GET / for context).
@@ -559,6 +561,7 @@ router.delete("/:id", async (req, res) => {
   if (!existing) { res.status(404).json({ error: "Customer not found" }); return; }
   const companyId = resolveCompanyId(req, existing.companyId);
   if (companyId && existing.companyId !== companyId) { res.status(403).json({ error: "غير مصرح" }); return; }
+  if (!(await requireMobilePerm(req, res, existing.companyId, "customer_delete", "ليست لديك صلاحية حذف العملاء من تطبيق الموبايل"))) return;
   await db.delete(customersTable).where(eq(customersTable.id, id));
   res.status(204).send();
 });

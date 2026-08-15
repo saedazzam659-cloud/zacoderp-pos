@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { cacheGet, cachePut, enqueue, isOfflineEnabled, isQueueablePost } from './offline';
 
 /**
  * API access for the Zacod ERP backend.
@@ -69,14 +70,25 @@ export async function api<T = unknown>(
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
+  const method = init?.method ?? 'GET';
   let res: Response;
   try {
     res = await fetch(`https://${domain}${path}`, {
-      method: init?.method ?? 'GET',
+      method,
       headers,
       body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
     });
   } catch {
+    // وضع الأوف لاين: القراءات من النسخة المحلية، والإنشاء يدخل صندوق الصادر
+    if (await isOfflineEnabled()) {
+      if (method === 'GET') {
+        const c = await cacheGet(domain, path);
+        if (c.hit) return c.data as T;
+      } else if (isQueueablePost(path, method)) {
+        const entry = await enqueue(domain, path, method, init?.body);
+        return { id: null, offline: true, queuedId: entry.id, message: 'حُفظت العملية محلياً وستُزامن عند عودة الاتصال' } as any as T;
+      }
+    }
     throw new ApiError('تعذّر الاتصال بالخادم — تأكد من الإنترنت', 0);
   }
 
@@ -93,6 +105,10 @@ export async function api<T = unknown>(
       (data && (data.error || data.message)) ||
       (res.status === 401 ? 'انتهت الجلسة — سجّل الدخول مجدداً' : `خطأ من الخادم (${res.status})`);
     throw new ApiError(String(msg), res.status);
+  }
+  // نجاح: حدّث النسخة المحلية للقوائم المخزنة (يبقى الكاش طازجاً تلقائياً)
+  if (method === 'GET' && (await isOfflineEnabled())) {
+    cachePut(domain, path, data).catch(() => {});
   }
   return data as T;
 }

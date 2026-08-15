@@ -2600,6 +2600,8 @@
     "mobileAdminNote": "Admins and superadmins always get every app feature regardless of these settings.",
     "mobileFeatureCol": "App feature",
     "mobileAllowedCol": "Allowed",
+    "mobileEditCol": "Edit",
+    "mobileDeleteCol": "Delete",
     "mobileLiveHint": "Without a permission, the button/screen disappears from the app immediately and the server rejects the action even from an outdated app.",
     "mobInvoicesView": "View sales invoices",
     "mobInvoiceCreate": "Create sales invoice",
