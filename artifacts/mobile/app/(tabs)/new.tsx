@@ -15,6 +15,7 @@ export default function NewMenu() {
 
   const items: { icon: keyof typeof Feather.glyphMap; title: string; sub: string; href: string; show: boolean; testID: string }[] = [
     { icon: 'file-plus', title: 'فاتورة مبيعات', sub: 'فاتورة ضريبية أو مبسطة', href: '/invoice/new', show: can('sales_module', 'create') || can('sales_module'), testID: 'action-new-invoice' },
+    { icon: 'corner-up-right', title: 'مرتجع مبيعات', sub: 'إرجاع أصناف من عميل', href: '/returns', show: can('sales_module', 'create') || can('sales_module'), testID: 'action-sales-returns' },
     { icon: 'download', title: 'سند قبض', sub: 'تحصيل دفعة من عميل', href: '/voucher/new', show: can('cash_module', 'create') || can('cash_module'), testID: 'action-new-voucher' },
     { icon: 'user-plus', title: 'عميل جديد', sub: 'إضافة عميل إلى السجل', href: '/(tabs)/customers', show: can('customers', 'create') || can('customers'), testID: 'action-new-customer' },
   ];

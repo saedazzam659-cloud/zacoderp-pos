@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -84,6 +85,16 @@ export default function InvoiceForm() {
   const [saveError, setSaveError] = useState('');
   const [loadedDoc, setLoadedDoc] = useState<any>(null);
   const [showCustomerPick, setShowCustomerPick] = useState(false);
+  // Explicit branch/warehouse/currency selection — defaults applied from the
+  // fetched lists on first load (see effects below), user can override.
+  const [branchSel, setBranchSel] = useState<number | null>(null);
+  const [warehouseSel, setWarehouseSel] = useState<number | null>(null);
+  const [currencySel, setCurrencySel] = useState<number | null>(null);
+  // نوع الفاتورة: مبسطة تُحفظ بدون رقم ضريبي للعميل؛ ضريبية ترفض الحفظ بدونه.
+  const [invoiceKind, setInvoiceKind] = useState<'simplified' | 'tax'>('simplified');
+  const [kindTouched, setKindTouched] = useState(false);
+  // Generic bottom-sheet list picker (cashbox / bank / branch / warehouse / currency)
+  const [pick, setPick] = useState<null | 'cashbox' | 'bank' | 'branch' | 'warehouse' | 'currency'>(null);
   const [custSearch, setCustSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [activeGroup, setActiveGroup] = useState<number | 'all'>('all');
@@ -121,6 +132,12 @@ export default function InvoiceForm() {
     enabled: !!companyId,
     retry: false,
   });
+  const currenciesQ = useQuery({
+    queryKey: ['currencies', companyId],
+    queryFn: () => api<any[]>(`/api/currencies?companyId=${companyId}`),
+    enabled: !!companyId,
+    retry: false,
+  });
   const docQ = useQuery({
     queryKey: ['sales-invoice', invoiceId],
     queryFn: () => api<any>(`/api/sales/sales-invoices/${invoiceId}?companyId=${companyId}`),
@@ -144,6 +161,9 @@ export default function InvoiceForm() {
     setBankAccountId(d.bankAccountId ?? null);
     setPriceIncludesVat(!!d.priceIncludesVat);
     setNotes(d.notes ?? '');
+    if (d.branchId) setBranchSel(d.branchId);
+    const firstWh = (Array.isArray(d.lines) ? d.lines : []).find((l: any) => l.warehouseId)?.warehouseId;
+    if (firstWh) setWarehouseSel(firstWh);
     const ls: CartLine[] = (Array.isArray(d.lines) ? d.lines : []).map((l: any) => ({
       itemId: l.itemId,
       name: l.itemName ?? l.item?.nameAr ?? `صنف ${l.itemId}`,
@@ -163,17 +183,52 @@ export default function InvoiceForm() {
   const banks = Array.isArray(banksQ.data) ? banksQ.data : [];
   const customer = customers.find((x) => x.id === customerId) ?? null;
 
-  // default branch: user's own branch first, then company's first branch
+  // default branch: user's own branch first, then company's default/first.
+  // `/api/org/branches` is already scoped server-side to the branches the
+  // user may access, so the picker simply shows everything returned.
   const branches = Array.isArray(branchesQ.data) ? branchesQ.data : [];
-  const branchId =
+  const defaultBranchId =
     loadedDoc?.branchId ??
     (user?.branchIds?.length ? user.branchIds[0] : null) ??
     (branches.find((b: any) => b.isDefault || b.is_default)?.id ?? branches[0]?.id ?? null);
+  const branchId = branchSel ?? defaultBranchId;
 
   // default warehouse for stock lines
   const warehouses = Array.isArray(warehousesQ.data) ? warehousesQ.data : [];
   const defaultWarehouseId =
     (warehouses.find((w: any) => w.isDefault || w.is_default)?.id ?? warehouses[0]?.id ?? null);
+  const warehouseId = warehouseSel ?? defaultWarehouseId;
+
+  // default currency: company default → SAR → first
+  const currencies = Array.isArray(currenciesQ.data) ? currenciesQ.data : [];
+  const defaultCurrency =
+    currencies.find((x: any) => x.isDefault || x.is_default) ??
+    currencies.find((x: any) => String(x.code ?? '').toUpperCase() === 'SAR') ??
+    currencies[0] ?? null;
+  const currency = currencies.find((x: any) => x.id === currencySel) ?? defaultCurrency;
+
+  // default cash box on open (نقدي): default-flagged box → first
+  useEffect(() => {
+    if (!cashBoxId && cashBoxes.length > 0 && !loadedDoc) {
+      setCashBoxId((cashBoxes.find((b: any) => b.isDefault || b.is_default) ?? cashBoxes[0]).id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cashBoxes.length]);
+
+  // نوع الفاتورة يتبع الرقم الضريبي للعميل تلقائياً ما لم يختَر المستخدم يدوياً
+  // (يعتمد على vatNumber نفسه حتى لو وصلت بيانات العملاء بعد اختيار العميل)
+  useEffect(() => {
+    if (!kindTouched) setInvoiceKind(customer?.vatNumber ? 'tax' : 'simplified');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, customer?.vatNumber]);
+
+  // ترطيب العملة من مستند محفوظ — حتى لا يستبدل التعديل عملة الفاتورة الأصلية
+  useEffect(() => {
+    if (!loadedDoc?.currencyCode || currencySel != null || !currencies.length) return;
+    const m = currencies.find((x: any) => String(x.code ?? '').toUpperCase() === String(loadedDoc.currencyCode).toUpperCase());
+    if (m) setCurrencySel(m.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedDoc?.currencyCode, currencies.length]);
 
   // groups for chips
   const groups = useMemo(() => {
@@ -257,7 +312,7 @@ export default function InvoiceForm() {
         discountAmount: 0,
         // mirrors the web form: line total is the entered (gross) amount
         lineTotal: +gross.toFixed(2),
-        warehouseId: defaultWarehouseId ?? undefined,
+        warehouseId: warehouseId ?? undefined,
         unitId: it?.unit?.id ?? undefined,
       };
     });
@@ -266,6 +321,8 @@ export default function InvoiceForm() {
       invoiceDate,
       customerId,
       branchId,
+      currencyCode: currency?.code ?? 'SAR',
+      exchangeRate: String(currency?.exchangeRate ?? currency?.rate ?? '1'),
       paymentType,
       cashBoxId: paymentType === 'cash' ? cashBoxId : null,
       bankAccountId: paymentType === 'bank' ? bankAccountId : null,
@@ -283,8 +340,11 @@ export default function InvoiceForm() {
     if (!lines.length) return 'أضف صنفاً واحداً على الأقل';
     if (!customerId) return 'اختر العميل (للبيع النقدي اختر «عميل نقدي»)';
     if (!branchId) return 'لا يوجد فرع معرّف لحسابك — تواصل مع مدير النظام';
-    if (paymentType === 'cash' && !cashBoxId && cashBoxes.length > 0) return 'اختر الصندوق';
+    if (paymentType === 'cash' && !cashBoxId && cashBoxes.length > 0) return 'اختر الخزنة';
     if (paymentType === 'bank' && !bankAccountId) return 'اختر الحساب البنكي';
+    // فاتورة ضريبية تتطلب رقم ضريبي للعميل — نرفض الحفظ بدونه (المبسطة تُحفظ بدونه)
+    if (invoiceKind === 'tax' && !String(customer?.vatNumber ?? '').trim())
+      return 'الفاتورة الضريبية تتطلب عميلاً له رقم ضريبي — أدخل الرقم الضريبي للعميل أو اختر فاتورة مبسطة';
     return '';
   };
 
@@ -362,6 +422,22 @@ export default function InvoiceForm() {
       setPrinting(false);
       setSharing(false);
     }
+  };
+
+  // إرسال الفاتورة عبر واتساب — يفتح محادثة رقم العميل (أو بدون رقم) بنص ملخص
+  // الفاتورة؛ لمشاركة PDF نموذج 14 نفسه يستخدم زر «مشاركة PDF».
+  const sendWhatsApp = async () => {
+    if (!loadedDoc) return;
+    const phone = String(customer?.phone ?? customer?.mobile ?? '').replace(/[^0-9]/g, '');
+    const intl = phone.startsWith('0') ? `966${phone.slice(1)}` : phone;
+    const msg =
+      `فاتورة ${invoiceKind === 'tax' ? 'ضريبية' : 'مبسطة'} رقم ${loadedDoc.docNumber ?? loadedDoc.id}\n` +
+      `التاريخ: ${String(loadedDoc.invoiceDate ?? '').slice(0, 10)}\n` +
+      `العميل: ${customer?.nameAr ?? '—'}\n` +
+      `الإجمالي شامل الضريبة: ${money(loadedDoc.totalAmount ?? totals.total)} ريال\n` +
+      `${user?.company?.nameAr ?? ''}`;
+    const url = `https://wa.me/${intl ? intl : ''}?text=${encodeURIComponent(msg)}`;
+    try { await Linking.openURL(url); } catch { notify('خطأ', 'تعذّر فتح واتساب'); }
   };
 
   const Seg = ({ options, value, onChange }: { options: { v: string; l: string }[]; value: string; onChange: (v: any) => void }) => (
@@ -446,9 +522,6 @@ export default function InvoiceForm() {
         {tab === 'basic' && (
           <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
             <Card style={{ gap: 12 }}>
-              <Text style={{ fontSize: 12, color: c.mutedForeground, textAlign: 'right' }}>
-                نوع الفاتورة (ضريبية / مبسطة) يتحدد تلقائياً حسب الرقم الضريبي للعميل — كما في النظام الرئيسي.
-              </Text>
               <Text style={{ fontSize: 13, color: c.mutedForeground, textAlign: 'right' }}>طريقة الدفع</Text>
               <Seg
                 options={[{ v: 'cash', l: 'نقدي' }, { v: 'bank', l: 'بنك/شبكة' }, { v: 'credit', l: 'آجل' }]}
@@ -457,12 +530,9 @@ export default function InvoiceForm() {
               />
               {paymentType === 'cash' && cashBoxes.length > 0 ? (
                 <PickRow
-                  label="الصندوق"
+                  label="الخزنة"
                   value={cashBoxes.find((b) => b.id === cashBoxId)?.nameAr ?? 'اختر'}
-                  onPress={() => {
-                    const idx = cashBoxes.findIndex((b) => b.id === cashBoxId);
-                    setCashBoxId(cashBoxes[(idx + 1) % cashBoxes.length]?.id ?? null);
-                  }}
+                  onPress={() => setPick('cashbox')}
                   testID="pick-cashbox"
                 />
               ) : null}
@@ -470,10 +540,7 @@ export default function InvoiceForm() {
                 <PickRow
                   label="الحساب البنكي"
                   value={banks.find((b) => b.id === bankAccountId)?.nameAr ?? 'اختر'}
-                  onPress={() => {
-                    const idx = banks.findIndex((b) => b.id === bankAccountId);
-                    setBankAccountId(banks[(idx + 1) % banks.length]?.id ?? null);
-                  }}
+                  onPress={() => setPick('bank')}
                   testID="pick-bank"
                 />
               ) : null}
@@ -482,6 +549,24 @@ export default function InvoiceForm() {
                 value={customer?.nameAr ?? 'اختر عميلاً *'}
                 onPress={() => setShowCustomerPick(true)}
                 testID="pick-customer"
+              />
+              <PickRow
+                label="الفرع"
+                value={branches.find((b: any) => b.id === branchId)?.nameAr ?? '—'}
+                onPress={() => { if (branches.length > 1) setPick('branch'); }}
+                testID="pick-branch"
+              />
+              <PickRow
+                label="المخزن"
+                value={warehouses.find((w: any) => w.id === warehouseId)?.nameAr ?? '—'}
+                onPress={() => { if (warehouses.length > 1) setPick('warehouse'); }}
+                testID="pick-warehouse"
+              />
+              <PickRow
+                label="العملة"
+                value={currency ? `${currency.nameAr ?? currency.code}${(currency.isDefault || currency.is_default) ? ' (افتراضية)' : ''}` : 'ريال سعودي'}
+                onPress={() => { if (currencies.length > 1) setPick('currency'); }}
+                testID="pick-currency"
               />
               <Field label="تاريخ الفاتورة (YYYY-MM-DD)" value={invoiceDate} onChangeText={setInvoiceDate} ltr testID="input-invoice-date" />
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -503,6 +588,17 @@ export default function InvoiceForm() {
         {tab === 'items' && (
           <View style={{ flex: 1 }}>
             <View style={{ padding: 12, gap: 10 }}>
+              {/* نوع الفاتورة: مبسطة (بدون رقم ضريبي) / ضريبية (رقم ضريبي إلزامي) */}
+              <Seg
+                options={[{ v: 'simplified', l: 'فاتورة مبسطة' }, { v: 'tax', l: 'فاتورة ضريبية' }]}
+                value={invoiceKind}
+                onChange={(v: any) => { setInvoiceKind(v); setKindTouched(true); }}
+              />
+              {invoiceKind === 'tax' && !String(customer?.vatNumber ?? '').trim() ? (
+                <Text style={{ fontSize: 12, color: c.destructive, textAlign: 'right' }}>
+                  الفاتورة الضريبية تتطلب رقماً ضريبياً للعميل — لن يتم الحفظ بدونه.
+                </Text>
+              ) : null}
               <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
                 <View style={{ flex: 1, flexDirection: 'row-reverse', alignItems: 'center', backgroundColor: c.card, borderWidth: 1.2, borderColor: c.input, borderRadius: 12, paddingHorizontal: 10 }}>
                   <Feather name="search" size={16} color={c.mutedForeground} />
@@ -602,12 +698,25 @@ export default function InvoiceForm() {
         )}
 
         {tab === 'returns' && (
-          <ScrollView contentContainerStyle={{ padding: 14 }}>
-            <Card>
-              <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 14, lineHeight: 22 }}>
-                إنشاء إشعار دائن (مرتجع) من الجوال سيتوفر في التحديث القادم. يمكنك حالياً إنشاء المرتجع من النظام الرئيسي على الويب لنفس الفاتورة.
-              </Text>
-            </Card>
+          <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }}>
+            {!loadedDoc ? (
+              <Card><Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 14 }}>احفظ الفاتورة أولاً لإنشاء مرتجع منها.</Text></Card>
+            ) : (
+              <>
+                <Card>
+                  <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 14, lineHeight: 22 }}>
+                    يُنشأ المرتجع من أصناف هذه الفاتورة، ويظهر تلقائياً في شاشة «مرتجع المبيعات».
+                  </Text>
+                </Card>
+                <Btn
+                  title="إنشاء مرتجع من هذه الفاتورة"
+                  icon="corner-up-right"
+                  onPress={() => router.push({ pathname: '/return/new', params: { invoiceId: String(loadedDoc.id) } } as any)}
+                  testID="button-create-return"
+                />
+                <Btn title="عرض كل المرتجعات" icon="list" kind="outline" onPress={() => router.push('/returns' as any)} />
+              </>
+            )}
           </ScrollView>
         )}
 
@@ -646,8 +755,9 @@ export default function InvoiceForm() {
             ) : (
               <View style={{ gap: 10 }}>
                 <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>هذه الفاتورة صادرة — للعرض فقط.</Text></Card>
-                <Btn title="طباعة الفاتورة" icon="printer" loading={printing} onPress={() => doPrint(false)} testID="button-print" />
+                <Btn title="طباعة الفاتورة (نموذج 14)" icon="printer" loading={printing} onPress={() => doPrint(false)} testID="button-print" />
                 <Btn title="مشاركة PDF (واتساب / بريد)" icon="share-2" kind="outline" loading={sharing} onPress={() => doPrint(true)} testID="button-share" />
+                <Btn title="إرسال عبر واتساب" icon="message-circle" kind="outline" onPress={sendWhatsApp} testID="button-whatsapp" />
                 {can('sales_invoices', 'post') ? (
                   <Btn title="فك ترحيل الفاتورة" icon="rotate-ccw" kind="destructive" loading={unposting} onPress={doUnpost} testID="button-unpost" />
                 ) : null}
@@ -656,6 +766,48 @@ export default function InvoiceForm() {
           </ScrollView>
         )}
       </View>
+
+      {/* generic list picker (خزنة / بنك / فرع / مخزن / عملة) */}
+      <Modal visible={!!pick} transparent animationType="slide" onRequestClose={() => setPick(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: c.card, borderTopLeftRadius: 18, borderTopRightRadius: 18, maxHeight: '60%', padding: 14, gap: 10 }}>
+            <Text style={{ fontSize: 16, fontFamily: 'Inter_600SemiBold', textAlign: 'right', color: c.foreground }}>
+              {pick === 'cashbox' ? 'اختيار الخزنة' : pick === 'bank' ? 'اختيار الحساب البنكي' : pick === 'branch' ? 'اختيار الفرع' : pick === 'warehouse' ? 'اختيار المخزن' : 'اختيار العملة'}
+            </Text>
+            <FlatList
+              data={pick === 'cashbox' ? cashBoxes : pick === 'bank' ? banks : pick === 'branch' ? branches : pick === 'warehouse' ? warehouses : currencies}
+              keyExtractor={(x: any) => String(x.id)}
+              renderItem={({ item }: any) => {
+                const cur =
+                  pick === 'cashbox' ? cashBoxId === item.id :
+                  pick === 'bank' ? bankAccountId === item.id :
+                  pick === 'branch' ? branchId === item.id :
+                  pick === 'warehouse' ? warehouseId === item.id :
+                  currency?.id === item.id;
+                const isDef = item.isDefault || item.is_default;
+                return (
+                  <Pressable
+                    onPress={() => {
+                      if (pick === 'cashbox') setCashBoxId(item.id);
+                      else if (pick === 'bank') setBankAccountId(item.id);
+                      else if (pick === 'branch') setBranchSel(item.id);
+                      else if (pick === 'warehouse') setWarehouseSel(item.id);
+                      else setCurrencySel(item.id);
+                      setPick(null);
+                    }}
+                    style={({ pressed }) => ({ paddingVertical: 13, borderBottomWidth: StyleShim, borderBottomColor: c.border, opacity: pressed ? 0.6 : 1, flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' })}
+                  >
+                    <Text style={{ textAlign: 'right', fontSize: 14, color: c.foreground }}>
+                      {item.nameAr ?? item.code ?? item.id}{isDef ? '  (افتراضي)' : ''}
+                    </Text>
+                    {cur ? <Feather name="check" size={16} color={c.primary} /> : null}
+                  </Pressable>
+                );
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
 
       {/* customer picker */}
       <Modal visible={showCustomerPick} transparent animationType="slide" onRequestClose={() => setShowCustomerPick(false)}>

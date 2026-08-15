@@ -30,3 +30,9 @@ description: Contracts and traps for artifacts/mobile — the Arabic ERP compani
 - The update gate lives in mobile `app/_layout.tsx` (UpdateGate ABOVE the router) — putting it in `app/index.tsx` is bypassable by deep links. Fail-open on network errors.
 - Login badges must wait for `/api/branding` to RESOLVE before rendering (`brandingResolved` state) or they flash on agent/reseller domains; agent domains never show them.
 - Server validates versions as dotted numerics (mobile comparator zeroes non-numeric segments like "v2.0.0") and requires https downloadUrl (it feeds public anchors + Linking.openURL).
+
+## Sales returns + invoice pickers (2026-08)
+- Sales-return POST contract is stricter than invoices: `notes` NON-BLANK required, every line needs `itemId` + `unitId` (resolve from items list `unit?.id ?? unitId ?? mainUnitId` when the source line lacks it), and from-invoice qty is capped server-side at sold − previously returned — prefill caps from `GET /sales-invoices/:id/returned-by-item`, never from the raw invoice qty.
+- Mobile invoice form: branch/warehouse/currency are user-pickable state seeded from defaults (default-flagged row → first); edit mode must hydrate currency from the doc's currencyCode or PUT silently rewrites the invoice currency.
+- invoiceKind (simplified/tax) is CLIENT-side validation only (tax requires customer.vatNumber); never send invoiceType — server derives it. Auto-seed effect must depend on customer?.vatNumber, not just customerId (customers list can resolve later).
+- `GET /sales-returns/:id` now branch-scoped via multiBranchScopeSpread (was company-only → cross-branch IDOR).

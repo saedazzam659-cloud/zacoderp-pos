@@ -1979,7 +1979,13 @@ router.get("/sales-returns/:id", async (req, res) => {
     const cid = getCid(req);
     const id = Number(req.params.id);
     const [ret] = await db.select().from(salesReturnsTable)
-      .where(and(eq(salesReturnsTable.id, id), cid ? eq(salesReturnsTable.companyId, cid) : sql`true`));
+      .where(and(
+        eq(salesReturnsTable.id, id),
+        cid ? eq(salesReturnsTable.companyId, cid) : sql`true`,
+        // Branch isolation: a branch-restricted user must not read another
+        // branch's return by guessing its id (mirrors invoice detail).
+        ...multiBranchScopeSpread(req, salesReturnsTable.branchId, undefined),
+      ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     const lines = await db.select().from(salesReturnLinesTable)
       .where(eq(salesReturnLinesTable.returnId, id))

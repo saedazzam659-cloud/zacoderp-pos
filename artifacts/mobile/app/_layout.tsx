@@ -70,6 +70,8 @@ function RootLayoutNav() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="login" />
       <Stack.Screen name="invoice/[id]" />
+      <Stack.Screen name="returns" />
+      <Stack.Screen name="return/[id]" />
       <Stack.Screen name="voucher/new" />
       <Stack.Screen name="voucher/list" />
       <Stack.Screen name="report/[kind]" />
