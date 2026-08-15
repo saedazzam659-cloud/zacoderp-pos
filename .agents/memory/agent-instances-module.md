@@ -43,3 +43,7 @@ esbuild externals trap: api-server prod ships ONLY the bundle (no node_modules) 
 
 ## Agent-hosted companies in SA admin screens
 Companies on full_shell agents are merged into /api/companies tagged agentInstanceId/agentName; ids COLLIDE with central ids. Any SA screen managing them must (1) key selection/lookups by `${agentInstanceId??0}:${id}` composite, (2) send `?agent=<id>` on every write so the handler wraps in runWithAgentScope, (3) skip emitSessionRefresh when agent-scoped (it targets central sessions by numeric id). Missing the ?agent wrap surfaces as «الشركة غير موجودة» 404.
+
+## Agent DB schema drift (2026-08)
+- Agent DBs are healed ONLY by re-running init-db («تهيئة + بصمة» — safe, additive, skips pg_dump when companies exists). Central code with drizzle full-column .values()/.returning()/select() on users breaks against stale agent DBs → SA admin routes touching agent-scoped users must use raw core-column SQL (done: admin.ts add-user + toggle, auth.ts register admin-user).
+- Rule: after publishing schema-adding changes, re-run init-db per agent, or agent-domain login/user-create fails with raw column-list SQL errors.
