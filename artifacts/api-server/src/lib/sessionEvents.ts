@@ -19,7 +19,12 @@ export type SessionEventType =
   // LiveKit support-room: SuperAdmin support agent invites a specific user
   // into an in-app support call room. Meta carries callId + agent identity.
   | "support_call_invite"
-  | "support_call_cancelled";
+  | "support_call_cancelled"
+  // Generic "some data in this company changed" ping. Emitted (debounced)
+  // after ANY successful mutating /api request, so every open client (web
+  // tab or mobile app) can invalidate its query cache and re-render live —
+  // e.g. unpost an invoice from mobile and the web list updates instantly.
+  | "data_changed";
 
 export interface SessionEvent {
   type: SessionEventType;

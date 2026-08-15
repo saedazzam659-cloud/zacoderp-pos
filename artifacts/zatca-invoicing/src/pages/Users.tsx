@@ -142,9 +142,9 @@ type PostingPerms = Record<string, { post: boolean; unpost: boolean }>;
 // denied; checked (or never saved) = allowed. Admin/superadmin always bypass.
 // Keys cover every feature of the Expo companion app.
 // editKey / deleteKey add the تعديل / حذف columns on entity rows.
-const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string; deleteKey?: string }> = [
-  { key: "invoices_view",      labelKey: "users.mobInvoicesView", editKey: "invoice_edit", deleteKey: "invoice_delete" },
-  { key: "invoice_create",     labelKey: "users.mobInvoiceCreate" },
+const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string; deleteKey?: string; screenKey?: string }> = [
+  { key: "invoices_view",      labelKey: "users.mobInvoicesView", editKey: "invoice_edit", deleteKey: "invoice_delete", screenKey: "screen_invoices" },
+  { key: "invoice_create",     labelKey: "users.mobInvoiceCreate", screenKey: "screen_new" },
   { key: "invoice_edit_price", labelKey: "users.mobInvoiceEditPrice" },
   { key: "invoice_print",      labelKey: "users.mobInvoicePrint" },
   { key: "invoice_whatsapp",   labelKey: "users.mobInvoiceWhatsapp" },
@@ -152,17 +152,17 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "return_create",      labelKey: "users.mobReturnCreate" },
   { key: "vouchers_view",      labelKey: "users.mobVouchersView", editKey: "voucher_edit", deleteKey: "voucher_delete" },
   { key: "voucher_create",     labelKey: "users.mobVoucherCreate" },
-  { key: "customers_view",     labelKey: "users.mobCustomersView", editKey: "customer_edit", deleteKey: "customer_delete" },
+  { key: "customers_view",     labelKey: "users.mobCustomersView", editKey: "customer_edit", deleteKey: "customer_delete", screenKey: "screen_customers" },
   { key: "customer_create",    labelKey: "users.mobCustomerCreate" },
   { key: "quotations_view",    labelKey: "users.mobQuotationsView", editKey: "quotation_edit", deleteKey: "quotation_delete" },
   { key: "quotation_create",   labelKey: "users.mobQuotationCreate" },
-  { key: "reports_view",       labelKey: "users.mobReportsView" },
+  { key: "reports_view",       labelKey: "users.mobReportsView", screenKey: "screen_reports" },
 ];
 
 // Every storable key (feature keys + edit/delete keys) — keep deny-all and
 // seeding in lockstep with the server's known-keys list.
 const ALL_MOBILE_KEYS: string[] = MOBILE_PERM_KEYS.flatMap(d =>
-  [d.key, d.editKey, d.deleteKey].filter((k): k is string => !!k));
+  [d.key, d.editKey, d.deleteKey, d.screenKey].filter((k): k is string => !!k));
 
 type MobilePerms = Record<string, boolean>;
 
@@ -1450,6 +1450,7 @@ export default function Users() {
                         <th className="text-center px-3 py-2 font-medium w-24">{t("users.mobileAllowedCol")}</th>
                         <th className="text-center px-3 py-2 font-medium w-24">{t("users.mobileEditCol")}</th>
                         <th className="text-center px-3 py-2 font-medium w-24">{t("users.mobileDeleteCol")}</th>
+                        <th className="text-center px-3 py-2 font-medium w-28">{t("users.mobileScreenCol")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1470,6 +1471,7 @@ export default function Users() {
                             <td className="text-center px-3 py-1.5">{cell(d.key)}</td>
                             <td className="text-center px-3 py-1.5">{cell(d.editKey)}</td>
                             <td className="text-center px-3 py-1.5">{cell(d.deleteKey)}</td>
+                            <td className="text-center px-3 py-1.5">{cell(d.screenKey)}</td>
                           </tr>
                         );
                       })}

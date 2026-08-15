@@ -6,6 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import { api, getDomain, setDomain, defaultDomain } from '@/lib/api';
 import { discardFailed, downloadAll, isOfflineEnabled, lastDownloadAt, outboxCounts, setOfflineEnabled, syncOutbox } from '@/lib/offline';
 import { useAuth } from '@/contexts/AuthContext';
+import { THEME_OPTIONS, useTheme } from '@/contexts/ThemeContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Field } from '@/components/ui';
@@ -13,6 +14,7 @@ import { Btn, Card, Field } from '@/components/ui';
 export default function More() {
   const { user, logout } = useAuth();
   const { mp } = useMobilePerms();
+  const { theme, setTheme } = useTheme();
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -183,6 +185,31 @@ export default function More() {
               ) : null}
             </>
           ) : null}
+          <View style={{ height: 1, backgroundColor: c.border }} />
+          {/* ─── ألوان التطبيق ─── */}
+          <View style={{ paddingVertical: 10, gap: 10 }}>
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+              <Feather name="droplet" size={18} color={c.primary} />
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: c.foreground }}>ألوان التطبيق</Text>
+            </View>
+            <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 12, paddingHorizontal: 4 }}>
+              {THEME_OPTIONS.map((opt) => {
+                const active = theme === opt.key;
+                return (
+                  <Pressable key={opt.key} onPress={() => setTheme(opt.key)} style={{ alignItems: 'center', gap: 4 }} testID={`theme-${opt.key}`}>
+                    <View style={{
+                      width: 38, height: 38, borderRadius: 19, backgroundColor: opt.swatch,
+                      borderWidth: active ? 3 : 1, borderColor: active ? c.foreground : c.border,
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {active ? <Feather name="check" size={18} color="#fff" /> : null}
+                    </View>
+                    <Text style={{ fontSize: 11, color: active ? c.foreground : c.mutedForeground }}>{opt.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
           <View style={{ height: 1, backgroundColor: c.border }} />
           <RowItem icon="server" title="إعدادات الخادم" onPress={() => setShowServer(true)} testID="row-server-settings" />
           <View style={{ height: 1, backgroundColor: c.border }} />

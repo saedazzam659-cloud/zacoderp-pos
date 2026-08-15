@@ -27,3 +27,8 @@ description: Per-user mobile-channel permission map — key lockstep, session-bo
 ## Mobile UI gates are mp()-only (2026-08)
 - Web `permissions` is GRANULAR (sales_invoices, customers…) and usually lacks group keys like `sales_module`; gating mobile UI on `can('sales_module',…)` blanked the + menu for every non-admin user. Mobile screens/buttons gate on mp() (mobile perms) only; server still enforces web RBAC + mobile fallback.
 - sales_invoice_lines.item_name is NOT NULL: mobile buildBody must send itemName per line, and mapInvoiceLine/mapQuotationLine keep a never-null fallback — the crash surfaced on saving an invoice converted from a quotation (PUT rebuilds ALL lines wholesale).
+
+## Live sync + bottom bar + themes (2026-08)
+- Live sync: api-server lib/dataVersion.ts bumps a per-company in-memory version after any successful mutating /api request (identity from req.authUser ONLY; body companyId trusted just for superadmin). Web gets SSE "data_changed" (sessionEvents, debounced 400ms) → invalidateQueries; mobile polls GET /api/realtime/data-version every 5s while active. Single-process by design.
+- Mobile nav: native Tabs bar hidden (display:none); the persistent Facebook-style bar is components/BottomBar.tsx rendered in root _layout under the Stack — new tab screens must be added THERE, and each item gated by mp('screen_*') mobile perm keys (screen_invoices/customers/new/reports) editable from the web Users mobile-perms matrix «إظهار الشاشة» column.
+- Theming: useColors now reads ThemeContext (AsyncStorage 'app_theme_key'); add new palettes in contexts/ThemeContext.tsx overrides, never hardcode brand colors in screens.

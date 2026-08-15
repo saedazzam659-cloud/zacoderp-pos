@@ -139,6 +139,7 @@ import { devStudioRouter, devStudioAdminRouter } from "./dev-studio";
 import extensionsRouter from "../extensions/index.js";
 import { marketplaceRouter, marketplaceAdminRouter } from "./marketplace.js";
 import { resolveDomainCompany } from "../middleware/domainResolver";
+import { dataVersionMiddleware } from "../lib/dataVersion.js";
 
 const router: IRouter = Router();
 
@@ -146,6 +147,9 @@ const router: IRouter = Router();
 // req.domainCompanyId (FALLBACK only; see auth.ts resolveCompanyId). Mounted
 // first so it runs for every /api request; it never throws or blocks.
 router.use(resolveDomainCompany);
+// مزامنة لحظية: أي طلب تعديل ناجح يرفع نسخة بيانات الشركة ويبث حدث
+// data_changed عبر SSE فتتحدث كل الشاشات المفتوحة (ويب/موبايل) فوراً.
+router.use(dataVersionMiddleware);
 // Agent datasource routing — requests from a registered agent domain are
 // served from the AGENT's external PostgreSQL (or 403 when suspended).
 // Must run before any data-touching route; public branding/heartbeat exempt.

@@ -30,6 +30,10 @@
 //   quotation_create  إنشاء عرض سعر
 //   quotation_edit    تعديل عرض سعر (يشمل تغيير الحالة والتحويل لفاتورة)
 //   quotation_delete  حذف عرض سعر
+//   screen_invoices   إظهار شاشة الفواتير في شريط التنقّل السفلي
+//   screen_customers  إظهار شاشة العملاء في شريط التنقّل السفلي
+//   screen_new        إظهار تبويب جديد (+) في شريط التنقّل السفلي
+//   screen_reports    إظهار شاشة الملخص في شريط التنقّل السفلي
 
 export type MobilePerms = Record<string, boolean> | null;
 

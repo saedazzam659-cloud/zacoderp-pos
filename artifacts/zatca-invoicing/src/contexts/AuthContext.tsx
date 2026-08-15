@@ -375,6 +375,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try { qc.invalidateQueries(); } catch { /* ignore */ }
       };
 
+      // مزامنة لحظية: أي تعديل بيانات ناجح في الشركة (من الويب أو تطبيق
+      // الموبايل) يبث data_changed — نبطل كل الكاش فتتحدث الشاشة المفتوحة
+      // فوراً دون تحديث الصفحة. (الحدث مُخفَّف سيرفرياً 400ms لكل شركة.)
+      es.addEventListener("data_changed", () => {
+        try { qc.invalidateQueries(); } catch { /* ignore */ }
+      });
+
       es.addEventListener("subscription_changed", onRefresh);
       es.addEventListener("company_changed", onRefresh);
       es.addEventListener("permissions_changed", onRefresh);

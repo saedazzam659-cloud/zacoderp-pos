@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { sessionEvents, type SessionEvent } from "../lib/sessionEvents.js";
+import { getDataVersion } from "../lib/dataVersion.js";
 
 const router: IRouter = Router();
 
@@ -79,6 +80,21 @@ router.get("/session-events", async (req, res) => {
   req.on("close", cleanup);
   req.on("error", cleanup);
   res.on("error", cleanup);
+});
+
+// GET /api/realtime/data-version — tiny polling endpoint for clients without
+// EventSource (the React Native mobile app). Returns the company's current
+// data version; the client invalidates its query cache when it changes.
+router.get("/data-version", async (req, res) => {
+  const headerAuth = req.headers.authorization;
+  const token = headerAuth?.startsWith("Bearer ") ? headerAuth.slice(7) : null;
+  if (!token) { res.status(401).json({ error: "missing token" }); return; }
+  const resolved = await resolveBearerToken(token);
+  if (!resolved || resolved.user.companyId == null) {
+    res.status(401).json({ error: "invalid token" });
+    return;
+  }
+  res.json({ v: getDataVersion(Number(resolved.user.companyId)) });
 });
 
 export default router;

@@ -2605,6 +2605,7 @@
     "mobileAllowedCol": "مسموح",
     "mobileEditCol": "تعديل",
     "mobileDeleteCol": "حذف",
+    "mobileScreenCol": "إظهار الشاشة",
     "mobileLiveHint": "المستخدم بدون صلاحية: يختفي الزر/الشاشة من التطبيق مباشرة، ويرفض السيرفر العملية حتى لو كان التطبيق قديماً.",
     "mobInvoicesView": "عرض فواتير المبيعات",
     "mobInvoiceCreate": "إنشاء فاتورة مبيعات",

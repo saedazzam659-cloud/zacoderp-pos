@@ -28,7 +28,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { AuthProvider } from '@/contexts/AuthContext';
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { ThemeProvider } from '@/contexts/ThemeContext';
+import { BottomBar } from '@/components/BottomBar';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -97,6 +99,36 @@ function UpdateGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// ─── مزامنة لحظية ───────────────────────────────────────────────────────────
+// نستفتي السيرفر كل 5 ثوانٍ عن «نسخة بيانات» الشركة (تُرفع بعد أي تعديل ناجح
+// من الويب أو الموبايل). عند تغيّرها نبطل كل الكاش فتتحدث الشاشة المفتوحة
+// فوراً — فك ترحيل/حذف من الويب يظهر في التطبيق دون خروج ودخول.
+function DataVersionPoller() {
+  const { user } = useAuth();
+  const lastV = React.useRef<number | null>(null);
+  useEffect(() => {
+    if (!user) { lastV.current = null; return; }
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await api<{ v: number }>('/api/realtime/data-version');
+        if (!alive || typeof r?.v !== 'number') return;
+        if (lastV.current != null && r.v !== lastV.current) {
+          queryClient.invalidateQueries();
+        }
+        lastV.current = r.v;
+      } catch { /* أوفلاين/خطأ مؤقت — نحاول في الدورة التالية */ }
+    };
+    tick();
+    const id = setInterval(() => {
+      // لا داعي للاستفتاء والتطبيق في الخلفية
+      if (AppState.currentState === 'active') tick();
+    }, 5_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [user]);
+  return null;
+}
+
 function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
@@ -138,9 +170,18 @@ export default function RootLayout() {
           <GestureHandlerRootView>
             <KeyboardProvider>
               <AuthProvider>
-                <UpdateGate>
-                  <RootLayoutNav />
-                </UpdateGate>
+                <ThemeProvider>
+                  <UpdateGate>
+                    <DataVersionPoller />
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flex: 1 }}>
+                        <RootLayoutNav />
+                      </View>
+                      {/* شريط تنقّل سفلي ثابت في كل الشاشات (نمط فيسبوك) */}
+                      <BottomBar />
+                    </View>
+                  </UpdateGate>
+                </ThemeProvider>
               </AuthProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>

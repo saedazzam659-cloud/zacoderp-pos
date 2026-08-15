@@ -17,11 +17,9 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarActiveTintColor: c.primary,
         tabBarInactiveTintColor: c.mutedForeground,
-        tabBarStyle: {
-          backgroundColor: c.card,
-          borderTopColor: c.border,
-          ...(Platform.OS === 'web' ? { height: 84, paddingBottom: 24 } : null),
-        },
+        // الشريط السفلي أصبح مكوّناً عالمياً ثابتاً (components/BottomBar)
+        // يظهر في كل الشاشات — نخفي شريط التبويبات الأصلي نهائياً.
+        tabBarStyle: { display: 'none' },
         tabBarLabelStyle: { fontFamily: 'Inter_500Medium', fontSize: 11 },
       }}
     >
