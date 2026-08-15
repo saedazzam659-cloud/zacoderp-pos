@@ -229,6 +229,22 @@ export default function AgentServers() {
     }
   }
 
+  // فك الحظر بضغطة زر — ينفّذ fail2ban unban --all على سيرفر الوكيل عبر SSH
+  // ويضيف عنوان المنصة لقائمة التجاهل حتى لا يتكرر الحظر.
+  async function unban(a: Agent) {
+    if (!confirm(`فك كل الحظر على سيرفر «${a.name}» وإضافة عنوان المنصة لقائمة التجاهل؟`)) return;
+    setBusy(`unban-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/unban`, { method: "POST", headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل");
+      invalidate();
+      toast({ title: "فك الحظر: تم", description: j.note });
+    } catch (e: any) {
+      toast({ title: "فك الحظر: فشل", description: String(e.message ?? e), variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
   async function openSetupKit(a: Agent) {
     setBusy(`kit-${a.id}`);
     try {
@@ -395,6 +411,12 @@ export default function AgentServers() {
                           ? <Loader2 className="h-3 w-3 animate-spin" />
                           : <Ban className="h-3 w-3 ms-1" />}
                         فحص الحظر
+                      </Button>
+                      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2 text-emerald-700"
+                        disabled={!a.sshHost || !a.sshSecretSet || busy === `unban-${a.id}`}
+                        onClick={() => unban(a)} data-testid={`button-unban-${a.id}`}>
+                        {busy === `unban-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Ban className="h-3 w-3 ms-1" />}
+                        فك الحظر
                       </Button>
                     </div>
                   </div>

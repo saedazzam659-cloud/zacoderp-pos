@@ -669,6 +669,67 @@ router.post("/:id/check-ban", async (req, res) => {
   });
 });
 
+// POST /:id/unban — فك الحظر بضغطة زر: يدخل SSH على سيرفر الوكيل وينفّذ
+// fail2ban-client unban --all ثم يضيف عنوان المنصة الحالي إلى قائمة
+// التجاهل الدائمة (jail.d) حتى لا يتكرر الحظر مستقبلًا.
+// ملاحظة مهمة: لو الحظر واقع على عنوان المنصة نفسها فلن يصل SSH أصلًا —
+// نكتشف ذلك (مهلة صامتة) ونرد برسالة توجيهية بدل فشل غامض.
+router.post("/:id/unban", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) { res.status(400).json({ error: "أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا" }); return; }
+  try { await assertProbeTargetAllowed(inst.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+
+  const unbanScript = `set -e
+if ! command -v fail2ban-client >/dev/null 2>&1; then echo "NO_FAIL2BAN"; exit 0; fi
+BANNED_BEFORE=$(fail2ban-client banned 2>/dev/null || true)
+fail2ban-client unban --all >/dev/null 2>&1 || true
+# تحصين دائم: أضف عنوان الاتصال الحالي (عنوان المنصة) إلى قائمة التجاهل
+MY_IP=$(echo "$SSH_CONNECTION" | awk '{print $1}')
+if [ -n "$MY_IP" ]; then
+  mkdir -p /etc/fail2ban/jail.d
+  F=/etc/fail2ban/jail.d/zacod-whitelist.conf
+  if [ ! -f "$F" ]; then printf '[DEFAULT]\\nignoreip = 127.0.0.1/8 %s\\n' "$MY_IP" > "$F";
+  elif ! grep -q "$MY_IP" "$F"; then sed -i "s|^ignoreip = .*|& $MY_IP|" "$F"; fi
+  fail2ban-client reload >/dev/null 2>&1 || systemctl reload fail2ban >/dev/null 2>&1 || true
+fi
+echo "UNBAN_OK ip=$MY_IP"
+echo "BANNED_BEFORE:$BANNED_BEFORE"`;
+
+  try {
+    const r = await sshRunScript(inst, unbanScript, { timeoutMs: 45_000 });
+    await pinHostKey(inst, r.hostKeyFp);
+    if (/NO_FAIL2BAN/.test(r.out)) {
+      await logAgentEvent(id, "unban_run", { result: "no_fail2ban", by: (req as any).authUser?.username ?? null }, req);
+      res.json({ ok: true, note: "fail2ban غير مثبّت على هذا السيرفر أصلًا — لا يوجد حظر لفكّه من هذه الجهة. لو المشكلة مستمرة فهي جدار ناري آخر أو إعدادات المزود." });
+      return;
+    }
+    const bannedBefore = (r.out.match(/BANNED_BEFORE:(.*)/)?.[1] ?? "").trim();
+    const hadBans = bannedBefore && bannedBefore !== "[]" && !/^\[\s*(\{\s*\}\s*,?\s*)*\]$/.test(bannedBefore.replace(/'[^']*':\s*\[\]/g, "{}"));
+    await db.update(agentInstancesTable).set({ sshStatus: "ok", sshLastCheckAt: new Date(), updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+    await logAgentEvent(id, "unban_run", { result: "ok", bannedBefore: bannedBefore.slice(0, 500), by: (req as any).authUser?.username ?? null }, req);
+    res.json({
+      ok: true,
+      note: hadBans
+        ? "تم فك كل الحظر بنجاح، وأضيف عنوان المنصة إلى قائمة التجاهل حتى لا يتكرر الحظر."
+        : "لم تكن هناك عناوين محظورة أصلًا — تم التأكيد وإضافة عنوان المنصة إلى قائمة التجاهل احتياطًا.",
+      bannedBefore: bannedBefore.slice(0, 1000) || null,
+    });
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    await logAgentEvent(id, "unban_run", { result: "error", error: msg.slice(0, 300) }, req);
+    if (/انتهت مهلة|ETIMEDOUT|Timed out/i.test(msg)) {
+      res.status(502).json({
+        error: "تعذّر الوصول للسيرفر عبر SSH (مهلة صامتة) — الأرجح أن عنوان المنصة نفسها هو المحظور، وفي هذه الحالة لا يمكن فك الحظر من هنا. الحلول: انتظر انتهاء مدة الحظر (عادة 10–60 دقيقة) ثم اضغط الزر مرة أخرى، أو نفّذ من كونسول المزود: fail2ban-client unban --all",
+      });
+      return;
+    }
+    res.status(502).json({ error: `فشل فك الحظر: ${msg.slice(0, 300)}` });
+  }
+});
+
 // POST /:id/check-domains — read-only diagnostics for the agent's domains.
 // For each domain (main + extras): DNS resolution, whether it points at the
 // agent's own server (sshHost IPs), and an HTTPS liveness probe with latency.
