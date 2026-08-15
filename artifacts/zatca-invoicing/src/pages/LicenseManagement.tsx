@@ -19,7 +19,14 @@ import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Company = { id: number; nameAr: string; nameEn?: string; vatNumber: string; status?: string };
+type Company = {
+  id: number; nameAr: string; nameEn?: string; vatNumber: string; status?: string;
+  // Agent-hosted companies (full_shell) are merged into /api/companies tagged
+  // with their agent — ids can collide with central ids, so selection and
+  // subscription lookups must key by agent+id, and writes must pass ?agent=.
+  agentInstanceId?: number | null; agentName?: string | null;
+};
+const keyOf = (c: { id: number; agentInstanceId?: number | null }) => `${c.agentInstanceId ?? 0}:${c.id}`;
 type Subscription = {
   id: number; companyId: number;
   plan: string; billingCycle: "monthly" | "yearly";
@@ -27,7 +34,7 @@ type Subscription = {
   price: string;
   maxUsers: number; maxBranches: number; maxWarehouses: number; maxInvoices: number;
 };
-type SubRow = { subscription: Subscription; company: Pick<Company, "id" | "nameAr" | "vatNumber" | "status"> | null };
+type SubRow = { subscription: Subscription; company: Pick<Company, "id" | "nameAr" | "vatNumber" | "status"> | null; agentInstanceId?: number | null };
 
 // ─── Plan presets ──────────────────────────────────────────────────────
 const PLAN_PRESETS: Record<string, {
@@ -93,7 +100,7 @@ export default function LicenseManagement() {
   };
 
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm());
 
   // ─── Subscription-notice settings (global, all companies) ───────
@@ -156,15 +163,17 @@ export default function LicenseManagement() {
   });
 
   const subByCompany = useMemo(() => {
-    const m = new Map<number, Subscription>();
-    for (const row of subs) if (row.subscription) m.set(row.subscription.companyId, row.subscription);
+    const m = new Map<string, Subscription>();
+    for (const row of subs) if (row.subscription) {
+      m.set(keyOf({ id: row.subscription.companyId, agentInstanceId: row.agentInstanceId }), row.subscription);
+    }
     return m;
   }, [subs]);
 
   // Auto-select first company
   useEffect(() => {
-    if (selectedId == null && companies.length > 0) setSelectedId(companies[0].id);
-  }, [companies, selectedId]);
+    if (selectedKey == null && companies.length > 0) setSelectedKey(keyOf(companies[0]));
+  }, [companies, selectedKey]);
 
   // Track the last (selectedId + subId) we hydrated, so we re-hydrate
   // when a sub appears for the selected company, but never overwrite user edits otherwise.
@@ -193,15 +202,17 @@ export default function LicenseManagement() {
   // Hydrate when company changes, OR when a sub first appears for the selected company.
   // Wait until subs query has settled at least once so we don't hydrate empty.
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedKey) return;
     if (subsLoading) return;
-    const ex = subByCompany.get(selectedId);
-    const key = `${selectedId}:${ex?.id ?? "none"}`;
+    const co = companies.find(c => keyOf(c) === selectedKey);
+    if (!co) return;
+    const ex = subByCompany.get(selectedKey);
+    const key = `${selectedKey}:${ex?.id ?? "none"}`;
     if (lastLoadedRef.current === key) return;
     lastLoadedRef.current = key;
-    hydrateFromSub(selectedId, ex);
+    hydrateFromSub(co.id, ex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, subs, subsLoading]);
+  }, [selectedKey, companies, subs, subsLoading]);
 
   // ─── Helpers ─────────────────────────────────────────────────
   const applyPlan = (planKey: keyof typeof PLAN_PRESETS) => {
@@ -245,7 +256,10 @@ export default function LicenseManagement() {
   // ─── Save ────────────────────────────────────────────────────
   const saveMut = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${API}/api/admin/licenses`, {
+      // Agent-hosted companies live in the agent's own DB — route the write
+      // there via ?agent=, otherwise the platform 404s «الشركة غير موجودة».
+      const agentQs = selected?.agentInstanceId ? `?agent=${selected.agentInstanceId}` : "";
+      const r = await fetch(`${API}/api/admin/licenses${agentQs}`, {
         method: "POST",
         headers,
         body: JSON.stringify(form),
@@ -286,10 +300,10 @@ export default function LicenseManagement() {
   };
 
   const selected = useMemo(
-    () => companies.find(c => c.id === selectedId) ?? null,
-    [companies, selectedId],
+    () => companies.find(c => keyOf(c) === selectedKey) ?? null,
+    [companies, selectedKey],
   );
-  const existingSub = selected ? subByCompany.get(selected.id) : undefined;
+  const existingSub = selected ? subByCompany.get(keyOf(selected)) : undefined;
 
   // Days remaining for header
   const daysRemaining = useMemo(() => {
@@ -397,13 +411,13 @@ export default function LicenseManagement() {
           </div>
           <div className="overflow-y-auto flex-1 p-2 space-y-1">
             {filteredCompanies.map(c => {
-              const sub = subByCompany.get(c.id);
+              const sub = subByCompany.get(keyOf(c));
               const st = statusOf(sub);
-              const isSel = c.id === selectedId;
+              const isSel = keyOf(c) === selectedKey;
               return (
                 <button
-                  key={c.id}
-                  onClick={() => setSelectedId(c.id)}
+                  key={keyOf(c)}
+                  onClick={() => setSelectedKey(keyOf(c))}
                   className={cn(
                     "w-full text-right p-2.5 rounded-lg border transition-all",
                     isSel

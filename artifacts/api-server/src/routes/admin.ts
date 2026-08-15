@@ -922,7 +922,13 @@ router.put("/system-settings/subscription-notice", requireSuperAdmin, async (req
 });
 
 // POST /api/admin/licenses — upsert a license/subscription for a company
+// `?agent=<id>` routes the lookup+write into that agent's DB (agent-hosted
+// companies don't exist in the central companies table — without the scope
+// this 404s «الشركة غير موجودة»).
 router.post("/licenses", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+  const isAgentScoped = !!req.query?.agent;
   try {
     const body = req.body ?? {};
     const companyId = toBoundedInt(body.companyId, 1, Number.MAX_SAFE_INTEGER);
@@ -972,16 +978,19 @@ router.post("/licenses", requireSuperAdmin, async (req, res) => {
     const [existing] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, companyId));
     if (existing) {
       const [updated] = await db.update(subscriptionsTable).set(payload).where(eq(subscriptionsTable.id, existing.id)).returning();
-      emitSessionRefresh(companyId, "subscription_changed", { op: "license-upsert", action: "updated" });
+      // Session refresh targets CENTRAL sessions — an agent company's numeric
+      // id would ping the wrong (central) tenant, so skip when agent-scoped.
+      if (!isAgentScoped) emitSessionRefresh(companyId, "subscription_changed", { op: "license-upsert", action: "updated" });
       res.json({ ok: true, subscription: updated, action: "updated" });
     } else {
       const [created] = await db.insert(subscriptionsTable).values(payload).returning();
-      emitSessionRefresh(companyId, "subscription_changed", { op: "license-upsert", action: "created" });
+      if (!isAgentScoped) emitSessionRefresh(companyId, "subscription_changed", { op: "license-upsert", action: "created" });
       res.json({ ok: true, subscription: created, action: "created" });
     }
   } catch (err: any) {
     res.status(500).json({ error: "فشل الحفظ: " + (err.message ?? "خطأ غير متوقع") });
   }
+  });
 });
 
 // POST /api/admin/seed — create superadmin (only if none exists)
