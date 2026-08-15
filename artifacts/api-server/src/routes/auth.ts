@@ -1101,6 +1101,12 @@ router.post("/register", async (req, res, next) => {
     }
     const { getAgentDbContext } = await import("../lib/agentDb.js");
     const ctx = getAgentDbContext(inst.id, inst.dbUrlEnc);
+    // The main handler re-checks callerIsSuperAdmin via the (proxied) `db`,
+    // which inside this ALS context points at the AGENT database — where the
+    // SuperAdmin user/session rows don't exist. Without this flag the
+    // handler mis-classifies the request as a public self-signup and returns
+    // the `pending` shape (no `user`), crashing the wizard client-side.
+    (req as any).callerIsSuperAdminCentral = true;
     runWithExternalDb(ctx, () => next());
   } catch (e) { next(e); }
 });
@@ -1281,8 +1287,11 @@ router.post("/register", async (req, res) => {
   // Determine if this is an internal admin creation (called by superadmin) vs public registration
   const auth = req.headers.authorization;
   const isAdminCreate = !!auth?.startsWith("Bearer ");
-  let callerIsSuperAdmin = false;
-  if (isAdminCreate) {
+  // Agent-targeted registrations: the pre-handler already verified the
+  // SuperAdmin token against the CENTRAL DB before entering the agent ALS
+  // context (where the checks below would miss — SA rows live centrally).
+  let callerIsSuperAdmin = (req as any).callerIsSuperAdminCentral === true;
+  if (isAdminCreate && !callerIsSuperAdmin) {
     const token = auth!.slice(7);
     const [caller] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
     callerIsSuperAdmin = caller?.role === "superadmin";
