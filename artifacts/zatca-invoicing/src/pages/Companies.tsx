@@ -62,28 +62,42 @@ export default function Companies() {
   const [search, setSearch]             = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [expandedRow, setExpandedRow]   = useState<number | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; agent?: number } | null>(null);
+  const { token } = useAuth() as any;
 
   // Soft delete: moves the company to /companies/deleted (recycle bin).
   // Reversible from there via "إرجاع إلى مكانها"; permanent cascade
   // delete is a separate, explicit action only available in that screen.
-  const confirmDelete = () => {
+  // Agent-DB companies (deleteTarget.agent) go through a raw fetch with
+  // `?agent=` so the backend routes the soft-delete into the agent DB.
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
-    deleteCompany.mutate({ id: deleteTarget.id }, {
-      onSuccess: () => {
-        toast({
-          title: "تم النقل إلى المحذوفات",
-          description: `نُقلت شركة "${deleteTarget.name}" إلى صفحة الشركات المحذوفة. يمكنك إرجاعها أو حذفها نهائياً من هناك.`,
+    const onSuccess = () => {
+      toast({
+        title: "تم النقل إلى المحذوفات",
+        description: `نُقلت شركة "${deleteTarget.name}" إلى صفحة الشركات المحذوفة. يمكنك إرجاعها أو حذفها نهائياً من هناك.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["companies"] });
+      setDeleteTarget(null);
+      setExpandedRow(null);
+    };
+    const onError = () => {
+      toast({ title: "حدث خطأ", description: "تعذّر حذف الشركة، حاول مرة أخرى.", variant: "destructive" });
+      setDeleteTarget(null);
+    };
+    if (deleteTarget.agent) {
+      try {
+        const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+        const r = await fetch(`${BASE}/api/companies/${deleteTarget.id}?agent=${deleteTarget.agent}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
         });
-        queryClient.invalidateQueries({ queryKey: ["companies"] });
-        setDeleteTarget(null);
-        setExpandedRow(null);
-      },
-      onError: () => {
-        toast({ title: "حدث خطأ", description: "تعذّر حذف الشركة، حاول مرة أخرى.", variant: "destructive" });
-        setDeleteTarget(null);
-      },
-    });
+        if (!r.ok) { onError(); return; }
+        onSuccess();
+      } catch { onError(); }
+      return;
+    }
+    deleteCompany.mutate({ id: deleteTarget.id }, { onSuccess, onError });
   };
 
   // Stats
@@ -215,13 +229,14 @@ export default function Companies() {
         {/* Column headers */}
         <div
           className="grid items-center gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide select-none"
-          style={{ gridTemplateColumns: "2fr 0.5fr 0.8fr 1.2fr 0.85fr 0.9fr 1fr 0.9fr 0.8fr auto" }}>
+          style={{ gridTemplateColumns: "2fr 0.5fr 0.8fr 1.2fr 0.85fr 0.9fr 0.9fr 0.9fr 0.9fr 0.8fr auto" }}>
           <span>الشركة</span>
           <span>ID</span>
           <span>كود الشركة</span>
           <span>الرقم الضريبي</span>
           <span>الدولة</span>
           <span>المدينة</span>
+          <span>الوكيل</span>
           <span>نوع الفاتورة</span>
           <span>حالة ZATCA</span>
           <span>الحالة</span>
@@ -278,7 +293,7 @@ export default function Companies() {
                 {/* Main row */}
                 <div
                   className="grid items-center gap-4 px-4 py-3.5 cursor-pointer"
-                  style={{ gridTemplateColumns: "2fr 0.5fr 0.8fr 1.2fr 0.85fr 0.9fr 1fr 0.9fr 0.8fr auto" }}
+                  style={{ gridTemplateColumns: "2fr 0.5fr 0.8fr 1.2fr 0.85fr 0.9fr 0.9fr 0.9fr 0.9fr 0.8fr auto" }}
                   onClick={() => setExpandedRow(isExpanded ? null : company.id)}
                 >
                   {/* Company name */}
@@ -331,6 +346,21 @@ export default function Companies() {
 
                   {/* City */}
                   <span className="text-sm text-foreground/80 truncate">{company.city || "—"}</span>
+
+                  {/* Agent (full_shell) badge — company lives on the agent's
+                      own DB; admin ops carry ?agent=<id> to route there. */}
+                  {company.agentInstanceId ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] border rounded-full px-2 py-0.5 font-medium w-fit bg-violet-100 text-violet-800 border-violet-300 truncate"
+                      data-testid={`company-agent-${company.id}`}
+                      title={company.agentName}
+                    >
+                      <Globe2 className="h-3 w-3 shrink-0" />
+                      {company.agentName ?? `وكيل #${company.agentInstanceId}`}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">المنصة</span>
+                  )}
 
                   {/* Invoice type */}
                   <span className="text-xs text-muted-foreground truncate">
@@ -399,15 +429,18 @@ export default function Companies() {
 
                     {/* Action buttons */}
                     <div className="flex items-center gap-2 pt-1 flex-wrap">
-                      {(company.status ?? "active") === "active" && !company.zatcaPcsid && (
+                      {/* ZATCA onboarding endpoints are not agent-DB-scoped —
+                          hide the shortcut for agent companies to avoid
+                          touching a colliding central company ID. */}
+                      {(company.status ?? "active") === "active" && !company.zatcaPcsid && !company.agentInstanceId && (
                         <Button asChild size="sm" className="gap-1.5 h-8">
-                          <Link href={`/companies/${company.id}?tab=zatca`}>
+                          <Link href={`/companies/${company.id}?tab=zatca${company.agentInstanceId ? `&agent=${company.agentInstanceId}` : ""}`}>
                             <ShieldCheck className="h-3.5 w-3.5" />ربط ZATCA
                           </Link>
                         </Button>
                       )}
                       <Button asChild variant="outline" size="sm" className="gap-1.5 h-8">
-                        <Link href={`/companies/${company.id}`}>
+                        <Link href={`/companies/${company.id}${company.agentInstanceId ? `?agent=${company.agentInstanceId}` : ""}`}>
                           <ExternalLink className="h-3.5 w-3.5" />عرض التفاصيل
                         </Link>
                       </Button>
@@ -416,7 +449,7 @@ export default function Companies() {
                           on automatically scopes to this tenant. The yellow
                           banner in Layout makes the active context obvious
                           and provides a one-click exit. */}
-                      {isSuperAdmin && (
+                      {isSuperAdmin && !company.agentInstanceId && (
                         <Button
                           size="sm"
                           variant={actingCompanyId === company.id ? "secondary" : "default"}
@@ -435,7 +468,7 @@ export default function Companies() {
                       <Button
                         size="sm" variant="ghost"
                         className="gap-1.5 h-8 text-destructive hover:bg-destructive/10 mr-auto"
-                        onClick={() => setDeleteTarget({ id: company.id, name: company.nameAr })}
+                        onClick={() => setDeleteTarget({ id: company.id, name: company.nameAr, agent: company.agentInstanceId ?? undefined })}
                       >
                         <Trash2 className="h-3.5 w-3.5" />حذف مؤقت
                       </Button>

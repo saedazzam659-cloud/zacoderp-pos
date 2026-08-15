@@ -30,6 +30,39 @@ router.get("/", async (req, res) => {
     .from(companiesTable)
     .where(isNull(companiesTable.deletedAt))
     .orderBy(companiesTable.createdAt);
+
+  // SuperAdmin: merge companies that live on agent (full_shell) databases so
+  // the dashboard can see/manage them too. Each agent row is tagged with
+  // `agentInstanceId`/`agentName`; the client sends `?agent=<id>` back on
+  // per-company admin ops so the handler re-routes into that agent DB.
+  // Agent DB failures are per-agent non-fatal — the central list must load.
+  const authUser = (req as any).authUser;
+  if (authUser?.role === "superadmin") {
+    try {
+      const { listInitializedAgents } = await import("../lib/agentScope.js");
+      const { runWithExternalDb } = await import("@workspace/db");
+      const { getAgentDbContext } = await import("../lib/agentDb.js");
+      const agents = await listInitializedAgents();
+      const merged: any[] = [...companies];
+      for (const agent of agents) {
+        try {
+          const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
+          const rows = await runWithExternalDb(ctx, async () =>
+            db.select().from(companiesTable)
+              .where(isNull(companiesTable.deletedAt))
+              .orderBy(companiesTable.createdAt),
+          );
+          for (const r of rows) merged.push({ ...r, agentInstanceId: agent.id, agentName: agent.name });
+        } catch (e: any) {
+          logger.warn({ agentId: agent.id, err: e?.message }, "companies list: agent DB unreachable");
+        }
+      }
+      res.json(merged);
+      return;
+    } catch (e: any) {
+      logger.warn({ err: e?.message }, "companies list: agent merge failed");
+    }
+  }
   res.json(companies);
 });
 
@@ -1000,6 +1033,14 @@ router.delete("/:id", async (req, res) => {
       res.status(400).json({ error: "معرّف الشركة غير صالح" });
       return;
     }
+    // `?agent=<id>`: soft-delete an AGENT-DB company (SuperAdmin only).
+    const { runWithAgentScope } = await import("../lib/agentScope.js");
+    await runWithAgentScope(req, res, () => softDeleteCompany(id, res));
+  } catch (err: any) {
+    res.status(500).json({ error: "فشل الحذف: " + (err.message ?? "خطأ غير متوقع") });
+  }
+});
+async function softDeleteCompany(id: number, res: Response) {
     // Atomic: company-flip + force-logout must succeed or fail together.
     // Otherwise a partial failure could leave a "deleted" tenant whose
     // users keep working sessions, or active users on a still-live tenant.
@@ -1022,9 +1063,6 @@ router.delete("/:id", async (req, res) => {
       return;
     }
     res.status(204).send();
-  } catch (err: any) {
-    res.status(500).json({ error: "فشل الحذف: " + (err.message ?? "خطأ غير متوقع") });
-  }
-});
+}
 
 export default router;

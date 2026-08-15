@@ -1351,7 +1351,11 @@ router.delete("/companies/:id/permanent", requireSuperAdmin, async (req, res) =>
 });
 
 // GET /api/admin/companies/:id — full company profile for superadmin
+// `?agent=<id>` re-routes into that agent's DB (companies created on
+// full_shell agent servers live there, not centrally).
 router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
   const id = parseInt(req.params.id);
   const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
   if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
@@ -1374,10 +1378,13 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
   ]);
 
   res.json({ company, subscription: subscription ?? null, users, counts: { invoices: invoiceCount, customers: customerCount, suppliers: supplierCount } });
+  });
 });
 
 // POST /api/admin/companies/:id/users — add user to a company
 router.post("/companies/:id/users", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
   const companyId = parseInt(req.params.id);
   const { username, email, password, role = "admin" } = req.body;
   if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
@@ -1395,27 +1402,34 @@ router.post("/companies/:id/users", requireSuperAdmin, async (req, res) => {
     username, email: email ?? null, passwordHash, companyId, role, isActive: true,
   }).returning({ id: usersTable.id, username: usersTable.username, email: usersTable.email, role: usersTable.role, isActive: usersTable.isActive, createdAt: usersTable.createdAt });
   res.status(201).json({ ok: true, user: newUser });
+  });
 });
 
 // DELETE /api/admin/companies/:id/users/:userId — remove user from a company
 router.delete("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) => {
-  const userId = parseInt(req.params.userId);
-  await db.delete(usersTable).where(eq(usersTable.id, userId));
-  res.status(204).send();
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const userId = parseInt(req.params.userId);
+    await db.delete(usersTable).where(eq(usersTable.id, userId));
+    res.status(204).send();
+  });
 });
 
 // PUT /api/admin/companies/:id/users/:userId — toggle user active status
 router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) => {
-  const userId = parseInt(req.params.userId);
-  const { isActive, password } = req.body;
-  const updates: Record<string, any> = { updatedAt: new Date() };
-  if (isActive != null) updates.isActive = isActive;
-  if (password) updates.passwordHash = await bcrypt.hash(password, 12);
-  const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId)).returning();
-  if (updated?.companyId != null) {
-    emitSessionRefresh(updated.companyId, "permissions_changed", { op: "user-update", userId });
-  }
-  res.json({ ok: true, user: updated });
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const userId = parseInt(req.params.userId);
+    const { isActive, password } = req.body;
+    const updates: Record<string, any> = { updatedAt: new Date() };
+    if (isActive != null) updates.isActive = isActive;
+    if (password) updates.passwordHash = await bcrypt.hash(password, 12);
+    const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId)).returning();
+    if (updated?.companyId != null) {
+      emitSessionRefresh(updated.companyId, "permissions_changed", { op: "user-update", userId });
+    }
+    res.json({ ok: true, user: updated });
+  });
 });
 
 // GET /api/admin/plans — public (used by Register page too)

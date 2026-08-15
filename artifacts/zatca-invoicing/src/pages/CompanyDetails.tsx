@@ -84,6 +84,10 @@ export default function CompanyDetails() {
 
   const search = useSearch();
   const initialTab = new URLSearchParams(search).get("tab") ?? "overview";
+  // `?agent=<id>` — the company lives on that agent's own DB; every admin
+  // call below must carry it so the backend routes into the agent DB.
+  const agentId = Number(new URLSearchParams(search).get("agent") ?? "") || null;
+  const agentQS = agentId ? `?agent=${agentId}` : "";
   const [tab, setTab] = useState(initialTab);
   const [showAddUser, setShowAddUser] = useState(false);
   const [showPass, setShowPass] = useState(false);
@@ -94,9 +98,9 @@ export default function CompanyDetails() {
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["admin-company", id],
+    queryKey: ["admin-company", id, agentId],
     queryFn: async () => {
-      const res = await fetch(`${API}/api/admin/companies/${id}`, { headers });
+      const res = await fetch(`${API}/api/admin/companies/${id}${agentQS}`, { headers });
       if (!res.ok) throw new Error("company not found");
       return res.json();
     },
@@ -137,7 +141,7 @@ export default function CompanyDetails() {
 
   const addUserMutation = useMutation({
     mutationFn: async (body: any) => {
-      const res = await fetch(`${API}/api/admin/companies/${id}/users`, {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users${agentQS}`, {
         method: "POST", headers, body: JSON.stringify(body),
       });
       const json = await res.json();
@@ -155,7 +159,7 @@ export default function CompanyDetails() {
 
   const deleteUserMutation = useMutation({
     mutationFn: async (userId: number) => {
-      await fetch(`${API}/api/admin/companies/${id}/users/${userId}`, { method: "DELETE", headers });
+      await fetch(`${API}/api/admin/companies/${id}/users/${userId}${agentQS}`, { method: "DELETE", headers });
     },
     onSuccess: () => {
       toast({ title: "✓ تم حذف المستخدم" });
@@ -165,7 +169,7 @@ export default function CompanyDetails() {
 
   const toggleUserMutation = useMutation({
     mutationFn: async ({ userId, isActive }: { userId: number; isActive: boolean }) => {
-      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}`, {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}${agentQS}`, {
         method: "PUT", headers, body: JSON.stringify({ isActive }),
       });
       return res.json();
@@ -175,7 +179,7 @@ export default function CompanyDetails() {
 
   const resetPassMutation = useMutation({
     mutationFn: async ({ userId, password }: { userId: number; password: string }) => {
-      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}`, {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}${agentQS}`, {
         method: "PUT", headers, body: JSON.stringify({ password }),
       });
       return res.json();
@@ -269,9 +273,11 @@ export default function CompanyDetails() {
         <TabBtn active={tab === "subscription"} onClick={() => setTab("subscription")}>
           <Package className="h-4 w-4" />الاشتراك
         </TabBtn>
-        <TabBtn active={tab === "zatca"} onClick={() => setTab("zatca")}>
+        {/* ZATCA onboarding endpoints are not agent-DB-scoped — hiding the
+            tab for agent companies avoids touching a colliding central ID. */}
+        {!agentId && <TabBtn active={tab === "zatca"} onClick={() => setTab("zatca")}>
           <Link2 className="h-4 w-4" />ربط ZATCA
-        </TabBtn>
+        </TabBtn>}
         <TabBtn active={tab === "data"} onClick={() => setTab("data")}>
           <BarChart3 className="h-4 w-4" />البيانات
         </TabBtn>
@@ -313,7 +319,9 @@ export default function CompanyDetails() {
               <InfoRow label="الرقم الإضافي" value={company.additionalNumber} ltr />
             </div>
           </div>
-          <div className="rounded-xl border bg-card p-5 md:col-span-2">
+          {/* Homing is a CENTRAL-DB concept — agent-DB companies are already
+              isolated to their agent domain, so the card is hidden there. */}
+          {!agentId && <div className="rounded-xl border bg-card p-5 md:col-span-2">
             <h3 className="font-semibold mb-1 flex items-center gap-2 text-sm">
               <Link2 className="h-4 w-4 text-primary" />النطاق الموطن (عزل الدخول)
             </h3>
@@ -345,7 +353,7 @@ export default function CompanyDetails() {
                 </Badge>
               )}
             </div>
-          </div>
+          </div>}
         </div>
       )}
 
@@ -566,7 +574,7 @@ export default function CompanyDetails() {
       )}
 
       {/* ─── ZATCA Tab ─── */}
-      {tab === "zatca" && (
+      {tab === "zatca" && !agentId && (
         <ZatcaIntegration companyId={id} />
       )}
 
