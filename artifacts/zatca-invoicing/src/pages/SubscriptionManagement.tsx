@@ -118,11 +118,14 @@ export default function SubscriptionManagement() {
   const [search, setSearch]             = useState("");
   const [planFilter, setPlanFilter]     = useState("all");
   const [tab, setTab]                   = useState<TabKey>("all");
-  const [expandedRow, setExpandedRow]   = useState<number | null>(null);
+  // Rows can come from the central DB or an agent DB (row.agentInstanceId set)
+  // — numeric subscription ids collide across DBs, so expansion/forms key by
+  // the composite row key instead. Bulk selection stays central-only.
+  const [expandedRow, setExpandedRow]   = useState<string | null>(null);
   const [selected, setSelected]         = useState<Set<number>>(new Set());
   const [bulkMonths, setBulkMonths]     = useState<number>(1);
-  const [extendForms, setExtendForms]   = useState<Record<number, number>>({});
-  const [planForms, setPlanForms]       = useState<Record<number, { plan: string; cycle: "monthly" | "yearly" }>>({});
+  const [extendForms, setExtendForms]   = useState<Record<string, number>>({});
+  const [planForms, setPlanForms]       = useState<Record<string, { plan: string; cycle: "monthly" | "yearly" }>>({});
   const [overLimitOpen, setOverLimitOpen] = useState(false);
   const [upgradeForId, setUpgradeForId] = useState<number | null>(null);
 
@@ -160,9 +163,11 @@ export default function SubscriptionManagement() {
   }, [usage]);
 
   // Mutations
+  const agentQS = (agent?: number | null) => (agent ? `?agent=${agent}` : "");
+
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: number; data: any }) => {
-      const res = await fetch(`${API}/api/admin/subscriptions/${id}`, {
+    mutationFn: async ({ id, data, agent }: { id: number; data: any; agent?: number | null }) => {
+      const res = await fetch(`${API}/api/admin/subscriptions/${id}${agentQS(agent)}`, {
         method: "PUT", headers, body: JSON.stringify(data),
       });
       const json = await res.json();
@@ -178,8 +183,8 @@ export default function SubscriptionManagement() {
   });
 
   const extendMutation = useMutation({
-    mutationFn: async ({ id, months }: { id: number; months: number }) => {
-      const res = await fetch(`${API}/api/admin/subscriptions/${id}/extend`, {
+    mutationFn: async ({ id, months, agent }: { id: number; months: number; agent?: number | null }) => {
+      const res = await fetch(`${API}/api/admin/subscriptions/${id}/extend${agentQS(agent)}`, {
         method: "POST", headers, body: JSON.stringify({ months }),
       });
       const json = await res.json();
@@ -195,8 +200,8 @@ export default function SubscriptionManagement() {
   });
 
   const changePlanMutation = useMutation({
-    mutationFn: async ({ id, planKey, billingCycle }: { id: number; planKey: string; billingCycle: string }) => {
-      const res = await fetch(`${API}/api/admin/subscriptions/${id}/change-plan`, {
+    mutationFn: async ({ id, planKey, billingCycle, agent }: { id: number; planKey: string; billingCycle: string; agent?: number | null }) => {
+      const res = await fetch(`${API}/api/admin/subscriptions/${id}/change-plan${agentQS(agent)}`, {
         method: "POST", headers, body: JSON.stringify({ planKey, billingCycle }),
       });
       const json = await res.json();
@@ -293,7 +298,9 @@ export default function SubscriptionManagement() {
   }).length;
   const overLimitCount = (usage as any[]).filter(u => u.overLimit).length;
 
-  const allFilteredIds = filtered.map((r: any) => r.subscription?.id).filter(Boolean) as number[];
+  // Bulk operations run against the CENTRAL DB only — agent rows are excluded
+  // from selection (their ids would collide with central subscription ids).
+  const allFilteredIds = filtered.filter((r: any) => !r.agentInstanceId).map((r: any) => r.subscription?.id).filter(Boolean) as number[];
   const allSelectedOnPage = allFilteredIds.length > 0 && allFilteredIds.every(id => selected.has(id));
   const toggleAll = () => {
     if (allSelectedOnPage) {
@@ -503,18 +510,20 @@ export default function SubscriptionManagement() {
           {filtered.map((row: any) => {
             const sub     = row.subscription;
             const company = row.company;
+            const agent   = row.agentInstanceId as number | undefined;
+            const rk      = `${agent ?? "c"}:${sub?.id}`;
             const plan    = PLAN_MAP[sub?.plan] ?? PLAN_MAP.starter;
-            const isExp   = expandedRow === sub?.id;
-            const isSelected = selected.has(sub?.id);
-            const u       = usageByCompany.get(sub?.companyId);
-            const extM    = extendForms[sub?.id] ?? 1;
-            const planForm = planForms[sub?.id] ?? { plan: sub?.plan, cycle: (sub?.billingCycle === "annual" ? "yearly" : sub?.billingCycle) ?? "monthly" };
+            const isExp   = expandedRow === rk;
+            const isSelected = !agent && selected.has(sub?.id);
+            const u       = agent ? undefined : usageByCompany.get(sub?.companyId);
+            const extM    = extendForms[rk] ?? 1;
+            const planForm = planForms[rk] ?? { plan: sub?.plan, cycle: (sub?.billingCycle === "annual" ? "yearly" : sub?.billingCycle) ?? "monthly" };
 
-            const isUpgradeTarget = upgradeForId === sub?.id;
+            const isUpgradeTarget = !agent && upgradeForId === sub?.id;
             return (
               <div
-                key={sub?.id}
-                id={`sub-row-${sub?.id}`}
+                key={rk}
+                id={`sub-row-${rk}`}
                 className={cn(
                   "transition-colors",
                   !sub?.isActive && "bg-muted/20",
@@ -525,10 +534,12 @@ export default function SubscriptionManagement() {
                 <div
                   className="grid items-center gap-4 px-4 py-3.5 cursor-pointer hover:bg-muted/20 transition-colors"
                   style={{ gridTemplateColumns: "auto 2fr 1fr 1fr 1fr 1fr 1.4fr auto" }}
-                  onClick={() => { setExpandedRow(isExp ? null : sub?.id); if (isUpgradeTarget) setUpgradeForId(null); }}
+                  onClick={() => { setExpandedRow(isExp ? null : rk); if (isUpgradeTarget) setUpgradeForId(null); }}
                 >
                   <div onClick={e => e.stopPropagation()}>
-                    <Checkbox checked={isSelected} onCheckedChange={() => toggleOne(sub?.id)} aria-label="تحديد" />
+                    {/* Bulk ops are central-only — no checkbox on agent rows */}
+                    {agent ? <span className="inline-block w-4" /> :
+                      <Checkbox checked={isSelected} onCheckedChange={() => toggleOne(sub?.id)} aria-label="تحديد" />}
                   </div>
 
                   {/* Company */}
@@ -539,6 +550,9 @@ export default function SubscriptionManagement() {
                     <div className="min-w-0">
                       <p className="font-semibold text-sm text-foreground truncate flex items-center gap-1.5">
                         {company?.nameAr}
+                        {agent && (
+                          <span className="text-[10px] bg-violet-100 text-violet-800 border border-violet-300 rounded px-1">وكيل: {row.agentName ?? agent}</span>
+                        )}
                         {company?.status === "suspended" && (
                           <span className="text-[10px] bg-red-100 text-red-700 border border-red-200 rounded px-1">شركة موقوفة</span>
                         )}
@@ -573,7 +587,7 @@ export default function SubscriptionManagement() {
                   <StatusBadge sub={sub} companyStatus={company?.status} />
 
                   <button className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground"
-                    onClick={e => { e.stopPropagation(); setExpandedRow(isExp ? null : sub?.id); }}>
+                    onClick={e => { e.stopPropagation(); setExpandedRow(isExp ? null : rk); }}>
                     {isExp ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                   </button>
                 </div>
@@ -608,11 +622,11 @@ export default function SubscriptionManagement() {
                         <div className="flex gap-2">
                           <select className="flex-1 h-8 rounded-md border bg-background px-2 text-xs"
                             value={extM}
-                            onChange={e => setExtendForms(f => ({ ...f, [sub.id]: parseInt(e.target.value) }))}>
+                            onChange={e => setExtendForms(f => ({ ...f, [rk]: parseInt(e.target.value) }))}>
                             {EXTEND_OPTIONS.map(o => <option key={o.months} value={o.months}>{o.label}</option>)}
                           </select>
                           <Button size="sm" className="h-8 gap-1.5" disabled={extendMutation.isPending}
-                            onClick={() => extendMutation.mutate({ id: sub.id, months: extM })}>
+                            onClick={() => extendMutation.mutate({ id: sub.id, months: extM, agent })}>
                             تطبيق
                           </Button>
                         </div>
@@ -629,17 +643,17 @@ export default function SubscriptionManagement() {
                         <div className="flex gap-2">
                           <select className="flex-1 h-8 rounded-md border bg-background px-2 text-xs"
                             value={planForm.plan}
-                            onChange={e => setPlanForms(f => ({ ...f, [sub.id]: { ...planForm, plan: e.target.value } }))}>
+                            onChange={e => setPlanForms(f => ({ ...f, [rk]: { ...planForm, plan: e.target.value } }))}>
                             {PLANS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                           </select>
                           <select className="h-8 rounded-md border bg-background px-2 text-xs"
                             value={planForm.cycle}
-                            onChange={e => setPlanForms(f => ({ ...f, [sub.id]: { ...planForm, cycle: e.target.value as "monthly" | "yearly" } }))}>
+                            onChange={e => setPlanForms(f => ({ ...f, [rk]: { ...planForm, cycle: e.target.value as "monthly" | "yearly" } }))}>
                             <option value="monthly">شهرية</option>
                             <option value="yearly">سنوية</option>
                           </select>
                           <Button size="sm" className="h-8 gap-1.5" disabled={changePlanMutation.isPending}
-                            onClick={() => changePlanMutation.mutate({ id: sub.id, planKey: planForm.plan, billingCycle: planForm.cycle })}>
+                            onClick={() => changePlanMutation.mutate({ id: sub.id, planKey: planForm.plan, billingCycle: planForm.cycle, agent })}>
                             تبديل
                           </Button>
                         </div>
@@ -652,7 +666,7 @@ export default function SubscriptionManagement() {
                     <div className="flex gap-2 pt-1 flex-wrap">
                       <Button size="sm" variant="outline" className={cn("gap-1.5 h-8",
                         sub?.isActive ? "border-red-300 text-red-700 hover:bg-red-50" : "border-green-300 text-green-700 hover:bg-green-50")}
-                        onClick={() => updateMutation.mutate({ id: sub.id, data: { isActive: !sub.isActive } })}>
+                        onClick={() => updateMutation.mutate({ id: sub.id, data: { isActive: !sub.isActive }, agent })}>
                         {sub?.isActive ? <><PauseCircle className="h-3.5 w-3.5" />تجميد</> : <><PlayCircle className="h-3.5 w-3.5" />تفعيل</>}
                       </Button>
                     </div>
@@ -704,17 +718,19 @@ export default function SubscriptionManagement() {
         {!isLoading && filtered.map((row: any) => {
           const sub      = row.subscription;
           const company  = row.company;
+          const agent    = row.agentInstanceId as number | undefined;
+          const rk       = `${agent ?? "c"}:${sub?.id}`;
           const plan     = PLAN_MAP[sub?.plan] ?? PLAN_MAP.starter;
-          const isExp    = expandedRow === sub?.id;
-          const isSelected = selected.has(sub?.id);
-          const u        = usageByCompany.get(sub?.companyId);
-          const extM     = extendForms[sub?.id] ?? 1;
-          const planForm = planForms[sub?.id] ?? { plan: sub?.plan, cycle: (sub?.billingCycle === "annual" ? "yearly" : sub?.billingCycle) ?? "monthly" };
-          const isUpgradeTarget = upgradeForId === sub?.id;
+          const isExp    = expandedRow === rk;
+          const isSelected = !agent && selected.has(sub?.id);
+          const u        = agent ? undefined : usageByCompany.get(sub?.companyId);
+          const extM     = extendForms[rk] ?? 1;
+          const planForm = planForms[rk] ?? { plan: sub?.plan, cycle: (sub?.billingCycle === "annual" ? "yearly" : sub?.billingCycle) ?? "monthly" };
+          const isUpgradeTarget = !agent && upgradeForId === sub?.id;
           return (
             <Card
-              key={sub?.id}
-              id={`sub-row-m-${sub?.id}`}
+              key={rk}
+              id={`sub-row-m-${rk}`}
               className={cn(
                 !sub?.isActive && "bg-muted/20",
                 isSelected && "ring-1 ring-primary/40",
@@ -725,7 +741,8 @@ export default function SubscriptionManagement() {
                 {/* Title row */}
                 <div className="flex items-start gap-3">
                   <div onClick={e => e.stopPropagation()} className="pt-0.5">
-                    <Checkbox checked={isSelected} onCheckedChange={() => toggleOne(sub?.id)} aria-label="تحديد" />
+                    {agent ? <span className="inline-block w-4" /> :
+                      <Checkbox checked={isSelected} onCheckedChange={() => toggleOne(sub?.id)} aria-label="تحديد" />}
                   </div>
                   <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">
                     {company?.nameAr?.[0] ?? "ش"}
@@ -733,6 +750,9 @@ export default function SubscriptionManagement() {
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-sm text-foreground flex items-center gap-1.5 flex-wrap">
                       {company?.nameAr}
+                      {agent && (
+                        <span className="text-[10px] bg-violet-100 text-violet-800 border border-violet-300 rounded px-1">وكيل: {row.agentName ?? agent}</span>
+                      )}
                       {company?.status === "suspended" && (
                         <span className="text-[10px] bg-red-100 text-red-700 border border-red-200 rounded px-1">شركة موقوفة</span>
                       )}
@@ -778,7 +798,7 @@ export default function SubscriptionManagement() {
                   size="sm"
                   variant="outline"
                   className="w-full gap-1.5"
-                  onClick={() => { setExpandedRow(isExp ? null : sub?.id); if (isUpgradeTarget) setUpgradeForId(null); }}
+                  onClick={() => { setExpandedRow(isExp ? null : rk); if (isUpgradeTarget) setUpgradeForId(null); }}
                 >
                   {isExp ? <><ChevronUp className="h-4 w-4" />إخفاء الإجراءات</> : <><ChevronDown className="h-4 w-4" />عرض الإجراءات</>}
                 </Button>
@@ -811,11 +831,11 @@ export default function SubscriptionManagement() {
                       <div className="flex gap-2">
                         <select className="flex-1 h-8 rounded-md border bg-background px-2 text-xs"
                           value={extM}
-                          onChange={e => setExtendForms(f => ({ ...f, [sub.id]: parseInt(e.target.value) }))}>
+                          onChange={e => setExtendForms(f => ({ ...f, [rk]: parseInt(e.target.value) }))}>
                           {EXTEND_OPTIONS.map(o => <option key={o.months} value={o.months}>{o.label}</option>)}
                         </select>
                         <Button size="sm" className="h-8 gap-1.5" disabled={extendMutation.isPending}
-                          onClick={() => extendMutation.mutate({ id: sub.id, months: extM })}>
+                          onClick={() => extendMutation.mutate({ id: sub.id, months: extM, agent })}>
                           تطبيق
                         </Button>
                       </div>
@@ -832,17 +852,17 @@ export default function SubscriptionManagement() {
                       <div className="flex gap-2 flex-wrap">
                         <select className="flex-1 h-8 rounded-md border bg-background px-2 text-xs"
                           value={planForm.plan}
-                          onChange={e => setPlanForms(f => ({ ...f, [sub.id]: { ...planForm, plan: e.target.value } }))}>
+                          onChange={e => setPlanForms(f => ({ ...f, [rk]: { ...planForm, plan: e.target.value } }))}>
                           {PLANS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                         </select>
                         <select className="h-8 rounded-md border bg-background px-2 text-xs"
                           value={planForm.cycle}
-                          onChange={e => setPlanForms(f => ({ ...f, [sub.id]: { ...planForm, cycle: e.target.value as "monthly" | "yearly" } }))}>
+                          onChange={e => setPlanForms(f => ({ ...f, [rk]: { ...planForm, cycle: e.target.value as "monthly" | "yearly" } }))}>
                           <option value="monthly">شهرية</option>
                           <option value="yearly">سنوية</option>
                         </select>
                         <Button size="sm" className="h-8 gap-1.5" disabled={changePlanMutation.isPending}
-                          onClick={() => changePlanMutation.mutate({ id: sub.id, planKey: planForm.plan, billingCycle: planForm.cycle })}>
+                          onClick={() => changePlanMutation.mutate({ id: sub.id, planKey: planForm.plan, billingCycle: planForm.cycle, agent })}>
                           تبديل
                         </Button>
                       </div>
@@ -854,7 +874,7 @@ export default function SubscriptionManagement() {
                     <div className="flex gap-2 pt-1 flex-wrap">
                       <Button size="sm" variant="outline" className={cn("gap-1.5 h-8",
                         sub?.isActive ? "border-red-300 text-red-700 hover:bg-red-50" : "border-green-300 text-green-700 hover:bg-green-50")}
-                        onClick={() => updateMutation.mutate({ id: sub.id, data: { isActive: !sub.isActive } })}>
+                        onClick={() => updateMutation.mutate({ id: sub.id, data: { isActive: !sub.isActive }, agent })}>
                         {sub?.isActive ? <><PauseCircle className="h-3.5 w-3.5" />تجميد</> : <><PlayCircle className="h-3.5 w-3.5" />تفعيل</>}
                       </Button>
                     </div>

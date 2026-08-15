@@ -81,7 +81,10 @@ export default function MenuPermissions() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Composite key: agent-DB company ids can collide with central ids, so
+  // selection is keyed `<agentInstanceId|c>:<id>` rather than the raw id.
+  const ck = (c: any) => `${c?.agentInstanceId ?? "c"}:${c?.id}`;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, boolean> | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
@@ -100,11 +103,11 @@ export default function MenuPermissions() {
   });
 
   useEffect(() => {
-    if (selectedId == null && companies.length > 0) setSelectedId(companies[0].id);
+    if (selectedId == null && companies.length > 0) setSelectedId(ck(companies[0]));
   }, [companies, selectedId]);
 
   const selected = useMemo(
-    () => companies.find((c: any) => c.id === selectedId) ?? null,
+    () => companies.find((c: any) => ck(c) === selectedId) ?? null,
     [companies, selectedId],
   );
 
@@ -123,8 +126,9 @@ export default function MenuPermissions() {
   }, [draft, savedPerms]);
 
   const saveMutation = useMutation({
-    mutationFn: async ({ companyId, perms }: { companyId: number; perms: Record<string, boolean> }) => {
-      const res = await fetch(`${API}/api/companies/${companyId}/menu-permissions`, {
+    mutationFn: async ({ companyId, perms, agent }: { companyId: number; perms: Record<string, boolean>; agent?: number | null }) => {
+      // Agent-DB companies: `?agent=` routes the write into the agent's DB.
+      const res = await fetch(`${API}/api/companies/${companyId}/menu-permissions${agent ? `?agent=${agent}` : ""}`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({ menuPermissions: JSON.stringify(pruneForSave(perms)) }),
@@ -184,14 +188,14 @@ export default function MenuPermissions() {
 
   const reset = () => setDraft(savedPerms);
 
-  const copyFrom = (sourceId: number) => {
-    const src = companies.find((c: any) => c.id === sourceId);
+  const copyFrom = (sourceKey: string) => {
+    const src = companies.find((c: any) => ck(c) === sourceKey);
     if (src) setDraft(parsePerms(src.menuPermissions));
   };
 
   const save = () => {
     if (!selected || !draft) return;
-    saveMutation.mutate({ companyId: selected.id, perms: draft });
+    saveMutation.mutate({ companyId: selected.id, perms: draft, agent: selected.agentInstanceId ?? undefined });
   };
 
   // Helpers reading current draft state
@@ -245,11 +249,11 @@ export default function MenuPermissions() {
                 const perms = parsePerms(c.menuPermissions);
                 const enabled = MENU_ITEMS.filter(m => perms[m.key]).length;
                 const total = MENU_ITEMS.length;
-                const isSel = c.id === selectedId;
+                const isSel = ck(c) === selectedId;
                 return (
                   <button
-                    key={c.id}
-                    onClick={() => setSelectedId(c.id)}
+                    key={ck(c)}
+                    onClick={() => setSelectedId(ck(c))}
                     className={cn(
                       "w-full text-right p-2.5 rounded-lg border transition-all",
                       isSel
@@ -259,8 +263,11 @@ export default function MenuPermissions() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <p className={cn("font-medium text-sm truncate", isSel && "text-indigo-700 dark:text-indigo-400")}>
-                          {c.nameAr}
+                        <p className={cn("font-medium text-sm truncate flex items-center gap-1", isSel && "text-indigo-700 dark:text-indigo-400")}>
+                          <span className="truncate">{c.nameAr}</span>
+                          {c.agentInstanceId && (
+                            <span className="text-[9px] bg-violet-100 text-violet-800 border border-violet-300 rounded px-1 shrink-0">وكيل</span>
+                          )}
                         </p>
                         <p className="text-[11px] font-mono text-muted-foreground truncate" dir="ltr">
                           {c.vatNumber}
@@ -323,14 +330,14 @@ export default function MenuPermissions() {
                         <XCircle className="h-3.5 w-3.5 text-red-600" /> تعطيل الكل
                       </Button>
                       <select
-                        onChange={(e) => { if (e.target.value) { copyFrom(Number(e.target.value)); e.target.value = ""; } }}
+                        onChange={(e) => { if (e.target.value) { copyFrom(e.target.value); e.target.value = ""; } }}
                         defaultValue=""
                         className="h-8 rounded-md border border-input bg-background px-2 text-xs"
                         title="نسخ من شركة أخرى"
                       >
                         <option value="">📋 نسخ من شركة...</option>
-                        {companies.filter((c: any) => c.id !== selected.id).map((c: any) => (
-                          <option key={c.id} value={c.id}>{c.nameAr}</option>
+                        {companies.filter((c: any) => ck(c) !== ck(selected)).map((c: any) => (
+                          <option key={ck(c)} value={ck(c)}>{c.nameAr}{c.agentInstanceId ? ` (وكيل)` : ""}</option>
                         ))}
                       </select>
                       {isDirty && (

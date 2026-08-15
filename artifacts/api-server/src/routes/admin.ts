@@ -324,9 +324,11 @@ router.delete("/requests/:id", requireSuperAdmin, async (req, res) => {
   }
 });
 
-// GET /api/admin/subscriptions — all subscriptions with company info
+// GET /api/admin/subscriptions — all subscriptions with company info.
+// Agent-DB subscriptions are merged in for the SuperAdmin, tagged with
+// `agentInstanceId`/`agentName`; per-row mutations then carry `?agent=<id>`.
 router.get("/subscriptions", requireSuperAdmin, async (_req, res) => {
-  const rows = await db.select({
+  const selectSubs = () => db.select({
     subscription: subscriptionsTable,
     company: {
       id: companiesTable.id,
@@ -337,6 +339,24 @@ router.get("/subscriptions", requireSuperAdmin, async (_req, res) => {
   })
   .from(subscriptionsTable)
   .leftJoin(companiesTable, eq(companiesTable.id, subscriptionsTable.companyId));
+
+  const rows: any[] = await selectSubs();
+  try {
+    const { listInitializedAgents } = await import("../lib/agentScope.js");
+    const { runWithExternalDb } = await import("@workspace/db");
+    const { getAgentDbContext } = await import("../lib/agentDb.js");
+    for (const agent of await listInitializedAgents()) {
+      try {
+        const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
+        const agentRows = await runWithExternalDb(ctx, async () => selectSubs());
+        for (const r of agentRows) rows.push({ ...r, agentInstanceId: agent.id, agentName: agent.name });
+      } catch (e: any) {
+        console.error("[admin/subscriptions] agent DB unreachable:", agent.id, e?.message ?? e);
+      }
+    }
+  } catch (e: any) {
+    console.error("[admin/subscriptions] agent merge failed:", e?.message ?? e);
+  }
   res.json(rows);
 });
 
@@ -354,7 +374,10 @@ const toBoundedInt = (v: any, min: number, max: number): number | null => {
 };
 
 // PUT /api/admin/subscriptions/:id — update a subscription
+// `?agent=<id>` routes the write into that agent's DB.
 router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
   const id = parseInt(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const { plan, maxUsers, maxBranches, maxWarehouses, maxInvoices, billingCycle, startDate, endDate, isActive, price } = req.body ?? {};
@@ -409,6 +432,7 @@ router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
   });
   emitSessionRefresh(updated.companyId, "subscription_changed", { op: "edit", fields: Object.keys(updates) });
   res.json({ ok: true, subscription: updated });
+  });
 });
 
 // ─── Subscription Lifecycle (extend / change-plan / bulk / usage) ──────────
@@ -457,6 +481,8 @@ function normalizeCycle(c: string): "monthly" | "yearly" | null {
 // Atomic: the read+compute+write happens inside one UPDATE so two concurrent
 // extends don't overwrite each other (the race was flagged in code review).
 router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
   const id = parseInt(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const months = Number(req.body?.months);
@@ -513,10 +539,13 @@ router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => 
     description: `تمديد الاشتراك ${months} شهر`,
   });
   res.json({ ok: true, subscription: updated, reactivated });
+  });
 });
 
 // POST /api/admin/subscriptions/:id/change-plan — switch plan template
 router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
   const id = parseInt(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const planKey = String(req.body?.planKey ?? "");
@@ -527,7 +556,10 @@ router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res
 
   const [existing] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
   if (!existing) { res.status(404).json({ error: "الاشتراك غير موجود" }); return; }
-  const [planConfig] = await db.select().from(planConfigsTable).where(eq(planConfigsTable.key, planKey));
+  // centralDb: plan templates are PLATFORM config — inside an agent DB
+  // scope the proxied `db` would miss them (same trap as /register pricing).
+  const { centralDb: planDb } = await import("@workspace/db");
+  const [planConfig] = await planDb.select().from(planConfigsTable).where(eq(planConfigsTable.key, planKey));
   if (!planConfig) { res.status(404).json({ error: "قالب الباقة غير موجود" }); return; }
 
   const start = todayISO();
@@ -587,6 +619,7 @@ router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res
     description: `تغيير الباقة إلى ${planKey} (${cycle})`,
   });
   res.json({ ok: true, subscription: updated });
+  });
 });
 
 // POST /api/admin/subscriptions/bulk-extend — atomic per-row UPDATE

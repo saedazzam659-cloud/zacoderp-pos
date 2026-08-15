@@ -772,6 +772,13 @@ router.patch("/:id/profile", async (req, res) => {
 
 // PATCH /:id/menu-permissions — update which menus are visible for company users
 router.patch("/:id/menu-permissions", async (req, res) => {
+  // Module grants are a SuperAdmin-only control — for BOTH central and
+  // agent-DB companies (the router middleware only guarantees a logged-in
+  // user, not a role).
+  if ((req as any).authUser?.role !== "superadmin") {
+    res.status(403).json({ error: "هذه العملية للمشرف العام فقط" });
+    return;
+  }
   const id = parseInt(req.params.id);
   const { menuPermissions } = req.body as { menuPermissions?: string };
   if (!menuPermissions) {
@@ -783,12 +790,16 @@ router.patch("/:id/menu-permissions", async (req, res) => {
     res.status(400).json({ error: "menuPermissions يجب أن يكون JSON صالح" });
     return;
   }
-  const [company] = await db.update(companiesTable).set({
-    menuPermissions,
-    updatedAt: new Date(),
-  }).where(eq(companiesTable.id, id)).returning();
-  if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
-  res.json(company);
+  // `?agent=<id>`: module grants for an AGENT-DB company (SuperAdmin only).
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const [company] = await db.update(companiesTable).set({
+      menuPermissions,
+      updatedAt: new Date(),
+    }).where(eq(companiesTable.id, id)).returning();
+    if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+    res.json(company);
+  });
 });
 
 // PATCH /:id/windows-module-permissions — SuperAdmin-controlled visibility of
