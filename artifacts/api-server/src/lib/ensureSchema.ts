@@ -353,6 +353,12 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // means "all allowed" (back-compat). See api-server lib/postingRights.ts.
     { label: "users.posting_permissions column",
       sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS posting_permissions JSONB` },
+    // Per-user mobile-app rights map (صلاحيات تطبيق الموبايل) — NULL means
+    // "all allowed" (back-compat). See api-server lib/mobilePerms.ts.
+    { label: "users.mobile_permissions column",
+      sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_permissions JSONB` },
+    { label: "users.session_channel column",
+      sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS session_channel TEXT` },
     // Per-type HR expiry-alert lead times (days) — {iqama,contract,passport,workPermit}.
     // ─── HR Core extension (دورة حياة الموظف) — see lib/db/src/schema/hr.ts.
     // ensureColumns only ALTERs existing tables, so materialise them here.

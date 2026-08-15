@@ -13,7 +13,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
@@ -21,6 +21,7 @@ import { money, qty as fq, todayISO, showDate } from '@/lib/format';
 import { onScan, clearScan } from '@/lib/scanBus';
 import { printInvoice, shareInvoicePdf } from '@/lib/print';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
 
@@ -65,6 +66,7 @@ export default function InvoiceForm() {
   const router = useRouter();
   const qc = useQueryClient();
   const { companyId, user, can } = useAuth();
+  const { mp } = useMobilePerms();
   const c = useColors();
   const insets = useSafeAreaInsets();
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
@@ -287,6 +289,20 @@ export default function InvoiceForm() {
 
   const setLineQty = (itemId: number, q: number) => {
     setLines((prev) => (q <= 0 ? prev.filter((l) => l.itemId !== itemId) : prev.map((l) => (l.itemId === itemId ? { ...l, qty: q } : l))));
+  };
+
+  // أسعار حية: عند كل فتح/عودة لهذه الشاشة نعيد جلب الأصناف من السيرفر
+  // فتظهر تعديلات الأسعار التي تمت من الويب فوراً دون إعادة تشغيل التطبيق.
+  useFocusEffect(
+    React.useCallback(() => {
+      if (companyId) itemsQ.refetch();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [companyId]),
+  );
+
+  // تعديل سعر البيع لسطر — متاح فقط لمن يملك صلاحية invoice_edit_price
+  const setLinePrice = (itemId: number, price: number) => {
+    setLines((prev) => prev.map((l) => (l.itemId === itemId ? { ...l, unitPrice: Math.max(0, price) } : l)));
   };
 
   const openScanner = () => {
@@ -724,8 +740,20 @@ export default function InvoiceForm() {
           <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
             <Card style={{ gap: 10 }}>
               {lines.map((l) => (
-                <View key={l.itemId} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', borderBottomWidth: StyleShim, borderBottomColor: c.border, paddingBottom: 6 }}>
+                <View key={l.itemId} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottomWidth: StyleShim, borderBottomColor: c.border, paddingBottom: 6 }}>
                   <Text style={{ fontSize: 13, color: c.foreground, flex: 1, textAlign: 'right' }}>{l.name} × {fq(l.qty)}</Text>
+                  {!readOnly && mp('invoice_edit_price') ? (
+                    <TextInput
+                      testID={`input-line-price-${l.itemId}`}
+                      defaultValue={String(l.unitPrice)}
+                      keyboardType="decimal-pad"
+                      onEndEditing={(e) => {
+                        const v = parseFloat(String(e.nativeEvent.text).replace(/[^\d.]/g, ''));
+                        if (Number.isFinite(v)) setLinePrice(l.itemId, v);
+                      }}
+                      style={{ minWidth: 74, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
+                    />
+                  ) : null}
                   <Text style={{ fontSize: 13, color: c.foreground, fontFamily: 'Inter_600SemiBold' }}>{money(l.qty * l.unitPrice)}</Text>
                 </View>
               ))}
@@ -748,16 +776,26 @@ export default function InvoiceForm() {
             </Card>
             {saveError ? <Text style={{ color: c.destructive, textAlign: 'right', fontSize: 13 }}>{saveError}</Text> : null}
             {!readOnly ? (
+              isNew && !mp('invoice_create') ? (
+                <Card><Text style={{ textAlign: 'right', color: c.destructive }}>ليست لديك صلاحية إنشاء فاتورة من التطبيق — تواصل مع مدير النظام.</Text></Card>
+              ) : (
               <View style={{ gap: 10 }}>
                 <Btn title="حفظ وإصدار الفاتورة" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post" />
                 <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft" />
               </View>
+              )
             ) : (
               <View style={{ gap: 10 }}>
                 <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>هذه الفاتورة صادرة — للعرض فقط.</Text></Card>
-                <Btn title="طباعة الفاتورة (نموذج 14)" icon="printer" loading={printing} onPress={() => doPrint(false)} testID="button-print" />
-                <Btn title="مشاركة PDF (واتساب / بريد)" icon="share-2" kind="outline" loading={sharing} onPress={() => doPrint(true)} testID="button-share" />
-                <Btn title="إرسال عبر واتساب" icon="message-circle" kind="outline" onPress={sendWhatsApp} testID="button-whatsapp" />
+                {mp('invoice_print') ? (
+                  <>
+                    <Btn title="طباعة الفاتورة (نموذج 14)" icon="printer" loading={printing} onPress={() => doPrint(false)} testID="button-print" />
+                    <Btn title="مشاركة PDF (واتساب / بريد)" icon="share-2" kind="outline" loading={sharing} onPress={() => doPrint(true)} testID="button-share" />
+                  </>
+                ) : null}
+                {mp('invoice_whatsapp') ? (
+                  <Btn title="إرسال عبر واتساب" icon="message-circle" kind="outline" onPress={sendWhatsApp} testID="button-whatsapp" />
+                ) : null}
                 {can('sales_invoices', 'post') ? (
                   <Btn title="فك ترحيل الفاتورة" icon="rotate-ccw" kind="destructive" loading={unposting} onPress={doUnpost} testID="button-unpost" />
                 ) : null}

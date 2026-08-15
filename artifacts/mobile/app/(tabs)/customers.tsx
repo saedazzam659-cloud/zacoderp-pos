@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Empty, ErrorBox, Field } from '@/components/ui';
 
@@ -18,6 +19,7 @@ interface CustomerRow {
 
 export default function Customers() {
   const { companyId, can } = useAuth();
+  const { mp } = useMobilePerms();
   const c = useColors();
   const qc = useQueryClient();
   const insets = useSafeAreaInsets();
@@ -66,7 +68,7 @@ export default function Customers() {
       <View style={{ backgroundColor: c.primary, paddingTop: topInset + 10, paddingBottom: 14, paddingHorizontal: 16, gap: 12 }}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ color: '#fff', fontSize: 19, fontFamily: 'Inter_700Bold' }}>العملاء</Text>
-          {can('customers', 'create') ? (
+          {can('customers', 'create') && mp('customer_create') ? (
             <Pressable testID="button-new-customer" onPress={() => setShowAdd(true)} style={{ backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 12, padding: 8 }}>
               <Feather name="user-plus" size={20} color="#fff" />
             </Pressable>
@@ -84,7 +86,11 @@ export default function Customers() {
         </View>
       </View>
 
-      {q.isError ? (
+      {!mp('customers_view') ? (
+        <View style={{ padding: 20 }}>
+          <Empty icon="lock" text="ليست لديك صلاحية عرض العملاء من التطبيق" />
+        </View>
+      ) : q.isError ? (
         <ErrorBox text={(q.error as Error)?.message ?? 'فشل تحميل العملاء'} onRetry={() => q.refetch()} />
       ) : (
         <FlatList

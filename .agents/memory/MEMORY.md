@@ -155,4 +155,5 @@
 - [Agent full edition + provisioning](agent-full-edition-provisioning.md) — mode=full runs the whole bundle locally; release=tar of own dist; shell-safety validators + claim-before-mint + loopback DB URL.
 - [Mobile companion app](mobile-companion-app.md) — Expo app calls api-server directly; branchId+customer+warehouseId mandatory on sales create, invoiceType is derived server-side, vouchers need explicit /post.
 - [Agent-server SSH rescue from dev](agent-server-ssh-from-dev.md) — banned prod IP: dev workspace IP differs; decrypt ssh_secret_enc (SESSION_SECRET shared) + sshpass unban; install script whitelists via $SSH_CONNECTION.
+- [Mobile app permissions](mobile-app-permissions.md) — users.mobile_permissions (NULL=allowed) + session-bound channel (users.session_channel at login, never header-only); price lock recomputes totals server-side; keys lockstep in 3 places.
 - [External DB storage routing](external-db-storage-routing.md) — SA-only module routing (archive first); tables self-created via lazy DDL (ensureSchema won't); route EVERY consumer incl. delivery-receipt counts.

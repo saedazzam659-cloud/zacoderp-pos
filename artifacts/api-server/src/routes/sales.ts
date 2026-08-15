@@ -25,6 +25,8 @@ import {
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread, intersectBranchRequest } from "../middleware/auth.js";
+import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
+import { usersTable } from "@workspace/db";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type BatchPick } from "../lib/stockHelpers.js";
@@ -761,9 +763,98 @@ async function getInvoiceQuota(companyId: number): Promise<{ limit: number; used
   return { limit, used, remaining: Math.max(0, limit - used), hasSubscription: !!sub, periodStart, periodEnd };
 }
 
+// ─── Mobile-app rights gate (صلاحيات تطبيق الموبايل) ────────────────────────
+// Applies ONLY to requests carrying `x-app-channel: mobile`. Web/API clients
+// are untouched. Semantics: users.mobile_permissions NULL / missing key =
+// allowed; explicit false = denied; admin/superadmin bypass.
+//   invoice_create      → gates POST (creating a new sales invoice)
+//   invoice_edit_price  → when denied, every line's unitPrice must equal the
+//                         item's stored salePrice (±0.01 rounding tolerance)
+//                         so a stale/patched app can't override prices.
+// Returns true when the request may proceed; otherwise the response has
+// already been sent (403/400).
+async function enforceMobileSalesRights(
+  req: any, res: any, cid: number, lines: any[] | undefined, action: "create" | "edit",
+): Promise<boolean> {
+  const role = req.authUser?.role;
+  if (role === "admin" || role === "superadmin") return true;
+  const uid = Number(req.authUser?.id);
+  if (!Number.isFinite(uid) || uid <= 0) return true; // no user context → other guards handle auth
+  const [u] = await db.select({
+    mobilePermissions: usersTable.mobilePermissions,
+    role: usersTable.role,
+    sessionChannel: usersTable.sessionChannel,
+  })
+    .from(usersTable)
+    .where(and(eq(usersTable.id, uid), eq(usersTable.companyId, cid)));
+  if (!u) return true;
+  // Mobile is decided by the SESSION's opening channel (set at login), OR by
+  // the per-request header — dropping the header on a mobile session cannot
+  // un-bind enforcement.
+  if (u.sessionChannel !== "mobile" && !isMobileChannel(req)) return true;
+  const holder = { role: u.role, mobilePermissions: u.mobilePermissions };
+  if (action === "create" && !mobilePermAllowed(holder, "invoice_create")) {
+    res.status(403).json({ error: "ليست لديك صلاحية إنشاء فاتورة من تطبيق الموبايل" });
+    return false;
+  }
+  if (!mobilePermAllowed(holder, "invoice_edit_price")) {
+    const ls = Array.isArray(lines) ? lines : [];
+    // Editing without resending lines could silently rewrite header totals —
+    // require the full line set when price-editing is denied.
+    if (action === "edit" && !ls.length) {
+      res.status(403).json({ error: "ليست لديك صلاحية تعديل أسعار/مبالغ الفاتورة من تطبيق الموبايل" });
+      return false;
+    }
+    const ids = Array.from(new Set(ls.map((l: any) => Number(l?.itemId)).filter((n) => Number.isInteger(n) && n > 0)));
+    if (ids.length) {
+      const rows = await db.select({ id: itemsTable.id, salePrice: itemsTable.salePrice })
+        .from(itemsTable)
+        .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, ids)));
+      const priceById = new Map(rows.map((r) => [r.id, parseFloat(String(r.salePrice ?? "0")) || 0]));
+      for (const l of ls) {
+        const iid = Number(l?.itemId);
+        if (!priceById.has(iid)) continue;
+        const sent = parseFloat(String(l?.unitPrice ?? "0")) || 0;
+        const stored = priceById.get(iid)!;
+        if (Math.abs(sent - stored) > 0.01) {
+          res.status(403).json({ error: "ليست لديك صلاحية تعديل سعر البيع من تطبيق الموبايل" });
+          return false;
+        }
+      }
+    }
+    // Header totals must be derivable from the (verified) lines — blocks
+    // forged subtotal/vatAmount/totalAmount or discount abuse while unit
+    // prices look correct.
+    const body = req.body ?? {};
+    const inclusive = body.priceIncludesVat === true;
+    let expSub = 0, expVat = 0;
+    for (const l of ls) {
+      const q = parseFloat(String(l?.qty ?? l?.quantity ?? "0")) || 0;
+      const p = parseFloat(String(l?.unitPrice ?? "0")) || 0;
+      const r = (parseFloat(String(l?.vatRate ?? "15")) || 0) / 100;
+      const gross = q * p;
+      if (inclusive) { const net = gross / (1 + r); expSub += net; expVat += gross - net; }
+      else { expSub += gross; expVat += gross * r; }
+    }
+    const discount = Math.abs(parseFloat(String(body.discountAmount ?? "0")) || 0);
+    const sentTotal = parseFloat(String(body.totalAmount ?? "0")) || 0;
+    // Allow generous rounding slack (0.05 SAR per line + 0.1) but nothing more.
+    const tol = 0.1 + ls.length * 0.05;
+    if (discount > 0.009 || (sentTotal > 0 && Math.abs(sentTotal - (expSub + expVat)) > tol)) {
+      res.status(403).json({ error: "ليست لديك صلاحية تعديل مبالغ الفاتورة (خصم/إجمالي) من تطبيق الموبايل" });
+      return false;
+    }
+  }
+  return true;
+}
+
 router.post("/sales-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    // ─── Mobile-app rights (صلاحيات تطبيق الموبايل) ───
+    // Enforced server-side for the mobile channel so a revoked right applies
+    // immediately even if the app UI is stale. NULL map = all allowed.
+    if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "create"))) return;
     // Plan-based monthly cap. Re-checked on every POST so SuperAdmin
     // upgrades take effect immediately. Returns the limit + used count
     // so the frontend can render an actionable message.
@@ -1069,6 +1160,8 @@ router.post("/sales-invoices", async (req, res) => {
 router.put("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    // Mobile-app rights — same gate as POST (see enforceMobileSalesRights).
+    if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "edit"))) return;
     const id = Number(req.params.id);
     // POSTED-DOC LOCK: a sales invoice that has been posted (status='posted')
     // is immutable from the edit screen. The user must explicitly call the

@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { todayISO } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Field } from '@/components/ui';
 
@@ -15,6 +16,7 @@ export default function NewVoucher() {
   const qc = useQueryClient();
   const params = useLocalSearchParams<{ invoiceId?: string; customerId?: string }>();
   const { companyId } = useAuth();
+  const { mp } = useMobilePerms();
   const c = useColors();
   const insets = useSafeAreaInsets();
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
@@ -137,7 +139,11 @@ export default function NewVoucher() {
           <Field label="البيان" value={description} onChangeText={setDescription} multiline />
         </Card>
         {error ? <Text style={{ color: c.destructive, textAlign: 'right', fontSize: 13 }}>{error}</Text> : null}
-        <Btn title="حفظ السند" onPress={save} loading={busy} icon="check" testID="button-save-voucher" />
+        {mp('voucher_create') ? (
+          <Btn title="حفظ السند" onPress={save} loading={busy} icon="check" testID="button-save-voucher" />
+        ) : (
+          <Card><Text style={{ textAlign: 'right', color: c.destructive }}>ليست لديك صلاحية إنشاء سند قبض من التطبيق — تواصل مع مدير النظام.</Text></Card>
+        )}
       </ScrollView>
 
       <Modal visible={showPick} transparent animationType="slide" onRequestClose={() => setShowPick(false)}>

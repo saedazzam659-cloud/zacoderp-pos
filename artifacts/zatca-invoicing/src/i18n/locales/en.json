@@ -2594,7 +2594,25 @@
     "postDocFaDepreciation": "Fixed-asset depreciation",
     "postDocFaDisposal": "Fixed-asset disposal",
     "postDocCtgOutgoingBill": "Outgoing contracting bills",
-    "postDocCtgIncomingBill": "Incoming contracting bills"
+    "postDocCtgIncomingBill": "Incoming contracting bills",
+    "tabMobile": "Mobile app permissions",
+    "mobileSectionHint": "Choose which features this user can access inside the mobile app. Changes apply instantly in the app without re-login.",
+    "mobileAdminNote": "Admins and superadmins always get every app feature regardless of these settings.",
+    "mobileFeatureCol": "App feature",
+    "mobileAllowedCol": "Allowed",
+    "mobileLiveHint": "Without a permission, the button/screen disappears from the app immediately and the server rejects the action even from an outdated app.",
+    "mobInvoicesView": "View sales invoices",
+    "mobInvoiceCreate": "Create sales invoice",
+    "mobInvoiceEditPrice": "Edit sale price on invoice",
+    "mobInvoicePrint": "Print / share invoice PDF",
+    "mobInvoiceWhatsapp": "Send invoice via WhatsApp",
+    "mobReturnsView": "View sales returns",
+    "mobReturnCreate": "Create sales return",
+    "mobVouchersView": "View receipt vouchers",
+    "mobVoucherCreate": "Create receipt voucher",
+    "mobCustomersView": "View customers",
+    "mobCustomerCreate": "Add new customer",
+    "mobReportsView": "Summary & reports"
   },
   "perms": {
     "groups": {

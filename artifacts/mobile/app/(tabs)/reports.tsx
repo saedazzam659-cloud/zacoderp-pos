@@ -7,11 +7,13 @@ import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { money } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Card, ErrorBox } from '@/components/ui';
 
 export default function Summary() {
   const { companyId, can } = useAuth();
+  const { mp } = useMobilePerms();
   const router = useRouter();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -55,7 +57,11 @@ export default function Summary() {
       <View style={{ backgroundColor: c.primary, paddingTop: topInset + 10, paddingBottom: 16, paddingHorizontal: 16 }}>
         <Text style={{ color: '#fff', fontSize: 19, fontFamily: 'Inter_700Bold', textAlign: 'right' }}>ملخص المبيعات</Text>
       </View>
-      {q.isError ? (
+      {!mp('reports_view') ? (
+        <View style={{ padding: 20 }}>
+          <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>ليست لديك صلاحية عرض التقارير من التطبيق.</Text></Card>
+        </View>
+      ) : q.isError ? (
         <ErrorBox text={(q.error as Error)?.message ?? 'فشل تحميل البيانات'} onRetry={() => q.refetch()} />
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>

@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { money, showDate } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Empty, ErrorBox } from '@/components/ui';
 
@@ -31,6 +32,7 @@ const STATUS_AR: Record<string, { label: string; tone: 'ok' | 'warn' | 'muted' }
 
 export default function Invoices() {
   const { companyId } = useAuth();
+  const { mp } = useMobilePerms();
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -59,13 +61,15 @@ export default function Invoices() {
       <View style={{ backgroundColor: c.primary, paddingTop: topInset + 10, paddingBottom: 14, paddingHorizontal: 16, gap: 12 }}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ color: '#fff', fontSize: 19, fontFamily: 'Inter_700Bold' }}>فواتير المبيعات</Text>
-          <Pressable
-            testID="button-new-invoice"
-            onPress={() => router.push('/invoice/new')}
-            style={{ backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 12, padding: 8 }}
-          >
-            <Feather name="plus" size={20} color="#fff" />
-          </Pressable>
+          {mp('invoice_create') ? (
+            <Pressable
+              testID="button-new-invoice"
+              onPress={() => router.push('/invoice/new')}
+              style={{ backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 12, padding: 8 }}
+            >
+              <Feather name="plus" size={20} color="#fff" />
+            </Pressable>
+          ) : null}
         </View>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 10 }}>
           <Feather name="search" size={16} color="rgba(255,255,255,0.8)" />
@@ -79,7 +83,11 @@ export default function Invoices() {
         </View>
       </View>
 
-      {q.isError ? (
+      {!mp('invoices_view') ? (
+        <View style={{ padding: 20 }}>
+          <Empty icon="lock" text="ليست لديك صلاحية عرض الفواتير من التطبيق" />
+        </View>
+      ) : q.isError ? (
         <ErrorBox text={(q.error as Error)?.message ?? 'فشل تحميل الفواتير'} onRetry={() => q.refetch()} />
       ) : (
         <FlatList

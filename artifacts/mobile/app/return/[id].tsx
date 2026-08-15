@@ -12,12 +12,13 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { money, qty as fq, todayISO } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Empty, Field } from '@/components/ui';
 
@@ -50,6 +51,7 @@ export default function SalesReturnForm() {
   const router = useRouter();
   const qc = useQueryClient();
   const { companyId, user } = useAuth();
+  const { mp } = useMobilePerms();
   const c = useColors();
   const insets = useSafeAreaInsets();
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
@@ -83,6 +85,13 @@ export default function SalesReturnForm() {
     queryFn: () => api<any[]>(`/api/inventory/items?companyId=${companyId}&includeHidden=1`),
     enabled: !!companyId,
   });
+  // أسعار حية: إعادة جلب الأصناف عند كل عودة لهذه الشاشة
+  useFocusEffect(
+    React.useCallback(() => {
+      if (companyId) itemsQ.refetch();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [companyId]),
+  );
   // الكميات المرتجعة سابقاً لهذه الفاتورة — السقف = المباع − المرتجع سابقاً
   const returnedQ = useQuery({
     queryKey: ['returned-by-item', srcInvoiceId],
@@ -426,8 +435,14 @@ export default function SalesReturnForm() {
         {saveError ? <Text style={{ color: c.destructive, textAlign: 'right', fontSize: 13 }}>{saveError}</Text> : null}
         {!readOnly ? (
           <View style={{ gap: 10 }}>
-            <Btn title="حفظ وترحيل المرتجع" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post-return" />
-            <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft-return" />
+            {isNew && !mp('return_create') ? (
+              <Card><Text style={{ textAlign: 'right', color: c.destructive }}>ليست لديك صلاحية إنشاء مرتجع من التطبيق — تواصل مع مدير النظام.</Text></Card>
+            ) : (
+              <>
+                <Btn title="حفظ وترحيل المرتجع" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post-return" />
+                <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft-return" />
+              </>
+            )}
           </View>
         ) : (
           <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>{isPosted ? 'هذا المرتجع مرحّل — للعرض فقط.' : 'مرتجع محفوظ — التعديل من النظام الرئيسي.'}</Text></Card>

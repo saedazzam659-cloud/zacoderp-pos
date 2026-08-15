@@ -5,11 +5,13 @@ import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { getDomain, setDomain, defaultDomain } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Field } from '@/components/ui';
 
 export default function More() {
   const { user, logout } = useAuth();
+  const { mp } = useMobilePerms();
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -71,8 +73,12 @@ export default function More() {
 
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
         <Card style={{ paddingVertical: 4 }}>
-          <RowItem icon="file-text" title="سندات القبض" onPress={() => router.push('/voucher/list' as any)} testID="row-vouchers" />
-          <View style={{ height: 1, backgroundColor: c.border }} />
+          {mp('vouchers_view') ? (
+            <>
+              <RowItem icon="file-text" title="سندات القبض" onPress={() => router.push('/voucher/list' as any)} testID="row-vouchers" />
+              <View style={{ height: 1, backgroundColor: c.border }} />
+            </>
+          ) : null}
           <RowItem icon="server" title="إعدادات الخادم" onPress={() => setShowServer(true)} testID="row-server-settings" />
           <View style={{ height: 1, backgroundColor: c.border }} />
           <RowItem icon="log-out" title="تسجيل الخروج" onPress={doLogout} danger testID="row-logout" />

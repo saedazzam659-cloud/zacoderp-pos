@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
-  CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck, PowerOff, Power,
+  CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck, PowerOff, Power, Smartphone,
   Copy, ArrowLeftRight, Sparkles, Eye, EyeOff, ChevronLeft, ChevronRight, BookCheck,
 } from "lucide-react";
 import {
@@ -100,6 +100,7 @@ type UserRow = {
   // Approval workflow — server returns numeric strings for the cap because
   // it's a NUMERIC column; we coerce on form-load.
   postingPermissions?: Record<string, { post?: boolean; unpost?: boolean }> | null;
+  mobilePermissions?: Record<string, boolean> | null;
   canApprove?: boolean;
   approvalLevel?: number;
   maxApprovalAmount?: string | number | null;
@@ -136,6 +137,34 @@ const POSTING_DOC_TYPES: Array<{ key: string; labelKey: string }> = [
 
 type PostingPerms = Record<string, { post: boolean; unpost: boolean }>;
 
+// ─── Per-user MOBILE APP rights (صلاحيات تطبيق الموبايل) ──────────────────
+// Mirrors api-server lib/mobilePerms.ts. Semantics: unchecked = explicitly
+// denied; checked (or never saved) = allowed. Admin/superadmin always bypass.
+// Keys cover every feature of the Expo companion app.
+const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string }> = [
+  { key: "invoices_view",      labelKey: "users.mobInvoicesView" },
+  { key: "invoice_create",     labelKey: "users.mobInvoiceCreate" },
+  { key: "invoice_edit_price", labelKey: "users.mobInvoiceEditPrice" },
+  { key: "invoice_print",      labelKey: "users.mobInvoicePrint" },
+  { key: "invoice_whatsapp",   labelKey: "users.mobInvoiceWhatsapp" },
+  { key: "returns_view",       labelKey: "users.mobReturnsView" },
+  { key: "return_create",      labelKey: "users.mobReturnCreate" },
+  { key: "vouchers_view",      labelKey: "users.mobVouchersView" },
+  { key: "voucher_create",     labelKey: "users.mobVoucherCreate" },
+  { key: "customers_view",     labelKey: "users.mobCustomersView" },
+  { key: "customer_create",    labelKey: "users.mobCustomerCreate" },
+  { key: "reports_view",       labelKey: "users.mobReportsView" },
+];
+
+type MobilePerms = Record<string, boolean>;
+
+// Seed the matrix: every feature checked (allowed) unless explicitly denied.
+const seedMobilePerms = (stored?: Record<string, boolean> | null): MobilePerms => {
+  const out: MobilePerms = {};
+  for (const d of MOBILE_PERM_KEYS) out[d.key] = stored?.[d.key] !== false;
+  return out;
+};
+
 // Seed the matrix: every doc type checked (allowed) unless the stored map
 // explicitly denies it. A user who was never configured sees all-checked.
 const seedPostingPerms = (stored?: Record<string, { post?: boolean; unpost?: boolean }> | null): PostingPerms => {
@@ -170,6 +199,8 @@ const emptyForm = () => ({
   // All-checked by default — matches the server's back-compat "allowed unless
   // explicitly denied" semantics.
   postingPermissions: seedPostingPerms(),
+  // All-checked by default — allowed unless explicitly denied (server mirror).
+  mobilePermissions: seedMobilePerms(),
   // Approval defaults: off, level 0, no cap, single-signature is fine.
   canApprove: false,
   approvalLevel: 0,
@@ -389,6 +420,7 @@ export default function Users() {
       // plain re-save can never silently grant view on every module.
       permissions: { ...emptyPermissions(), ...(u.permissions ?? {}) },
       postingPermissions: seedPostingPerms(u.postingPermissions),
+      mobilePermissions: seedMobilePerms((u as any).mobilePermissions),
       // Approval workflow fields — coerce numeric-string cap to a string the
       // <Input type="number"> can render without leading zeros.
       canApprove: !!u.canApprove,
@@ -426,6 +458,7 @@ export default function Users() {
         branchIds: form.branchIds,
         permissions: form.permissions,
         postingPermissions: form.postingPermissions,
+        mobilePermissions: form.mobilePermissions,
         // Approval workflow — server clamps these too as a safety net.
         canApprove: form.canApprove,
         approvalLevel: Number(form.approvalLevel) || 0,
@@ -727,7 +760,7 @@ export default function Users() {
 
           <CardContent className="pt-5">
             <Tabs defaultValue="info" className="w-full" dir={isRtl ? "rtl" : "ltr"}>
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5">
+              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-6">
                 <TabsTrigger value="info">{t("users.tabInfo")}</TabsTrigger>
                 <TabsTrigger value="branches">{t("users.tabBranches", { count: form.branchIds.length })}</TabsTrigger>
                 <TabsTrigger value="permissions">{t("users.tabPermissions")}</TabsTrigger>
@@ -738,6 +771,11 @@ export default function Users() {
                 <TabsTrigger value="approval" data-testid="tab-approval" className="gap-1.5">
                   <ShieldCheck className="h-3.5 w-3.5" />
                   {t("users.tabApproval")}
+                </TabsTrigger>
+                {/* RTL: rendered after approval so it appears to its LEFT */}
+                <TabsTrigger value="mobile" data-testid="tab-mobile" className="gap-1.5">
+                  <Smartphone className="h-3.5 w-3.5" />
+                  {t("users.tabMobile")}
                 </TabsTrigger>
               </TabsList>
 
@@ -1366,6 +1404,67 @@ export default function Users() {
                     {t("users.approvalDisabledHint")}
                   </div>
                 )}
+              </TabsContent>
+
+              {/* Mobile-app rights tab — صلاحيات تطبيقات الموبايل */}
+              <TabsContent value="mobile" className="space-y-4 pt-4" data-testid="mobile-tab-content">
+                <div className="text-sm text-muted-foreground flex items-start gap-2 p-3 rounded-lg border border-teal-200 bg-teal-50/40 dark:bg-teal-950/20">
+                  <Smartphone className="h-4 w-4 text-teal-600 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-semibold text-teal-900 dark:text-teal-100">{t("users.tabMobile")}</div>
+                    <div className="text-xs mt-0.5">{t("users.mobileSectionHint")}</div>
+                    {form.role === "admin" && (
+                      <div className="text-xs mt-1.5 text-amber-700 font-medium">{t("users.mobileAdminNote")}</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex gap-2 text-xs">
+                  <Button type="button" variant="outline" size="sm" data-testid="btn-mobile-all"
+                    onClick={() => setForm(f => ({ ...f, mobilePermissions: seedMobilePerms() }))}>
+                    {t("users.postingAllowAll")}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" data-testid="btn-mobile-none"
+                    onClick={() => setForm(f => {
+                      const next: MobilePerms = {};
+                      MOBILE_PERM_KEYS.forEach(d => { next[d.key] = false; });
+                      return { ...f, mobilePermissions: next };
+                    })}>
+                    {t("users.postingDenyAll")}
+                  </Button>
+                </div>
+
+                <div className="rounded-lg border overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/60">
+                      <tr>
+                        <th className="text-start px-3 py-2 font-medium">{t("users.mobileFeatureCol")}</th>
+                        <th className="text-center px-3 py-2 font-medium w-28">{t("users.mobileAllowedCol")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {MOBILE_PERM_KEYS.map(d => {
+                        const checked = form.mobilePermissions[d.key] !== false;
+                        return (
+                          <tr key={d.key} className="border-t hover:bg-muted/30">
+                            <td className="px-3 py-1.5">{t(d.labelKey)}</td>
+                            <td className="text-center px-3 py-1.5">
+                              <Checkbox
+                                checked={checked}
+                                data-testid={`mobile-perm-${d.key}`}
+                                onCheckedChange={(v) => setForm(f => ({
+                                  ...f,
+                                  mobilePermissions: { ...f.mobilePermissions, [d.key]: !!v },
+                                }))}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[11px] text-muted-foreground">{t("users.mobileLiveHint")}</p>
               </TabsContent>
             </Tabs>
 

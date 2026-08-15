@@ -398,6 +398,9 @@ router.post("/login", async (req, res) => {
   await db.update(usersTable).set({
     sessionToken,
     sessionId,
+    // Bind the session to its opening channel — mobile-app permission
+    // enforcement keys off this (not just the forgeable per-request header).
+    sessionChannel: String(req.headers?.["x-app-channel"] ?? "") === "mobile" ? "mobile" : "web",
     lastLoginAt: new Date(),
     updatedAt: new Date(),
   }).where(eq(usersTable.id, user.id));
@@ -832,6 +835,9 @@ router.get("/me", async (req, res) => {
     nameAr: (user as any).nameAr ?? null,
     nameEn: (user as any).nameEn ?? null,
     permissions: (user as any).permissions ?? {},
+    // Per-user mobile-app rights (صلاحيات تطبيق الموبايل) — null = all
+    // allowed. The Expo app re-reads /me on focus so changes apply live.
+    mobilePermissions: (user as any).mobilePermissions ?? null,
     // Durable per-user UI preferences (column order / hidden columns / colours
     // / page size / widths per screen). Surfaced here so the client can restore
     // a saved grid layout even after a browser cache wipe cleared localStorage.
@@ -1780,7 +1786,7 @@ router.post("/register", async (req, res) => {
     // Admin-created: return token immediately
     const sessionToken = generateToken();
     const sessionId = randomUUID();
-    await db.update(usersTable).set({ sessionToken, sessionId, lastLoginAt: new Date(), updatedAt: new Date() })
+    await db.update(usersTable).set({ sessionToken, sessionId, sessionChannel: "web", lastLoginAt: new Date(), updatedAt: new Date() })
       .where(eq(usersTable.id, newUser.id));
     const [subscription] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, company.id));
     res.status(201).json({

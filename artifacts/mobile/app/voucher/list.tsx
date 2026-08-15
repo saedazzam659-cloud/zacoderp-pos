@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { money } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Card, ErrorBox } from '@/components/ui';
 
@@ -18,6 +19,7 @@ function notify(title: string, msg: string) {
 /** سندات القبض — قائمة مع فك الترحيل (نفس سياسة الويب: الخادم يفرض مصفوفة صلاحيات الترحيل) */
 export default function VoucherList() {
   const { companyId, can } = useAuth();
+  const { mp } = useMobilePerms();
   const router = useRouter();
   const c = useColors();
   const qc = useQueryClient();
@@ -62,7 +64,11 @@ export default function VoucherList() {
           <Feather name="x" size={22} color="#fff" />
         </Pressable>
       </View>
-      {q.isLoading ? (
+      {!mp('vouchers_view') ? (
+        <View style={{ padding: 20 }}>
+          <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>ليست لديك صلاحية عرض سندات القبض من التطبيق.</Text></Card>
+        </View>
+      ) : q.isLoading ? (
         <ActivityIndicator color={c.primary} size="large" style={{ marginTop: 40 }} />
       ) : q.isError ? (
         <ErrorBox text={(q.error as Error)?.message ?? 'فشل تحميل السندات'} onRetry={() => q.refetch()} />

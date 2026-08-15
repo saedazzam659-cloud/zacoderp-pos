@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { money, showDate } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Empty } from '@/components/ui';
 
@@ -14,6 +15,7 @@ import { Empty } from '@/components/ui';
 export default function SalesReturnsList() {
   const router = useRouter();
   const { companyId } = useAuth();
+  const { mp } = useMobilePerms();
   const c = useColors();
   const insets = useSafeAreaInsets();
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
@@ -30,16 +32,22 @@ export default function SalesReturnsList() {
       <View style={{ backgroundColor: c.primary, paddingTop: topInset + 10, paddingBottom: 12, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={{ color: '#fff', fontSize: 17, fontFamily: 'Inter_700Bold' }}>مرتجع المبيعات</Text>
         <View style={{ flexDirection: 'row-reverse', gap: 14, alignItems: 'center' }}>
-          <Pressable testID="button-new-return" onPress={() => router.push('/return/new' as any)} hitSlop={8}>
-            <Feather name="plus-circle" size={22} color="#fff" />
-          </Pressable>
+          {mp('return_create') ? (
+            <Pressable testID="button-new-return" onPress={() => router.push('/return/new' as any)} hitSlop={8}>
+              <Feather name="plus-circle" size={22} color="#fff" />
+            </Pressable>
+          ) : null}
           <Pressable onPress={() => router.back()} hitSlop={8} testID="button-close-returns">
             <Feather name="x" size={22} color="#fff" />
           </Pressable>
         </View>
       </View>
 
-      {listQ.isLoading ? (
+      {!mp('returns_view') ? (
+        <View style={{ padding: 20 }}>
+          <Empty icon="lock" text="ليست لديك صلاحية عرض المرتجعات من التطبيق" />
+        </View>
+      ) : listQ.isLoading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={c.primary} size="large" />
         </View>

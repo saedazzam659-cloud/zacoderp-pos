@@ -33,6 +33,13 @@ export const usersTable = pgTable("users", {
   // today's behaviour); explicit false → denied. Admin/superadmin always
   // bypass. Enforcement lives in api-server lib/postingRights.ts.
   postingPermissions: jsonb("posting_permissions"),
+  // ─── Per-user MOBILE APP rights (صلاحيات تطبيق الموبايل) ─────
+  // Shape: { "<mobileKey>": boolean } — NULL / missing key → ALLOWED
+  // (back-compat); explicit false → denied. Admin/superadmin always bypass.
+  // Keys mirror MOBILE_PERM_KEYS in the web Users screen; enforcement is
+  // client-side gating in the Expo app + server checks on mobile-channel
+  // sales creation (see api-server lib/mobilePerms.ts).
+  mobilePermissions: jsonb("mobile_permissions"),
   // Per-user UI preferences (durable, server-side mirror of what used to live
   // only in localStorage). Survives a browser cache/localStorage wipe. Shape:
   //   { "<screenSlug>": { ...arbitrary layout blob } }
@@ -77,6 +84,10 @@ export const usersTable = pgTable("users", {
   requireSecondApproval: boolean("require_second_approval").notNull().default(false),
   sessionToken: text("session_token"),
   sessionId: text("session_id"),
+  // Channel the CURRENT session was opened from ("web" | "mobile"). Set at
+  // login from x-app-channel; used to bind mobile-app permission enforcement
+  // to the session itself (a forged per-request header can't unbind it).
+  sessionChannel: text("session_channel"),
   // ID of the user's currently-selected manual session (FK to sessions.id, see
   // schema/sessions.ts). Soft reference (no FK constraint) to avoid a circular
   // import. Cleared if the user is removed from the session or the session is

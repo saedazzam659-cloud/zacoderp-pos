@@ -2597,7 +2597,25 @@
     "postDocFaDepreciation": "إهلاك الأصول الثابتة",
     "postDocFaDisposal": "استبعاد الأصول الثابتة",
     "postDocCtgOutgoingBill": "مستخلصات المقاولات الصادرة",
-    "postDocCtgIncomingBill": "مستخلصات المقاولات الواردة"
+    "postDocCtgIncomingBill": "مستخلصات المقاولات الواردة",
+    "tabMobile": "صلاحيات تطبيقات الموبايل",
+    "mobileSectionHint": "حدد الميزات المتاحة لهذا المستخدم داخل تطبيق الجوال. أي تغيير هنا يُطبَّق فوراً في التطبيق دون الحاجة لإعادة تسجيل الدخول.",
+    "mobileAdminNote": "المدير والمشرف العام مسموح لهم دائماً بكل ميزات التطبيق بغض النظر عن هذه الإعدادات.",
+    "mobileFeatureCol": "الميزة في التطبيق",
+    "mobileAllowedCol": "مسموح",
+    "mobileLiveHint": "المستخدم بدون صلاحية: يختفي الزر/الشاشة من التطبيق مباشرة، ويرفض السيرفر العملية حتى لو كان التطبيق قديماً.",
+    "mobInvoicesView": "عرض فواتير المبيعات",
+    "mobInvoiceCreate": "إنشاء فاتورة مبيعات",
+    "mobInvoiceEditPrice": "تعديل سعر البيع في الفاتورة",
+    "mobInvoicePrint": "طباعة / مشاركة الفاتورة PDF",
+    "mobInvoiceWhatsapp": "إرسال الفاتورة عبر واتساب",
+    "mobReturnsView": "عرض مرتجعات المبيعات",
+    "mobReturnCreate": "إنشاء مرتجع مبيعات",
+    "mobVouchersView": "عرض سندات القبض",
+    "mobVoucherCreate": "إنشاء سند قبض",
+    "mobCustomersView": "عرض العملاء",
+    "mobCustomerCreate": "إضافة عميل جديد",
+    "mobReportsView": "الملخص والتقارير"
   },
   "perms": {
     "groups": {

@@ -4,6 +4,7 @@ import { usersTable, userBranchesTable, branchesTable, subscriptionsTable } from
 import { eq, and, asc, ne, inArray, desc, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { sanitizeMobilePermissions } from "../lib/mobilePerms.js";
 
 const router = Router();
 
@@ -104,6 +105,7 @@ router.get("/", async (req, res) => {
       nameEn: usersTable.nameEn,
       permissions: usersTable.permissions,
       postingPermissions: usersTable.postingPermissions,
+      mobilePermissions: usersTable.mobilePermissions,
       viewAllBranches: usersTable.viewAllBranches,
       scopeOwnCustomersOnly: usersTable.scopeOwnCustomersOnly,
       isActive: usersTable.isActive,
@@ -216,6 +218,9 @@ router.post("/", async (req, res) => {
       // Per-user POST/UNPOST rights (صلاحيات الترحيل وفك الترحيل). NULL =
       // all allowed (back-compat); see lib/postingRights.ts.
       postingPermissions: sanitizePostingPermissions(req.body?.postingPermissions),
+      // Per-user mobile-app rights (صلاحيات تطبيق الموبايل). NULL = all
+      // allowed (back-compat); see lib/mobilePerms.ts.
+      mobilePermissions: sanitizeMobilePermissions(req.body?.mobilePermissions),
       // Default true if not provided (matches the column default).
       viewAllBranches: typeof viewAllBranches === "boolean" ? viewAllBranches : true,
       scopeOwnCustomersOnly: typeof req.body?.scopeOwnCustomersOnly === "boolean" ? req.body.scopeOwnCustomersOnly : false,
@@ -294,6 +299,9 @@ router.patch("/:id", async (req, res) => {
     if (permissions !== undefined) update.permissions = permissions;
     if (req.body?.postingPermissions !== undefined) {
       update.postingPermissions = sanitizePostingPermissions(req.body.postingPermissions);
+    }
+    if (req.body?.mobilePermissions !== undefined) {
+      update.mobilePermissions = sanitizeMobilePermissions(req.body.mobilePermissions);
     }
     // ─── Approval permissions (clamped) ───
     if (typeof canApprove === "boolean") update.canApprove = canApprove;

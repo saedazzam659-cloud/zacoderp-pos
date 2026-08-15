@@ -12,7 +12,8 @@ if (!__DEV__) {
   });
 }
 import { checkForcedUpdate, currentAppVersion, type UpdateCheck } from '@/lib/appUpdate';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AppState } from 'react-native';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -31,7 +32,24 @@ import * as SplashScreen from 'expo-splash-screen';
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
-const queryClient = new QueryClient();
+// بيانات حية دائماً: أي شاشة تُفتح تعيد جلب بياناتها من السيرفر فوراً
+// (staleTime 0 + refetchOnMount 'always')، فتظهر تعديلات الأسعار/الأصناف
+// التي تمت من الويب مباشرة دون الحاجة لإغلاق التطبيق أو السحب للتحديث.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 0,
+      refetchOnMount: 'always',
+      refetchOnReconnect: true,
+    },
+  },
+});
+
+// عند عودة التطبيق من الخلفية إلى الواجهة، تُحدَّث كل الاستعلامات النشطة
+// تلقائياً (react-query focusManager) — نفس سلوك المتصفح عند العودة للتبويب.
+AppState.addEventListener('change', (s) => {
+  focusManager.setFocused(s === 'active');
+});
 
 // Forced-update gate sits ABOVE the router so deep links can't bypass it.
 // Fail-open (offline/server error ⇒ app works normally); while checking we
