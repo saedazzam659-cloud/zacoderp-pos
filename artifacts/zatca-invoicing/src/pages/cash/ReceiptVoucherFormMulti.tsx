@@ -651,7 +651,10 @@ export default function ReceiptVoucherFormMulti() {
         try { next.select(); } catch { /* date inputs don't support select */ }
       }
     } else {
-      if (!saveMut.isPending && !isLockedSourceEntry) save("draft");
+      // Last field: do NOT auto-save (a stray Enter used to silently create
+      // a duplicate draft voucher). Move focus to the save button instead so
+      // the user confirms explicitly.
+      document.querySelector<HTMLElement>('[data-testid="rv-save-draft"]')?.focus();
     }
     return true;
   }
