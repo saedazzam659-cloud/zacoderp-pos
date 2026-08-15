@@ -93,7 +93,7 @@ export default function Customers() {
       <View style={{ backgroundColor: c.primary, paddingTop: topInset + 10, paddingBottom: 14, paddingHorizontal: 16, gap: 12 }}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ color: '#fff', fontSize: 19, fontFamily: 'Inter_700Bold' }}>العملاء</Text>
-          {can('customers', 'create') && mp('customer_create') ? (
+          {mp('customer_create') ? (
             <Pressable testID="button-new-customer" onPress={() => setShowAdd(true)} style={{ backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 12, padding: 8 }}>
               <Feather name="user-plus" size={20} color="#fff" />
             </Pressable>

@@ -321,6 +321,7 @@ export default function InvoiceForm() {
       const it = items.find((i) => i.id === l.itemId);
       return {
         itemId: l.itemId,
+        itemName: l.name || it?.nameAr || `صنف ${l.itemId}`,
         qty: l.qty,
         unitPrice: l.unitPrice,
         vatRate: l.vatRate,

@@ -624,7 +624,9 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number, fallbackRate = "
   return {
     invoiceId, companyId: cid,
     itemId:      l.itemId      ? Number(l.itemId)      : null,
-    itemName:    l.itemName,
+    // item_name is NOT NULL — older mobile clients omit it, so fall back to
+    // any provided display name and finally a generic label (never null).
+    itemName:    String(l.itemName ?? l.name ?? (l.itemId != null ? `صنف ${l.itemId}` : "صنف")),
     itemCode:    l.itemCode    || null,
     unit:        l.unit        || null,
     unitId:      l.unitId      ? Number(l.unitId)      : null,
@@ -2989,7 +2991,7 @@ function mapQuotationLine(l: any, quotationId: number, cid: number, fallbackRate
   return {
     quotationId, companyId: cid,
     itemId:    l.itemId   ? Number(l.itemId)   : null,
-    itemName:  l.itemName,
+    itemName:  String(l.itemName ?? l.name ?? (l.itemId != null ? `صنف ${l.itemId}` : "صنف")),
     itemCode:  l.itemCode || null,
     unit:      l.unit     || null,
     unitId:    l.unitId   ? Number(l.unitId)   : null,

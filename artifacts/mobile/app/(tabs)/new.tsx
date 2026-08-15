@@ -16,12 +16,15 @@ export default function NewMenu() {
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
 
   const items: { icon: keyof typeof Feather.glyphMap; title: string; sub: string; href: string; show: boolean; testID: string }[] = [
-    { icon: 'file-plus', title: 'فاتورة مبيعات', sub: 'فاتورة ضريبية أو مبسطة', href: '/invoice/new', show: (can('sales_module', 'create') || can('sales_module')) && mp('invoice_create'), testID: 'action-new-invoice' },
-    { icon: 'file-text', title: 'عرض سعر', sub: 'عرض سعر قابل للتحويل إلى فاتورة', href: '/quotation/new', show: (can('sales_module', 'create') || can('sales_module')) && mp('quotation_create'), testID: 'action-new-quotation' },
-    { icon: 'list', title: 'عروض الأسعار', sub: 'استعراض ومتابعة عروض الأسعار', href: '/quotations', show: (can('sales_module', 'view') || can('sales_module')) && mp('quotations_view'), testID: 'action-quotations-list' },
-    { icon: 'corner-up-right', title: 'مرتجع مبيعات', sub: 'إرجاع أصناف من عميل', href: '/returns', show: (can('sales_module', 'create') || can('sales_module')) && mp('return_create'), testID: 'action-sales-returns' },
-    { icon: 'download', title: 'سند قبض', sub: 'تحصيل دفعة من عميل', href: '/voucher/new', show: (can('cash_module', 'create') || can('cash_module')) && mp('voucher_create'), testID: 'action-new-voucher' },
-    { icon: 'user-plus', title: 'عميل جديد', sub: 'إضافة عميل إلى السجل', href: '/(tabs)/customers', show: (can('customers', 'create') || can('customers')) && mp('customer_create'), testID: 'action-new-customer' },
+    // تطبيق الموبايل محكوم بصلاحيات تطبيقات الموبايل (mp) فقط — صلاحيات
+    // الويب granular وغالباً لا تحتوي مفاتيح المجموعات مثل sales_module،
+    // فاشتراط can() كان يخفي كل العناصر عن المستخدمين غير الـ admin.
+    { icon: 'file-plus', title: 'فاتورة مبيعات', sub: 'فاتورة ضريبية أو مبسطة', href: '/invoice/new', show: mp('invoice_create'), testID: 'action-new-invoice' },
+    { icon: 'file-text', title: 'عرض سعر', sub: 'عرض سعر قابل للتحويل إلى فاتورة', href: '/quotation/new', show: mp('quotation_create'), testID: 'action-new-quotation' },
+    { icon: 'list', title: 'عروض الأسعار', sub: 'استعراض ومتابعة عروض الأسعار', href: '/quotations', show: mp('quotations_view'), testID: 'action-quotations-list' },
+    { icon: 'corner-up-right', title: 'مرتجع مبيعات', sub: 'إرجاع أصناف من عميل', href: '/returns', show: mp('return_create'), testID: 'action-sales-returns' },
+    { icon: 'download', title: 'سند قبض', sub: 'تحصيل دفعة من عميل', href: '/voucher/new', show: mp('voucher_create'), testID: 'action-new-voucher' },
+    { icon: 'user-plus', title: 'عميل جديد', sub: 'إضافة عميل إلى السجل', href: '/(tabs)/customers', show: mp('customer_create'), testID: 'action-new-customer' },
   ];
 
   return (

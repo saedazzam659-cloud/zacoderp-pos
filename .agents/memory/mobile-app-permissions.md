@@ -23,3 +23,7 @@ description: Per-user mobile-channel permission map — key lockstep, session-bo
 - ESCALATION GUARD: the fallback GRANTS what web RBAC denied, so it requires DB sessionChannel==='mobile' AND a NON-NULL mobilePermissions set. NULL (= all-allowed back-compat) grants only in the restricting guard requireMobilePerm, never in the fallback — otherwise spoofing x-app-channel at login bypasses web RBAC.
 - Quotation GET list/detail also carry requireMobilePerm(quotations_view) (web/desktop callers pass through). PUT enforces terminal-state immutability server-side (only draft/sent editable).
 - Quotations list API returns no customerName — mobile list resolves it client-side from /api/customers.
+
+## Mobile UI gates are mp()-only (2026-08)
+- Web `permissions` is GRANULAR (sales_invoices, customers…) and usually lacks group keys like `sales_module`; gating mobile UI on `can('sales_module',…)` blanked the + menu for every non-admin user. Mobile screens/buttons gate on mp() (mobile perms) only; server still enforces web RBAC + mobile fallback.
+- sales_invoice_lines.item_name is NOT NULL: mobile buildBody must send itemName per line, and mapInvoiceLine/mapQuotationLine keep a never-null fallback — the crash surfaced on saving an invoice converted from a quotation (PUT rebuilds ALL lines wholesale).
