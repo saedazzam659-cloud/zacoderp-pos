@@ -1770,17 +1770,15 @@ router.post("/register", async (req, res) => {
 
   // Hash password + create admin user (inactive until superadmin approves)
   const passwordHash = await bcrypt.hash(password, 12);
-  const [newUser] = await db.insert(usersTable).values({
-    username,
-    email: email ?? null,
-    passwordHash,
-    companyId: company.id,
-    role: "admin",
-    sessionToken: null,
-    sessionId: null,
-    lastLoginAt: null,
-    isActive: userIsActive,
-  }).returning();
+  // Raw column-list INSERT on purpose: drizzle's .values() names EVERY schema
+  // column (filling `default`), which breaks on agent DBs whose users table
+  // predates newer platform columns. Core columns work on any schema version.
+  const insertedUser = await db.execute(sql`
+    INSERT INTO users (username, email, password_hash, company_id, role, is_active)
+    VALUES (${username}, ${email ?? null}, ${passwordHash}, ${company.id}, ${"admin"}, ${userIsActive})
+    RETURNING id, username, email, role
+  `);
+  const newUser = ((Array.isArray(insertedUser) ? insertedUser[0] : (insertedUser as any).rows?.[0]) ?? null) as { id: number; username: string; email: string | null; role: string };
 
   if (callerIsSuperAdmin) {
     // Admin-created: return token immediately
