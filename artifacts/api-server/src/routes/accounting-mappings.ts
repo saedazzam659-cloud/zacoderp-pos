@@ -83,6 +83,13 @@ router.put("/bulk", requireAdmin, async (req, res) => {
     type Cleaned = { documentType: string; roleKey: string; accountId: number | null; isLocked: boolean };
     const cleaned: Cleaned[] = [];
     const accountIdsToCheck = new Set<number>();
+    // Control-parent roles: these accounts legitimately grow auto-minted
+    // children (e.g. «موردون محليون» gains a sub-account per supplier), so the
+    // leaf-account check must NOT reject them. Tenant validation still applies.
+    const PARENT_OK_ROLES = new Set(["payable", "receivable"]);
+    const isParentOk = (dt: string, rk: string) =>
+      dt === "entity_account_parents" || PARENT_OK_ROLES.has(rk);
+    const leafCheckIds = new Set<number>();
 
     for (const it of items) {
       const documentType = String(it.documentType || "").trim();
@@ -93,7 +100,10 @@ router.put("/bulk", requireAdmin, async (req, res) => {
         return;
       }
       const accountId = it.accountId ? Number(it.accountId) : null;
-      if (accountId) accountIdsToCheck.add(accountId);
+      if (accountId) {
+        accountIdsToCheck.add(accountId);
+        if (!isParentOk(documentType, roleKey)) leafCheckIds.add(accountId);
+      }
       cleaned.push({ documentType, roleKey, accountId, isLocked: !!it.isLocked });
     }
 
@@ -108,7 +118,7 @@ router.put("/bulk", requireAdmin, async (req, res) => {
         }
       }
       try {
-        await ensureLeafAccounts(companyId, Array.from(accountIdsToCheck));
+        await ensureLeafAccounts(companyId, Array.from(leafCheckIds));
       } catch (err: any) {
         res.status(400).json({ error: err?.message ?? "حساب رئيسي غير مسموح" });
         return;

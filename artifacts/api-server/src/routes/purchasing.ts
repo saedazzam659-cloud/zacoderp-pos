@@ -3014,9 +3014,35 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
 
-    const noWh = lines.filter(l => l.itemId && !l.warehouseId);
+    // Item metadata (type + batch mode + cost account). SERVICE/prepaid items
+    // (خدمي/مصروف مقدم) NEVER touch stock — mirrors the purchase-invoice
+    // posting path: exempt from the warehouse requirement, skipped in stock
+    // ops, and CREDITED to their own cost account (reversal of the invoice's
+    // service-cost debit).
+    const retItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const retItemRows = retItemIds.length
+      ? await db
+          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType, costAcc: itemsTable.costAccountId })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, retItemIds)))
+      : [];
+    const retTypeById = new Map<number, string>();
+    const retCostAccById = new Map<number, number | null>();
+    for (const r of retItemRows) { retTypeById.set(r.id, (r.type ?? "stock") as string); retCostAccById.set(r.id, r.costAcc ?? null); }
+    const isSvcLine = (l: any) => {
+      if (!l.itemId) return false;
+      const t = retTypeById.get(l.itemId);
+      return t === "service" || t === "prepaid_expense";
+    };
+
+    const noWh = lines.filter(l => l.itemId && !l.warehouseId && !isSvcLine(l));
     if (noWh.length) {
       res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
+      return;
+    }
+    const svcNoCost = lines.filter(l => isSvcLine(l) && Number(l.unitPrice) * Number(l.qty) > 0 && !retCostAccById.get(l.itemId as number));
+    if (svcNoCost.length) {
+      res.status(400).json({ error: `يجب تحديد حساب التكلفة للأصناف الخدمية قبل الترحيل: ${svcNoCost.map(l => l.itemName ?? `صنف #${l.itemId}`).join("، ")}` });
       return;
     }
 
@@ -3030,7 +3056,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     {
       const reqByKey = new Map<string, { itemId: number; warehouseId: number; qty: number; itemName: string | null }>();
       for (const line of lines) {
-        if (!line.itemId || !line.warehouseId) continue;
+        if (!line.itemId || !line.warehouseId || isSvcLine(line)) continue;
         const wh = whInfo[line.warehouseId];
         if (wh?.allowNegative) continue;
         const factor = Number(line.conversionFactor || "1") || 1;
@@ -3065,13 +3091,6 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     //       beyond what was originally received falls back to an unbatched
     //       OUT row at the line's derived cost.
     //   * batch-tracked WITHOUT source invoice → legacy WAC OUT path.
-    const retItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
-    const retItemRows = retItemIds.length
-      ? await db
-          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
-          .from(itemsTable)
-          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, retItemIds)))
-      : [];
     const retModeById = new Map<number, "none" | "fifo" | "fefo">();
     for (const r of retItemRows) {
       const m = (r.mode ?? "none") as string;
@@ -3091,7 +3110,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     // Key: `${itemId}|${warehouseId}|${batch||__null__}|${expiry||""}`
     const consumedThisDoc = new Map<string, number>();
     for (const line of lines) {
-      if (!line.itemId || !line.warehouseId) continue;
+      if (!line.itemId || !line.warehouseId || isSvcLine(line)) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
       // Inventory credit covers BOTH paid and free units leaving the warehouse.
       // Cost-per-unit for the JE is derived from the paid line value spread
@@ -3302,6 +3321,24 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     //     variance account needed; GL follows the document.
     //   * postVariance=true  → Cr inventory at ACTUAL stock-out cost and
     //     route the doc-vs-cost delta to the variance account (old behavior).
+    // SERVICE credits — reversal of the invoice's service-cost debit, at
+    // document net value, keyed "costAccountId|costCenter". Service lines
+    // never touched the stock loops above, so they get their own bucket.
+    const serviceCreditByKey: Record<string, number> = {};
+    for (const line of lines) {
+      if (!isSvcLine(line)) continue;
+      const lineDisc = Math.max(0, Math.min(100, Number((line as any).discount) || 0));
+      const val = Number(line.unitPrice) * Number(line.qty) * (1 - lineDisc / 100);
+      if (val <= 0) continue;
+      const acc = retCostAccById.get(line.itemId as number);
+      if (!acc) continue; // valued lines guarded above (svcNoCost)
+      const cc = (((line as any).costCenter ?? "") as string).toString().trim();
+      const k = `${acc}|${cc}`;
+      serviceCreditByKey[k] = (serviceCreditByKey[k] ?? 0) + val;
+    }
+    const svcRawTotal = Object.values(serviceCreditByKey).reduce((s, v) => s + v, 0);
+    let svcCreditByKey: Record<string, number> = { ...serviceCreditByKey };
+
     const useVariance = (ret as any).postVariance === true;
     let creditBaseByWh = useVariance ? inventoryByWarehouse : docNetByWarehouse;
     if (!useVariance) {
@@ -3309,18 +3346,22 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
       // VAT it is gross, and header discount/tax modes can also skew it.
       // Scale ALL buckets proportionally so their sum equals the document
       // subtotal (net of VAT) — never dump the difference into one bucket.
-      const rawTotal = Object.values(docNetByWarehouse).reduce((s, v) => s + v, 0);
+      const rawTotal = Object.values(docNetByWarehouse).reduce((s, v) => s + v, 0) + svcRawTotal;
       if (rawTotal <= 0 && subtotal > 0.01) {
-        throw new Error("لا يمكن ترحيل المرتجع بقيمة المستند: لا توجد بنود مخزنية (صنف + مستودع) تحمل قيمة. حدّد الصنف والمستودع على البنود أو فعّل قيد فروق الأسعار.");
+        throw new Error("لا يمكن ترحيل المرتجع بقيمة المستند: لا توجد بنود (صنف + مستودع، أو صنف خدمي) تحمل قيمة. حدّد الصنف والمستودع على البنود أو فعّل قيد فروق الأسعار.");
       }
       if (rawTotal > 0 && Math.abs(rawTotal - subtotal) > 0.005) {
         const scale = subtotal / rawTotal;
         creditBaseByWh = Object.fromEntries(
           Object.entries(docNetByWarehouse).map(([k, v]) => [k, Math.round(v * scale * 100) / 100]),
         );
+        svcCreditByKey = Object.fromEntries(
+          Object.entries(serviceCreditByKey).map(([k, v]) => [k, Math.round(v * scale * 100) / 100]),
+        );
       }
     }
-    const goodsCostTotal = Object.values(creditBaseByWh).reduce((s, v) => s + v, 0);
+    const goodsCostTotal = Object.values(creditBaseByWh).reduce((s, v) => s + v, 0)
+      + Object.values(svcCreditByKey).reduce((s, v) => s + v, 0);
     const varianceDelta  = subtotal - goodsCostTotal; // >0 → CR variance (refund > cost = gain); <0 → DR variance (refund < cost = loss)
     const VARIANCE_NUDGE_THRESHOLD = 0.01;
     const needsVarianceLine = useVariance && Math.abs(varianceDelta) > VARIANCE_NUDGE_THRESHOLD;
@@ -3336,9 +3377,14 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     const inventoryCreditByWh: Record<string, number> = { ...creditBaseByWh };
     if (!needsVarianceLine && Math.abs(varianceDelta) > 0) {
       // Sub-cent rounding — push the leftover into the last inventory line
-      // so the JE still balances without needing a variance account.
+      // (or last service line for service-only returns) so the JE still
+      // balances without needing a variance account.
       const lastKey = Object.keys(inventoryCreditByWh).pop();
       if (lastKey) inventoryCreditByWh[lastKey] += varianceDelta;
+      else {
+        const lastSvc = Object.keys(svcCreditByKey).pop();
+        if (lastSvc) svcCreditByKey[lastSvc] += varianceDelta;
+      }
     }
 
     const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
@@ -3385,6 +3431,19 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
               credit: amt,
               description: `ارتجاع البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
               // Per-line cost center (optional) — "" falls back to header via createJournalEntry.
+              ...(cc ? { costCenter: cc } : {}),
+            };
+          }),
+        // SERVICE items (خدمي): credit each item's own cost account —
+        // reversal of the purchase-invoice service-cost debit.
+        ...Object.entries(svcCreditByKey)
+          .filter(([, amt]) => amt > 0)
+          .map(([key, amt]) => {
+            const [accStr, cc] = key.split("|");
+            return {
+              accountId: Number(accStr),
+              credit: amt,
+              description: "ارتجاع صنف خدمي",
               ...(cc ? { costCenter: cc } : {}),
             };
           }),
