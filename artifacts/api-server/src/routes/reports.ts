@@ -311,6 +311,40 @@ router.get("/vat-declaration", requirePermission("vat_declaration", "view"), asy
       }
     }
   }
+  // ─── Purchase-return supplier breakdown ────────────────────────────────
+  // Surface each posted purchase return in supplierTaxLines (negative VAT) so
+  // the declaration shows اسم المورد ورقم فاتورة المورد with the deducted VAT.
+  if (purchRet.length > 0) {
+    const supIds = Array.from(new Set(purchRet.map(r => r.supplierId).filter((x): x is number => x != null)));
+    const supRows = supIds.length > 0
+      ? await db.select({
+          id: suppliersTable.id, nameAr: suppliersTable.nameAr,
+          nameEn: suppliersTable.nameEn, vatNumber: suppliersTable.vatNumber,
+        }).from(suppliersTable).where(and(
+          eq(suppliersTable.companyId, companyId),
+          inArray(suppliersTable.id, supIds),
+        ))
+      : [];
+    const supById = new Map(supRows.map(s => [s.id, s]));
+    for (const r of purchRet) {
+      const vat  = Number(r.vatAmount);
+      const base = Math.max(0, Number(r.totalAmount) - vat);
+      if (Math.abs(vat) <= 0.005 && base <= 0.005) continue;
+      const s = r.supplierId != null ? supById.get(r.supplierId) : undefined;
+      supplierTaxLines.push({
+        source: "purchase_return",
+        docNumber: r.docNumber ?? null,
+        date: r.returnDate,
+        supplierName: ((s?.nameAr ?? "").trim() || (s?.nameEn ?? "").trim()) || null,
+        supplierVatNumber: (s?.vatNumber ?? "").trim() || null,
+        supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
+        supplierInvoiceDate: null,
+        base: -base,
+        vat:  -vat,
+      });
+    }
+  }
+
   // Fold into the standard-rated input bucket + totals so it flows through
   // netVat and the frontend's existing input-tax rendering unchanged.
   if (Math.abs(paymentVoucherInputVat) > 0.005 || paymentVoucherInputBase !== 0) {
@@ -761,12 +795,16 @@ router.get("/vat-declaration/details", requirePermission("vat_declaration", "vie
         date: purchaseReturnsTable.returnDate,
         total: purchaseReturnsTable.totalAmount,
         vat: purchaseReturnsTable.vatAmount,
+        supplierInvoiceNumber: purchaseReturnsTable.supplierInvoiceNumber,
         supAr: suppliersTable.nameAr,
         supEn: suppliersTable.nameEn,
         supVat: suppliersTable.vatNumber,
       })
       .from(purchaseReturnsTable)
-      .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseReturnsTable.supplierId))
+      .leftJoin(suppliersTable, and(
+        eq(suppliersTable.id, purchaseReturnsTable.supplierId),
+        eq(suppliersTable.companyId, companyId),
+      ))
       .where(and(
         eq(purchaseReturnsTable.companyId, companyId),
         eq(purchaseReturnsTable.status, "posted"),
@@ -780,7 +818,8 @@ router.get("/vat-declaration/details", requirePermission("vat_declaration", "vie
         id: r.id, source: "purchase_return", docNumber: r.docNumber, date: r.date,
         partyName: r.supAr ?? r.supEn ?? null,
         supplierVatNumber: (r.supVat ?? "").trim() || null,
-        supplierInvoiceNumber: null, supplierInvoiceDate: null,
+        supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
+        supplierInvoiceDate: null,
         base, vat, total: Number(r.total), link: `/purchasing/returns`,
       });
     }
@@ -887,6 +926,59 @@ router.get("/purchases-vat-register", async (req, res) => {
       vat,
       notes:             (r.notes ?? "").trim() || "",
       source:            "invoice",
+      id:                r.id,
+    });
+  }
+
+  // ─── 1b) Purchase RETURNS (posted, in period) — NEGATIVE rows ───────────
+  // مرتجع المشتريات يخفّض ضريبة المدخلات، فيظهر في السجل بسطر سالب يحمل اسم
+  // المورد ورقم فاتورة المورد — نفس نمط فواتير المشتريات أعلاه.
+  const retRows = await db
+    .select({
+      id:                    purchaseReturnsTable.id,
+      docNumber:             purchaseReturnsTable.docNumber,
+      supplierInvoiceNumber: purchaseReturnsTable.supplierInvoiceNumber,
+      returnDate:            purchaseReturnsTable.returnDate,
+      totalAmount:           purchaseReturnsTable.totalAmount,
+      vatAmount:             purchaseReturnsTable.vatAmount,
+      notes:                 purchaseReturnsTable.notes,
+      supplierNameAr:        suppliersTable.nameAr,
+      supplierNameEn:        suppliersTable.nameEn,
+      supplierVatNumber:     suppliersTable.vatNumber,
+      entryNumber:           journalEntriesTable.docNumber,
+      entryDate:             journalEntriesTable.entryDate,
+    })
+    .from(purchaseReturnsTable)
+    .leftJoin(suppliersTable, and(
+      eq(suppliersTable.id, purchaseReturnsTable.supplierId),
+      eq(suppliersTable.companyId, companyId),
+    ))
+    .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, purchaseReturnsTable.journalEntryId))
+    .where(and(
+      eq(purchaseReturnsTable.companyId, companyId),
+      eq(purchaseReturnsTable.status, "posted"),
+      gte(purchaseReturnsTable.returnDate, from),
+      lte(purchaseReturnsTable.returnDate, to),
+    ));
+
+  for (const r of retRows) {
+    const vat  = round2(Number(r.vatAmount ?? 0));
+    // Returns store totalAmount VAT-inclusive → base = total − VAT.
+    const base = round2(Number(r.totalAmount ?? 0) - vat);
+    if (base <= 0.005 && vat <= 0.005) continue;
+    raw.push({
+      sortDate:          r.returnDate,
+      entryDate:         (r.entryDate ?? "").trim() || r.returnDate,
+      entryNumber:       (r.entryNumber ?? "").trim() || "",
+      invoiceDate:       r.returnDate,
+      invoiceNumber:     (r.supplierInvoiceNumber ?? "").trim() || (r.docNumber ?? "").trim() || "",
+      supplierName:      (r.supplierNameAr ?? "").trim() || (r.supplierNameEn ?? "").trim() || "",
+      supplierVatNumber: (r.supplierVatNumber ?? "").trim() || "",
+      statement:         "مرتجع مشتريات",
+      base: -base,
+      vat:  -vat,
+      notes:             (r.notes ?? "").trim() || "",
+      source:            "purchase_return",
       id:                r.id,
     });
   }
@@ -1015,7 +1107,7 @@ router.get("/purchases-vat-register", async (req, res) => {
     const base  = round2(r.base);
     const vat   = round2(r.vat);
     const gross = round2(base + vat);
-    const rate  = base > 0 ? round2((vat / base) * 100) : 0;
+    const rate  = Math.abs(base) > 0.005 ? round2((vat / base) * 100) : 0;
     return {
       serial:            i + 1,
       entryDate:         r.entryDate,

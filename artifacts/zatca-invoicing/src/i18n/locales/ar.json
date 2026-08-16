@@ -3511,6 +3511,8 @@
     "base": "الأساس الخاضع",
     "outputTaxSection": "ضريبة المخرجات (المبيعات)",
     "inputTaxSection": "ضريبة المدخلات (المشتريات)",
+    "salesReturnsDeducted": "مرتجعات المبيعات (مخصومة من الإجمالي)",
+    "purchaseReturnsDeducted": "مرتجعات المشتريات (مخصومة من الإجمالي)",
     "netVatSection": "صافي الضريبة",
     "journalAdjustments": "تسويات يدوية على ضريبة القيمة المضافة (قيود)",
     "totalAdjustments": "إجمالي التسويات",

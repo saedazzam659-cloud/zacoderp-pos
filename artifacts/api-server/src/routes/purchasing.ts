@@ -3287,6 +3287,22 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
         ? await getSupplierAccountId(cid, ret.supplierId)
         : null;
 
+    // Supplier display info for the JE line description — كشف الحساب must show
+    // WHO the return belongs to + the supplier's invoice number, not just
+    // "تخفيض رصيد المورد".
+    const [retSupRow] = ret.supplierId
+      ? await db.select({ nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+          .from(suppliersTable)
+          .where(and(eq(suppliersTable.id, ret.supplierId), eq(suppliersTable.companyId, cid)))
+      : [];
+    const retSupName = ((retSupRow?.nameAr ?? "").trim() || (retSupRow?.nameEn ?? "").trim());
+    const retSupInv  = ((ret as any).supplierInvoiceNumber ?? "").toString().trim();
+    const apLineDesc = [
+      "تخفيض رصيد المورد بالمرتجع",
+      retSupName ? `المورد: ${retSupName}` : "",
+      retSupInv ? `فاتورة المورد رقم ${retSupInv}` : "",
+    ].filter(Boolean).join(" — ");
+
     const missing: string[] = [];
     if (vatAmount > 0 && !taxAccId) missing.push("حساب الضرائب (مدخلات)");
     if (discountAmount > 0 && !discountAccId) missing.push("حساب الخصم المكتسب");
@@ -3410,12 +3426,12 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
         // ledger account, fall back to the old direct debit.
         ...(((ret.paymentType === "cash" || ret.paymentType === "bank") && returnSupplierApAccId)
           ? [
-              { accountId: returnSupplierApAccId, debit:  totalAmount, description: "تخفيض رصيد المورد بالمرتجع" },
+              { accountId: returnSupplierApAccId, debit:  totalAmount, description: apLineDesc },
               { accountId: returnSupplierApAccId, credit: totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي من المورد" : "استرداد بنكي من المورد" },
               { accountId: counterpartyAccountId, debit:  totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي" : "استرداد بنكي" },
             ]
           : [
-              { accountId: counterpartyAccountId, debit:  totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : "تخفيض رصيد المورد" },
+              { accountId: counterpartyAccountId, debit:  totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : apLineDesc },
             ]),
         { accountId: discountAccId,                   debit:  discountAmount, description: "إلغاء خصم مكتسب" },
         // Inventory: one credit line per warehouse using its own GL account.

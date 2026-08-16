@@ -133,6 +133,12 @@ interface VATData {
     exempt:        { base: number; vat: number };
     total:         { base: number; vat: number };
   };
+  // Returns already NETTED out of outputTax/inputTax above — surfaced here as
+  // POSITIVE numbers so the UI can show the deducted amount explicitly.
+  returns?: {
+    sales:     { base: number; vat: number; count: number };
+    purchases: { base: number; vat: number; count: number };
+  };
   netVat: number;
   discountTotal: number;
   invoiceBreakdown: { standardTypeCount: number; simplifiedTypeCount: number; totalCount: number };
@@ -1056,6 +1062,9 @@ export default function TaxDeclaration() {
                 <TRow num="3" label={t("taxDeclaration.salesExempt")}
                   base={data.outputTax.exempt.base} vat={null}
                   bucket="sales_exempt" onDrillDown={openDrill} />
+                <TRow num="-" label={t("taxDeclaration.salesReturnsDeducted", "مرتجعات المبيعات (مخصومة من الإجمالي)")}
+                  base={-(data.returns?.sales.base ?? 0)} vat={-(data.returns?.sales.vat ?? 0)}
+                  bucket="sales_returns" onDrillDown={openDrill} />
                 <TRow num="4" label={t("taxDeclaration.totalSales")}
                   base={data.outputTax.total.base} vat={data.outputTax.total.vat} highlight="green" />
               </tbody>
@@ -1086,6 +1095,9 @@ export default function TaxDeclaration() {
                 <TRow num="7" label={t("taxDeclaration.purchaseExempt")}
                   base={data.inputTax.exempt.base} vat={null}
                   bucket="purchases_exempt" onDrillDown={openDrill} />
+                <TRow num="-" label={t("taxDeclaration.purchaseReturnsDeducted", "مرتجعات المشتريات (مخصومة من الإجمالي)")}
+                  base={-(data.returns?.purchases.base ?? 0)} vat={-(data.returns?.purchases.vat ?? 0)}
+                  bucket="purchase_returns" onDrillDown={openDrill} />
                 <TRow num="8" label={t("taxDeclaration.totalPurchases")}
                   base={data.inputTax.total.base} vat={data.inputTax.total.vat} highlight="blue" />
               </tbody>

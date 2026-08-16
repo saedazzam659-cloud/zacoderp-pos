@@ -3508,6 +3508,8 @@
     "base": "Taxable Base",
     "outputTaxSection": "Output Tax (Sales)",
     "inputTaxSection": "Input Tax (Purchases)",
+    "salesReturnsDeducted": "Sales Returns (already deducted)",
+    "purchaseReturnsDeducted": "Purchase Returns (already deducted)",
     "netVatSection": "Net VAT",
     "journalAdjustments": "Manual VAT Adjustments (Journal Entries)",
     "totalAdjustments": "Total Adjustments",
