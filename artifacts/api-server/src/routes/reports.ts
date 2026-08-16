@@ -645,6 +645,46 @@ router.get("/vat-declaration/details", requirePermission("vat_declaration", "vie
         link: `/invoices/${r.id}`,
       });
     }
+    // Sales returns are folded INTO the matching bucket (standard / zero /
+    // exempt) as NEGATIVE rows (per user request — no separate deduction
+    // row on the declaration). The summary nets returns per-bucket via
+    // net(), so every bucket's drilldown must mirror that.
+    {
+      const retRows = await db
+        .select({
+          id: salesReturnsTable.id,
+          docNumber: salesReturnsTable.docNumber,
+          date: salesReturnsTable.returnDate,
+          total: salesReturnsTable.totalAmount,
+          vat: salesReturnsTable.vatAmount,
+          notes: salesReturnsTable.notes,
+          custAr: customersTable.nameAr,
+          custEn: customersTable.nameEn,
+        })
+        .from(salesReturnsTable)
+        .leftJoin(customersTable, and(
+          eq(customersTable.id, salesReturnsTable.customerId),
+          eq(customersTable.companyId, companyId),
+        ))
+        .where(and(
+          eq(salesReturnsTable.companyId, companyId),
+          eq(salesReturnsTable.status, "posted"),
+          gte(salesReturnsTable.returnDate, from),
+          lte(salesReturnsTable.returnDate, to),
+        ));
+      for (const r of retRows) {
+        const vat = Number(r.vat);
+        const base = Math.max(0, Number(r.total) - vat);
+        if (classifyOne(base, vat) !== target) continue;
+        out.push({
+          id: r.id, source: "sales_return", docNumber: r.docNumber, date: r.date,
+          partyName: r.custAr ?? r.custEn ?? null,
+          supplierVatNumber: null, supplierInvoiceNumber: null, supplierInvoiceDate: null,
+          voucherDescription: (r.notes ?? "").trim() || "مرتجع مبيعات — مخصوم من الإجمالي",
+          base: -base, vat: -vat, total: -Number(r.total), link: `/sales/returns`,
+        });
+      }
+    }
   } else if (want.startsWith("purchases_") && want !== "purchases_returns") {
     const target: Bucket3 = want === "purchases_standard" ? "standard" : want === "purchases_zero" ? "zero" : "exempt";
     const rows = await db
@@ -755,6 +795,49 @@ router.get("/vat-declaration/details", requirePermission("vat_declaration", "vie
           isMultiVoucher: isMulti,
           base, vat, total: base + vat,
           link: `/cash/payment-vouchers/${r.voucherId}`,
+        });
+      }
+    }
+    // Purchase returns are folded INTO the matching bucket (standard /
+    // zero / exempt) as NEGATIVE rows (per user request — no separate
+    // deduction row). Mirrors the per-bucket netting done by net().
+    {
+      const retRows = await db
+        .select({
+          id: purchaseReturnsTable.id,
+          docNumber: purchaseReturnsTable.docNumber,
+          date: purchaseReturnsTable.returnDate,
+          total: purchaseReturnsTable.totalAmount,
+          vat: purchaseReturnsTable.vatAmount,
+          supplierInvoiceNumber: purchaseReturnsTable.supplierInvoiceNumber,
+          notes: purchaseReturnsTable.notes,
+          supAr: suppliersTable.nameAr,
+          supEn: suppliersTable.nameEn,
+          supVat: suppliersTable.vatNumber,
+        })
+        .from(purchaseReturnsTable)
+        .leftJoin(suppliersTable, and(
+          eq(suppliersTable.id, purchaseReturnsTable.supplierId),
+          eq(suppliersTable.companyId, companyId),
+        ))
+        .where(and(
+          eq(purchaseReturnsTable.companyId, companyId),
+          eq(purchaseReturnsTable.status, "posted"),
+          gte(purchaseReturnsTable.returnDate, from),
+          lte(purchaseReturnsTable.returnDate, to),
+        ));
+      for (const r of retRows) {
+        const vat = Number(r.vat);
+        const base = Math.max(0, Number(r.total) - vat);
+        if (classifyOne(base, vat) !== target) continue;
+        out.push({
+          id: r.id, source: "purchase_return", docNumber: r.docNumber, date: r.date,
+          partyName: r.supAr ?? r.supEn ?? null,
+          supplierVatNumber: (r.supVat ?? "").trim() || null,
+          supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || (r.docNumber ?? "").trim() || null,
+          supplierInvoiceDate: r.date,
+          voucherDescription: (r.notes ?? "").trim() || "مرتجع مشتريات — مخصوم من الإجمالي",
+          base: -base, vat: -vat, total: -Number(r.total), link: `/purchasing/returns`,
         });
       }
     }

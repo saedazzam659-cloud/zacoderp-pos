@@ -493,8 +493,12 @@ function VatDrilldownDialog({
               <tbody>
                 {filtered.map((d) => {
                   const meta = SOURCE_LABELS[d.source] ?? { label: d.source, color: "bg-gray-100 text-gray-700" };
+                  const isReturn = d.base < 0 || d.vat < 0;
                   return (
-                    <tr key={`${d.source}-${d.id}`} className="border-t border-border/40 hover:bg-muted/30">
+                    <tr key={`${d.source}-${d.id}`} className={cn(
+                      "border-t border-border/40 hover:bg-muted/30",
+                      isReturn && "bg-red-50/50 dark:bg-red-950/20 text-red-700 dark:text-red-400",
+                    )}>
                       <td className="px-3 py-2.5">
                         <span className={cn("inline-block px-2 py-0.5 rounded text-[11px] font-medium", meta.color)}>{meta.label}</span>
                       </td>
@@ -1062,9 +1066,6 @@ export default function TaxDeclaration() {
                 <TRow num="3" label={t("taxDeclaration.salesExempt")}
                   base={data.outputTax.exempt.base} vat={null}
                   bucket="sales_exempt" onDrillDown={openDrill} />
-                <TRow num="-" label={t("taxDeclaration.salesReturnsDeducted", "مرتجعات المبيعات (مخصومة من الإجمالي)")}
-                  base={-(data.returns?.sales.base ?? 0)} vat={-(data.returns?.sales.vat ?? 0)}
-                  bucket="sales_returns" onDrillDown={openDrill} />
                 <TRow num="4" label={t("taxDeclaration.totalSales")}
                   base={data.outputTax.total.base} vat={data.outputTax.total.vat} highlight="green" />
               </tbody>
@@ -1095,9 +1096,6 @@ export default function TaxDeclaration() {
                 <TRow num="7" label={t("taxDeclaration.purchaseExempt")}
                   base={data.inputTax.exempt.base} vat={null}
                   bucket="purchases_exempt" onDrillDown={openDrill} />
-                <TRow num="-" label={t("taxDeclaration.purchaseReturnsDeducted", "مرتجعات المشتريات (مخصومة من الإجمالي)")}
-                  base={-(data.returns?.purchases.base ?? 0)} vat={-(data.returns?.purchases.vat ?? 0)}
-                  bucket="purchase_returns" onDrillDown={openDrill} />
                 <TRow num="8" label={t("taxDeclaration.totalPurchases")}
                   base={data.inputTax.total.base} vat={data.inputTax.total.vat} highlight="blue" />
               </tbody>
