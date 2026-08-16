@@ -1287,9 +1287,10 @@ export default function Items() {
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Service items are non-stock and must route their cost AND revenue to GL
-    // accounts (e.g. "مشاريع تحت التنفيذ") since they never hit inventory/COGS.
-    if (form.itemType === "service" && (!form.costAccountId || !form.revenueAccountId)) {
+    // Service items are non-stock: the REVENUE account is mandatory (sales
+    // routing); the cost account is optional — purchases of a service item
+    // validate cost routing at posting time if ever needed.
+    if (form.itemType === "service" && !form.revenueAccountId) {
       setActiveItemTab("accounts");
       toast({ title: t("inventoryMaster.items.serviceAccountsRequired"), variant: "destructive" });
       return;
@@ -1639,7 +1640,7 @@ export default function Items() {
             </TabsContent>
             <TabsContent value="accounts" className="mt-0">
               <FormGrid cols={3}>
-                <Field label={t("pages.items.costAccount")} required={form.itemType === "service" || form.itemType === "prepaid_expense"} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceAccountsRequired") : form.itemType === "prepaid_expense" ? t("inventoryMaster.items.prepaidCostAccountRequired") : undefined}>
+                <Field label={t("pages.items.costAccount")} required={form.itemType === "prepaid_expense"} hint={form.itemType === "prepaid_expense" ? t("inventoryMaster.items.prepaidCostAccountRequired") : undefined}>
                   <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder={t("pages.items.chooseCostAccount")} filterTypes={["expense", "asset"]} grouped={false} />
                 </Field>
                 <Field label={t("pages.items.revenueAccount")} required={form.itemType === "service"} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceAccountsRequired") : undefined}>

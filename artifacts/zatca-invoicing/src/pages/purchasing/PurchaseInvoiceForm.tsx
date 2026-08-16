@@ -302,7 +302,10 @@ export default function PurchaseInvoiceForm() {
   useEffect(() => {
     if (!isNew || !defaultWarehouse || headerWarehouseId) return;
     setHeaderWarehouseId(String(defaultWarehouse.id));
-  }, [isNew, defaultWarehouse?.id]);
+    // headerWarehouseId is a dep on purpose: the route-transition safeguard
+    // below clears it AFTER this fill ran (cached warehouses resolve before
+    // mount-order effects), so the fill must re-run when it becomes "".
+  }, [isNew, defaultWarehouse?.id, headerWarehouseId]);
   useEffect(() => {
     if (isNew || headerWarehouseId) return;
     const firstWh = lines.find(l => l.warehouseId)?.warehouseId;
@@ -350,7 +353,9 @@ export default function PurchaseInvoiceForm() {
   useEffect(() => {
     if (!isNew || !defaultTax || headerTaxId) return;
     applyHeaderTax(String(defaultTax.id));
-  }, [isNew, defaultTax?.id]);
+    // Same race as headerWarehouseId: the clear-on-route-change effect can
+    // wipe the value after this ran; re-fill when it resets to "".
+  }, [isNew, defaultTax?.id, headerTaxId]);
   function applyHeaderTax(v: string) {
     setHeaderTaxId(v);
     const rate = percentRateOf(v);
