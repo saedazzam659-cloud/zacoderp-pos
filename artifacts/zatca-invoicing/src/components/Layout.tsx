@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { useAgentBrandName } from "@/lib/agentBranding";
 import {
   LayoutDashboard, Building2, FileText, FileSpreadsheet, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning,
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
@@ -2806,6 +2807,8 @@ function SidebarInner({
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
+  // Agent-domain brand (e.g. «طفرة») replaces the default app name.
+  const agentBrand = useAgentBrandName();
   const filteredBusiness = useMemo(() => companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
   const filteredSystem   = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
@@ -2834,7 +2837,7 @@ function SidebarInner({
             data-testid="sidebar-brand-mark"
           />
           <div className="min-w-0">
-            <p className="text-sm font-bold text-sidebar-foreground leading-tight truncate">{t("auth.appName")}</p>
+            <p className="text-sm font-bold text-sidebar-foreground leading-tight truncate">{agentBrand || t("auth.appName")}</p>
             <p className="text-[10px] text-sidebar-foreground/50 leading-tight">ZATCA e-Invoicing</p>
           </div>
         </div>
@@ -3500,13 +3503,16 @@ function TopBar({
   const { t, i18n } = useTranslation();
   const [, navigate] = useLocation();
   const crumbs = useMemo(() => getBreadcrumbs(location, t), [location, t, i18n.language]);
+  // On agent domains the visible app title is the agent's brand (e.g. «طفرة»)
+  // on every screen — not the default Zacode name.
+  const agentBrand = useAgentBrandName();
 
   // Update browser tab title to current page name (so opening in a new tab shows the screen name)
   useEffect(() => {
     const last = crumbs[crumbs.length - 1]?.label;
-    const appName = t("auth.appName", "زاكود المحاسبي");
+    const appName = agentBrand || t("auth.appName", "زاكود المحاسبي");
     document.title = last && last !== t("topbar.page") ? `${last} — ${appName}` : appName;
-  }, [crumbs, t]);
+  }, [crumbs, t, agentBrand]);
 
   return (
     <header className="border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
@@ -3533,7 +3539,7 @@ function TopBar({
             knows where they are, even with the desktop sidebar hidden. */}
         <div className="md:hidden flex items-center gap-2 min-w-0 flex-1">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs shadow">Z</div>
-          <span className="text-sm font-semibold truncate">{t("auth.appName")}</span>
+          <span className="text-sm font-semibold truncate">{agentBrand || t("auth.appName")}</span>
         </div>
 
         {/* Search — hidden on phones (re-introduced as a search icon in the

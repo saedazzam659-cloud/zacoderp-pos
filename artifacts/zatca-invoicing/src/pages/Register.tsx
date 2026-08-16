@@ -1275,7 +1275,7 @@ export default function Register() {
                         type={showPass ? "text" : "password"}
                         value={form.password ?? ""}
                         onChange={e => set("password", e.target.value)}
-                        placeholder="8 أحرف على الأقل"
+                        placeholder="3 أحرف على الأقل"
                         dir="ltr" className="text-left pl-10"
                         autoComplete="new-password"
                       />
@@ -1284,8 +1284,8 @@ export default function Register() {
                         {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                     </div>
-                    {form.password && form.password.length < 8 && (
-                      <p className="text-xs text-amber-600">كلمة المرور يجب أن تكون 8 أحرف على الأقل</p>
+                    {form.password && form.password.length < 3 && (
+                      <p className="text-xs text-amber-600">كلمة المرور يجب أن تكون 3 أحرف على الأقل</p>
                     )}
                   </div>
                 </div>
@@ -1293,7 +1293,7 @@ export default function Register() {
                   <Button variant="ghost" onClick={() => setStep(1)} className="gap-2"><ChevronRight className="h-4 w-4" />رجوع</Button>
                   <Button onClick={() => {
                     if (!form.username || !form.password) { setError("اسم المستخدم وكلمة المرور مطلوبان"); return; }
-                    if (form.password.length < 8) { setError("كلمة المرور يجب أن تكون 8 أحرف على الأقل"); return; }
+                    if (form.password.length < 3) { setError("كلمة المرور يجب أن تكون 3 أحرف على الأقل"); return; }
                     setError(""); setStep(3);
                   }} className="gap-2">التالي <ChevronLeft className="h-4 w-4" /></Button>
                 </div>

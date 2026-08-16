@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, cashBoxesTable, bankAccountsTable, accountsTable } from "@workspace/db";
 import { eq, and, isNull, asc, sql } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
+import { z } from "zod";
 import { extractAuth } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
 import { seedDefaultChartOfAccounts } from "../lib/seedDefaultChartOfAccounts.js";
@@ -132,6 +133,56 @@ router.get("/:id", async (req, res) => {
     return;
   }
   res.json(company);
+});
+
+// PUT /:id/rename — SuperAdmin-only rename (nameAr / optional nameEn).
+// `?agent=<id>` routes the rename into that agent's external DB via
+// runWithAgentScope. Deliberately a dedicated route: the generic PUT
+// requires the FULL UpdateCompanyBody, while rename patches one field.
+router.put("/:id/rename", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف الشركة غير صالح" });
+      return;
+    }
+    const u = (req as any).authUser;
+    if (!u || u.role !== "superadmin") {
+      res.status(403).json({ error: "تعديل اسم الشركة متاح للمشرف العام فقط" });
+      return;
+    }
+    // Strict agent selector: a present-but-malformed `?agent=` must be
+    // rejected, never silently treated as a central-DB request.
+    const rawAgent = req.query?.agent;
+    if (rawAgent !== undefined) {
+      const agentId = Number(Array.isArray(rawAgent) ? rawAgent[0] : rawAgent);
+      if (!Number.isInteger(agentId) || agentId <= 0) {
+        res.status(400).json({ error: "معرّف الوكيل غير صالح" });
+        return;
+      }
+    }
+    const RenameBody = z.object({
+      nameAr: z.string().trim().min(1, "اسم الشركة مطلوب").max(255),
+      nameEn: z.string().trim().max(255).optional(),
+    });
+    const parsed = RenameBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
+      return;
+    }
+    const { runWithAgentScope } = await import("../lib/agentScope.js");
+    await runWithAgentScope(req, res, async () => {
+      const [company] = await db.update(companiesTable).set({
+        nameAr: parsed.data.nameAr,
+        ...(parsed.data.nameEn !== undefined ? { nameEn: parsed.data.nameEn } : {}),
+        updatedAt: new Date(),
+      }).where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt))).returning();
+      if (!company) { res.status(404).json({ error: "Company not found" }); return; }
+      res.json(company);
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "فشل تعديل الاسم" });
+  }
 });
 
 router.put("/:id", async (req, res) => {

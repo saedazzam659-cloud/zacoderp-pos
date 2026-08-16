@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   Plus, Building2, ExternalLink, ShieldCheck, AlertCircle,
   CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
-  BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2, LogIn
+  BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2, LogIn, Pencil
 } from "lucide-react";
 import ExportButtons from "@/components/ExportButtons";
 import { Button } from "@/components/ui/button";
@@ -63,7 +63,34 @@ export default function Companies() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [expandedRow, setExpandedRow]   = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; agent?: number } | null>(null);
+  const [editTarget, setEditTarget]     = useState<{ id: number; name: string; agent?: number } | null>(null);
+  const [editName, setEditName]         = useState("");
+  const [renaming, setRenaming]         = useState(false);
   const { token } = useAuth() as any;
+
+  // Rename (SuperAdmin): PUT /api/companies/:id — agent companies route into
+  // their agent DB via `?agent=<id>` (SA-only, enforced server-side).
+  const confirmRename = async () => {
+    if (!editTarget || !editName.trim() || renaming) return;
+    setRenaming(true);
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const qs = editTarget.agent ? `?agent=${editTarget.agent}` : "";
+      const r = await fetch(`${BASE}/api/companies/${editTarget.id}/rename${qs}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ nameAr: editName.trim() }),
+      });
+      if (!r.ok) throw new Error();
+      toast({ title: "تم تعديل الاسم", description: `أصبح اسم الشركة "${editName.trim()}".` });
+      queryClient.invalidateQueries({ queryKey: ["companies"] });
+      setEditTarget(null);
+    } catch {
+      toast({ title: "حدث خطأ", description: "تعذّر تعديل اسم الشركة، حاول مرة أخرى.", variant: "destructive" });
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   // Soft delete: moves the company to /companies/deleted (recycle bin).
   // Reversible from there via "إرجاع إلى مكانها"; permanent cascade
@@ -463,6 +490,17 @@ export default function Companies() {
                           {actingCompanyId === company.id ? "داخل الشركة" : "دخول إلى الشركة"}
                         </Button>
                       )}
+                      {/* Rename — SuperAdmin only; works for central AND
+                          agent-DB companies (routed via ?agent=). */}
+                      {isSuperAdmin && (
+                        <Button
+                          size="sm" variant="outline" className="gap-1.5 h-8"
+                          onClick={() => { setEditTarget({ id: company.id, name: company.nameAr, agent: company.agentInstanceId ?? undefined }); setEditName(company.nameAr ?? ""); }}
+                          data-testid={`button-rename-company-${company.id}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />تعديل الاسم
+                        </Button>
+                      )}
                       {/* Soft delete: any status. Moves to recycle bin
                           (/companies/deleted) — fully reversible. */}
                       <Button
@@ -513,6 +551,41 @@ export default function Companies() {
             >
               <Trash2 className="h-4 w-4" />
               {deleteCompany.isPending ? "جاري النقل..." : "نعم، انقل إلى المحذوفات"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Rename dialog (SuperAdmin) ── */}
+      <AlertDialog open={!!editTarget} onOpenChange={open => !open && setEditTarget(null)}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-primary" />تعديل اسم الشركة
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-right">
+              الاسم الحالي: <strong className="text-foreground">"{editTarget?.name}"</strong>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            value={editName}
+            onChange={e => setEditName(e.target.value)}
+            placeholder="الاسم الجديد للشركة"
+            dir="rtl"
+            autoFocus
+            onKeyDown={e => { if (e.key === "Enter") confirmRename(); }}
+            data-testid="input-rename-company"
+          />
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={e => { e.preventDefault(); confirmRename(); }}
+              disabled={renaming || !editName.trim()}
+              className="gap-2"
+              data-testid="button-confirm-rename"
+            >
+              <Pencil className="h-4 w-4" />
+              {renaming ? "جاري الحفظ..." : "حفظ الاسم"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

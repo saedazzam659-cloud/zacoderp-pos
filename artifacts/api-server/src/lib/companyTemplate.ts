@@ -1,4 +1,12 @@
-import { db } from "@workspace/db";
+// Template reads come from `centralDb` EXPLICITLY: the template company
+// (id 10) lives in the CENTRAL database only. When a company is created on
+// an agent domain, the ALS-proxied `db` targets the agent's external DB —
+// reading the template through it would find nothing and new agent
+// companies would fall back to the generic COA. Writes (the NEW company's
+// settings/sequences/accounts) stay on the ALS `db` so they land in
+// whichever DB the company was created in. Read-only access to the
+// designated template is the intended sharing — no tenant data crosses.
+import { db, centralDb } from "@workspace/db";
 import {
   companiesTable,
   accountsTable,
@@ -45,7 +53,7 @@ export const TEMPLATE_COMPANY_ID = Number(process.env.TEMPLATE_COMPANY_ID ?? 10)
 
 /** Clone display/print settings from the template company. */
 async function cloneDisplaySettings(companyId: number, templateId: number): Promise<boolean> {
-  const [tpl] = await db.select({
+  const [tpl] = await centralDb.select({
     menuLayout:              companiesTable.menuLayout,
     invoiceFormLayout:       companiesTable.invoiceFormLayout,
     printTemplateSales:      companiesTable.printTemplateSales,
@@ -76,7 +84,7 @@ async function cloneSequences(companyId: number, templateId: number): Promise<nu
     .from(sequencesTable).where(eq(sequencesTable.companyId, companyId)).limit(1);
   if (existing.length > 0) return 0; // never double-seed
 
-  const rows = await db.select().from(sequencesTable)
+  const rows = await centralDb.select().from(sequencesTable)
     .where(and(eq(sequencesTable.companyId, templateId), eq(sequencesTable.isActive, true)));
   if (rows.length === 0) return 0;
 
@@ -127,19 +135,19 @@ async function templatePartyAccountIds(templateId: number): Promise<Set<number>>
   const collect = async (q: Promise<Array<{ accountId: number | null }>>) => {
     for (const r of await q) if (r.accountId != null) out.add(r.accountId);
   };
-  await collect(db.select({ accountId: customersTable.accountId }).from(customersTable)
+  await collect(centralDb.select({ accountId: customersTable.accountId }).from(customersTable)
     .where(and(eq(customersTable.companyId, templateId), isNotNull(customersTable.accountId))));
-  await collect(db.select({ accountId: suppliersTable.accountId }).from(suppliersTable)
+  await collect(centralDb.select({ accountId: suppliersTable.accountId }).from(suppliersTable)
     .where(and(eq(suppliersTable.companyId, templateId), isNotNull(suppliersTable.accountId))));
-  await collect(db.select({ accountId: employeesTable.payableAccountId }).from(employeesTable)
+  await collect(centralDb.select({ accountId: employeesTable.payableAccountId }).from(employeesTable)
     .where(and(eq(employeesTable.companyId, templateId), isNotNull(employeesTable.payableAccountId))));
-  await collect(db.select({ accountId: salesRepsTable.accountId }).from(salesRepsTable)
+  await collect(centralDb.select({ accountId: salesRepsTable.accountId }).from(salesRepsTable)
     .where(and(eq(salesRepsTable.companyId, templateId), isNotNull(salesRepsTable.accountId))));
-  await collect(db.select({ accountId: sisterCompaniesTable.accountId }).from(sisterCompaniesTable)
+  await collect(centralDb.select({ accountId: sisterCompaniesTable.accountId }).from(sisterCompaniesTable)
     .where(and(eq(sisterCompaniesTable.companyId, templateId), isNotNull(sisterCompaniesTable.accountId))));
-  await collect(db.select({ accountId: cashBoxesTable.accountId }).from(cashBoxesTable)
+  await collect(centralDb.select({ accountId: cashBoxesTable.accountId }).from(cashBoxesTable)
     .where(and(eq(cashBoxesTable.companyId, templateId), isNotNull(cashBoxesTable.accountId))));
-  await collect(db.select({ accountId: bankAccountsTable.accountId }).from(bankAccountsTable)
+  await collect(centralDb.select({ accountId: bankAccountsTable.accountId }).from(bankAccountsTable)
     .where(and(eq(bankAccountsTable.companyId, templateId), isNotNull(bankAccountsTable.accountId))));
   return out;
 }
@@ -152,7 +160,7 @@ async function templatePartyAccountIds(templateId: number): Promise<Set<number>>
  */
 async function cloneChartOfAccounts(companyId: number, templateId: number): Promise<number> {
   const excluded = await templatePartyAccountIds(templateId);
-  const tplAccounts = await db.select().from(accountsTable)
+  const tplAccounts = await centralDb.select().from(accountsTable)
     .where(eq(accountsTable.companyId, templateId))
     .orderBy(asc(accountsTable.level), asc(accountsTable.code));
   if (tplAccounts.length === 0) return 0;
@@ -235,7 +243,7 @@ export async function applyCompanyTemplateDefaults(companyId: number): Promise<{
   let applied = false;
   let coaInserted = 0;
   if (templateId && templateId !== companyId) {
-    const [tpl] = await db.select({ id: companiesTable.id })
+    const [tpl] = await centralDb.select({ id: companiesTable.id })
       .from(companiesTable).where(eq(companiesTable.id, templateId));
     if (!tpl) {
       logger.warn({ templateId }, "company-template.missing");
