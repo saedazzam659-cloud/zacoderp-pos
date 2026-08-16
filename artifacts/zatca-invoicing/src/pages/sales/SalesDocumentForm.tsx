@@ -1388,6 +1388,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // legacy `autoPostingEnabled` master switch. Only an explicit `false`
   // disables auto-posting for sales invoices.
   const _co = (user as any)?.company;
+  // Company-wide UX flag (الإعدادات العامة): hide the quick add-item bar and
+  // let the items grid grow ~2 rows taller in its place. (Defined here — NOT
+  // next to useTabbedLayout below — because displayLinesGrid is evaluated
+  // before useTabbedLayout is declared.)
+  const hideQuickAdd = !!_co?.hideQuickAddBar;
   const _gl = _co?.autoPostingEnabled !== false;
   const autoPostingEnabled = _co?.autoPostSales === undefined || _co?.autoPostSales === null
     ? _gl
@@ -1957,7 +1962,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     };
     return (
       <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="overflow-auto max-h-[calc(100vh-360px)] min-h-[200px]">
+        <div className={cn("overflow-auto min-h-[200px]", hideQuickAdd ? "max-h-[calc(100vh-260px)]" : "max-h-[calc(100vh-360px)]")}>
           <div className="min-w-max">
             <div className="grid gap-1.5 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10" style={{ gridTemplateColumns: gridCols }}>
               {headers.map((h, i) => (
@@ -3411,7 +3416,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   {topActionBar}
                   <fieldset disabled={editLock} className="contents">
                     {linesHeaderBlock}
-                    {quickAddBar}
+                    {hideQuickAdd
+                      ? <div className="flex justify-end">{priceInclToggle}</div>
+                      : quickAddBar}
                     {displayLinesGrid}
                     {compactFooterBlock}
                   </fieldset>

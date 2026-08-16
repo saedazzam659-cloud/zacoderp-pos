@@ -125,6 +125,9 @@ export default function PurchaseReturns() {
   // viewMode = read-only inspection (opened via grid double-click), forces tabbed
   // layout and opens on the details tab.
   const useTabbedLayout = (user?.company?.invoiceFormLayout ?? "tabbed") !== "classic";
+  // Company-wide UX flag (الإعدادات العامة): hide the quick add-item bar and
+  // let the items grid grow ~2 rows taller in its place.
+  const hideQuickAdd = !!(user?.company as any)?.hideQuickAddBar;
   const [viewMode, setViewMode] = useState(false);
   const [activeTab, setActiveTab] = useState<"basic" | "items" | "details">("basic");
 
@@ -912,15 +915,9 @@ export default function PurchaseReturns() {
   // Same design as the sales-invoice items tab: pick item → commit. The item
   // picker auto-fills the accurate cost/unit/VAT on commit (handleQuickAdd →
   // selectItem), so leaving السعر blank is the norm.
-  const quickAddBar = (
-    <div className="mb-3 rounded-xl border-2 border-primary/30 bg-primary/5 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-semibold text-primary">
-          <Plus className="h-4 w-4" />
-          <span>إضافة صنف</span>
-        </div>
-        {/* Compact ‹السعر شامل الضريبة› toggle — mirrors the sales invoice
-            items tab: lives at the top beside the quick-add title. */}
+  // ‹السعر شامل الضريبة› toggle — rendered inside the quick-add bar normally,
+  // or standalone above the grid when the bar is hidden (hideQuickAdd).
+  const vatModeToggle = (
         <label
           data-testid="price-includes-vat-toggle"
           className={cn(
@@ -943,6 +940,16 @@ export default function PurchaseReturns() {
             {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
           </span>
         </label>
+  );
+
+  const quickAddBar = (
+    <div className="mb-3 rounded-xl border-2 border-primary/30 bg-primary/5 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+          <Plus className="h-4 w-4" />
+          <span>إضافة صنف</span>
+        </div>
+        {vatModeToggle}
       </div>
       <div
         ref={quickAddRef}
@@ -1869,7 +1876,9 @@ ${sections}
                 <ListOrdered className="h-4 w-4" />
                 <span>{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</span>
               </div>
-              {useTabbedLayout && !viewMode && quickAddBar}
+              {useTabbedLayout && !viewMode && (hideQuickAdd
+                ? <div className="mb-3 flex justify-end">{vatModeToggle}</div>
+                : quickAddBar)}
               {(() => {
                 const GRID_COLS_PR = "38px 80px minmax(160px,1.3fr) 118px 100px 64px 64px 98px 74px 64px 108px 150px 34px";
                 const addGridLine = () => {
@@ -1882,7 +1891,7 @@ ${sections}
                 };
                 return (
               <div className="rounded-xl border bg-card overflow-hidden">
-                <div className="overflow-auto max-h-[calc(100vh-360px)] min-h-[200px]">
+                <div className={cn("overflow-auto min-h-[200px]", (useTabbedLayout && hideQuickAdd) ? "max-h-[calc(100vh-260px)]" : "max-h-[calc(100vh-360px)]")}>
                 <div className="min-w-max">
               <div className="grid gap-1.5 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10" style={{ gridTemplateColumns: GRID_COLS_PR }}>
                 {lineColHeaders.map((h, i) => (
