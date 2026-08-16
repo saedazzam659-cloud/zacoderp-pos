@@ -817,6 +817,39 @@ router.get("/account-statement", async (req, res) => {
       }
     }
 
+    // Purchase-return rows: build the الشرح from the SOURCE return document
+    // (supplier name + supplier invoice number) so even legacy JE lines that
+    // stored the generic "تخفيض رصيد المورد" read correctly in the statement.
+    const pRetIds = Array.from(new Set(rows.map(r => r.purchaseReturnId).filter((x): x is number => !!x)));
+    const pRetInfo = new Map<number, string>();
+    if (pRetIds.length) {
+      const hdrs = await db.select({
+        id: purchaseReturnsTable.id,
+        docNumber: purchaseReturnsTable.docNumber,
+        supplierInvoiceNumber: purchaseReturnsTable.supplierInvoiceNumber,
+        notes: purchaseReturnsTable.notes,
+        party: suppliersTable.nameAr,
+        partyEn: suppliersTable.nameEn,
+      })
+        .from(purchaseReturnsTable)
+        .leftJoin(suppliersTable, and(
+          eq(suppliersTable.id, purchaseReturnsTable.supplierId),
+          eq(suppliersTable.companyId, cid),
+        ))
+        .where(and(eq(purchaseReturnsTable.companyId, cid), inArray(purchaseReturnsTable.id, pRetIds)));
+      for (const h of hdrs) {
+        const supName = ((h.party ?? "").trim() || (h.partyEn ?? "").trim());
+        const invNo   = ((h.supplierInvoiceNumber ?? "").trim() || (h.docNumber ?? "").trim());
+        const parts = [
+          "تخفيض رصيد المورد بالمرتجع",
+          supName ? `المورد: ${supName}` : "",
+          invNo ? `فاتورة المورد رقم ${invNo}` : "",
+          (h.notes ?? "").trim(),
+        ].filter(Boolean);
+        pRetInfo.set(h.id, parts.join(" — "));
+      }
+    }
+
     const invoiceDescription = (info: { names: string; docNumber: string | null; party: string | null } | undefined): string | null => {
       if (!info) return null;
       const parts = [info.names, info.docNumber ?? "", info.party ?? ""]
@@ -869,7 +902,9 @@ router.get("/account-statement", async (req, res) => {
         }
         voucherDesc = mergeDesc(vHeader, vPerLine, vNotes) || `${vLabel}${vEntity ? ` — ${vEntity}` : ""}`;
       }
-      const srcDesc = r.purchaseInvoiceId
+      const srcDesc = r.purchaseReturnId
+        ? (pRetInfo.get(r.purchaseReturnId) ?? null)
+        : r.purchaseInvoiceId
         ? invoiceDescription(pInvInfo.get(r.purchaseInvoiceId))
         : r.salesInvoiceId
         ? invoiceDescription(sInvInfo.get(r.salesInvoiceId))

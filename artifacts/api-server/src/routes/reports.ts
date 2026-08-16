@@ -796,6 +796,7 @@ router.get("/vat-declaration/details", requirePermission("vat_declaration", "vie
         total: purchaseReturnsTable.totalAmount,
         vat: purchaseReturnsTable.vatAmount,
         supplierInvoiceNumber: purchaseReturnsTable.supplierInvoiceNumber,
+        notes: purchaseReturnsTable.notes,
         supAr: suppliersTable.nameAr,
         supEn: suppliersTable.nameEn,
         supVat: suppliersTable.vatNumber,
@@ -818,8 +819,12 @@ router.get("/vat-declaration/details", requirePermission("vat_declaration", "vie
         id: r.id, source: "purchase_return", docNumber: r.docNumber, date: r.date,
         partyName: r.supAr ?? r.supEn ?? null,
         supplierVatNumber: (r.supVat ?? "").trim() || null,
-        supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || null,
-        supplierInvoiceDate: null,
+        // Mirror the purchases bucket layout: supplier invoice # (or the
+        // return's own doc number) + a date so the "فاتورة المورد: … — …"
+        // sub-line renders, plus البيان from the return's notes.
+        supplierInvoiceNumber: (r.supplierInvoiceNumber ?? "").trim() || (r.docNumber ?? "").trim() || null,
+        supplierInvoiceDate: r.date,
+        voucherDescription: (r.notes ?? "").trim() || "مرتجع مشتريات",
         base, vat, total: Number(r.total), link: `/purchasing/returns`,
       });
     }
