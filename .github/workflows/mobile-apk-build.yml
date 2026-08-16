@@ -1,0 +1,243 @@
+name: mobile / build Android APK
+
+# Builds the zacode Expo mobile app (artifacts/mobile) into an installable
+# Android APK for direct download (no Google Play needed).
+#
+# Triggers:
+#   • push tag matching `mobile-v*`  → build + create draft GitHub Release with the APK
+#   • workflow_dispatch              → manual run from the Actions tab (uploads artifact)
+#
+# Signing:
+#   If the repo secrets ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD /
+#   ANDROID_KEY_ALIAS are set, the APK is re-signed with that keystore so
+#   future updates install over the old version. Otherwise a fresh keystore is
+#   generated per run (users must uninstall before installing a new build) and
+#   the keystore is attached as a build artifact — download it and add it as
+#   the secrets above to make signing stable.
+
+on:
+  push:
+    tags:
+      - "mobile-v*"
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # softprops/action-gh-release on tag pushes
+
+jobs:
+  build:
+    name: Build (android APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      NODE_VERSION: "20"
+      PNPM_VERSION: "9"
+      JAVA_VERSION: "17"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ── Version pin from the git tag (tag builds only) ──────────────
+      # expo.version + android.versionCode come from the COMMITTED app.json.
+      # Derive them FROM the tag so a release can never advertise a version
+      # it didn't compile (same policy as the pos-desktop workflow).
+      - name: Pin version from tag
+        if: startsWith(github.ref, 'refs/tags/mobile-v')
+        working-directory: artifacts/mobile
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#mobile-v}"
+          if [[ -z "$TAG_VER" ]]; then
+            echo "::error::Empty version after stripping tag prefix from $GITHUB_REF_NAME"; exit 1
+          fi
+          echo "Pinning version $TAG_VER from tag $GITHUB_REF_NAME"
+          node -e "
+            const fs=require('fs');
+            const j=JSON.parse(fs.readFileSync('app.json'));
+            j.expo.version='$TAG_VER';
+            // versionCode = MAJOR*10000 + MINOR*100 + PATCH (monotonic per tag)
+            const [ma,mi,pa]=('$TAG_VER').split('.').map(n=>parseInt(n,10)||0);
+            j.expo.android = j.expo.android || {};
+            j.expo.android.versionCode = ma*10000 + mi*100 + pa;
+            fs.writeFileSync('app.json', JSON.stringify(j,null,2)+'\n');
+          "
+          node -p "const j=require('./app.json').expo; \`app.json → \${j.version} (versionCode \${j.android.versionCode})\`"
+
+      - name: Get pnpm store path
+        id: pnpm-cache
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-mobile-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-mobile-
+
+      # Monorepo install — the mobile app is a pnpm workspace package.
+      - name: Install JS dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: TypeScript check (mobile)
+        working-directory: artifacts/mobile
+        run: pnpm exec tsc -p . --noEmit
+
+      # ── Generate the native android/ project from app.json ──────────
+      - name: Expo prebuild (android)
+        working-directory: artifacts/mobile
+        run: npx expo prebuild -p android --no-install
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-mobile-${{ hashFiles('artifacts/mobile/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-mobile-
+
+      - name: Build release APK
+        working-directory: artifacts/mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      # ── Resolve signing keystore (stable secret OR ephemeral) ───────
+      - name: Resolve keystore
+        id: ks
+        env:
+          KS_B64:   ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS:  ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          mkdir -p /tmp/ks
+          if [[ -n "$KS_B64" && -n "$KS_PASS" && -n "$KS_ALIAS" ]]; then
+            echo "$KS_B64" | base64 -d > /tmp/ks/release.keystore
+            echo "MODE=stable" >> "$GITHUB_OUTPUT"
+            echo "ALIAS=$KS_ALIAS" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signing with the stable keystore from repo secrets."
+          else
+            PASS="$(openssl rand -hex 16)"
+            keytool -genkeypair -v -keystore /tmp/ks/release.keystore \
+              -alias zacode -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PASS" -keypass "$PASS" \
+              -dname "CN=zacode, O=zacoderp, C=SA"
+            echo "$PASS" > /tmp/ks/keystore-password.txt
+            echo "MODE=ephemeral" >> "$GITHUB_OUTPUT"
+            echo "ALIAS=zacode" >> "$GITHUB_OUTPUT"
+            echo "KS_PASS=$PASS" >> "$GITHUB_OUTPUT"
+            echo "::warning::No ANDROID_KEYSTORE_* secrets — generated a ONE-TIME keystore. Updates over an older install will require uninstall. Save the attached keystore as repo secrets to fix this."
+          fi
+
+      - name: Sign APK
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+          RAW=$(find artifacts/mobile/android/app/build/outputs/apk/release -name "*.apk" | head -n1)
+          if [[ -z "$RAW" ]]; then echo "::error::No APK produced"; exit 1; fi
+          PASS="${KS_PASS:-${{ steps.ks.outputs.KS_PASS }}}"
+          VER="${GITHUB_REF_NAME#mobile-v}"; [[ "$GITHUB_REF_NAME" == mobile-v* ]] || VER="dev-${GITHUB_SHA::7}"
+          OUT="zacode-mobile-$VER.apk"
+          "$BT/zipalign" -f -p 4 "$RAW" /tmp/aligned.apk
+          "$BT/apksigner" sign --ks /tmp/ks/release.keystore \
+            --ks-key-alias "${{ steps.ks.outputs.ALIAS }}" \
+            --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
+            --out "$OUT" /tmp/aligned.apk
+          "$BT/apksigner" verify "$OUT"
+          SHA=$(sha256sum "$OUT" | cut -d' ' -f1)
+          SIZE=$(stat -c %s "$OUT")
+          echo "APK: $OUT ($SIZE bytes) sha256=$SHA"
+          {
+            echo "APK_PATH=$OUT"
+            echo "APK_NAME=$OUT"
+            echo "APK_SHA256=$SHA"
+            echo "APK_SIZE=$SIZE"
+          } >> "$GITHUB_ENV"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zacode-mobile-apk-${{ github.sha }}
+          path: ${{ env.APK_PATH }}
+          retention-days: 30
+          if-no-files-found: error
+
+      # Attach the one-time keystore so it can be promoted to repo secrets
+      # (base64 it into ANDROID_KEYSTORE_BASE64 + password + alias "zacode").
+      - name: Upload ephemeral keystore (first run only)
+        if: steps.ks.outputs.MODE == 'ephemeral'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-keystore-SAVE-AS-SECRETS
+          path: |
+            /tmp/ks/release.keystore
+            /tmp/ks/keystore-password.txt
+          retention-days: 7
+
+      - name: Create GitHub Release (tag-only)
+        if: startsWith(github.ref, 'refs/tags/mobile-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK_PATH }}
+          name: "zacode Mobile ${{ github.ref_name }}"
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## zacode Mobile — `${{ github.ref_name }}`
+
+            **APK:** `${{ env.APK_NAME }}`
+            **Size:** ${{ env.APK_SIZE }} bytes
+            **SHA-256:** `${{ env.APK_SHA256 }}`
+            **Commit:** ${{ github.sha }}
+
+            ### خطوات النشر
+            1. انشر هذا الـ Release (اخرجه من Draft).
+            2. انسخ رابط ملف الـ APK من الأصول أدناه.
+            3. لوحة السوبر أدمن → أجهزة POS → تطبيقات الموبايل → حدّث رابط
+               تحميل أندرويد + رقم الإصدار — سيظهر زر التحميل تلقائياً في صفحة
+               تسجيل الدخول على zacoderp.com.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## zacode Mobile — APK build summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| APK | \`${APK_NAME:-n/a}\` |"
+            echo "| Size | ${APK_SIZE:-n/a} bytes |"
+            echo "| SHA-256 | \`${APK_SHA256:-n/a}\` |"
+            echo "| Signing | ${{ steps.ks.outputs.MODE || 'n/a' }} |"
+            echo "| Commit | ${{ github.sha }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
