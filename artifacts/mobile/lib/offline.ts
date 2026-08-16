@@ -22,6 +22,8 @@ const LAST_SYNC_PREFIX = 'zacod_offline_last_download:'; // + <domain>
 // المسارات المخزنة محلياً (تُطابَق بالبادئة بعد إزالة الـ query)
 const CACHED_GETS = [
   '/api/inventory/items',
+  '/api/inventory/units',
+  '/api/inventory/item-groups',
   '/api/inventory/warehouses',
   '/api/customers',
   '/api/cash-boxes',
@@ -74,9 +76,24 @@ const isCacheablePath = (path: string): boolean => {
   return CACHED_GETS.includes(clean);
 };
 
-// المفتاح = النطاق + المسار الكامل (مع الـ query التي تتضمن companyId)
-const cacheKeyFor = (scope: string, path: string): string | null =>
-  isCacheablePath(path) ? `${CACHE_PREFIX}${scope}:${path}` : null;
+// المفتاح = النطاق + المسار النظيف + companyId فقط.
+// نطبّع الـ query إلى companyId وحده حتى تتطابق طلبات نفس القائمة رغم اختلاف
+// بقية البارامترات (مثل includeHidden=1 في شاشة الفاتورة) — كان اختلافها يسبب
+// عدم ظهور الأصناف في وضع الأوف لاين. عزل الشركات محفوظ لأن companyId جزء من المفتاح.
+const cacheKeyFor = (scope: string, path: string): string | null => {
+  if (!isCacheablePath(path)) return null;
+  const [rawPath, rawQuery = ''] = path.split('?');
+  const clean = rawPath.replace(/\/+$/, '');
+  // نحذف فقط البارامترات «التجميلية» التي لا تغيّر دلالة الاستجابة
+  // (includeHidden) ونرتّب الباقي — حتى تتطابق طلبات نفس القائمة مع اختلاف
+  // includeHidden دون أن تتداخل قوائم مفلترة مختلفة (مثل salesInvoiceId) في
+  // سجل تخزين واحد. companyId يبقى ضمن المفتاح فيُحفظ عزل الشركات.
+  const kept = rawQuery
+    .split('&')
+    .filter((p) => p && !p.startsWith('includeHidden='))
+    .sort();
+  return `${CACHE_PREFIX}${scope}:${clean}?${kept.join('&')}`;
+};
 
 export async function cachePut(scope: string, path: string, data: unknown): Promise<void> {
   const key = cacheKeyFor(scope, path);
@@ -103,7 +120,9 @@ export async function downloadAll(
   let ok = 0;
   for (const base of CACHED_GETS) {
     try {
-      await fetcher(`${base}?companyId=${companyId}`);
+      // الأصناف تُنزَّل شاملة المخفية من POS — الويب/الموبايل يطلبها بهذا الشكل
+      const extra = base === '/api/inventory/items' ? '&includeHidden=1' : '';
+      await fetcher(`${base}?companyId=${companyId}${extra}`);
       ok++;
     } catch {
       failed.push(base);
@@ -154,6 +173,19 @@ export async function enqueue(scope: string, path: string, method: string, body:
   list.push(entry);
   await writeOutbox(scope, list);
   return entry;
+}
+
+/**
+ * العمليات المعلقة (غير الفاشلة) لمسار معيّن — تُدمج في شاشات القوائم حتى
+ * تظهر الإضافات التي تمت أوف لاين فوراً بدل أن «تختفي» حتى عودة الاتصال.
+ */
+export async function pendingOutboxFor(scope: string, basePath: string): Promise<OutboxEntry[]> {
+  const list = await readOutbox(scope);
+  return list.filter((e) => {
+    if (e.failed) return false;
+    const clean = e.path.split('?')[0].replace(/\/+$/, '');
+    return clean === basePath;
+  });
 }
 
 export async function outboxCounts(scope: string): Promise<{ pending: number; failed: number }> {
@@ -207,9 +239,15 @@ export async function syncOutbox(
         }
       }
     }
-    await writeOutbox(scope, keep);
-    const failed = keep.filter((k) => k.failed).length;
-    return { sent, remaining: keep.length - failed, failed };
+    // دمج قبل الحفظ: قد تُضاف عمليات جديدة أثناء المزامنة (خصوصاً مع مهلة 12ث)
+    // — الكتابة المباشرة لقائمة keep كانت ستمحوها. نعيد القراءة ونضم أي إدخال
+    // جديد لم يكن ضمن اللقطة الأصلية حتى لا تُفقد أي عملية مالية أبداً.
+    const snapshotIds = new Set(list.map((e) => e.id));
+    const fresh = await readOutbox(scope);
+    const merged = [...keep, ...fresh.filter((e) => !snapshotIds.has(e.id))];
+    await writeOutbox(scope, merged);
+    const failed = merged.filter((k) => k.failed).length;
+    return { sent, remaining: merged.length - failed, failed };
   } finally {
     syncInFlight = false;
   }

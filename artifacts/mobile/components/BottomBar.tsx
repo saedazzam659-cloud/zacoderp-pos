@@ -63,6 +63,11 @@ export function BottomBar() {
       show: mp('screen_reports') && mp('reports_view'),
     },
     {
+      key: 'items', title: 'الأصناف', icon: 'package', href: '/items',
+      activePrefixes: ['/items'],
+      show: mp('screen_items') && mp('items_view'),
+    },
+    {
       key: 'more', title: 'المزيد', icon: 'menu', href: '/(tabs)/more',
       activePrefixes: ['/more', '/quotations', '/quotation', '/returns', '/return', '/voucher'],
       show: true,

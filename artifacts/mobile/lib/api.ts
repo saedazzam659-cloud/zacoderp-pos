@@ -73,11 +73,20 @@ export async function api<T = unknown>(
   const method = init?.method ?? 'GET';
   let res: Response;
   try {
-    res = await fetch(`https://${domain}${path}`, {
-      method,
-      headers,
-      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-    });
+    // مهلة 12 ثانية — بعض الشبكات «تعلّق» بلا رد؛ بدون مهلة لا يعمل
+    // السقوط للنسخة المحلية أبداً وتبدو الشاشات فارغة في وضع الأوف لاين.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12_000);
+    try {
+      res = await fetch(`https://${domain}${path}`, {
+        method,
+        headers,
+        body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch {
     // وضع الأوف لاين: القراءات من النسخة المحلية، والإنشاء يدخل صندوق الصادر
     if (await isOfflineEnabled()) {
@@ -97,6 +106,11 @@ export async function api<T = unknown>(
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
 
   if (!res.ok) {
+    // أعطال بوابة/سيرفر مؤقتة (5xx) تُعامل كانقطاع للقراءات في وضع الأوف لاين
+    if (method === 'GET' && res.status >= 500 && (await isOfflineEnabled())) {
+      const c = await cacheGet(domain, path);
+      if (c.hit) return c.data as T;
+    }
     if (res.status === 401 && !path.startsWith('/api/auth/login')) {
       // stale/invalid token — clear it so the next app entry returns to login
       await setToken(null);

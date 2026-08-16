@@ -4,7 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
-import { api } from '@/lib/api';
+import { api, getDomain } from '@/lib/api';
+import { pendingOutboxFor } from '@/lib/offline';
 import { money, showDate } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
@@ -25,6 +26,7 @@ interface InvoiceRow {
 
 const STATUS_AR: Record<string, { label: string; tone: 'ok' | 'warn' | 'muted' }> = {
   draft: { label: 'مسودة', tone: 'muted' },
+  pending_sync: { label: 'بانتظار المزامنة', tone: 'warn' },
   posted: { label: 'مرحّلة', tone: 'ok' },
   issued: { label: 'صادرة', tone: 'ok' },
   cancelled: { label: 'ملغاة', tone: 'warn' },
@@ -45,8 +47,32 @@ export default function Invoices() {
     enabled: !!companyId,
   });
 
+  // الفواتير المحفوظة أوف لاين (صندوق الصادر) — تظهر أعلى القائمة بوسم «بانتظار المزامنة»
+  const pendQ = useQuery({
+    queryKey: ['outbox-invoices', companyId],
+    queryFn: async () => {
+      const domain = await getDomain();
+      const entries = await pendingOutboxFor(domain, '/api/sales/sales-invoices');
+      return entries
+        .filter((e) => Number((e.body as any)?.companyId) === Number(companyId))
+        .map((e) => {
+          const b = (e.body ?? {}) as any;
+          return {
+            id: 0,
+            invoiceDate: b.invoiceDate,
+            totalAmount: b.totalAmount,
+            status: 'pending_sync',
+            _pendingId: e.id,
+          } as InvoiceRow & { _pendingId: string };
+        });
+    },
+    enabled: !!companyId,
+    refetchInterval: 5000,
+  });
+
   const rows = useMemo(() => {
-    const list = Array.isArray(q.data) ? q.data : [];
+    const pending = Array.isArray(pendQ.data) ? pendQ.data : [];
+    const list = [...pending, ...(Array.isArray(q.data) ? q.data : [])];
     const s = search.trim();
     if (!s) return list;
     return list.filter(
@@ -54,7 +80,7 @@ export default function Invoices() {
         (r.docNumber ?? '').includes(s) ||
         (r.customerName ?? r.customer?.nameAr ?? '').includes(s),
     );
-  }, [q.data, search]);
+  }, [q.data, pendQ.data, search]);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -92,18 +118,19 @@ export default function Invoices() {
       ) : (
         <FlatList
           data={rows}
-          keyExtractor={(r) => String(r.id)}
+          keyExtractor={(r: any) => (r._pendingId ? `p-${r._pendingId}` : String(r.id))}
           contentContainerStyle={{ padding: 14, gap: 10, paddingBottom: 30 }}
           refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} tintColor={c.primary} />}
           ListEmptyComponent={
             q.isLoading ? null : <Empty icon="file-text" text="لا توجد فواتير بعد — اضغط + لإنشاء فاتورة" />
           }
-          renderItem={({ item }) => {
+          renderItem={({ item }: { item: InvoiceRow & { _pendingId?: string } }) => {
             const st = STATUS_AR[item.status ?? ''] ?? { label: item.status ?? '—', tone: 'muted' as const };
             const stColor = st.tone === 'ok' ? c.success : st.tone === 'warn' ? c.destructive : c.mutedForeground;
             return (
               <Pressable
-                testID={`card-invoice-${item.id}`}
+                testID={`card-invoice-${item._pendingId ?? item.id}`}
+                disabled={!!item._pendingId}
                 onPress={() => router.push(`/invoice/${item.id}`)}
                 style={({ pressed }) => ({
                   backgroundColor: c.card,
@@ -117,7 +144,7 @@ export default function Invoices() {
               >
                 <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 15, color: c.foreground }}>
-                    {item.docNumber ?? `#${item.id}`}
+                    {item._pendingId ? 'فاتورة محلية' : item.docNumber ?? `#${item.id}`}
                   </Text>
                   <View style={{ backgroundColor: `${stColor}18`, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
                     <Text style={{ color: stColor, fontSize: 12, fontFamily: 'Inter_500Medium' }}>{st.label}</Text>

@@ -3,7 +3,8 @@ import { FlatList, Modal, Platform, Pressable, RefreshControl, Text, TextInput, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
-import { api } from '@/lib/api';
+import { api, getDomain } from '@/lib/api';
+import { pendingOutboxFor } from '@/lib/offline';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
@@ -40,12 +41,30 @@ export default function Customers() {
     enabled: !!companyId,
   });
 
+  // العملاء المضافون أوف لاين (صندوق الصادر) — يظهرون فوراً بوسم «بانتظار المزامنة»
+  const pendQ = useQuery({
+    queryKey: ['outbox-customers', companyId],
+    queryFn: async () => {
+      const domain = await getDomain();
+      const entries = await pendingOutboxFor(domain, '/api/customers');
+      return entries
+        .filter((e) => Number((e.body as any)?.companyId) === Number(companyId))
+        .map((e) => {
+          const b = (e.body ?? {}) as any;
+          return { id: 0, nameAr: b.nameAr, phone: b.phone, vatNumber: b.vatNumber, _pendingId: e.id } as CustomerRow & { _pendingId: string };
+        });
+    },
+    enabled: !!companyId,
+    refetchInterval: 5000,
+  });
+
   const rows = useMemo(() => {
-    const list = Array.isArray(q.data) ? q.data : [];
+    const pending = Array.isArray(pendQ.data) ? pendQ.data : [];
+    const list = [...pending, ...(Array.isArray(q.data) ? q.data : [])];
     const s = search.trim();
     if (!s) return list;
     return list.filter((r) => (r.nameAr ?? '').includes(s) || (r.phone ?? '').includes(s) || (r.code ?? '').includes(s));
-  }, [q.data, search]);
+  }, [q.data, pendQ.data, search]);
 
   const closeModal = () => { setShowAdd(false); setEditId(null); setNameAr(''); setPhone(''); setVatNumber(''); setError(''); };
 
@@ -67,6 +86,7 @@ export default function Customers() {
       else await api('/api/customers', { method: 'POST', body });
       closeModal();
       qc.invalidateQueries({ queryKey: ['customers', companyId] });
+      qc.invalidateQueries({ queryKey: ['outbox-customers', companyId] });
     } catch (e: any) {
       setError(e?.message ?? 'فشل الحفظ');
     } finally {
@@ -120,20 +140,26 @@ export default function Customers() {
       ) : (
         <FlatList
           data={rows}
-          keyExtractor={(r) => String(r.id)}
+          keyExtractor={(r: any) => (r._pendingId ? `p-${r._pendingId}` : String(r.id))}
           contentContainerStyle={{ padding: 14, gap: 10, paddingBottom: 30 }}
           refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} tintColor={c.primary} />}
           ListEmptyComponent={q.isLoading ? null : <Empty icon="users" text="لا يوجد عملاء بعد" />}
-          renderItem={({ item }) => (
+          renderItem={({ item }: { item: CustomerRow & { _pendingId?: string } }) => (
             <Pressable
-              testID={`customer-row-${item.id}`}
-              disabled={!mp('customer_edit') && !mp('customer_delete')}
+              testID={`customer-row-${item._pendingId ?? item.id}`}
+              disabled={!!item._pendingId || (!mp('customer_edit') && !mp('customer_delete'))}
               onPress={() => openEdit(item)}
               style={({ pressed }) => ({ backgroundColor: c.card, borderRadius: 14, borderWidth: 1, borderColor: c.border, padding: 13, gap: 4, opacity: pressed ? 0.7 : 1 })}
             >
               <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}>
                 <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 15, color: c.foreground }}>{item.nameAr ?? '—'}</Text>
-                <Text style={{ color: c.mutedForeground, fontSize: 12 }}>{item.code ?? ''}</Text>
+                {item._pendingId ? (
+                  <View style={{ backgroundColor: `${c.primary}18`, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+                    <Text style={{ color: c.primary, fontSize: 11, fontFamily: 'Inter_500Medium' }}>بانتظار المزامنة</Text>
+                  </View>
+                ) : (
+                  <Text style={{ color: c.mutedForeground, fontSize: 12 }}>{item.code ?? ''}</Text>
+                )}
               </View>
               <View style={{ flexDirection: 'row-reverse', gap: 16 }}>
                 {item.phone ? <Text style={{ color: c.mutedForeground, fontSize: 13 }}>📱 {item.phone}</Text> : null}

@@ -139,6 +139,7 @@ function RootLayoutNav() {
       <Stack.Screen name="quotation/[id]" />
       <Stack.Screen name="returns" />
       <Stack.Screen name="return/[id]" />
+      <Stack.Screen name="items" />
       <Stack.Screen name="voucher/new" />
       <Stack.Screen name="voucher/list" />
       <Stack.Screen name="report/[kind]" />

@@ -30,6 +30,11 @@
 //   quotation_create  إنشاء عرض سعر
 //   quotation_edit    تعديل عرض سعر (يشمل تغيير الحالة والتحويل لفاتورة)
 //   quotation_delete  حذف عرض سعر
+//   items_view        عرض الأصناف
+//   item_create       إضافة صنف
+//   item_edit         تعديل صنف
+//   item_delete       حذف صنف
+//   screen_items      إظهار شاشة الأصناف في شريط التنقّل السفلي
 //   screen_invoices   إظهار شاشة الفواتير في شريط التنقّل السفلي
 //   screen_customers  إظهار شاشة العملاء في شريط التنقّل السفلي
 //   screen_new        إظهار تبويب جديد (+) في شريط التنقّل السفلي

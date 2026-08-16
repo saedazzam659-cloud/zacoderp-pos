@@ -374,6 +374,15 @@ export default function InvoiceForm() {
       let docId = invoiceId;
       if (isNew && !loadedDoc) {
         const created = await api<any>('/api/sales/sales-invoices', { method: 'POST', body: buildBody() });
+        // أوف لاين: دخلت الفاتورة صندوق الصادر — لا يوجد معرف بعد، فنتخطى
+        // خطوة الترحيل ونعود؛ ستُزامن (وتُرحّل من الويب) عند عودة الاتصال.
+        if (created?.offline) {
+          qc.invalidateQueries({ queryKey: ['sales-invoices', companyId] });
+          qc.invalidateQueries({ queryKey: ['outbox-invoices', companyId] });
+          notify('تم الحفظ محلياً', 'لا يوجد اتصال — حُفظت الفاتورة على الجهاز وستُزامن تلقائياً عند عودة الإنترنت');
+          router.back();
+          return;
+        }
         docId = created?.id ?? created?.invoice?.id;
         setLoadedDoc(created?.invoice ?? created);
       } else {

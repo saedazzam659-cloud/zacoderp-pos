@@ -245,6 +245,7 @@ const MOBILE_MODULE_KEYS: Record<string, Partial<Record<PermAction, string>>> = 
   receipt_vouchers: { view: "vouchers_view",  create: "voucher_create",  edit: "voucher_edit",  delete: "voucher_delete",  post: "voucher_create" },
   customers:        { view: "customers_view", create: "customer_create", edit: "customer_edit", delete: "customer_delete" },
   sales_quotations: { view: "quotations_view", create: "quotation_create", edit: "quotation_edit", delete: "quotation_delete" },
+  items:            { view: "items_view",      create: "item_create",      edit: "item_edit",      delete: "item_delete" },
 };
 
 async function mobileChannelAllowed(u: any, module: string, action: PermAction): Promise<boolean> {

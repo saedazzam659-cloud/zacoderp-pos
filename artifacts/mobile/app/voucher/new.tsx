@@ -101,6 +101,13 @@ export default function NewVoucher() {
         newId = editId;
       } else {
         const created = await api<any>('/api/receipt-vouchers', { method: 'POST', body });
+        // أوف لاين: السند دخل صندوق الصادر — لا معرف بعد فنتخطى خطوة الترحيل
+        if (created?.offline) {
+          qc.invalidateQueries({ queryKey: ['receipt-vouchers'] });
+          if (Platform.OS !== 'web') Alert.alert('تم الحفظ محلياً', 'لا يوجد اتصال — حُفظ السند على الجهاز وستتم مزامنته وترحيله عند عودة الإنترنت');
+          router.back();
+          return;
+        }
         newId = created?.id ?? created?.voucher?.id;
       }
       if (newId && !editId) {

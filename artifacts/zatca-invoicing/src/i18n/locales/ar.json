@@ -2618,6 +2618,8 @@
     "mobVoucherCreate": "إنشاء سند قبض",
     "mobCustomersView": "عرض العملاء",
     "mobCustomerCreate": "إضافة عميل جديد",
+    "mobItemsView": "عرض الأصناف",
+    "mobItemCreate": "إضافة صنف جديد",
     "mobQuotationsView": "عرض عروض الأسعار",
     "mobQuotationCreate": "إنشاء عرض سعر",
     "mobReportsView": "الملخص والتقارير"

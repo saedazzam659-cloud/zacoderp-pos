@@ -2615,6 +2615,8 @@
     "mobVoucherCreate": "Create receipt voucher",
     "mobCustomersView": "View customers",
     "mobCustomerCreate": "Add new customer",
+    "mobItemsView": "View items",
+    "mobItemCreate": "Add new item",
     "mobQuotationsView": "View quotations",
     "mobQuotationCreate": "Create quotation",
     "mobReportsView": "Summary & reports"
