@@ -187,6 +187,35 @@ export async function resolveAgentRequestHost(req: Request): Promise<string | nu
   return normalizeHost((Array.isArray(fwd) ? fwd[0] : fwd) || req.headers.host);
 }
 
+// ── Per-agent, per-boot schema auto-heal ─────────────────────────────────
+// Keyed by agent id + ctx identity so a rotated DB URL (new pool/context)
+// re-heals. Single-flight: concurrent requests await the same promise; a
+// FAILED heal is retried on the next request (promise removed), while a
+// successful one stays cached for the life of the process. Heal failures are
+// logged but never block traffic — the request proceeds exactly as before
+// this feature existed.
+const agentHealDone = new Map<number, { ctx: unknown; promise: Promise<void> }>();
+async function ensureAgentSchemaHealed(
+  agentId: number,
+  ctx: { db: unknown; pool: unknown },
+  runWithExternalDb: (c: any, fn: () => any) => any,
+): Promise<void> {
+  const prev = agentHealDone.get(agentId);
+  if (prev && prev.ctx === ctx) { await prev.promise.catch(() => {}); return; }
+  const promise = (async () => {
+    const { runSchemaHealOnActiveDb } = await import("../lib/ensureSchema.js");
+    await runWithExternalDb(ctx, () => runSchemaHealOnActiveDb());
+  })();
+  agentHealDone.set(agentId, { ctx, promise });
+  try {
+    await promise;
+  } catch (e) {
+    // Retry on next request; meanwhile serve traffic (same behavior as before).
+    agentHealDone.delete(agentId);
+    void logAgentEvent(agentId, "schema_heal_failed", { error: String((e as any)?.message ?? e).slice(0, 500) });
+  }
+}
+
 export async function agentDataSourceRouter(req: Request, res: any, next: (err?: unknown) => void): Promise<void> {
   try {
     const host = await resolveAgentRequestHost(req);
@@ -204,6 +233,17 @@ export async function agentDataSourceRouter(req: Request, res: any, next: (err?:
       const { getAgentDbContext } = await import("../lib/agentDb.js");
       const ctx = getAgentDbContext(hit.id, hit.dbUrlEnc);
       const { runWithExternalDb } = await import("@workspace/db");
+      // ── Auto schema heal (once per agent per server boot) ────────────
+      // Central deploys add columns/enums the agent DB doesn't have yet;
+      // previously the agent DB was only reconciled during the privileged
+      // init/تهيئة flow, so every central schema addition broke agent-domain
+      // requests (e.g. login 500) until a manual re-init. Here we run the
+      // same idempotent additive reconciliation (ADD COLUMN/VALUE IF NOT
+      // EXISTS) against the agent DB before serving traffic. This touches
+      // ONLY schema — it never reads or writes zacod_installation, the
+      // fingerprint, or any encrypted material, so identity/fingerprint
+      // guarantees are untouched.
+      await ensureAgentSchemaHealed(hit.id, ctx, runWithExternalDb);
       runWithExternalDb(ctx, () => next());
       return;
     }
