@@ -302,6 +302,24 @@ export default function Login() {
   // an agent-domain server once returned a giant SQL/permission-keys blob as
   // `error`, which was rendered verbatim here. Anything long or SQL/JSON-like
   // collapses to a short friendly message.
+  // After a publish, agent servers pull the new release and restart; for a
+  // couple of minutes the first login attempt fails with a network error or a
+  // gateway 502/503/504. Showing the generic "فشل تسجيل الدخول" there misleads
+  // users into thinking their credentials are wrong — surface a clear
+  // "server is updating" message instead.
+  const isServerUnreachable = (err: any): boolean => {
+    const status = err?.status;
+    if (status === 502 || status === 503 || status === 504) return true;
+    if (typeof status === "number") return false; // real server response
+    const m = String(err?.message ?? "");
+    return err instanceof TypeError ||
+      /failed to fetch|load failed|networkerror|network request failed|fetch failed|timeout|timed out|econnrefused/i.test(m);
+  };
+  const SERVER_UPDATING_MSG = t(
+    "auth.serverUpdating",
+    "الخادم يتم تحديثه الآن — بياناتك صحيحة، انتظر دقيقة ثم حاول مرة أخرى.",
+  );
+
   const friendlyError = (msg: unknown, fallback: string): string => {
     const s = typeof msg === "string" ? msg.trim() : "";
     if (!s) return fallback;
@@ -341,7 +359,11 @@ export default function Login() {
         // 409 + useSuperAdminFlow signals: this account requires the SA flow.
         const isSAHint = err?.status === 409 && err?.data?.useSuperAdminFlow === true;
         if (!isSAHint) {
-          setError(friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")));
+          setError(
+            isServerUnreachable(err)
+              ? SERVER_UPDATING_MSG
+              : friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")),
+          );
           return;
         }
         // Switch the UI into SA mode for any future actions.
@@ -359,7 +381,11 @@ export default function Login() {
         await performSuperAdminLogin();
       }
     } catch (err: any) {
-      setError(friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")));
+      setError(
+        isServerUnreachable(err)
+          ? SERVER_UPDATING_MSG
+          : friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")),
+      );
     } finally {
       setLoading(false);
     }
