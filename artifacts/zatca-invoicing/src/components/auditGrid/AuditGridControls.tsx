@@ -142,7 +142,7 @@ export function FooterColorPicker({ layout, isRtl }: CommonProps) {
               variant="ghost"
               className="h-6 px-2 text-[11px] text-slate-600 gap-1"
               onClick={() => setFooterColor(DEFAULT_FOOTER_COLOR)}
-              title="إعادة لون القدم الافتراضي (رمادي)"
+              title="إعادة لون القدم الافتراضي (أبيض)"
             >
               <RotateCw className="h-3 w-3" />
               افتراضي

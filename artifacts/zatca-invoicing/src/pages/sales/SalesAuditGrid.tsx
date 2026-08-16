@@ -90,7 +90,7 @@ const FOOTER_THEMES: Record<FooterColor, {
   teal:    { label: "تركواز", swatch: "bg-teal-800",                              bg: "bg-teal-800",    text: "text-white",       border: "border-teal-700",    toneDiscount: "text-orange-200", toneVat: "text-amber-200",  toneCommission: "text-purple-200" },
 };
 const FOOTER_COLOR_KEYS: FooterColor[] = ["slate", "white", "rose", "blue", "emerald", "amber", "purple", "teal"];
-const DEFAULT_FOOTER_COLOR: FooterColor = "slate";
+const DEFAULT_FOOTER_COLOR: FooterColor = "white";
 
 // ── Page-size options for the audit grid ──────────────────────────────────
 // `0` means "show all" — useful when the user wants to scan/audit everything
@@ -2146,7 +2146,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                       variant="ghost"
                       className="h-6 px-2 text-[11px] text-slate-600 gap-1"
                       onClick={() => setFooterColor(DEFAULT_FOOTER_COLOR)}
-                      title="إعادة لون القدم الافتراضي (رمادي)"
+                      title="إعادة لون القدم الافتراضي (أبيض)"
                     >
                       <RotateCw className="h-3 w-3" />
                       افتراضي

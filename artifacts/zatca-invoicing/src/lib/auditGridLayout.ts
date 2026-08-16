@@ -66,7 +66,7 @@ export const FOOTER_THEMES: Record<FooterColor, {
 };
 export const FOOTER_COLOR_KEYS: FooterColor[] =
   ["slate", "white", "rose", "blue", "emerald", "amber", "purple", "teal"];
-export const DEFAULT_FOOTER_COLOR: FooterColor = "slate";
+export const DEFAULT_FOOTER_COLOR: FooterColor = "white";
 
 /* ─────────────────────────── Pagination options ────────────────────────── */
 export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 0] as const;

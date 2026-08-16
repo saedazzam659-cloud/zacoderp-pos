@@ -6047,7 +6047,7 @@
       "posTab": "Point of Sale",
       "natureFieldLabel": "Item nature",
       "natureFieldHint": "Helps distinguish raw materials from finished goods in manufacturing screens",
-      "serviceNoStockHint": "Service item: never affects inventory. Set the cost account (e.g. Projects under Construction) and revenue account in the \"Accounting Link\" tab.",
+      "serviceNoStockHint": "Service item: never affects inventory. Set the revenue account (required) in the \"Accounting Link\" tab — the cost account is optional (e.g. Projects under Construction).",
       "serviceAccountsRequired": "A service item requires a revenue account (set it in the \"Accounting Link\" tab) — the cost account is optional.",
       "prepaidNoStockHint": "Prepaid expense item: never affects inventory. Set the expense (cost) account in the \"Accounting Link\" tab — preferably also link the item to a \"Deferred expense\" group.",
       "prepaidCostAccountRequired": "A prepaid-expense item requires an expense (cost) account in the \"Accounting Link\" tab — or a group that has a default cost account.",

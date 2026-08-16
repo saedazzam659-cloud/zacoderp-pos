@@ -299,12 +299,19 @@ export default function PurchaseInvoiceForm() {
   const defaultWarehouse = (warehouses as any[]).find((w: any) => w.isDefault) ?? (warehouses as any[])[0];
   // Header-level warehouse picker — broadcast to every line on change.
   const [headerWarehouseId, setHeaderWarehouseId] = useState<string>("");
+  // Route-transition safeguard — MUST be declared BEFORE the default-fill
+  // effect below. Effects run in declaration order, so on mount (and on doc-id
+  // change) this clear runs first and the fill then repopulates. Declared the
+  // other way round, the clear silently wipes the freshly filled default when
+  // warehouses resolve from the react-query cache on first render (state goes
+  // "" → id → "" within one commit, so no dep ever changes and the fill never
+  // re-runs — the "empty warehouse on new invoice" bug).
+  useEffect(() => {
+    setHeaderWarehouseId("");
+  }, [editId, isNew]);
   useEffect(() => {
     if (!isNew || !defaultWarehouse || headerWarehouseId) return;
     setHeaderWarehouseId(String(defaultWarehouse.id));
-    // headerWarehouseId is a dep on purpose: the route-transition safeguard
-    // below clears it AFTER this fill ran (cached warehouses resolve before
-    // mount-order effects), so the fill must re-run when it becomes "".
   }, [isNew, defaultWarehouse?.id, headerWarehouseId]);
   useEffect(() => {
     if (isNew || headerWarehouseId) return;
@@ -350,6 +357,10 @@ export default function PurchaseInvoiceForm() {
   // stored vat_rate/vat_amount/tax_category that ZATCA XML/QR read.
   const { taxes: taxCatalog, defaultPercentTax: defaultTax, comboItemsPercent: taxComboItems, percentRateOf } = useCompanyTaxes();
   const [headerTaxId, setHeaderTaxId] = useState<string>("");
+  // Same ordering rule as headerWarehouseId: clear BEFORE the default-fill.
+  useEffect(() => {
+    setHeaderTaxId("");
+  }, [editId, isNew]);
   useEffect(() => {
     if (!isNew || !defaultTax || headerTaxId) return;
     applyHeaderTax(String(defaultTax.id));
@@ -366,12 +377,6 @@ export default function PurchaseInvoiceForm() {
       return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
     }));
   }
-  // Route-transition safeguard — clear header on doc-id change so init/derive
-  // effects re-populate from the freshly loaded doc.
-  useEffect(() => {
-    setHeaderWarehouseId("");
-    setHeaderTaxId("");
-  }, [editId, isNew]);
 
   const { data: supplierBalances = [] } = useQuery<any[]>({
     queryKey: ["supplier-balances", cid],
