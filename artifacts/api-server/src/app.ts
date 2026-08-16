@@ -408,7 +408,20 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   logger.error({ err, url: req.url, method: req.method }, "unhandled API error");
   if (res.headersSent) return;
   const status = typeof err?.status === "number" ? err.status : 500;
-  const message = err?.message || "حدث خطأ غير متوقع في الخادم";
+  // NEVER leak raw internal error text to the client. Driver/ORM errors can
+  // embed the full SQL statement (including huge inline permission-key
+  // defaults) — that blob was rendered verbatim in the login screen's error
+  // box on agent domains. Only short, human-authored messages attached to
+  // errors with an explicit status (our own HttpError-style throws) pass
+  // through; everything else collapses to a generic Arabic message. The
+  // full error is already logged above for diagnosis.
+  const raw = typeof err?.message === "string" ? err.message : "";
+  const looksInternal =
+    raw.length > 300 ||
+    /select |insert |update |delete |syntax error|column |relation |sql|violates|constraint/i.test(raw);
+  const message = (status < 500 && raw && !looksInternal)
+    ? raw
+    : "حدث خطأ غير متوقع في الخادم. حاول مرة أخرى أو تواصل مع الدعم.";
   res.status(status).json({ error: message });
 });
 

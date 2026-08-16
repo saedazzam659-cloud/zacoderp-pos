@@ -298,6 +298,20 @@ export default function Login() {
     }
   };
 
+  // Never show raw server internals in the red error box. A backend fault on
+  // an agent-domain server once returned a giant SQL/permission-keys blob as
+  // `error`, which was rendered verbatim here. Anything long or SQL/JSON-like
+  // collapses to a short friendly message.
+  const friendlyError = (msg: unknown, fallback: string): string => {
+    const s = typeof msg === "string" ? msg.trim() : "";
+    if (!s) return fallback;
+    if (s.length > 300 || /["'{\[].{80,}/s.test(s) ||
+        /select |insert |column |relation |syntax error|constraint/i.test(s)) {
+      return t("auth.serverError", "حدث خطأ في الخادم. حاول مرة أخرى أو تواصل مع الدعم.");
+    }
+    return s;
+  };
+
   // ── Submit credentials ─────────────────────────────────────────────────
   const submitCreds = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -327,7 +341,7 @@ export default function Login() {
         // 409 + useSuperAdminFlow signals: this account requires the SA flow.
         const isSAHint = err?.status === 409 && err?.data?.useSuperAdminFlow === true;
         if (!isSAHint) {
-          setError(err?.message || t("auth.loginError", "فشل تسجيل الدخول"));
+          setError(friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")));
           return;
         }
         // Switch the UI into SA mode for any future actions.
@@ -345,7 +359,7 @@ export default function Login() {
         await performSuperAdminLogin();
       }
     } catch (err: any) {
-      setError(err?.message || t("auth.loginError", "فشل تسجيل الدخول"));
+      setError(friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")));
     } finally {
       setLoading(false);
     }
