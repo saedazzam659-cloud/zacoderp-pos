@@ -1211,6 +1211,44 @@ export default function GeneralSettings() {
         {/* ═══ TAB 1: General (Logo + Decimals + Save) ═══════════════════════ */}
         <TabsContent value="general" className="mt-5 space-y-6">
 
+      {/* ─── Document entry preferences (شاشات المستندات) ─────────────────── */}
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-muted-foreground" />
+          خيارات شاشات المستندات
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          تحكم في طريقة عرض تبويب الأصناف داخل نماذج المستندات (فواتير المشتريات حالياً).
+        </p>
+        <label
+          data-testid="hide-quick-add-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.hideQuickAddBar
+              ? "border-primary bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+            checked={!!user?.company?.hideQuickAddBar}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ hideQuickAddBar: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">
+              إخفاء شريط «إضافة صنف» السريع في تبويب الأصناف
+            </span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند التفعيل يختفي شريط الإدخال السريع أعلى جريدة الأصناف وتتوسع الجريدة
+              بمقدار سطرين إضافيين — تبقى إضافة الأصناف متاحة من زر «إضافة صنف» داخل الجريدة.
+              (مطبَّق حالياً على فواتير المشتريات)
+            </span>
+          </span>
+        </label>
+      </div>
+
       {/* ─── Logo Section ──────────────────────────────────────────────────── */}
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">

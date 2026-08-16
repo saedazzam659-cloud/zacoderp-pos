@@ -235,7 +235,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   const {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
-    decimalPlaces, showZeros, autoPostingEnabled,
+    decimalPlaces, showZeros, hideQuickAddBar, autoPostingEnabled,
     // Per-doc-type auto-posting toggles. Each one independently decides
     // whether saving that document immediately posts the resulting journal
     // entry. Validated as plain booleans below.
@@ -284,7 +284,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
-    decimalPlaces?: number; showZeros?: boolean; autoPostingEnabled?: boolean;
+    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; autoPostingEnabled?: boolean;
     autoPostJournalEntry?: boolean;
     autoPostSales?: boolean; autoPostPurchase?: boolean;
     allowDraftWithoutWarehouse?: boolean;
@@ -372,6 +372,8 @@ router.patch("/:id/general-settings", async (req, res) => {
   // Display-only "show zeros" toggle — coerce to boolean so we never persist a
   // string. Affects how numeric inputs render 0; no impact on stored data.
   if (showZeros !== undefined) updates.showZeros = !!showZeros;
+  // UX-only toggle: hide the quick add-item bar on document item tabs.
+  if (hideQuickAddBar !== undefined) updates.hideQuickAddBar = !!hideQuickAddBar;
   if (autoPostingEnabled !== undefined) {
     updates.autoPostingEnabled = !!autoPostingEnabled;
   }

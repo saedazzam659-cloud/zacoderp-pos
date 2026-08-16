@@ -50,6 +50,11 @@ export const companiesTable = pgTable("companies", {
   // are NEVER affected. Default false = HIDE zeros for existing + new tenants
   // (the user can flip it back from /general-settings).
   showZeros: boolean("show_zeros").notNull().default(false),
+  // UX preference (company-wide): hide the quick "إضافة صنف" entry bar on the
+  // tabbed items tab of document forms (purchase invoices first), letting the
+  // items grid grow taller. Purely presentational — items are still added via
+  // the in-grid "إضافة صنف" button.
+  hideQuickAddBar: boolean("hide_quick_add_bar").notNull().default(false),
   // Menu visibility permissions (JSON): { invoices, customers, suppliers, zatca }
   menuPermissions: text("menu_permissions").default('{"invoices":true,"customers":true,"suppliers":true,"zatca":true}'),
   // Windows desktop-app module visibility (JSON): { <windows module key>: boolean }.
