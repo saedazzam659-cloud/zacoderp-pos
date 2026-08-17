@@ -1,5 +1,5 @@
 import http from "node:http";
-import app from "./app";
+import app, { rebrandSpaIndexOnDiskForAgent } from "./app";
 import { logger } from "./lib/logger";
 import { ensureSchemaUpToDate } from "./lib/ensureSchema";
 import { attachCobrowseHub } from "./lib/cobrowseHub";
@@ -348,6 +348,10 @@ async function bootstrap() {
   } catch (err) {
     logger.warn({ err }, "warmEmailConfig failed at startup");
   }
+
+  // Agent «full» servers: rewrite the on-disk SPA index.html with the agent's
+  // brand before serving starts (no-op elsewhere — see app.ts).
+  await rebrandSpaIndexOnDiskForAgent();
 
   const httpServer = http.createServer(app);
   // Attach the WebSocket signaling hub for the Co-browse feature. It hooks

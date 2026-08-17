@@ -296,6 +296,46 @@ function rebrandIndexHtml(html: string, brand: string): string {
     .replace(/href="\/manifest\.webmanifest"/g, 'href="/api/branding/manifest"');
 }
 
+// Agent «full» servers: the deployed bundle's static layer answers "/" and
+// SPA paths BEFORE these express routes, so per-request rebranding never
+// runs there. Instead, at boot (and after every auto-update, which restarts
+// the service) rewrite the on-disk public/index.html itself with the agent's
+// brand. The agent server hosts exactly one brand, so a disk rewrite is safe
+// and idempotent (all tokens are gone after the first pass). No-op anywhere
+// without /opt/zacod/config.json (i.e. dev + central prod).
+export async function rebrandSpaIndexOnDiskForAgent(): Promise<void> {
+  try {
+    const { promises: fsp } = await import("node:fs");
+    const path = await import("node:path");
+    let domain = "";
+    try {
+      const cfgRaw = await fsp.readFile(process.env.ZACOD_AGENT_CONFIG || "/opt/zacod/config.json", "utf8");
+      domain = String(JSON.parse(cfgRaw)?.domain ?? "").trim().toLowerCase();
+    } catch { return; } // not an agent server
+    if (!domain) return;
+    const { lookupAgentByHost } = await import("./routes/agentInstances.js");
+    const hit = await lookupAgentByHost(domain).catch(() => null);
+    const brand = hit?.brandName?.trim();
+    if (!brand) return;
+    const candidates = [
+      process.argv[1] ? path.join(path.dirname(process.argv[1]), "public", "index.html") : "",
+      path.resolve(process.cwd(), "public", "index.html"),
+      path.resolve(process.cwd(), "dist", "public", "index.html"),
+    ].filter(Boolean);
+    for (const p of candidates) {
+      try {
+        const html = await fsp.readFile(p, "utf8");
+        const branded = rebrandIndexHtml(html, brand);
+        if (branded === html) continue; // already branded (or no tokens)
+        const tmp = `${p}.rebrand-${process.pid}`;
+        await fsp.writeFile(tmp, branded, "utf8");
+        await fsp.rename(tmp, p);
+        console.log(`agent white-label: rebranded ${p} → "${brand}"`);
+      } catch { /* next candidate */ }
+    }
+  } catch { /* strictly best-effort */ }
+}
+
 app.get(["/", "/index.html", "/login", "/register"], async (req, res, next) => {
   try {
     const { resolveAgentRequestHost, lookupAgentByHost } = await import("./routes/agentInstances.js");

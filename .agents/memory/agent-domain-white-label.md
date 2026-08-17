@@ -11,6 +11,8 @@ Rule: on registered agent domains (agent_instances.brand_name), the static index
 
 **Why:** WhatsApp/Telegram crawlers read raw HTML; the platform's prod static layer is not in the repo, so express routes on non-file SPA paths are the only server-side lever.
 
+- Agent «full» servers: the deployed bundle's static layer answers "/" and SPA paths BEFORE express — per-request rewrite never runs. Fix: `rebrandSpaIndexOnDiskForAgent()` at boot rewrites dist/public/index.html on disk (agent detected via /opt/zacod/config.json domain → lookupAgentByHost; atomic tmp+rename; idempotent; no-op on dev/central).
+
 **Traps:**
 - Brand replacement must be token-ordered longest-first (`زاكود المحاسبي` → `زاكود`, `Zacoderp` → `Zacod ERP` → `Zacode`) or "Zacoderp" degrades to "<brand>rp"; lowercase zacoderp.com URLs must stay intact.
 - JSON-LD `<script type="application/ld+json">` blocks are DROPPED on agent domains — HTML-escaped replacements corrupt the JSON, and Zacode org schema is wrong for the brand anyway.
