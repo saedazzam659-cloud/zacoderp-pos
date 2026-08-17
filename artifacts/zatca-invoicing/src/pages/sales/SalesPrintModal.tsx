@@ -2009,9 +2009,16 @@ function template14(d: PrintData): string {
     /* Tightened bottom & top margins so the running header on each
        new page sits closer to the previous page's running footer —
        removes the visual "gap between the red boxes" the user flagged. */
-    @page { size: A4; margin: 8mm 8mm 10mm 8mm !important; }
+    /* margin:0 also suppresses the browser's own print header/footer
+       (URL + date line) — the page padding is recreated below via the
+       body's side padding + the repeating running header/footer cells. */
+    @page { size: A4; margin: 0 !important; }
     :root { --ink:#0f172a; --line:#e5e7eb; --soft:#f8fafc; --gold:#b88a2a; --gold2:#e5c277; }
     html, body { padding: 0 !important; margin: 0 !important; color: var(--ink); }
+    /* Horizontal padding on the body persists on every printed page
+       (the block box spans page breaks), replacing the old 8mm side
+       @page margins. */
+    body { padding-left: 8mm !important; padding-right: 8mm !important; }
     .sheet { padding: 0 !important; }
 
     /* ── Page frame: repeating header + footer on every printed page ─ */
@@ -2023,8 +2030,11 @@ function template14(d: PrintData): string {
     .page-frame > tbody > tr > td { padding: 0; vertical-align: top; }
     /* Tight breathing space so consecutive page header/footer pairs
        sit close together across the page break. */
-    .running-header { padding-top: 2mm; padding-bottom: 4px; }
-    .running-footer { padding-top: 4px; padding-bottom: 1mm; }
+    /* The thead/tfoot repeat on every page, so their padding recreates
+       the old top (8mm) / bottom (10mm) @page margins now that the page
+       margin itself is 0 (needed to kill the browser URL footer). */
+    .running-header { padding-top: 10mm; padding-bottom: 4px; }
+    .running-footer { padding-top: 4px; padding-bottom: 11mm; }
 
     /* ── 3-column header ───────────────────────────────────────────── */
     .hdr { display:grid; grid-template-columns: 1fr 1.1fr 1fr; gap:12px; align-items:stretch; margin-bottom:14px; }
