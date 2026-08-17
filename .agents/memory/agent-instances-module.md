@@ -47,3 +47,6 @@ Companies on full_shell agents are merged into /api/companies tagged agentInstan
 ## Agent DB schema drift (2026-08)
 - Agent DBs are healed ONLY by re-running init-db («تهيئة + بصمة» — safe, additive, skips pg_dump when companies exists). Central code with drizzle full-column .values()/.returning()/select() on users breaks against stale agent DBs → SA admin routes touching agent-scoped users must use raw core-column SQL (done: admin.ts add-user + toggle, auth.ts register admin-user).
 - Rule: after publishing schema-adding changes, re-run init-db per agent, or agent-domain login/user-create fails with raw column-list SQL errors.
+
+## License rotation vs on-server config
+Heartbeat 403 `license_mismatch` makes heartbeat.sh touch /opt/zacod/SUSPENDED and `systemctl stop caddy` → the whole agent domain goes down (521) until a 200 heartbeat un-suspends it. Rotating/changing `license_key` centrally WITHOUT updating `/opt/zacod/config.json` on the box causes exactly this. **How to apply:** any central license_key change must be mirrored into the server's config.json (sed + rerun heartbeat.sh); diagnose via /tmp/zacod_hb.json on the box.
