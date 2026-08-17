@@ -13,6 +13,8 @@ Rule: on registered agent domains (agent_instances.brand_name), the static index
 
 - Agent «full» servers: the deployed bundle's static layer answers "/" and SPA paths BEFORE express — per-request rewrite never runs. Fix: `rebrandSpaIndexOnDiskForAgent()` at boot rewrites dist/public/index.html on disk (agent detected via /opt/zacod/config.json domain → lookupAgentByHost; atomic tmp+rename; idempotent; no-op on dev/central).
 
+- Non-«full» agents (frontend_only/full_shell) proxy everything to central, where the static layer serves HTML before express AND the release channel refuses them (403 not_full_edition) — server/boot rewrites can never reach them. Fix: public `GET /api/branding/index?host=` returns the rebranded SPA index; agent Caddy serves `/opt/zacod/www/index.html` locally for GET / /index.html /login /register (matcher falls through to proxy when the file is absent), heartbeat cron refreshes it every 5 min. Existing agents need their setup kit re-run (new Caddyfile+heartbeat) — new installs get it automatically.
+
 **Traps:**
 - Brand replacement must be token-ordered longest-first (`زاكود المحاسبي` → `زاكود`, `Zacoderp` → `Zacod ERP` → `Zacode`) or "Zacoderp" degrades to "<brand>rp"; lowercase zacoderp.com URLs must stay intact.
 - JSON-LD `<script type="application/ld+json">` blocks are DROPPED on agent domains — HTML-escaped replacements corrupt the JSON, and Zacode org schema is wrong for the brand anyway.

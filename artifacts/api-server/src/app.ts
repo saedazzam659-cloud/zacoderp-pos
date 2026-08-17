@@ -253,7 +253,7 @@ app.get("/robots.txt", robotsHandler);
 // serving — this middleware is strictly additive.
 let cachedIndexHtml: { path: string; html: string } | null | undefined;
 let indexHtmlMissRetryAt = 0; // don't cache "missing" forever — retry after a short TTL
-async function readSpaIndexHtml(): Promise<{ path: string; html: string } | null> {
+export async function readSpaIndexHtml(): Promise<{ path: string; html: string } | null> {
   if (cachedIndexHtml) return cachedIndexHtml;
   if (cachedIndexHtml === null && Date.now() < indexHtmlMissRetryAt) return null;
   const { promises: fsp } = await import("node:fs");
@@ -277,7 +277,7 @@ async function readSpaIndexHtml(): Promise<{ path: string; html: string } | null
   return null;
 }
 
-function rebrandIndexHtml(html: string, brand: string): string {
+export function rebrandIndexHtml(html: string, brand: string): string {
   // Escape for safe embedding inside HTML text/attribute values.
   const safe = brand.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   return html

@@ -1052,7 +1052,19 @@ elif [ "$CODE" = "200" ] && [ -f /opt/zacod/SUSPENDED ]; then
   rm -f /opt/zacod/SUSPENDED
   systemctl start caddy 2>/dev/null || true
 fi
-`;
+${inst.mode === "full" ? "" : `# تحديث صفحة الواجهة المعدّلة بالعلامة التجارية — تُقدَّم محليًا عبر Caddy
+# لمسارات الدخول (/ /login /register). فشل الجلب لا يؤثر: يبقى الملف السابق،
+# وإن لم يوجد ملف يسقط Caddy تلقائيًا إلى الوكيل المركزي.
+mkdir -p /opt/zacod/www
+ORIGIN=$(grep -o '"centralOrigin": *"[^"]*"' $CFG | cut -d'"' -f4)
+DOMAIN=$(grep -o '"domain": *"[^"]*"' $CFG | cut -d'"' -f4)
+BCODE=$(curl -s -o /opt/zacod/www/index.html.tmp -w '%{http_code}' "$ORIGIN/api/branding/index?host=$DOMAIN" || echo 000)
+if [ "$BCODE" = "200" ] && grep -q "<title>" /opt/zacod/www/index.html.tmp 2>/dev/null; then
+  mv /opt/zacod/www/index.html.tmp /opt/zacod/www/index.html
+else
+  rm -f /opt/zacod/www/index.html.tmp
+fi
+`}`;
   // «full» edition runs the whole app locally — Caddy fronts the local app
   // (TLS + kill-switch via heartbeat) instead of proxying to the central API.
   const caddyfile = inst.mode === "full"
@@ -1061,10 +1073,28 @@ fi
 }
 `
     : `${inst.domain} {
-  reverse_proxy ${origin} {
-    header_up Host {upstream_hostport}
-    header_up X-Zacod-Agent-Host ${inst.domain}
-    header_up X-Zacod-Agent-Token ${proxyToken}
+  # صفحات الدخول تُقدَّم محليًا بنسخة معدّلة بالعلامة التجارية (يحدّثها كرون
+  # النبض كل ٥ دقائق). إن لم يوجد الملف بعد، يسقط الطلب تلقائيًا إلى الوكيل.
+  @branded {
+    method GET
+    path / /index.html /login /register
+    file {
+      root /opt/zacod/www
+      try_files /index.html
+    }
+  }
+  handle @branded {
+    root * /opt/zacod/www
+    rewrite * /index.html
+    header Cache-Control no-cache
+    file_server
+  }
+  handle {
+    reverse_proxy ${origin} {
+      header_up Host {upstream_hostport}
+      header_up X-Zacod-Agent-Host ${inst.domain}
+      header_up X-Zacod-Agent-Token ${proxyToken}
+    }
   }
 }
 `;
@@ -1751,6 +1781,34 @@ agentPublicRouter.get("/branding/manifest", async (req, res) => {
       { name: "الفواتير", short_name: "فواتير", url: "/invoices", icons: [{ src: "/icon-192.png", sizes: "192x192" }] },
     ],
   });
+});
+
+// GET /api/branding/index?host=... — the full SPA index.html rebranded for an
+// agent host. Non-«full» agents can't rebrand server-side (their HTML comes
+// from the central static layer, which answers before express), so their
+// Caddy serves this file locally for the entry paths (/, /login, /register).
+// The agent heartbeat cron refreshes the cached copy every 5 minutes.
+// Covered by AGENT_PUBLIC_PATHS ("/branding" prefix).
+agentPublicRouter.get("/branding/index", async (req, res) => {
+  try {
+    const host = typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
+    const hit = await lookupAgentByHost(host);
+    const brand = hit?.brandName?.trim();
+    if (!brand) { res.status(404).json({ error: "not_agent_domain" }); return; }
+    const { readSpaIndexHtml, rebrandIndexHtml } = await import("../app.js");
+    let html = (await readSpaIndexHtml())?.html ?? null;
+    if (!html) {
+      // Fallback: fetch our own public root — the static layer serves it.
+      try {
+        const r = await fetch(`${resolveCentralOrigin()}/`, { headers: { "User-Agent": "zacod-branding-fetch" } });
+        if (r.ok) { const t = await r.text(); if (t.includes("<title>")) html = t; }
+      } catch { /* fall through */ }
+    }
+    if (!html) { res.status(503).json({ error: "index_unavailable" }); return; }
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.send(rebrandIndexHtml(html, brand));
+  } catch (e: any) { res.status(500).json({ error: String(e?.message ?? e).slice(0, 200) }); }
 });
 
 // ── Release channel for «full» edition agents ──────────────────────────────
