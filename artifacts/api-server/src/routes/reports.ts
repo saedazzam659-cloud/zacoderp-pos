@@ -16,7 +16,7 @@ import {
 } from "@workspace/db";
 import { eq, and, gte, lte, inArray, notInArray, sql as dsql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, requirePermissionAny } from "../middleware/permissions.js";
 import { customersTable } from "@workspace/db";
 import { suppliersTable } from "@workspace/db";
 import { sendEmail } from "../lib/email.js";
@@ -116,7 +116,12 @@ function validIsoDate(s: string): boolean {
 // invoices) and input VAT (purchase invoices − purchase returns) from the
 // canonical accounting tables, all gated to status='posted' (or 'issued'
 // for legacy ZATCA invoices). Drafts and cancelled docs are excluded.
-router.get("/vat-declaration", requirePermission("vat_declaration", "view"), async (req, res) => {
+// الإقرار الضريبي is reachable from TWO screens: the tax screens (gate
+// `reports` via vat_declaration) AND the accounting-reports screen
+// /accounting/reports/tax-declaration (gate `accounting_reports`). Industry
+// registration deny-fills unselected gates, so many companies have only ONE
+// of the two enabled — either module must open this report.
+router.get("/vat-declaration", requirePermissionAny(["vat_declaration", "accounting_reports"], "view"), async (req, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
   if (!from || !to) { res.status(400).json({ error: "from و to مطلوبان (YYYY-MM-DD)" }); return; }
   if (!validIsoDate(from) || !validIsoDate(to)) {
@@ -560,7 +565,7 @@ function classifyOne(base: number, vat: number): Bucket3 {
   return "exempt";
 }
 
-router.get("/vat-declaration/details", requirePermission("vat_declaration", "view"), async (req, res) => {
+router.get("/vat-declaration/details", requirePermissionAny(["vat_declaration", "accounting_reports"], "view"), async (req, res) => {
   const { from, to, bucket } = req.query as { from?: string; to?: string; bucket?: string };
   if (!from || !to || !bucket) { res.status(400).json({ error: "from و to و bucket مطلوبة" }); return; }
   if (!validIsoDate(from) || !validIsoDate(to)) { res.status(400).json({ error: "صيغة التاريخ غير صحيحة" }); return; }

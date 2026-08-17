@@ -7,12 +7,33 @@ import {
 import { eq, and, asc, gte, lte, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
-import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { moduleAudit, requireModulePermission, requirePermissionAny } from "../middleware/permissions.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
+
+// The cost-center LIST feeds report-screen filter pickers (e.g. جدول
+// التسويات وحركة المصروف المقدم والمستحق under /accounting/reports which is
+// gated by accounting_reports) — register it BEFORE the accounts module gate
+// so companies with accounting reports but a disabled accounts module can
+// still populate the picker. Read-only endpoint.
+router.get(
+  "/",
+  requirePermissionAny(["accounts", "accounting_reports"], "view"),
+  async (req, res) => {
+    try {
+      const cid = resolveCompanyId(req, (req as any).authUser?.companyId ?? undefined);
+      if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+      const rows = await db.select().from(costCentersTable)
+        .where(eq(costCentersTable.companyId, cid))
+        .orderBy(asc(costCentersTable.code));
+      res.json(rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  },
+);
+
 router.use(requireModulePermission("accounts"));
 router.use(moduleAudit("accounts"));
 
@@ -39,17 +60,6 @@ async function validateParent(cid: number, selfId: number | null, parentId: numb
   }
   return null;
 }
-
-// ─── LIST ─────────────────────────────────────────────────────────────────────
-router.get("/", async (req, res) => {
-  try {
-    const cid = guard(req, res); if (!cid) return;
-    const rows = await db.select().from(costCentersTable)
-      .where(eq(costCentersTable.companyId, cid))
-      .orderBy(asc(costCentersTable.code));
-    res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
-});
 
 // ─── GET ONE ──────────────────────────────────────────────────────────────────
 router.get("/:id", async (req, res) => {

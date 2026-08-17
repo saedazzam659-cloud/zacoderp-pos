@@ -305,6 +305,44 @@ export function requirePermission(module: string, action: PermAction) {
   };
 }
 
+// OR-gate variant: pass when ANY of the listed modules grants access
+// (company gate + per-user action both satisfied for that module).
+// Use for shared/report endpoints that logically belong to more than one
+// module — e.g. the VAT-declaration report is reachable from both the tax
+// screens (gate `reports`) and the accounting-reports screens (gate
+// `accounting_reports`); industry-registered companies often have only one
+// of the two gates enabled, and a single-module guard 403s the other path.
+export function requirePermissionAny(modules: string[], action: PermAction) {
+  return async function permAnyGuard(req: Request, res: Response, next: NextFunction) {
+    const u = req.authUser;
+    if (!u) { res.status(401).json({ error: "غير مصرح" }); return; }
+    if (u.role === "superadmin") { next(); return; }
+    let anyCompanyAllowed = false;
+    for (const module of modules) {
+      if (!companyAllowsModule(u, module)) continue;
+      anyCompanyAllowed = true;
+      if (userActionAllowed(u, module, action)) { next(); return; }
+      if (await mobileChannelAllowed(u, module, action)) { next(); return; }
+    }
+    const primary = modules[0] ?? "unknown";
+    void writeAudit({
+      userId: u.id, username: u.username, role: u.role, companyId: u.companyId,
+      module: primary, action: "denied",
+      method: req.method, path: req.originalUrl, statusCode: 403,
+      ip: clientIp(req), userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500),
+      metadata: {
+        attemptedAction: action, modulesTried: modules,
+        reason: anyCompanyAllowed ? undefined : "company_module_disabled",
+      },
+    });
+    if (!anyCompanyAllowed) {
+      res.status(403).json({ error: `هذا الموديل غير مفعّل لشركتك — يرجى مراجعة المسؤول` });
+      return;
+    }
+    res.status(403).json({ error: `صلاحيات غير كافية للوصول إلى ${primary}` });
+  };
+}
+
 // Convenience for legacy usage: "must be admin/superadmin" (no granular check).
 export function requireAdminRole(req: Request, res: Response, next: NextFunction) {
   const role = req.authUser?.role;

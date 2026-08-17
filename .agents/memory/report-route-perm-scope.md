@@ -8,3 +8,5 @@ Rule: when a screen is UI-gated by `accounting_reports` but its API endpoint liv
 **Why:** architect review caught this on the adjustments movement-schedule report — company/module gating happens per-router, and the FA schedule got away with it only because both screen and router share the same module key.
 
 **How to apply:** any new report endpoint added to an existing CRUD module router where the UI permKey differs from the router's module key.
+
+**OR-gate for dual-surface reports:** industry registration deny-fills every unselected gate key to `false`, so a company can have `accounting_reports` ON but `reports` OFF. Any endpoint reachable from screens of TWO modules (e.g. /reports/vat-declaration serves both tax screens and /accounting/reports/tax-declaration) must use `requirePermissionAny([...],"view")` (permissions.ts), not a single-module guard — and picker feeds like the cost-centers LIST needed by report screens must register BEFORE the router-level `accounts` gate with the same OR-gate.
