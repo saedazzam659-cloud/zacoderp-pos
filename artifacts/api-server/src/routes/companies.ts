@@ -304,6 +304,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     bankAccountText, printShowItemsSummary,
+    printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
     printEnabledTemplates, printDefaultTemplate,
     invoicePrintLanguage,
     sequenceDateSource,
@@ -358,6 +359,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
     bankAccountText?: string | null; printShowItemsSummary?: boolean;
+    printT14ShowEnSubtitle?: boolean; printT14ShowAccountCode?: boolean; printT14ShowAuditFooter?: boolean;
     printEnabledTemplates?: number[] | null; printDefaultTemplate?: number;
     invoicePrintLanguage?: string;
     sequenceDateSource?: string;
@@ -523,6 +525,10 @@ router.patch("/:id/general-settings", async (req, res) => {
     }
     updates.sequenceDateSource = v;
   }
+  // Template-14 («الأصلي») visibility toggles — coerce to boolean.
+  if (printT14ShowEnSubtitle  !== undefined) updates.printT14ShowEnSubtitle  = !!printT14ShowEnSubtitle;
+  if (printT14ShowAccountCode !== undefined) updates.printT14ShowAccountCode = !!printT14ShowAccountCode;
+  if (printT14ShowAuditFooter !== undefined) updates.printT14ShowAuditFooter = !!printT14ShowAuditFooter;
   // Auto-print toggles — coerce to boolean.
   if (printAutoAfterSaveSales   !== undefined) updates.printAutoAfterSaveSales   = !!printAutoAfterSaveSales;
   if (printAutoAfterSaveReceipt !== undefined) updates.printAutoAfterSaveReceipt = !!printAutoAfterSaveReceipt;

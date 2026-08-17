@@ -4037,6 +4037,9 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
     printTemplateJournal:  company.printTemplateJournal ?? "a4",
     invoicePrintLanguage:  company.invoicePrintLanguage ?? "ar",
     printShowItemsSummary: company.printShowItemsSummary !== false,
+    printT14ShowEnSubtitle:  company.printT14ShowEnSubtitle  !== false,
+    printT14ShowAccountCode: company.printT14ShowAccountCode !== false,
+    printT14ShowAuditFooter: company.printT14ShowAuditFooter !== false,
   });
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -4070,6 +4073,9 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
                   printTemplateJournal: data.printTemplateJournal,
                   invoicePrintLanguage: data.invoicePrintLanguage,
                   printShowItemsSummary: data.printShowItemsSummary,
+                  printT14ShowEnSubtitle:  data.printT14ShowEnSubtitle,
+                  printT14ShowAccountCode: data.printT14ShowAccountCode,
+                  printT14ShowAuditFooter: data.printT14ShowAuditFooter,
                 },
               }
             : u,
@@ -4171,6 +4177,38 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
           <Switch
             checked={form.printShowItemsSummary !== false}
             onCheckedChange={(v) => setForm((p) => ({ ...p, printShowItemsSummary: !!v }))}
+          />
+        </div>
+
+        {/* Template-14 extra metadata visibility toggles */}
+        <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 p-4">
+          <div className="space-y-0.5">
+            <div className="font-medium text-sm">إظهار العنوان الإنجليزي أسفل عنوان الفاتورة</div>
+            <p className="text-xs text-muted-foreground">السطر الإنجليزي أسفل «فاتورة مبيعات ضريبية» (مثل TAX INVOICE). عند الإيقاف يختفي من الفاتورة المطبوعة.</p>
+          </div>
+          <Switch
+            checked={form.printT14ShowEnSubtitle !== false}
+            onCheckedChange={(v) => setForm((p) => ({ ...p, printT14ShowEnSubtitle: !!v }))}
+          />
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 p-4">
+          <div className="space-y-0.5">
+            <div className="font-medium text-sm">إظهار «كود الحساب» في بيانات العميل</div>
+            <p className="text-xs text-muted-foreground">عند الإيقاف يختفي سطر كود حساب العميل من صندوق بيانات العميل في الفاتورة المطبوعة.</p>
+          </div>
+          <Switch
+            checked={form.printT14ShowAccountCode !== false}
+            onCheckedChange={(v) => setForm((p) => ({ ...p, printT14ShowAccountCode: !!v }))}
+          />
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 p-4">
+          <div className="space-y-0.5">
+            <div className="font-medium text-sm">إظهار شريط أسفل الفاتورة (تاريخ الإنشاء / بواسطة / طُبع / ZATCA e-Invoice)</div>
+            <p className="text-xs text-muted-foreground">الشريط السفلي الذي يعرض تاريخ الإنشاء واسم المستخدم وتاريخ الطباعة وعبارة ZATCA e-Invoice. عند الإيقاف يختفي بالكامل من كل صفحات الفاتورة.</p>
+          </div>
+          <Switch
+            checked={form.printT14ShowAuditFooter !== false}
+            onCheckedChange={(v) => setForm((p) => ({ ...p, printT14ShowAuditFooter: !!v }))}
           />
         </div>
       </div>

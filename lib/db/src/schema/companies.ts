@@ -208,6 +208,15 @@ export const companiesTable = pgTable("companies", {
   // Toggle for the items/quantities summary box ("blue box") on the printed
   // invoice. Defaults to shown to preserve existing behavior.
   printShowItemsSummary: boolean("print_show_items_summary").notNull().default(true),
+  // ─── Template 14 («الأصلي») visibility toggles ────────────────────────
+  // Control the extra metadata blocks the user may want hidden on the
+  // printed invoice: the English subtitle under the title (e.g. "TAX
+  // INVOICE"), the customer's «كود الحساب» row, and the bottom audit
+  // footer strip (created-at / by-user / printed-at / ZATCA e-Invoice).
+  // Default = shown to preserve existing behavior.
+  printT14ShowEnSubtitle:  boolean("print_t14_show_en_subtitle").notNull().default(true),
+  printT14ShowAccountCode: boolean("print_t14_show_account_code").notNull().default(true),
+  printT14ShowAuditFooter: boolean("print_t14_show_audit_footer").notNull().default(true),
   // Which sales-print templates are visible to end-users in the print
   // modal. NULL or empty array = show all 12 (default behavior). Stored
   // as a JSONB int[] (template ids 1..12). The "default" id below picks

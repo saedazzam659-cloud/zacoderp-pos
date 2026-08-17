@@ -1961,6 +1961,11 @@ function template14(d: PrintData): string {
     } catch { createdAtStr = String(createdAtRaw); }
   }
   const userName = doc.createdByName ?? doc.postedByName ?? "—";
+  // Company-level visibility toggles for template 14's extra metadata
+  // (general settings → إعدادات الطباعة). Default = shown (back-compat).
+  const t14ShowEnSub  = (company as any)?.printT14ShowEnSubtitle  !== false;
+  const t14ShowAcct   = (company as any)?.printT14ShowAccountCode !== false;
+  const t14ShowFooter = (company as any)?.printT14ShowAuditFooter !== false;
 
   // Split the lines into chunks per page so a long invoice paginates
   // cleanly. The page-frame `<thead>`/`<tfoot>` (company/customer + audit
@@ -2186,7 +2191,7 @@ function template14(d: PrintData): string {
         ${safeLogo ? `<div class="logo-wrap"><img src="${safeLogo}" alt="logo" /></div>` : ""}
         <div class="doc-title-pill">
           ${titleMain}
-          ${!isEn ? `<span class="en">${titleSub}</span>` : ""}
+          ${(!isEn && t14ShowEnSub) ? `<span class="en">${titleSub}</span>` : ""}
         </div>
         <div class="meta-pills">
           <span class="pill no"><b>${docNo}</b></span>
@@ -2208,12 +2213,12 @@ function template14(d: PrintData): string {
           <div class="row"><b>${L.country}</b><span class="mono">${custCountryName}</span></div>
           ${(customer?.vatNumber ?? doc.buyerVatNumber)
             ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
-          ${acctCode ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
+          ${(acctCode && t14ShowAcct) ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
           ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
         ` : `
           ${(customer?.vatNumber ?? doc.buyerVatNumber)
             ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
-          ${acctCode ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
+          ${(acctCode && t14ShowAcct) ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
           ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
           ${bldgNo ? `<div class="row"><b>${L.customerAddress}</b><span class="mono">${bldgNo}</span></div>` : ""}
         `}
@@ -2221,7 +2226,8 @@ function template14(d: PrintData): string {
     </div>`;
 
   // Green-box running footer — appears on every printed page.
-  const footerHtml = `
+  // Hidden entirely when the company turned off the audit-footer toggle.
+  const footerHtml = !t14ShowFooter ? "" : `
     <div class="audit-footer">
       <div class="grp">
         <span>${L.createdAtLbl}: <b>${createdAtStr}</b></span>
