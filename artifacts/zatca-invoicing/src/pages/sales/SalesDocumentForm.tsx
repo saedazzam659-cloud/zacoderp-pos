@@ -2781,24 +2781,40 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // step with a doc that can't be saved. We respect the company's
   // draft-without-warehouse policy: when warehouses are mandatory (policy OFF)
   // the header warehouse must be chosen before advancing.
-  const basicFieldsValid = (() => {
+  const missingBasicFields = (() => {
     // EXISTING docs (drafts included) already passed the save validation when
     // they were created — never lock the items tab on edit/view, otherwise a
     // draft saved without a warehouse (allowed under the draft-without-
     // warehouse policy, or legacy data) becomes uneditable: the user can't
     // even reach its lines. The full hard gate in handleSave still runs on
     // every save/post.
-    if (!isNew) return true;
+    if (!isNew) return [] as string[];
+    const missing: string[] = [];
     if (isInvoice || isOrder) {
-      if (!customerId) return false;
-      if (usesBranch && !branchId) return false;
+      if (!customerId) missing.push("العميل");
+      if (usesBranch && !branchId) missing.push("الفرع");
     } else if (fp.isRequired("customer") && !customerId) {
-      return false;
+      missing.push("العميل");
     }
-    if (!docDate) return false;
-    if (isInvoice && !allowDraftWithoutWarehouse && !headerWarehouseId) return false;
-    return true;
+    if (!docDate) missing.push("التاريخ");
+    if (isInvoice && !allowDraftWithoutWarehouse && !headerWarehouseId) missing.push("المستودع");
+    return missing;
   })();
+  const basicFieldsValid = missingBasicFields.length === 0;
+
+  // The items tab is never silently disabled: clicking it (or "التالي") while
+  // basics are incomplete explains EXACTLY which fields are missing.
+  const explainMissingBasics = () => {
+    toast({
+      title: "أكمل البيانات الأساسية أولاً",
+      description: `الحقول الناقصة: ${missingBasicFields.join("، ")}`,
+      variant: "destructive",
+    });
+  };
+  const handleTabChange = (v: string) => {
+    if (v === "items" && !basicFieldsValid) { explainMissingBasics(); return; }
+    setActiveTab(v);
+  };
 
   const isPostedLock = isInvoice && !isNew && (existing as any)?.status === "posted";
   // Any read-only context: a posted invoice OR an explicit view-only open.
@@ -2836,12 +2852,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       <p className="text-[11px] text-muted-foreground">
         {basicFieldsValid
           ? "اكتملت البيانات الأساسية — انتقل إلى الأصناف."
-          : "أكمل الحقول الأساسية المطلوبة (العميل" + (usesBranch ? "، الفرع" : "") + (isInvoice && !allowDraftWithoutWarehouse ? "، المستودع" : "") + ") للمتابعة."}
+          : `أكمل الحقول الناقصة للمتابعة: ${missingBasicFields.join("، ")}.`}
       </p>
       <Button
         type="button"
-        onClick={() => setActiveTab("items")}
-        disabled={!basicFieldsValid}
+        onClick={() => { if (!basicFieldsValid) { explainMissingBasics(); return; } setActiveTab("items"); }}
         className="gap-1.5"
         data-testid="button-next-to-items"
       >
@@ -3076,7 +3091,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       })()}
 
       <div className="contents">
-      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
+      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={handleTabChange} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
             {/* Tab chips FIRST (inline-start): RTL Arabic → tabs start from the
@@ -3088,7 +3103,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <FileText className="h-3.5 w-3.5" />البيانات الأساسية
                   </TabsTrigger>
-                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="items" className={`h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground ${basicFieldsValid ? "" : "opacity-50"}`}>
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
                   {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled

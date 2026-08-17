@@ -907,9 +907,27 @@ export default function PurchaseReturns() {
   // Gate the items tab until the mandatory header fields are filled — mirrors
   // SalesDocumentForm's basicFieldsValid. Existing docs (edit/view) already
   // passed save validation, so they are never locked out of their lines.
-  const basicFieldsValid =
-    editingId != null || viewMode ||
-    (!!form.supplierId && !!form.branchId && !!form.returnDate);
+  const missingBasicFields =
+    editingId != null || viewMode
+      ? []
+      : [
+          ...(!form.supplierId ? ["المورد"] : []),
+          ...(!form.branchId ? ["الفرع"] : []),
+          ...(!form.returnDate ? ["التاريخ"] : []),
+        ];
+  const basicFieldsValid = missingBasicFields.length === 0;
+  // Never silently block the items tab — explain exactly what is missing.
+  const explainMissingBasics = () => {
+    toast({
+      title: "أكمل البيانات الأساسية أولاً",
+      description: `الحقول الناقصة: ${missingBasicFields.join("، ")}`,
+      variant: "destructive",
+    });
+  };
+  const handleTabChange = (v: string) => {
+    if (v === "items" && !basicFieldsValid) { explainMissingBasics(); return; }
+    setActiveTab(v as any);
+  };
 
   // ── "إضافة صنف" quick-entry bar (tabbed items tab) ────────────────────
   // Same design as the sales-invoice items tab: pick item → commit. The item
@@ -1531,7 +1549,7 @@ ${sections}
         >
           <Tabs
             value={useTabbedLayout ? activeTab : "header"}
-            onValueChange={(v) => setActiveTab(v as any)}
+            onValueChange={handleTabChange}
             dir={isRtl ? "rtl" : "ltr"}
             className="space-y-4"
           >
@@ -1540,7 +1558,7 @@ ${sections}
               <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <FileText className="h-3.5 w-3.5" />{tr("headerData")}
               </TabsTrigger>
-              <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TabsTrigger value="items" className={`h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground ${basicFieldsValid ? "" : "opacity-50"}`}>
                 <ListOrdered className="h-3.5 w-3.5" />{tr("linesTitle")}
               </TabsTrigger>
               <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
@@ -1852,9 +1870,9 @@ ${sections}
                 <p className="text-[11px] text-muted-foreground">
                   {basicFieldsValid
                     ? "اكتملت البيانات الأساسية — انتقل إلى الأصناف."
-                    : "أكمل الحقول الأساسية المطلوبة (المورد، الفرع، التاريخ) للمتابعة."}
+                    : `أكمل الحقول الناقصة للمتابعة: ${missingBasicFields.join("، ")}.`}
                 </p>
-                <Button type="button" size="sm" className="gap-1.5" onClick={() => setActiveTab("items")} disabled={!basicFieldsValid} data-testid="button-next-to-items">
+                <Button type="button" size="sm" className="gap-1.5" onClick={() => { if (!basicFieldsValid) { explainMissingBasics(); return; } setActiveTab("items"); }} data-testid="button-next-to-items">
                   {tr("linesTitle")} <ListOrdered className="h-4 w-4" />
                 </Button>
               </div>

@@ -1013,11 +1013,29 @@ export default function PurchaseInvoiceForm() {
   // In view-only mode OR on a posted invoice the whole form is read-only.
   const editLock = viewMode || isPosted;
   // A purchase invoice needs a date AND a supplier before the items tab.
-  const basicFieldsValid = !!invoiceDate && !!supplierId;
+  // EXISTING docs (edit/view) already passed save validation — never lock
+  // their items tab (legacy/incomplete headers or late async loads).
+  const missingBasicFields = (!isNew || viewMode) ? [] : [
+    ...(!invoiceDate ? ["التاريخ"] : []),
+    ...(!supplierId ? ["المورد"] : []),
+  ];
+  const basicFieldsValid = missingBasicFields.length === 0;
+  // Never silently block the items tab — explain exactly what is missing.
+  const explainMissingBasics = () => {
+    toast({
+      title: "أكمل البيانات الأساسية أولاً",
+      description: `الحقول الناقصة: ${missingBasicFields.join("، ")}`,
+      variant: "destructive",
+    });
+  };
+  const handleTabChange = (v: string) => {
+    if (v === "items" && !basicFieldsValid) { explainMissingBasics(); return; }
+    setActiveTab(v as any);
+  };
 
   const nextButtonBlock = (
     <div className="flex justify-end pt-2">
-      <Button type="button" onClick={() => setActiveTab("items")} disabled={!basicFieldsValid} className="gap-1.5">
+      <Button type="button" onClick={() => { if (!basicFieldsValid) { explainMissingBasics(); return; } setActiveTab("items"); }} className="gap-1.5">
         التالي: الأصناف
         {isRtl ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
       </Button>
@@ -1243,7 +1261,7 @@ export default function PurchaseInvoiceForm() {
           </Button>
         </div>
       )}
-      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={(v) => setActiveTab(v as any)} dir={isRtl ? "rtl" : "ltr"}>
+      <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={handleTabChange} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
             {/* Tab chips FIRST (inline-start): RTL Arabic → tabs start from the
@@ -1255,7 +1273,7 @@ export default function PurchaseInvoiceForm() {
                   <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <FileText className="h-3.5 w-3.5" />البيانات الأساسية
                   </TabsTrigger>
-                  <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="items" className={`h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground ${basicFieldsValid ? "" : "opacity-50"}`}>
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
                   {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled
