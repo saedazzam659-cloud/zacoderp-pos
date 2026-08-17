@@ -105,7 +105,7 @@ async function logAgentEvent(agentId: number | null, eventType: string, detail: 
 // ── Agent-host lookup (used by /register blocking + public branding) ───────
 // 60s TTL cache: host → agent row (or null).
 type AgentHostHit = {
-  id: number; status: string; dbStatus: string; dbUrlEnc: string | null;
+  id: number; domain: string; status: string; dbStatus: string; dbUrlEnc: string | null;
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
   proxyToken: string | null; // decrypted per-agent proxy secret (null = not issued)
 } | null;
@@ -131,7 +131,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
       const extras = Array.isArray(r.extraDomains) ? (r.extraDomains as string[]) : [];
       if (r.domain === host || extras.includes(host)) {
         hit = {
-          id: r.id, status: r.status, dbStatus: r.dbStatus, dbUrlEnc: r.dbUrlEnc,
+          id: r.id, domain: r.domain, status: r.status, dbStatus: r.dbStatus, dbUrlEnc: r.dbUrlEnc,
           brandName: r.brandName, brandLogoUrl: r.brandLogoUrl, brandColor: r.brandColor,
           proxyToken: r.proxySecretEnc ? decryptSecret(r.proxySecretEnc) : null,
         };
@@ -1711,6 +1711,45 @@ agentPublicRouter.get("/branding", async (req, res) => {
     isAgentDomain: true,
     suspended: hit.status !== "active",
     brandName: hit.brandName, brandLogoUrl: hit.brandLogoUrl, brandColor: hit.brandColor,
+  });
+});
+
+// GET /api/branding/manifest?host=... — PWA manifest rebranded per agent
+// domain. The static /manifest.webmanifest ships the Zacode name, so the PWA
+// install prompt («تثبيت زاكود») shows the wrong brand on agent domains; the
+// index.html served on agent domains (and the client-side fallback) points
+// the <link rel="manifest"> here instead. Falls back to Zacode branding when
+// the host is not an agent domain, so it is always safe to reference.
+// Covered by AGENT_PUBLIC_PATHS ("/branding" prefix) — works even for
+// suspended agents (harmless, read-only, central-DB only).
+agentPublicRouter.get("/branding/manifest", async (req, res) => {
+  const host = typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
+  const hit = await lookupAgentByHost(host);
+  const brand = hit?.brandName?.trim() || null;
+  const name = brand ? `${brand} - ZATCA e-Invoicing` : "زاكود المحاسبي - ZATCA e-Invoicing";
+  const shortName = brand ?? "زاكود";
+  res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.json({
+    name,
+    short_name: shortName,
+    description: brand
+      ? `${brand} - نظام محاسبة سعودي معتمد من ZATCA - فاتورة إلكترونية، نقاط بيع، ومخزون`
+      : "نظام محاسبة سعودي معتمد من ZATCA - فاتورة إلكترونية، نقاط بيع، ومخزون",
+    lang: "ar", dir: "rtl", start_url: "/", scope: "/",
+    display: "standalone", orientation: "portrait",
+    background_color: "#ffffff", theme_color: "#047857",
+    categories: ["business", "finance", "productivity"],
+    icons: [
+      { src: "/favicon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+    ],
+    shortcuts: [
+      { name: "نقاط البيع", short_name: "POS", url: "/pos/", icons: [{ src: "/icon-192.png", sizes: "192x192" }] },
+      { name: "الفواتير", short_name: "فواتير", url: "/invoices", icons: [{ src: "/icon-192.png", sizes: "192x192" }] },
+    ],
   });
 });
 

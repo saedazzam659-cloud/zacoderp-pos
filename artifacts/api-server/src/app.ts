@@ -242,6 +242,75 @@ app.use((_req, res, next) => {
 app.get("/sitemap.xml", sitemapHandler);
 app.get("/robots.txt", robotsHandler);
 
+// ── Agent-domain white-label HTML ────────────────────────────────────────
+// WhatsApp/Telegram link previews and the first-paint <title> come from the
+// STATIC index.html, which carries the Zacode brand. On a registered agent
+// domain (e.g. main.tafrah.com.sa with brandName «طفرة») serve a rebranded
+// copy instead: replace every «زاكود» occurrence in the head/meta/title with
+// the agent's brand and point <link rel="manifest"> at the dynamic
+// /api/branding/manifest so the PWA install prompt shows the brand too.
+// Non-agent hosts (and any read failure) fall through to the normal static
+// serving — this middleware is strictly additive.
+let cachedIndexHtml: { path: string; html: string } | null | undefined;
+let indexHtmlMissRetryAt = 0; // don't cache "missing" forever — retry after a short TTL
+async function readSpaIndexHtml(): Promise<{ path: string; html: string } | null> {
+  if (cachedIndexHtml) return cachedIndexHtml;
+  if (cachedIndexHtml === null && Date.now() < indexHtmlMissRetryAt) return null;
+  const { promises: fsp } = await import("node:fs");
+  const path = await import("node:path");
+  const candidates = [
+    // Deployed bundle: SPA assets ride alongside index.mjs (dist/public).
+    process.argv[1] ? path.join(path.dirname(process.argv[1]), "public", "index.html") : "",
+    path.resolve(process.cwd(), "public", "index.html"),
+    path.resolve(process.cwd(), "dist", "public", "index.html"),
+    // Dev workspace fallback (built web artifact).
+    path.resolve(process.cwd(), "..", "zatca-invoicing", "dist", "public", "index.html"),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      const html = await fsp.readFile(p, "utf8");
+      if (html.includes("<title>")) { cachedIndexHtml = { path: p, html }; return cachedIndexHtml; }
+    } catch { /* next candidate */ }
+  }
+  cachedIndexHtml = null;
+  indexHtmlMissRetryAt = Date.now() + 60_000;
+  return null;
+}
+
+function rebrandIndexHtml(html: string, brand: string): string {
+  // Escape for safe embedding inside HTML text/attribute values.
+  const safe = brand.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return html
+    // JSON-LD blocks carry Zacode-specific structured data (org name, aliases,
+    // canonical URLs). On agent domains they'd be wrong for the brand, and
+    // HTML-escaped replacements would corrupt the JSON — drop them entirely.
+    .replace(/<script\s+type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/gi, "")
+    // Brand tokens, longest first so "Zacoderp"/"Zacod ERP" never degrade to
+    // "<brand>rp"/"<brand> ERP". Lowercase zacoderp.com URLs are untouched.
+    .split("زاكود المحاسبي").join(safe)
+    .split("زاكود").join(safe)
+    .split("Zacoderp").join(safe)
+    .split("Zacod ERP").join(safe)
+    .split("Zacode").join(safe)
+    // PWA manifest → dynamic branded manifest (same-origin API route).
+    .replace(/href="\/manifest\.webmanifest"/g, 'href="/api/branding/manifest"');
+}
+
+app.get(["/", "/index.html", "/login", "/register"], async (req, res, next) => {
+  try {
+    const { resolveAgentRequestHost, lookupAgentByHost } = await import("./routes/agentInstances.js");
+    const host = await resolveAgentRequestHost(req);
+    const hit = await lookupAgentByHost(host);
+    const brand = hit?.brandName?.trim();
+    if (!brand) { next(); return; }
+    const idx = await readSpaIndexHtml();
+    if (!idx) { next(); return; }
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.send(rebrandIndexHtml(idx.html, brand));
+  } catch { next(); }
+});
+
 // ─────────────────────────────────────────────────────────────────────
 // /ai-overview.json — a single canonical JSON document AI assistants
 // (ChatGPT, Perplexity, Claude, Gemini, Copilot) can fetch to get an
