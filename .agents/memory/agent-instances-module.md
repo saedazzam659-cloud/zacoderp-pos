@@ -50,3 +50,9 @@ Companies on full_shell agents are merged into /api/companies tagged agentInstan
 
 ## License rotation vs on-server config
 Heartbeat 403 `license_mismatch` makes heartbeat.sh touch /opt/zacod/SUSPENDED and `systemctl stop caddy` → the whole agent domain goes down (521) until a 200 heartbeat un-suspends it. Rotating/changing `license_key` centrally WITHOUT updating `/opt/zacod/config.json` on the box causes exactly this. **How to apply:** any central license_key change must be mirrored into the server's config.json (sed + rerun heartbeat.sh); diagnose via /tmp/zacod_hb.json on the box.
+
+## Multi-server failover (تعدد السيرفرات)
+- Primary server stays on the `agent_instances` row (all deploy/unban/rescue code reads it); `agent_servers` holds STANDBY rows only.
+- Promote = atomic in-tx field swap (SSH creds, host-key pin, deploy status/log, heartbeat fields, hb markers) with in-tx `FOR UPDATE` re-read + status re-check; demoted primary becomes a standby row «(الرئيسي السابق)». Full-edition (mode=full) standby deploy AND promote are rejected (needs app+DB replication — later phase). DNS repoint is manual; response returns Arabic note (low TTL advice).
+- Heartbeat routing: each standby has immutable `hbMarker` (srv-<8hex>) baked as `serverMarker` in /opt/zacod/config.json at deploy; instance has `primaryHbMarker` (""/null = legacy). Heartbeat validates license/domain/fingerprint FIRST (invalid heartbeat never updates any health row), then routes to matching row; unknown marker logs `unknown_server_marker` and updates nothing.
+- Standby deploy lease: claim flips deployStatus=deploying with claimAt timestamp; ALL terminal updates fence on `deployStatus='deploying' AND updatedAt=claimAt` so a stale slow deploy can't overwrite a later claimant.

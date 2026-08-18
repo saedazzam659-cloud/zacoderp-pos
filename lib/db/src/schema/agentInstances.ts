@@ -79,6 +79,11 @@ export const agentInstancesTable = pgTable("agent_instances", {
   saEmail:       text("sa_email"),          // يستقبل رمز OTP عند الدخول
   saPasswordEnc: text("sa_password_enc"),
 
+  // علامة نبض السيرفر الرئيسي الحالي (تعدد السيرفرات): "" أو NULL = السيرفر
+  // القديم بدون علامة؛ بعد «الترقية» تحمل علامة السيرفر المرقّى حتى يُنسب
+  // نبضه لصف الوكيل نفسه (انظر agent_servers.hb_marker).
+  primaryHbMarker: text("primary_hb_marker"),
+
   notes:     text("notes"),
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -105,5 +110,47 @@ export const agentSecurityEventsTable = pgTable("agent_security_events", {
   typeIdx:  index("agent_security_events_type_idx").on(t.eventType),
 }));
 
+// ─────────────────────────────────────────────────────────────────────────
+// Agent Servers — سيرفرات إضافية (احتياطية) لكل وكيل.
+// السيرفر «الرئيسي» يبقى على أعمدة agent_instances نفسها (كل الكود القائم
+// يعتمد عليها: النشر، فك الحظر، الإنقاذ…). هذا الجدول يحمل السيرفرات
+// الاحتياطية فقط؛ «الترقية» تبادل الحقول بين الصفّين ذرّيًا.
+// ─────────────────────────────────────────────────────────────────────────
+export const agentServersTable = pgTable("agent_servers", {
+  id:        serial("id").primaryKey(),
+  agentId:   integer("agent_id").notNull().references(() => agentInstancesTable.id, { onDelete: "cascade" }),
+  label:     text("label").notNull(),                   // اسم وصفي (مثال: سيرفر فرانكفورت الاحتياطي)
+  role:      text("role").notNull().default("standby"), // standby فقط حاليًا
+
+  // SSH — نفس نموذج أعمدة agent_instances (السر مشفّر write-only).
+  sshHost:      text("ssh_host"),
+  sshPort:      integer("ssh_port"),
+  sshUser:      text("ssh_user"),
+  sshSecretEnc: text("ssh_secret_enc"),
+  sshStatus:    text("ssh_status").notNull().default("not_configured"),
+  sshLastCheckAt: timestamp("ssh_last_check_at"),
+  sshHostKeyFp: text("ssh_host_key_fp"),
+
+  // نشر بوابة الدخول على هذا السيرفر.
+  deployStatus: text("deploy_status").notNull().default("never"), // never | deploying | ok | error
+  deployLog:    text("deploy_log"),
+  lastDeployAt: timestamp("last_deploy_at"),
+
+  // نبض هذا السيرفر تحديدًا — تميّزه علامة hb_marker المزروعة في config.json
+  // أثناء التسطيب ("" = يلتقط النبضات القديمة بلا علامة بعد التبادل).
+  hbMarker:        text("hb_marker").notNull(),
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  lastSeenIp:      text("last_seen_ip"),
+  deployedVersion: text("deployed_version"),
+
+  notes:     text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  agentIdx: index("agent_servers_agent_idx").on(t.agentId),
+  markerIdx: index("agent_servers_marker_idx").on(t.agentId, t.hbMarker),
+}));
+
 export type AgentInstance = typeof agentInstancesTable.$inferSelect;
 export type AgentSecurityEvent = typeof agentSecurityEventsTable.$inferSelect;
+export type AgentServer = typeof agentServersTable.$inferSelect;

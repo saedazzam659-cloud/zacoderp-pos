@@ -31,7 +31,7 @@ import { pbkdf2Sync, createCipheriv, createHash } from "node:crypto";
 // agent's cloned DB has an empty registry — following the proxy would
 // silently disable suspend/register-block enforcement).
 import { centralDb as db } from "@workspace/db";
-import { agentInstancesTable, agentSecurityEventsTable } from "@workspace/db";
+import { agentInstancesTable, agentSecurityEventsTable, agentServersTable } from "@workspace/db";
 import { eq, desc, and, or, ne, lt } from "drizzle-orm";
 import { z } from "zod/v4";
 import { PgPool, type PgPoolType } from "@workspace/db";
@@ -1080,8 +1080,14 @@ async function ensureProxySecret(inst: typeof agentInstancesTable.$inferSelect):
   return token;
 }
 
-async function buildSetupKit(inst: typeof agentInstancesTable.$inferSelect) {
+async function buildSetupKit(
+  inst: typeof agentInstancesTable.$inferSelect,
+  opts?: { hbMarker?: string },
+) {
   assertSafeDomain(inst.domain);
+  // علامة النبض: تميّز أي سيرفر (رئيسي/احتياطي) أرسل النبضة عند تعدد السيرفرات.
+  const hbMarker = opts?.hbMarker ?? (inst.primaryHbMarker ?? "");
+  if (!/^[a-z0-9-]{0,40}$/.test(hbMarker)) throw new Error("علامة نبض غير صالحة");
   const origin = resolveCentralOrigin();
   // Validate before interpolating into the root script.
   const originUrl = new URL(origin);
@@ -1095,17 +1101,19 @@ async function buildSetupKit(inst: typeof agentInstancesTable.$inferSelect) {
     fingerprint: inst.dbFingerprint ?? "",
     centralOrigin: origin,
     heartbeatUrl: `${origin}/api/agent/heartbeat`,
+    serverMarker: hbMarker,
   };
   const heartbeatScript = `#!/usr/bin/env bash
 # zacod agent heartbeat — validates license/identity with the central platform.
 # On a definitive 403 (suspended / revoked license) the local proxy is stopped.
 CFG=/opt/zacod/config.json
 URL=$(grep -o '"heartbeatUrl": *"[^"]*"' $CFG | cut -d'"' -f4)
-BODY=$(printf '{"installationId":"%s","licenseKey":"%s","domain":"%s","fingerprint":"%s"}' \\
+BODY=$(printf '{"installationId":"%s","licenseKey":"%s","domain":"%s","fingerprint":"%s","serverMarker":"%s"}' \\
   "$(grep -o '"installationId": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
   "$(grep -o '"licenseKey": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
   "$(grep -o '"domain": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
-  "$(grep -o '"fingerprint": *"[^"]*"' $CFG | cut -d'"' -f4)")
+  "$(grep -o '"fingerprint": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
+  "$(grep -o '"serverMarker": *"[^"]*"' $CFG | cut -d'"' -f4)")
 CODE=$(curl -s -o /tmp/zacod_hb.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$BODY" "$URL")
 if [ "$CODE" = "403" ]; then
   touch /opt/zacod/SUSPENDED
@@ -1482,6 +1490,276 @@ router.post("/:id/deploy", async (req, res) => {
     await finish(false, `[error] ${String(e?.message ?? e).slice(0, 400)}`);
     res.status(502).json({ error: "فشل النشر", detail: String(e?.message ?? e).slice(0, 400) });
   }
+});
+
+// ── تعدد السيرفرات (سيرفرات احتياطية لكل وكيل) ─────────────────────────────
+//
+// السيرفر «الرئيسي» يبقى على أعمدة agent_instances (كل خطوط النشر/الإنقاذ
+// تعتمد عليها). جدول agent_servers يحمل السيرفرات الاحتياطية: نضيفها،
+// نختبر SSH، نسطّب عليها بوابة الدخول (Caddy + نبض بعلامة مميزة)، وعند
+// تعطل الرئيسي زر «ترقية» يبادل الحقول بين الصفّين ذرّيًا — ثم يوجَّه
+// الدومين (DNS) إلى عنوان السيرفر الجديد.
+
+function serverPublicRow(s: typeof agentServersTable.$inferSelect) {
+  const { sshSecretEnc, sshHostKeyFp: _fp, hbMarker: _m, ...rest } = s as any;
+  return { ...rest, sshSecretSet: !!sshSecretEnc };
+}
+
+/** يبني هدف SSH بشكل صف الوكيل لكن ببيانات السيرفر الاحتياطي (لإعادة استخدام sshRunScript). */
+function overlayServerTarget(
+  inst: typeof agentInstancesTable.$inferSelect,
+  srv: typeof agentServersTable.$inferSelect,
+): typeof agentInstancesTable.$inferSelect {
+  return {
+    ...inst,
+    sshHost: srv.sshHost, sshPort: srv.sshPort, sshUser: srv.sshUser,
+    sshSecretEnc: srv.sshSecretEnc, sshHostKeyFp: srv.sshHostKeyFp,
+  } as typeof agentInstancesTable.$inferSelect;
+}
+
+async function loadServer(agentId: number, sid: number) {
+  const [srv] = await db.select().from(agentServersTable)
+    .where(and(eq(agentServersTable.id, sid), eq(agentServersTable.agentId, agentId))).limit(1);
+  return srv ?? null;
+}
+
+const serverUpsertSchema = z.object({
+  label: z.string().min(2).max(120),
+  sshHost: z.string().max(255).nullish(),
+  sshPort: z.number().int().min(1).max(65535).nullish(),
+  sshUser: z.string().max(100).nullish(),
+  // write-only: فارغ/غير مُرسل = الإبقاء على الحالية.
+  sshSecret: z.string().max(10000).nullish(),
+  notes: z.string().max(2000).nullish(),
+});
+
+// GET /:id/servers — قائمة السيرفرات الاحتياطية للوكيل.
+router.get("/:id/servers", async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await db.select().from(agentServersTable)
+    .where(eq(agentServersTable.agentId, id)).orderBy(desc(agentServersTable.id));
+  res.json(rows.map(serverPublicRow));
+});
+
+// POST /:id/servers — إضافة سيرفر احتياطي.
+router.post("/:id/servers", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  const p = serverUpsertSchema.safeParse(req.body);
+  if (!p.success) { res.status(400).json({ error: "بيانات غير صالحة" }); return; }
+  const d = p.data;
+  const [row] = await db.insert(agentServersTable).values({
+    agentId: id, label: d.label,
+    sshHost: d.sshHost ?? null, sshPort: d.sshPort ?? null, sshUser: d.sshUser ?? null,
+    sshSecretEnc: d.sshSecret ? encryptSecret(d.sshSecret) : null,
+    hbMarker: `srv-${randomBytes(4).toString("hex")}`,
+    notes: d.notes ?? null,
+  }).returning();
+  res.status(201).json(serverPublicRow(row));
+});
+
+// PUT /:id/servers/:sid — تعديل سيرفر احتياطي (السر write-only).
+router.put("/:id/servers/:sid", async (req, res) => {
+  const id = Number(req.params.id), sid = Number(req.params.sid);
+  const srv = await loadServer(id, sid);
+  if (!srv) { res.status(404).json({ error: "غير موجود" }); return; }
+  const p = serverUpsertSchema.partial().safeParse(req.body);
+  if (!p.success) { res.status(400).json({ error: "بيانات غير صالحة" }); return; }
+  const d = p.data;
+  const hostChanged = d.sshHost !== undefined && (d.sshHost ?? null) !== srv.sshHost;
+  const [row] = await db.update(agentServersTable).set({
+    ...(d.label !== undefined ? { label: d.label } : {}),
+    ...(d.sshHost !== undefined ? { sshHost: d.sshHost ?? null } : {}),
+    ...(d.sshPort !== undefined ? { sshPort: d.sshPort ?? null } : {}),
+    ...(d.sshUser !== undefined ? { sshUser: d.sshUser ?? null } : {}),
+    ...(d.sshSecret ? { sshSecretEnc: encryptSecret(d.sshSecret) } : {}),
+    ...(d.notes !== undefined ? { notes: d.notes ?? null } : {}),
+    // تغيير المضيف = سيرفر آخر فعليًا — صفّر تثبيت مفتاح المضيف والحالة.
+    ...(hostChanged ? { sshHostKeyFp: null, sshStatus: "not_configured", deployStatus: "never" } : {}),
+    updatedAt: new Date(),
+  }).where(and(eq(agentServersTable.id, sid), eq(agentServersTable.agentId, id))).returning();
+  res.json(serverPublicRow(row));
+});
+
+// DELETE /:id/servers/:sid
+router.delete("/:id/servers/:sid", async (req, res) => {
+  const id = Number(req.params.id), sid = Number(req.params.sid);
+  const srv = await loadServer(id, sid);
+  if (!srv) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (srv.deployStatus === "deploying") { res.status(409).json({ error: "يوجد تسطيب جارٍ على هذا السيرفر" }); return; }
+  await db.delete(agentServersTable).where(and(eq(agentServersTable.id, sid), eq(agentServersTable.agentId, id)));
+  res.json({ ok: true });
+});
+
+// POST /:id/servers/:sid/test-ssh — نفس منطق فحص السيرفر الرئيسي.
+router.post("/:id/servers/:sid/test-ssh", async (req, res) => {
+  const id = Number(req.params.id), sid = Number(req.params.sid);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  const srv = inst ? await loadServer(id, sid) : null;
+  if (!inst || !srv) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!srv.sshHost) { res.status(400).json({ error: "لم يتم إدخال بيانات السيرفر بعد" }); return; }
+  const port = srv.sshPort ?? 22;
+  try { await assertProbeTargetAllowed(srv.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+  const mark = (patch: Record<string, unknown>) =>
+    db.update(agentServersTable).set({ ...patch, sshLastCheckAt: new Date(), updatedAt: new Date() })
+      .where(eq(agentServersTable.id, sid));
+  const reachable = await new Promise<boolean>((resolve) => {
+    const sock = net.connect({ host: srv.sshHost!, port, timeout: 6000 });
+    sock.on("connect", () => { sock.destroy(); resolve(true); });
+    sock.on("timeout", () => { sock.destroy(); resolve(false); });
+    sock.on("error", () => resolve(false));
+  });
+  if (!reachable) {
+    await mark({ sshStatus: "error" });
+    res.status(502).json({ error: `تعذّر الوصول إلى ${srv.sshHost}:${port} — تأكد من العنوان والمنفذ` });
+    return;
+  }
+  if (srv.sshUser && srv.sshSecretEnc) {
+    try {
+      const r = await sshRunScript(overlayServerTarget(inst, srv), "echo AUTH_OK", { timeoutMs: 25_000 });
+      await mark({ sshStatus: "ok", ...(!srv.sshHostKeyFp && r.hostKeyFp ? { sshHostKeyFp: r.hostKeyFp } : {}) });
+      res.json({ ok: true, host: srv.sshHost, port, auth: true, user: srv.sshUser });
+    } catch (e: any) {
+      const raw = String(e?.message ?? e);
+      const friendly = /authentication methods failed/i.test(raw)
+        ? `المنفذ مفتوح لكن السيرفر رفض تسجيل الدخول للمستخدم «${srv.sshUser}» — تأكد من اسم المستخدم وكلمة المرور/المفتاح`
+        : `المنفذ مفتوح لكن فشل الدخول: ${raw.slice(0, 300)}`;
+      await mark({ sshStatus: "error" });
+      res.status(502).json({ error: friendly });
+    }
+    return;
+  }
+  await mark({ sshStatus: "ok" });
+  res.json({ ok: true, host: srv.sshHost, port, auth: false, note: "تم فحص الوصول فقط — أدخل المستخدم وكلمة المرور لاختبار الدخول الفعلي" });
+});
+
+// POST /:id/servers/:sid/deploy — تسطيب بوابة الدخول على السيرفر الاحتياطي
+// (Caddy + نبض بعلامة السيرفر). النسخة الكاملة غير مدعومة احتياطيًا بعد
+// (تحتاج نسخ التطبيق وقاعدة البيانات — مرحلة لاحقة).
+router.post("/:id/servers/:sid/deploy", async (req, res) => {
+  const id = Number(req.params.id), sid = Number(req.params.sid);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  const srv = inst ? await loadServer(id, sid) : null;
+  if (!inst || !srv) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.mode === "full") {
+    res.status(400).json({ error: "النسخة الكاملة تعمل محليًا على سيرفر واحد — التسطيب الاحتياطي متاح حاليًا لوضع البوابة فقط (يتطلب لاحقًا نسخ التطبيق وقاعدة البيانات)" });
+    return;
+  }
+  if (!srv.sshHost || !srv.sshUser || !srv.sshSecretEnc) { res.status(400).json({ error: "أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا" }); return; }
+  if (!inst.licenseKey) { res.status(400).json({ error: "أصدر ترخيصًا أولًا" }); return; }
+  try { await assertProbeTargetAllowed(srv.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+
+  let installScript: string;
+  try { ({ installScript } = await buildSetupKit(inst, { hbMarker: srv.hbMarker })); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 200) }); return; }
+
+  // حجز ذرّي على صف السيرفر (تسطيب معلّق أقدم من 10 دقائق يُعاد حجزه).
+  // طابع الحجز (claimAt) يعمل كسياج: تحديث النهاية لا ينفَّذ إلا إن كان
+  // الحجز لا يزال حجزنا — فلا يدهس تسطيبٌ بطيء نتيجةَ حاجزٍ لاحق.
+  const staleBefore = new Date(Date.now() - 10 * 60_000);
+  const claimAt = new Date();
+  const claimed = await db.update(agentServersTable)
+    .set({ deployStatus: "deploying", updatedAt: claimAt })
+    .where(and(
+      eq(agentServersTable.id, sid), eq(agentServersTable.agentId, id),
+      or(ne(agentServersTable.deployStatus, "deploying"), lt(agentServersTable.updatedAt, staleBefore)),
+    )).returning({ id: agentServersTable.id });
+  if (!claimed.length) { res.status(409).json({ error: "يوجد تسطيب جارٍ بالفعل على هذا السيرفر" }); return; }
+  const leaseWhere = and(
+    eq(agentServersTable.id, sid),
+    eq(agentServersTable.deployStatus, "deploying"),
+    eq(agentServersTable.updatedAt, claimAt),
+  );
+
+  const log: string[] = [];
+  const finish = async (ok: boolean, tail: string) => {
+    log.push(tail);
+    await db.update(agentServersTable).set({
+      deployStatus: ok ? "ok" : "error",
+      deployLog: log.join("\n").slice(-8000),
+      lastDeployAt: new Date(),
+      sshStatus: ok ? "ok" : srv.sshStatus,
+      updatedAt: new Date(),
+    }).where(leaseWhere).catch(() => {});
+  };
+  try {
+    const target = overlayServerTarget(inst, srv);
+    const result = await sshRunScript(target, installScript);
+    log.push(`[ssh] connected to ${srv.sshHost}:${srv.sshPort ?? 22} as ${srv.sshUser} (hostkey ${result.hostKeyFp.slice(0, 16)}…)`);
+    const ok = result.code === 0 && result.out.includes("ZACOD_BOOTSTRAP_DONE");
+    if (ok && !srv.sshHostKeyFp && result.hostKeyFp) {
+      await db.update(agentServersTable).set({ sshHostKeyFp: result.hostKeyFp }).where(leaseWhere).catch(() => {});
+    }
+    await finish(ok, result.out.slice(-6000));
+    await logAgentEvent(id, ok ? "standby_deployed" : "standby_deploy_failed", { serverId: sid, label: srv.label }, req);
+    if (ok) res.json({ ok: true, log: log.join("\n").slice(-8000) });
+    else res.status(502).json({ error: "فشل التسطيب — راجع السجل", log: log.join("\n").slice(-8000) });
+  } catch (e: any) {
+    await finish(false, `[error] ${String(e?.message ?? e).slice(0, 400)}`);
+    res.status(502).json({ error: "فشل التسطيب", detail: String(e?.message ?? e).slice(0, 400) });
+  }
+});
+
+// POST /:id/servers/:sid/promote — ترقية الاحتياطي إلى رئيسي: تبادل حقول
+// SSH/النشر/النبض بين صف الوكيل وصف السيرفر ذرّيًا (الرئيسي السابق يصبح
+// احتياطيًا قابلًا للإصلاح). بعدها يجب توجيه DNS للدومين إلى عنوان السيرفر
+// الجديد — لا نتحكم في DNS الوكيل من هنا.
+router.post("/:id/servers/:sid/promote", async (req, res) => {
+  const id = Number(req.params.id), sid = Number(req.params.sid);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  const srv = inst ? await loadServer(id, sid) : null;
+  if (!inst || !srv) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.mode === "full") {
+    res.status(400).json({ error: "النسخة الكاملة تعمل محليًا بقاعدة بياناتها — ترقية سيرفر احتياطي غير مدعومة لها حاليًا (تتطلب نسخ التطبيق وقاعدة البيانات)" });
+    return;
+  }
+  if (srv.deployStatus !== "ok") { res.status(400).json({ error: "سطّب بوابة الدخول على هذا السيرفر أولًا (يجب أن يكون التسطيب ناجحًا قبل الترقية)" }); return; }
+  try {
+  await db.transaction(async (tx) => {
+    // إعادة قراءة الصفين داخل المعاملة مع قفل — يمنع سباق الترقية مع
+    // تسطيب جارٍ بدأ بعد الفحص الأولي.
+    const [instFresh] = await tx.select().from(agentInstancesTable)
+      .where(eq(agentInstancesTable.id, id)).for("update").limit(1);
+    const [srvFresh] = await tx.select().from(agentServersTable)
+      .where(and(eq(agentServersTable.id, sid), eq(agentServersTable.agentId, id))).for("update").limit(1);
+    if (!instFresh || !srvFresh) throw Object.assign(new Error("غير موجود"), { httpStatus: 404 });
+    if (srvFresh.deployStatus !== "ok" || instFresh.deployStatus === "deploying") {
+      throw Object.assign(new Error("يوجد تسطيب جارٍ أو تغيّرت حالة السيرفر — أعد المحاولة بعد انتهائه"), { httpStatus: 409 });
+    }
+    const inst = instFresh, srv = srvFresh;
+    await tx.update(agentInstancesTable).set({
+      sshHost: srv.sshHost, sshPort: srv.sshPort, sshUser: srv.sshUser,
+      sshSecretEnc: srv.sshSecretEnc, sshStatus: srv.sshStatus, sshLastCheckAt: srv.sshLastCheckAt,
+      sshHostKeyFp: srv.sshHostKeyFp,
+      deployStatus: srv.deployStatus, deployLog: srv.deployLog, lastDeployAt: srv.lastDeployAt,
+      lastHeartbeatAt: srv.lastHeartbeatAt, lastSeenIp: srv.lastSeenIp, deployedVersion: srv.deployedVersion,
+      primaryHbMarker: srv.hbMarker,
+      updatedAt: new Date(),
+    }).where(eq(agentInstancesTable.id, id));
+    await tx.update(agentServersTable).set({
+      sshHost: inst.sshHost, sshPort: inst.sshPort, sshUser: inst.sshUser,
+      sshSecretEnc: inst.sshSecretEnc, sshStatus: inst.sshStatus, sshLastCheckAt: inst.sshLastCheckAt,
+      sshHostKeyFp: inst.sshHostKeyFp,
+      deployStatus: inst.deployStatus, deployLog: inst.deployLog, lastDeployAt: inst.lastDeployAt,
+      lastHeartbeatAt: inst.lastHeartbeatAt, lastSeenIp: inst.lastSeenIp, deployedVersion: inst.deployedVersion,
+      hbMarker: inst.primaryHbMarker ?? "",
+      label: `${srv.label} (الرئيسي السابق)`.slice(0, 120),
+      updatedAt: new Date(),
+    }).where(eq(agentServersTable.id, sid));
+  });
+  } catch (e: any) {
+    res.status(Number(e?.httpStatus) || 500).json({ error: String(e?.message ?? "فشلت الترقية").slice(0, 300) });
+    return;
+  }
+  await logAgentEvent(id, "server_promoted", { serverId: sid, label: srv.label, newPrimaryHost: srv.sshHost }, req);
+  res.json({
+    ok: true,
+    newPrimaryHost: srv.sshHost,
+    note: `تمت الترقية — وجِّه الآن سجل DNS للدومين ${inst.domain} إلى عنوان السيرفر الجديد (${srv.sshHost ?? "?"}). نصيحة: اجعل TTL منخفضًا (60-300 ثانية) لتسريع التحويل مستقبلًا.`,
+  });
 });
 
 // ── One-click full provisioning ────────────────────────────────────────────
@@ -2173,7 +2451,7 @@ agentPublicRouter.get("/agent/release/custom", async (req, res) => {
 // POST /api/agent/heartbeat — instance validation. Body:
 // { installationId, licenseKey, domain, fingerprint?, version? }
 agentPublicRouter.post("/agent/heartbeat", async (req, res) => {
-  const { installationId, licenseKey, domain: rawDomain, fingerprint, version } = req.body ?? {};
+  const { installationId, licenseKey, domain: rawDomain, fingerprint, version, serverMarker } = req.body ?? {};
   const domain = normalizeHost(typeof rawDomain === "string" ? rawDomain : "");
   if (typeof installationId !== "string" || !installationId) { res.status(400).json({ ok: false, error: "bad_request" }); return; }
 
@@ -2195,15 +2473,34 @@ agentPublicRouter.post("/agent/heartbeat", async (req, res) => {
   // Once a fingerprint has been planted, every heartbeat MUST present it.
   if (inst.dbFingerprint && fingerprint !== inst.dbFingerprint) problems.push("db_fingerprint_mismatch");
 
-  await db.update(agentInstancesTable).set({
-    lastHeartbeatAt: new Date(), lastSeenIp: clientIp(req),
-    ...(typeof version === "string" && version ? { deployedVersion: version.slice(0, 40) } : {}),
-    updatedAt: new Date(),
-  }).where(eq(agentInstancesTable.id, inst.id));
-
+  // توجيه النبضة لصاحبها عند تعدد السيرفرات: العلامة المزروعة في config.json
+  // تحدد أي سيرفر أرسلها. علامة السيرفر الرئيسي محفوظة على صف الوكيل
+  // (فارغة تاريخيًا)؛ أي علامة أخرى تُنسب لصف السيرفر الاحتياطي المطابق.
+  // التحقق أولًا — نبضة برخصة/دومين/بصمة غير صحيحة لا تُحدّث أي صف صحة
+  // (وإلا بدا سيرفر مخترق «حيًّا» في اللوحة).
   if (problems.length) {
     await logAgentEvent(inst.id, problems[0], { problems, domain }, req);
     res.status(403).json({ ok: false, error: problems[0], problems }); return;
+  }
+
+  const marker = typeof serverMarker === "string" ? serverMarker.slice(0, 40) : "";
+  const primaryMarker = inst.primaryHbMarker ?? "";
+  const hbFields = {
+    lastHeartbeatAt: new Date(), lastSeenIp: clientIp(req),
+    ...(typeof version === "string" && version ? { deployedVersion: version.slice(0, 40) } : {}),
+    updatedAt: new Date(),
+  };
+  if (marker === primaryMarker) {
+    await db.update(agentInstancesTable).set(hbFields).where(eq(agentInstancesTable.id, inst.id));
+  } else {
+    const upd = await db.update(agentServersTable).set(hbFields)
+      .where(and(eq(agentServersTable.agentId, inst.id), eq(agentServersTable.hbMarker, marker)))
+      .returning({ id: agentServersTable.id });
+    // علامة غير معروفة (سيرفر حُذف صفه مثلًا): لا نحدّث أي صف صحة —
+    // نكتفي بالرد ok حتى لا نُسند نبضة مجهولة المصدر للسيرفر الرئيسي.
+    if (!upd.length) {
+      await logAgentEvent(inst.id, "unknown_server_marker", { marker: marker.slice(0, 40), domain }, req);
+    }
   }
   res.json({ ok: true, status: "active", licenseExpiresAt: inst.licenseExpiresAt });
 });

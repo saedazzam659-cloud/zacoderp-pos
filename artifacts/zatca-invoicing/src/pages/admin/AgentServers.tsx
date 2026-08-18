@@ -1143,6 +1143,11 @@ export default function AgentServers() {
               <div><label className="text-xs text-muted-foreground block mb-1">المنفذ</label><Input dir="ltr" inputMode="numeric" value={form.sshPort} onChange={e => set("sshPort", e.target.value)} /></div>
               <div><label className="text-xs text-muted-foreground block mb-1">المستخدم</label><Input dir="ltr" value={form.sshUser} onChange={e => set("sshUser", e.target.value)} /></div>
               <div><label className="text-xs text-muted-foreground block mb-1">كلمة المرور / المفتاح</label><Input dir="ltr" type="password" placeholder={isEdit ? "اتركه فارغًا للإبقاء" : ""} value={form.sshSecret} onChange={e => set("sshSecret", e.target.value)} /></div>
+              {isEdit && (
+                <div className="col-span-2">
+                  <StandbyServers agentId={form.id} agentMode={form.mode} headers={headers} toast={toast} />
+                </div>
+              )}
             </TabsContent>
 
             <TabsContent value="brand" className="mt-3 grid grid-cols-2 gap-3">
@@ -1198,6 +1203,210 @@ export default function AgentServers() {
         </div>
       </div>
       )}
+    </div>
+  );
+}
+
+// ── السيرفرات الاحتياطية (تعدد السيرفرات لكل وكيل) ──────────────────────────
+type StandbySrv = {
+  id: number; label: string; role: string;
+  sshHost: string | null; sshPort: number | null; sshUser: string | null; sshSecretSet: boolean;
+  sshStatus: string; sshLastCheckAt: string | null;
+  deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
+  lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
+  notes: string | null;
+};
+
+const emptySrvForm = { id: 0, label: "", sshHost: "", sshPort: "22", sshUser: "root", sshSecret: "" };
+
+function StandbyServers({ agentId, agentMode, headers, toast }: {
+  agentId: number; agentMode: string;
+  headers: Record<string, string>;
+  toast: (o: { title: string; description?: string; variant?: "destructive" }) => void;
+}) {
+  const qc = useQueryClient();
+  const base = `${API}/api/admin/agent-instances/${agentId}/servers`;
+  const listQ = useQuery<StandbySrv[]>({
+    queryKey: ["agent-servers", agentId],
+    queryFn: async () => {
+      const r = await fetch(base, { headers });
+      if (!r.ok) throw new Error("فشل التحميل");
+      return r.json();
+    },
+    refetchInterval: (q) => (q.state.data ?? []).some(s => s.deployStatus === "deploying") ? 3000 : 30_000,
+  });
+  const [srvForm, setSrvForm] = useState<typeof emptySrvForm | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [logView, setLogView] = useState<{ title: string; text: string } | null>(null);
+  const [promoteSrv, setPromoteSrv] = useState<StandbySrv | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["agent-servers", agentId] });
+
+  async function call(path: string, method: string, body?: any, key?: string) {
+    if (key) setBusy(key);
+    try {
+      const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل");
+      refresh();
+      return j;
+    } finally { if (key) setBusy(null); }
+  }
+
+  async function saveSrv() {
+    const f = srvForm!;
+    if (!f.label.trim()) { toast({ title: "أدخل اسمًا للسيرفر", variant: "destructive" }); return; }
+    const payload: any = {
+      label: f.label.trim(),
+      sshHost: f.sshHost.trim() || null,
+      sshPort: f.sshPort ? Number(f.sshPort) : null,
+      sshUser: f.sshUser.trim() || null,
+    };
+    if (f.sshSecret.trim()) payload.sshSecret = f.sshSecret.trim();
+    try {
+      await call(f.id ? `${base}/${f.id}` : base, f.id ? "PUT" : "POST", payload, "save");
+      setSrvForm(null);
+      toast({ title: "تم الحفظ" });
+    } catch (e: any) { toast({ title: "فشل الحفظ", description: String(e.message ?? e), variant: "destructive" }); }
+  }
+
+  const hbBadge = (s: StandbySrv) => {
+    if (!s.lastHeartbeatAt) return <Badge variant="outline" className="text-[10px] h-4 px-1">لا نبض بعد</Badge>;
+    const ageMin = (Date.now() - new Date(s.lastHeartbeatAt).getTime()) / 60_000;
+    return ageMin <= 12
+      ? <Badge className="text-[10px] h-4 px-1 bg-emerald-600">نبض حي</Badge>
+      : <Badge variant="destructive" className="text-[10px] h-4 px-1">نبض متوقف ({Math.round(ageMin)} د)</Badge>;
+  };
+
+  const servers = listQ.data ?? [];
+  return (
+    <div className="border rounded-lg p-3 space-y-3 bg-muted/20" data-testid="standby-servers-block">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium flex items-center gap-1.5">
+          <Server className="h-4 w-4" />سيرفرات احتياطية ({servers.length})
+        </div>
+        <Button type="button" variant="outline" size="sm" className="h-7 text-xs"
+          onClick={() => setSrvForm({ ...emptySrvForm })} data-testid="button-add-standby">
+          + إضافة سيرفر
+        </Button>
+      </div>
+      <div className="text-[11px] text-muted-foreground leading-relaxed">
+        عند تعطل السيرفر الرئيسي: سطّب بوابة الدخول على السيرفر الاحتياطي مسبقًا، وعند الحاجة اضغط «ترقية إلى رئيسي» ثم وجّه DNS للدومين إلى عنوانه. اجعل TTL للدومين منخفضًا (60-300 ثانية) ليكون التحويل سريعًا.
+        {agentMode === "full" && <span className="text-amber-700 block mt-1">تنبيه: النسخة الكاملة تعمل محليًا بقاعدة بياناتها — التسطيب الاحتياطي متاح حاليًا لوضع البوابة فقط.</span>}
+      </div>
+
+      {servers.map(s => (
+        <div key={s.id} className="border rounded-lg p-2.5 bg-background space-y-1.5" data-testid={`standby-row-${s.id}`}>
+          <div className="flex items-center justify-between flex-wrap gap-1.5">
+            <div className="text-xs font-medium">{s.label}</div>
+            <div className="flex items-center gap-1.5">{hbBadge(s)}
+              {s.deployStatus === "ok" ? <Badge className="text-[10px] h-4 px-1 bg-emerald-600">مسطّب</Badge>
+                : s.deployStatus === "deploying" ? <Badge variant="secondary" className="text-[10px] h-4 px-1">تسطيب جارٍ…</Badge>
+                : s.deployStatus === "error" ? <Badge variant="destructive" className="text-[10px] h-4 px-1">فشل التسطيب</Badge>
+                : <Badge variant="outline" className="text-[10px] h-4 px-1">غير مسطّب</Badge>}
+            </div>
+          </div>
+          <div dir="ltr" className="text-[11px] text-muted-foreground">{s.sshHost ? `${s.sshUser ?? "?"}@${s.sshHost}:${s.sshPort ?? 22}` : "—"}</div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Button type="button" variant="outline" size="sm" className="h-6 text-[11px]" disabled={!s.sshHost || busy === `test-${s.id}`}
+              onClick={async () => {
+                try { const j = await call(`${base}/${s.id}/test-ssh`, "POST", undefined, `test-${s.id}`); toast({ title: "فحص السيرفر: تم بنجاح", description: j.note }); }
+                catch (e: any) { toast({ title: "فحص السيرفر: فشل", description: String(e.message ?? e), variant: "destructive" }); }
+              }} data-testid={`button-standby-test-${s.id}`}>
+              {busy === `test-${s.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : "اختبار SSH"}
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="h-6 text-[11px]"
+              disabled={agentMode === "full" || !s.sshHost || !s.sshSecretSet || s.deployStatus === "deploying" || busy === `deploy-${s.id}`}
+              onClick={async () => {
+                try { await call(`${base}/${s.id}/deploy`, "POST", undefined, `deploy-${s.id}`); toast({ title: "تم تسطيب بوابة الدخول على السيرفر الاحتياطي" }); }
+                catch (e: any) { toast({ title: "فشل التسطيب", description: String(e.message ?? e), variant: "destructive" }); }
+              }} data-testid={`button-standby-deploy-${s.id}`}>
+              {busy === `deploy-${s.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : "تسطيب البوابة"}
+            </Button>
+            <Button type="button" size="sm" className="h-6 text-[11px]" disabled={s.deployStatus !== "ok" || busy === `promote-${s.id}`}
+              onClick={() => setPromoteSrv(s)} data-testid={`button-standby-promote-${s.id}`}>
+              ترقية إلى رئيسي
+            </Button>
+            {s.deployLog && (
+              <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px]" onClick={() => setLogView({ title: `سجل التسطيب — ${s.label}`, text: s.deployLog! })}>
+                السجل
+              </Button>
+            )}
+            <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px]" onClick={() => setSrvForm({ id: s.id, label: s.label, sshHost: s.sshHost ?? "", sshPort: s.sshPort != null ? String(s.sshPort) : "22", sshUser: s.sshUser ?? "", sshSecret: "" })}>
+              تعديل
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px] text-rose-600" disabled={busy === `del-${s.id}`}
+              onClick={async () => {
+                try { await call(`${base}/${s.id}`, "DELETE", undefined, `del-${s.id}`); toast({ title: "تم حذف السيرفر" }); }
+                catch (e: any) { toast({ title: "فشل الحذف", description: String(e.message ?? e), variant: "destructive" }); }
+              }} data-testid={`button-standby-delete-${s.id}`}>
+              حذف
+            </Button>
+          </div>
+        </div>
+      ))}
+      {!servers.length && !listQ.isLoading && (
+        <div className="text-[11px] text-muted-foreground text-center py-2">لا توجد سيرفرات احتياطية بعد</div>
+      )}
+
+      {/* نموذج إضافة/تعديل سيرفر احتياطي */}
+      <Dialog open={!!srvForm} onOpenChange={(o) => !o && setSrvForm(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{srvForm?.id ? "تعديل سيرفر احتياطي" : "إضافة سيرفر احتياطي"}</DialogTitle></DialogHeader>
+          {srvForm && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2"><label className="text-xs text-muted-foreground block mb-1">الاسم</label>
+                <Input placeholder="مثال: السيرفر الاحتياطي" value={srvForm.label} onChange={e => setSrvForm(p => p && { ...p, label: e.target.value })} data-testid="input-standby-label" /></div>
+              <div><label className="text-xs text-muted-foreground block mb-1">Host / IP</label>
+                <Input dir="ltr" value={srvForm.sshHost} onChange={e => setSrvForm(p => p && { ...p, sshHost: e.target.value })} data-testid="input-standby-host" /></div>
+              <div><label className="text-xs text-muted-foreground block mb-1">المنفذ</label>
+                <Input dir="ltr" inputMode="numeric" value={srvForm.sshPort} onChange={e => setSrvForm(p => p && { ...p, sshPort: e.target.value })} /></div>
+              <div><label className="text-xs text-muted-foreground block mb-1">المستخدم</label>
+                <Input dir="ltr" value={srvForm.sshUser} onChange={e => setSrvForm(p => p && { ...p, sshUser: e.target.value })} /></div>
+              <div><label className="text-xs text-muted-foreground block mb-1">كلمة المرور / المفتاح</label>
+                <Input dir="ltr" type="password" placeholder={srvForm.id ? "اتركه فارغًا للإبقاء" : ""} value={srvForm.sshSecret} onChange={e => setSrvForm(p => p && { ...p, sshSecret: e.target.value })} data-testid="input-standby-secret" /></div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setSrvForm(null)}>إلغاء</Button>
+            <Button onClick={saveSrv} disabled={busy === "save"} data-testid="button-standby-save">
+              {busy === "save" && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}حفظ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* تأكيد الترقية */}
+      <Dialog open={!!promoteSrv} onOpenChange={(o) => !o && setPromoteSrv(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>ترقية «{promoteSrv?.label}» إلى سيرفر رئيسي؟</DialogTitle></DialogHeader>
+          <div className="text-xs text-muted-foreground space-y-2 leading-relaxed">
+            <p>سيتم تبادل بيانات السيرفرين: هذا السيرفر يصبح <b>الرئيسي</b> (كل عمليات النشر وفك الحظر والفحص عليه)، والرئيسي الحالي يصبح احتياطيًا.</p>
+            <p className="text-amber-700 font-medium">بعد الترقية يجب توجيه سجل DNS للدومين إلى عنوان السيرفر الجديد <span dir="ltr">({promoteSrv?.sshHost})</span> — التحويل الفعلي للزوار يتم عبر DNS.</p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setPromoteSrv(null)}>إلغاء</Button>
+            <Button disabled={busy === `promote-${promoteSrv?.id}`} onClick={async () => {
+              const s = promoteSrv!;
+              try {
+                const j = await call(`${base}/${s.id}/promote`, "POST", undefined, `promote-${s.id}`);
+                qc.invalidateQueries({ queryKey: ["agent-instances"] });
+                setPromoteSrv(null);
+                toast({ title: "تمت الترقية", description: j.note });
+              } catch (e: any) { toast({ title: "فشلت الترقية", description: String(e.message ?? e), variant: "destructive" }); }
+            }} data-testid="button-standby-promote-confirm">
+              {busy === `promote-${promoteSrv?.id}` && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}تأكيد الترقية
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* عرض السجل */}
+      <Dialog open={!!logView} onOpenChange={(o) => !o && setLogView(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>{logView?.title}</DialogTitle></DialogHeader>
+          <pre dir="ltr" className="text-[11px] bg-muted rounded-lg p-3 whitespace-pre-wrap break-all max-h-[60vh] overflow-y-auto">{logView?.text || "—"}</pre>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
