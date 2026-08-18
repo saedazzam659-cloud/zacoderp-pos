@@ -1420,6 +1420,16 @@ router.delete("/companies/:id/permanent", requireSuperAdmin, async (req, res) =>
   }
 });
 
+// Additive self-heal for agent DBs that predate the users.security_notice_exempt
+// column (runWithAgentScope switches the DB context but never runs ensureSchema).
+// Idempotent + cheap; called only on ?agent= scoped requests that touch the column.
+async function ensureUsersSecurityNoticeColumn(): Promise<void> {
+  try {
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS security_notice_exempt boolean DEFAULT false NOT NULL`);
+  } catch { /* best-effort — the query below will surface a real failure */ }
+}
+
 // GET /api/admin/companies/:id — full company profile for superadmin
 // `?agent=<id>` re-routes into that agent's DB (companies created on
 // full_shell agent servers live there, not centrally).
@@ -1427,6 +1437,9 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
   const id = parseInt(req.params.id);
+  // Older agent DBs may predate newer users columns — heal additively
+  // before selecting them (runWithAgentScope does not run ensureSchema).
+  if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
   const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
   if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
 
@@ -1437,6 +1450,7 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
     email: usersTable.email,
     role: usersTable.role,
     isActive: usersTable.isActive,
+    securityNoticeExempt: usersTable.securityNoticeExempt,
     lastLoginAt: usersTable.lastLoginAt,
     createdAt: usersTable.createdAt,
   }).from(usersTable).where(eq(usersTable.companyId, id));
@@ -1501,9 +1515,13 @@ router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) =
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
     const userId = parseInt(req.params.userId);
-    const { isActive, password } = req.body;
+    const { isActive, password, securityNoticeExempt } = req.body;
     const updates: Record<string, any> = { updatedAt: new Date() };
     if (isActive != null) updates.isActive = isActive;
+    if (securityNoticeExempt != null) {
+      updates.securityNoticeExempt = !!securityNoticeExempt;
+      if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
+    }
     if (password) updates.passwordHash = await bcrypt.hash(password, 12);
     // Restrict RETURNING to core columns — a bare .returning() names every
     // schema column and breaks on older agent DBs missing newer columns.

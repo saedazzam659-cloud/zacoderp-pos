@@ -577,6 +577,13 @@ router.post("/login", async (req, res) => {
     },
     manualSessions,
     currentSessionId,
+    // Weak-password security notice: shown client-side after login unless
+    // the SA exempted this user. Computed here because only the login
+    // request ever sees the plaintext password.
+    weakPassword:
+      typeof password === "string" &&
+      password.length < 6 &&
+      (user as any).securityNoticeExempt !== true,
   });
 });
 

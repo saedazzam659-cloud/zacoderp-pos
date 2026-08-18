@@ -477,6 +477,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     localStorage.setItem(TOKEN_KEY, data.token);
     localStorage.setItem(SESSION_KEY, data.sessionId);
+    // Weak-password security notice flag — consumed by <SecurityNotice/>
+    // (shows an animated banner right after login + every 30 minutes).
+    if (data.weakPassword === true) {
+      localStorage.setItem("zatca_sec_notice", String(Date.now()));
+    } else {
+      localStorage.removeItem("zatca_sec_notice");
+    }
     // Defensively clear any stale acting-company id from a previous login
     // (e.g. SA logged out, then a tenant user logs in on the same browser).
     // Without this the new user would still send the header — server ignores
@@ -528,6 +535,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(ACTING_COMPANY_KEY);
+    localStorage.removeItem("zatca_sec_notice");
     setActingCompanyIdState(null);
     setToken(null);
     setUser(null);
@@ -552,6 +560,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setSession = useCallback((args: { token: string; sessionId?: string | null; user: AuthUser }) => {
+    // Alternate-auth session (SA/OTP/recovery): never inherit a previous
+    // tenant login's weak-password banner schedule.
+    localStorage.removeItem("zatca_sec_notice");
     localStorage.setItem(TOKEN_KEY, args.token);
     if (args.sessionId) localStorage.setItem(SESSION_KEY, args.sessionId);
     setToken(args.token);

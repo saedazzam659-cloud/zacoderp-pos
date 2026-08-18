@@ -99,6 +99,9 @@ export const usersTable = pgTable("users", {
   // (their email, enforced at approval time). Purely additive; normal
   // tenant users keep the default false and are untouched.
   isTrainee: boolean("is_trainee").notNull().default(false),
+  // When true, the post-login "change your default/weak password" security
+  // notice is suppressed for this user (SA checkbox in company users grid).
+  securityNoticeExempt: boolean("security_notice_exempt").notNull().default(false),
   lastLoginAt: timestamp("last_login_at"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),

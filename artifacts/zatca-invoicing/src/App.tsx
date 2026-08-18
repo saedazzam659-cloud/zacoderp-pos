@@ -4,6 +4,7 @@ import CustomerCobrowseWidget from "@/components/cobrowse/CustomerCobrowseWidget
 import WhatsAppFloat from "@/components/WhatsAppFloat";
 import PwaInstallPrompt from "@/components/PwaInstallPrompt";
 import { Toaster } from "@/components/ui/toaster";
+import SecurityNotice from "@/components/SecurityNotice";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import InAppNotFound from "@/components/InAppNotFound";
@@ -1245,6 +1246,8 @@ function App() {
                   without each page needing to opt in. */}
               <WhatsAppFloat />
               <PwaInstallPrompt />
+              {/* تنبيه كلمة المرور الضعيفة بعد الدخول */}
+              <SecurityNotice />
               </TrainingBroadcastProvider>
               </CallProvider>
             </ScreenActionsProvider>

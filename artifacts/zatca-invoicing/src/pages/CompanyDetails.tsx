@@ -177,6 +177,16 @@ export default function CompanyDetails() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-company", id] }),
   });
 
+  const exemptNoticeMutation = useMutation({
+    mutationFn: async ({ userId, exempt }: { userId: number; exempt: boolean }) => {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}${agentQS}`, {
+        method: "PUT", headers, body: JSON.stringify({ securityNoticeExempt: exempt }),
+      });
+      return res.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-company", id] }),
+  });
+
   const resetPassMutation = useMutation({
     mutationFn: async ({ userId, password }: { userId: number; password: string }) => {
       const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}${agentQS}`, {
@@ -472,6 +482,13 @@ export default function CompanyDetails() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1 w-20 justify-end">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-emerald-600 cursor-pointer"
+                        title="عدم إظهار التنبيه الأمني عند تسجيل الدخول"
+                        checked={u.securityNoticeExempt === true}
+                        onChange={e => exemptNoticeMutation.mutate({ userId: u.id, exempt: e.target.checked })}
+                      />
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground"
                         title="تغيير كلمة المرور"
                         onClick={() => { setResetPassDialog(u); setNewPass(""); }}>
