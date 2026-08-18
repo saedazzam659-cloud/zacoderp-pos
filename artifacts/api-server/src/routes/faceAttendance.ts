@@ -184,7 +184,9 @@ function evaluateLocation(opts: {
   return { status: "ok", distanceM };
 }
 
-function parseDescriptor(json: string): number[] | null {
+// Exported: reused by the ZacodeHR employee-portal face flow (hr-portal.ts)
+// so enrollment/matching logic lives in exactly one place.
+export function parseDescriptor(json: string): number[] | null {
   try {
     const a = JSON.parse(json);
     if (Array.isArray(a) && a.length === 128 && a.every((x) => typeof x === "number")) return a;
@@ -192,13 +194,17 @@ function parseDescriptor(json: string): number[] | null {
   return null;
 }
 
-function euclidean(a: number[], b: number[]): number {
+export function euclidean(a: number[], b: number[]): number {
   let s = 0;
   for (let i = 0; i < a.length; i++) {
     const d = a[i] - b[i];
     s += d * d;
   }
   return Math.sqrt(s);
+}
+
+export async function getFaceSettings(companyId: number) {
+  return getSettings(companyId);
 }
 
 async function getSettings(companyId: number) {
@@ -236,6 +242,7 @@ router.put("/settings", async (req, res) => {
         workdayEnd: N(b.workdayEnd),
         notifyOnUnknown: typeof b.notifyOnUnknown === "boolean" ? b.notifyOnUnknown : undefined,
         minQualityScore: b.minQualityScore != null ? String(b.minQualityScore) : undefined,
+        portalFaceRequired: typeof b.portalFaceRequired === "boolean" ? b.portalFaceRequired : undefined,
         updatedAt: new Date(),
       })
       .where(eq(attendanceAiSettingsTable.companyId, cid))

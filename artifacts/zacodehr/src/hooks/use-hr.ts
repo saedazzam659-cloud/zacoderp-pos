@@ -28,6 +28,29 @@ export function usePunch() {
   });
 }
 
+export function useFaceStatus() {
+  return useQuery({
+    queryKey: ["face-status"],
+    queryFn: api.faceStatus,
+    staleTime: 60_000,
+  });
+}
+
+export function useFaceEnroll() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: api.faceEnroll,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["face-status"] });
+      toast({ title: "تم تسجيل وجهك بنجاح", description: "من الآن سيتم التحقق بالوجه عند كل بصمة" });
+    },
+    onError: (err: Error) => {
+      toast({ variant: "destructive", title: "فشل تسجيل الوجه", description: err.message });
+    },
+  });
+}
+
 export function useAttendance(year: number, month: number) {
   return useQuery({
     queryKey: ["attendance", year, month],

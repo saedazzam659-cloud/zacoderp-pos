@@ -1008,6 +1008,10 @@ importers:
         version: 3.25.76
 
   artifacts/zacodehr:
+    dependencies:
+      '@vladmandic/face-api':
+        specifier: ^1.7.15
+        version: 1.7.15
     devDependencies:
       '@hookform/resolvers':
         specifier: ^3.10.0

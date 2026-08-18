@@ -2523,6 +2523,13 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // One ERP user ↔ at most one employee per company (تقرير حضوري الموبايل).
     { label: "employees_company_user_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS employees_company_user_uniq ON employees (company_id, user_id) WHERE user_id IS NOT NULL` },
+    // ZacodeHR portal face punch (بصمة الوجه في بوابة الموظف)
+    { label: "attendance_ai_settings.portal_face_required",
+      sql:   `ALTER TABLE attendance_ai_settings ADD COLUMN IF NOT EXISTS portal_face_required BOOLEAN NOT NULL DEFAULT false` },
+    { label: "attendance_movements.selfie_url",
+      sql:   `ALTER TABLE attendance_movements ADD COLUMN IF NOT EXISTS selfie_url TEXT` },
+    { label: "attendance_movements.face_verified",
+      sql:   `ALTER TABLE attendance_movements ADD COLUMN IF NOT EXISTS face_verified BOOLEAN` },
     { label: "employees_company_login_username_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS employees_company_login_username_uniq ON employees (company_id, lower(login_username)) WHERE login_username IS NOT NULL` },
 

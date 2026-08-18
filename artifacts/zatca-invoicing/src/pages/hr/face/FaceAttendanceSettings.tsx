@@ -106,6 +106,14 @@ export default function FaceAttendanceSettings() {
         </div>
         <div className="flex items-center justify-between">
           <div>
+            <Label>اشتراط بصمة الوجه في بوابة الموظف</Label>
+            <p className="text-xs text-muted-foreground">الموظف يسجّل وجهه أول مرة من البوابة، ثم يتحقق بالصورة الحية مع الموقع عند كل حضور/انصراف</p>
+          </div>
+          <Switch checked={!!(form as any).portalFaceRequired}
+            onCheckedChange={(v) => setForm({ ...form, portalFaceRequired: v } as any)} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
             <Label>تنبيه عند ظهور وجه غير مسجل</Label>
             <p className="text-xs text-muted-foreground">إنشاء تنبيه أمني عند رصد شخص غير معروف</p>
           </div>

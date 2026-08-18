@@ -98,6 +98,21 @@ export type MeResponse = {
   };
 };
 
+export type FaceStatus = {
+  enrolled: boolean;
+  required: boolean;
+  requireLiveness: boolean;
+  minQuality: number;
+};
+
+export type FacePayload = {
+  descriptor: number[];
+  qualityScore: number;
+  livenessPassed: boolean;
+  imageB64: string;
+  imageMime: string;
+};
+
 export type PunchResponse = {
   ok: boolean;
   time: string;
@@ -149,8 +164,10 @@ export type PayslipRow = {
 export const api = {
   login: (body: any) => req<LoginResponse>("POST", "/api/hr-portal/login", body),
   me: () => req<MeResponse>("GET", "/api/hr-portal/me"),
-  punch: (body: { type: "in" | "out"; lat?: number; lng?: number; accuracy?: number }) => 
+  punch: (body: { type: "in" | "out"; lat?: number; lng?: number; accuracy?: number } & Partial<FacePayload>) => 
     req<PunchResponse>("POST", "/api/hr-portal/punch", body),
+  faceStatus: () => req<FaceStatus>("GET", "/api/hr-portal/face/status"),
+  faceEnroll: (body: FacePayload) => req<{ ok: boolean }>("POST", "/api/hr-portal/face/enroll", body),
   getAttendance: (year: number, month: number) => 
     req<{ rows: AttendanceRow[] }>("GET", `/api/hr-portal/attendance?year=${year}&month=${month}`),
   getPermissions: () => 

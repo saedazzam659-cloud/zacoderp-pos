@@ -20,7 +20,11 @@ import {
   employeeAttendanceTable, attendanceMovementsTable,
   exitPermissionsTable, employeeLeavesTable,
   payrollRunsTable, payrollLinesTable,
+  employeeFaceEnrollmentsTable,
 } from "@workspace/db";
+// Face logic reused from the admin face-attendance module — single source of
+// truth for descriptors/matching/settings (no duplication).
+import { getFaceSettings, parseDescriptor, euclidean } from "./faceAttendance.js";
 import { and, eq, desc, asc, gte, lte, sql } from "drizzle-orm";
 import { requireDate, timeOrNull, oneOf, respondHrError, HrValidationError } from "../lib/hrValidate.js";
 import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
@@ -179,6 +183,94 @@ function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number):
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+// ── Face (بصمة الوجه) ────────────────────────────────────────────────────────
+// Rebuild a data URL server-side from raw base64 + mime. The prod edge WAF
+// blocks request bodies containing `data:<mime>;base64,` — clients must send
+// the two parts separately.
+const SELFIE_MAX_B64 = 300_000; // ~220KB image
+function selfieDataUrl(b64: unknown, mime: unknown): string | null {
+  const b = typeof b64 === "string" ? b64.trim() : "";
+  const m = typeof mime === "string" ? mime.trim().toLowerCase() : "";
+  if (!b || !m) return null;
+  if (b.length > SELFIE_MAX_B64) throw new HrValidationError("الصورة كبيرة جداً");
+  if (!/^image\/(jpeg|png|webp)$/.test(m)) throw new HrValidationError("نوع الصورة غير مدعوم");
+  if (!/^[A-Za-z0-9+/=]+$/.test(b)) throw new HrValidationError("صورة غير صالحة");
+  return `data:${m};base64,${b}`;
+}
+
+function descriptorOrNull(v: unknown): number[] | null {
+  return Array.isArray(v) && v.length === 128 && v.every((x) => typeof x === "number" && Number.isFinite(x))
+    ? (v as number[]) : null;
+}
+
+async function loadEnrollments(cid: number, employeeId: number) {
+  return db.select({
+    id: employeeFaceEnrollmentsTable.id,
+    descriptorJson: employeeFaceEnrollmentsTable.descriptorJson,
+  }).from(employeeFaceEnrollmentsTable)
+    .where(and(eq(employeeFaceEnrollmentsTable.companyId, cid), eq(employeeFaceEnrollmentsTable.employeeId, employeeId)));
+}
+
+// GET /face/status — is this employee enrolled + what the client must enforce
+router.get("/face/status", async (req, res) => {
+  try {
+    const ctx = await portalAuth(req, res); if (!ctx) return;
+    const settings = await getFaceSettings(ctx.companyId);
+    const enrollments = await loadEnrollments(ctx.companyId, ctx.employee.id);
+    res.json({
+      enrolled: enrollments.length > 0,
+      required: !!(settings as any).portalFaceRequired,
+      requireLiveness: !!settings.requireLiveness,
+      minQuality: Number(settings.minQualityScore ?? "0.5"),
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /face/enroll — first-time self-enrollment from the portal camera.
+// Allowed ONLY while the employee has no enrollment yet; re-enrollment is an
+// HR/admin action from the web screen (prevents an employee swapping faces).
+router.post("/face/enroll", async (req, res) => {
+  try {
+    const ctx = await portalAuth(req, res); if (!ctx) return;
+    const { employee: emp, companyId: cid } = ctx;
+    const b = req.body ?? {};
+    const descriptor = descriptorOrNull(b.descriptor);
+    if (!descriptor) { res.status(400).json({ error: "بصمة الوجه غير صالحة — أعد المحاولة" }); return; }
+    const settings = await getFaceSettings(cid);
+    const q = Number(b.qualityScore ?? 0);
+    const minQ = Number(settings.minQualityScore ?? "0.5");
+    if (!Number.isFinite(q) || q < minQ) { res.status(400).json({ error: "جودة الصورة منخفضة — حاول في إضاءة أفضل" }); return; }
+    if (settings.requireLiveness && !b.livenessPassed) { res.status(400).json({ error: "فشل اختبار الكشف الحي — ارمش بعينيك أمام الكاميرا" }); return; }
+    const imageUrl = selfieDataUrl(b.imageB64, b.imageMime);
+    if (!imageUrl) { res.status(400).json({ error: "الصورة مطلوبة للتسجيل — أعد الالتقاط" }); return; }
+    // Atomic "only while un-enrolled": advisory lock closes the race where two
+    // concurrent requests both pass the emptiness check. (No unique index —
+    // HR-side enrollment legitimately stores multiple poses per employee.)
+    const conflict = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`face-enroll:${cid}:${emp.id}`}))`);
+      const [{ c }] = await tx.select({ c: sql<number>`count(*)::int` }).from(employeeFaceEnrollmentsTable)
+        .where(and(eq(employeeFaceEnrollmentsTable.companyId, cid), eq(employeeFaceEnrollmentsTable.employeeId, emp.id)));
+      if (c > 0) return true;
+      await tx.insert(employeeFaceEnrollmentsTable).values({
+        companyId: cid, employeeId: emp.id,
+        descriptorJson: JSON.stringify(descriptor),
+        qualityScore: String(q),
+        pose: "frontal",
+        livenessPassed: !!b.livenessPassed,
+        imageUrl,
+        isPrimary: true,
+      });
+      return false;
+    });
+    if (conflict) { res.status(409).json({ error: "وجهك مسجّل بالفعل — التعديل يتم عن طريق إدارة الموارد البشرية" }); return; }
+    if (!emp.photoUrl && imageUrl) {
+      await db.update(employeesTable).set({ photoUrl: imageUrl })
+        .where(and(eq(employeesTable.id, emp.id), eq(employeesTable.companyId, cid)));
+    }
+    res.status(201).json({ ok: true });
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
 router.post("/punch", async (req, res) => {
   try {
     const ctx = await portalAuth(req, res); if (!ctx) return;
@@ -203,6 +295,35 @@ router.post("/punch", async (req, res) => {
       gpsStatus = "ok";
     }
 
+    // Face verification: enrolled employees ALWAYS verify; un-enrolled ones are
+    // blocked only when the company turned portalFaceRequired on.
+    const settings = await getFaceSettings(cid);
+    const enrollments = await loadEnrollments(cid, emp.id);
+    let faceVerified: boolean | null = null;
+    let selfieUrl: string | null = null;
+    if (enrollments.length > 0) {
+      const descriptor = descriptorOrNull(req.body?.descriptor);
+      if (!descriptor) { res.status(400).json({ error: "التحقق بالوجه مطلوب — افتح الكاميرا وأعد المحاولة" }); return; }
+      if (settings.requireLiveness && !req.body?.livenessPassed) {
+        res.status(400).json({ error: "فشل اختبار الكشف الحي — ارمش بعينيك أمام الكاميرا" }); return;
+      }
+      const threshold = Number(settings.matchThreshold ?? "0.6");
+      let best = Infinity;
+      for (const e of enrollments) {
+        const arr = parseDescriptor(e.descriptorJson);
+        if (arr) best = Math.min(best, euclidean(descriptor, arr));
+      }
+      if (!(best <= threshold)) {
+        res.status(400).json({ error: "الوجه غير مطابق للوجه المسجّل — أعد المحاولة" }); return;
+      }
+      selfieUrl = selfieDataUrl(req.body?.imageB64, req.body?.imageMime);
+      if (!selfieUrl) { res.status(400).json({ error: "الصورة الحية مطلوبة — أعد المحاولة" }); return; }
+      faceVerified = true;
+    } else if ((settings as any).portalFaceRequired) {
+      res.status(428).json({ error: "يجب تسجيل وجهك أولاً قبل تسجيل الحضور", code: "FACE_ENROLL_REQUIRED" });
+      return;
+    }
+
     // Local date + local time from the SAME instant — toISOString() is UTC and
     // records a punch around midnight under the wrong attendance date.
     const now = new Date();
@@ -215,7 +336,7 @@ router.post("/punch", async (req, res) => {
     const location = hasGps ? `${lat.toFixed(6)},${lng.toFixed(6)}` : null;
     const r = await db.insert(attendanceMovementsTable).values({
       companyId: cid, employeeId: emp.id, date, time, type,
-      source: "mobile", location,
+      source: "mobile", location, selfieUrl, faceVerified,
     }).onConflictDoNothing({
       target: [attendanceMovementsTable.employeeId, attendanceMovementsTable.date, attendanceMovementsTable.time, attendanceMovementsTable.type],
     }).returning({ id: attendanceMovementsTable.id });

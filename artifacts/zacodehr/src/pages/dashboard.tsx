@@ -1,52 +1,57 @@
 import { useMe } from "@/hooks/use-auth";
-import { usePunch as usePunchMutation } from "@/hooks/use-hr";
+import { usePunch as usePunchMutation, useFaceStatus, useFaceEnroll } from "@/hooks/use-hr";
 import { Button } from "@/components/ui/button";
-import { Fingerprint, Clock, AlertCircle, FileText, CheckCircle2, XCircle } from "lucide-react";
+import { Fingerprint, Clock, AlertCircle, FileText, CheckCircle2, XCircle, ScanFace } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
 import { ar } from "date-fns/locale";
+import FaceCapture, { type FaceCaptureResult } from "@/components/FaceCapture";
 
 export default function Dashboard() {
   const { data: me, isLoading } = useMe();
   const punch = usePunchMutation();
+  const faceStatus = useFaceStatus();
+  const faceEnroll = useFaceEnroll();
   const { toast } = useToast();
   const [gpsLoading, setGpsLoading] = useState(false);
+  // Camera modal: "enroll" = first-time face registration, otherwise the punch
+  // type awaiting live verification.
+  const [faceMode, setFaceMode] = useState<null | "enroll" | { type: "in" | "out"; lat?: number; lng?: number; accuracy?: number }>(null);
+
+  const needsFace = !!faceStatus.data && (faceStatus.data.enrolled || faceStatus.data.required);
+  const needsEnroll = !!faceStatus.data && faceStatus.data.required && !faceStatus.data.enrolled;
+
+  const getGps = () =>
+    new Promise<{ lat?: number; lng?: number; accuracy?: number }>((resolve, reject) => {
+      if (!navigator.geolocation) { reject(new Error("خدمة تحديد الموقع غير مدعومة في متصفحك.")); return; }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+        () => reject(new Error("يرجى السماح بصلاحيات الموقع لتتمكن من تسجيل البصمة.")),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      );
+    });
 
   const handlePunch = async (type: "in" | "out") => {
+    if (needsEnroll) { setFaceMode("enroll"); return; }
     setGpsLoading(true);
-    
-    if (!navigator.geolocation) {
-      toast({
-        variant: "destructive",
-        title: "غير مدعوم",
-        description: "خدمة تحديد الموقع غير مدعومة في متصفحك.",
-      });
+    try {
+      const gps = await getGps();
+      if (needsFace) setFaceMode({ type, ...gps }); // live selfie next, then submit
+      else punch.mutate({ type, ...gps });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "فشل تحديد الموقع", description: e.message });
+    } finally {
       setGpsLoading(false);
-      return;
     }
+  };
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        punch.mutate({
-          type,
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        });
-        setGpsLoading(false);
-      },
-      (err) => {
-        toast({
-          variant: "destructive",
-          title: "فشل تحديد الموقع",
-          description: "يرجى السماح بصلاحيات الموقع لتتمكن من تسجيل البصمة.",
-        });
-        setGpsLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+  const handleFaceDone = (r: FaceCaptureResult) => {
+    const mode = faceMode;
+    setFaceMode(null);
+    if (mode === "enroll") faceEnroll.mutate(r);
+    else if (mode) punch.mutate({ ...mode, ...r });
   };
 
   if (isLoading) {
@@ -114,8 +119,18 @@ export default function Dashboard() {
             </h3>
             <p className="text-muted-foreground text-sm flex items-center gap-1.5 justify-center">
               <AlertCircle className="w-4 h-4" />
-              يتطلب تحديد الموقع الجغرافي (GPS)
+              {needsFace ? "يتطلب تحديد الموقع (GPS) والتحقق بالوجه" : "يتطلب تحديد الموقع الجغرافي (GPS)"}
             </p>
+            {needsEnroll && (
+              <button
+                onClick={() => setFaceMode("enroll")}
+                className="mt-4 flex items-center gap-2 text-sm font-semibold text-primary bg-primary/10 rounded-full px-4 py-2"
+                data-testid="button-face-enroll"
+              >
+                <ScanFace className="w-4 h-4" />
+                سجّل وجهك أول مرة لتفعيل البصمة
+              </button>
+            )}
           </>
         ) : (
           <div className="py-8 flex flex-col items-center">
@@ -163,6 +178,16 @@ export default function Dashboard() {
           <p className="text-sm text-muted-foreground mt-1">طلبات معلقة</p>
         </div>
       </div>
+
+      {faceMode !== null && faceStatus.data && (
+        <FaceCapture
+          title={faceMode === "enroll" ? "تسجيل الوجه لأول مرة" : "التحقق بالوجه"}
+          requireLiveness={faceStatus.data.requireLiveness}
+          minQuality={faceStatus.data.minQuality}
+          onDone={handleFaceDone}
+          onClose={() => setFaceMode(null)}
+        />
+      )}
     </div>
   );
 }

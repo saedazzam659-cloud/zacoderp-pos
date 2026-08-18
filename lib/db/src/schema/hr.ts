@@ -238,6 +238,9 @@ export const attendanceAiSettingsTable = pgTable("attendance_ai_settings", {
   workdayEnd:       text("workday_end").default("17:00"),
   notifyOnUnknown:  boolean("notify_on_unknown").notNull().default(true),
   minQualityScore:  decimal("min_quality_score", { precision: 5, scale: 4 }).notNull().default("0.5"),
+  // When ON, ZacodeHR portal punches require face verification (employee must
+  // self-enroll first). When OFF, only already-enrolled employees are verified.
+  portalFaceRequired: boolean("portal_face_required").notNull().default(false),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
   updatedAt:        timestamp("updated_at").defaultNow().notNull(),
 });
@@ -503,6 +506,9 @@ export const attendanceMovementsTable = pgTable("attendance_movements", {
   exitPermissionId: integer("exit_permission_id"),
   enteredBy:    integer("entered_by"),
   editReason:   text("edit_reason"),
+  // ZacodeHR portal face punch: live selfie (data URL) + verification result.
+  selfieUrl:    text("selfie_url"),
+  faceVerified: boolean("face_verified"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
 }, (t) => ({
   uqPunch: unique("uq_att_movement_punch").on(t.employeeId, t.date, t.time, t.type),
