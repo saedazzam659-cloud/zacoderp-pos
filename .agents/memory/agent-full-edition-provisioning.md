@@ -24,3 +24,8 @@ description: Invariants for the «نسخة كاملة» agent edition, its relea
 - upload: حزم مرفوعة (backend مطلوب tgz، frontend اختياري يُفك في public/، db backup اختياري) تخزن في tmpdir/zacod-custom-pkg/<id>؛ تُسحب عبر `/agent/release/custom` بنفس مصادقة bundle؛ بدون كرون تحديث تلقائي.
 - **استعادة الـ DB backup يجب أن تسبق الخطوة 4 (سكيما+بصمة)** وإلا مسحت البصمة → تعطل النبض؛ وتفشل بصوت عالٍ (ON_ERROR_STOP=1 / --exit-on-error) لا استعادة صامتة.
 - التشفير: صيغة openssl القياسية Salted__ + AES-256-CBC + PBKDF2-SHA256 iter=10000 (Node pbkdf2Sync 48 بايت = key+iv)؛ المفتاح HMAC(SESSION_SECRET, installationId:licenseKey) — fail-closed إذا غاب SESSION_SECRET؛ يُسلَّم عبر SSH فقط ويُحفظ في app.env للمحدّث، لا يمر في أي URL.
+
+## حساب السوبر أدمن للنسخة الكاملة
+- حقول sa_username / sa_email / sa_password_enc على صف الوكيل (كلمة المرور write-only مشفّرة، publicRow يعيد saPasswordSet فقط).
+- تُزرع في قاعدة الوكيل بخطوة 4.5 من التسطيب (بعد السكيما والبصمة) عبر upsert على users بشرط company_id IS NULL — نفس قواعد التحقق المركزية (username regex، كلمة مرور ≥10 بأحرف وأرقام).
+- الحقول تظهر في نموذج الوكيل فقط عند mode=full؛ تعديلها بعد التسطيب يتطلب إعادة «تسطيب كامل» ليُعاد الزرع.

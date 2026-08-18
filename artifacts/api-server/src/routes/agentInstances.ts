@@ -293,7 +293,7 @@ router.use((req, res, next) => {
 
 /** Public projection — secrets replaced with set/masked flags. */
 function publicRow(r: typeof agentInstancesTable.$inferSelect) {
-  const { dbUrlEnc, sshSecretEnc, proxySecretEnc, sshHostKeyFp: _fp, ...rest } = r as any;
+  const { dbUrlEnc, sshSecretEnc, proxySecretEnc, saPasswordEnc, sshHostKeyFp: _fp, ...rest } = r as any;
   // Secrets are STRICTLY write-only: only boolean presence flags leave the
   // server — never the ciphertext and never any plaintext fragment.
   return {
@@ -301,6 +301,7 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
     dbUrlSet: !!dbUrlEnc,
     sshSecretSet: !!sshSecretEnc,
     proxyTokenSet: !!proxySecretEnc,
+    saPasswordSet: !!saPasswordEnc,
   };
 }
 
@@ -333,7 +334,27 @@ const upsertSchema = z.object({
   brandLogoMime: z.enum(["image/png", "image/jpeg", "image/webp"]).nullish(),
   brandColor: z.string().max(20).nullish(),
   notes: z.string().max(2000).nullish(),
+  // بيانات دخول السوبر أدمن للنسخة الكاملة — تُزرع في قاعدة الوكيل عند التسطيب.
+  saUsername: z.string().max(64).nullish(),
+  saEmail: z.string().max(200).nullish(),
+  // write-only: فارغ/غير مُرسل = الإبقاء على الحالية.
+  saPassword: z.string().max(200).nullish(),
 });
+
+/** يتحقق من حقول سوبر أدمن الوكيل (نفس قواعد حسابات السوبر أدمن المركزية).
+ *  يعيد رسالة الخطأ أو null. */
+function validateSaFields(d: { saUsername?: string | null; saEmail?: string | null; saPassword?: string | null }): string | null {
+  const u = (d.saUsername ?? "").trim().toLowerCase();
+  if (u && !/^[a-z0-9._-]{3,32}$/.test(u)) return "اسم مستخدم السوبر أدمن يجب أن يكون 3-32 حرفًا (أحرف إنجليزية صغيرة وأرقام و . _ -)";
+  const e = (d.saEmail ?? "").trim().toLowerCase();
+  if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return "إيميل السوبر أدمن (OTP) غير صالح";
+  const p = d.saPassword ?? "";
+  if (p) {
+    if (p.length < 10) return "كلمة مرور السوبر أدمن يجب أن تكون 10 أحرف فأكثر";
+    if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) return "كلمة مرور السوبر أدمن يجب أن تحتوي على أحرف وأرقام";
+  }
+  return null;
+}
 
 // POST /api/admin/agent-instances
 router.post("/", async (req, res) => {
@@ -352,6 +373,8 @@ router.post("/", async (req, res) => {
   catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 120) }); return; }
   const conflict = await findDomainConflict([domain, ...extras], null);
   if (conflict) { res.status(409).json({ error: `الدومين ${conflict} مسجّل لوكيل آخر` }); return; }
+  const saErr = validateSaFields(d);
+  if (saErr) { res.status(400).json({ error: saErr }); return; }
 
   const installationId = randomUUID();
   const [row] = await db.insert(agentInstancesTable).values({
@@ -370,6 +393,9 @@ router.post("/", async (req, res) => {
       : (d.brandLogoUrl ?? null),
     brandColor: d.brandColor ?? null,
     notes: d.notes ?? null,
+    saUsername: (d.saUsername ?? "").trim().toLowerCase() || null,
+    saEmail: (d.saEmail ?? "").trim().toLowerCase() || null,
+    saPasswordEnc: d.saPassword ? encryptSecret(d.saPassword) : null,
     createdByUserId: (req as any).authUser?.id ?? null,
   }).returning();
   clearAgentHostCache();
@@ -423,9 +449,14 @@ router.put("/:id", async (req, res) => {
     const conflict = await findDomainConflict(all, id);
     if (conflict) { res.status(409).json({ error: `الدومين ${conflict} مسجّل لوكيل آخر` }); return; }
   }
+  const saErr = validateSaFields(d);
+  if (saErr) { res.status(400).json({ error: saErr }); return; }
+  if (d.saUsername !== undefined) patch.saUsername = (d.saUsername ?? "").trim().toLowerCase() || null;
+  if (d.saEmail !== undefined) patch.saEmail = (d.saEmail ?? "").trim().toLowerCase() || null;
   // Secrets: only overwrite when a NON-EMPTY value is sent (empty = keep).
   if (d.dbUrl) { patch.dbUrlEnc = encryptSecret(d.dbUrl); patch.dbStatus = "not_configured"; patch.dbLastError = null; }
   if (d.sshSecret) { patch.sshSecretEnc = encryptSecret(d.sshSecret); patch.sshStatus = "not_configured"; }
+  if (d.saPassword) patch.saPasswordEnc = encryptSecret(d.saPassword);
 
   const [row] = await db.update(agentInstancesTable).set(patch).where(eq(agentInstancesTable.id, id)).returning();
   clearAgentHostCache();
@@ -464,6 +495,33 @@ async function withAgentPool<T>(dbUrlEnc: string, fn: (pool: PgPoolType) => Prom
   }
   const pool = new PgPool({ connectionString: url, max: 2, connectionTimeoutMillis: 8000, ssl: url.includes("sslmode=disable") ? undefined : { rejectUnauthorized: false } });
   try { return await fn(pool); } finally { await pool.end().catch(() => {}); }
+}
+
+/** يزرع/يحدّث حساب السوبر أدمن في قاعدة بيانات الوكيل (النسخة الكاملة).
+ *  upsert باسم المستخدم (company_id IS NULL) — يعيد وصفًا للسجل أو null إذا
+ *  لم تُدخل بيانات دخول على صف الوكيل. */
+async function seedAgentSuperadmin(inst: typeof agentInstancesTable.$inferSelect): Promise<string | null> {
+  const username = (inst.saUsername ?? "").trim().toLowerCase();
+  const passwordPlain = inst.saPasswordEnc ? (decryptSecret(inst.saPasswordEnc) ?? "") : "";
+  if (!username || !passwordPlain) return null;
+  const email = (inst.saEmail ?? "").trim().toLowerCase() || null;
+  const bcrypt = (await import("bcryptjs")).default;
+  const passwordHash = await bcrypt.hash(passwordPlain, 12);
+  return withAgentPool(inst.dbUrlEnc!, async (pool) => {
+    const existing = await pool.query(
+      `SELECT id FROM users WHERE username = $1 AND company_id IS NULL LIMIT 1`, [username]);
+    if (existing.rows.length) {
+      await pool.query(
+        `UPDATE users SET password_hash = $2, email = COALESCE($3, email), role = 'superadmin', is_active = true, view_all_branches = true WHERE id = $1`,
+        [existing.rows[0].id, passwordHash, email]);
+      return `تم تحديث حساب السوبر أدمن (${username}) في قاعدة الوكيل${email ? ` — إيميل OTP: ${email}` : ""}`;
+    }
+    await pool.query(
+      `INSERT INTO users (username, email, password_hash, role, name_ar, is_active, view_all_branches)
+       VALUES ($1, $2, $3, 'superadmin', $4, true, true)`,
+      [username, email, passwordHash, inst.name || "SuperAdmin"]);
+    return `تم إنشاء حساب السوبر أدمن (${username}) في قاعدة الوكيل${email ? ` — إيميل OTP: ${email}` : ""}`;
+  });
 }
 
 // POST /:id/test-db — connectivity + fingerprint verification.
@@ -1683,6 +1741,15 @@ echo ZACOD_DB_RESTORED`, "ZACOD_DB_RESTORED", 600_000);
     } catch (e: any) {
       await markInitDbFailed(inst.id, String(e?.message ?? e).slice(0, 500));
       throw e;
+    }
+
+    // 4.5) زرع حساب السوبر أدمن (النسخة الكاملة فقط) — من الحقول المسجلة
+    // على صف الوكيل (اسم مستخدم + كلمة مرور مشفّرة + إيميل OTP اختياري).
+    if (inst.mode === "full") {
+      await reload();
+      const seeded = await seedAgentSuperadmin(inst);
+      if (seeded) log.push(seeded);
+      else log.push("لم تُدخل بيانات سوبر أدمن للنسخة (اسم مستخدم/كلمة مرور) — تخطّي زرع الحساب. يمكن إضافتها من نموذج التعديل ثم إعادة التسطيب.");
     }
 
     // 5) full edition: the app itself

@@ -73,6 +73,12 @@ export const agentInstancesTable = pgTable("agent_instances", {
   // agent's reverse proxy presents it to prove the original request host.
   proxySecretEnc: text("proxy_secret_enc"),
 
+  // بيانات دخول السوبر أدمن للنسخة الكاملة — تُزرع في قاعدة بيانات الوكيل
+  // عند التسطيب (كلمة المرور مشفّرة AES-256-GCM، لا تُعاد أبدًا عبر API).
+  saUsername:    text("sa_username"),
+  saEmail:       text("sa_email"),          // يستقبل رمز OTP عند الدخول
+  saPasswordEnc: text("sa_password_enc"),
+
   notes:     text("notes"),
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),

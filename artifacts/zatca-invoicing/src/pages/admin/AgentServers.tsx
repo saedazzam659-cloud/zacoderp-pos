@@ -67,6 +67,7 @@ type Agent = {
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
   lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
   deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
+  saUsername: string | null; saEmail: string | null; saPasswordSet: boolean;
   notes: string | null; createdAt: string;
 };
 
@@ -102,6 +103,7 @@ const emptyForm = {
   mode: "frontend_only", maxCompanies: "", licenseExpiresAt: "",
   dbUrl: "", sshHost: "", sshPort: "22", sshUser: "", sshSecret: "",
   brandName: "", brandLogoUrl: "", brandColor: "", notes: "",
+  saUsername: "", saEmail: "", saPassword: "",
 };
 
 function fmtDate(s: string | null | undefined) {
@@ -165,7 +167,11 @@ export default function AgentServers() {
         brandName: form.brandName || null, brandColor: form.brandColor || null,
         sshHost: form.sshHost || null, sshPort: form.sshPort ? Number(form.sshPort) : null, sshUser: form.sshUser || null,
         notes: form.notes || null,
+        saUsername: form.saUsername.trim() || null,
+        saEmail: form.saEmail.trim() || null,
       };
+      // كلمة مرور السوبر أدمن: تُرسل فقط عند إدخال قيمة جديدة (فارغ = الإبقاء).
+      if (form.saPassword.trim()) payload.saPassword = form.saPassword.trim();
       // اللوجو: الـ WAF في الإنتاج يمنع data: URIs داخل جسم الطلب — نرسل
       // base64 + mime منفصلين ويعيد السيرفر بناء الرابط.
       const logo = form.brandLogoUrl.trim();
@@ -369,6 +375,7 @@ export default function AgentServers() {
       sshUser: a.sshUser ?? "", sshSecret: "",
       brandName: a.brandName ?? "", brandLogoUrl: a.brandLogoUrl ?? "", brandColor: a.brandColor ?? "",
       notes: a.notes ?? "",
+      saUsername: a.saUsername ?? "", saEmail: a.saEmail ?? "", saPassword: "",
     });
     setShowForm(true);
   }
@@ -1097,6 +1104,20 @@ export default function AgentServers() {
                 </Select>
               </div>
               <div><label className="text-xs text-muted-foreground block mb-1">أقصى عدد شركات</label><Input inputMode="numeric" dir="ltr" value={form.maxCompanies} onChange={e => set("maxCompanies", e.target.value)} /></div>
+              {form.mode === "full" && (
+                <div className="col-span-2 border rounded-lg p-3 bg-muted/30 space-y-3">
+                  <div className="text-xs font-medium">حساب السوبر أدمن للنسخة الكاملة <span className="text-muted-foreground font-normal">— يُزرع في قاعدة بيانات الوكيل عند التسطيب ليدخل به الوكيل للوحة التحكم</span></div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div><label className="text-xs text-muted-foreground block mb-1">اسم المستخدم</label>
+                      <Input dir="ltr" placeholder="admin" value={form.saUsername} onChange={e => set("saUsername", e.target.value)} data-testid="input-agent-sa-username" /></div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">كلمة المرور {isEdit && agents.find(x => x.id === form.id)?.saPasswordSet && <span className="opacity-70">(محفوظة — فارغ = الإبقاء)</span>}</label>
+                      <Input dir="ltr" type="password" placeholder="10 أحرف فأكثر (أحرف وأرقام)" value={form.saPassword} onChange={e => set("saPassword", e.target.value)} data-testid="input-agent-sa-password" /></div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">إيميل استقبال OTP</label>
+                      <Input dir="ltr" placeholder="owner@agent.com" value={form.saEmail} onChange={e => set("saEmail", e.target.value)} data-testid="input-agent-sa-email" /></div>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground leading-relaxed">كلمة المرور تُحفظ مشفّرة ولا تُعرض بعد الحفظ. عند الدخول للوحة تحكم نسخة الوكيل يصل رمز التحقق (OTP) إلى هذا الإيميل. لو كانت النسخة مسطّبة بالفعل: عدّل البيانات هنا ثم أعد «تسطيب كامل» لتطبيقها.</div>
+                </div>
+              )}
               <div><label className="text-xs text-muted-foreground block mb-1">انتهاء الترخيص</label><DateField value={form.licenseExpiresAt} onChange={e => set("licenseExpiresAt", e.target.value)} /></div>
               <div className="col-span-2"><label className="text-xs text-muted-foreground block mb-1">ملاحظات</label><Textarea rows={2} value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
             </TabsContent>
