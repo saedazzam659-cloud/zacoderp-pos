@@ -3,7 +3,7 @@ import { usePunch as usePunchMutation, useFaceStatus, useFaceEnroll } from "@/ho
 import { Button } from "@/components/ui/button";
 import { Fingerprint, Clock, AlertCircle, FileText, CheckCircle2, XCircle, ScanFace } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
 import { ar } from "date-fns/locale";
@@ -46,6 +46,25 @@ export default function Dashboard() {
       setGpsLoading(false);
     }
   };
+
+  // Deep-link quick actions from "حسابي": /?action=in|out|enroll — consume ONCE
+  // then strip the param so refresh/back doesn't re-trigger.
+  const actionConsumedRef = useRef(false);
+  useEffect(() => {
+    if (actionConsumedRef.current || isLoading || !me || faceStatus.isLoading) return;
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get("action");
+    if (!action) return;
+    actionConsumedRef.current = true;
+    window.history.replaceState(null, "", window.location.pathname);
+    if (action === "enroll") {
+      if (faceStatus.data?.enrolled) toast({ title: "وجهك مسجّل بالفعل", description: "سيتم التحقق بالوجه تلقائياً عند كل بصمة" });
+      else setFaceMode("enroll");
+    } else if (action === "in" || action === "out") {
+      void handlePunch(action);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, me, faceStatus.isLoading]);
 
   const handleFaceDone = (r: FaceCaptureResult) => {
     const mode = faceMode;

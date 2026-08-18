@@ -1,12 +1,16 @@
 import { useMe, useLogout } from "@/hooks/use-auth";
+import { useFaceStatus } from "@/hooks/use-hr";
 import { Button } from "@/components/ui/button";
-import { LogOut, User as UserIcon, Building, Briefcase, Mail, Phone, Hash } from "lucide-react";
+import { LogOut, User as UserIcon, Building, Briefcase, Mail, Phone, Hash, ScanFace, LogIn, DoorOpen, ChevronLeft, CheckCircle2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useLocation } from "wouter";
 
 export default function Profile() {
   const { data: me, isLoading } = useMe();
+  const faceStatus = useFaceStatus();
   const logout = useLogout();
+  const [, navigate] = useLocation();
 
   if (isLoading) {
     return (
@@ -74,6 +78,58 @@ export default function Profile() {
             <p className="font-semibold">{emp.department}</p>
           </div>
         </div>
+      </div>
+
+      {/* Quick actions */}
+      <div className="bg-card rounded-3xl border shadow-sm divide-y overflow-hidden">
+        <button
+          onClick={() => navigate("/?action=enroll")}
+          className="w-full p-4 sm:p-5 flex items-center gap-4 hover:bg-muted/50 active:bg-muted transition-colors text-start"
+          data-testid="link-face-enroll"
+        >
+          <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+            <ScanFace className="w-5 h-5" />
+          </div>
+          <div className="flex-1">
+            <p className="font-semibold">بصمة الوجه</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {faceStatus.data?.enrolled
+                ? <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle2 className="w-3.5 h-3.5" /> وجهك مسجّل — يتم التحقق تلقائياً</span>
+                : "اضغط لفتح الكاميرا وتسجيل وجهك أول مرة"}
+            </p>
+          </div>
+          <ChevronLeft className="w-5 h-5 text-muted-foreground" />
+        </button>
+
+        <button
+          onClick={() => navigate("/?action=in")}
+          className="w-full p-4 sm:p-5 flex items-center gap-4 hover:bg-muted/50 active:bg-muted transition-colors text-start"
+          data-testid="link-punch-in"
+        >
+          <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+            <LogIn className="w-5 h-5" />
+          </div>
+          <div className="flex-1">
+            <p className="font-semibold">تسجيل الحضور</p>
+            <p className="text-xs text-muted-foreground mt-0.5">موقعك + وجهك مباشرة بضغطة واحدة</p>
+          </div>
+          <ChevronLeft className="w-5 h-5 text-muted-foreground" />
+        </button>
+
+        <button
+          onClick={() => navigate("/?action=out")}
+          className="w-full p-4 sm:p-5 flex items-center gap-4 hover:bg-muted/50 active:bg-muted transition-colors text-start"
+          data-testid="link-punch-out"
+        >
+          <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center shrink-0">
+            <DoorOpen className="w-5 h-5" />
+          </div>
+          <div className="flex-1">
+            <p className="font-semibold">تسجيل الانصراف</p>
+            <p className="text-xs text-muted-foreground mt-0.5">موقعك + وجهك مباشرة بضغطة واحدة</p>
+          </div>
+          <ChevronLeft className="w-5 h-5 text-muted-foreground" />
+        </button>
       </div>
 
       {/* Actions */}
