@@ -21,7 +21,11 @@
 // lib/encryption.ts, write-only through the API, and NEVER returned.
 // Explicit superadmin role check on the router — mirrors routes/domains.ts.
 
-import { Router, type Request } from "express";
+import express, { Router, type Request } from "express";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { pbkdf2Sync, createCipheriv, createHash } from "node:crypto";
 // Control-plane module: ALL registry reads/writes here must hit the CENTRAL
 // DB even when the request is running inside an agent-DB ALS context (an
 // agent's cloned DB has an empty registry — following the proxy would
@@ -1435,6 +1439,55 @@ router.post("/:id/deploy", async (req, res) => {
 // Responds immediately ({started:true}); progress is streamed into deployLog
 // (the UI polls the list while deployStatus === "deploying").
 
+// ── حزم مشفّرة + حزم مرفوعة (تسطيب برفع ملفات) ────────────────────────────
+//
+// التشفير: صيغة openssl القياسية ("Salted__" + salt + AES-256-CBC/PBKDF2-SHA256
+// بـ 10000 دورة) حتى يفكّها سيرفر الوكيل بأمر openssl واحد دون أدوات إضافية.
+// كلمة السر تُشتق لكل وكيل من SESSION_SECRET + معرّف التركيب + مفتاح الترخيص،
+// وتُسلَّم للسيرفر عبر SSH فقط (لا تظهر في أي URL).
+
+function bundlePassphrase(inst: { installationId: string; licenseKey: string | null }): string {
+  // fail-closed: بدون SESSION_SECRET يصبح المفتاح قابلًا للاشتقاق من معطيات
+  // الـ URL (معرّف التركيب + الترخيص) — نرفض التشفير بدلًا من تشفير وهمي.
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) throw new Error("SESSION_SECRET غير مضبوط — لا يمكن إنشاء مفتاح تشفير الحزمة");
+  return createHmac("sha256", secret)
+    .update(`bundle:${inst.installationId}:${inst.licenseKey ?? ""}`).digest("hex");
+}
+
+/** يبثّ ملفًا (اختياريًا مشفّرًا بصيغة openssl enc) إلى الاستجابة. */
+function streamFileMaybeEncrypted(res: any, filePath: string, downloadName: string, passphrase: string | null): void {
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("Content-Disposition", `attachment; filename="${downloadName}"`);
+  const src = fs.createReadStream(filePath);
+  if (!passphrase) { src.pipe(res); return; }
+  const salt = randomBytes(8);
+  const keyIv = pbkdf2Sync(passphrase, salt, 10_000, 48, "sha256");
+  const cipher = createCipheriv("aes-256-cbc", keyIv.subarray(0, 32), keyIv.subarray(32, 48));
+  res.write(Buffer.concat([Buffer.from("Salted__"), salt]));
+  src.pipe(cipher).pipe(res);
+  src.on("error", () => { try { res.destroy(); } catch { /* noop */ } });
+}
+
+// الملفات المرفوعة للتسطيب المخصّص تُخزَّن مؤقتًا على قرص المنصة لكل وكيل.
+const CUSTOM_KINDS = ["backend", "frontend", "db"] as const;
+type CustomKind = (typeof CUSTOM_KINDS)[number];
+function customPkgDir(agentId: number): string {
+  const dir = path.join(os.tmpdir(), "zacod-custom-pkg", String(agentId));
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+function customPkgMeta(agentId: number): Record<string, { filename: string; sizeBytes: number; uploadedAt: string }> {
+  try { return JSON.parse(fs.readFileSync(path.join(customPkgDir(agentId), "meta.json"), "utf8")); }
+  catch { return {}; }
+}
+function saveCustomPkgMeta(agentId: number, meta: Record<string, any>): void {
+  fs.writeFileSync(path.join(customPkgDir(agentId), "meta.json"), JSON.stringify(meta, null, 2));
+}
+function customPkgPath(agentId: number, kind: CustomKind): string {
+  return path.join(customPkgDir(agentId), `${kind}.bin`);
+}
+
 function shQ(s: string): string {
   // Single-quote for bash. Values we interpolate are validated/hex, but keep
   // a hard guard anyway.
@@ -1453,7 +1506,15 @@ function assertShellSafeDbUrl(v: string): void {
   if (!/^postgres(ql)?:\/\/[A-Za-z0-9_.:@/%?&=-]+$/.test(v)) throw new Error("رابط قاعدة البيانات غير صالح لبيئة التشغيل");
 }
 
-async function runProvision(instIn: typeof agentInstancesTable.$inferSelect): Promise<void> {
+type ProvisionOpts = {
+  /** full = السلوك الحالي | no_db = استخدام قاعدة البيانات المسجلة فقط (لا إنشاء)
+   *  | upload = تثبيت الملفات المرفوعة بدل حزمة المنصة */
+  variant: "full" | "no_db" | "upload";
+  /** إرسال الحزمة مشفّرة (AES-256) ويفكّها السيرفر عند الاستلام */
+  encryptBundle: boolean;
+};
+
+async function runProvision(instIn: typeof agentInstancesTable.$inferSelect, opts: ProvisionOpts = { variant: "full", encryptBundle: false }): Promise<void> {
   let inst = instIn;
   const log: string[] = [];
   const save = async (status?: "ok" | "error") => {
@@ -1505,6 +1566,10 @@ echo ZACOD_CHECK_OK`, "ZACOD_CHECK_OK", 60_000);
     })();
     if (storedDbUrlOk) {
       log.push("قاعدة بيانات مسجّلة مسبقًا — تخطّي الإنشاء.");
+    } else if (opts.variant === "no_db") {
+      // تسطيب بدون قاعدة بيانات: يعتمد حصريًا على الرابط المسجّل في بيانات
+      // الوكيل — لا نثبّت PostgreSQL ولا ننشئ قاعدة على السيرفر.
+      throw new Error("اخترت «تسطيب بدون قاعدة بيانات» ولا يوجد رابط قاعدة بيانات صالح في بيانات الوكيل — أدخل الرابط في تبويب «قاعدة البيانات» أولًا.");
     } else {
       if (inst.dbUrlEnc) log.push("الرابط المحفوظ غير صالح — سيتم إنشاء قاعدة بيانات جديدة على السيرفر وحفظ رابطها تلقائيًا.");
       const dbUser = `zacod_a${inst.id}`;
@@ -1553,6 +1618,51 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
     const { installScript } = await buildSetupKit(inst);
     await runSsh(installScript, "ZACOD_BOOTSTRAP_DONE", 300_000);
 
+    // 3.5) استعادة نسخة قاعدة البيانات المرفوعة — يجب أن تسبق زرع السكيما
+    // والبصمة (الخطوة 4)، وإلا مسحت الاستعادةُ بصمةَ التركيب وجدول التنصيب
+    // فيتعطل النبض. أي فشل هنا يُسقط التسطيب كاملًا (لا استعادة صامتة).
+    if (opts.variant === "upload" && inst.mode === "full") {
+      const metaR = customPkgMeta(inst.id);
+      if (metaR.db && fs.existsSync(customPkgPath(inst.id, "db"))) {
+        await step("استعادة نسخة قاعدة البيانات المرفوعة");
+        await reload();
+        const originR = resolveCentralOrigin();
+        const storedDbUrlR = decryptSecret(inst.dbUrlEnc!) ?? "";
+        assertShellSafeDbUrl(storedDbUrlR);
+        let restoreDbUrl = storedDbUrlR;
+        try {
+          const u = new URL(storedDbUrlR);
+          if (u.hostname === inst.sshHost) { u.hostname = "127.0.0.1"; u.searchParams.delete("sslmode"); restoreDbUrl = u.toString().replace(/\?$/, ""); }
+        } catch { /* keep stored URL as-is */ }
+        assertShellSafeDbUrl(restoreDbUrl);
+        const encR = opts.encryptBundle;
+        const passR = encR ? bundlePassphrase(inst) : "";
+        const qR = `installationId=${encodeURIComponent(inst.installationId)}&licenseKey=${encodeURIComponent(inst.licenseKey ?? "")}`;
+        const dUrl = `${originR}/api/agent/release/custom?${qR}&kind=db${encR ? "&enc=1" : ""}`;
+        const isGz = /\.gz$/i.test(metaR.db.filename);
+        const isSql = /\.sql(\.gz)?$/i.test(metaR.db.filename);
+        const dlR = encR
+          ? `curl -fsSL ${shQ(dUrl)} -o /tmp/zacod-db.bak.enc
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 10000 -md sha256 -pass "pass:$ZACOD_BUNDLE_KEY" -in /tmp/zacod-db.bak.enc -out /tmp/zacod-db.bak
+rm -f /tmp/zacod-db.bak.enc`
+          : `curl -fsSL ${shQ(dUrl)} -o /tmp/zacod-db.bak`;
+        await runSsh(`set -e
+export DEBIAN_FRONTEND=noninteractive
+export ZACOD_BUNDLE_KEY=${shQ(passR)}
+command -v psql >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y postgresql-client >/dev/null; }
+${encR ? `command -v openssl >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y openssl >/dev/null; }` : `true`}
+${dlR}
+${isSql
+  ? (isGz
+      ? `gunzip -c /tmp/zacod-db.bak | psql "${restoreDbUrl}" -v ON_ERROR_STOP=1 >/dev/null`
+      : `psql "${restoreDbUrl}" -v ON_ERROR_STOP=1 -f /tmp/zacod-db.bak >/dev/null`)
+  : `pg_restore --clean --if-exists --no-owner --exit-on-error -d "${restoreDbUrl}" /tmp/zacod-db.bak >/dev/null`}
+rm -f /tmp/zacod-db.bak
+echo ZACOD_DB_RESTORED`, "ZACOD_DB_RESTORED", 600_000);
+        log.push(`تمت استعادة نسخة قاعدة البيانات (${metaR.db.filename}) — ستُعاد تهيئة السكيما والبصمة فوقها في الخطوة التالية.`);
+      }
+    }
+
     // 4) schema init + fingerprint
     await step("4/6 تهيئة قاعدة البيانات (السكيما + البصمة)");
     await reload();
@@ -1591,20 +1701,67 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
       } catch { /* keep stored URL as-is */ }
       assertShellSafeDbUrl(localDbUrl);
       const q = `installationId=${encodeURIComponent(inst.installationId)}&licenseKey=${encodeURIComponent(inst.licenseKey ?? "")}`;
+      const enc = opts.encryptBundle;
+      const encQ = enc ? "&enc=1" : "";
+      const pass = enc ? bundlePassphrase(inst) : "";
+      // أمر تنزيل موحّد: عند تفعيل «حزمة مشفّرة» تُنزَّل الحزمة مشفّرة
+      // (AES-256-CBC/PBKDF2 بصيغة openssl القياسية) وتُفكّ على السيرفر.
+      const dlCmd = (url: string, out: string) => enc
+        ? `curl -fsSL ${shQ(url)} -o ${out}.enc
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 10000 -md sha256 -pass "pass:$ZACOD_BUNDLE_KEY" -in ${out}.enc -out ${out}
+rm -f ${out}.enc`
+        : `curl -fsSL ${shQ(url)} -o ${out}`;
+      const keyExport = enc ? `export ZACOD_BUNDLE_KEY=${shQ(pass)}` : `export ZACOD_BUNDLE_KEY=`;
+      const keyEnvLine = enc ? `echo "ZACOD_BUNDLE_KEY=$ZACOD_BUNDLE_KEY";` : "";
+
+      // مصدر التطبيق: حزمة المنصة (الافتراضي) أو الملفات المرفوعة يدويًا.
+      let bundleUrl = `${origin}/api/agent/release/bundle?${q}${encQ}`;
+      let relVersion = "";
+      let autoUpdater = true;
+      let frontendCmd = "";
+      let dbRestoreCmd = "";
+      if (opts.variant === "upload") {
+        const meta = customPkgMeta(inst.id);
+        if (!meta.backend || !fs.existsSync(customPkgPath(inst.id, "backend"))) {
+          throw new Error("لم تُرفع حزمة Backend — ارفع الملفات من نافذة «تسطيب برفع ملفات» أولًا.");
+        }
+        const hashFile = (p: string) => new Promise<string>((resolve, reject) => {
+          const h = createHash("sha256");
+          fs.createReadStream(p).on("data", (d) => h.update(d)).on("end", () => resolve(h.digest("hex").slice(0, 16))).on("error", reject);
+        });
+        relVersion = `custom-${await hashFile(customPkgPath(inst.id, "backend"))}`;
+        autoUpdater = false; // الحزم المرفوعة لا تُحدَّث تلقائيًا من المنصة
+        bundleUrl = `${origin}/api/agent/release/custom?${q}&kind=backend${encQ}`;
+        log.push(`مصدر التطبيق: ملفات مرفوعة (${meta.backend.filename}, ${Math.round(meta.backend.sizeBytes / 1024 / 1024)}MB)${enc ? " — مشفّرة أثناء النقل" : ""}`);
+        if (meta.frontend && fs.existsSync(customPkgPath(inst.id, "frontend"))) {
+          const fUrl = `${origin}/api/agent/release/custom?${q}&kind=frontend${encQ}`;
+          frontendCmd = `${dlCmd(fUrl, "/tmp/zacod-front.tgz")}
+mkdir -p /opt/zacod/app.new/public
+tar -xzf /tmp/zacod-front.tgz -C /opt/zacod/app.new/public
+rm -f /tmp/zacod-front.tgz
+echo "Frontend مرفوع: تم فكّه"`;
+          log.push(`+ حزمة Frontend مرفوعة (${meta.frontend.filename})`);
+        }
+        // ملاحظة: استعادة نسخة قاعدة البيانات المرفوعة تمت في الخطوة 3.5
+        // (قبل زرع السكيما والبصمة) — لا شيء يُستعاد هنا.
+      } else {
+        // Warm the bundle cache before the agent curls it.
+        const { getReleaseInfo } = await import("../lib/agentRelease.js");
+        const rel = await getReleaseInfo();
+        relVersion = rel.version;
+        log.push(`إصدار الحزمة: ${rel.version} (${Math.round(rel.sizeBytes / 1024 / 1024)}MB)${enc ? " — مشفّرة أثناء النقل" : ""}`);
+      }
       const manifestUrl = `${origin}/api/agent/release/manifest?${q}`;
-      const bundleUrl = `${origin}/api/agent/release/bundle?${q}`;
-      // Warm the bundle cache before the agent curls it.
-      const { getReleaseInfo } = await import("../lib/agentRelease.js");
-      const rel = await getReleaseInfo();
-      log.push(`إصدار الحزمة: ${rel.version} (${Math.round(rel.sizeBytes / 1024 / 1024)}MB)`);
       const updater = `#!/usr/bin/env bash
 set -e
 [ -f /opt/zacod/SUSPENDED ] && exit 0
+ZACOD_BUNDLE_KEY=$(grep '^ZACOD_BUNDLE_KEY=' /opt/zacod/app.env 2>/dev/null | cut -d= -f2-)
+export ZACOD_BUNDLE_KEY
 MAN=$(curl -fsS ${shQ(manifestUrl)}) || exit 0
 VER=$(echo "$MAN" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
 CUR=$(cat /opt/zacod/app/VERSION 2>/dev/null || echo none)
 { [ -n "$VER" ] && [ "$VER" != "$CUR" ]; } || exit 0
-curl -fsSL ${shQ(bundleUrl)} -o /tmp/zacod-app.tgz
+${dlCmd(bundleUrl, "/tmp/zacod-app.tgz")}
 rm -rf /opt/zacod/app.new && mkdir -p /opt/zacod/app.new
 tar -xzf /tmp/zacod-app.tgz -C /opt/zacod/app.new
 echo "$VER" > /opt/zacod/app.new/VERSION
@@ -1613,18 +1770,23 @@ systemctl restart zacod-app
 `;
       await runSsh(`set -e
 export DEBIAN_FRONTEND=noninteractive
+${keyExport}
 NEED_NODE=1
 if command -v node >/dev/null 2>&1; then MAJ=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0); [ "$MAJ" -ge 20 ] && NEED_NODE=0; fi
 if [ "$NEED_NODE" = "1" ]; then curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null; apt-get install -y nodejs >/dev/null; fi
 echo "Node: $(node -v)"
+${enc ? `command -v openssl >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y openssl >/dev/null; }` : `true`}
 mkdir -p /opt/zacod
-curl -fsSL ${shQ(bundleUrl)} -o /tmp/zacod-app.tgz
+${dlCmd(bundleUrl, "/tmp/zacod-app.tgz")}
 rm -rf /opt/zacod/app.new && mkdir -p /opt/zacod/app.new
 tar -xzf /tmp/zacod-app.tgz -C /opt/zacod/app.new
-echo ${shQ(rel.version)} > /opt/zacod/app.new/VERSION
+rm -f /tmp/zacod-app.tgz
+echo ${shQ(relVersion)} > /opt/zacod/app.new/VERSION
+${frontendCmd || "true"}
 if [ -f /opt/zacod/app.env ] && grep -q '^SESSION_SECRET=' /opt/zacod/app.env; then SS=$(grep '^SESSION_SECRET=' /opt/zacod/app.env | cut -d= -f2-); else SS=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \\n'); fi
-{ echo "NODE_ENV=production"; echo "PORT=8080"; echo "DATABASE_URL=${localDbUrl}"; echo "SESSION_SECRET=$SS"; echo "PUBLIC_BASE_URL=https://${inst.domain}"; } > /opt/zacod/app.env
+{ echo "NODE_ENV=production"; echo "PORT=8080"; echo "DATABASE_URL=${localDbUrl}"; echo "SESSION_SECRET=$SS"; echo "PUBLIC_BASE_URL=https://${inst.domain}"; ${keyEnvLine} } > /opt/zacod/app.env
 chmod 600 /opt/zacod/app.env
+${dbRestoreCmd || "true"}
 rm -rf /opt/zacod/app.old; [ -d /opt/zacod/app ] && mv /opt/zacod/app /opt/zacod/app.old; mv /opt/zacod/app.new /opt/zacod/app
 NODE_BIN=$(command -v node)
 cat > /etc/systemd/system/zacod-app.service <<EOF
@@ -1644,14 +1806,16 @@ cat > /opt/zacod/update.sh <<'ZACOD_UPD'
 ${updater}
 ZACOD_UPD
 chmod 700 /opt/zacod/update.sh
-( crontab -l 2>/dev/null | grep -v zacod-update ; echo "*/10 * * * * /opt/zacod/update.sh # zacod-update" ) | crontab -
+${autoUpdater
+  ? `( crontab -l 2>/dev/null | grep -v zacod-update ; echo "*/10 * * * * /opt/zacod/update.sh # zacod-update" ) | crontab -`
+  : `( crontab -l 2>/dev/null | grep -v zacod-update ) | crontab - || true`}
 systemctl daemon-reload
 systemctl enable zacod-app >/dev/null 2>&1
 systemctl restart zacod-app
 for i in $(seq 1 12); do sleep 5; CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ || echo 000); [ "$CODE" != "000" ] && break; done
 echo "HTTP local: $CODE"
 [ "$CODE" != "000" ] || { echo "ERROR: التطبيق لم يستجب محليًا"; journalctl -u zacod-app -n 40 --no-pager 2>/dev/null | tail -40; exit 1; }
-echo ZACOD_APP_DONE`, "ZACOD_APP_DONE", 300_000);
+echo ZACOD_APP_DONE`, "ZACOD_APP_DONE", 600_000);
     } else {
       await step("5/6 تثبيت التطبيق");
       log.push("النسخة ليست «كاملة» — لا يلزم تثبيت تطبيق محلي (يُخدَم من المنصة المركزية).");
@@ -1676,6 +1840,20 @@ router.post("/:id/provision", async (req, res) => {
   const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
   if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
   if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) { res.status(400).json({ error: "أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا" }); return; }
+  // خيارات التسطيب (إضافية — الافتراضي يطابق السلوك الحالي تمامًا)
+  const variant: ProvisionOpts["variant"] =
+    req.body?.variant === "no_db" ? "no_db" : req.body?.variant === "upload" ? "upload" : "full";
+  const encryptBundle = req.body?.encryptBundle === true;
+  if (variant === "no_db" && !inst.dbUrlEnc) {
+    res.status(400).json({ error: "«تسطيب بدون قاعدة بيانات» يتطلب إدخال رابط قاعدة البيانات في بيانات الوكيل أولًا" }); return;
+  }
+  if (variant === "upload") {
+    if (inst.mode !== "full") { res.status(400).json({ error: "التسطيب برفع ملفات متاح للنسخة الكاملة فقط — غيّر نوع النسخة إلى «كاملة» أولًا" }); return; }
+    const meta = customPkgMeta(id);
+    if (!meta.backend || !fs.existsSync(customPkgPath(id, "backend"))) {
+      res.status(400).json({ error: "ارفع حزمة Backend أولًا من نافذة التسطيب" }); return;
+    }
+  }
   try { await assertProbeTargetAllowed(inst.sshHost); }
   catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
   // Claim FIRST (atomic — only one provision/deploy runs), then mint the
@@ -1696,9 +1874,58 @@ router.post("/:id/provision", async (req, res) => {
   }
   // Re-read the claimed row so the pipeline works off fresh state.
   const [fresh] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
-  await logAgentEvent(id, "provision_started", { by: (req as any).authUser?.username ?? null, mode: inst.mode }, req);
+  await logAgentEvent(id, "provision_started", { by: (req as any).authUser?.username ?? null, mode: inst.mode, variant, encryptBundle }, req);
   res.json({ ok: true, started: true });
-  void runProvision(fresh ?? inst);
+  void runProvision(fresh ?? inst, { variant, encryptBundle });
+});
+
+// ── حزم التسطيب المرفوعة (Backend / Frontend / Database Backup) ────────────
+// تُخزَّن مؤقتًا على قرص المنصة لكل وكيل، ويسحبها سيرفر الوكيل أثناء
+// «التسطيب برفع ملفات» عبر قناة الإصدارات المصادَق عليها (مشفّرة اختياريًا).
+
+router.get("/:id/custom-package", async (req, res) => {
+  const id = Number(req.params.id);
+  const meta = customPkgMeta(id);
+  const out: Record<string, any> = {};
+  for (const kind of CUSTOM_KINDS) {
+    const p = customPkgPath(id, kind);
+    out[kind] = meta[kind] && fs.existsSync(p) ? meta[kind] : null;
+  }
+  res.json(out);
+});
+
+router.put("/:id/custom-package/:kind",
+  express.raw({ type: () => true, limit: "800mb" }),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const kind = String(req.params.kind) as CustomKind;
+    if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "نوع ملف غير معروف" }); return; }
+    const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+    if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+    const body: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (!body.length) { res.status(400).json({ error: "الملف فارغ" }); return; }
+    const filename = String(req.query.filename ?? `${kind}.bin`).slice(0, 200).replace(/[^\w.\-()\u0600-\u06FF ]+/g, "_");
+    // فحص بسيط للصيَغ: backend/frontend يجب أن تكون tar.gz (تبدأ بـ gzip magic)
+    if ((kind === "backend" || kind === "frontend") && !(body[0] === 0x1f && body[1] === 0x8b)) {
+      res.status(400).json({ error: "يجب أن تكون الحزمة بصيغة tar.gz (مضغوطة gzip)" }); return;
+    }
+    fs.writeFileSync(customPkgPath(id, kind), body);
+    const meta = customPkgMeta(id);
+    meta[kind] = { filename, sizeBytes: body.length, uploadedAt: new Date().toISOString() };
+    saveCustomPkgMeta(id, meta);
+    await logAgentEvent(id, "custom_package_uploaded", { kind, filename, sizeBytes: body.length }, req);
+    res.json({ ok: true, kind, filename, sizeBytes: body.length });
+  });
+
+router.delete("/:id/custom-package/:kind", async (req, res) => {
+  const id = Number(req.params.id);
+  const kind = String(req.params.kind) as CustomKind;
+  if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "نوع ملف غير معروف" }); return; }
+  try { fs.rmSync(customPkgPath(id, kind), { force: true }); } catch { /* noop */ }
+  const meta = customPkgMeta(id);
+  delete meta[kind];
+  saveCustomPkgMeta(id, meta);
+  res.json({ ok: true });
 });
 
 // ── Security events ────────────────────────────────────────────────────────
@@ -1847,11 +2074,33 @@ agentPublicRouter.get("/agent/release/bundle", async (req, res) => {
   try {
     const { getReleaseInfo } = await import("../lib/agentRelease.js");
     const rel = await getReleaseInfo();
-    await logAgentEvent(inst.id, "release_downloaded", { version: rel.version }, req);
+    const enc = req.query.enc === "1";
+    await logAgentEvent(inst.id, "release_downloaded", { version: rel.version, encrypted: enc }, req);
+    if (enc) {
+      // حزمة مشفّرة: AES-256-CBC/PBKDF2 بصيغة openssl — المفتاح مشتق لكل
+      // وكيل ولا يمر في أي URL (يُسلَّم عبر SSH أثناء التسطيب فقط).
+      streamFileMaybeEncrypted(res, rel.tarPath, `zacod-app-${rel.version}.tgz.enc`, bundlePassphrase(inst));
+      return;
+    }
     res.setHeader("Content-Type", "application/gzip");
     res.setHeader("Content-Disposition", `attachment; filename="zacod-app-${rel.version}.tgz"`);
     res.sendFile(rel.tarPath);
   } catch (e: any) { res.status(503).json({ error: String(e?.message ?? e).slice(0, 200) }); }
+});
+
+// GET /api/agent/release/custom?installationId&licenseKey&kind=backend|frontend|db[&enc=1]
+// قناة سحب الملفات المرفوعة للتسطيب المخصّص — نفس مصادقة قناة الإصدارات.
+agentPublicRouter.get("/agent/release/custom", async (req, res) => {
+  const inst = await authReleaseRequest(req, res);
+  if (!inst) return;
+  const kind = String(req.query.kind ?? "") as CustomKind;
+  if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "bad_kind" }); return; }
+  const p = customPkgPath(inst.id, kind);
+  const meta = customPkgMeta(inst.id);
+  if (!meta[kind] || !fs.existsSync(p)) { res.status(404).json({ error: "not_uploaded" }); return; }
+  await logAgentEvent(inst.id, "custom_package_downloaded", { kind, filename: meta[kind].filename }, req);
+  const enc = req.query.enc === "1";
+  streamFileMaybeEncrypted(res, p, enc ? `${kind}.enc` : meta[kind].filename, enc ? bundlePassphrase(inst) : null);
 });
 
 // POST /api/agent/heartbeat — instance validation. Body:

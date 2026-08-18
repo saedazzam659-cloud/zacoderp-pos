@@ -17,3 +17,10 @@ description: Invariants for the «نسخة كاملة» agent edition, its relea
 - UI: deploy + init-db + provision buttons all disable while `deployStatus==="deploying"` (they share the lease).
 - Full-mode app env uses a LOOPBACK DATABASE_URL (rewrite host→127.0.0.1, drop sslmode); central keeps the public URL because schema init/fingerprint run from central — that is why the agent Postgres is remotely reachable (scram + strong hex password). Tightening exposure = known follow-up.
 - Progress streams into deployLog (reused column, no DDL); UI polls the list every 3s while deploying.
+
+## خيارات التسطيب (variants)
+- `/provision` body: `{variant: full|no_db|upload, encryptBundle}` — الافتراضي يطابق السلوك القديم تمامًا.
+- no_db: يرفض بوضوح إذا لا يوجد dbUrlEnc (لا يثبّت PostgreSQL أبدًا).
+- upload: حزم مرفوعة (backend مطلوب tgz، frontend اختياري يُفك في public/، db backup اختياري) تخزن في tmpdir/zacod-custom-pkg/<id>؛ تُسحب عبر `/agent/release/custom` بنفس مصادقة bundle؛ بدون كرون تحديث تلقائي.
+- **استعادة الـ DB backup يجب أن تسبق الخطوة 4 (سكيما+بصمة)** وإلا مسحت البصمة → تعطل النبض؛ وتفشل بصوت عالٍ (ON_ERROR_STOP=1 / --exit-on-error) لا استعادة صامتة.
+- التشفير: صيغة openssl القياسية Salted__ + AES-256-CBC + PBKDF2-SHA256 iter=10000 (Node pbkdf2Sync 48 بايت = key+iv)؛ المفتاح HMAC(SESSION_SECRET, installationId:licenseKey) — fail-closed إذا غاب SESSION_SECRET؛ يُسلَّم عبر SSH فقط ويُحفظ في app.env للمحدّث، لا يمر في أي URL.

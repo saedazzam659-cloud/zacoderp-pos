@@ -296,6 +296,43 @@ export default function AgentServers() {
 
   // ── التسطيب الكامل بضغطة واحدة ──
   const [provisionAgentId, setProvisionAgentId] = useState<number | null>(null);
+  // نافذة اختيار طريقة التسطيب: كامل / بدون قاعدة بيانات / برفع ملفات (+ تشفير)
+  const [installDlg, setInstallDlg] = useState<{ agentId: number; variant: "full" | "no_db" | "upload"; encrypt: boolean } | null>(null);
+  const installAgent = (listQ.data ?? []).find(x => x.id === installDlg?.agentId) ?? null;
+  const [pkgStatus, setPkgStatus] = useState<Record<string, { filename: string; sizeBytes: number; uploadedAt: string } | null> | null>(null);
+  const [pkgBusy, setPkgBusy] = useState<string | null>(null);
+
+  async function refreshPkgStatus(agentId: number) {
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package`, { headers });
+      setPkgStatus(r.ok ? await r.json() : null);
+    } catch { setPkgStatus(null); }
+  }
+  useEffect(() => {
+    if (installDlg?.variant === "upload") void refreshPkgStatus(installDlg.agentId);
+  }, [installDlg?.agentId, installDlg?.variant]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function uploadPkg(agentId: number, kind: "backend" | "frontend" | "db", f: File) {
+    setPkgBusy(kind);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}?filename=${encodeURIComponent(f.name)}`, {
+        method: "PUT", headers: { ...headers, "Content-Type": "application/octet-stream" }, body: f,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل الرفع");
+      toast({ title: "تم رفع الملف", description: f.name });
+      await refreshPkgStatus(agentId);
+    } catch (e: any) {
+      toast({ title: "فشل رفع الملف", description: String(e.message ?? e), variant: "destructive" });
+    } finally { setPkgBusy(null); }
+  }
+  async function deletePkg(agentId: number, kind: "backend" | "frontend" | "db") {
+    setPkgBusy(kind);
+    try {
+      await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}`, { method: "DELETE", headers });
+      await refreshPkgStatus(agentId);
+    } finally { setPkgBusy(null); }
+  }
   const provisionAgent = (listQ.data ?? []).find(x => x.id === provisionAgentId) ?? null;
   const anyDeploying = (listQ.data ?? []).some(x => x.deployStatus === "deploying");
   // سجل حي: أثناء أي تسطيب جارٍ حدّث القائمة كل 3 ثوانٍ.
@@ -305,16 +342,15 @@ export default function AgentServers() {
     return () => clearInterval(t);
   }, [anyDeploying, qc]);
 
-  async function provisionNow(a: Agent) {
-    const what = a.mode === "full"
-      ? "سيتم: فحص السيرفر، تثبيت PostgreSQL وإنشاء قاعدة البيانات، تثبيت Caddy والنبض، تهيئة السكيما والبصمة، تثبيت التطبيق الكامل كخدمة مع محدّث تلقائي."
-      : "سيتم: فحص السيرفر، تثبيت PostgreSQL وإنشاء قاعدة البيانات، تثبيت Caddy والنبض، تهيئة السكيما والبصمة.";
-    if (!confirm(`تسطيب كامل على سيرفر «${a.name}» عبر SSH؟\n${what}`)) return;
+  async function provisionNow(a: Agent, opts: { variant: "full" | "no_db" | "upload"; encryptBundle: boolean }) {
     setBusy(`provision-${a.id}`);
     try {
-      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/provision`, { method: "POST", headers });
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/provision`, {
+        method: "POST", headers, body: JSON.stringify(opts),
+      });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل");
+      setInstallDlg(null);
       setProvisionAgentId(a.id);
       invalidate();
     } catch (e: any) {
@@ -470,7 +506,7 @@ export default function AgentServers() {
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || busy === `test-ssh-${a.id}`} onClick={() => action(a.id, "test-ssh", "فحص السيرفر")}>
                       {busy === `test-ssh-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3 ms-1" />}اختبار الوصول
                     </Button>
-                    <Button size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || busy === `provision-${a.id}` || a.deployStatus === "deploying"} onClick={() => provisionNow(a)} data-testid={`button-provision-${a.id}`}>
+                    <Button size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || busy === `provision-${a.id}` || a.deployStatus === "deploying"} onClick={() => setInstallDlg({ agentId: a.id, variant: "full", encrypt: false })} data-testid={`button-provision-${a.id}`}>
                       {busy === `provision-${a.id}` || a.deployStatus === "deploying" ? <Loader2 className="h-3 w-3 animate-spin ms-1" /> : <UploadCloud className="h-3 w-3 ms-1" />}تسطيب كامل
                     </Button>
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}` || a.deployStatus === "deploying"} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
@@ -927,10 +963,113 @@ export default function AgentServers() {
         </DialogContent>
       </Dialog>
 
-      {/* ── نموذج إضافة/تعديل ── */}
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{isEdit ? `تعديل — ${form.name}` : "وكيل جديد"}</DialogTitle></DialogHeader>
+      {/* ── نافذة اختيار طريقة التسطيب ── */}
+      <Dialog open={!!installDlg} onOpenChange={(o) => { if (!o) setInstallDlg(null); }}>
+        <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><UploadCloud className="h-5 w-5" />تسطيب كامل — {installAgent?.name}</DialogTitle></DialogHeader>
+          {installDlg && installAgent && (
+            <div className="space-y-3">
+              {([
+                { v: "full" as const, title: "تسطيب كامل (الافتراضي)", desc: "فحص السيرفر، تثبيت PostgreSQL وإنشاء قاعدة البيانات، Caddy والنبض، السكيما والبصمة" + (installAgent.mode === "full" ? "، وتثبيت التطبيق الكامل كخدمة مع محدّث تلقائي." : ".") },
+                { v: "no_db" as const, title: "تسطيب بدون قاعدة بيانات", desc: "يستخدم رابط قاعدة البيانات المسجّل في بيانات الوكيل كما هو — لا يثبّت PostgreSQL ولا ينشئ قاعدة جديدة. يفشل برسالة واضحة إذا لم يكن الرابط مُدخلًا." },
+                { v: "upload" as const, title: "تسطيب برفع ملفات", desc: "يثبّت حزمة Backend وFrontend ونسخة قاعدة بيانات ترفعها أنت بدل حزمة المنصة (النسخة الكاملة فقط، بدون تحديث تلقائي)." },
+              ]).map(opt => (
+                <button key={opt.v} type="button" onClick={() => setInstallDlg(p => p && { ...p, variant: opt.v })}
+                  className={`w-full text-start border rounded-xl p-3 transition-colors ${installDlg.variant === opt.v ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40"}`}
+                  data-testid={`install-variant-${opt.v}`}>
+                  <div className="font-medium text-sm flex items-center gap-2">
+                    <span className={`h-3.5 w-3.5 rounded-full border-2 ${installDlg.variant === opt.v ? "border-primary bg-primary" : "border-muted-foreground/40"}`} />
+                    {opt.title}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-1 leading-relaxed pr-5">{opt.desc}</div>
+                </button>
+              ))}
+
+              {installDlg.variant === "upload" && (
+                <div className="border rounded-xl p-3 space-y-2 bg-muted/30">
+                  <div className="text-xs font-medium">ملفات التسطيب</div>
+                  {([
+                    { k: "backend" as const, label: "حزمة Backend (tar.gz — يجب أن تحتوي index.mjs)", required: true, accept: ".tgz,.tar.gz,.gz" },
+                    { k: "frontend" as const, label: "حزمة Frontend (tar.gz — تُفك داخل public/)", required: false, accept: ".tgz,.tar.gz,.gz" },
+                    { k: "db" as const, label: "نسخة قاعدة البيانات (.sql / .sql.gz / .dump)", required: false, accept: ".sql,.gz,.dump,.backup" },
+                  ]).map(row => {
+                    const st = pkgStatus?.[row.k] ?? null;
+                    return (
+                      <div key={row.k} className="flex items-center justify-between gap-2 border rounded-lg bg-card p-2">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-medium">{row.label}{row.required && <span className="text-rose-600"> *</span>}</div>
+                          {st
+                            ? <div className="text-[11px] text-emerald-700 truncate" dir="ltr">✓ {st.filename} ({Math.max(1, Math.round(st.sizeBytes / 1024 / 1024))}MB)</div>
+                            : <div className="text-[11px] text-muted-foreground">لم يُرفع</div>}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <label className="inline-flex">
+                            <input type="file" accept={row.accept} className="hidden" onChange={e => {
+                              const f = e.target.files?.[0]; e.target.value = "";
+                              if (f) void uploadPkg(installDlg.agentId, row.k, f);
+                            }} data-testid={`input-pkg-${row.k}`} />
+                            <span className="h-7 px-2 text-[11px] inline-flex items-center rounded-md border cursor-pointer hover:bg-accent">
+                              {pkgBusy === row.k ? <Loader2 className="h-3 w-3 animate-spin" /> : <UploadCloud className="h-3 w-3 ms-1" />}رفع
+                            </span>
+                          </label>
+                          {st && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" disabled={pkgBusy === row.k} onClick={() => void deletePkg(installDlg.agentId, row.k)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 border rounded-xl p-3 cursor-pointer text-sm">
+                <input type="checkbox" className="h-4 w-4 accent-primary" checked={installDlg.encrypt}
+                  onChange={e => setInstallDlg(p => p && { ...p, encrypt: e.target.checked })} data-testid="checkbox-encrypt-bundle" />
+                <span>
+                  إرسال الحزمة <b>مشفّرة</b> (AES-256)
+                  <span className="block text-[11px] text-muted-foreground">تُنقل الحزمة مشفّرة ويفكّها سيرفر الوكيل بمفتاح يُسلَّم عبر SSH فقط.</span>
+                </span>
+              </label>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInstallDlg(null)}>إلغاء</Button>
+            <Button
+              disabled={!installAgent || busy === `provision-${installDlg?.agentId}` || (installDlg?.variant === "upload" && !pkgStatus?.backend)}
+              onClick={() => installAgent && installDlg && provisionNow(installAgent, { variant: installDlg.variant, encryptBundle: installDlg.encrypt })}
+              data-testid="button-start-provision">
+              {busy === `provision-${installDlg?.agentId}` ? <Loader2 className="h-4 w-4 ms-1 animate-spin" /> : <UploadCloud className="h-4 w-4 ms-1" />}
+              بدء التسطيب
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── نموذج إضافة/تعديل — صفحة كاملة (بنمط نموذج الفاتورة) ── */}
+      {showForm && (
+      <div className="fixed inset-0 z-50 bg-background overflow-y-auto" dir="rtl">
+        <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 border-b pb-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center"><Server className="h-5 w-5 text-primary" /></div>
+              <div>
+                <h1 className="text-lg font-bold">{isEdit ? `تعديل وكيل — ${form.name || "بدون اسم"}` : "وكيل جديد"}</h1>
+                <p className="text-xs text-muted-foreground">البيانات الأساسية، قاعدة البيانات، السيرفر، والهوية — كلها في صفحة واحدة.</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setShowForm(false)} data-testid="button-cancel-agent-form">إلغاء</Button>
+              <Button onClick={() => {
+                if (!form.name.trim() || !form.domain.trim()) { toast({ title: "الاسم والدومين مطلوبان", variant: "destructive" }); return; }
+                saveMut.mutate();
+              }} disabled={saveMut.isPending} data-testid="button-save-agent">
+                {saveMut.isPending && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}حفظ
+              </Button>
+            </div>
+          </div>
+          <div className="border rounded-xl bg-card p-4">
           <Tabs defaultValue="basic">
             <TabsList className="w-full flex-wrap h-auto">
               <TabsTrigger value="basic">البيانات</TabsTrigger>
@@ -1025,17 +1164,19 @@ export default function AgentServers() {
               </div>
             </TabsContent>
           </Tabs>
-          <DialogFooter>
+          </div>
+          <div className="flex justify-end gap-2 pb-8">
             <Button variant="outline" onClick={() => setShowForm(false)}>إلغاء</Button>
             <Button onClick={() => {
               if (!form.name.trim() || !form.domain.trim()) { toast({ title: "الاسم والدومين مطلوبان", variant: "destructive" }); return; }
               saveMut.mutate();
-            }} disabled={saveMut.isPending} data-testid="button-save-agent">
+            }} disabled={saveMut.isPending} data-testid="button-save-agent-bottom">
               {saveMut.isPending && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}حفظ
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      </div>
+      )}
     </div>
   );
 }
