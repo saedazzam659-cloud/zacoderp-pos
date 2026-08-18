@@ -159,6 +159,7 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "quotations_view",    labelKey: "users.mobQuotationsView", editKey: "quotation_edit", deleteKey: "quotation_delete" },
   { key: "quotation_create",   labelKey: "users.mobQuotationCreate" },
   { key: "reports_view",       labelKey: "users.mobReportsView", screenKey: "screen_reports" },
+  { key: "hr_attendance_view", labelKey: "users.mobHrAttendanceView" },
 ];
 
 // Every storable key (feature keys + edit/delete keys) — keep deny-all and

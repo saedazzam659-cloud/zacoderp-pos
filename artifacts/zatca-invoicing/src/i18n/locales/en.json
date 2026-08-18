@@ -2620,7 +2620,8 @@
     "mobItemCreate": "Add new item",
     "mobQuotationsView": "View quotations",
     "mobQuotationCreate": "Create quotation",
-    "mobReportsView": "Summary & reports"
+    "mobReportsView": "Summary & reports",
+    "mobHrAttendanceView": "My attendance report (linked employee)"
   },
   "perms": {
     "groups": {

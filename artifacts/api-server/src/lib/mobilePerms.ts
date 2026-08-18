@@ -39,6 +39,7 @@
 //   screen_customers  إظهار شاشة العملاء في شريط التنقّل السفلي
 //   screen_new        إظهار تبويب جديد (+) في شريط التنقّل السفلي
 //   screen_reports    إظهار شاشة الملخص في شريط التنقّل السفلي
+//   hr_attendance_view  تقرير حضوري وانصرافي (الموظف المرتبط بالمستخدم فقط)
 
 export type MobilePerms = Record<string, boolean> | null;
 

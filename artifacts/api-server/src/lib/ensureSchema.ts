@@ -2518,6 +2518,11 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE employees ADD COLUMN IF NOT EXISTS portal_active BOOLEAN DEFAULT TRUE` },
     { label: "subscriptions.max_hr_users",
       sql:   `ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_hr_users INTEGER NOT NULL DEFAULT 10` },
+    { label: "employees.user_id",
+      sql:   `ALTER TABLE employees ADD COLUMN IF NOT EXISTS user_id INTEGER` },
+    // One ERP user ↔ at most one employee per company (تقرير حضوري الموبايل).
+    { label: "employees_company_user_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS employees_company_user_uniq ON employees (company_id, user_id) WHERE user_id IS NOT NULL` },
     { label: "employees_company_login_username_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS employees_company_login_username_uniq ON employees (company_id, lower(login_username)) WHERE login_username IS NOT NULL` },
 

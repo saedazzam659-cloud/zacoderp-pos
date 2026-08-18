@@ -159,6 +159,12 @@ export default function More() {
               <View style={{ height: 1, backgroundColor: c.border }} />
             </>
           ) : null}
+          {mp('hr_attendance_view') ? (
+            <>
+              <RowItem icon="clock" title="تقرير حضوري (الحضور والانصراف)" onPress={() => router.push('/hr-attendance' as any)} testID="row-hr-attendance" />
+              <View style={{ height: 1, backgroundColor: c.border }} />
+            </>
+          ) : null}
           <RowItem
             icon={offlineOn ? 'wifi-off' : 'download-cloud'}
             title={offlineBusy ? 'جارٍ التنزيل/المزامنة…' : offlineOn ? 'وضع الأوف لاين: مفعّل (اضغط للإيقاف)' : 'تفعيل وضع الأوف لاين'}

@@ -2623,7 +2623,8 @@
     "mobItemCreate": "إضافة صنف جديد",
     "mobQuotationsView": "عرض عروض الأسعار",
     "mobQuotationCreate": "إنشاء عرض سعر",
-    "mobReportsView": "الملخص والتقارير"
+    "mobReportsView": "الملخص والتقارير",
+    "mobHrAttendanceView": "تقرير حضوري (حضور وانصراف الموظف المرتبط)"
   },
   "perms": {
     "groups": {

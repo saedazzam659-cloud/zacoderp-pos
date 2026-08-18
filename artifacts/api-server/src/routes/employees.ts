@@ -13,7 +13,8 @@ import {
   intOrDefault, emailOrNull, mobileOrNull, idNumberOrNull, timeOrNull, respondHrError,
 } from "../lib/hrValidate.js";
 import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
-import { subscriptionsTable } from "@workspace/db";
+import { requireMobilePerm } from "../lib/mobileGuard.js";
+import { subscriptionsTable, usersTable } from "@workspace/db";
 import bcrypt from "bcryptjs";
 
 const router = Router();
@@ -119,6 +120,15 @@ async function hrSeatOverflowRevert(cid: number, empId: number): Promise<string 
       .where(and(eq(employeesTable.id, empId), eq(employeesTable.companyId, cid)));
   }
   return err;
+}
+
+// Validate the mobile-app user link: the user must exist in THIS company.
+// Returns the Arabic error, or null when valid / not provided.
+async function linkedUserError(cid: number, userId: number | null): Promise<string | null> {
+  if (userId == null) return null;
+  const [u] = await db.select({ id: usersTable.id }).from(usersTable)
+    .where(and(eq(usersTable.id, userId), eq(usersTable.companyId, cid)));
+  return u ? null : "المستخدم المرتبط غير موجود في هذه الشركة";
 }
 
 async function portalUsernameTaken(cid: number, username: string, excludeId?: number): Promise<boolean> {
@@ -443,6 +453,66 @@ router.delete("/travels/:tid", async (req, res) => {
   } catch (e: any) { respondHrError(req, res, e); }
 });
 
+// ─── Mobile: my own attendance (تقرير حضوري) ────────────────────────────────
+// The logged-in ERP user must be linked to an employee via employees.user_id.
+// Gated by mobile permission "hr_attendance_view". Registered BEFORE /:id.
+router.get("/my-attendance", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const uid = Number((req as any).authUser?.id);
+    if (!Number.isFinite(uid) || uid <= 0) { res.status(401).json({ error: "غير مصرح" }); return; }
+    if (!(await requireMobilePerm(req, res, cid, "hr_attendance_view", "لا تملك صلاحية عرض تقرير الحضور"))) return;
+    const [emp] = await db.select({
+      id: employeesTable.id, code: employeesTable.code,
+      nameAr: employeesTable.nameAr, jobTitle: employeesTable.jobTitle,
+    }).from(employeesTable)
+      .where(and(eq(employeesTable.companyId, cid), eq(employeesTable.userId, uid)));
+    if (!emp) {
+      res.status(404).json({ error: "لا يوجد ملف موظف مرتبط بحسابك — اطلب من الإدارة ربط حسابك من شاشة الموظفين" });
+      return;
+    }
+    const now = new Date();
+    const year = Math.min(2100, Math.max(2000, Number(req.query.year) || now.getFullYear()));
+    const month = Math.min(12, Math.max(1, Number(req.query.month) || (now.getMonth() + 1)));
+    const mm = String(month).padStart(2, "0");
+    const from = `${year}-${mm}-01`;
+    // Inclusive month end — last real day (Feb/30-day months break with "-31").
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const to = `${year}-${mm}-${String(lastDay).padStart(2, "0")}`;
+    const rows = await db.select({
+      date: employeeAttendanceTable.date,
+      checkIn: employeeAttendanceTable.checkIn,
+      checkOut: employeeAttendanceTable.checkOut,
+      workedHours: employeeAttendanceTable.workedHours,
+      overtimeHours: employeeAttendanceTable.overtimeHours,
+      lateMinutes: employeeAttendanceTable.lateMinutes,
+      earlyLeaveMinutes: employeeAttendanceTable.earlyLeaveMinutes,
+      status: employeeAttendanceTable.status,
+      notes: employeeAttendanceTable.notes,
+    }).from(employeeAttendanceTable)
+      .where(and(
+        eq(employeeAttendanceTable.companyId, cid),
+        eq(employeeAttendanceTable.employeeId, emp.id),
+        gte(employeeAttendanceTable.date, from),
+        lte(employeeAttendanceTable.date, to),
+      ))
+      .orderBy(desc(employeeAttendanceTable.date));
+    const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+    const summary = {
+      days: rows.length,
+      present: rows.filter(r => r.status === "present" || r.status === "late").length,
+      absent: rows.filter(r => r.status === "absent").length,
+      leave: rows.filter(r => r.status === "leave" || r.status === "vacation").length,
+      lateDays: rows.filter(r => num(r.lateMinutes) > 0).length,
+      lateMinutes: rows.reduce((s, r) => s + num(r.lateMinutes), 0),
+      earlyLeaveMinutes: rows.reduce((s, r) => s + num(r.earlyLeaveMinutes), 0),
+      workedHours: Math.round(rows.reduce((s, r) => s + num(r.workedHours), 0) * 100) / 100,
+      overtimeHours: Math.round(rows.reduce((s, r) => s + num(r.overtimeHours), 0) * 100) / 100,
+    };
+    res.json({ employee: emp, year, month, rows, summary });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -485,6 +555,11 @@ router.post("/", async (req, res) => {
       const dup = await db.select({ id: employeesTable.id }).from(employeesTable)
         .where(and(eq(employeesTable.companyId, cid), eq(employeesTable.idNumber, String(clean.idNumber))));
       if (dup.length) { res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" }); return; }
+    }
+    const linkUserId = N(b.userId) ? Number(b.userId) : null;
+    {
+      const luErr = await linkedUserError(cid, linkUserId);
+      if (luErr) { res.status(400).json({ error: luErr }); return; }
     }
     // Portal credentials (optional)
     let credUsername: string | null = null, credHash: string | null = null;
@@ -545,6 +620,7 @@ router.post("/", async (req, res) => {
       bankApproved: b.bankApproved === false ? false : true,
       loginUsername: credUsername,
       loginPasswordHash: credHash,
+      userId: linkUserId,
     }).returning();
     if (credUsername) {
       const overflow = await hrSeatOverflowRevert(cid, row.id);
@@ -556,6 +632,8 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" });
     if (String(e?.message).includes("uq_employees_company_code"))
       return res.status(400).json({ error: "كود الموظف مكرر" });
+    if (String(e?.message).includes("employees_company_user_uniq"))
+      return res.status(409).json({ error: "هذا المستخدم مرتبط بموظف آخر بالفعل" });
     respondHrError(req, res, e);
   }
 });
@@ -587,6 +665,12 @@ router.put("/:id", async (req, res) => {
       if (f in b) updates[f] = b[f] === false ? false : true;
     if ("payableAccountId" in b) updates.payableAccountId = N(b.payableAccountId) ? Number(b.payableAccountId) : null;
     if ("branchId" in b) updates.branchId = N(b.branchId) ? Number(b.branchId) : null;
+    if ("userId" in b) {
+      const linkUserId = N(b.userId) ? Number(b.userId) : null;
+      const luErr = await linkedUserError(cid, linkUserId);
+      if (luErr) { res.status(400).json({ error: luErr }); return; }
+      updates.userId = linkUserId;
+    }
 
     // Portal credentials (optional). Blank password on edit keeps the old hash.
     if ("loginUsername" in b || "loginPassword" in b || "portalActive" in b) {
@@ -640,6 +724,8 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" });
     if (String(e?.message).includes("employees_company_login_username_uniq"))
       return res.status(409).json({ error: "اسم المستخدم مستخدم لموظف آخر" });
+    if (String(e?.message).includes("employees_company_user_uniq"))
+      return res.status(409).json({ error: "هذا المستخدم مرتبط بموظف آخر بالفعل" });
     respondHrError(req, res, e);
   }
 });

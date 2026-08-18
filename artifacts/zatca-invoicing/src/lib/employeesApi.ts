@@ -19,6 +19,8 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export const employeesApi = {
   list:    () => req<any[]>("GET", "/employees"),
+  // مستخدمو النظام — لربط الموظف بمستخدم تطبيق الموبايل (تقرير حضوري)
+  users:   () => req<any[]>("GET", "/users"),
   get:     (id: number) => req<any>("GET", `/employees/${id}`),
   alerts:  () => req<any>("GET", "/employees/alerts"),
   create:  (data: any) => req<any>("POST", "/employees", data),

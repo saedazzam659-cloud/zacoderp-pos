@@ -39,6 +39,8 @@ const EMPTY: any = {
   bankApproved: true,
   // ZacodeHR portal credentials (optional)
   loginUsername: "", loginPassword: "",
+  // ربط بمستخدم تطبيق الموبايل (تقرير حضوري)
+  userId: null,
 };
 
 function daysUntil(date?: string): number | null {
@@ -89,6 +91,7 @@ export default function Employees() {
   const [showAlertSettings, setShowAlertSettings] = useState(false);
 
   const empQ = useQuery({ queryKey: ["employees"], queryFn: employeesApi.list });
+  const usersQ = useQuery({ queryKey: ["employees", "users"], queryFn: employeesApi.users, retry: false });
   const alertsQ = useQuery({ queryKey: ["employees", "alerts"], queryFn: employeesApi.alerts });
 
   const filtered = useMemo(() => {
@@ -320,6 +323,22 @@ export default function Employees() {
                     <Field label={tr("fPortalPassword", { defaultValue: "كلمة مرور البوابة" })}>
                       <Input dir="ltr" type="password" autoComplete="new-password" value={editing.loginPassword ?? ""} onChange={e => setF("loginPassword", e.target.value)}
                         placeholder={editing.hasPortalPassword ? tr("fPortalPasswordKeep", { defaultValue: "اتركه فارغًا للإبقاء على كلمة المرور الحالية" }) : tr("fPortalPasswordNew", { defaultValue: "4 أحرف على الأقل" })} />
+                    </Field>
+                    {/* ربط الموظف بمستخدم تطبيق الموبايل — يتيح له تقرير "حضوري" في التطبيق */}
+                    <Field label={tr("fLinkedUser", { defaultValue: "ربط بمستخدم تطبيق الموبايل (تقرير حضوري)" })}>
+                      <SearchCombobox
+                        items={[
+                          { value: "", label: tr("fLinkedUserNone", { defaultValue: "بدون ربط" }) },
+                          ...(Array.isArray(usersQ.data) ? usersQ.data : []).map((u: any) => ({
+                            value: String(u.id),
+                            label: `${u.name || u.username || u.email || u.id}`,
+                          })),
+                        ]}
+                        value={editing.userId ? String(editing.userId) : ""}
+                        onValueChange={(v) => setF("userId", v ? Number(v) : null)}
+                        placeholder={tr("fLinkedUserPh", { defaultValue: "اختر المستخدم…" })}
+                        className="w-full"
+                      />
                     </Field>
                     <Field label={tr("fNotes")} className="md:col-span-2"><Textarea rows={2} value={editing.notes} onChange={e => setF("notes", e.target.value)} /></Field>
                   </FormGrid>

@@ -65,6 +65,9 @@ export const employeesTable = pgTable("employees", {
   loginUsername:     text("login_username"),
   loginPasswordHash: text("login_password_hash"),
   portalActive:      boolean("portal_active").default(true),
+  // Optional link to an ERP users row — lets the mobile companion app show
+  // this employee's own attendance (تقرير حضوري) to the logged-in user.
+  userId:            integer("user_id"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({
