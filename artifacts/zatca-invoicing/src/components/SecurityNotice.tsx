@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 
 /**
@@ -16,8 +17,19 @@ const REPEAT_MS = 30 * 60_000; // re-show every 30 minutes
 
 export default function SecurityNotice() {
   const { user } = useAuth();
+  const [, setLocation] = useLocation();
   const [visible, setVisible] = useState(false);
   const [leaving, setLeaving] = useState(false);
+
+  // Only company admins have access to the Users screen; for them a click
+  // jumps straight to their own user's edit form (auto-opened via ?selected=).
+  const canJump = user?.role === "admin" || user?.role === "superadmin";
+  const jumpToEdit = () => {
+    if (!canJump || !user?.id) return;
+    setLeaving(true);
+    setTimeout(() => setVisible(false), 300);
+    setLocation(`/users?selected=${user.id}`);
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -46,8 +58,11 @@ export default function SecurityNotice() {
       dir="rtl"
       className={`fixed top-4 left-1/2 z-[200] w-[min(94vw,480px)] -translate-x-1/2 ${leaving ? "sec-notice-out" : "sec-notice-in"}`}
       role="alert"
+      onClick={jumpToEdit}
+      style={canJump ? { cursor: "pointer" } : undefined}
+      title={canJump ? "اضغط للانتقال إلى تعديل المستخدم" : undefined}
     >
-      <div className="rounded-2xl border border-amber-300/70 bg-gradient-to-l from-amber-50 via-orange-50 to-rose-50 shadow-xl shadow-amber-900/10 px-4 py-3.5">
+      <div className="rounded-2xl border border-amber-300/70 bg-gradient-to-l from-amber-50 via-orange-50 to-rose-50 shadow-xl shadow-amber-900/10 px-4 py-3.5 hover:shadow-2xl transition-shadow">
         <div className="flex items-start gap-3">
           <div className="text-2xl leading-none mt-0.5">🔐</div>
           <div className="min-w-0">
