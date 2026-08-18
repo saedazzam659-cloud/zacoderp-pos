@@ -2369,8 +2369,159 @@ function template14(d: PrintData): string {
   </div></body></html>`;
 }
 
+// ── Template 15 — «كلاسيكي ثنائي اللغة» (Al-Rayyan style) ────────────────────
+// Fully bordered, bilingual (AR/EN) classic layout modelled on the user's
+// reference quotation: Arabic company block on the right, English on the
+// left, centered logo, boxed title, bordered label/value meta rows, and a
+// bordered bilingual items table. Works for all sales doc types; quotation
+// meta shows validity (مدة العرض) instead of payment method.
+function template15(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const totals = computeFullTotals(doc, lines, d.type);
+  const safeLogo = safeLogoSrc(company?.logo);
+  const isQuot  = d.type === "quotation";
+  const isOrder = d.type === "order";
+  const isRet   = d.type === "return";
+  const hasBuyerVat = !!(customer?.vatNumber ?? doc.buyerVatNumber);
+  const titleAr = isRet ? "مرتجع مبيعات" : isQuot ? "عرض السعر" : isOrder ? "أمر بيع"
+                : (hasBuyerVat ? "فاتورة ضريبية" : "فاتورة مبيعات مبسطة");
+  const titleEn = isRet ? "Sales Return" : isQuot ? "Quotation" : isOrder ? "Sales Order"
+                : (hasBuyerVat ? "Tax Invoice" : "Simplified Tax Invoice");
+  const docNo = doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
+  const dateStr = docDate(doc, d.type);
+  const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const custNo = (customer as any)?.code ?? (customer?.id != null ? String(customer.id).padStart(5, "0") : "—");
+  const custVat = customer?.vatNumber ?? doc.buyerVatNumber ?? "—";
+  const custAddr = [customer?.city, customer?.district, customer?.street].filter(Boolean).join(" - ")
+                || customer?.address || "—";
+  const payLabel = doc.paymentType === "cash" ? "نقداً / Cash" : doc.paymentType === "bank" ? "بنك / Bank" : "آجل / Credit";
+  const durOrPay = isQuot || isOrder
+    ? { en: "Show<br/>duration", ar: isQuot ? "مدة العرض" : "التسليم", val: esc(doc.validUntil ?? "—") }
+    : { en: "Payment", ar: "طريقة الدفع", val: payLabel };
+  const inc = !!doc?.priceIncludesVat;
+  // VAT label — show the actual rate only when ALL lines share one rate;
+  // mixed-rate documents get a generic label (never a hard-coded 15%).
+  const rates = new Set<number>((lines ?? []).map((l: any) => Number(l.vatRate) || 0));
+  const vatLabel = rates.size === 1
+    ? `ضريبة القيمة المضافة ${fmt([...rates][0])}%<br/>VAT ${fmt([...rates][0])}%`
+    : "ضريبة القيمة المضافة<br/>VAT";
+  const rows = (lines ?? []).map((l: any, i: number) => {
+    const f = lineFigures(l, inc);
+    return `<tr>
+      <td class="c">${i + 1}</td>
+      <td class="desc">${esc(l.itemName ?? l.itemCode ?? "—")}</td>
+      <td class="c">${esc(l.unit ?? "—")}</td>
+      <td class="c mono">${fmt(f.qty)}</td>
+      <td class="c mono">${fmt(f.price)}</td>
+      <td class="c mono">${fmt(f.netEx)}</td>
+    </tr>`;
+  }).join("");
+  const box = (en: string, val: string, ar: string, flexEn = "0 0 90px", flexAr = "0 0 90px") =>
+    `<div class="mb"><div class="lbl" style="flex:${flexEn}">${en}</div><div class="val">${val}</div><div class="lbl" style="flex:${flexAr}">${ar}</div></div>`;
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>${titleAr} ${docNo}</title>
+  <style>
+    @page { size: A4; margin: 10mm 12mm; }
+    * { box-sizing:border-box; margin:0; padding:0; font-family:'Times New Roman','Segoe UI',Tahoma,serif; }
+    body { direction:rtl; background:#fff; color:#111; font-size:12px; }
+    .mono { font-variant-numeric:tabular-nums; direction:ltr; unicode-bidi:isolate; }
+    .hdr { display:flex; gap:10px; align-items:flex-start; margin-bottom:10px; }
+    .hcol { flex:1; }
+    .hcol.en { direction:ltr; text-align:left; }
+    .hcol.ar { text-align:right; }
+    .hcol .nm { font-weight:800; font-size:14px; margin-bottom:3px; }
+    .hcol div { margin-bottom:2px; line-height:1.45; }
+    .hcol .hl { color:#c2410c; font-weight:700; }
+    .hlogo { flex:0 0 170px; text-align:center; align-self:center; }
+    .hlogo img { max-height:80px; max-width:165px; object-fit:contain; }
+    .title-box { width:200px; margin:4px auto 10px; border:1.5px solid #444; border-radius:4px; text-align:center; padding:7px 10px; box-shadow:2px 2px 0 #bbb; }
+    .title-box .a { font-weight:800; font-size:15px; }
+    .title-box .e { font-size:13px; font-weight:700; }
+    .meta { display:flex; flex-wrap:wrap; gap:6px 10px; margin-bottom:8px; }
+    .mb { display:flex; border:1.5px solid #333; border-radius:3px; overflow:hidden; align-items:stretch; flex:1 1 46%; min-width:280px; }
+    .mb .lbl { background:#f5f5f5; border-inline-start:1.5px solid #333; padding:6px 8px; font-weight:700; text-align:center; display:flex; align-items:center; justify-content:center; line-height:1.2; }
+    .mb .lbl:first-child { border-inline-start:none; border-inline-end:1.5px solid #333; direction:ltr; }
+    .mb .val { flex:1; padding:6px 8px; text-align:center; display:flex; align-items:center; justify-content:center; }
+    table.items { width:100%; border-collapse:collapse; margin-top:4px; }
+    table.items th, table.items td { border:1.5px solid #333; padding:6px 6px; }
+    table.items thead th { background:#f0f0f0; font-weight:800; text-align:center; line-height:1.3; }
+    td.c { text-align:center; } td.desc { text-align:right; }
+    table.items thead { display:table-header-group; }
+    tr { page-break-inside:avoid; break-inside:avoid; }
+    .totals { width:300px; margin-inline-start:auto; margin-top:8px; border-collapse:collapse; }
+    .totals td { border:1.5px solid #333; padding:6px 8px; }
+    .totals .k { background:#f5f5f5; font-weight:700; }
+    .totals .g td { background:#efefef; font-weight:800; }
+    .bottom { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-top:8px; break-inside:avoid; }
+    .words { flex:1; border:1.5px solid #333; border-radius:3px; padding:8px 10px; font-size:11.5px; }
+    .foot { margin-top:14px; display:flex; justify-content:space-between; font-size:11px; }
+    .sig { text-align:center; min-width:160px; }
+    .sig .ln { margin-top:34px; border-top:1px solid #333; padding-top:4px; }
+    @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+  </style></head><body>
+  <div class="hdr">
+    <div class="hcol ar">
+      <div class="nm">${esc(company?.nameAr ?? "")}</div>
+      <div>${esc(company?.address ?? company?.city ?? "")}</div>
+      ${company?.crNumber ? `<div>سجل تجارى : <b class="mono">${esc(company.crNumber)}</b></div>` : ""}
+      <div>الرقم الضريبي: <b class="mono">${esc(company?.vatNumber ?? "—")}</b></div>
+      ${company?.phone ? `<div class="hl">موبايل : <span class="mono">${esc(company.phone)}</span></div>` : ""}
+      ${company?.email ? `<div class="hl">ايميل&nbsp; <u>${esc(company.email)}</u></div>` : ""}
+    </div>
+    <div class="hlogo">${safeLogo ? `<img src="${safeLogo}" alt="logo"/>` : ""}</div>
+    <div class="hcol en">
+      <div class="nm">${esc(company?.nameEn ?? company?.nameAr ?? "")}</div>
+      <div>${esc(company?.addressEn ?? company?.address ?? "")}</div>
+      ${company?.crNumber ? `<div><b>CR : <span class="mono">${esc(company.crNumber)}</span></b></div>` : ""}
+      <div><b>Vat No: <span class="mono">${esc(company?.vatNumber ?? "—")}</span></b></div>
+      ${company?.phone ? `<div class="hl">Mobile: <span class="mono">${esc(company.phone)}</span></div>` : ""}
+      ${company?.email ? `<div class="hl">E-mail&nbsp; <u>${esc(company.email)}</u></div>` : ""}
+    </div>
+  </div>
+  <div class="title-box"><div class="a">${titleAr}</div><div class="e">${titleEn}</div></div>
+  <div class="meta">
+    ${box("Date", `<span class="mono">${esc(dateStr)}</span>`, "التاريخ")}
+    ${box(isQuot ? "Quotation No." : "Doc No.", `<span class="mono">${esc(docNo)}</span>`, isQuot ? "رقم العرض" : "رقم المستند", "0 0 110px")}
+    ${box("Cust. Name", esc(customer?.nameAr ?? customer?.name ?? doc.customerName ?? "—"), "اسم العميل", "0 0 90px")}
+    ${box("Cust. No.", `<span class="mono">${esc(custNo)}</span>`, "رقم العميل")}
+    ${box("Address", esc(custAddr), "العنوان")}
+    ${box("VAT No.", `<span class="mono">${esc(custVat)}</span>`, "الرقم الضريبية")}
+    ${box("Notes", esc(doc.notes ?? ""), "الملاحظات")}
+    ${box(durOrPay.en, durOrPay.val, durOrPay.ar)}
+  </div>
+  <table class="items">
+    <thead><tr>
+      <th style="width:34px;">م<br/>No</th>
+      <th>البيــان<br/>Description</th>
+      <th style="width:76px;">الوحدة<br/>Unit</th>
+      <th style="width:76px;">الكمية<br/>Quantity</th>
+      <th style="width:86px;">السعر<br/>Price</th>
+      <th style="width:96px;">المجموع<br/>Subtotal</th>
+    </tr></thead>
+    <tbody>${rows || `<tr><td class="c" colspan="6">—</td></tr>`}</tbody>
+  </table>
+  <table class="totals">
+    ${totals.discountTotal > 0 ? `
+    <tr><td class="k">الإجمالي قبل الخصم<br/>Subtotal</td><td class="mono" style="text-align:center;">${fmt(totals.subtotalPreDiscount)}</td></tr>
+    <tr><td class="k">الخصم / Discount</td><td class="mono" style="text-align:center;">${fmt(totals.discountTotal)}</td></tr>` : ""}
+    <tr><td class="k">الصافي قبل الضريبة<br/>Net (excl. VAT)</td><td class="mono" style="text-align:center;">${fmt(totals.netPreVat)}</td></tr>
+    <tr><td class="k">${vatLabel}</td><td class="mono" style="text-align:center;">${fmt(totals.vatAmount)}</td></tr>
+    <tr class="g"><td class="k">الإجمالي شامل الضريبة<br/>Grand Total</td><td class="mono" style="text-align:center;">${fmt(totals.grandTotal)} ${esc(totals.currencySym)}</td></tr>
+  </table>
+  <div class="bottom">
+    <div class="words">المبلغ كتابةً: <b>${esc(totals.amountWords)}</b></div>
+    ${!isQuot && !isOrder ? qrImgHtml(d, { size: 96, border: "1px solid #333" }) : ""}
+  </div>
+  <div class="foot">
+    <div class="sig">المستلم / Receiver<div class="ln">&nbsp;</div></div>
+    <div class="sig">المحاسب / Accountant<div class="ln">&nbsp;</div></div>
+    <div class="sig">الإدارة / Management<div class="ln">&nbsp;</div></div>
+  </div>
+  </body></html>`;
+}
+
 const TEMPLATES = [
   { id: 14, name: "الأصلي",         desc: "نموذج مرتب بشعار وسط وبيانات شركة/عميل جانبية", color: "#b88a2a", fn: template14, thermal: false },
+  { id: 15, name: "كلاسيكي ثنائي اللغة", desc: "نموذج تجاري بحدود كاملة عربي/إنجليزي", color: "#7c4a12", fn: template15, thermal: false },
   { id: 1,  name: "كلاسيكي",       desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1,  thermal: false },
   { id: 2,  name: "حديث",          desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2,  thermal: false },
   { id: 3,  name: "مؤسسي",         desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3,  thermal: false },
