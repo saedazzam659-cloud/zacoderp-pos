@@ -11,7 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
  * AuthContext.login) so a page refresh keeps the schedule.
  */
 const LS_KEY = "zatca_sec_notice";
-const SHOW_MS = 3000;          // visible duration (per the requirement: ~3s)
+const SHOW_MS = 8000;          // visible duration (~8s per user request)
 const REPEAT_MS = 30 * 60_000; // re-show every 30 minutes
 
 export default function SecurityNotice() {
