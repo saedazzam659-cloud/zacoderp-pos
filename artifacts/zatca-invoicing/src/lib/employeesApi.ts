@@ -134,6 +134,46 @@ export const employeesApi = {
   returnCustody: (id: number, data: { amount?: number; returnDate?: string; cashBoxId?: number | null; bankAccountId?: number | null; description?: string }) =>
     req<any>("POST", `/hr/custodies/${id}/return`, data),
 
+  // Asset custody (عهدة عينية) — administrative only, no JE
+  assetCustodies: (params: { employeeId?: number; assetId?: number; status?: string; from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.employeeId) qs.set("employeeId", String(params.employeeId));
+    if (params.assetId) qs.set("assetId", String(params.assetId));
+    if (params.status) qs.set("status", params.status);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    const q = qs.toString(); return req<any[]>("GET", `/hr/custodies/asset${q ? `?${q}` : ""}`);
+  },
+  addAssetCustody:    (data: any) => req<any>("POST", "/hr/custodies/asset", data),
+  updateAssetCustody: (id: number, data: any) => req<any>("PUT", `/hr/custodies/asset/${id}`, data),
+  returnAssetCustody: (id: number, data: { actualReturnDate?: string; notes?: string }) =>
+    req<any>("POST", `/hr/custodies/asset/${id}/return`, data),
+  deleteAssetCustody: (id: number) => req<any>("DELETE", `/hr/custodies/asset/${id}`),
+
+  // Violations (المخالفات المسجلة)
+  violations: (params: { employeeId?: number; status?: string; from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.employeeId) qs.set("employeeId", String(params.employeeId));
+    if (params.status) qs.set("status", params.status);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    const q = qs.toString(); return req<any[]>("GET", `/employees/violations/list${q ? `?${q}` : ""}`);
+  },
+  addViolation:    (data: any) => req<any>("POST", "/employees/violations", data),
+  updateViolation: (id: number, data: any) => req<any>("PUT", `/employees/violations/${id}`, data),
+  deleteViolation: (id: number) => req<any>("DELETE", `/employees/violations/${id}`),
+
+  // Travel exit/return (الخروج والعودة)
+  travels: (params: { employeeId?: number; status?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.employeeId) qs.set("employeeId", String(params.employeeId));
+    if (params.status) qs.set("status", params.status);
+    const q = qs.toString(); return req<any[]>("GET", `/employees/travels/list${q ? `?${q}` : ""}`);
+  },
+  addTravel:    (data: any) => req<any>("POST", "/employees/travels", data),
+  updateTravel: (id: number, data: any) => req<any>("PUT", `/employees/travels/${id}`, data),
+  deleteTravel: (id: number) => req<any>("DELETE", `/employees/travels/${id}`),
+
   // EOS payment (creates JE)
   payEos: (empId: number, data: { amount: number; payDate: string; cashBoxId?: number | null; bankAccountId?: number | null; useProvision?: boolean; description?: string; endEmployment?: boolean }) =>
     req<any>("POST", `/employees/${empId}/eos-pay`, data),

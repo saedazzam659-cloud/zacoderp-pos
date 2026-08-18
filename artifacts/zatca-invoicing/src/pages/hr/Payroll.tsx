@@ -187,10 +187,10 @@ export default function Payroll() {
   function downloadCSV() {
     const r = viewRun;
     if (!r) return;
-    const head = [tr("csvCode"), tr("csvName"), tr("csvBasic"), tr("csvHousing"), tr("csvTransport"), tr("csvOther"), tr("csvOvertime"), tr("csvGross"), tr("csvGosi"), tr("csvLoans"), tr("csvAbsence"), tr("csvDeductions"), tr("csvNet"), tr("csvIban")];
+    const head = [tr("csvCode"), tr("csvName"), tr("csvBasic"), tr("csvHousing"), tr("csvTransport"), tr("csvOther"), tr("csvOvertime"), tr("csvGross"), tr("csvGosi"), tr("csvLoans"), "خصم مخالفات", tr("csvAbsence"), tr("csvDeductions"), tr("csvNet"), tr("csvIban")];
     const rows = r.lines.map((l: any) => [
       l.empCode, pickName(l.empNameAr, l.empNameEn), l.basicSalary, l.housingAllow, l.transportAllow, l.otherAllow,
-      l.overtimeAmount, l.grossSalary, l.gosiEmployee, l.loanDeduction, l.absenceDeduction, l.totalDeductions, l.netSalary, l.iban || "",
+      l.overtimeAmount, l.grossSalary, l.gosiEmployee, l.loanDeduction, l.violationDeduction ?? 0, l.absenceDeduction, l.totalDeductions, l.netSalary, l.iban || "",
     ]);
     const csv = "\uFEFF" + [head, ...rows].map(r => r.map((c: any) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -346,6 +346,7 @@ export default function Payroll() {
                       <th className="p-2 bg-amber-50">{tr("prevColTotal")}</th>
                       <th className="p-2">{tr("prevColInsurance")}</th>
                       <th className="p-2">{tr("prevColLoans")}</th>
+                      <th className="p-2">خصم مخالفات</th>
                       <th className="p-2">{tr("prevColAbsence")}</th>
                       <th className="p-2 bg-rose-50">{tr("prevColDeductions")}</th>
                       <th className="p-2 bg-emerald-50">{tr("prevColNet")}</th>
@@ -365,6 +366,7 @@ export default function Payroll() {
                         <td className="p-2 tabular-nums text-center bg-amber-50/30 font-semibold">{fmt2(l.grossSalary)}</td>
                         <td className="p-2 tabular-nums text-center text-rose-600">{l.gosiEmployee > 0 ? fmt2(l.gosiEmployee) : "—"}</td>
                         <td className="p-2 tabular-nums text-center text-rose-600">{l.loanDeduction > 0 ? fmt2(l.loanDeduction) : "—"}</td>
+                        <td className="p-2 tabular-nums text-center text-rose-600">{l.violationDeduction > 0 ? fmt2(l.violationDeduction) : "—"}</td>
                         <td className="p-2 tabular-nums text-center text-rose-600">{l.absenceDeduction > 0 ? `${fmt2(l.absenceDeduction)} (${l.absentDays}${tr("absenceDaysSuffix")})` : "—"}</td>
                         <td className="p-2 tabular-nums text-center bg-rose-50/30 text-rose-700">{fmt2(l.totalDeductions)}</td>
                         <td className="p-2 tabular-nums text-center bg-emerald-50/30 font-semibold text-emerald-700">{fmt2(l.netSalary)}</td>
@@ -498,6 +500,7 @@ export default function Payroll() {
                         <th className="p-2">{tr("detailColAllowances")}</th>
                         <th className="p-2">{tr("detailColOvertime")}</th>
                         <th className="p-2">{tr("detailColTotal")}</th>
+                        <th className="p-2">خصم مخالفات</th>
                         <th className="p-2">{tr("detailColDeductions")}</th>
                         <th className="p-2">{tr("detailColNet")}</th>
                         <th className="p-2 text-start">{tr("detailColIban")}</th>
@@ -514,6 +517,7 @@ export default function Payroll() {
                           <td className="p-2 tabular-nums text-center">{fmt2(Number(l.housingAllow)+Number(l.transportAllow)+Number(l.otherAllow))}</td>
                           <td className="p-2 tabular-nums text-center">{fmt2(l.overtimeAmount)}</td>
                           <td className="p-2 tabular-nums text-center font-medium">{fmt2(l.grossSalary)}</td>
+                          <td className="p-2 tabular-nums text-center text-rose-600">{Number(l.violationDeduction) > 0 ? fmt2(l.violationDeduction) : "—"}</td>
                           <td className="p-2 tabular-nums text-center text-rose-700">{fmt2(l.totalDeductions)}</td>
                           <td className="p-2 tabular-nums text-center font-semibold text-emerald-700">{fmt2(l.netSalary)}</td>
                           <td className="p-2 text-[10px] font-mono">{l.iban || "—"}</td>

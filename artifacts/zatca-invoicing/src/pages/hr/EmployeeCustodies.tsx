@@ -19,6 +19,8 @@ import { fmt2 } from "@/lib/format";
 import { printCustodyVoucher, downloadCustodyVoucherPdf, type CustodyVoucherDoc } from "@/lib/custodyVoucherPrint";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 import { HrFormCheck } from "@/lib/hrFormValidate";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { AssetCustodyTab, CustodyReportTab } from "./AssetCustodyTabs";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY: any = { employeeId: "", custodyDate: today(), amount: 0, custodyAccountId: "", purpose: "", notes: "" };
@@ -51,6 +53,7 @@ export default function EmployeeCustodies() {
   const { user } = useAuth();
   const company = (user as any)?.company ?? null;
 
+  const [tab, setTab] = useState("financial");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<any>(EMPTY);
@@ -338,15 +341,31 @@ export default function EmployeeCustodies() {
           <Briefcase className="size-6 text-primary" />
           <h1 className="text-xl font-semibold">{tr("title")}</h1>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={exportExcel} disabled={custodies.length === 0} data-testid="btn-export-custodies">
-            <FileSpreadsheet className="size-4 me-1" /> {tr("exportExcel")}
-          </Button>
-          <Button onClick={openNew} data-testid="btn-new-custody">
-            <Plus className="size-4 me-1" /> {tr("newCustody")}
-          </Button>
-        </div>
+        {tab === "financial" && (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={exportExcel} disabled={custodies.length === 0} data-testid="btn-export-custodies">
+              <FileSpreadsheet className="size-4 me-1" /> {tr("exportExcel")}
+            </Button>
+            <Button onClick={openNew} data-testid="btn-new-custody">
+              <Plus className="size-4 me-1" /> {tr("newCustody")}
+            </Button>
+          </div>
+        )}
       </div>
+
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="financial" data-testid="tab-financial-custody">العهد المالية</TabsTrigger>
+          <TabsTrigger value="asset" data-testid="tab-asset-custody">العهد العينية</TabsTrigger>
+          <TabsTrigger value="report" data-testid="tab-custody-report">تقرير العهد</TabsTrigger>
+        </TabsList>
+        <TabsContent value="asset" className="pt-3">
+          <AssetCustodyTab employees={employees} pickName={pickName} isRtl={isRtl} />
+        </TabsContent>
+        <TabsContent value="report" className="pt-3">
+          <CustodyReportTab employees={employees} pickName={pickName} isRtl={isRtl} />
+        </TabsContent>
+        <TabsContent value="financial" className="pt-3 space-y-4">
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="rounded-lg border p-3 bg-card">
@@ -513,6 +532,8 @@ export default function EmployeeCustodies() {
           </tbody>
         </table>
       </div>
+        </TabsContent>
+      </Tabs>
 
       {/* Disburse dialog */}
       <Dialog open={!!disburseFor} onOpenChange={(o) => { if (!o) { setDisburseFor(null); setPayAccountId(""); } }}>

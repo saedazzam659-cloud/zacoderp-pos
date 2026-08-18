@@ -290,6 +290,66 @@ export const employeeCustodySettlementsTable = pgTable("employee_custody_settlem
   createdAt:      timestamp("created_at").defaultNow().notNull(),
 });
 
+// ─── العهد العينية (أصول مسلَّمة للموظفين) ───────────────────────────────────
+// Administrative custody of a REGISTERED fixed asset (car/laptop/phone/…).
+// NO journal entry is created — the asset is already on the books; this only
+// tracks employee responsibility. Delivering/returning also syncs
+// fixed_assets.custodian_employee_id. status: delivered | returned.
+export const assetCustodiesTable = pgTable("asset_custodies", {
+  id:                 serial("id").primaryKey(),
+  companyId:          integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:         integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  assetId:            integer("asset_id").notNull(), // fixed_assets.id (validated per-company in routes)
+  deliveryDate:       date("delivery_date").notNull(),
+  expectedReturnDate: date("expected_return_date"),
+  actualReturnDate:   date("actual_return_date"),
+  status:             text("status").notNull().default("delivered"),
+  notes:              text("notes"),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ─── مخالفات الموظفين ────────────────────────────────────────────────────────
+// Registered disciplinary violations (distinct from the DERIVED attendance
+// violations grid). deduct_from_salary=true + status='pending' rows are
+// consumed by payroll preview/run as violationDeduction; when a run is
+// created they flip to status='deducted' with payroll_run_id (reverted if the
+// run is deleted). status: pending | deducted | waived.
+export const employeeViolationsTable = pgTable("employee_violations", {
+  id:              serial("id").primaryKey(),
+  companyId:       integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:      integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  violationType:   text("violation_type").notNull(),
+  violationDate:   date("violation_date").notNull(),
+  reason:          text("reason"),
+  amount:          decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  deductFromSalary: boolean("deduct_from_salary").notNull().default(false),
+  payrollRunId:    integer("payroll_run_id"),
+  status:          text("status").notNull().default("pending"),
+  notes:           text("notes"),
+  createdAt:       timestamp("created_at").defaultNow().notNull(),
+  updatedAt:       timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ─── الخروج والعودة (سفر الموظف) ─────────────────────────────────────────────
+// Travel exit/return tracking. Alerts fire one week before expected return
+// (in /employees/alerts). status: out | returned.
+export const employeeTravelsTable = pgTable("employee_travels", {
+  id:                 serial("id").primaryKey(),
+  companyId:          integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:         integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  exitDate:           date("exit_date").notNull(),
+  exitTime:           text("exit_time"),
+  expectedReturnDate: date("expected_return_date"),
+  expectedReturnTime: text("expected_return_time"),
+  actualReturnDate:   date("actual_return_date"),
+  actualReturnTime:   text("actual_return_time"),
+  status:             text("status").notNull().default("out"),
+  notes:              text("notes"),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const payrollRunsTable = pgTable("payroll_runs", {
   id:             serial("id").primaryKey(),
   companyId:      integer("company_id").references(() => companiesTable.id).notNull(),
@@ -330,6 +390,7 @@ export const payrollLinesTable = pgTable("payroll_lines", {
   grossSalary:    decimal("gross_salary", { precision: 12, scale: 2 }).notNull().default("0"),
   gosiEmployee:   decimal("gosi_employee", { precision: 12, scale: 2 }).notNull().default("0"),
   loanDeduction:  decimal("loan_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
+  violationDeduction: decimal("violation_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   absenceDeduction:decimal("absence_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   otherDeduction: decimal("other_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   totalDeductions:decimal("total_deductions", { precision: 12, scale: 2 }).notNull().default("0"),

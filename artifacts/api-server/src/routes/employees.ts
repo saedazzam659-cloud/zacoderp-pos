@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
-import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable, accountsTable, companiesTable } from "@workspace/db";
-import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
+import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable, accountsTable, companiesTable, employeeViolationsTable, employeeTravelsTable } from "@workspace/db";
+import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { requireAdminRole } from "../middleware/permissions.js";
@@ -159,7 +159,27 @@ router.get("/alerts", async (req, res) => {
     const tag = (rows: any[], field: string) =>
       rows.map(r => ({ ...r, daysLeft: daysLeft(r[field]) }));
 
+    // الخروج والعودة — travellers still out whose expected return is within
+    // one week (or already overdue).
+    const in7Str = new Date(today.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+    const upcomingReturns = await db.select({
+      id: employeeTravelsTable.id,
+      employeeId: employeeTravelsTable.employeeId,
+      exitDate: employeeTravelsTable.exitDate,
+      expectedReturnDate: employeeTravelsTable.expectedReturnDate,
+      employeeName: employeesTable.nameAr,
+      code: employeesTable.code,
+    }).from(employeeTravelsTable)
+      .leftJoin(employeesTable, eq(employeesTable.id, employeeTravelsTable.employeeId))
+      .where(and(
+        eq(employeeTravelsTable.companyId, cid),
+        eq(employeeTravelsTable.status, "out"),
+        isNotNull(employeeTravelsTable.expectedReturnDate),
+        lte(employeeTravelsTable.expectedReturnDate, in7Str),
+      )).orderBy(asc(employeeTravelsTable.expectedReturnDate));
+
     res.json({
+      upcomingReturns:     tag(upcomingReturns, "expectedReturnDate"),
       expiringIqamas:      tag(expIqamas, "iqamaExpiry"),
       expiringContracts:   tag(expContracts, "endDate"),
       expiringPassports:   tag(expPassports, "passportExpiry"),
@@ -168,6 +188,209 @@ router.get("/alerts", async (req, res) => {
       todayStr, in90Str,
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══ المخالفات (registered disciplinary violations) ══════════════════════════
+// Defined BEFORE /:id so the "violations" segment never hits it.
+router.get("/violations/list", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { employeeId, status, from, to } = req.query as any;
+    const conds: any[] = [eq(employeeViolationsTable.companyId, cid)];
+    if (employeeId) conds.push(eq(employeeViolationsTable.employeeId, Number(employeeId)));
+    if (status) conds.push(eq(employeeViolationsTable.status, String(status)));
+    if (from) conds.push(gte(employeeViolationsTable.violationDate, String(from)));
+    if (to) conds.push(lte(employeeViolationsTable.violationDate, String(to)));
+    const rows = await db.select({
+      id: employeeViolationsTable.id,
+      employeeId: employeeViolationsTable.employeeId,
+      violationType: employeeViolationsTable.violationType,
+      violationDate: employeeViolationsTable.violationDate,
+      reason: employeeViolationsTable.reason,
+      amount: employeeViolationsTable.amount,
+      deductFromSalary: employeeViolationsTable.deductFromSalary,
+      payrollRunId: employeeViolationsTable.payrollRunId,
+      status: employeeViolationsTable.status,
+      notes: employeeViolationsTable.notes,
+      empCode: employeesTable.code,
+      empNameAr: employeesTable.nameAr,
+      empNameEn: employeesTable.nameEn,
+    }).from(employeeViolationsTable)
+      .leftJoin(employeesTable, eq(employeesTable.id, employeeViolationsTable.employeeId))
+      .where(and(...conds))
+      .orderBy(desc(employeeViolationsTable.id));
+    res.json(rows);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+async function assertEmpInCompany(cid: number, employeeId: number) {
+  const [e] = await db.select({ id: employeesTable.id }).from(employeesTable)
+    .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid)));
+  if (!e) throw Object.assign(new Error("الموظف غير موجود"), { status: 400 });
+}
+
+router.post("/violations", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const b = req.body || {};
+    const employeeId = Number(b.employeeId);
+    if (!employeeId) { res.status(400).json({ error: "الموظف مطلوب" }); return; }
+    await assertEmpInCompany(cid, employeeId);
+    if (!String(b.violationType || "").trim()) { res.status(400).json({ error: "نوع المخالفة مطلوب" }); return; }
+    const [row] = await db.insert(employeeViolationsTable).values({
+      companyId: cid,
+      employeeId,
+      violationType: String(b.violationType).trim(),
+      violationDate: requireDate(b.violationDate, "تاريخ المخالفة"),
+      reason: N(b.reason),
+      amount: String(moneyOrZero(b.amount, "قيمة المخالفة")),
+      deductFromSalary: !!b.deductFromSalary,
+      status: b.status === "waived" ? "waived" : "pending",
+      notes: N(b.notes),
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+router.put("/violations/:vid", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.vid);
+    const b = req.body || {};
+    const [v] = await db.select().from(employeeViolationsTable)
+      .where(and(eq(employeeViolationsTable.id, id), eq(employeeViolationsTable.companyId, cid)));
+    if (!v) { res.status(404).json({ error: "غير موجود" }); return; }
+    if (v.status === "deducted") { res.status(400).json({ error: "المخالفة مخصومة في مسير رواتب — لا يمكن تعديلها" }); return; }
+    const patch: any = { updatedAt: new Date() };
+    if (b.employeeId !== undefined && Number(b.employeeId) !== v.employeeId) {
+      await assertEmpInCompany(cid, Number(b.employeeId));
+      patch.employeeId = Number(b.employeeId);
+    }
+    if (b.violationType !== undefined) patch.violationType = String(b.violationType).trim();
+    if (b.violationDate !== undefined) patch.violationDate = requireDate(b.violationDate, "تاريخ المخالفة");
+    if (b.reason !== undefined) patch.reason = N(b.reason);
+    if (b.amount !== undefined) patch.amount = String(moneyOrZero(b.amount, "قيمة المخالفة"));
+    if (b.deductFromSalary !== undefined) patch.deductFromSalary = !!b.deductFromSalary;
+    if (b.status !== undefined && ["pending", "waived"].includes(String(b.status))) patch.status = String(b.status);
+    if (b.notes !== undefined) patch.notes = N(b.notes);
+    // Conditional update: a concurrent payroll run may have consumed this
+    // violation after the read above — the WHERE re-asserts it's not deducted.
+    const [row] = await db.update(employeeViolationsTable).set(patch)
+      .where(and(
+        eq(employeeViolationsTable.id, id),
+        eq(employeeViolationsTable.companyId, cid),
+        sql`${employeeViolationsTable.status} <> 'deducted'`,
+      ))
+      .returning();
+    if (!row) { res.status(409).json({ error: "المخالفة خُصمت في مسير رواتب أثناء التعديل — لا يمكن تعديلها" }); return; }
+    res.json(row);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+router.delete("/violations/:vid", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.vid);
+    const [v] = await db.select().from(employeeViolationsTable)
+      .where(and(eq(employeeViolationsTable.id, id), eq(employeeViolationsTable.companyId, cid)));
+    if (!v) { res.status(404).json({ error: "غير موجود" }); return; }
+    if (v.status === "deducted") { res.status(400).json({ error: "المخالفة مخصومة في مسير رواتب — لا يمكن حذفها" }); return; }
+    const deleted = await db.delete(employeeViolationsTable)
+      .where(and(
+        eq(employeeViolationsTable.id, id),
+        eq(employeeViolationsTable.companyId, cid),
+        sql`${employeeViolationsTable.status} <> 'deducted'`,
+      )).returning({ id: employeeViolationsTable.id });
+    if (!deleted.length) { res.status(409).json({ error: "المخالفة خُصمت في مسير رواتب — لا يمكن حذفها" }); return; }
+    res.json({ ok: true });
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+// ═══ الخروج والعودة (travel exit/return) ══════════════════════════════════════
+router.get("/travels/list", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { employeeId, status } = req.query as any;
+    const conds: any[] = [eq(employeeTravelsTable.companyId, cid)];
+    if (employeeId) conds.push(eq(employeeTravelsTable.employeeId, Number(employeeId)));
+    if (status) conds.push(eq(employeeTravelsTable.status, String(status)));
+    const rows = await db.select({
+      id: employeeTravelsTable.id,
+      employeeId: employeeTravelsTable.employeeId,
+      exitDate: employeeTravelsTable.exitDate,
+      exitTime: employeeTravelsTable.exitTime,
+      expectedReturnDate: employeeTravelsTable.expectedReturnDate,
+      expectedReturnTime: employeeTravelsTable.expectedReturnTime,
+      actualReturnDate: employeeTravelsTable.actualReturnDate,
+      actualReturnTime: employeeTravelsTable.actualReturnTime,
+      status: employeeTravelsTable.status,
+      notes: employeeTravelsTable.notes,
+      empCode: employeesTable.code,
+      empNameAr: employeesTable.nameAr,
+      empNameEn: employeesTable.nameEn,
+    }).from(employeeTravelsTable)
+      .leftJoin(employeesTable, eq(employeesTable.id, employeeTravelsTable.employeeId))
+      .where(and(...conds))
+      .orderBy(desc(employeeTravelsTable.id));
+    res.json(rows);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+router.post("/travels", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const b = req.body || {};
+    const employeeId = Number(b.employeeId);
+    if (!employeeId) { res.status(400).json({ error: "الموظف مطلوب" }); return; }
+    await assertEmpInCompany(cid, employeeId);
+    const [row] = await db.insert(employeeTravelsTable).values({
+      companyId: cid,
+      employeeId,
+      exitDate: requireDate(b.exitDate, "تاريخ الخروج"),
+      exitTime: timeOrNull(b.exitTime, "وقت الخروج"),
+      expectedReturnDate: dateOrNull(b.expectedReturnDate, "تاريخ العودة المتوقع"),
+      expectedReturnTime: timeOrNull(b.expectedReturnTime, "وقت العودة المتوقع"),
+      status: "out",
+      notes: N(b.notes),
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+router.put("/travels/:tid", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.tid);
+    const b = req.body || {};
+    const [tRow] = await db.select().from(employeeTravelsTable)
+      .where(and(eq(employeeTravelsTable.id, id), eq(employeeTravelsTable.companyId, cid)));
+    if (!tRow) { res.status(404).json({ error: "غير موجود" }); return; }
+    const patch: any = { updatedAt: new Date() };
+    if (b.exitDate !== undefined) patch.exitDate = requireDate(b.exitDate, "تاريخ الخروج");
+    if (b.exitTime !== undefined) patch.exitTime = timeOrNull(b.exitTime, "وقت الخروج");
+    if (b.expectedReturnDate !== undefined) patch.expectedReturnDate = dateOrNull(b.expectedReturnDate, "تاريخ العودة المتوقع");
+    if (b.expectedReturnTime !== undefined) patch.expectedReturnTime = timeOrNull(b.expectedReturnTime, "وقت العودة المتوقع");
+    if (b.actualReturnDate !== undefined) {
+      patch.actualReturnDate = dateOrNull(b.actualReturnDate, "تاريخ العودة الفعلي");
+      patch.status = patch.actualReturnDate ? "returned" : "out";
+    }
+    if (b.actualReturnTime !== undefined) patch.actualReturnTime = timeOrNull(b.actualReturnTime, "وقت العودة الفعلي");
+    if (b.notes !== undefined) patch.notes = N(b.notes);
+    const [row] = await db.update(employeeTravelsTable).set(patch)
+      .where(and(eq(employeeTravelsTable.id, id), eq(employeeTravelsTable.companyId, cid)))
+      .returning();
+    res.json(row);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+router.delete("/travels/:tid", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.tid);
+    await db.delete(employeeTravelsTable)
+      .where(and(eq(employeeTravelsTable.id, Number(req.params.tid)), eq(employeeTravelsTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { respondHrError(req, res, e); }
 });
 
 router.get("/:id", async (req, res) => {
@@ -1058,6 +1281,7 @@ router.get("/payroll/runs/:id", async (req, res) => {
       grossSalary: payrollLinesTable.grossSalary,
       gosiEmployee: payrollLinesTable.gosiEmployee,
       loanDeduction: payrollLinesTable.loanDeduction,
+      violationDeduction: payrollLinesTable.violationDeduction,
       absenceDeduction: payrollLinesTable.absenceDeduction,
       otherDeduction: payrollLinesTable.otherDeduction,
       totalDeductions: payrollLinesTable.totalDeductions,
@@ -1140,6 +1364,17 @@ router.post("/payroll/preview", async (req, res) => {
       }
       loanDeduction = +loanDeduction.toFixed(2);
 
+      // Registered violations flagged "خصم من الراتب" and not yet deducted.
+      const pendingViolations = await db.select({ amount: employeeViolationsTable.amount })
+        .from(employeeViolationsTable)
+        .where(and(
+          eq(employeeViolationsTable.companyId, cid),
+          eq(employeeViolationsTable.employeeId, e.id),
+          eq(employeeViolationsTable.status, "pending"),
+          eq(employeeViolationsTable.deductFromSalary, true),
+        ));
+      const violationDeduction = +pendingViolations.reduce((s, v) => s + Number(v.amount || 0), 0).toFixed(2);
+
       // GOSI: Saudis only — 10% employee on (basic + housing), capped at 45,000 base
       const isSaudi = /(سعود|saudi)/i.test(e.nationality || "");
       let gosiEmployee = 0;
@@ -1149,7 +1384,7 @@ router.post("/payroll/preview", async (req, res) => {
       }
 
       const gross = +(basic + housing + transport + other + overtimeAmount).toFixed(2);
-      const totalDeductions = +(gosiEmployee + loanDeduction + absenceDeduction).toFixed(2);
+      const totalDeductions = +(gosiEmployee + loanDeduction + violationDeduction + absenceDeduction).toFixed(2);
       const net = +(gross - totalDeductions).toFixed(2);
 
       lines.push({
@@ -1158,7 +1393,7 @@ router.post("/payroll/preview", async (req, res) => {
         basicSalary: basic, housingAllow: housing, transportAllow: transport, otherAllow: other,
         overtimeAmount, bonusAmount: 0,
         grossSalary: gross,
-        gosiEmployee, loanDeduction, absenceDeduction, otherDeduction: 0,
+        gosiEmployee, loanDeduction, violationDeduction, absenceDeduction, otherDeduction: 0,
         totalDeductions, netSalary: net,
         workedDays, absentDays,
         overtimeHours: +overtimeHours.toFixed(2),
@@ -1211,15 +1446,46 @@ router.post("/payroll/runs", async (req, res) => {
       if (!br) { res.status(400).json({ error: "الفرع غير موجود في هذه الشركة" }); return; }
     }
 
-    let totalGross = 0, totalDed = 0, totalNet = 0;
-    for (const l of lines) {
-      totalGross += Number(l.grossSalary || 0);
-      totalDed += Number(l.totalDeductions || 0);
-      totalNet += Number(l.netSalary || 0);
-    }
-
     try {
-      const [run] = await db.insert(payrollRunsTable).values({
+      const run = await db.transaction(async (tx) => {
+      // Server-authoritative violation consumption: lock the pending
+      // salary-deduction violations of the run's employees (FOR UPDATE) and
+      // derive each line's violationDeduction from the LOCKED rows — never
+      // trust the client's previewed figure (a violation may have been
+      // edited/waived between preview and save). Line totals/net are adjusted
+      // by the delta so the run always reconciles with what gets consumed.
+      const empIds = lines.map((l: any) => Number(l.employeeId)).filter(Boolean);
+      const lockedViolations = empIds.length
+        ? await tx.select({ id: employeeViolationsTable.id, employeeId: employeeViolationsTable.employeeId, amount: employeeViolationsTable.amount })
+            .from(employeeViolationsTable)
+            .where(and(
+              eq(employeeViolationsTable.companyId, cid),
+              eq(employeeViolationsTable.status, "pending"),
+              eq(employeeViolationsTable.deductFromSalary, true),
+              inArray(employeeViolationsTable.employeeId, empIds),
+            )).for("update")
+        : [];
+      const violByEmp = new Map<number, number>();
+      for (const v of lockedViolations) {
+        violByEmp.set(v.employeeId, +( (violByEmp.get(v.employeeId) || 0) + Number(v.amount || 0) ).toFixed(2));
+      }
+      for (const l of lines) {
+        const server = violByEmp.get(Number(l.employeeId)) || 0;
+        const client = Number(l.violationDeduction || 0);
+        const delta = +(server - client).toFixed(2);
+        l.violationDeduction = server;
+        l.totalDeductions = +(Number(l.totalDeductions || 0) + delta).toFixed(2);
+        l.netSalary = +(Number(l.netSalary || 0) - delta).toFixed(2);
+      }
+
+      let totalGross = 0, totalDed = 0, totalNet = 0;
+      for (const l of lines) {
+        totalGross += Number(l.grossSalary || 0);
+        totalDed += Number(l.totalDeductions || 0);
+        totalNet += Number(l.netSalary || 0);
+      }
+
+      const [run] = await tx.insert(payrollRunsTable).values({
         companyId: cid,
         branchId: resolvedBranchId,
         code,
@@ -1235,7 +1501,7 @@ router.post("/payroll/runs", async (req, res) => {
       }).returning();
 
       for (const l of lines) {
-        await db.insert(payrollLinesTable).values({
+        await tx.insert(payrollLinesTable).values({
           payrollRunId: run.id,
           employeeId: Number(l.employeeId),
           basicSalary: String(l.basicSalary || 0),
@@ -1247,6 +1513,7 @@ router.post("/payroll/runs", async (req, res) => {
           grossSalary: String(l.grossSalary || 0),
           gosiEmployee: String(l.gosiEmployee || 0),
           loanDeduction: String(l.loanDeduction || 0),
+          violationDeduction: String(l.violationDeduction || 0),
           absenceDeduction: String(l.absenceDeduction || 0),
           otherDeduction: String(l.otherDeduction || 0),
           totalDeductions: String(l.totalDeductions || 0),
@@ -1256,6 +1523,16 @@ router.post("/payroll/runs", async (req, res) => {
           notes: N(l.notes),
         });
       }
+      // Consume EXACTLY the locked violations (reverted if the draft run is
+      // deleted). Marking by id keeps the run-line ↔ violation reconciliation
+      // exact even under concurrent violation creation.
+      if (lockedViolations.length) {
+        await tx.update(employeeViolationsTable)
+          .set({ status: "deducted", payrollRunId: run.id, updatedAt: new Date() })
+          .where(inArray(employeeViolationsTable.id, lockedViolations.map((v) => v.id)));
+      }
+      return run;
+      });
       res.status(201).json(run);
     } catch (e: any) {
       if (String(e.message).includes("uq_payroll_company_period")) {
@@ -1462,7 +1739,16 @@ router.delete("/payroll/runs/:id", async (req, res) => {
       .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)));
     if (!run) { res.status(404).json({ error: "غير موجود" }); return; }
     if (run.status !== "draft") { res.status(400).json({ error: "لا يمكن حذف مسير معتمد" }); return; }
-    await db.delete(payrollRunsTable).where(eq(payrollRunsTable.id, id));
+    // Release the violations this draft run had consumed + delete atomically.
+    await db.transaction(async (tx) => {
+      await tx.update(employeeViolationsTable)
+        .set({ status: "pending", payrollRunId: null, updatedAt: new Date() })
+        .where(and(
+          eq(employeeViolationsTable.companyId, cid),
+          eq(employeeViolationsTable.payrollRunId, id),
+        ));
+      await tx.delete(payrollRunsTable).where(eq(payrollRunsTable.id, id));
+    });
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

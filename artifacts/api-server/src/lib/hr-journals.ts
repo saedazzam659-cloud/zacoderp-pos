@@ -163,7 +163,8 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
     netPayable     += num(l.netSalary);
     gosiEmployee   += num(l.gosiEmployee);
     loanDeduction  += num(l.loanDeduction);
-    otherDeduction += num(l.otherDeduction);
+    // Violation deductions ride the "استقطاعات أخرى" account (21053).
+    otherDeduction += num(l.otherDeduction) + num((l as any).violationDeduction);
   }
 
   const accounts = await resolveHrAccounts(cid, true, dx);

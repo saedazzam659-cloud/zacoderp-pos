@@ -44,13 +44,21 @@ function daysUntil(date?: string): number | null {
   return Math.ceil((new Date(date).getTime() - Date.now()) / 86400000);
 }
 
+// المدة المتبقية: أشهر + أيام. أحمر عند 5 أشهر (~152 يوم) أو أقل.
+function remainingLabel(d: number): string {
+  if (d < 60) return `باقي ${d} يوم`;
+  const months = Math.floor(d / 30.44);
+  const days = Math.round(d - months * 30.44);
+  return days > 0 ? `باقي ${months} شهر و ${days} يوم` : `باقي ${months} شهر`;
+}
 function ExpiryBadge({ date, tr }: { date?: string; tr: (k: string, opts?: any) => string }) {
   const d = daysUntil(date);
   if (d == null) return <span className="text-muted-foreground text-xs">—</span>;
   if (d < 0)   return <Badge className="bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-100">{tr("expiredAgo", { n: Math.abs(d) })}</Badge>;
-  if (d <= 30) return <Badge className="bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-100">{tr("remainingDays", { n: d })}</Badge>;
-  if (d <= 90) return <Badge className="bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-100">{tr("remainingDays", { n: d })}</Badge>;
-  return <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-50">{tr("remainingDays", { n: d })}</Badge>;
+  // ≤ 5 أشهر → أحمر (متطلب الإقامة/رخصة العمل)
+  if (d <= 152) return <Badge className="bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-100">{remainingLabel(d)}</Badge>;
+  if (d <= 240) return <Badge className="bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-100">{remainingLabel(d)}</Badge>;
+  return <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-50">{remainingLabel(d)}</Badge>;
 }
 
 export default function Employees() {

@@ -15,6 +15,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/ui/date-field";
 import { DailyBoard, MovementsTab, PermissionsTab, ViolationsTab, ApprovalTab } from "./attendance/AttendancePlusTabs";
+import { RegisteredViolationsSection, TravelsTab } from "./attendance/HrExtrasTabs";
+import { faceApi } from "@/lib/faceAttendanceApi";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -39,6 +41,11 @@ export default function Attendance() {
   const [tab, setTab] = useState("daily");
 
   const { data: employees = [] } = useQuery<any[]>({ queryKey: ["employees"], queryFn: () => employeesApi.list() });
+  // بداية/نهاية الدوام من «إعدادات الحضور بالذكاء الاصطناعي» — مصدر واحد للدوام
+  // بدل القيم الثابتة 08:00/17:00 (تبقى احتياطًا إذا لم تُضبط الإعدادات).
+  const { data: faceSettings } = useQuery<any>({ queryKey: ["face-settings"], queryFn: () => faceApi.getSettings() });
+  const workStart = (faceSettings?.workdayStart || "08:00").slice(0, 5);
+  const workEnd = (faceSettings?.workdayEnd || "17:00").slice(0, 5);
   const { data: attendance = [], isLoading } = useQuery<any[]>({
     queryKey: ["attendance", date],
     queryFn: () => employeesApi.attendance({ date }),
@@ -55,7 +62,7 @@ export default function Attendance() {
   const aiParse = useMutation({
     mutationFn: () => employeesApi.aiParseAttendance({
       text: aiText, employees: activeEmps, date,
-      defaultCheckIn: "08:00", defaultCheckOut: "17:00",
+      defaultCheckIn: workStart, defaultCheckOut: workEnd,
     }),
     onSuccess: (r: any) => {
       setAiPreview(r.records || []);
@@ -132,7 +139,7 @@ export default function Attendance() {
     onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
-  function markAll(status: string, ci: string = "08:00", co: string = "17:00") {
+  function markAll(status: string, ci: string = workStart, co: string = workEnd) {
     const next: any = {};
     for (const e of activeEmps) {
       next[e.id] = {
@@ -188,6 +195,7 @@ export default function Attendance() {
           <TabsTrigger value="movements" data-testid="tab-movements">{trp("tabMovements")}</TabsTrigger>
           <TabsTrigger value="permissions" data-testid="tab-permissions">{trp("tabPermissions")}</TabsTrigger>
           <TabsTrigger value="violations" data-testid="tab-violations">{trp("tabViolations")}</TabsTrigger>
+          <TabsTrigger value="travels" data-testid="tab-travels">الخروج والعودة</TabsTrigger>
           <TabsTrigger value="monthly" data-testid="tab-monthly">{tr("tabMonthly")}</TabsTrigger>
           <TabsTrigger value="approval" data-testid="tab-approval">{trp("tabApproval")}</TabsTrigger>
         </TabsList>
@@ -195,7 +203,11 @@ export default function Attendance() {
         <TabsContent value="board"><DailyBoard date={date} /></TabsContent>
         <TabsContent value="movements"><MovementsTab date={date} /></TabsContent>
         <TabsContent value="permissions"><PermissionsTab date={date} /></TabsContent>
-        <TabsContent value="violations"><ViolationsTab date={date} /></TabsContent>
+        <TabsContent value="violations" className="space-y-4">
+          <RegisteredViolationsSection employees={activeEmps} pickName={pickName} isRtl={isRtl} />
+          <ViolationsTab date={date} />
+        </TabsContent>
+        <TabsContent value="travels"><TravelsTab employees={activeEmps} pickName={pickName} isRtl={isRtl} /></TabsContent>
         <TabsContent value="approval"><ApprovalTab date={date} /></TabsContent>
 
         <TabsContent value="daily" className="space-y-3">

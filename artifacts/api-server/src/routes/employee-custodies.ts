@@ -13,8 +13,10 @@ import {
   branchesTable,
   journalEntriesTable,
   journalEntryLinesTable,
+  assetCustodiesTable,
+  fixedAssetsTable,
 } from "@workspace/db";
-import { and, eq, desc, inArray } from "drizzle-orm";
+import { and, eq, desc, inArray, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import {
   buildCustodyDisbursementJournal,
@@ -53,6 +55,188 @@ async function assertBranchInCompany(dx: any, cid: number, branchId: number) {
     .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
   if (!br) throw Object.assign(new Error("الفرع غير موجود"), { status: 400 });
 }
+
+// ═══ ASSET CUSTODY (عهدة عينية) — administrative only, NO journal entry ═════
+// Tracks delivery of a REGISTERED fixed asset to an employee. Delivering /
+// returning syncs fixed_assets.custodian_employee_id. Routes are defined
+// BEFORE the imprest /:id routes so the "asset" segment never hits them.
+async function assertAssetInCompany(dx: any, cid: number, assetId: number) {
+  const [a] = await dx.select({
+    id: fixedAssetsTable.id,
+    custodianEmployeeId: fixedAssetsTable.custodianEmployeeId,
+  }).from(fixedAssetsTable)
+    .where(and(eq(fixedAssetsTable.id, assetId), eq(fixedAssetsTable.companyId, cid)));
+  if (!a) throw Object.assign(new Error("الأصل غير موجود"), { status: 400 });
+  return a;
+}
+
+// LIST asset custodies (with employee + asset info) — also the report source.
+router.get("/asset", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { employeeId, assetId, status, from, to } = req.query as any;
+    const conds: any[] = [eq(assetCustodiesTable.companyId, cid)];
+    if (employeeId) conds.push(eq(assetCustodiesTable.employeeId, Number(employeeId)));
+    if (assetId) conds.push(eq(assetCustodiesTable.assetId, Number(assetId)));
+    if (status) conds.push(eq(assetCustodiesTable.status, String(status)));
+    if (from) conds.push(gte(assetCustodiesTable.deliveryDate, String(from)));
+    if (to) conds.push(lte(assetCustodiesTable.deliveryDate, String(to)));
+    const rows = await db.select({
+      id: assetCustodiesTable.id,
+      employeeId: assetCustodiesTable.employeeId,
+      assetId: assetCustodiesTable.assetId,
+      deliveryDate: assetCustodiesTable.deliveryDate,
+      expectedReturnDate: assetCustodiesTable.expectedReturnDate,
+      actualReturnDate: assetCustodiesTable.actualReturnDate,
+      status: assetCustodiesTable.status,
+      notes: assetCustodiesTable.notes,
+      empCode: employeesTable.code,
+      empNameAr: employeesTable.nameAr,
+      empNameEn: employeesTable.nameEn,
+      assetCode: fixedAssetsTable.code,
+      assetNameAr: fixedAssetsTable.nameAr,
+      assetNameEn: fixedAssetsTable.nameEn,
+      assetValue: fixedAssetsTable.purchaseValue,
+      assetBookValue: fixedAssetsTable.bookValue,
+      assetLocation: fixedAssetsTable.location,
+    }).from(assetCustodiesTable)
+      .leftJoin(employeesTable, eq(employeesTable.id, assetCustodiesTable.employeeId))
+      .leftJoin(fixedAssetsTable, eq(fixedAssetsTable.id, assetCustodiesTable.assetId))
+      .where(and(...conds))
+      .orderBy(desc(assetCustodiesTable.id));
+    res.json(rows);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+// CREATE — deliver an asset to an employee.
+router.post("/asset", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const b = req.body || {};
+    const assetId = Number(b.assetId);
+    if (!assetId) { res.status(400).json({ error: "الأصل مطلوب" }); return; }
+    const deliveryDate = requireDate(b.deliveryDate, "تاريخ التسليم");
+    const row = await db.transaction(async (tx) => {
+      const asset = await assertAssetInCompany(tx, cid, assetId);
+      // Employee: explicit pick wins; otherwise fall back to the asset's
+      // currently-linked responsible employee.
+      const employeeId = Number(b.employeeId) || Number(asset.custodianEmployeeId) || 0;
+      if (!employeeId) { throw Object.assign(new Error("الموظف مطلوب"), { status: 400 }); }
+      await assertEmployeeInCompany(tx, cid, employeeId);
+      const [live] = await tx.select({ id: assetCustodiesTable.id }).from(assetCustodiesTable)
+        .where(and(eq(assetCustodiesTable.assetId, assetId), eq(assetCustodiesTable.status, "delivered")));
+      if (live) throw Object.assign(new Error("الأصل مسلَّم بالفعل في عهدة قائمة — أرجِعه أولًا"), { status: 409 });
+      const [created] = await tx.insert(assetCustodiesTable).values({
+        companyId: cid,
+        employeeId,
+        assetId,
+        deliveryDate,
+        expectedReturnDate: dateOrNull(b.expectedReturnDate, "تاريخ الإرجاع المتوقع"),
+        notes: N(b.notes),
+        status: "delivered",
+      }).returning();
+      // Sync the asset card's responsible employee.
+      await tx.update(fixedAssetsTable)
+        .set({ custodianEmployeeId: employeeId })
+        .where(and(eq(fixedAssetsTable.id, assetId), eq(fixedAssetsTable.companyId, cid)));
+      return created;
+    });
+    res.status(201).json(row);
+  } catch (e: any) {
+    if (e?.code === "23505") { res.status(409).json({ error: "الأصل مسلَّم بالفعل في عهدة قائمة" }); return; }
+    respondHrError(req, res, e);
+  }
+});
+
+// UPDATE — edit dates/notes (and employee while still delivered).
+router.put("/asset/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body || {};
+    const row = await db.transaction(async (tx) => {
+      const [c] = await tx.select().from(assetCustodiesTable)
+        .where(and(eq(assetCustodiesTable.id, id), eq(assetCustodiesTable.companyId, cid)));
+      if (!c) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      const patch: any = { updatedAt: new Date() };
+      if (b.deliveryDate !== undefined) patch.deliveryDate = requireDate(b.deliveryDate, "تاريخ التسليم");
+      if (b.expectedReturnDate !== undefined) patch.expectedReturnDate = dateOrNull(b.expectedReturnDate, "تاريخ الإرجاع المتوقع");
+      if (b.notes !== undefined) patch.notes = N(b.notes);
+      if (b.employeeId !== undefined && Number(b.employeeId) !== c.employeeId) {
+        if (c.status !== "delivered") throw Object.assign(new Error("لا يمكن تغيير الموظف بعد الإرجاع"), { status: 400 });
+        const employeeId = Number(b.employeeId);
+        await assertEmployeeInCompany(tx, cid, employeeId);
+        patch.employeeId = employeeId;
+        await tx.update(fixedAssetsTable)
+          .set({ custodianEmployeeId: employeeId })
+          .where(and(eq(fixedAssetsTable.id, c.assetId), eq(fixedAssetsTable.companyId, cid)));
+      }
+      const [updated] = await tx.update(assetCustodiesTable).set(patch)
+        .where(and(eq(assetCustodiesTable.id, id), eq(assetCustodiesTable.companyId, cid)))
+        .returning();
+      return updated;
+    });
+    res.json(row);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+// RETURN — mark returned + clear the asset link (if it still points at this employee).
+router.post("/asset/:id/return", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body || {};
+    const actualReturnDate = requireDate(b.actualReturnDate ?? new Date().toISOString().slice(0, 10), "تاريخ الإرجاع الفعلي");
+    const row = await db.transaction(async (tx) => {
+      const [c] = await tx.select().from(assetCustodiesTable)
+        .where(and(eq(assetCustodiesTable.id, id), eq(assetCustodiesTable.companyId, cid)));
+      if (!c) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      if (c.status !== "delivered") throw Object.assign(new Error("العهدة مُرجَعة بالفعل"), { status: 400 });
+      const [updated] = await tx.update(assetCustodiesTable).set({
+        status: "returned",
+        actualReturnDate,
+        notes: b.notes !== undefined ? N(b.notes) : c.notes,
+        updatedAt: new Date(),
+      }).where(and(eq(assetCustodiesTable.id, id), eq(assetCustodiesTable.companyId, cid)))
+        .returning();
+      // Clear the asset's responsible employee only if it still points here.
+      await tx.update(fixedAssetsTable)
+        .set({ custodianEmployeeId: null })
+        .where(and(
+          eq(fixedAssetsTable.id, c.assetId),
+          eq(fixedAssetsTable.companyId, cid),
+          eq(fixedAssetsTable.custodianEmployeeId, c.employeeId),
+        ));
+      return updated;
+    });
+    res.json(row);
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+// DELETE — remove the record; a live custody also unlinks the asset.
+router.delete("/asset/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    await db.transaction(async (tx) => {
+      const [c] = await tx.select().from(assetCustodiesTable)
+        .where(and(eq(assetCustodiesTable.id, id), eq(assetCustodiesTable.companyId, cid)));
+      if (!c) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      if (c.status === "delivered") {
+        await tx.update(fixedAssetsTable)
+          .set({ custodianEmployeeId: null })
+          .where(and(
+            eq(fixedAssetsTable.id, c.assetId),
+            eq(fixedAssetsTable.companyId, cid),
+            eq(fixedAssetsTable.custodianEmployeeId, c.employeeId),
+          ));
+      }
+      await tx.delete(assetCustodiesTable)
+        .where(and(eq(assetCustodiesTable.id, id), eq(assetCustodiesTable.companyId, cid)));
+    });
+    res.json({ ok: true });
+  } catch (e: any) { respondHrError(req, res, e); }
+});
 
 // ─── LIST ────────────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {

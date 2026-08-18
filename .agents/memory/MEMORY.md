@@ -146,4 +146,5 @@
 - [Agent-server SSH rescue from dev](agent-server-ssh-from-dev.md) — banned prod IP: dev workspace IP differs; decrypt ssh_secret_enc (SESSION_SECRET shared) + sshpass unban; install script whitelists via $SSH_CONNECTION.
 - Mobile companion — [permissions](mobile-app-permissions.md) + [offline mode](mobile-offline-mode.md): NULL=allowed keys, session-bound channel, requireMobilePerm on PUT/DELETE, delete btn renders even when edit denied; offline cache/outbox keyed domain+full path, failed ops kept never dropped, clear on logout.
 - [Company template central reads](company-template-central-reads.md) — template-co reads via centralDb (agent DBs lack co 10), writes stay ALS db; rename = dedicated SA-only /rename route, malformed ?agent must 400.
+- [HR violations/custody/travel](hr-violations-custody-travel.md) — payroll consumes locked violations in-tx (server-authoritative); asset custody = admin-only no-JE; attendance defaults from face settings.
 - [External DB storage routing](external-db-storage-routing.md) — SA-only module routing (archive first); tables self-created via lazy DDL (ensureSchema won't); route EVERY consumer incl. delivery-receipt counts.
