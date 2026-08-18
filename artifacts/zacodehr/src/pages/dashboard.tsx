@@ -92,8 +92,21 @@ export default function Dashboard() {
   const needsCheckOut = !!me.today.checkIn && !me.today.checkOut;
   const punchDone = !!me.today.checkIn && !!me.today.checkOut;
 
+  // Reminder: shift started and no check-in yet.
+  const nowHM = format(new Date(), "HH:mm");
+  const shiftStart = me.shift?.start ?? "08:00";
+  const showReminder = needsCheckIn && nowHM >= shiftStart;
+
   return (
     <div className="space-y-6">
+      {showReminder && (
+        <div className="bg-orange-50 border border-orange-200 text-orange-800 rounded-2xl p-4 flex items-center gap-3" data-testid="banner-checkin-reminder">
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <p className="text-sm font-medium">
+            بدأ الدوام الساعة {shiftStart} ولم تسجّل حضورك بعد — اضغط زر البصمة الآن.
+          </p>
+        </div>
+      )}
       {/* Greeting Card */}
       <div className="bg-gradient-to-r from-primary to-primary/80 rounded-3xl p-6 text-primary-foreground shadow-lg">
         <h2 className="text-sm font-medium opacity-90 mb-1">

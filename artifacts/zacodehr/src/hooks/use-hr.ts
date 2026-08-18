@@ -58,6 +58,13 @@ export function useAttendance(year: number, month: number) {
   });
 }
 
+export function useMovements(year: number, month: number) {
+  return useQuery({
+    queryKey: ["movements", year, month],
+    queryFn: () => api.getMovements(year, month),
+  });
+}
+
 export function usePermissions() {
   return useQuery({
     queryKey: ["permissions"],

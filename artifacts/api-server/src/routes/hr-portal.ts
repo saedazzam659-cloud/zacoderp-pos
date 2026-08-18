@@ -141,8 +141,11 @@ router.get("/me", async (req, res) => {
     const { employee: emp, companyId: cid } = ctx;
     const [company] = await db.select({ nameAr: companiesTable.nameAr, code: companiesTable.code })
       .from(companiesTable).where(eq(companiesTable.id, cid));
+    // Same local-date convention as /punch — toISOString() is UTC and shifts
+    // the calendar date around midnight, desyncing "today" from the punch row.
     const now = new Date();
-    const today = now.toISOString().slice(0, 10);
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    const today = local.toISOString().slice(0, 10);
     const monthStart = today.slice(0, 8) + "01";
     const [todayRow] = await db.select().from(employeeAttendanceTable)
       .where(and(eq(employeeAttendanceTable.companyId, cid), eq(employeeAttendanceTable.employeeId, emp.id), eq(employeeAttendanceTable.date, today)));
@@ -156,9 +159,14 @@ router.get("/me", async (req, res) => {
       .where(and(eq(exitPermissionsTable.companyId, cid), eq(exitPermissionsTable.employeeId, emp.id), eq(exitPermissionsTable.status, "pending")));
     const [pendLeave] = await db.select({ c: sql<number>`count(*)::int` }).from(employeeLeavesTable)
       .where(and(eq(employeeLeavesTable.companyId, cid), eq(employeeLeavesTable.employeeId, emp.id), eq(employeeLeavesTable.status, "pending")));
+    const faceSettings = await getFaceSettings(cid);
     res.json({
       employee: empPublic(emp),
       company: company ?? null,
+      shift: {
+        start: (faceSettings as any).workdayStart ?? "08:00",
+        end: (faceSettings as any).workdayEnd ?? "17:00",
+      },
       today: {
         date: today,
         checkIn: todayRow?.checkIn ?? null,
@@ -369,6 +377,39 @@ router.get("/attendance", async (req, res) => {
         lateMinutes: r.lateMinutes ?? 0, workedHours: r.workedHours ?? "0",
       })),
     });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /movements?year&month — raw punches with selfie + GPS evidence ──────
+router.get("/movements", async (req, res) => {
+  try {
+    const ctx = await portalAuth(req, res); if (!ctx) return;
+    const now = new Date();
+    const year = Number(req.query.year) || now.getFullYear();
+    const month = Number(req.query.month) || now.getMonth() + 1;
+    if (year < 2000 || year > 2100 || month < 1 || month > 12) {
+      res.status(400).json({ error: "شهر أو سنة غير صالحة" }); return;
+    }
+    const from = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    const rows = await db.select({
+      id: attendanceMovementsTable.id,
+      date: attendanceMovementsTable.date,
+      time: attendanceMovementsTable.time,
+      type: attendanceMovementsTable.type,
+      location: attendanceMovementsTable.location,
+      selfieUrl: attendanceMovementsTable.selfieUrl,
+      faceVerified: attendanceMovementsTable.faceVerified,
+    }).from(attendanceMovementsTable)
+      .where(and(
+        eq(attendanceMovementsTable.companyId, ctx.companyId),
+        eq(attendanceMovementsTable.employeeId, ctx.employee.id),
+        gte(attendanceMovementsTable.date, from), lte(attendanceMovementsTable.date, to),
+      ))
+      .orderBy(desc(attendanceMovementsTable.date), attendanceMovementsTable.time)
+      .limit(200);
+    res.json({ rows });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

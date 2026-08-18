@@ -84,6 +84,7 @@ export type LoginResponse = {
 export type MeResponse = {
   employee: Employee;
   company: Company;
+  shift?: { start: string; end: string };
   today: {
     date: string;
     checkIn?: string;
@@ -128,6 +129,16 @@ export type AttendanceRow = {
   workedHours: string;
 };
 
+export type MovementRow = {
+  id: number;
+  date: string;
+  time: string;
+  type: "in" | "out";
+  location: string | null;
+  selfieUrl: string | null;
+  faceVerified: boolean | null;
+};
+
 export type PermissionRow = {
   id: number;
   permissionDate: string;
@@ -170,6 +181,8 @@ export const api = {
   faceEnroll: (body: FacePayload) => req<{ ok: boolean }>("POST", "/api/hr-portal/face/enroll", body),
   getAttendance: (year: number, month: number) => 
     req<{ rows: AttendanceRow[] }>("GET", `/api/hr-portal/attendance?year=${year}&month=${month}`),
+  getMovements: (year: number, month: number) =>
+    req<{ rows: MovementRow[] }>("GET", `/api/hr-portal/movements?year=${year}&month=${month}`),
   getPermissions: () => 
     req<{ rows: PermissionRow[] }>("GET", "/api/hr-portal/permissions"),
   createPermission: (body: any) => 

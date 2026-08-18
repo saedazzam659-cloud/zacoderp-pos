@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useAttendance } from "@/hooks/use-hr";
+import { useAttendance, useMovements } from "@/hooks/use-hr";
 import { Button } from "@/components/ui/button";
-import { ChevronRight, ChevronLeft, Calendar as CalendarIcon, Clock } from "lucide-react";
+import { ChevronRight, ChevronLeft, Calendar as CalendarIcon, Clock, MapPin, ScanFace, ChevronDown } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, subMonths, addMonths } from "date-fns";
 import { ar } from "date-fns/locale";
@@ -13,6 +13,14 @@ export default function Attendance() {
   const month = currentDate.getMonth() + 1; // JS months are 0-indexed
 
   const { data, isLoading } = useAttendance(year, month);
+  const movements = useMovements(year, month);
+  const [openDay, setOpenDay] = useState<string | null>(null);
+
+  // Normalize a row date (DD/MM/YYYY or YYYY-MM-DD) to ISO for matching.
+  const toIso = (d: string) =>
+    d.includes("/") ? d.split("/").reverse().join("-") : d.slice(0, 10);
+  const dayMovements = (rowDate: string) =>
+    (movements.data?.rows ?? []).filter((m) => toIso(String(m.date)) === toIso(rowDate));
 
   const prevMonth = () => setCurrentDate(subMonths(currentDate, 1));
   const nextMonth = () => setCurrentDate(addMonths(currentDate, 1));
@@ -71,8 +79,16 @@ export default function Attendance() {
           </div>
         ) : (
           <div className="divide-y">
-            {data.rows.map((row, i) => (
-              <div key={i} className="p-4 hover:bg-muted/50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            {data.rows.map((row, i) => {
+              const moves = dayMovements(row.date);
+              const isOpen = openDay === row.date;
+              return (
+              <div key={i} className="hover:bg-muted/30 transition-colors">
+              <div
+                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer"
+                onClick={() => setOpenDay(isOpen ? null : row.date)}
+                data-testid={`row-attendance-${toIso(row.date)}`}
+              >
                 <div className="flex items-center gap-4">
                   <div className="bg-muted p-2 rounded-xl text-center min-w-[60px]">
                     <div className="text-2xl font-bold leading-none mb-1">
@@ -117,9 +133,49 @@ export default function Attendance() {
                       {row.workedHours}
                     </div>
                   )}
+                  {moves.length > 0 && (
+                    <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                  )}
                 </div>
               </div>
-            ))}
+
+              {/* Day details: selfie + map per punch */}
+              {isOpen && moves.length > 0 && (
+                <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {moves.map((m) => (
+                    <div key={m.id} className="bg-muted/40 rounded-2xl p-3 flex items-center gap-3 border">
+                      {m.selfieUrl ? (
+                        <img src={m.selfieUrl} alt="" className="w-14 h-14 rounded-xl object-cover border" />
+                      ) : (
+                        <div className="w-14 h-14 rounded-xl bg-muted flex items-center justify-center text-muted-foreground">
+                          <ScanFace className="w-6 h-6 opacity-40" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold">
+                          {m.type === "in" ? "دخول" : "خروج"} {m.time}
+                          {m.faceVerified && <span className="text-green-600 text-xs ms-2">✓ تحقق بالوجه</span>}
+                        </p>
+                        {m.location ? (
+                          <a
+                            href={`https://maps.google.com/?q=${m.location}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs text-primary inline-flex items-center gap-1 mt-1"
+                          >
+                            <MapPin className="w-3.5 h-3.5" /> عرض الموقع على الخريطة
+                          </a>
+                        ) : (
+                          <p className="text-xs text-muted-foreground mt-1">بدون موقع</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              </div>
+            );})}
           </div>
         )}
       </div>
