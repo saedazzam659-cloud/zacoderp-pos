@@ -29,9 +29,20 @@ export default function Dashboard() {
       navigator.geolocation.getCurrentPosition(
         (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
         () => reject(new Error("يرجى السماح بصلاحيات الموقع لتتمكن من تسجيل البصمة.")),
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+        // Accept a fix from the last 20s — the mount-time warm-up below usually
+        // makes the punch-time read instant instead of a cold GPS lock.
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 20000 },
       );
     });
+
+  // Warm up GPS on page load: triggers the permission prompt early and primes
+  // the GPS chip so the actual punch gets a cached high-accuracy fix instantly.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(() => {}, () => {}, {
+      enableHighAccuracy: true, timeout: 15000, maximumAge: 60000,
+    });
+  }, []);
 
   const handlePunch = async (type: "in" | "out") => {
     if (needsEnroll) { setFaceMode("enroll"); return; }
