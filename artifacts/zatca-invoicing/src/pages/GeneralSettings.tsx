@@ -3644,6 +3644,11 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const [defaultTplId, setDefaultTplId] = useState<number>(
     Number.isInteger(company.printDefaultTemplate) ? Number(company.printDefaultTemplate) : 1,
   );
+  // Per-doc-type default overrides (null = follow the company-wide default).
+  const asTplId = (v: any): number | null => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : null);
+  const [defaultQuotTplId,  setDefaultQuotTplId]  = useState<number | null>(asTplId(company.printDefaultTemplateQuotation));
+  const [defaultOrderTplId, setDefaultOrderTplId] = useState<number | null>(asTplId(company.printDefaultTemplateOrder));
+  const [defaultRetTplId,   setDefaultRetTplId]   = useState<number | null>(asTplId(company.printDefaultTemplateReturn));
 
   useEffect(() => {
     setInvoiceFooter(company.printFooterInvoice ?? DEFAULT_INVOICE);
@@ -3656,8 +3661,11 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
       ? new Set(raw.filter((n: any) => ALL_IDS.includes(Number(n))).map(Number))
       : new Set(ALL_IDS));
     setDefaultTplId(Number.isInteger(company.printDefaultTemplate) ? Number(company.printDefaultTemplate) : 1);
+    setDefaultQuotTplId(asTplId(company.printDefaultTemplateQuotation));
+    setDefaultOrderTplId(asTplId(company.printDefaultTemplateOrder));
+    setDefaultRetTplId(asTplId(company.printDefaultTemplateReturn));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printEnabledTemplates, company.printDefaultTemplate, DEFAULT_INVOICE, DEFAULT_RETURN]);
+  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printEnabledTemplates, company.printDefaultTemplate, company.printDefaultTemplateQuotation, company.printDefaultTemplateOrder, company.printDefaultTemplateReturn, DEFAULT_INVOICE, DEFAULT_RETURN]);
 
   function toggleTemplate(id: number) {
     setEnabledIds(prev => {
@@ -3702,6 +3710,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           // the row with a long array that means the same as the default.
           printEnabledTemplates: enabledIds.size === ALL_IDS.length ? null : Array.from(enabledIds).sort((a,b)=>a-b),
           printDefaultTemplate: defaultTplId,
+          printDefaultTemplateQuotation: defaultQuotTplId,
+          printDefaultTemplateOrder:     defaultOrderTplId,
+          printDefaultTemplateReturn:    defaultRetTplId,
         }),
       });
       const json = await res.json();
@@ -3721,6 +3732,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             bankAccountText:       data.bankAccountText,
             printEnabledTemplates: data.printEnabledTemplates,
             printDefaultTemplate:  data.printDefaultTemplate,
+            printDefaultTemplateQuotation: data.printDefaultTemplateQuotation,
+            printDefaultTemplateOrder:     data.printDefaultTemplateOrder,
+            printDefaultTemplateReturn:    data.printDefaultTemplateReturn,
           },
         }));
       }
@@ -3738,6 +3752,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setBankAccountText("");
     setEnabledIds(new Set(ALL_IDS));
     setDefaultTplId(1);
+    setDefaultQuotTplId(null);
+    setDefaultOrderTplId(null);
+    setDefaultRetTplId(null);
   }
 
   const invoiceLen = invoiceFooter.length;
@@ -3947,6 +3964,29 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
                   >
                     {isDefault ? "النموذج الافتراضي ✓" : "اجعله الافتراضي"}
                   </Button>
+
+                  {/* Per-doc-type default checkboxes (A4 templates only).
+                      Checking one makes THIS template the default for that
+                      doc type; unchecking falls back to the general default. */}
+                  {!tpl.thermal && (
+                    <div className="flex flex-wrap gap-x-2 gap-y-1 pt-1 border-t border-dashed" onClick={(e) => e.stopPropagation()}>
+                      {([
+                        ["عرض سعر",  defaultQuotTplId,  setDefaultQuotTplId ] as const,
+                        ["أمر بيع",  defaultOrderTplId, setDefaultOrderTplId] as const,
+                        ["مرتجع",    defaultRetTplId,   setDefaultRetTplId  ] as const,
+                      ]).map(([label, val, setter]) => (
+                        <label key={label} className={cn("flex items-center gap-1 text-[10px] cursor-pointer select-none", !isOn && "opacity-50 pointer-events-none")}>
+                          <input
+                            type="checkbox"
+                            className="h-3 w-3 accent-primary"
+                            checked={val === tpl.id}
+                            onChange={(e) => setter(e.target.checked ? tpl.id : null)}
+                          />
+                          <span className={val === tpl.id ? "font-bold text-primary" : "text-muted-foreground"}>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             );

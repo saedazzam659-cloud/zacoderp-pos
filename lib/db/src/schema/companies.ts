@@ -223,6 +223,12 @@ export const companiesTable = pgTable("companies", {
   // which one is preselected when the modal opens.
   printEnabledTemplates: jsonb("print_enabled_templates").$type<number[]>(),
   printDefaultTemplate:  integer("print_default_template").notNull().default(1),
+  // Optional per-doc-type default template overrides. NULL = fall back to
+  // the company-wide `printDefaultTemplate` above. Set from the checkboxes
+  // on each template card in General Settings → print templates.
+  printDefaultTemplateQuotation: integer("print_default_template_quotation"),
+  printDefaultTemplateOrder:     integer("print_default_template_order"),
+  printDefaultTemplateReturn:    integer("print_default_template_return"),
   // Default language for invoice PRINT output ("ar" | "en"). Currently
   // honoured by template 14 («الأصلي») only; the per-print toggle in
   // SalesPrintModal can override it for a single print job.

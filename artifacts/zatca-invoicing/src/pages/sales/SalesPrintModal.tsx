@@ -2519,6 +2519,62 @@ function template15(d: PrintData): string {
   </body></html>`;
 }
 
+/** Per-doc-type default template id configured in General Settings
+ *  (null/undefined = no override → company-wide default applies). */
+export function perTypeDefaultId(company: any, type?: SalesPrintType): number | null {
+  if (!company || !type) return null;
+  const raw = type === "quotation" ? company.printDefaultTemplateQuotation
+            : type === "order"     ? company.printDefaultTemplateOrder
+            : type === "return"    ? company.printDefaultTemplateReturn
+            : null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** Resolve which template id should print a given doc type for a company:
+ *  per-type override → company default → 14 («الأصلي») → first available.
+ *  Honours printEnabledTemplates visibility. */
+export function resolveTemplateIdFor(company: any, type: SalesPrintType): number {
+  const enabled = Array.isArray(company?.printEnabledTemplates) && company.printEnabledTemplates.length > 0
+    ? new Set<number>(company.printEnabledTemplates.map((n: any) => Number(n)))
+    : null;
+  const visible = (id: number) => !enabled || enabled.has(id);
+  const perType = perTypeDefaultId(company, type);
+  if (perType != null && visible(perType) && TEMPLATES.some(t => t.id === perType)) return perType;
+  const def = Number(company?.printDefaultTemplate);
+  if (Number.isInteger(def) && visible(def) && TEMPLATES.some(t => t.id === def)) return def;
+  if (visible(14)) return 14;
+  return TEMPLATES.find(t => visible(t.id))?.id ?? 14;
+}
+
+/** Render one or more sales docs through the company's resolved print
+ *  template and return ONE combined HTML document (used by the bulk
+ *  «طباعة المحدَّد» flow so it prints the real templates instead of the
+ *  legacy report-style layout). Each doc is wrapped in `section.doc` so
+ *  the shared one-per-page toggle keeps working. */
+export function renderSalesDocsBundleHtml(datas: PrintData[], company: any): string {
+  const type = datas[0]?.type ?? "quotation";
+  const id = resolveTemplateIdFor(company, type);
+  const tmpl = TEMPLATES.find(t => t.id === id) ?? TEMPLATES[0];
+  const rendered = datas.map(d => {
+    (d.doc as any).__printType = d.type;
+    return tmpl.fn(d);
+  });
+  if (rendered.length === 1) {
+    // Single doc → keep the template's own auto-print behavior intact.
+    return rendered[0].includes("</body>")
+      ? rendered[0].replace("</body>", `<script>setTimeout(()=>window.print(),300);</script></body>`)
+      : rendered[0];
+  }
+  const headMatch = rendered[0].match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+  const head = headMatch ? headMatch[1] : "";
+  const bodies = rendered.map(html => {
+    const m = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    return `<section class="doc" style="page-break-after:always;">${m ? m[1] : html}</section>`;
+  }).join("\n");
+  return `<!DOCTYPE html><html dir="rtl"><head>${head}<style>section.doc:last-of-type{page-break-after:auto;}</style></head><body>${bodies}<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+}
+
 const TEMPLATES = [
   { id: 14, name: "الأصلي",         desc: "نموذج مرتب بشعار وسط وبيانات شركة/عميل جانبية", color: "#b88a2a", fn: template14, thermal: false },
   { id: 15, name: "كلاسيكي ثنائي اللغة", desc: "نموذج تجاري بحدود كاملة عربي/إنجليزي", color: "#7c4a12", fn: template15, thermal: false },
@@ -2578,6 +2634,13 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     if (defaultTemplate === "a4") {
       const t = visibleTemplates.find(x => !x.thermal);
       if (t) return t.id;
+    }
+    // Per-doc-type default override (quotation / order / return checkboxes
+    // in General Settings) wins over the company-wide default when set
+    // and visible.
+    const typeDefault = Number(perTypeDefaultId(companyCfg, (data as any)?.type));
+    if (Number.isInteger(typeDefault) && visibleTemplates.some(t => t.id === typeDefault)) {
+      return typeDefault;
     }
     // Otherwise use the company's configured default if it's visible.
     const cfgDefault = Number(companyCfg.printDefaultTemplate);
@@ -2659,7 +2722,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   }, [accountsQuery.data]);
   // Re-sync the selected template when the caller's preference or the
   // company's visibility config changes.
-  useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate]);
+  useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate, companyCfg.printDefaultTemplateQuotation, companyCfg.printDefaultTemplateOrder, companyCfg.printDefaultTemplateReturn, (data as any)?.type]);
   // Fire-and-forget auto-print on open. We track the last id we auto-
   // printed so we don't loop on re-renders, and reset when the modal
   // closes so the next "open" can auto-print again.

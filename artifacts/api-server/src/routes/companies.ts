@@ -306,6 +306,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     bankAccountText, printShowItemsSummary,
     printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
     printEnabledTemplates, printDefaultTemplate,
+    printDefaultTemplateQuotation, printDefaultTemplateOrder, printDefaultTemplateReturn,
     invoicePrintLanguage,
     sequenceDateSource,
     // Per-doc-type print preferences (auto-print toggle + template name).
@@ -361,6 +362,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     bankAccountText?: string | null; printShowItemsSummary?: boolean;
     printT14ShowEnSubtitle?: boolean; printT14ShowAccountCode?: boolean; printT14ShowAuditFooter?: boolean;
     printEnabledTemplates?: number[] | null; printDefaultTemplate?: number;
+    printDefaultTemplateQuotation?: number | null;
+    printDefaultTemplateOrder?: number | null;
+    printDefaultTemplateReturn?: number | null;
     invoicePrintLanguage?: string;
     sequenceDateSource?: string;
     printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
@@ -499,17 +503,32 @@ router.patch("/:id/general-settings", async (req, res) => {
       const cleaned = Array.from(new Set(
         printEnabledTemplates
           .map((x) => Number(x))
-          .filter((n) => Number.isInteger(n) && n >= 1 && n <= 14),
+          .filter((n) => Number.isInteger(n) && n >= 1 && n <= 15),
       )).sort((a, b) => a - b);
       updates.printEnabledTemplates = cleaned.length === 0 ? null : cleaned;
     }
   }
   if (printDefaultTemplate !== undefined) {
     const n = Number(printDefaultTemplate);
-    if (!Number.isInteger(n) || n < 1 || n > 14) {
-      res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 14" }); return;
+    if (!Number.isInteger(n) || n < 1 || n > 15) {
+      res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 15" }); return;
     }
     updates.printDefaultTemplate = n;
+  }
+  // Per-doc-type default template overrides (nullable — null clears the
+  // override so the doc type falls back to the company-wide default).
+  for (const [key, val] of [
+    ["printDefaultTemplateQuotation", printDefaultTemplateQuotation],
+    ["printDefaultTemplateOrder",     printDefaultTemplateOrder],
+    ["printDefaultTemplateReturn",    printDefaultTemplateReturn],
+  ] as const) {
+    if (val === undefined) continue;
+    if (val === null) { updates[key] = null; continue; }
+    const n = Number(val);
+    if (!Number.isInteger(n) || n < 1 || n > 15) {
+      res.status(400).json({ error: "النموذج الافتراضي لنوع المستند يجب أن يكون رقماً بين 1 و 15 أو فارغاً" }); return;
+    }
+    updates[key] = n;
   }
   if (invoicePrintLanguage !== undefined) {
     const v = String(invoicePrintLanguage);

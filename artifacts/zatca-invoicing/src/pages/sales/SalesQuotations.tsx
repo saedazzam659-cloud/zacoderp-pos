@@ -31,7 +31,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
-import SalesPrintModal from "./SalesPrintModal";
+import SalesPrintModal, { renderSalesDocsBundleHtml, type PrintData } from "./SalesPrintModal";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -336,99 +336,6 @@ ${source.map((r: any, i: number) => `<tr>
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
 
-  const buildBulkHtml = (docs: any[]) => {
-    const today = new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn");
-    const grandSub = docs.reduce((a, d: any) => a + Number(d.subtotal ?? 0), 0);
-    const grandVat = docs.reduce((a, d: any) => a + Number(d.vatAmount ?? 0), 0);
-    const grandTot = docs.reduce((a, d: any) => a + Number(d.totalAmount ?? 0), 0);
-    const logoHtml = safeLogo
-      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto;" /></div>` : "";
-    const companyHtml = user?.company?.nameAr
-      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;text-align:center;">${escapeHtml(user.company.nameAr)}</div>` : "";
-    const sections = docs.map((d: any) => {
-      const lines: any[] = Array.isArray(d.lines) ? d.lines : [];
-      const docNo  = d.docNumber ?? `SQ-${d.id}`;
-      const linesHtml = lines.length === 0
-        ? `<tr><td colspan="6" style="text-align:center;color:#6b7280;padding:14px;">لا توجد بنود لهذا العرض.</td></tr>`
-        : lines.map((l: any, i: number) => {
-            const itemLabel = l.itemName ?? l.description ?? `#${l.itemId ?? ""}`;
-            const qty = Number(l.quantity ?? l.qty ?? 0);
-            const up  = Number(l.unitPrice ?? 0);
-            const vat = Number(l.vatAmount ?? 0);
-            const ttl = Number(l.totalAmount ?? l.lineTotal ?? 0);
-            return `<tr>
-              <td style="text-align:center;">${i + 1}</td>
-              <td>${escapeHtml(itemLabel)}</td>
-              <td class="num">${fmt2(qty)}</td>
-              <td class="num">${fmt2(up)}</td>
-              <td class="num">${fmt2(vat)}</td>
-              <td class="num">${fmt2(ttl)}</td>
-            </tr>`;
-          }).join("");
-      return `<section class="doc">
-        <div class="doc-head">
-          <span class="badge b-doc">رقم العرض: ${escapeHtml(docNo)}</span>
-          <span class="badge b-date">التاريخ: ${escapeHtml(d.quotationDate ?? "")}</span>
-          <span class="badge b-cust">العميل: ${escapeHtml(cusMap[d.customerId] ?? "")}</span>
-          <span class="badge b-status s-${escapeHtml(d.status)}">${escapeHtml(statusLabel(d.status))}</span>
-        </div>
-        ${d.notes ? `<div class="desc">${escapeHtml(d.notes)}</div>` : ""}
-        <table>
-          <thead><tr>
-            <th style="width:30px;">#</th><th>الصنف</th>
-            <th style="width:70px;">الكمية</th><th style="width:80px;">السعر</th>
-            <th style="width:75px;">الضريبة</th><th style="width:90px;">الإجمالي</th>
-          </tr></thead>
-          <tbody>${linesHtml}</tbody>
-          <tfoot><tr>
-            <td colspan="4" style="text-align:left;">المجموع</td>
-            <td class="num">${fmt2(Number(d.vatAmount ?? 0))}</td>
-            <td class="num">${fmt2(Number(d.totalAmount ?? 0))}</td>
-          </tr></tfoot>
-        </table>
-      </section>`;
-    }).join("");
-    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>طباعة عروض الأسعار المحدّدة</title>
-<style>
-@page { size: A4 portrait; margin: 12mm; }
-* { box-sizing: border-box; }
-body { font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
-.h { text-align:center; margin-bottom:10px; }
-.h h1 { margin:0 0 4px; font-size:17px; }
-.h .meta { font-size:11px; color:#555; }
-.grand { display:flex; gap:14px; justify-content:center; margin:6px 0 14px; font-size:12px; }
-.grand span b { color:#0f766e; }
-section.doc { margin:0 0 14px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; page-break-inside:avoid; background:#fff; }
-.doc-head { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
-.badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600; border:1px solid; }
-.b-doc{background:#eef2ff;border-color:#a5b4fc;color:#3730a3;}
-.b-date{background:#fef9c3;border-color:#fde047;color:#713f12;}
-.b-cust{background:#ecfeff;border-color:#67e8f9;color:#155e75;}
-.b-status.s-accepted{background:#d1fae5;border-color:#34d399;color:#065f46;}
-.b-status.s-sent{background:#dbeafe;border-color:#60a5fa;color:#1e3a8a;}
-.b-status.s-draft{background:#f1f5f9;border-color:#94a3b8;color:#334155;}
-.b-status.s-rejected{background:#fee2e2;border-color:#f87171;color:#991b1b;}
-.b-status.s-converted{background:#e0e7ff;border-color:#818cf8;color:#3730a3;}
-.desc { font-size:11px; color:#475569; padding:4px 6px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:4px; margin-bottom:6px; }
-table { width:100%; border-collapse:collapse; font-size:10.5px; }
-thead th { background:#1e3a8a; color:#fff; padding:5px 6px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
-tbody td { padding:4px 6px; border:1px solid #d1d5db; text-align:right; }
-tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-weight:700; }
-.num { font-family:"Consolas",monospace; }
-.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
-@media print { .print-btn { display:none; } }
-</style></head><body>
-<button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="h">${logoHtml}${companyHtml}<h1>عروض الأسعار المحدّدة</h1>
-<div class="meta">تاريخ التقرير: ${today} — عدد العروض: ${docs.length}</div></div>
-<div class="grand">
-  <span>إجمالي المجموع: <b>${fmt2(grandSub)}</b></span>
-  <span>إجمالي الضريبة: <b>${fmt2(grandVat)}</b></span>
-  <span>الإجمالي العام: <b>${fmt2(grandTot)}</b></span>
-</div>
-${sections}
-<script>setTimeout(()=>window.print(),350);</script></body></html>`;
-  };
 
   const handleExportPDF = () => openPrintWindow(buildListHtml());
   const handlePrint    = () => openPrintWindow(buildListHtml());
@@ -655,7 +562,19 @@ ${sections}
             }}
             company={user?.company}
             buildSummary={(docs) => buildListHtml(docs as any[])}
-            buildDetailed={(docs) => buildBulkHtml(docs as any[])}
+            buildDetailed={(docs) => {
+              // Print the REAL sales templates (default «الأصلي» 14 or the
+              // per-type default from settings) instead of the legacy
+              // report-style bulk layout.
+              const datas: PrintData[] = (docs as any[]).map((full: any) => ({
+                type: "quotation",
+                doc: full,
+                lines: Array.isArray(full.lines) ? full.lines : [],
+                customer: customers.find((c: any) => c.id === full.customerId) ?? null,
+                company: user?.company ?? null,
+              }));
+              return renderSalesDocsBundleHtml(datas, user?.company);
+            }}
             fetchFull={async (id) => {
               const res = await fetch(`${API}/api/sales/sales-quotations/${id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
               if (!res.ok) throw new Error(`HTTP ${res.status}`);
