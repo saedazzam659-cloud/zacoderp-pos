@@ -380,7 +380,7 @@ router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
   await runWithAgentScope(req, res, async () => {
   const id = parseInt(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
-  const { plan, maxUsers, maxBranches, maxWarehouses, maxInvoices, billingCycle, startDate, endDate, isActive, price } = req.body ?? {};
+  const { plan, maxUsers, maxBranches, maxWarehouses, maxInvoices, maxHrUsers, billingCycle, startDate, endDate, isActive, price } = req.body ?? {};
 
   const updates: Record<string, any> = {};
   if (plan != null) {
@@ -393,7 +393,7 @@ router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
     if (!ALLOWED_CYCLES.has(bc)) { res.status(400).json({ error: "دورة فوترة غير صالحة" }); return; }
     updates.billingCycle = bc;
   }
-  for (const [key, val] of Object.entries({ maxUsers, maxBranches, maxWarehouses, maxInvoices })) {
+  for (const [key, val] of Object.entries({ maxUsers, maxBranches, maxWarehouses, maxInvoices, maxHrUsers })) {
     if (val == null) continue;
     const n = toBoundedInt(val, 0, 1_000_000);
     if (n == null) { res.status(400).json({ error: `قيمة غير صالحة لـ ${key}` }); return; }
@@ -957,7 +957,8 @@ router.post("/licenses", requireSuperAdmin, async (req, res) => {
     const maxBranches   = toBoundedInt(body.maxBranches   ?? 1,   0, 1_000_000);
     const maxWarehouses = toBoundedInt(body.maxWarehouses ?? 1,   0, 1_000_000);
     const maxInvoices   = toBoundedInt(body.maxInvoices   ?? 500, 0, 1_000_000);
-    if ([maxUsers, maxBranches, maxWarehouses, maxInvoices].some(v => v == null)) {
+    const maxHrUsers    = toBoundedInt(body.maxHrUsers    ?? 10,  0, 1_000_000);
+    if ([maxUsers, maxBranches, maxWarehouses, maxInvoices, maxHrUsers].some(v => v == null)) {
       res.status(400).json({ error: "قيم الحدود يجب أن تكون أعداد صحيحة موجبة" }); return;
     }
     const priceNum = Number(body.price ?? 0);
@@ -973,6 +974,7 @@ router.post("/licenses", requireSuperAdmin, async (req, res) => {
       price: String(priceNum),
       maxUsers: maxUsers!, maxBranches: maxBranches!,
       maxWarehouses: maxWarehouses!, maxInvoices: maxInvoices!,
+      maxHrUsers: maxHrUsers!,
     };
 
     const [existing] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, companyId));

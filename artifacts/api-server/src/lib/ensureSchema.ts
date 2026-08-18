@@ -2509,6 +2509,18 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "dev_studio_usage_dev_period_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS dev_studio_usage_dev_period_uniq ON dev_studio_usage (developer_id, period_key)` },
 
+    // ── Employee portal (zacodehr) credentials + HR seat limit ─────────────
+    { label: "employees.login_username",
+      sql:   `ALTER TABLE employees ADD COLUMN IF NOT EXISTS login_username TEXT` },
+    { label: "employees.login_password_hash",
+      sql:   `ALTER TABLE employees ADD COLUMN IF NOT EXISTS login_password_hash TEXT` },
+    { label: "employees.portal_active",
+      sql:   `ALTER TABLE employees ADD COLUMN IF NOT EXISTS portal_active BOOLEAN DEFAULT TRUE` },
+    { label: "subscriptions.max_hr_users",
+      sql:   `ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_hr_users INTEGER NOT NULL DEFAULT 10` },
+    { label: "employees_company_login_username_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS employees_company_login_username_uniq ON employees (company_id, lower(login_username)) WHERE login_username IS NOT NULL` },
+
     { label: "create dev_studio_audit table",
       sql:   `CREATE TABLE IF NOT EXISTS dev_studio_audit (
         id           SERIAL PRIMARY KEY,

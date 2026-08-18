@@ -95,7 +95,7 @@ async function loadSchedules(cid: number, employeeIds: number[], date: string) {
 
 // ═══════════════════ Recalc core (قاعدة 29) ═══════════════════
 
-async function recalcDay(cid: number, date: string, employeeIds?: number[]) {
+export async function recalcDay(cid: number, date: string, employeeIds?: number[]) {
   const empConds = [eq(employeesTable.companyId, cid), eq(employeesTable.status, "active")];
   const emps = await db.select({ id: employeesTable.id }).from(employeesTable).where(and(...empConds));
   let ids = emps.map((e) => e.id);

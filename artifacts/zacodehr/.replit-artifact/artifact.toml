@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/zacodehr/"
+title = "ZacodeHR — بوابة الموظف"
+description = "Arabic RTL employee self-service portal for the Zacode ERP HR module. Employees sign in with their company code, username and password (set in the HR employees screen) to check in/out with live GPS, request exit permissions and leaves, and view their attendance log and payslips. Frontend-only; talks to the shared api-server HR endpoints."
+version = "1.0.0"
+id = "artifacts/zacodehr"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/zacodehr/" ]
+localPort = 23063
+
+[services.development]
+run = "pnpm --filter @workspace/zacodehr run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/zacodehr", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/zacodehr/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23063"
+BASE_PATH = "/zacodehr/"

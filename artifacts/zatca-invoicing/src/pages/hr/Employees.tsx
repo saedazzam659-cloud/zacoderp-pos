@@ -37,6 +37,8 @@ const EMPTY: any = {
   onSponsorship: true, establishmentNumber: "",
   sponsorshipStart: "", sponsorshipEnd: "", workPermitExpiry: "",
   bankApproved: true,
+  // ZacodeHR portal credentials (optional)
+  loginUsername: "", loginPassword: "",
 };
 
 function daysUntil(date?: string): number | null {
@@ -311,6 +313,14 @@ export default function Employees() {
                         />
                       </Field>
                     )}
+                    {/* ZacodeHR employee-portal credentials (بوابة الموظف) */}
+                    <Field label={tr("fPortalUsername", { defaultValue: "اسم مستخدم بوابة الموظف (اختياري)" })}>
+                      <Input dir="ltr" autoComplete="off" value={editing.loginUsername ?? ""} onChange={e => setF("loginUsername", e.target.value)} placeholder="username" />
+                    </Field>
+                    <Field label={tr("fPortalPassword", { defaultValue: "كلمة مرور البوابة" })}>
+                      <Input dir="ltr" type="password" autoComplete="new-password" value={editing.loginPassword ?? ""} onChange={e => setF("loginPassword", e.target.value)}
+                        placeholder={editing.hasPortalPassword ? tr("fPortalPasswordKeep", { defaultValue: "اتركه فارغًا للإبقاء على كلمة المرور الحالية" }) : tr("fPortalPasswordNew", { defaultValue: "4 أحرف على الأقل" })} />
+                    </Field>
                     <Field label={tr("fNotes")} className="md:col-span-2"><Textarea rows={2} value={editing.notes} onChange={e => setF("notes", e.target.value)} /></Field>
                   </FormGrid>
                 </TabsContent>

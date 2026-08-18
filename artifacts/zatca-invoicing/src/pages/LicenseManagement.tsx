@@ -33,6 +33,7 @@ type Subscription = {
   startDate: string; endDate: string; isActive: boolean;
   price: string;
   maxUsers: number; maxBranches: number; maxWarehouses: number; maxInvoices: number;
+  maxHrUsers?: number;
 };
 type SubRow = { subscription: Subscription; company: Pick<Company, "id" | "nameAr" | "vatNumber" | "status"> | null; agentInstanceId?: number | null };
 
@@ -40,30 +41,31 @@ type SubRow = { subscription: Subscription; company: Pick<Company, "id" | "nameA
 const PLAN_PRESETS: Record<string, {
   label: string; icon: any; color: string; gradient: string;
   maxUsers: number; maxBranches: number; maxWarehouses: number; maxInvoices: number;
+  maxHrUsers: number;
   monthly: string; yearly: string;
 }> = {
   starter: {
     label: "البداية", icon: Star, color: "text-blue-600",
     gradient: "from-blue-500 to-cyan-500",
-    maxUsers: 2, maxBranches: 1, maxWarehouses: 1, maxInvoices: 100,
+    maxUsers: 2, maxBranches: 1, maxWarehouses: 1, maxInvoices: 100, maxHrUsers: 5,
     monthly: "99", yearly: "990",
   },
   professional: {
     label: "احترافي", icon: Zap, color: "text-purple-600",
     gradient: "from-purple-500 to-pink-500",
-    maxUsers: 10, maxBranches: 3, maxWarehouses: 5, maxInvoices: 1000,
+    maxUsers: 10, maxBranches: 3, maxWarehouses: 5, maxInvoices: 1000, maxHrUsers: 10,
     monthly: "299", yearly: "2990",
   },
   enterprise: {
     label: "المؤسسات", icon: Crown, color: "text-amber-600",
     gradient: "from-amber-500 to-orange-500",
-    maxUsers: 999, maxBranches: 999, maxWarehouses: 999, maxInvoices: 999999,
+    maxUsers: 999, maxBranches: 999, maxWarehouses: 999, maxInvoices: 999999, maxHrUsers: 999,
     monthly: "899", yearly: "8990",
   },
   custom: {
     label: "مخصص", icon: Sparkles, color: "text-indigo-600",
     gradient: "from-indigo-500 to-purple-600",
-    maxUsers: 5, maxBranches: 2, maxWarehouses: 2, maxInvoices: 500,
+    maxUsers: 5, maxBranches: 2, maxWarehouses: 2, maxInvoices: 500, maxHrUsers: 10,
     monthly: "0", yearly: "0",
   },
 };
@@ -88,6 +90,7 @@ const emptyForm = () => ({
   maxBranches: PLAN_PRESETS.professional.maxBranches,
   maxWarehouses: PLAN_PRESETS.professional.maxWarehouses,
   maxInvoices: PLAN_PRESETS.professional.maxInvoices,
+  maxHrUsers: PLAN_PRESETS.professional.maxHrUsers,
 });
 
 export default function LicenseManagement() {
@@ -193,6 +196,7 @@ export default function LicenseManagement() {
         maxBranches: ex.maxBranches ?? 1,
         maxWarehouses: ex.maxWarehouses ?? 1,
         maxInvoices: ex.maxInvoices,
+        maxHrUsers: ex.maxHrUsers ?? 10,
       });
     } else {
       setForm({ ...emptyForm(), companyId: id });
@@ -222,6 +226,7 @@ export default function LicenseManagement() {
       plan: planKey,
       maxUsers: p.maxUsers, maxBranches: p.maxBranches,
       maxWarehouses: p.maxWarehouses, maxInvoices: p.maxInvoices,
+      maxHrUsers: p.maxHrUsers,
       price: f.billingCycle === "yearly" ? p.yearly : p.monthly,
     }));
   };
@@ -632,6 +637,11 @@ export default function LicenseManagement() {
                     icon={FileText} color="purple"
                     label="عدد الفواتير / شهر" value={form.maxInvoices}
                     onChange={(v) => setForm({ ...form, maxInvoices: v })}
+                  />
+                  <LimitField
+                    icon={UsersIcon} color="emerald"
+                    label="عدد مستخدمي HR (بوابة الموظف)" value={form.maxHrUsers}
+                    onChange={(v) => setForm({ ...form, maxHrUsers: v })}
                   />
                 </div>
 

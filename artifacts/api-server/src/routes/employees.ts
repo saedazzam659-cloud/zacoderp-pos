@@ -13,6 +13,8 @@ import {
   intOrDefault, emailOrNull, mobileOrNull, idNumberOrNull, timeOrNull, respondHrError,
 } from "../lib/hrValidate.js";
 import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
+import { subscriptionsTable } from "@workspace/db";
+import bcrypt from "bcryptjs";
 
 const router = Router();
 router.use(extractAuth);
@@ -77,6 +79,54 @@ async function validateLoanAccount(cid: number, raw: any): Promise<number | null
   return accId;
 }
 
+// ── Employee-portal credentials (بوابة الموظف zacodehr) ─────────────────────
+// Never leak the bcrypt hash to any client; expose a boolean instead so the
+// edit form can show "كلمة المرور محفوظة".
+function stripCreds(row: any) {
+  if (!row) return row;
+  const { loginPasswordHash, ...rest } = row;
+  return { ...rest, hasPortalPassword: !!loginPasswordHash };
+}
+
+// Portal seats = employees WITH a login username; capped by subscriptions.max_hr_users.
+async function hrSeatError(cid: number): Promise<string | null> {
+  const [sub] = await db.select({ m: subscriptionsTable.maxHrUsers })
+    .from(subscriptionsTable).where(eq(subscriptionsTable.companyId, cid));
+  const limit = sub?.m ?? 10;
+  const [{ c }] = await db.select({ c: sql<number>`count(*)::int` }).from(employeesTable)
+    .where(and(eq(employeesTable.companyId, cid), isNotNull(employeesTable.loginUsername)));
+  if ((c ?? 0) >= limit)
+    return `تم بلوغ الحد الأقصى لمستخدمي بوابة الموظفين (${limit}) — يمكن زيادة الحد من إدارة التراخيص`;
+  return null;
+}
+
+// Race guard: two concurrent creations can both pass hrSeatError's pre-check.
+// After the write, recount; if the cap is exceeded, revert THIS row's creds.
+async function hrSeatOverflowRevert(cid: number, empId: number): Promise<string | null> {
+  const err = await (async () => {
+    const [sub] = await db.select({ m: subscriptionsTable.maxHrUsers })
+      .from(subscriptionsTable).where(eq(subscriptionsTable.companyId, cid));
+    const limit = sub?.m ?? 10;
+    const [{ c }] = await db.select({ c: sql<number>`count(*)::int` }).from(employeesTable)
+      .where(and(eq(employeesTable.companyId, cid), isNotNull(employeesTable.loginUsername)));
+    return (c ?? 0) > limit
+      ? `تم بلوغ الحد الأقصى لمستخدمي بوابة الموظفين (${limit}) — يمكن زيادة الحد من إدارة التراخيص`
+      : null;
+  })();
+  if (err) {
+    await db.update(employeesTable)
+      .set({ loginUsername: null, loginPasswordHash: null })
+      .where(and(eq(employeesTable.id, empId), eq(employeesTable.companyId, cid)));
+  }
+  return err;
+}
+
+async function portalUsernameTaken(cid: number, username: string, excludeId?: number): Promise<boolean> {
+  const dup = await db.select({ id: employeesTable.id }).from(employeesTable)
+    .where(and(eq(employeesTable.companyId, cid), sql`lower(${employeesTable.loginUsername}) = ${username}`));
+  return dup.some((d) => d.id !== excludeId);
+}
+
 // ─── EMPLOYEES ───────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
@@ -84,7 +134,7 @@ router.get("/", async (req, res) => {
     const rows = await db.select().from(employeesTable)
       .where(eq(employeesTable.companyId, cid))
       .orderBy(asc(employeesTable.code));
-    res.json(rows);
+    res.json(rows.map(stripCreds));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -406,7 +456,7 @@ router.get("/:id", async (req, res) => {
     const leaves = await db.select().from(employeeLeavesTable)
       .where(eq(employeeLeavesTable.employeeId, id))
       .orderBy(desc(employeeLeavesTable.startDate));
-    res.json({ ...row, contracts, leaves });
+    res.json({ ...stripCreds(row), contracts, leaves });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -435,6 +485,21 @@ router.post("/", async (req, res) => {
       const dup = await db.select({ id: employeesTable.id }).from(employeesTable)
         .where(and(eq(employeesTable.companyId, cid), eq(employeesTable.idNumber, String(clean.idNumber))));
       if (dup.length) { res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" }); return; }
+    }
+    // Portal credentials (optional)
+    let credUsername: string | null = null, credHash: string | null = null;
+    {
+      const u = String(b.loginUsername ?? "").trim().toLowerCase();
+      const p = String(b.loginPassword ?? "");
+      if (u) {
+        if (p.length < 4) { res.status(400).json({ error: "كلمة مرور البوابة مطلوبة (4 أحرف على الأقل)" }); return; }
+        const seatErr = await hrSeatError(cid);
+        if (seatErr) { res.status(409).json({ error: seatErr }); return; }
+        if (await portalUsernameTaken(cid, u)) { res.status(409).json({ error: "اسم المستخدم مستخدم لموظف آخر" }); return; }
+        credUsername = u; credHash = await bcrypt.hash(p, 12);
+      } else if (p) {
+        res.status(400).json({ error: "أدخل اسم مستخدم للبوابة أولاً" }); return;
+      }
     }
     const [row] = await db.insert(employeesTable).values({
       companyId: cid,
@@ -478,8 +543,14 @@ router.post("/", async (req, res) => {
       sponsorshipEnd: clean.sponsorshipEnd ?? null,
       workPermitExpiry: clean.workPermitExpiry ?? null,
       bankApproved: b.bankApproved === false ? false : true,
+      loginUsername: credUsername,
+      loginPasswordHash: credHash,
     }).returning();
-    res.status(201).json(row);
+    if (credUsername) {
+      const overflow = await hrSeatOverflowRevert(cid, row.id);
+      if (overflow) { res.status(201).json({ ...stripCreds({ ...row, loginUsername: null, loginPasswordHash: null }), seatWarning: overflow }); return; }
+    }
+    res.status(201).json(stripCreds(row));
   } catch (e: any) {
     if (String(e?.message).includes("uq_employees_company_idnumber"))
       return res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" });
@@ -517,14 +588,58 @@ router.put("/:id", async (req, res) => {
     if ("payableAccountId" in b) updates.payableAccountId = N(b.payableAccountId) ? Number(b.payableAccountId) : null;
     if ("branchId" in b) updates.branchId = N(b.branchId) ? Number(b.branchId) : null;
 
+    // Portal credentials (optional). Blank password on edit keeps the old hash.
+    if ("loginUsername" in b || "loginPassword" in b || "portalActive" in b) {
+      const [cur] = await db.select({
+        loginUsername: employeesTable.loginUsername,
+        loginPasswordHash: employeesTable.loginPasswordHash,
+      }).from(employeesTable)
+        .where(and(eq(employeesTable.id, id), eq(employeesTable.companyId, cid)));
+      if (!cur) { res.status(404).json({ error: "غير موجود" }); return; }
+      if ("portalActive" in b) updates.portalActive = b.portalActive !== false;
+      const p = String(b.loginPassword ?? "");
+      if ("loginUsername" in b) {
+        const u = String(b.loginUsername ?? "").trim().toLowerCase();
+        if (!u) {
+          updates.loginUsername = null; updates.loginPasswordHash = null;
+        } else {
+          if (u !== (cur.loginUsername ?? "").toLowerCase()) {
+            if (!cur.loginUsername) {
+              const seatErr = await hrSeatError(cid);
+              if (seatErr) { res.status(409).json({ error: seatErr }); return; }
+            }
+            if (await portalUsernameTaken(cid, u, id)) { res.status(409).json({ error: "اسم المستخدم مستخدم لموظف آخر" }); return; }
+          }
+          updates.loginUsername = u;
+          if (p) {
+            if (p.length < 4) { res.status(400).json({ error: "كلمة المرور قصيرة (4 أحرف على الأقل)" }); return; }
+            updates.loginPasswordHash = await bcrypt.hash(p, 12);
+          } else if (!cur.loginPasswordHash) {
+            res.status(400).json({ error: "كلمة مرور البوابة مطلوبة (4 أحرف على الأقل)" }); return;
+          }
+        }
+      } else if (p) {
+        if (!cur.loginUsername) { res.status(400).json({ error: "أدخل اسم مستخدم للبوابة أولاً" }); return; }
+        if (p.length < 4) { res.status(400).json({ error: "كلمة المرور قصيرة (4 أحرف على الأقل)" }); return; }
+        updates.loginPasswordHash = await bcrypt.hash(p, 12);
+      }
+    }
+
     const [row] = await db.update(employeesTable).set(updates)
       .where(and(eq(employeesTable.id, id), eq(employeesTable.companyId, cid)))
       .returning();
     if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
-    res.json(row);
+    // Seat newly consumed on this update? re-verify the cap post-write.
+    if (updates.loginUsername && row.loginUsername) {
+      const overflow = await hrSeatOverflowRevert(cid, id);
+      if (overflow) { res.status(409).json({ error: overflow }); return; }
+    }
+    res.json(stripCreds(row));
   } catch (e: any) {
     if (String(e?.message).includes("uq_employees_company_idnumber"))
       return res.status(400).json({ error: "رقم الهوية/الإقامة مكرر" });
+    if (String(e?.message).includes("employees_company_login_username_uniq"))
+      return res.status(409).json({ error: "اسم المستخدم مستخدم لموظف آخر" });
     respondHrError(req, res, e);
   }
 });

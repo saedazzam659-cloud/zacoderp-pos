@@ -127,6 +127,8 @@ export const subscriptionsTable = pgTable("subscriptions", {
   maxBranches: integer("max_branches").notNull().default(1),
   maxWarehouses: integer("max_warehouses").notNull().default(1),
   maxInvoices: integer("max_invoices").notNull().default(50),
+  // ZacodeHR portal seats: employees allowed to have portal credentials.
+  maxHrUsers: integer("max_hr_users").notNull().default(10),
   billingCycle: text("billing_cycle").notNull().default("monthly"),
   startDate: text("start_date").notNull(),
   endDate: text("end_date").notNull(),

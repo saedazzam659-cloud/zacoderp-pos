@@ -58,6 +58,13 @@ export const employeesTable = pgTable("employees", {
   workLat:        decimal("work_lat", { precision: 10, scale: 7 }),
   workLng:        decimal("work_lng", { precision: 10, scale: 7 }),
   workRadiusM:    integer("work_radius_m"),
+  // ─── ZacodeHR employee-portal credentials (optional) ────────────────
+  // Employees with a username+password can sign in to the zacodehr
+  // self-service portal (company code + username + password). The count of
+  // employees with a non-null username is capped by subscriptions.max_hr_users.
+  loginUsername:     text("login_username"),
+  loginPasswordHash: text("login_password_hash"),
+  portalActive:      boolean("portal_active").default(true),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({
