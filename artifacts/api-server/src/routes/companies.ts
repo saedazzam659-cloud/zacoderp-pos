@@ -309,6 +309,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDepreciationExpenseAccountId, faAcquisitionClearingAccountId,
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
+    printQuotationShowQr, printQuotationShowCurrencyName, printQuotationShowCustomerAddress,
     bankAccountText, printShowItemsSummary,
     printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
     printEnabledTemplates, printDefaultTemplate,
@@ -365,6 +366,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDisposalLossAccountId?: number | null;
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
+    printQuotationShowQr?: boolean;
+    printQuotationShowCurrencyName?: boolean;
+    printQuotationShowCustomerAddress?: boolean;
     bankAccountText?: string | null; printShowItemsSummary?: boolean;
     printT14ShowEnSubtitle?: boolean; printT14ShowAccountCode?: boolean; printT14ShowAuditFooter?: boolean;
     printEnabledTemplates?: number[] | null; printDefaultTemplate?: number;
@@ -492,6 +496,9 @@ router.patch("/:id/general-settings", async (req, res) => {
   }
   if (printShowTimestamp !== undefined) updates.printShowTimestamp = !!printShowTimestamp;
   if (printShowZatcaBrand !== undefined) updates.printShowZatcaBrand = !!printShowZatcaBrand;
+  if (printQuotationShowQr !== undefined) updates.printQuotationShowQr = !!printQuotationShowQr;
+  if (printQuotationShowCurrencyName !== undefined) updates.printQuotationShowCurrencyName = !!printQuotationShowCurrencyName;
+  if (printQuotationShowCustomerAddress !== undefined) updates.printQuotationShowCustomerAddress = !!printQuotationShowCustomerAddress;
   if (bankAccountText !== undefined) {
     const bt = bankAccountText === null ? "" : String(bankAccountText).trim().slice(0, 500);
     updates.bankAccountText = bt === "" ? null : bt;

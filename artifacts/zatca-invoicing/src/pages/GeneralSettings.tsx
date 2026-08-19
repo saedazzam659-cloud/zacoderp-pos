@@ -3610,6 +3610,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const [returnFooter,  setReturnFooter]  = useState<string>(company.printFooterReturn  ?? DEFAULT_RETURN);
   const [showTimestamp, setShowTimestamp] = useState<boolean>(company.printShowTimestamp !== false);
   const [showZatca,     setShowZatca]     = useState<boolean>(company.printShowZatcaBrand !== false);
+  const [quotationShowQr, setQuotationShowQr] = useState<boolean>(company.printQuotationShowQr === true);
+  const [quotationShowCurrencyName, setQuotationShowCurrencyName] = useState<boolean>(company.printQuotationShowCurrencyName !== false);
+  const [quotationShowCustomerAddress, setQuotationShowCustomerAddress] = useState<boolean>(company.printQuotationShowCustomerAddress !== false);
   const [bankAccountText, setBankAccountText] = useState<string>(company.bankAccountText ?? "");
 
   // ─── Template visibility / default selection ─────────────────────────
@@ -3655,6 +3658,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setReturnFooter(company.printFooterReturn ?? DEFAULT_RETURN);
     setShowTimestamp(company.printShowTimestamp !== false);
     setShowZatca(company.printShowZatcaBrand !== false);
+    setQuotationShowQr(company.printQuotationShowQr === true);
+    setQuotationShowCurrencyName(company.printQuotationShowCurrencyName !== false);
+    setQuotationShowCustomerAddress(company.printQuotationShowCustomerAddress !== false);
     setBankAccountText(company.bankAccountText ?? "");
     const raw = company.printEnabledTemplates;
     setEnabledIds(Array.isArray(raw) && raw.length > 0
@@ -3665,7 +3671,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setDefaultOrderTplId(asTplId(company.printDefaultTemplateOrder));
     setDefaultRetTplId(asTplId(company.printDefaultTemplateReturn));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printEnabledTemplates, company.printDefaultTemplate, company.printDefaultTemplateQuotation, company.printDefaultTemplateOrder, company.printDefaultTemplateReturn, DEFAULT_INVOICE, DEFAULT_RETURN]);
+  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printQuotationShowQr, company.printQuotationShowCurrencyName, company.printQuotationShowCustomerAddress, company.printEnabledTemplates, company.printDefaultTemplate, company.printDefaultTemplateQuotation, company.printDefaultTemplateOrder, company.printDefaultTemplateReturn, DEFAULT_INVOICE, DEFAULT_RETURN]);
 
   function toggleTemplate(id: number) {
     setEnabledIds(prev => {
@@ -3705,6 +3711,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           printFooterReturn:  returnFooter.trim(),
           printShowTimestamp: showTimestamp,
           printShowZatcaBrand: showZatca,
+          printQuotationShowQr: quotationShowQr,
+          printQuotationShowCurrencyName: quotationShowCurrencyName,
+          printQuotationShowCustomerAddress: quotationShowCustomerAddress,
           bankAccountText: bankAccountText.trim() || null,
           // Send `null` when all templates are enabled so we don't bloat
           // the row with a long array that means the same as the default.
@@ -3729,6 +3738,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             printFooterReturn:     data.printFooterReturn,
             printShowTimestamp:    data.printShowTimestamp,
             printShowZatcaBrand:   data.printShowZatcaBrand,
+            printQuotationShowQr:              data.printQuotationShowQr,
+            printQuotationShowCurrencyName:    data.printQuotationShowCurrencyName,
+            printQuotationShowCustomerAddress: data.printQuotationShowCustomerAddress,
             bankAccountText:       data.bankAccountText,
             printEnabledTemplates: data.printEnabledTemplates,
             printDefaultTemplate:  data.printDefaultTemplate,
@@ -3749,6 +3761,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setReturnFooter(DEFAULT_RETURN);
     setShowTimestamp(true);
     setShowZatca(true);
+    setQuotationShowQr(false);
+    setQuotationShowCurrencyName(true);
+    setQuotationShowCustomerAddress(true);
     setBankAccountText("");
     setEnabledIds(new Set(ALL_IDS));
     setDefaultTplId(1);
@@ -3862,6 +3877,39 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
               <p className="text-xs text-muted-foreground">{t("pages.generalSettings.printFooterShowZatcaHint")}</p>
             </div>
             <Switch checked={showZatca} onCheckedChange={setShowZatca} />
+          </div>
+        </div>
+
+        <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
+          <div>
+            <h3 className="font-semibold text-sm">محتوى عرض السعر المطبوع</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              تحكم في العناصر الظاهرة في عروض الأسعار فقط. الإعداد الافتراضي يخفي QR ويُظهر اسم العملة وعنوان العميل.
+            </p>
+          </div>
+
+          <div className="border-t pt-4 flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="font-medium text-sm">إظهار رمز QR في عرض السعر</div>
+              <p className="text-xs text-muted-foreground">مخفي افتراضيًا لأن عرض السعر ليس فاتورة ضريبية.</p>
+            </div>
+            <Switch checked={quotationShowQr} onCheckedChange={setQuotationShowQr} />
+          </div>
+
+          <div className="border-t pt-4 flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="font-medium text-sm">إظهار اسم العملة بجانب الإجمالي</div>
+              <p className="text-xs text-muted-foreground">يستخدم الاسم العربي أو الإنجليزي المسجل في شاشة العملات حسب لغة الطباعة.</p>
+            </div>
+            <Switch checked={quotationShowCurrencyName} onCheckedChange={setQuotationShowCurrencyName} />
+          </div>
+
+          <div className="border-t pt-4 flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="font-medium text-sm">إظهار عنوان العميل</div>
+              <p className="text-xs text-muted-foreground">يعرض بيانات العنوان المسجلة في بطاقة العميل داخل رأس عرض السعر.</p>
+            </div>
+            <Switch checked={quotationShowCustomerAddress} onCheckedChange={setQuotationShowCustomerAddress} />
           </div>
         </div>
       </div>

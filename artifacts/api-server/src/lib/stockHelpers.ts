@@ -140,7 +140,7 @@ export async function upsertBalance(
   warehouseId: number,
   deltaQty: number,
   costPrice: number
-) {
+): Promise<number> {
   const [existing] = await db.select().from(stockBalanceTable).where(
     and(
       eq(stockBalanceTable.companyId, companyId),
@@ -154,6 +154,7 @@ export async function upsertBalance(
       qty: String(deltaQty),
       avgCost: String(costPrice),
     });
+    return deltaQty;
   } else {
     const oldQty  = Number(existing.qty);
     const oldCost = Number(existing.avgCost);
@@ -168,6 +169,7 @@ export async function upsertBalance(
     await db.update(stockBalanceTable)
       .set({ qty: String(newQty), avgCost: String(newAvg), updatedAt: new Date() })
       .where(eq(stockBalanceTable.id, existing.id));
+    return newQty;
   }
 }
 

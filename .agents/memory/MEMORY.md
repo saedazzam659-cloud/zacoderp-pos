@@ -150,3 +150,4 @@
 - [ZacodeHR employee portal](zacodehr-portal.md) — separate HMAC auth realm on employees row (fail closed on empty SESSION_SECRET), seat cap = count(login_username) vs max_hr_users w/ post-write revert, punch reuses recalcDay, 401 redirect needs BASE_URL.
 - [External DB storage routing](external-db-storage-routing.md) — SA-only module routing (archive first); tables self-created via lazy DDL (ensureSchema won't); route EVERY consumer incl. delivery-receipt counts.
 - [Per-device demo isolation + cookie binding](demo-device-link-lifecycle.md) — each browser gets its own demo workspace (clone+shadow); every bearer path incl. shadow must match the HttpOnly cookie; failed login = release (delete) link, never revoke.
+- [Remote agent DB latency](remote-agent-db-latency.md) — batch read-only SQL round trips; never batch stock writes without one transaction plus conditional quantity/lot reservation.

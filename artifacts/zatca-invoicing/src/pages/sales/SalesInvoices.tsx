@@ -10,11 +10,26 @@ import { Input } from "@/components/ui/input";
 import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy, Printer, FileSpreadsheet, FileDown, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SalesPrintModal from "./SalesPrintModal";
-import { TablePagination, usePagination } from "@/components/TablePagination";
+import { TablePagination, type PageSize } from "@/components/TablePagination";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+const SERVER_PAGE_SIZE_OPTIONS: readonly PageSize[] = [10, 50, 100];
+
+type InvoicePage = {
+  items: any[];
+  page: number;
+  pageSize: number;
+  total: number;
+  pageCount: number;
+  summary: {
+    totalInvoices: number;
+    postedInvoices: number;
+    draftInvoices: number;
+    totalPostedAmount: number;
+  };
+};
 
 export default function SalesInvoices() {
   const { user, token } = useAuth() as any;
@@ -34,7 +49,10 @@ export default function SalesInvoices() {
   };
 
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(10);
   // Multi-branch filter — empty array = "all branches the user can see".
   // Only managers (admin/superadmin/viewAllBranches=true) actually see the
   // picker UI; for restricted users the array stays empty and the backend
@@ -54,11 +72,14 @@ export default function SalesInvoices() {
   async function openPrint(inv: any, opts?: { template?: "a4" | "thermal"; autoPrint?: boolean }) {
     try {
       const res = await fetch(`${API}/api/sales/sales-invoices/${inv.id}`, { headers: authH });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? "تعذّر تحميل الفاتورة للطباعة");
+      }
       const full = await res.json();
-      const customer = customers.find((c: any) => c.id === inv.customerId) ?? null;
       setPrintTemplate(opts?.template ?? salesTemplatePref);
       setAutoPrintOnOpen(!!opts?.autoPrint);
-      setPrintData({ type: "invoice", doc: full, lines: full.lines ?? [], customer, company: user?.company ?? null });
+      setPrintData({ type: "invoice", doc: full, lines: full.lines ?? [], customer: full.customer ?? null, company: user?.company ?? null });
     } catch (e: any) {
       toast({ title: e?.message ?? "تعذّر تحميل الفاتورة للطباعة", variant: "destructive" });
     }
@@ -67,26 +88,52 @@ export default function SalesInvoices() {
   const autoPrintHandledRef = useRef(false);
 
   const branchKey = branchIds.length ? branchIds.slice().sort((a,b)=>a-b).join(",") : "all";
-  const { data: invoices = [], isLoading } = useQuery<any[]>({
-    queryKey: ["sales-invoices", cid, branchKey],
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [cid]);
+
+  const { data: invoicePage, isLoading } = useQuery<InvoicePage>({
+    queryKey: ["sales-invoices", "paged", cid, branchKey, page, pageSize, debouncedSearch, filterStatus],
     queryFn: async () => {
       const params = new URLSearchParams();
+      params.set("paged", "1");
+      params.set("page", String(page));
+      params.set("pageSize", String(pageSize));
+      params.set("status", filterStatus);
+      if (debouncedSearch) params.set("search", debouncedSearch);
       if (cid) params.set("companyId", String(cid));
       if (branchIds.length) params.set("branchIds", branchIds.join(","));
-      const url = params.toString()
-        ? `${API}/api/sales/sales-invoices?${params.toString()}`
-        : `${API}/api/sales/sales-invoices`;
-      const r = await fetch(url, { headers: authH });
+      const r = await fetch(`${API}/api/sales/sales-invoices?${params.toString()}`, { headers: authH });
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        throw new Error(body?.error ?? "تعذّر تحميل فواتير المبيعات");
+      }
       return r.json();
     },
     enabled: !!user,
   });
+  const invoices = invoicePage?.items ?? [];
+  const summary = invoicePage?.summary ?? {
+    totalInvoices: 0,
+    postedInvoices: 0,
+    draftInvoices: 0,
+    totalPostedAmount: 0,
+  };
 
-  const { data: customers = [] } = useQuery<any[]>({
-    queryKey: ["customers", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
-    enabled: !!user,
-  });
+  useEffect(() => {
+    if (invoicePage && page > invoicePage.pageCount) {
+      setPage(Math.max(1, invoicePage.pageCount));
+    }
+  }, [invoicePage, page]);
 
   // Plan-based monthly invoice quota — invalidated on `subscription_changed`
   // SSE (handled globally by AuthContext) so SuperAdmin upgrades reflect
@@ -122,16 +169,16 @@ export default function SalesInvoices() {
 
   // Pick up the auto-print hint planted by SalesDocumentForm via
   // sessionStorage when redirecting back here after save. We wait
-  // until invoices and customers have loaded so the invoice lookup
-  // and customer enrichment in openPrint both succeed, then clear
+  // Load the saved invoice directly by id. The detail response includes the
+  // tenant-scoped customer needed by print templates, so auto-print neither
+  // depends on the current page nor downloads the entire customer directory.
   // the marker so refresh / re-visits don't re-print. We use
   // sessionStorage rather than window.history.state because
   // wouter's navigate() pushes a fresh state object which would
   // otherwise wipe the hint.
   useEffect(() => {
     if (autoPrintHandledRef.current) return;
-    if (!invoices || invoices.length === 0) return;
-    if (!customers) return;
+    if (!user || !token) return;
     let hint: { id: number; template?: string; ts?: number } | null = null;
     try {
       const raw = sessionStorage.getItem("autoPrintSalesInvoice");
@@ -143,13 +190,11 @@ export default function SalesInvoices() {
     const id = hint?.id;
     if (!id) return;
     const tpl: "a4" | "thermal" = hint?.template === "thermal" ? "thermal" : "a4";
-    const inv = invoices.find((x: any) => Number(x.id) === Number(id));
-    if (!inv) return;
     autoPrintHandledRef.current = true;
     try { sessionStorage.removeItem("autoPrintSalesInvoice"); } catch { /* noop */ }
-    openPrint(inv, { template: tpl, autoPrint: true });
+    openPrint({ id }, { template: tpl, autoPrint: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices, customers]);
+  }, [user, token]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["sales-invoices"] });
 
@@ -182,18 +227,25 @@ export default function SalesInvoices() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  const cusMap = Object.fromEntries(customers.map((c: any) => [c.id, c.nameAr ?? c.nameEn]));
+  const cusMap = Object.fromEntries(
+    invoices.map((invoice: any) => [invoice.customerId, invoice.customerName ?? "—"]),
+  );
 
-  const filtered = invoices.filter(inv => {
-    const q = search.toLowerCase();
-    const matchText = !search || (inv.docNumber ?? "").includes(q) || (cusMap[inv.customerId] ?? "").includes(search);
-    const matchStatus = filterStatus === "all" || inv.status === filterStatus;
-    return matchText && matchStatus;
-  });
-
-  const pager = usePagination(filtered);
-
-  const totalPosted = invoices.filter(i => i.status === "posted").reduce((s, i) => s + Number(i.totalAmount || 0), 0);
+  // Filtering and paging are server-driven on this high-volume screen. The
+  // current page remains the export set so exports still match visible rows.
+  const filtered = invoices;
+  const pager = {
+    page,
+    pageSize,
+    pageCount: invoicePage?.pageCount ?? 1,
+    total: invoicePage?.total ?? 0,
+    pagedItems: invoices,
+    setPage,
+    setPageSize: (next: PageSize) => {
+      setPageSize(next);
+      setPage(1);
+    },
+  };
 
   // ─── Excel / PDF export of the currently filtered list ──────────────────
   // We export `filtered` (search + status filters honoured) instead of the
@@ -348,10 +400,10 @@ export default function SalesInvoices() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: t("salesInvoices.totalInvoices"), value: invoices.length, color: "text-primary" },
-          { label: t("salesInvoices.posted"),        value: invoices.filter(i => i.status === "posted").length, color: "text-green-700" },
-          { label: t("salesInvoices.drafts"),        value: invoices.filter(i => i.status === "draft").length,  color: "text-amber-700" },
-          { label: t("salesInvoices.totalSales"),    value: `${fmt(totalPosted)} ${t("common.currencySAR")}`,    color: "text-primary" },
+          { label: t("salesInvoices.totalInvoices"), value: summary.totalInvoices, color: "text-primary" },
+          { label: t("salesInvoices.posted"),        value: summary.postedInvoices, color: "text-green-700" },
+          { label: t("salesInvoices.drafts"),        value: summary.draftInvoices,  color: "text-amber-700" },
+          { label: t("salesInvoices.totalSales"),    value: `${fmt(summary.totalPostedAmount)} ${t("common.currencySAR")}`, color: "text-primary" },
         ].map((c, i) => (
           <div key={i} className="rounded-xl border bg-card p-4 shadow-sm">
             <p className="text-xs text-muted-foreground mb-1">{c.label}</p>
@@ -367,10 +419,19 @@ export default function SalesInvoices() {
         </div>
         {/* Multi-branch filter — auto-hides when the user has access to a
             single branch only (preserving the legacy single-branch UI). */}
-        <MultiBranchFilter value={branchIds} onChange={setBranchIds} />
+        <MultiBranchFilter
+          value={branchIds}
+          onChange={(next) => {
+            setBranchIds(next);
+            setPage(1);
+          }}
+        />
         <div className="flex gap-1">
           {["all", "draft", "posted", "cancelled"].map(s => (
-            <button key={s} onClick={() => setFilterStatus(s)}
+            <button key={s} onClick={() => {
+              setFilterStatus(s);
+              setPage(1);
+            }}
               className={cn("text-xs rounded-full px-3 py-1 border font-medium transition-colors",
                 filterStatus === s ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted"
               )}>
@@ -483,6 +544,7 @@ export default function SalesInvoices() {
               total={pager.total}
               onPageChange={pager.setPage}
               onPageSizeChange={pager.setPageSize}
+              pageSizeOptions={SERVER_PAGE_SIZE_OPTIONS}
               itemLabel={t("salesInvoices.itemLabel", { defaultValue: "فاتورة" })}
             />
           </div>
@@ -647,6 +709,7 @@ export default function SalesInvoices() {
             total={pager.total}
             onPageChange={pager.setPage}
             onPageSizeChange={pager.setPageSize}
+            pageSizeOptions={SERVER_PAGE_SIZE_OPTIONS}
             itemLabel={t("salesInvoices.itemLabel", { defaultValue: "فاتورة" })}
           />
         )}

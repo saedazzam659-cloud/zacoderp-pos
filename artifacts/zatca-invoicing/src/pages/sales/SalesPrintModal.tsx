@@ -10,6 +10,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 import { getWorldCountryName } from "@/lib/worldCountries";
+import {
+  buildQuotationCustomerAddress,
+  getQuotationPrintOptions,
+  resolveQuotationCurrencyName,
+} from "@/lib/quotationPrintOptions";
 import QRCode from "qrcode";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -50,6 +55,11 @@ const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, 
 // grouping/decimal separators), avoiding the Arabic locale's separators.
 const EN_NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtEn = (n: any) => EN_NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+const escapePrintHtml = (value: unknown) => String(value ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;");
 // Build the Arabic-name → English-name lookup map from an inventory item list.
 // Keys are normalised (trimmed + lower-cased) Arabic names; only items that
 // actually carry an English name are included.
@@ -144,6 +154,7 @@ interface FullTotals {
   itemsCount: number;
   currency: string;
   currencySym: string;
+  currencyName: string;
   amountWords: string;
   // ── Base-currency (SAR) equivalents — ZATCA requires the VAT amount (and we
   // also surface the grand total) in the company's base currency whenever a
@@ -218,10 +229,15 @@ function computeFullTotals(doc: any, lines: any[], printType?: SalesPrintType): 
   const isTaxDoc = resolvedType ? (resolvedType === "invoice" || resolvedType === "return") : true;
   const vatAmountBase = vatAmount * exchangeRate;
   const grandTotalBase = grandTotal * exchangeRate;
+  const printData = doc?.__pd as PrintData | undefined;
+  const printLang: PrintLang = (printData as any)?._lang === "en" ? "en" : "ar";
+  const currencyName = resolvedType === "quotation"
+    ? resolveQuotationCurrencyName(printData?.company, printData?.currency ?? doc?.currency, printLang)
+    : "";
   return {
     subtotalPreDiscount, discountTotal, netPreVat, vatAmount, grandTotal,
     totalQty, totalFreeQty, itemsCount: (lines ?? []).length, currency,
-    currencySym: currencySymbol(currency),
+    currencySym: currencySymbol(currency), currencyName,
     amountWords: numberToArabicWords(grandTotal),
     exchangeRate, baseCurrency, baseSym: currencySymbol(baseCurrency),
     isForeign, vatAmountBase, grandTotalBase,
@@ -258,13 +274,14 @@ function sarEqRowsHtml(
 // provides the CSS row class (so each template keeps its native styling)
 // plus an optional grand‑row class for the final highlighted line.
 function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "grand"): string {
+  const currencyName = t.currencyName ? ` <span class="currency-name">(${escapePrintHtml(t.currencyName)})</span>` : "";
   return `
     <div class="${rowClass}" style="font-size:9px;opacity:.7;"><span>نوع التسعير</span><span>${vatModeLabel(t.priceIncludesVat)}</span></div>
     <div class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
-    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
+    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}${currencyName}</span></div>`;
 }
 
 // Universal summary footer (tafqeet + total items + total qty inc. free) shown
@@ -341,10 +358,15 @@ async function buildZatcaQrDataUrl(company: any, doc: any, t: FullTotals): Promi
   } catch { return ""; }
 }
 
+function shouldShowQr(d: PrintData): boolean {
+  return d?.type !== "quotation" || getQuotationPrintOptions(d.company).showQr;
+}
+
 // Reusable QR rendering helper — uses the real ZATCA data URL when available,
 // falls back to a labelled placeholder so layouts don't collapse during
 // development / when QRCode generation fails.
 function qrImgHtml(d: PrintData, opts: { size?: number; border?: string; bg?: string; color?: string } = {}): string {
+  if (!shouldShowQr(d)) return "";
   const size = opts.size ?? 110;
   const url = (d as any)._qrDataUrl as string | undefined;
   if (url) {
@@ -371,6 +393,12 @@ export interface PrintData {
   lines: any[];
   customer: any;
   company: any;
+  currency?: {
+    code?: string | null;
+    nameAr?: string | null;
+    nameEn?: string | null;
+    symbol?: string | null;
+  } | null;
 }
 
 function docTitle(type: SalesPrintType) {
@@ -447,14 +475,34 @@ function logoCenterHtml(c: any, maxH = 50, maxW = 150): string {
   return `<div style="text-align:center;margin-bottom:4px;"><img src="${safeLogo}" alt="" style="max-height:${maxH}px;max-width:${maxW}px;object-fit:contain;display:inline-block;" /></div>`;
 }
 
-function customerBlock(cu: any) {
-  if (!cu) return "<div>—</div>";
+function quotationCustomerAddressText(
+  d: PrintData,
+  language: "ar" | "en" = "ar",
+): string {
+  if (d.type !== "quotation" || !getQuotationPrintOptions(d.company).showCustomerAddress) return "";
+  const countryCode = String(
+    d.customer?.country ?? d.doc?.buyerCountry ?? "SA",
+  ).toUpperCase();
+  const countryName = countryCode !== "SA"
+    ? getWorldCountryName(countryCode, language)
+    : undefined;
+  return buildQuotationCustomerAddress(d.customer, d.doc, language, countryName);
+}
+
+function customerBlock(cu: any, d?: PrintData) {
+  const isQuotation = d?.type === "quotation";
+  const language: "ar" | "en" = (d as any)?._lang === "en" ? "en" : "ar";
+  const quotationAddress = d ? quotationCustomerAddressText(d, language) : "";
+  const displayName = cu?.nameAr ?? cu?.nameEn ?? d?.doc?.buyerName ?? "—";
+  if (!cu && !d?.doc?.buyerName) return "<div>—</div>";
   return `
     <div>
-      <div style="font-weight:600;">${cu.nameAr ?? cu.nameEn ?? "—"}</div>
-      ${cu.vatNumber ? `<div>الرقم الضريبي: ${cu.vatNumber}</div>` : ""}
-      ${cu.phone     ? `<div>هاتف: ${cu.phone}</div>` : ""}
-      ${cu.city      ? `<div>${cu.city}</div>` : ""}
+      <div style="font-weight:600;">${displayName}</div>
+      ${(cu?.vatNumber ?? d?.doc?.buyerVatNumber) ? `<div>الرقم الضريبي: ${cu?.vatNumber ?? d?.doc?.buyerVatNumber}</div>` : ""}
+      ${cu?.phone ? `<div>هاتف: ${cu.phone}</div>` : ""}
+      ${isQuotation
+        ? (quotationAddress ? `<div>${escapePrintHtml(quotationAddress)}</div>` : "")
+        : (cu?.city ? `<div>${cu.city}</div>` : "")}
     </div>`;
 }
 
@@ -518,6 +566,9 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "", inc = fal
 
 function totalsBlock(doc: any, lines: any[], align: "right" | "left" = "right") {
   const t = computeFullTotals(doc, lines);
+  const printData = doc.__pd ?? { _qrDataUrl: (doc as any)._qrDataUrl };
+  const showQr = printData?.type !== "quotation" || getQuotationPrintOptions(printData?.company).showQr;
+  const currencyName = t.currencyName ? ` <span class="currency-name">(${escapePrintHtml(t.currencyName)})</span>` : "";
   const rows = `
     <style>
       .__totalsRow { display:flex; justify-content:space-between; margin-bottom:6px; color:#374151; font-size:12px; }
@@ -528,13 +579,13 @@ function totalsBlock(doc: any, lines: any[], align: "right" | "left" = "right") 
     <div class="__totalsRow"><span style="color:#666">مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
     <div class="__totalsRow"><span style="color:#666">الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
     <div class="__totalsRow"><span style="color:#666">ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
-    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
+    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}${currencyName}</span></div>`;
   return `
     <div style="display:flex;justify-content:${align === "right" ? "flex-start" : "flex-end"};gap:14px;align-items:flex-start;">
-      <div style="${align === "right" ? "" : "margin-left:auto;"}">
-        ${qrImgHtml(doc.__pd ?? { _qrDataUrl: (doc as any)._qrDataUrl }, { size: 110 })}
+      ${showQr ? `<div style="${align === "right" ? "" : "margin-left:auto;"}">
+        ${qrImgHtml(printData, { size: 110 })}
         <div style="font-size:9px;color:#666;text-align:center;margin-top:4px;">رمز QR — ZATCA</div>
-      </div>
+      </div>` : ""}
       <div style="min-width:280px;border:1px solid #ddd;border-radius:6px;padding:10px 14px;">${rows}${summaryFooterHtml(t)}</div>
     </div>`;
 }
@@ -566,7 +617,7 @@ function template1(d: PrintData): string {
     </div>
   </div>
   <div class="parties">
-    <div class="section"><h4>بيانات العميل</h4>${customerBlock(customer)}</div>
+    <div class="section"><h4>بيانات العميل</h4>${customerBlock(customer, d)}</div>
     <div class="section"><h4>بيانات المنشأة</h4>${companyBlock(company)}</div>
   </div>
   <div class="section">
@@ -622,7 +673,7 @@ function template2(d: PrintData): string {
     </div>
   </div>
   <div class="two-col">
-    <div class="card"><h4>العميل</h4>${customerBlock(customer)}</div>
+    <div class="card"><h4>العميل</h4>${customerBlock(customer, d)}</div>
     <div class="card">
       <h4>تفاصيل الوثيقة</h4>
       ${d.type !== "quotation" ? `<div>النوع: <span class="badge">${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</span></div>` : (doc.validUntil ? `<div>صالح حتى: <span class="badge">${doc.validUntil}</span></div>` : "")}
@@ -691,15 +742,15 @@ function template3(d: PrintData): string {
   </div>
   <div class="body">
     <div class="party-grid">
-      <div class="party-box"><h4>العميل</h4>${customerBlock(customer)}</div>
+      <div class="party-box"><h4>العميل</h4>${customerBlock(customer, d)}</div>
       <div class="party-box"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
     ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:space-between;margin-top:16px;gap:14px;align-items:flex-start;">
-      <div style="text-align:center;">
+      ${shouldShowQr(d) ? `<div style="text-align:center;">
         ${qrImgHtml(d, { size: 110 })}
         <div style="font-size:9px;color:#1e3a5f;margin-top:4px;font-weight:700;">رمز QR — ZATCA</div>
-      </div>
+      </div>` : ""}
       <div style="flex:1;max-width:340px;">
         <div class="totals-box">${totalRowsHtml(computeFullTotals(doc, lines), "totals-row", "total")}</div>
         ${summaryFooterHtml(computeFullTotals(doc, lines))}
@@ -761,7 +812,7 @@ function template4(d: PrintData): string {
   <div class="two-col">
     <div class="box">
       <div class="section-title">بيانات العميل</div>
-      ${customerBlock(customer)}
+      ${customerBlock(customer, d)}
     </div>
     <div class="box">
       <div class="section-title">تفاصيل</div>
@@ -774,10 +825,10 @@ function template4(d: PrintData): string {
     ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
   </div>
   <div style="display:flex;justify-content:space-between;margin-top:12px;gap:14px;align-items:flex-start;">
-    <div style="text-align:center;">
+    ${shouldShowQr(d) ? `<div style="text-align:center;">
       ${qrImgHtml(d, { size: 110, border: "1.5px solid #d97706", bg: "#fff" })}
       <div style="font-size:9px;color:#92400e;margin-top:4px;font-weight:700;">رمز QR — ZATCA</div>
-    </div>
+    </div>` : ""}
     <div style="flex:1;max-width:340px;">
       <div class="total-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
       ${summaryFooterHtml(computeFullTotals(doc, lines))}
@@ -860,17 +911,17 @@ function template5(d: PrintData): string {
     </div>
     <div>
       <div class="party-head">المشتري / العميل — Buyer</div>
-      <div class="party-cell">${customerBlock(customer)}</div>
+      <div class="party-cell">${customerBlock(customer, d)}</div>
     </div>
   </div>
 
   ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
 
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:16px;gap:14px;">
-    <div style="text-align:center;">
+    ${shouldShowQr(d) ? `<div style="text-align:center;">
       <div style="font-size:10px;color:#1a6e3d;font-weight:700;margin-bottom:6px;">رمز QR للتحقق — ZATCA</div>
       ${qrImgHtml(d, { size: 110, border: "1.5px solid #1a6e3d", bg: "#f0fdf4", color: "#1a6e3d" })}
-    </div>
+    </div>` : ""}
     <div style="flex:1;max-width:360px;">
       <div class="totals">${totalRowsHtml(computeFullTotals(doc, lines), "row", "grand")}</div>
       ${summaryFooterHtml(computeFullTotals(doc, lines))}
@@ -907,6 +958,7 @@ function footerSettings(company: any, isReturn: boolean) {
 function template6(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const isReturn = d.type === "return";
+  const quotationAddress = quotationCustomerAddressText(d, "ar");
   const accent = isReturn ? "#b91c1c" : "#111";
   const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
   const itemsRows = lines.map((l) => {
@@ -984,6 +1036,7 @@ function template6(d: PrintData): string {
       <div><b>العميل:</b> ${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
       ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
       ${customer?.phone     ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
+      ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
       ${d.type !== "quotation"
         ? `<div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>`
         : ""}
@@ -1012,10 +1065,10 @@ function template6(d: PrintData): string {
 
     ${doc.notes ? `<div class="sep"></div><div class="info"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
 
-    <div class="qr-box">
+    ${shouldShowQr(d) ? `<div class="qr-box">
       ${qrImgHtml(d, { size: 110 })}
       <div style="margin-top:3px;">رمز ZATCA — تحقّق من الفاتورة</div>
-    </div>
+    </div>` : ""}
 
     <div class="sep-solid"></div>
     <div class="footer">
@@ -1030,6 +1083,7 @@ function template6(d: PrintData): string {
 function template7(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const isReturn = d.type === "return";
+  const quotationAddress = quotationCustomerAddressText(d, "ar");
   const accent = isReturn ? "#dc2626" : "#0f766e";
   const accentSoft = isReturn ? "#fee2e2" : "#ccfbf1";
   const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
@@ -1118,6 +1172,7 @@ function template7(d: PrintData): string {
         <div><b>العميل:</b> ${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
         ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
         ${customer?.phone ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
+        ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
         ${d.type !== "quotation"
           ? `<div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>`
           : ""}
@@ -1138,10 +1193,10 @@ function template7(d: PrintData): string {
 
       ${doc.notes ? `<div class="info-card" style="margin-top:8px;"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
 
-      <div class="qr-box">
+      ${shouldShowQr(d) ? `<div class="qr-box">
         ${qrImgHtml(d, { size: 105, color: accent })}
         <div class="qr-cap">امسح للتحقق من الفاتورة</div>
-      </div>
+      </div>` : ""}
     </div>
 
     <div class="footer">
@@ -1206,15 +1261,15 @@ function template8(d: PrintData): string {
     <div class="meta-cell"><div class="k">${d.type === "quotation" ? "صلاحية" : "الدفع"}</div><div class="v">${d.type === "quotation" ? (doc.validUntil ?? "—") : (doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل")}</div></div>
   </div>
   <div class="parties">
-    <div class="party"><h4>إلى</h4>${customerBlock(customer)}</div>
+    <div class="party"><h4>إلى</h4>${customerBlock(customer, d)}</div>
     <div class="party"><h4>من</h4>${companyBlock(company)}</div>
   </div>
   ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
   <div class="totals" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
-    <div style="text-align:center;">
+    ${shouldShowQr(d) ? `<div style="text-align:center;">
       ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
       <div style="font-size:9px;color:#0f172a;margin-top:4px;letter-spacing:2px;text-transform:uppercase;">QR — ZATCA</div>
-    </div>
+    </div>` : ""}
     <div class="totals-card" style="flex:1;max-width:360px;">
       ${totalRowsHtml(computeFullTotals(doc, lines), "totals-row", "grand")}
       ${summaryFooterHtml(computeFullTotals(doc, lines))}
@@ -1285,15 +1340,15 @@ function template9(d: PrintData): string {
         ${d.type !== "quotation" ? `<span>الدفع: <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span>صالح حتى: <b>${doc.validUntil}</b></span>` : "")}
       </div>
       <div class="two">
-        <div class="panel"><h4>العميل</h4>${customerBlock(customer)}</div>
+        <div class="panel"><h4>العميل</h4>${customerBlock(customer, d)}</div>
         <div class="panel"><h4>المنشأة</h4>${companyBlock(company)}</div>
       </div>
       ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
       <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
-        <div style="text-align:center;">
+        ${shouldShowQr(d) ? `<div style="text-align:center;">
           ${qrImgHtml(d, { size: 110, border: "1px solid #d4af37", bg: "#fff" })}
           <div style="font-size:9px;color:#d4af37;margin-top:4px;font-weight:700;letter-spacing:1px;">QR — ZATCA</div>
-        </div>
+        </div>` : ""}
         <div style="flex:1;max-width:360px;">
           <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
           ${summaryFooterHtml(computeFullTotals(doc, lines))}
@@ -1365,15 +1420,15 @@ function template10(d: PrintData): string {
       ${d.type !== "quotation" ? `<span>الدفع <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span>صالح حتى <b>${doc.validUntil}</b></span>` : "")}
     </div>
     <div class="two">
-      <div class="card"><h4>العميل</h4>${customerBlock(customer)}</div>
+      <div class="card"><h4>العميل</h4>${customerBlock(customer, d)}</div>
       <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
     ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
-      <div style="text-align:center;">
+      ${shouldShowQr(d) ? `<div style="text-align:center;">
         ${qrImgHtml(d, { size: 110, bg: "#fff" })}
         <div style="font-size:9px;margin-top:4px;font-weight:700;">QR — ZATCA</div>
-      </div>
+      </div>` : ""}
       <div style="flex:1;max-width:360px;">
         <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
         ${summaryFooterHtml(computeFullTotals(doc, lines))}
@@ -1443,15 +1498,15 @@ function template11(d: PrintData): string {
       ${d.type !== "quotation" ? `<span class="pill">الدفع <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : "")}
     </div>
     <div class="two">
-      <div class="card"><h4>العميل</h4>${customerBlock(customer)}</div>
+      <div class="card"><h4>العميل</h4>${customerBlock(customer, d)}</div>
       <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
     ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
-      <div style="text-align:center;">
+      ${shouldShowQr(d) ? `<div style="text-align:center;">
         ${qrImgHtml(d, { size: 110, bg: "#fff" })}
         <div style="font-size:9px;margin-top:4px;font-weight:700;">QR — ZATCA</div>
-      </div>
+      </div>` : ""}
       <div style="flex:1;max-width:360px;">
         <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
         ${summaryFooterHtml(computeFullTotals(doc, lines))}
@@ -1542,14 +1597,14 @@ function template12(d: PrintData): string {
       </div>
       <div class="cust-card">
         <h4>العميل</h4>
-        ${customerBlock(customer)}
+        ${customerBlock(customer, d)}
       </div>
       ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
       <div class="totals-area" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
-        <div style="text-align:center;">
+        ${shouldShowQr(d) ? `<div style="text-align:center;">
           ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
           <div style="font-size:9px;color:#0f172a;margin-top:4px;font-weight:700;letter-spacing:1px;">QR — ZATCA</div>
-        </div>
+        </div>` : ""}
         <div class="totals-card" style="flex:1;max-width:360px;">
           ${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}
           ${summaryFooterHtml(computeFullTotals(doc, lines))}
@@ -1579,6 +1634,10 @@ function template13(d: PrintData): string {
   const isQuot = d.type === "quotation";
   const english = isReturn ? "Sales Return" : isQuot ? "Quotation" : "Sales Invoice";
   const totals = computeFullTotals(doc, lines);
+  const quotationAddress = quotationCustomerAddressText(d, "ar");
+  const quotationCurrencyHtml = totals.currencyName
+    ? ` <span class="currency-name">(${escapePrintHtml(totals.currencyName)})</span>`
+    : "";
   const docNo = doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
   const safeLogo = safeLogoSrc(company?.logo);
   const GOLD = "#c9a35e";
@@ -1738,7 +1797,9 @@ function template13(d: PrintData): string {
         <div class="name">${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
         ${customer?.vatNumber ? `<div><span style="color:${GOLD_DARK}">الرقم الضريبي:</span> ${customer.vatNumber}</div>` : ""}
         ${customer?.phone     ? `<div><span style="color:${GOLD_DARK}">هاتف:</span> ${customer.phone}</div>` : ""}
-        ${customer?.city      ? `<div><span style="color:${GOLD_DARK}">العنوان:</span> ${customer.city}${customer.country ? ` — ${customer.country}` : ""}</div>` : ""}
+        ${isQuot
+          ? (quotationAddress ? `<div><span style="color:${GOLD_DARK}">العنوان:</span> ${escapePrintHtml(quotationAddress)}</div>` : "")
+          : (customer?.city ? `<div><span style="color:${GOLD_DARK}">العنوان:</span> ${customer.city}${customer.country ? ` — ${customer.country}` : ""}</div>` : "")}
       </div>
     </div>
 
@@ -1746,10 +1807,10 @@ function template13(d: PrintData): string {
 
     <div class="bottom">
       <div>
-        <div class="qr-card">
+        ${shouldShowQr(d) ? `<div class="qr-card">
           ${qrImgHtml(d, { size: 120, border: `1px solid ${GOLD}`, bg: "#fff", color: INK })}
           <div class="lbl">رمز QR — ZATCA</div>
-        </div>
+        </div>` : ""}
         <div class="tafqeet-card">
           <div class="lbl">المبلغ بالحروف — Amount in Words</div>
           <div><b>${numberToArabicWords(totals.grandTotal)} ${totals.currency === "SAR" ? "ريال سعودي لا غير" : totals.currency}</b></div>
@@ -1761,7 +1822,7 @@ function template13(d: PrintData): string {
           <div class="row disc"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(totals.discountTotal)} ${totals.currencySym}</span></div>
           <div class="row"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currencySym}</span></div>
           <div class="row vat"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(totals.vatAmount)} ${totals.currencySym}</span></div>
-          <div class="row grand"><span>الصافي شامل الضريبة — Total</span><span class="mono v">${fmt(totals.grandTotal)} ${totals.currencySym}</span></div>
+          <div class="row grand"><span>الصافي شامل الضريبة — Total</span><span class="mono v">${fmt(totals.grandTotal)} ${totals.currencySym}${quotationCurrencyHtml}</span></div>
         </div>
         ${summaryFooterHtml(totals)}
       </div>
@@ -1940,9 +2001,18 @@ function template14(d: PrintData): string {
   const custStreet = (customer as any)?.street ?? (doc as any)?.buyerStreet ?? null;
   const custPostal = (customer as any)?.postalCode ?? (doc as any)?.buyerPostalCode ?? null;
   const custCity   = (customer as any)?.city ?? (doc as any)?.buyerCity ?? null;
-  // Foreign-customer country always prints in ENGLISH (international document
-  // convention), regardless of the print language (Arabic or English).
-  const custCountryName = getWorldCountryName(custCountryCode, "en");
+  const custCountryName = getWorldCountryName(custCountryCode, isEn ? "en" : "ar");
+  const quotationOptions = getQuotationPrintOptions(company);
+  const quotationAddress = isQuot ? quotationCustomerAddressText(d, lang) : "";
+  const quotationCurrencyName = isQuot
+    ? resolveQuotationCurrencyName(company, d.currency ?? (doc as any)?.currency, lang)
+    : "";
+  const quotationCurrencyHtml = quotationCurrencyName
+    ? ` <span class="currency-name">(${escapePrintHtml(quotationCurrencyName)})</span>`
+    : "";
+  const showQrInDocument = !isQuot || quotationOptions.showQr;
+  const bankText = (company?.bankAccountText ?? "").toString().trim();
+  const showQrColumn = showQrInDocument || !!bankText;
   // Footer audit line — only render the "أنشئ بـ" line when we actually have
   // a timestamp; some legacy rows may not carry one.
   const createdAtRaw = doc.createdAt ?? doc.invoiceDate ?? doc.returnDate ?? doc.orderDate ?? doc.quotationDate ?? null;
@@ -2216,7 +2286,13 @@ function template14(d: PrintData): string {
       <div class="col-cu">
         <div class="label">${L.customerInfo}</div>
         <div class="cu-name">${(isEn ? (customer?.nameEn ?? customer?.nameAr) : (customer?.nameAr ?? customer?.nameEn)) ?? doc.buyerName ?? L.none}</div>
-        ${isForeignCust ? `
+        ${isQuot ? `
+          ${(customer?.vatNumber ?? doc.buyerVatNumber)
+            ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+          ${(acctCode && t14ShowAcct) ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
+          ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
+          ${quotationAddress ? `<div class="row"><b>${L.customerAddress}</b><span>${escapePrintHtml(quotationAddress)}</span></div>` : ""}
+        ` : isForeignCust ? `
           ${custStreet ? `<div class="row"><b>${L.street}</b><span class="mono">${custStreet}</span></div>` : ""}
           ${custPostal ? `<div class="row"><b>${L.postalCode}</b><span class="mono">${custPostal}</span></div>` : ""}
           ${custCity ? `<div class="row"><b>${L.city}</b><span class="mono">${custCity}</span></div>` : ""}
@@ -2339,28 +2415,23 @@ function template14(d: PrintData): string {
           ${anchorBottom ? `<div class="bottom-spacer"></div>` : ""}
 
           <!-- Bottom : totals + QR (anchored to the page bottom) ──────── -->
-          <div class="bottom">
+          <div class="bottom" style="${showQrColumn ? "" : "grid-template-columns:1fr;"}">
             <div class="totals-card">
               <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)}</span></div>
               <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)}</span></div>
               <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)}</span></div>
               <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono" style="color:#b45309;">${nf(totals.vatAmount)}</span></div>
-              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}</span><span class="mono">${nf(totals.grandTotal)}</span></div>
+              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}</span><span class="mono">${nf(totals.grandTotal)}${quotationCurrencyHtml}</span></div>
               ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
               ${(company?.printShowItemsSummary !== false) ? (isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)) : ""}
             </div>
-            <div class="qr-col">
-              <div class="qr-card">
+            ${showQrColumn ? `<div class="qr-col">
+              ${showQrInDocument ? `<div class="qr-card">
                 ${qrImgHtml(d, { size: 150 })}
                 <div class="lbl">QR — ZATCA</div>
-              </div>
-              ${(() => {
-                const bt = (company?.bankAccountText ?? "").toString().trim();
-                if (!bt) return "";
-                const esc = bt.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                return `<div class="bank-box"><div class="bank-title">${tl("بيانات الحساب البنكي", "Bank Account Details")}</div><div class="bank-body">${esc}</div></div>`;
-              })()}
-            </div>
+              </div>` : ""}
+              ${bankText ? `<div class="bank-box"><div class="bank-title">${tl("بيانات الحساب البنكي", "Bank Account Details")}</div><div class="bank-body">${escapePrintHtml(bankText)}</div></div>` : ""}
+            </div>` : ""}
           </div>
           ${anchorBottom ? `</div>` : ""}
         </td></tr>
@@ -2390,10 +2461,20 @@ function template15(d: PrintData): string {
   const docNo = doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
   const dateStr = docDate(doc, d.type);
   const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const printLanguage: "ar" | "en" = (d as any)._lang === "en" ? "en" : "ar";
   const custNo = (customer as any)?.code ?? (customer?.id != null ? String(customer.id).padStart(5, "0") : "—");
   const custVat = customer?.vatNumber ?? doc.buyerVatNumber ?? "—";
-  const custAddr = [customer?.city, customer?.district, customer?.street].filter(Boolean).join(" - ")
-                || customer?.address || "—";
+  const quotationOptions = getQuotationPrintOptions(company);
+  const custAddr = isQuot
+    ? (quotationCustomerAddressText(d, printLanguage) || "—")
+    : ([customer?.city, customer?.district, customer?.street].filter(Boolean).join(" - ")
+      || customer?.address || "—");
+  const quotationCurrencyName = isQuot
+    ? resolveQuotationCurrencyName(company, d.currency ?? (doc as any)?.currency, printLanguage)
+    : "";
+  const quotationCurrencyHtml = quotationCurrencyName
+    ? ` <span class="currency-name">(${esc(quotationCurrencyName)})</span>`
+    : "";
   const payLabel = doc.paymentType === "cash" ? "نقداً / Cash" : doc.paymentType === "bank" ? "بنك / Bank" : "آجل / Credit";
   const durOrPay = isQuot || isOrder
     ? { en: "Show<br/>duration", ar: isQuot ? "مدة العرض" : "التسليم", val: esc(doc.validUntil ?? "—") }
@@ -2483,7 +2564,7 @@ function template15(d: PrintData): string {
     ${box(isQuot ? "Quotation No." : "Doc No.", `<span class="mono">${esc(docNo)}</span>`, isQuot ? "رقم العرض" : "رقم المستند", "0 0 110px")}
     ${box("Cust. Name", esc(customer?.nameAr ?? customer?.name ?? doc.customerName ?? "—"), "اسم العميل", "0 0 90px")}
     ${box("Cust. No.", `<span class="mono">${esc(custNo)}</span>`, "رقم العميل")}
-    ${box("Address", esc(custAddr), "العنوان")}
+    ${(!isQuot || quotationOptions.showCustomerAddress) ? box("Address", esc(custAddr), "العنوان") : ""}
     ${box("VAT No.", `<span class="mono">${esc(custVat)}</span>`, "الرقم الضريبية")}
     ${box("Notes", esc(doc.notes ?? ""), "الملاحظات")}
     ${box(durOrPay.en, durOrPay.val, durOrPay.ar)}
@@ -2505,11 +2586,11 @@ function template15(d: PrintData): string {
     <tr><td class="k">الخصم / Discount</td><td class="mono" style="text-align:center;">${fmt(totals.discountTotal)}</td></tr>` : ""}
     <tr><td class="k">الصافي قبل الضريبة<br/>Net (excl. VAT)</td><td class="mono" style="text-align:center;">${fmt(totals.netPreVat)}</td></tr>
     <tr><td class="k">${vatLabel}</td><td class="mono" style="text-align:center;">${fmt(totals.vatAmount)}</td></tr>
-    <tr class="g"><td class="k">الإجمالي شامل الضريبة<br/>Grand Total</td><td class="mono" style="text-align:center;">${fmt(totals.grandTotal)} ${esc(totals.currencySym)}</td></tr>
+    <tr class="g"><td class="k">الإجمالي شامل الضريبة<br/>Grand Total</td><td class="mono" style="text-align:center;">${fmt(totals.grandTotal)} ${esc(totals.currencySym)}${quotationCurrencyHtml}</td></tr>
   </table>
   <div class="bottom">
     <div class="words">المبلغ كتابةً: <b>${esc(totals.amountWords)}</b></div>
-    ${!isQuot && !isOrder ? qrImgHtml(d, { size: 96, border: "1px solid #333" }) : ""}
+    ${(!isOrder && (!isQuot || quotationOptions.showQr)) ? qrImgHtml(d, { size: 96, border: "1px solid #333" }) : ""}
   </div>
   <div class="foot">
     <div class="sig">المستلم / Receiver<div class="ln">&nbsp;</div></div>
@@ -2552,14 +2633,26 @@ export function resolveTemplateIdFor(company: any, type: SalesPrintType): number
  *  «طباعة المحدَّد» flow so it prints the real templates instead of the
  *  legacy report-style layout). Each doc is wrapped in `section.doc` so
  *  the shared one-per-page toggle keeps working. */
-export function renderSalesDocsBundleHtml(datas: PrintData[], company: any): string {
+export async function renderSalesDocsBundleHtml(datas: PrintData[], company: any): Promise<string> {
   const type = datas[0]?.type ?? "quotation";
   const id = resolveTemplateIdFor(company, type);
   const tmpl = TEMPLATES.find(t => t.id === id) ?? TEMPLATES[0];
-  const rendered = datas.map(d => {
+  const rendered = await Promise.all(datas.map(async d => {
     (d.doc as any).__printType = d.type;
+    (d.doc as any).__pd = d;
+    (d as any)._lang = company?.invoicePrintLanguage === "en" ? "en" : "ar";
+    if (shouldShowQr(d)) {
+      try {
+        const totals = computeFullTotals(d.doc, d.lines, d.type);
+        (d as any)._qrDataUrl = await buildZatcaQrDataUrl(d.company, d.doc, totals);
+      } catch {
+        delete (d as any)._qrDataUrl;
+      }
+    } else {
+      delete (d as any)._qrDataUrl;
+    }
     return tmpl.fn(d);
-  });
+  }));
   if (rendered.length === 1) {
     // Single doc → keep the template's own auto-print behavior intact.
     return rendered[0].includes("</body>")
@@ -2780,10 +2873,15 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // the SAR-equivalent block to tax documents (invoice/return) only — every
     // template reads `doc` (directly or via {...doc}) so this reaches them all.
     (data.doc as any).__printType = data.type;
+    (data.doc as any).__pd = data;
+    const shouldBuildQr = data.type !== "quotation" || getQuotationPrintOptions(data.company).showQr;
+    if (!shouldBuildQr) delete (data as any)._qrDataUrl;
     try {
-      const totals = computeFullTotals(data.doc, data.lines);
-      const qr = await buildZatcaQrDataUrl(data.company, data.doc, totals);
-      (data as any)._qrDataUrl = qr;
+      if (shouldBuildQr) {
+        const totals = computeFullTotals(data.doc, data.lines);
+        const qr = await buildZatcaQrDataUrl(data.company, data.doc, totals);
+        (data as any)._qrDataUrl = qr;
+      }
     } catch { /* fallback to placeholder inside qrImgHtml */ }
     // Inject the chosen print language + live English item-name map so the
     // (currently template-14-only) i18n builder can render in English.

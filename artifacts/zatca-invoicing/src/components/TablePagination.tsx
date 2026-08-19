@@ -71,6 +71,7 @@ interface TablePaginationProps {
   total: number;
   onPageChange: (p: number) => void;
   onPageSizeChange: (s: PageSize) => void;
+  pageSizeOptions?: readonly PageSize[];
   className?: string;
   itemLabel?: string;
 }
@@ -82,6 +83,7 @@ export function TablePagination({
   total,
   onPageChange,
   onPageSizeChange,
+  pageSizeOptions = PAGE_SIZE_OPTIONS,
   className,
   itemLabel,
 }: TablePaginationProps) {
@@ -112,7 +114,7 @@ export function TablePagination({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PAGE_SIZE_OPTIONS.map((opt) => (
+            {pageSizeOptions.map((opt) => (
               <SelectItem key={opt} value={String(opt)} className="text-xs">
                 {opt}
               </SelectItem>

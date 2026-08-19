@@ -206,6 +206,12 @@ export const companiesTable = pgTable("companies", {
   printFooterReturn:    text("print_footer_return").notNull().default("تم استلام المرتجع — شكراً لتعاملكم"),
   printShowTimestamp:   boolean("print_show_timestamp").notNull().default(true),
   printShowZatcaBrand:  boolean("print_show_zatca_brand").notNull().default(true),
+  // Quotation-specific print content controls. Quotations are not tax
+  // documents, so the QR starts hidden; currency name and customer address
+  // start visible for a clearer commercial offer.
+  printQuotationShowQr:              boolean("print_quotation_show_qr").notNull().default(false),
+  printQuotationShowCurrencyName:    boolean("print_quotation_show_currency_name").notNull().default(true),
+  printQuotationShowCustomerAddress: boolean("print_quotation_show_customer_address").notNull().default(true),
   // Free-text bank account details (account name, bank, IBAN …) printed in the
   // empty area under the QR on the "الأصلي" invoice template. NULL/empty = hide.
   bankAccountText:      text("bank_account_text"),

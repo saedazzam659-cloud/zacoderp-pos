@@ -84,11 +84,20 @@ const dbAls = new AsyncLocalStorage<ExternalDbContext>();
 
 /** Create a drizzle instance + pool over an EXTERNAL PostgreSQL URL (agent DB). */
 export function createExternalDb(connectionString: string, opts?: { max?: number }): ExternalDbContext {
+  const externalMax = opts?.max ?? toInt(process.env.PG_EXTERNAL_POOL_MAX, 10);
   const p = new Pool({
     connectionString,
-    max: opts?.max ?? 5,
-    connectionTimeoutMillis: 10_000,
-    idleTimeoutMillis: 30_000,
+    // Agent traffic has its own pool budget. Keep it independently tunable:
+    // increasing the central pool does not help requests routed through ALS.
+    max: externalMax,
+    connectionTimeoutMillis: toInt(
+      process.env.PG_EXTERNAL_CONNECTION_TIMEOUT_MS,
+      toInt(process.env.PG_CONNECTION_TIMEOUT_MS, 10_000),
+    ),
+    idleTimeoutMillis: toInt(
+      process.env.PG_EXTERNAL_IDLE_TIMEOUT_MS,
+      toInt(process.env.PG_IDLE_TIMEOUT_MS, 30_000),
+    ),
     keepAlive: true,
     ssl: connectionString.includes("sslmode=disable") ? undefined : { rejectUnauthorized: false },
   });

@@ -37,6 +37,7 @@ import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
+import { printAuditPageIfNothingSelected } from "@/lib/auditPagePrint";
 
 // ── Header color theme palette ────────────────────────────────────────────
 // Default is "white" (light header with dark text). Selecting any other color
@@ -93,12 +94,26 @@ const FOOTER_COLOR_KEYS: FooterColor[] = ["slate", "white", "rose", "blue", "eme
 const DEFAULT_FOOTER_COLOR: FooterColor = "white";
 
 // ── Page-size options for the audit grid ──────────────────────────────────
-// `0` means "show all" — useful when the user wants to scan/audit everything
-// at once or print without paging. Default is 25 — large enough to be useful,
-// small enough to keep the DOM responsive on slow devices.
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 0] as const;
+// The API caps pages at 100 rows. Keeping the UI choices in lockstep prevents
+// this high-volume screen from silently falling back to loading tenant history.
+const PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
 type PageSize = typeof PAGE_SIZE_OPTIONS[number];
-const DEFAULT_PAGE_SIZE: PageSize = 25;
+const DEFAULT_PAGE_SIZE: PageSize = 10;
+type InvoicePage = {
+  items: any[];
+  page: number;
+  pageSize: number;
+  total: number;
+  pageCount: number;
+  accessibleTotal: number;
+  truncated: boolean;
+  summary: {
+    totalInvoices: number;
+    postedInvoices: number;
+    draftInvoices: number;
+    totalPostedAmount: number;
+  };
+};
 import { cn } from "@/lib/utils";
 import {
   rowToneFor,
@@ -707,6 +722,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
 
   // ── Filters ────────────────────────────────────────────────────────────
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "cancelled">("all");
   // Multi-branch filter (managers only — auto-hidden for single-branch users
   // by MultiBranchFilter itself). Empty array = "all allowed branches".
@@ -859,6 +875,14 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
 
   // Current page is ephemeral (not persisted) — always start at 1 on mount.
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   const theme = HEADER_THEMES[headerColor];
   const footerTheme = FOOTER_THEMES[footerColor];
@@ -1129,23 +1153,37 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   const branchKey = branchIds.length
     ? branchIds.slice().sort((a, b) => a - b).join(",")
     : "all";
-  const { data: invoices = [], isLoading, refetch, isFetching, error: invoicesError } = useQuery<any[]>({
-    queryKey: ["sales-invoices", cid, "audit-grid", source, branchKey],
-    queryFn: () => {
+  const { data: invoicePage, isLoading, refetch, isFetching, error: invoicesError } = useQuery<InvoicePage>({
+    queryKey: [
+      "sales-invoices", cid, "audit-grid", source, branchKey,
+      page, pageSize, debouncedSearch, statusFilter, dateFrom, dateTo, warehouseFilter,
+    ],
+    queryFn: async () => {
       const params = new URLSearchParams();
+      params.set("paged", "1");
+      params.set("page", String(page));
+      params.set("pageSize", String(pageSize));
+      params.set("status", statusFilter);
       if (cid) params.set("companyId", String(cid));
       params.set("source", source);
       if (branchIds.length) params.set("branchIds", branchIds.join(","));
-      return getList(`${API}/api/sales/sales-invoices?${params.toString()}`);
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo) params.set("dateTo", dateTo);
+      if (warehouseFilter) params.set("warehouseId", warehouseFilter);
+      const response = await fetch(`${API}/api/sales/sales-invoices?${params.toString()}`, { headers: authH });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error ?? `HTTP ${response.status}`);
+      }
+      const body = await response.json();
+      if (!body || !Array.isArray(body.items)) throw new Error("استجابة فواتير المبيعات غير صالحة");
+      return body;
     },
     enabled: !!user,
   });
-
-  const { data: customers = [], isFetched: customersFetched } = useQuery<any[]>({
-    queryKey: ["customers", cid],
-    queryFn: () => getList(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`),
-    enabled: !!user,
-  });
+  const invoices = invoicePage?.items ?? [];
+  const invoiceTotal = invoicePage?.total ?? 0;
 
   const { data: salesReps = [] } = useQuery<any[]>({
     queryKey: ["sales-reps-audit", cid],
@@ -1159,89 +1197,45 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     enabled: !!user,
   });
 
-  // Sales returns are fetched separately so we can highlight any invoice that
-  // has at least one return — a critical audit signal that wasn't visible in
-  // the previous row design. We don't need amounts here, just the set of
-  // invoiceIds, so a lightweight Set keeps the per-row check O(1).
   const { data: warehousesList = [] } = useQuery<any[]>({
     queryKey: ["warehouses", cid],
     queryFn: () => inventoryApi.getWarehouses(cid),
     enabled: !!user,
   });
 
-  const { data: salesReturns = [] } = useQuery<any[]>({
-    queryKey: ["sales-returns-audit", cid],
-    queryFn: () => getList(cid ? `${API}/api/sales/sales-returns?companyId=${cid}` : `${API}/api/sales/sales-returns`).catch(() => []),
-    enabled: !!user,
-  });
   const returnedInvoiceIds = useMemo(
-    () => new Set<number>(salesReturns.map((r: any) => Number(r.invoiceId)).filter((n) => Number.isFinite(n))),
-    [salesReturns],
+    () => new Set<number>(invoices.filter((invoice: any) => invoice.hasReturn).map((invoice: any) => Number(invoice.id))),
+    [invoices],
   );
 
   // ── Lookup maps ───────────────────────────────────────────────────────
-  const cusMap = useMemo(() => Object.fromEntries(customers.map((c: any) => [c.id, {
-    id: c.id,
-    code: c.code ?? `CUS-${String(c.id).padStart(6, "0")}`,
-    name: c.nameAr ?? c.nameEn,
-    vat: c.vatNumber,
-    phone: c.phone,
-    city: c.city,
-    district: c.district,
-  }])), [customers]);
+  const cusMap = useMemo(() => Object.fromEntries(invoices.map((invoice: any) => {
+    const customer = invoice.customer;
+    const customerId = Number(invoice.customerId);
+    return [customerId, {
+      id: customerId,
+      code: `CUS-${String(customerId).padStart(6, "0")}`,
+      name: customer?.nameAr ?? customer?.nameEn ?? invoice.customerName ?? "—",
+      vat: customer?.vatNumber ?? null,
+      phone: customer?.phone ?? null,
+      city: customer?.city ?? null,
+      district: customer?.district ?? null,
+    }];
+  })), [invoices]);
   const repMap = useMemo(() => Object.fromEntries(salesReps.map((r: any) => [r.id, r.nameAr ?? r.nameEn])), [salesReps]);
   const branchMap = useMemo(() => Object.fromEntries(branches.map((b: any) => [b.id, b.nameAr ?? b.nameEn ?? b.name])), [branches]);
 
   // ── Filtering ─────────────────────────────────────────────────────────
-  // Two layers: top-bar (search/status/date) AND per-column filters (Excel-like).
+  // Search/status/date/warehouse/branch filtering is server-driven so the
+  // browser only receives one bounded page. Advanced column filters remain
+  // page-local because they cover presentation-only derived values.
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    // Pre-compute the digit-only form of the query once, not once per row —
-    // the quick-search now also matches phone numbers ignoring formatting
-    // (spaces, dashes, "+966" prefix etc.), so we strip non-digits.
-    const qDigits = q.replace(/\D/g, "");
     const PAY_AR: Record<string, string> = { cash: "نقدي", bank: "بنكي", credit: "آجل" };
     const STATUS_AR: Record<string, string> = { draft: "مسودة", posted: "مُرحَّل", cancelled: "ملغاة" };
 
     return invoices.filter((inv: any) => {
       const cus = cusMap[inv.customerId];
       const cusName = cus?.name ?? "";
-      const cusPhone = cus?.phone ?? "";
-      const cusCode = cus?.code ?? "";
-      const cusCity = cus?.city ?? "";
-      const cusDistrict = cus?.district ?? "";
-      const branchName = branchMap[inv.branchId] ?? "";
-      const phoneDigits = cusPhone.replace(/\D/g, "");
-
-      // top-bar filters — quick search looks up phone in two ways:
-      //   1. case-insensitive substring on the raw phone string
-      //      (handy if user pastes "+966 555 …")
-      //   2. digit-only substring (handy for "5555" → "+966 555 5555")
-      // Also matches customer code/id, branch name, and city/district
-      // so users can locate invoices by customer number, branch, or region.
-      const matchText = !q
-        || (inv.docNumber ?? "").toLowerCase().includes(q)
-        || cusName.toLowerCase().includes(q)
-        || cusCode.toLowerCase().includes(q)
-        || String(inv.customerId ?? "").includes(q)
-        || branchName.toLowerCase().includes(q)
-        || cusCity.toLowerCase().includes(q)
-        || cusDistrict.toLowerCase().includes(q)
-        || cusPhone.toLowerCase().includes(q)
-        || (qDigits.length > 0 && phoneDigits.includes(qDigits))
-        || (inv.notes ?? "").toLowerCase().includes(q);
-      const matchStatus = statusFilter === "all" || inv.status === statusFilter;
-      const matchFrom = !dateFrom || (inv.invoiceDate >= dateFrom);
-      const matchTo   = !dateTo   || (inv.invoiceDate <= dateTo);
-      // فلتر المخزن — يعتمد على الحقل `warehouseIds` المضاف في استجابة
-      // GET /api/sales/sales-invoices (مجموع كل المخازن المستخدمة في بنود
-      // الفاتورة). list endpoint لا يُرجع البنود كاملةً لتقليل حجم الاستجابة.
-      let matchWarehouse = true;
-      if (warehouseFilter) {
-        const ids: any[] = Array.isArray(inv.warehouseIds) ? inv.warehouseIds : [];
-        matchWarehouse = ids.some((wid: any) => String(wid) === warehouseFilter);
-      }
-      if (!(matchText && matchStatus && matchFrom && matchTo && matchWarehouse)) return false;
 
       // column filters (advanced two-condition popover)
       for (const col of COLUMNS) {
@@ -1278,7 +1272,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       }
       return true;
     });
-  }, [invoices, search, statusFilter, dateFrom, dateTo, warehouseFilter, cusMap, branchMap, repMap, colAdv]);
+  }, [invoices, cusMap, branchMap, repMap, colAdv]);
 
   // ── Sorting ───────────────────────────────────────────────────────────
   // Resolves the sortable value for a given invoice + column key. Mirrors
@@ -1329,44 +1323,24 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   }, [filtered, sort, cusMap, branchMap, repMap]);
 
   // ── Pagination ────────────────────────────────────────────────────────
-  // pageSize === 0 means "show all" — we still keep `page` at 1 in that mode
-  // so toggling back to a finite size lands on a sane page. Totals (footer)
-  // are intentionally computed from `filtered`, not `paged`, so they always
-  // reflect the entire filtered result regardless of which page is shown.
-  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
-  // Clamp `page` if filters shrunk the result set below the current page.
+  // The backend owns the page window and total count. Advanced column
+  // filters/sorting operate on the current bounded page.
+  const totalPages = invoicePage?.pageCount ?? 1;
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
-  // Reset to page 1 whenever filters/search change so users don't see an
-  // empty middle-page after typing in a filter.
+  // Reset to page 1 whenever a server-side filter changes.
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, dateFrom, dateTo, colAdv, pageSize]);
-
-  // `printAllOverride` lets us briefly render the entire filtered set so
-  // window.print() captures every row, not just the current page. It is
-  // toggled on right before printSelected() falls back to window.print() and
-  // toggled off again once the print dialog is dismissed.
-  const [printAllOverride, setPrintAllOverride] = useState(false);
-  const paged = useMemo(() => {
-    if (pageSize === 0 || printAllOverride) return sorted;
-    const start = (page - 1) * pageSize;
-    return sorted.slice(start, start + pageSize);
-  }, [sorted, page, pageSize, printAllOverride]);
-  // When the override flips on, wait one frame for React to flush the full
-  // table to the DOM, fire window.print() (which blocks until the user
-  // dismisses the dialog), then drop the override.
+  }, [statusFilter, dateFrom, dateTo, warehouseFilter, branchKey, pageSize]);
   useEffect(() => {
-    if (!printAllOverride) return;
-    const id = window.requestAnimationFrame(() => {
-      try { window.print(); } finally { setPrintAllOverride(false); }
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [printAllOverride]);
+    setSelected(new Set());
+  }, [page, pageSize, debouncedSearch, statusFilter, dateFrom, dateTo, warehouseFilter, branchKey]);
 
-  const pageStart = filtered.length === 0 ? 0 : (pageSize === 0 ? 1 : (page - 1) * pageSize + 1);
-  const pageEnd = pageSize === 0 ? filtered.length : Math.min(page * pageSize, filtered.length);
+  const paged = sorted;
+
+  const pageStart = invoiceTotal === 0 ? 0 : (page - 1) * pageSize + 1;
+  const pageEnd = Math.min(page * pageSize, invoiceTotal);
 
   // ── Selection helpers ─────────────────────────────────────────────────
   const allFilteredIds = useMemo(() => filtered.map((i: any) => i.id), [filtered]);
@@ -1675,7 +1649,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     const csv = [header, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
     void saveBlob(blob, `sales-audit-${new Date().toISOString().slice(0,10)}.csv`);
-    toast({ title: "تم تصدير ملف CSV بنجاح" });
+    toast({ title: `تم تصدير ${filtered.length} فاتورة من الصفحة الحالية إلى CSV` });
   }
 
   // ── Per-invoice print modal (uses SalesPrintModal w/ 12 templates) ───
@@ -1698,27 +1672,11 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       const r = await fetch(`${API}/api/sales/sales-invoices/${invId}`, { headers: authH });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const full = await r.json();
-      // The grid's customers list holds the full customer object — pass
-      // that to the print modal so templates render full address/VAT/etc.
-      // If the user clicked print before the customers query resolved, or
-      // the customer is missing from the list (deleted/different tenant
-      // cache), fall back to fetching the single customer directly so the
-      // template still has VAT / address / phone instead of "—".
-      let customer: any = null;
-      if (full.customerId) {
-        customer = customers.find((c: any) => c.id === full.customerId) ?? null;
-        if (!customer) {
-          try {
-            const cr = await fetch(`${API}/api/customers/${full.customerId}`, { headers: authH });
-            if (cr.ok) customer = await cr.json();
-          } catch { /* keep customer=null; modal renders "—" gracefully */ }
-        }
-      }
       setPrintData({
         type: "invoice",
         doc: full,
         lines: full.lines ?? [],
-        customer,
+        customer: full.customer ?? null,
         company: (user as any)?.company ?? null,
       });
       if (opts?.template) setPrintDefault(opts.template);
@@ -1737,16 +1695,15 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   // When the sales-invoice form saves with the company's
   // `printAutoAfterSaveSales` toggle on, it sets `autoPrintSalesInvoice` in
   // sessionStorage and navigates back here. We pick that up exactly once
-  // per mount, wait for the customers query to *settle* (success OR error
-  // — NOT for it to be non-empty: a tenant may legitimately have zero
-  // customers, and `openPrintFor` falls back to fetching the customer
-  // directly anyway), then open the print modal with `autoPrint=true`.
+  // per mount, then open the print modal with `autoPrint=true`. The invoice
+  // detail response includes its tenant-scoped customer, so this never waits
+  // for or downloads the entire customer directory.
   // A stale flag (e.g. a leftover key from a tab the user closed mid-flow)
   // is also cleared here so it cannot fire on a later unrelated mount.
   const autoPrintConsumed = useRef(false);
   useEffect(() => {
     if (autoPrintConsumed.current) return;
-    if (!user || !customersFetched) return;
+    if (!user || !token) return;
     let raw: string | null = null;
     try { raw = sessionStorage.getItem("autoPrintSalesInvoice"); } catch { /* ignore */ }
     if (!raw) return;
@@ -1761,7 +1718,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     if (parsed.ts && Date.now() - parsed.ts > 5 * 60 * 1000) return;
     void openPrintFor(parsed.id, { autoPrint: true, template: parsed.template });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, customersFetched]);
+  }, [user, token]);
 
   // ── Bulk print (selected invoices' CONTENTS) ─────────────────────────
   // When user has selected one or more rows and clicks "طباعة", we fetch the
@@ -1776,15 +1733,10 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   const [printing, setPrinting] = useState(false);
 
   async function printSelected() {
-    if (selected.size === 0) {
-      // No row selection → fall back to printing the audit screen. We must
-      // first expand to ALL filtered rows (not just the current page),
-      // otherwise pagination would silently truncate the printout. The
-      // useEffect below handles the actual window.print() call after React
-      // has flushed the expanded view to the DOM.
-      setPrintAllOverride(true);
-      return;
-    }
+    // Server paging intentionally keeps only the current page in memory.
+    // With no selected invoices, print exactly what is visible rather than
+    // pretending the browser can print unloaded historical pages.
+    if (printAuditPageIfNothingSelected(selected.size, () => window.print())) return;
     if (selected.size === 1) {
       // Single selection → use the rich SalesPrintModal with the 12-template
       // picker so the user can pick a design (classic, gold, ocean, …).
@@ -1856,12 +1808,11 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     }
   }
 
-  // ── Excel / PDF export of the currently filtered list ─────────────────
+  // ── Excel / PDF export of the current filtered page ───────────────────
   // Mirrors `exportCsv`'s column set but routes through the shared
   // `exportToExcel` / `exportToPDF` helpers so we get matching xlsx/PDF
-  // output across the app. Both export the FILTERED list (search +
-  // status + date + per-column filters honoured). Totals row sums the
-  // numeric columns so the file is self-describing.
+  // output across the app. Both export the CURRENT server page after the
+  // page-local advanced column filters/sort. Totals are page totals.
   function buildExportColumns(): ExportColumn[] {
     return [
       { header: "#",                 key: "_idx",         width: 5  },
@@ -1947,8 +1898,14 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
     }
-    exportToExcel(buildExportRows(), buildExportColumns(), exportFilenameBase(), "جرد فواتير المبيعات", buildExportTotals());
-    toast({ title: `تم تصدير ${filtered.length} فاتورة إلى Excel` });
+    exportToExcel(
+      buildExportRows(),
+      buildExportColumns(),
+      exportFilenameBase(),
+      "جرد الصفحة الحالية لفواتير المبيعات",
+      buildExportTotals(),
+    );
+    toast({ title: `تم تصدير ${filtered.length} فاتورة من الصفحة الحالية إلى Excel` });
   }
   function exportPdf() {
     if (filtered.length === 0) {
@@ -1959,14 +1916,14 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       buildExportRows(),
       buildExportColumns(),
       exportFilenameBase(),
-      "الجرد الخارجي لفواتير المبيعات",
-      `إجمالي السجلات: ${filtered.length}`,
+      "الصفحة الحالية من الجرد الخارجي لفواتير المبيعات",
+      `إجمالي سجلات الصفحة: ${filtered.length}`,
       true,
       buildExportTotals(),
       null,
       (user as any)?.company?.logo ?? null,
     );
-    toast({ title: `جارٍ فتح ${filtered.length} فاتورة بصيغة PDF` });
+    toast({ title: `جارٍ فتح ${filtered.length} فاتورة من الصفحة الحالية بصيغة PDF` });
   }
 
   // ── Status & ZATCA pills ──────────────────────────────────────────────
@@ -2327,9 +2284,10 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               variant="ghost"
               className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
               onClick={exportCsv}
+              title="تصدير الصفحة الحالية إلى CSV"
             >
               <FileSpreadsheet className="h-3.5 w-3.5" />
-              تصدير CSV
+              CSV الصفحة
             </Button>
             )}
             {fp.isVisible("export_excel") && (
@@ -2340,11 +2298,11 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
               onClick={exportXlsx}
               disabled={filtered.length === 0}
-              title="تصدير الجرد الحالي إلى ملف Excel (xlsx)"
+              title="تصدير الصفحة الحالية إلى ملف Excel (xlsx)"
               data-testid="button-audit-export-excel"
             >
               <FileSpreadsheet className="h-3.5 w-3.5" />
-              تصدير Excel
+              Excel الصفحة
             </Button>
             )}
             {fp.isVisible("export_pdf") && (
@@ -2355,11 +2313,11 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
               onClick={exportPdf}
               disabled={filtered.length === 0}
-              title="تصدير الجرد الحالي إلى PDF"
+              title="تصدير الصفحة الحالية إلى PDF"
               data-testid="button-audit-export-pdf"
             >
               <FileDown className="h-3.5 w-3.5" />
-              تصدير PDF
+              PDF الصفحة
             </Button>
             )}
             {fp.isVisible("print") && (
@@ -2372,10 +2330,10 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               disabled={printing}
               title={selected.size > 0
                 ? `طباعة محتوى ${selected.size} فاتورة محدَّدة`
-                : "طباعة شاشة الجرد كاملةً (حدِّد سطوراً لطباعة محتوى الفواتير)"}
+                : "طباعة الصفحة الحالية (حدِّد سطوراً لطباعة محتوى الفواتير)"}
             >
               {printing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
-              طباعة{selected.size > 0 ? ` (${selected.size})` : ""}
+              {selected.size > 0 ? `طباعة (${selected.size})` : "طباعة الصفحة"}
             </Button>
             )}
             {fp.isVisible("ai_audit") && (
@@ -2387,7 +2345,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               disabled={auditing || filtered.length === 0}
             >
               {auditing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-              تدقيق بالذكاء الاصطناعي
+              تدقيق الصفحة بالذكاء الاصطناعي
             </Button>
             )}
           </div>
@@ -2484,8 +2442,13 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filtered.length} فاتورة
-            {filtered.length !== invoices.length && <span className="text-slate-400"> / {invoices.length}</span>}
+            {invoiceTotal} فاتورة
+            {filtered.length !== invoices.length && (
+              <span className="text-slate-400"> — {filtered.length} ظاهرة في الصفحة</span>
+            )}
+            {invoicePage?.truncated && (
+              <span className="text-amber-700"> — التصفح المباشر لأول {invoicePage.accessibleTotal.toLocaleString("en-US")} نتيجة؛ استخدم البحث للوصول للبقية</span>
+            )}
           </span>
         </div>
 
@@ -2618,8 +2581,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       </div>
 
       {/* ─── Color legend — explains what each row tint means ─────────────
-          Counts are derived from the FILTERED set so users immediately see
-          how many drafts / postings / returns survive their current filter.
+          Counts are derived from the visible filtered page so users see
+          how many drafts / postings / returns are currently on screen.
           ──────────────────────────────────────────────────────────────── */}
       {fp.isVisible("color_legend") && (() => {
         const counts = {
@@ -2722,7 +2685,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                       {col.key === "_sel" ? (
                         <input
                           type="checkbox"
-                          aria-label="تحديد كل النتائج المفلترة (عبر جميع الصفحات)"
+                          aria-label="تحديد كل النتائج الظاهرة في الصفحة الحالية"
                           checked={allSelected}
                           ref={el => { if (el) el.indeterminate = someSelected; }}
                           onChange={toggleAll}
@@ -2784,7 +2747,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                 {paged.map((inv: any, idx: number) => {
                   // Absolute row number across the FILTERED set (not just the
                   // current page) so users can read row 27 on page 2 of 25.
-                  const absIdx = pageSize === 0 ? idx : (page - 1) * pageSize + idx;
+                  const absIdx = (page - 1) * pageSize + idx;
                   const cus = cusMap[inv.customerId];
                   const st = STATUS[inv.status] ?? STATUS.draft;
                   const z = ZATCA[String(inv.zatcaStatus ?? "pending")] ?? null;
@@ -3040,7 +3003,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <tfoot className="sticky bottom-0">
                 <tr className={cn("text-[11px] font-semibold", footerTheme.bg, footerTheme.text)}>
                   {visibleColumns.map((col, i) => {
-                    // Numeric columns get their total; the very first cell holds the "الإجمالي:" label.
+                    // Numeric columns get their current-page total.
                     const totalByKey: Record<string, number | undefined> = {
                       freeQty: totals.freeQty,
                       subtotal: totals.subtotal,
@@ -3053,7 +3016,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                     if (i === 0) {
                       return (
                         <td key={col.key} className={cn("px-2 py-2 border text-end whitespace-nowrap", footerTheme.border)}>
-                          الإجمالي:
+                          إجمالي الصفحة:
                         </td>
                       );
                     }
@@ -3092,14 +3055,12 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               aria-label="عدد الأسطر المعروضة في كل صفحة"
               title="عدد الفواتير المعروضة في كل صفحة"
             >
-              {PAGE_SIZE_OPTIONS.map(n => (
-                <option key={n} value={n}>{n === 0 ? "الكل" : n}</option>
-              ))}
+              {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
 
           <div className="text-slate-600 font-mono">
-            {filtered.length === 0
+            {invoiceTotal === 0
               ? "لا يوجد بيانات"
               : (
                 <>
@@ -3107,7 +3068,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                   <span className="text-slate-400 mx-1">–</span>
                   <span className="text-slate-900 font-bold">{pageEnd}</span>
                   <span className="text-slate-500 mx-1">من</span>
-                  <span className="text-slate-900 font-bold">{filtered.length}</span>
+                  <span className="text-slate-900 font-bold">{invoiceTotal}</span>
                   <span className="text-slate-500 ms-1">فاتورة</span>
                 </>
               )}
@@ -3116,7 +3077,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           {/* Spacer pushes nav to the opposite edge in RTL/LTR */}
           <div className="flex-1" />
 
-          {pageSize !== 0 && totalPages > 1 && (
+          {totalPages > 1 && (
             <div className="flex items-center gap-1">
               <Button
                 type="button"

@@ -330,7 +330,7 @@ export interface BulkPrintMenuProps<T> {
    *  existing summary + detailed layouts so the look the user already
    *  knows is preserved as the default templates. */
   buildSummary: (selected: T[]) => string;
-  buildDetailed: (selectedFull: T[]) => string;
+  buildDetailed: (selectedFull: T[]) => string | Promise<string>;
   /** Detailed needs full doc with lines — this fetches one. */
   fetchFull: (id: number) => Promise<T>;
   /** Toast for "popup blocked" + fetch failures. */
@@ -393,7 +393,7 @@ export function BulkPrintMenu<T>(props: BulkPrintMenuProps<T>) {
       let html = "";
       switch (templateId) {
         case "summary":      html = buildSummary(source); break;
-        case "detailed":     html = buildDetailed(source); break;
+        case "detailed":     html = await buildDetailed(source); break;
         case "professional": html = buildProfessionalDocsHtml(source, adapter, company); break;
         case "compact":      html = buildCompactDocsHtml(source, adapter, company); break;
       }

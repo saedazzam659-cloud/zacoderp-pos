@@ -66,8 +66,15 @@ export default function SalesQuotations() {
     try {
       const res = await fetch(`${API}/api/sales/sales-quotations/${q.id}`, { headers: authH });
       const full = await res.json();
-      const customer = customers.find((c: any) => c.id === q.customerId) ?? null;
-      setPrintData({ type: "quotation", doc: full, lines: full.lines ?? [], customer, company: user?.company ?? null });
+      const customer = full.customer ?? customers.find((c: any) => c.id === q.customerId) ?? null;
+      setPrintData({
+        type: "quotation",
+        doc: full,
+        lines: full.lines ?? [],
+        customer,
+        company: user?.company ?? null,
+        currency: full.currency ?? null,
+      });
     } catch (e: any) {
       toast({ title: e?.message ?? "تعذّر تحميل عرض السعر للطباعة", variant: "destructive" });
     }
@@ -570,8 +577,9 @@ ${source.map((r: any, i: number) => `<tr>
                 type: "quotation",
                 doc: full,
                 lines: Array.isArray(full.lines) ? full.lines : [],
-                customer: customers.find((c: any) => c.id === full.customerId) ?? null,
+                customer: full.customer ?? customers.find((c: any) => c.id === full.customerId) ?? null,
                 company: user?.company ?? null,
+                currency: full.currency ?? null,
               }));
               return renderSalesDocsBundleHtml(datas, user?.company);
             }}

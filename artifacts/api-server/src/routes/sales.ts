@@ -11,7 +11,7 @@ import {
   salesQuotationsTable, salesQuotationLinesTable,
   salesOrdersTable, salesOrderLinesTable,
   customerSettlementsTable, stockBalanceTable, stockLedgerTable,
-  companiesTable,
+  companiesTable, currenciesTable,
   customersTable, cashBoxesTable, bankAccountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
   receiptVouchersTable, paymentVouchersTable,
@@ -19,11 +19,12 @@ import {
   goodsDeliveriesTable,
   subscriptionsTable,
   itemsTable,
+  posSessionsTable,
   itemBrandsTable,
   brandsTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
-import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte, ilike, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread, intersectBranchRequest } from "../middleware/auth.js";
 import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
@@ -38,6 +39,56 @@ import { assertInvoiceEditKeepsSettlementsCovered } from "../lib/invoiceSettleme
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
 import { salesInvoiceRowToZatcaData } from "../lib/zatca-sales-mapper.js";
 import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH, csidEnvMismatchMessage } from "../lib/zatca-env.js";
+import { boundedOffsetPage } from "../lib/boundedPagination.js";
+import { logger } from "../lib/logger.js";
+import { getAgentDbPoolStats } from "../lib/agentDb.js";
+
+function beginAgentInvoiceTiming(
+  req: any,
+  res: any,
+  operation: "create" | "update" | "post",
+  lineCount: number,
+): { mark: (stage: string) => void; setLineCount: (count: number) => void } | null {
+  const agentId = Number(req?.agentDomainHit?.id);
+  if (!Number.isInteger(agentId) || agentId <= 0) return null;
+  if (process.env.AGENT_INVOICE_TIMING_LOG === "0" || process.env.AGENT_INVOICE_TIMING_LOG === "false") return null;
+  const startedAt = Date.now();
+  let previousAt = startedAt;
+  let observedLineCount = lineCount;
+  const stages: Record<string, number> = {};
+  const poolStart = getAgentDbPoolStats(agentId);
+  res.once("finish", () => {
+    logger.info({
+      agentId,
+      operation,
+      statusCode: res.statusCode,
+      lineCount: observedLineCount,
+      totalMs: Date.now() - startedAt,
+      stages,
+      poolStart,
+      poolEnd: getAgentDbPoolStats(agentId),
+    }, "Agent sales invoice timing");
+  });
+  return {
+    mark(stage: string) {
+      const now = Date.now();
+      stages[stage] = now - previousAt;
+      previousAt = now;
+    },
+    setLineCount(count: number) {
+      observedLineCount = count;
+    },
+  };
+}
+
+function queryRows<T>(result: unknown): T[] {
+  if (Array.isArray(result)) return result as T[];
+  if (result && typeof result === "object") {
+    const rows = (result as { rows?: unknown }).rows;
+    if (Array.isArray(rows)) return rows as T[];
+  }
+  return [];
+}
 
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
@@ -218,13 +269,58 @@ async function resolveRepCommission(
 }
 
 /** Map a list of warehouse IDs (used by an invoice) to their {accountId, allowNegative, name}. */
-async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<number, { accountId: number | null; allowNegative: boolean; nameAr: string | null }>> {
+type WarehouseInfo = {
+  accountId: number | null;
+  allowNegative: boolean;
+  nameAr: string | null;
+};
+
+async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<number, WarehouseInfo>> {
   const out: Record<number, any> = {};
   const uniq = Array.from(new Set(ids.filter(Boolean)));
-  for (const wid of uniq) {
-    const [w] = await db.select().from(warehousesTable)
-      .where(and(eq(warehousesTable.id, wid), eq(warehousesTable.companyId, cid)));
-    out[wid] = { accountId: w?.accountId ?? null, allowNegative: !!w?.allowNegative, nameAr: w?.nameAr ?? null };
+  if (!uniq.length) return out;
+  const rows = await db.select({
+    id: warehousesTable.id,
+    accountId: warehousesTable.accountId,
+    allowNegative: warehousesTable.allowNegative,
+    nameAr: warehousesTable.nameAr,
+  }).from(warehousesTable)
+    .where(and(eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, uniq)));
+  for (const w of rows) {
+    out[w.id] = { accountId: w.accountId ?? null, allowNegative: !!w.allowNegative, nameAr: w.nameAr ?? null };
+  }
+  return out;
+}
+
+type StockSnapshot = { qty: number; avgCost: number };
+
+async function loadStockSnapshots(
+  cid: number,
+  pairs: Array<{ itemId: number; warehouseId: number }>,
+): Promise<Map<string, StockSnapshot>> {
+  const requested = new Set(
+    pairs
+      .filter((p) => Number.isInteger(p.itemId) && Number.isInteger(p.warehouseId))
+      .map((p) => `${p.itemId}:${p.warehouseId}`),
+  );
+  const out = new Map<string, StockSnapshot>();
+  if (!requested.size) return out;
+  const itemIds = [...new Set(pairs.map((p) => p.itemId).filter(Number.isInteger))];
+  const warehouseIds = [...new Set(pairs.map((p) => p.warehouseId).filter(Number.isInteger))];
+  const rows = await db.select({
+    itemId: stockBalanceTable.itemId,
+    warehouseId: stockBalanceTable.warehouseId,
+    qty: stockBalanceTable.qty,
+    avgCost: stockBalanceTable.avgCost,
+  }).from(stockBalanceTable).where(and(
+    eq(stockBalanceTable.companyId, cid),
+    inArray(stockBalanceTable.itemId, itemIds),
+    inArray(stockBalanceTable.warehouseId, warehouseIds),
+  ));
+  for (const row of rows) {
+    const key = `${row.itemId}:${row.warehouseId}`;
+    if (!requested.has(key)) continue;
+    out.set(key, { qty: Number(row.qty ?? 0), avgCost: Number(row.avgCost ?? 0) });
   }
   return out;
 }
@@ -354,7 +450,16 @@ async function getAvgCost(companyId: number, itemId: number, warehouseId: number
 router.get("/sales-invoices", async (req, res) => {
   try {
     const cid = getCid(req);
-    if (!cid) { res.json([]); return; }
+    const paged = String(req.query.paged ?? "") === "1";
+    const emptyPaged = {
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+      pageCount: 1,
+      summary: { totalInvoices: 0, postedInvoices: 0, draftInvoices: 0, totalPostedAmount: 0 },
+    };
+    if (!cid) { res.json(paged ? emptyPaged : []); return; }
     // Source filter — separates POS-originated invoices from manually-entered ones.
     // Default `manual` hides POS rows so the Sales Invoices screen stays clean
     // (POS invoices live under POS Operations). Pass `?source=all` to see both
@@ -364,39 +469,200 @@ router.get("/sales-invoices", async (req, res) => {
       source === "pos"    ? [sql`${salesInvoicesTable.posSessionId} IS NOT NULL`] :
       source === "manual" ? [sql`${salesInvoicesTable.posSessionId} IS NULL`] :
       [];
-    const rows = await db.select().from(salesInvoicesTable)
-      .where(and(
-        eq(salesInvoicesTable.companyId, cid),
-        ...sourceFilter,
-        // Accept multi-branch filter (?branchIds=1,2,3 or repeated
-        // ?branchIds=1&branchIds=2) for managers with view-all-branches.
-        // Falls back to legacy single ?branchId when branchIds is absent.
-        ...multiBranchScopeSpread(
-          req,
-          salesInvoicesTable.branchId,
-          req.query.branchIds ?? req.query.branchId,
-        ),
-      ))
-      .orderBy(desc(salesInvoicesTable.invoiceDate));
+    const baseWhere = and(
+      eq(salesInvoicesTable.companyId, cid),
+      ...sourceFilter,
+      // Accept multi-branch filter (?branchIds=1,2,3 or repeated
+      // ?branchIds=1&branchIds=2) for managers with view-all-branches.
+      // Falls back to legacy single ?branchId when branchIds is absent.
+      ...multiBranchScopeSpread(
+        req,
+        salesInvoicesTable.branchId,
+        req.query.branchIds ?? req.query.branchId,
+      ),
+    );
+
+    let rows: (typeof salesInvoicesTable.$inferSelect)[];
+    let pageMeta: {
+      page: number;
+      pageSize: number;
+      total: number;
+      pageCount: number;
+      accessibleTotal: number;
+      truncated: boolean;
+      summary: {
+        totalInvoices: number;
+        postedInvoices: number;
+        draftInvoices: number;
+        totalPostedAmount: number;
+      };
+    } | null = null;
+
+    if (paged) {
+      const rawPage = Number(Array.isArray(req.query.page) ? req.query.page[0] : req.query.page);
+      const rawPageSize = Number(Array.isArray(req.query.pageSize) ? req.query.pageSize[0] : req.query.pageSize);
+      // A deliberately small ceiling keeps the settlement/line enrichment
+      // bounded even when a caller supplies an abusive pageSize.
+      const pageSize = Math.min(
+        100,
+        Number.isFinite(rawPageSize) && rawPageSize > 0 ? Math.floor(rawPageSize) : 10,
+      );
+      // Offset paging is retained for the existing table UI, but the offset
+      // itself is bounded so a hostile/deep page cannot force an arbitrarily
+      // expensive scan or overflow PostgreSQL's OFFSET.
+      const maxPage = Math.floor(100_000 / pageSize) + 1;
+      let page = Math.min(
+        maxPage,
+        Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1,
+      );
+      const statusRaw = String(req.query.status ?? "all").toLowerCase();
+      const status = statusRaw === "draft" || statusRaw === "posted" || statusRaw === "cancelled"
+        ? statusRaw
+        : null;
+      const search = String(req.query.search ?? "").trim().slice(0, 100);
+      const searchPattern = `%${search}%`;
+      const dateFromRaw = String(req.query.dateFrom ?? "");
+      const dateToRaw = String(req.query.dateTo ?? "");
+      const dateFrom = /^\d{4}-\d{2}-\d{2}$/.test(dateFromRaw) ? dateFromRaw : null;
+      const dateTo = /^\d{4}-\d{2}-\d{2}$/.test(dateToRaw) ? dateToRaw : null;
+      const rawWarehouseId = Number(req.query.warehouseId);
+      const warehouseId = Number.isInteger(rawWarehouseId) && rawWarehouseId > 0 ? rawWarehouseId : null;
+      const listWhere = and(
+        baseWhere,
+        status ? eq(salesInvoicesTable.status, status) : undefined,
+        dateFrom ? gte(salesInvoicesTable.invoiceDate, dateFrom) : undefined,
+        dateTo ? lte(salesInvoicesTable.invoiceDate, dateTo) : undefined,
+        warehouseId
+          ? sql`exists (
+              select 1
+              from ${salesInvoiceLinesTable}
+              where ${salesInvoiceLinesTable.invoiceId} = ${salesInvoicesTable.id}
+                and ${salesInvoiceLinesTable.warehouseId} = ${warehouseId}
+            )`
+          : undefined,
+        search
+          ? or(
+              ilike(salesInvoicesTable.docNumber, searchPattern),
+              ilike(salesInvoicesTable.notes, searchPattern),
+              // Correlated EXISTS keeps customer-name search inside PostgreSQL.
+              // It avoids materialising a potentially huge customer-id array
+              // in Node when the user types a common Arabic character.
+              sql`exists (
+                select 1
+                from ${customersTable}
+                where ${customersTable.id} = ${salesInvoicesTable.customerId}
+                  and ${customersTable.companyId} = ${cid}
+                  and (
+                    ${ilike(customersTable.nameAr, searchPattern)}
+                    or ${ilike(customersTable.nameEn, searchPattern)}
+                    or ${ilike(customersTable.vatNumber, searchPattern)}
+                    or ${ilike(customersTable.phone, searchPattern)}
+                    or ${ilike(customersTable.city, searchPattern)}
+                    or ${ilike(customersTable.district, searchPattern)}
+                    or cast(${customersTable.id} as text) ilike ${searchPattern}
+                  )
+              )`,
+            )
+          : undefined,
+      );
+
+      let [pageRows, totalRows, summaryRows] = await Promise.all([
+        db.select().from(salesInvoicesTable)
+          .where(listWhere)
+          .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id))
+          .limit(pageSize)
+          .offset((page - 1) * pageSize),
+        db.select({ value: count() }).from(salesInvoicesTable).where(listWhere),
+        db.select({
+          totalInvoices: sql<number>`count(*)::int`,
+          postedInvoices: sql<number>`count(*) filter (where ${salesInvoicesTable.status} = 'posted')::int`,
+          draftInvoices: sql<number>`count(*) filter (where ${salesInvoicesTable.status} = 'draft')::int`,
+          totalPostedAmount: sql<string>`coalesce(sum(${salesInvoicesTable.totalAmount}) filter (where ${salesInvoicesTable.status} = 'posted'), 0)`,
+        }).from(salesInvoicesTable).where(baseWhere),
+      ]);
+
+      const total = Number(totalRows[0]?.value ?? 0);
+      const bounded = boundedOffsetPage(total, page, pageSize);
+      if (bounded.page !== page) {
+        page = bounded.page;
+        pageRows = await db.select().from(salesInvoicesTable)
+          .where(listWhere)
+          .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id))
+          .limit(pageSize)
+          .offset((page - 1) * pageSize);
+      }
+      rows = pageRows;
+      const summary = summaryRows[0];
+      pageMeta = {
+        page,
+        pageSize,
+        total,
+        pageCount: bounded.pageCount,
+        accessibleTotal: bounded.accessibleTotal,
+        truncated: bounded.truncated,
+        summary: {
+          totalInvoices: Number(summary?.totalInvoices ?? 0),
+          postedInvoices: Number(summary?.postedInvoices ?? 0),
+          draftInvoices: Number(summary?.draftInvoices ?? 0),
+          totalPostedAmount: Number(summary?.totalPostedAmount ?? 0),
+        },
+      };
+    } else {
+      // Backwards-compatible mode for POS, mobile, voucher pickers, and sales
+      // returns. These consumers still expect a bare Array response.
+      rows = await db.select().from(salesInvoicesTable)
+        .where(baseWhere)
+        .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id));
+    }
+
+    const respond = (items: unknown[]) => {
+      res.json(pageMeta ? { items, ...pageMeta } : items);
+    };
 
     // Resolve usernames for createdById / postedById in one pass so the grid
     // can render "أنشأه" / "رحّله" columns without an extra round trip.
-    const { usersTable } = await import("@workspace/db");
-    const { inArray: _inArr } = await import("drizzle-orm");
     const auditUserIds = Array.from(new Set(
       rows.flatMap(r => [r.createdById, r.postedById])
         .filter((x): x is number => typeof x === "number")
     ));
     const auditUserMap = new Map<number, string>();
-    if (auditUserIds.length > 0) {
-      const us = await db.select({ id: usersTable.id, username: usersTable.username })
-        .from(usersTable).where(_inArr(usersTable.id, auditUserIds));
-      for (const u of us) auditUserMap.set(u.id, u.username);
-    }
+    const pageCustomerIds = pageMeta
+      ? Array.from(new Set(rows.map((row) => row.customerId).filter((id): id is number => id != null)))
+      : [];
+    const [auditUsers, pageCustomers] = await Promise.all([
+      auditUserIds.length
+        ? db.select({ id: usersTable.id, username: usersTable.username })
+            .from(usersTable).where(inArray(usersTable.id, auditUserIds))
+        : Promise.resolve([]),
+      pageCustomerIds.length
+        ? db.select({
+            id: customersTable.id,
+            nameAr: customersTable.nameAr,
+            nameEn: customersTable.nameEn,
+            vatNumber: customersTable.vatNumber,
+            phone: customersTable.phone,
+            city: customersTable.city,
+            district: customersTable.district,
+          })
+            .from(customersTable)
+            .where(and(
+              eq(customersTable.companyId, cid),
+              inArray(customersTable.id, pageCustomerIds),
+            ))
+        : Promise.resolve([]),
+    ]);
+    for (const u of auditUsers) auditUserMap.set(u.id, u.username);
+    const pageCustomerMap = new Map(pageCustomers.map((customer) => [customer.id, customer] as const));
     const enrichedRows = rows.map(r => ({
       ...r,
       createdByName: r.createdById != null ? (auditUserMap.get(r.createdById) ?? null) : null,
       postedByName:  r.postedById  != null ? (auditUserMap.get(r.postedById)  ?? null) : null,
+      ...(pageMeta ? {
+        customerName: r.customerId != null
+          ? (pageCustomerMap.get(r.customerId)?.nameAr || pageCustomerMap.get(r.customerId)?.nameEn || null)
+          : null,
+        customer: r.customerId != null ? (pageCustomerMap.get(r.customerId) ?? null) : null,
+      } : {}),
     }));
 
     // Enrich each invoice with its latest linked receipt voucher so the
@@ -404,9 +670,7 @@ router.get("/sales-invoices", async (req, res) => {
     // pull all linked vouchers for this tenant in a single query and
     // group in memory — cheap, and avoids N+1 even for large tenants.
     const ids = enrichedRows.map(r => r.id);
-    if (ids.length === 0) { res.json(enrichedRows); return; }
-    const { receiptVouchersTable } = await import("@workspace/db");
-    const { inArray } = await import("drizzle-orm");
+    if (ids.length === 0) { respond(enrichedRows); return; }
     const links = await db.select({
       voucherId:     receiptVouchersTable.id,
       code:          receiptVouchersTable.code,
@@ -446,6 +710,15 @@ router.get("/sales-invoices", async (req, res) => {
       discount:    salesInvoiceLinesTable.discount,
       discountAmount: salesInvoiceLinesTable.discountAmount,
     }).from(salesInvoiceLinesTable).where(inArray(salesInvoiceLinesTable.invoiceId, ids));
+    const returnedRows = await db.selectDistinct({ invoiceId: salesReturnsTable.invoiceId })
+      .from(salesReturnsTable)
+      .where(and(
+        eq(salesReturnsTable.companyId, cid),
+        inArray(salesReturnsTable.invoiceId, ids),
+      ));
+    const returnedInvoiceIds = new Set(
+      returnedRows.map((row) => row.invoiceId).filter((invoiceId): invoiceId is number => invoiceId != null),
+    );
     const whByInvoice = new Map<number, Set<number>>();
     // Σ effective per-line discount (SAR) per invoice. Line discounts are
     // folded into the stored NET `subtotal` and NEVER surface on the header
@@ -495,6 +768,7 @@ router.get("/sales-invoices", async (req, res) => {
         warehouseIds: Array.from(whByInvoice.get(r.id) ?? []),
         lineDiscountTotal: (lineDiscByInvoice.get(r.id) ?? 0).toFixed(2),
         totalFreeQty: (freeQtyByInvoice.get(r.id) ?? 0),
+        hasReturn: returnedInvoiceIds.has(r.id),
         paymentSettlement: top ? {
           voucherId:   top.voucherId,
           code:        top.code,
@@ -505,7 +779,7 @@ router.get("/sales-invoices", async (req, res) => {
         } : null,
       };
     });
-    res.json(enriched);
+    respond(enriched);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
@@ -538,9 +812,19 @@ router.get("/sales-invoices/:id", async (req, res) => {
         ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
       ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
-    const lines = await db.select().from(salesInvoiceLinesTable)
-      .where(eq(salesInvoiceLinesTable.invoiceId, id))
-      .orderBy(asc(salesInvoiceLinesTable.id));
+    const [lines, customerRows] = await Promise.all([
+      db.select().from(salesInvoiceLinesTable)
+        .where(eq(salesInvoiceLinesTable.invoiceId, id))
+        .orderBy(asc(salesInvoiceLinesTable.id)),
+      inv.customerId != null
+        ? db.select().from(customersTable)
+            .where(and(
+              eq(customersTable.id, inv.customerId),
+              eq(customersTable.companyId, cid),
+            ))
+            .limit(1)
+        : Promise.resolve([]),
+    ]);
     // Surface offer names alongside the FK ids so the form can render the
     // "applied offer" badges immediately on edit, without an extra round-trip.
     const offerIds = new Set<number>();
@@ -576,6 +860,7 @@ router.get("/sales-invoices/:id", async (req, res) => {
       documentOfferName: inv.documentOfferId ? (offerNameById.get(inv.documentOfferId) ?? null) : null,
       createdByName: inv.createdById != null ? (auditMap.get(inv.createdById) ?? null) : null,
       postedByName:  inv.postedById  != null ? (auditMap.get(inv.postedById)  ?? null) : null,
+      customer: customerRows[0] ?? null,
       lines: linesWithOfferName,
     });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
@@ -738,13 +1023,6 @@ function collectInvoiceOfferIds(documentOfferId: any, lines: any[] | undefined):
 // the company's max_invoices subscription cap. No caching so SuperAdmin
 // plan edits apply on the very next request.
 async function getInvoiceQuota(companyId: number): Promise<{ limit: number; used: number; remaining: number; hasSubscription: boolean; periodStart: string; periodEnd: string }> {
-  const [sub] = await db
-    .select({ maxInvoices: subscriptionsTable.maxInvoices })
-    .from(subscriptionsTable)
-    .where(eq(subscriptionsTable.companyId, companyId))
-    .orderBy(desc(subscriptionsTable.endDate), desc(subscriptionsTable.id))
-    .limit(1);
-  const limit = sub?.maxInvoices ?? 1_000_000;
   // Month boundaries in Asia/Riyadh local time (UTC+3, no DST). Using
   // UTC here would shift the cutoff by 3 hours and falsely roll the
   // month over for invoices issued late at night in KSA.
@@ -754,16 +1032,131 @@ async function getInvoiceQuota(companyId: number): Promise<{ limit: number; used
   const periodStart = `${yyyy}-${mm}-01`;
   const lastDay = new Date(Date.UTC(yyyy, nowKsa.getUTCMonth() + 1, 0)).getUTCDate();
   const periodEnd = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
-  const [{ n }] = await db
-    .select({ n: count() })
-    .from(salesInvoicesTable)
-    .where(and(
-      eq(salesInvoicesTable.companyId, companyId),
-      gte(salesInvoicesTable.invoiceDate, periodStart),
-      lte(salesInvoicesTable.invoiceDate, periodEnd),
-    ));
-  const used = Number(n ?? 0);
-  return { limit, used, remaining: Math.max(0, limit - used), hasSubscription: !!sub, periodStart, periodEnd };
+  // One round-trip instead of "latest subscription" then "invoice count".
+  // On remote agent databases each serial query pays WAN latency, even when
+  // both statements are individually fast inside PostgreSQL.
+  const result = await db.execute(sql`
+    SELECT
+      COALESCE((
+        SELECT max_invoices
+        FROM subscriptions
+        WHERE company_id = ${companyId}
+        ORDER BY end_date DESC, id DESC
+        LIMIT 1
+      ), 1000000)::int AS "limit",
+      EXISTS(
+        SELECT 1 FROM subscriptions WHERE company_id = ${companyId}
+      ) AS "hasSubscription",
+      (
+        SELECT COUNT(*)::int
+        FROM sales_invoices
+        WHERE company_id = ${companyId}
+          AND invoice_date >= ${periodStart}
+          AND invoice_date <= ${periodEnd}
+      ) AS "used"
+  `);
+  const row = queryRows<{ limit?: unknown; used?: unknown; hasSubscription?: unknown }>(result)[0] ?? {};
+  const limit = Number(row.limit ?? 1_000_000);
+  const used = Number(row.used ?? 0);
+  return {
+    limit,
+    used,
+    remaining: Math.max(0, limit - used),
+    hasSubscription: row.hasSubscription === true,
+    periodStart,
+    periodEnd,
+  };
+}
+
+type OldestOutstandingCredit = {
+  customerName: string;
+  paymentTermsDays: number;
+  invoiceDate: string;
+  outstandingAmount: number;
+};
+
+export async function findOldestOutstandingCredit(
+  companyId: number,
+  customerId: number,
+): Promise<OldestOutstandingCredit | null> {
+  // Preserve the existing FIFO rule while reducing four serial reads
+  // (customer → invoices → returns → receipts) to one PostgreSQL statement.
+  const result = await db.execute(sql`
+    WITH customer AS (
+      SELECT
+        name_ar AS "customerName",
+        COALESCE(payment_terms_days, 0)::int AS "paymentTermsDays"
+      FROM customers
+      WHERE id = ${customerId}
+        AND company_id = ${companyId}
+        AND COALESCE(payment_terms_days, 0) > 0
+    ),
+    credits AS (
+      SELECT
+        COALESCE((
+          SELECT SUM(total_amount)
+          FROM sales_returns
+          WHERE company_id = ${companyId}
+            AND customer_id = ${customerId}
+            AND status = 'posted'
+            AND payment_type = 'credit'
+        ), 0)::numeric
+        +
+        COALESCE((
+          SELECT SUM(amount)
+          FROM receipt_vouchers
+          WHERE company_id = ${companyId}
+            AND entity_type = 'customer'
+            AND entity_id = ${customerId}
+            AND status = 'posted'
+        ), 0)::numeric AS credit
+    ),
+    prior AS (
+      SELECT
+        id,
+        invoice_date AS "invoiceDate",
+        total_amount::numeric AS total,
+        COALESCE(
+          SUM(total_amount::numeric) OVER (
+            ORDER BY invoice_date ASC, id ASC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ),
+          0
+        )::numeric AS "priorTotal"
+      FROM sales_invoices
+      WHERE company_id = ${companyId}
+        AND customer_id = ${customerId}
+        AND status = 'posted'
+        AND payment_type = 'credit'
+    )
+    SELECT
+      c."customerName",
+      c."paymentTermsDays",
+      p."invoiceDate",
+      GREATEST(
+        0,
+        p.total - GREATEST(0, cr.credit - p."priorTotal")
+      )::numeric AS "outstandingAmount"
+    FROM customer c
+    CROSS JOIN credits cr
+    CROSS JOIN prior p
+    WHERE cr.credit < p."priorTotal" + p.total
+    ORDER BY p."invoiceDate" ASC, p.id ASC
+    LIMIT 1
+  `);
+  const row = queryRows<{
+    customerName?: unknown;
+    paymentTermsDays?: unknown;
+    invoiceDate?: unknown;
+    outstandingAmount?: unknown;
+  }>(result)[0];
+  if (!row) return null;
+  return {
+    customerName: String(row.customerName ?? ""),
+    paymentTermsDays: Number(row.paymentTermsDays ?? 0),
+    invoiceDate: String(row.invoiceDate),
+    outstandingAmount: Number(row.outstandingAmount ?? 0),
+  };
 }
 
 // ─── Mobile-app rights gate (صلاحيات تطبيق الموبايل) ────────────────────────
@@ -852,16 +1245,19 @@ async function enforceMobileSalesRights(
 }
 
 router.post("/sales-invoices", async (req, res) => {
+  const timing = beginAgentInvoiceTiming(req, res, "create", Array.isArray(req.body?.lines) ? req.body.lines.length : 0);
   try {
     const cid = guard(req, res); if (!cid) return;
     // ─── Mobile-app rights (صلاحيات تطبيق الموبايل) ───
     // Enforced server-side for the mobile channel so a revoked right applies
     // immediately even if the app UI is stale. NULL map = all allowed.
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "create"))) return;
+    timing?.mark("mobile-rights");
     // Plan-based monthly cap. Re-checked on every POST so SuperAdmin
     // upgrades take effect immediately. Returns the limit + used count
     // so the frontend can render an actionable message.
     const invQuota = await getInvoiceQuota(cid);
+    timing?.mark("quota");
     if (invQuota.used >= invQuota.limit) {
       res.status(403).json({
         error: `وصلت إلى الحد الأقصى للفواتير الشهرية المسموح به في خطتك (${invQuota.limit} فاتورة/شهر). يرجى ترقية الخطة لإضافة المزيد.`,
@@ -878,7 +1274,7 @@ router.post("/sales-invoices", async (req, res) => {
     // Item Usage Control (Phase ب): block a save containing items routed
     // hidden/readonly/requires_permission for this screen (unprivileged).
     {
-      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageIds = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
       const usageV = await checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
@@ -905,6 +1301,7 @@ router.post("/sales-invoices", async (req, res) => {
       if (sq.status !== "accepted") { res.status(400).json({ error: "يجب قبول عرض السعر قبل التحويل لفاتورة" }); return; }
       validatedSourceQuotation = { id: sq.id, docNumber: sq.docNumber };
     }
+    timing?.mark("source-and-item-validation");
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     // Required-fields gate (per company policy): every sales invoice must
     // have an explicit customer + branch. Server-side enforcement here is
@@ -927,70 +1324,35 @@ router.post("/sales-invoices", async (req, res) => {
     // first, then checks the oldest remaining one. Cash invoices and customers
     // without payment terms bypass the guard entirely.
     if (pType === "credit" && customerId) {
-      const [cust] = await db.select({
-        nameAr: customersTable.nameAr,
-        paymentTermsDays: customersTable.paymentTermsDays,
-      }).from(customersTable)
-        .where(and(eq(customersTable.id, Number(customerId)), eq(customersTable.companyId, cid)));
-      const terms = Number(cust?.paymentTermsDays ?? 0);
-      if (cust && terms > 0) {
-        const priorInvs = await db.select({
-          date:  salesInvoicesTable.invoiceDate,
-          total: salesInvoicesTable.totalAmount,
-        }).from(salesInvoicesTable)
-          .where(and(
-            eq(salesInvoicesTable.companyId, cid),
-            eq(salesInvoicesTable.customerId, Number(customerId)),
-            eq(salesInvoicesTable.status, "posted"),
-            eq(salesInvoicesTable.paymentType, "credit"),
-          ))
-          .orderBy(asc(salesInvoicesTable.invoiceDate), asc(salesInvoicesTable.id));
-        const [retSum] = await db.select({
-          s: sql<string>`coalesce(sum(${salesReturnsTable.totalAmount}), 0)`,
-        }).from(salesReturnsTable).where(and(
-          eq(salesReturnsTable.companyId, cid),
-          eq(salesReturnsTable.customerId, Number(customerId)),
-          eq(salesReturnsTable.status, "posted"),
-          eq(salesReturnsTable.paymentType, "credit"),
-        ));
-        const [recSum] = await db.select({
-          s: sql<string>`coalesce(sum(${receiptVouchersTable.amount}), 0)`,
-        }).from(receiptVouchersTable).where(and(
-          eq(receiptVouchersTable.companyId, cid),
-          eq(receiptVouchersTable.entityType, "customer"),
-          eq(receiptVouchersTable.entityId, Number(customerId)),
-          eq(receiptVouchersTable.status, "posted"),
-        ));
-        let credit = Number(retSum?.s ?? 0) + Number(recSum?.s ?? 0);
+      const overdue = await findOldestOutstandingCredit(cid, Number(customerId));
+      if (overdue) {
         const refMs = new Date(invoiceDate).getTime();
-        for (const inv of priorInvs) {
-          let remaining = Number(inv.total);
-          if (credit >= remaining) { credit -= remaining; continue; }
-          remaining -= credit; credit = 0;
-          const days = Math.floor((refMs - new Date(inv.date).getTime()) / 86400000);
-          if (days > terms) {
-            res.status(409).json({
-              error:
-                `لا يمكن إصدار فاتورة جديدة للعميل "${cust.nameAr}" — يوجد فاتورة سابقة بتاريخ ${inv.date} ` +
-                `بمبلغ مستحق ${remaining.toFixed(2)} ر.س لم تُسدَّد خلال مدة الاستحقاق (${terms} يوم — تأخر ${days} يوماً). ` +
-                `الرجاء سرعة السداد لاستكمال عمليات البيع.`,
-              code: "OVERDUE_PAYMENT",
-              overdueDays: days,
-              paymentTermsDays: terms,
-              outstandingAmount: Number(remaining.toFixed(2)),
-              oldestUnpaidInvoiceDate: inv.date,
-            });
-            return;
-          }
-          break; // oldest unpaid is within terms → all newer ones are too
+        const days = Math.floor((refMs - new Date(overdue.invoiceDate).getTime()) / 86400000);
+        if (days > overdue.paymentTermsDays) {
+          res.status(409).json({
+            error:
+              `لا يمكن إصدار فاتورة جديدة للعميل "${overdue.customerName}" — يوجد فاتورة سابقة بتاريخ ${overdue.invoiceDate} ` +
+              `بمبلغ مستحق ${overdue.outstandingAmount.toFixed(2)} ر.س لم تُسدَّد خلال مدة الاستحقاق (${overdue.paymentTermsDays} يوم — تأخر ${days} يوماً). ` +
+              `الرجاء سرعة السداد لاستكمال عمليات البيع.`,
+            code: "OVERDUE_PAYMENT",
+            overdueDays: days,
+            paymentTermsDays: overdue.paymentTermsDays,
+            outstandingAmount: Number(overdue.outstandingAmount.toFixed(2)),
+            oldestUnpaidInvoiceDate: overdue.invoiceDate,
+          });
+          return;
         }
       }
     }
+    timing?.mark("credit-guard");
     // Reject the request before INSERT if any offer id (line-level or
     // document-level) doesn't belong to this tenant. Prevents cross-tenant
     // FK pollution and the resulting offer-name leak via the GET join.
-    await validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines));
-    await validateBrandLinesBelongToCompany(cid, lines);
+    await Promise.all([
+      validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines)),
+      validateBrandLinesBelongToCompany(cid, lines),
+    ]);
+    timing?.mark("offer-and-brand-validation");
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // Snapshot the rep's commission % at save time so historical invoices keep
     // their commission even if the rep's % changes later.
@@ -1005,9 +1367,45 @@ router.post("/sales-invoices", async (req, res) => {
     // picker they get in the UI (sales-reps /me/current returns "not linked").
     const repRole = req.authUser?.role;
     const isManagerRole = repRole === "admin" || repRole === "superadmin";
-    const effectiveRepId = salesRepId
-      ?? (isManagerRole ? null : await repIdForUser(cid, req.authUser?.id));
-    const repInfo = await resolveRepCommission(cid, effectiveRepId, totals.totalAmount);
+    const repInfoPromise = (async () => {
+      const effectiveRepId = salesRepId
+        ?? (isManagerRole ? null : await repIdForUser(cid, req.authUser?.id));
+      return resolveRepCommission(cid, effectiveRepId, totals.totalAmount);
+    })();
+    const buyerCountryPromise = customerId
+      ? db.select({ country: customersTable.country })
+          .from(customersTable)
+          .where(and(eq(customersTable.id, Number(customerId)), eq(customersTable.companyId, cid)))
+          .limit(1)
+      : Promise.resolve([]);
+    const taxRatePromise = lines?.length
+      ? resolveTaxRate(cid, taxId ? Number(taxId) : null)
+      : Promise.resolve("15");
+    const posSessionPromise = posSessionId
+      ? db.select({
+          id: posSessionsTable.id,
+          companyId: posSessionsTable.companyId,
+          status: posSessionsTable.status,
+        }).from(posSessionsTable)
+          .where(eq(posSessionsTable.id, Number(posSessionId)))
+          .limit(1)
+      : Promise.resolve([]);
+
+    const [repInfo, buyerCountryRows, resolvedRate, posSessionRows] = await Promise.all([
+      repInfoPromise,
+      buyerCountryPromise,
+      taxRatePromise,
+      posSessionPromise,
+    ]);
+    const buyerIsForeign = !!buyerCountryRows[0]
+      && String(buyerCountryRows[0].country ?? "SA").toUpperCase() !== "SA";
+    const validPosSession = posSessionRows[0];
+    const validPosSessionId = validPosSession
+      && validPosSession.companyId === cid
+      && validPosSession.status === "open"
+      ? validPosSession.id
+      : null;
+    timing?.mark("independent-lookups");
 
     // The central sequence engine is authoritative whenever an active
     // sequence exists for "sales_invoice" — we always allocate server-side
@@ -1018,13 +1416,6 @@ router.post("/sales-invoices", async (req, res) => {
     // Foreign-customer numbering: when the buyer's country is not SA, the
     // invoice draws from the separate "sales_invoice_foreign" series (if the
     // company configured one). The ZATCA ICV/PIH chain stays unified.
-    let buyerIsForeign = false;
-    if (customerId) {
-      const [cc] = await db.select({ country: customersTable.country })
-        .from(customersTable)
-        .where(and(eq(customersTable.id, Number(customerId)), eq(customersTable.companyId, cid)));
-      buyerIsForeign = !!cc && String(cc.country ?? "SA").toUpperCase() !== "SA";
-    }
     let resolvedDocNumber: string | null;
     try {
       // POS-screen sales (posSessionId present) number from a PER-STATION
@@ -1065,6 +1456,7 @@ router.post("/sales-invoices", async (req, res) => {
       res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
       return;
     }
+    timing?.mark("sequence");
 
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
@@ -1082,7 +1474,7 @@ router.post("/sales-invoices", async (req, res) => {
       status: "draft", notes: notes || null,
       // Creation channel — 'mobile' when the companion app created the doc.
       sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
-      posSessionId: null, // set below after validation
+      posSessionId: validPosSessionId,
       // Manual session (admin-created) the user is currently working under,
       // resolved by extractAuth from the trusted x-session-id header. Null when
       // the user is operating without a manual session.
@@ -1100,22 +1492,10 @@ router.post("/sales-invoices", async (req, res) => {
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
       taxId:              taxId ? Number(taxId) : null,
     }).returning();
-    // Validate posSessionId belongs to the same company before linking — prevents cross-tenant pollution.
-    if (posSessionId) {
-      const sid = Number(posSessionId);
-      const { posSessionsTable } = await import("@workspace/db");
-      const [s] = await db.select({ id: posSessionsTable.id, companyId: posSessionsTable.companyId, status: posSessionsTable.status })
-        .from(posSessionsTable).where(eq(posSessionsTable.id, sid));
-      if (s && s.companyId === cid && s.status === "open") {
-        await db.update(salesInvoicesTable).set({ posSessionId: sid })
-          .where(eq(salesInvoicesTable.id, inv.id));
-        inv.posSessionId = sid;
-      }
-    }
     if (lines?.length) {
-      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, inv.id, cid, resolvedRate)));
     }
+    timing?.mark("invoice-and-lines-write");
     // Bump times_used once per distinct offer that influenced this invoice
     // (line-level + the doc-level header offer). Counter increments only
     // when an invoice is actually saved — never just by the matcher firing.
@@ -1156,16 +1536,19 @@ router.post("/sales-invoices", async (req, res) => {
         return;
       }
     }
+    timing?.mark("post-write-links");
     res.status(201).json(inv);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/sales-invoices/:id", async (req, res) => {
+  const timing = beginAgentInvoiceTiming(req, res, "update", Array.isArray(req.body?.lines) ? req.body.lines.length : 0);
   try {
     const cid = guard(req, res); if (!cid) return;
     // Mobile-app rights — same gate as POST (see enforceMobileSalesRights).
     if (!(await requireMobilePerm(req, res, cid, "invoice_edit", "ليست لديك صلاحية تعديل الفواتير من تطبيق الموبايل"))) return;
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "edit"))) return;
+    timing?.mark("mobile-rights");
     const id = Number(req.params.id);
     // POSTED-DOC LOCK: a sales invoice that has been posted (status='posted')
     // is immutable from the edit screen. The user must explicitly call the
@@ -1179,6 +1562,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
       res.status(409).json({ error: "لا يمكن تعديل فاتورة مُرحَّلة. قم بفك الترحيل أولاً." });
       return;
     }
+    timing?.mark("invoice-read");
     // docNumber is intentionally not destructured here — it is immutable on
     // edit (see the .set() below).
     const { invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
@@ -1206,6 +1590,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // company's offer.
     await validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines));
     await validateBrandLinesBelongToCompany(cid, lines);
+    timing?.mark("validation");
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
@@ -1268,6 +1653,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
         await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, id, cid, resolvedRate)));
       }
     }
+    timing?.mark("invoice-and-lines-write");
     // Bump times_used for offers that are NEW to this invoice on this edit
     // (didn't exist before the update). Re-saving the same invoice with the
     // same offers does NOT bump the counter — matches the "counted once per
@@ -1282,11 +1668,13 @@ router.put("/sales-invoices/:id", async (req, res) => {
       for (const oid of newOfferIds) if (!prevOfferIds.has(oid)) toBump.push(oid);
       await bumpOffersTimesUsed(cid, toBump);
     }
+    timing?.mark("offer-links");
     res.json(inv);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, res) => {
+  const timing = beginAgentInvoiceTiming(req, res, "post", 0);
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -1302,18 +1690,13 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
       ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status === "posted") { res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" }); return; }
+    timing?.mark("invoice-read");
 
     const lines = await db.select().from(salesInvoiceLinesTable)
       .where(eq(salesInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
-
-    // Item Usage Control (Phase ب): block posting a doc carrying items routed
-    // hidden/readonly/requires_permission/requires_approval (unprivileged).
-    {
-      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
-      const usageV = await checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "post");
-      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
-    }
+    timing?.setLineCount(lines.length);
+    timing?.mark("lines-read");
 
     // When this invoice was created from a Goods Delivery Note (GDN), the
     // stock movement (and inventory credit) already happened at GDN-post
@@ -1327,12 +1710,20 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
     // are SAP-style — they NEVER affect stock/COGS and their revenue is credited
     // to the item's own revenue account instead of the generic sales account.
     const lineItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
-    const itemMetaRows = lineItemIds.length
-      ? await db
-          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType, revAcc: itemsTable.revenueAccountId })
-          .from(itemsTable)
-          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
-      : [];
+    const [usageV, itemMetaRows] = await Promise.all([
+      checkItemsUsable(cid, "sales_invoices", lineItemIds, req.authUser, "post"),
+      lineItemIds.length
+        ? db
+            .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType, revAcc: itemsTable.revenueAccountId })
+            .from(itemsTable)
+            .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
+        : Promise.resolve([]),
+    ]);
+    if (usageV.length) {
+      res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV });
+      return;
+    }
+    timing?.mark("item-validation-and-metadata");
     const modeById = new Map<number, "none" | "fifo" | "fefo">();
     const typeById = new Map<number, string>();
     const revAccById = new Map<number, number | null>();
@@ -1356,7 +1747,18 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
 
     // Load warehouse info (account + allow-negative) for every distinct warehouse used.
     // (Not needed when GDN-sourced — no stock loop and no per-warehouse inventory credits.)
-    const whInfo = gdnSourced ? {} : await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
+    const stockPairs = lines
+      .filter((l) => l.itemId && l.warehouseId && !isServiceLine(l))
+      .map((l) => ({ itemId: Number(l.itemId), warehouseId: Number(l.warehouseId) }));
+    let whInfo: Record<number, WarehouseInfo> = {};
+    let stockSnapshots = new Map<string, StockSnapshot>();
+    if (!gdnSourced) {
+      [whInfo, stockSnapshots] = await Promise.all([
+        loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]),
+        loadStockSnapshots(cid, stockPairs),
+      ]);
+    }
+    timing?.mark("warehouse-and-stock-snapshots");
 
     // Validate stock availability first (qty * conversionFactor = base-unit qty)
     // Skip the check for warehouses that explicitly allow negative stock.
@@ -1370,7 +1772,7 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
         // in the availability check so a 5-paid + 3-free line that exceeds
         // stock fails up-front instead of going negative on the COGS leg.
         const qty = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
-        const cur = await getBalance(cid, line.itemId, line.warehouseId);
+        const cur = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.qty ?? 0;
         if (cur < qty) {
           res.status(400).json({
             error: `رصيد الصنف "${line.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? line.warehouseId}" — المتاح ${cur} والمطلوب ${qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
@@ -1420,7 +1822,7 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
         let avgCost: number;
         let picks: BatchPick[] | null;
         if (mode === "none") {
-          avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
+          avgCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
           picks = null;
         } else {
           // pickBatches throws when stock is insufficient — surface as 400.
@@ -1439,6 +1841,7 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
         stockOps.push({ itemId: line.itemId, warehouseId: line.warehouseId, qty, avgCost, notes: line.notes ?? null, picks });
       }
     }
+    timing?.mark("costing");
 
     // ── Build journal entry ──
     // Dr Customer/Cash (= total = subtotal − discount + vat)
@@ -1470,8 +1873,11 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
     // sales when desired. Falls back to `sales_invoice` for any role left
     // unconfigured under POS so a missing POS mapping never breaks posting.
     const isPos = !!inv.posSessionId;
-    const mapSi = await loadMappings(cid, "sales_invoice");
-    const mapPos = isPos ? await loadMappings(cid, "pos_invoice") : null;
+    const [mapSi, mapPos] = await Promise.all([
+      loadMappings(cid, "sales_invoice"),
+      isPos ? loadMappings(cid, "pos_invoice") : Promise.resolve(null),
+    ]);
+    timing?.mark("account-mappings");
     const pick = (role: string): number | null =>
       (mapPos ? mapPos("pos_invoice", role) : null) ?? mapSi("sales_invoice", role);
     const salesAccId    = pickAccount(inv.salesAccountId,    pick("revenue"));
@@ -1647,19 +2053,24 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
       }
     }
 
-    const partyAccountId =
-      inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
-      : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
-      : await getCustomerAccountId(cid, inv.customerId);
+    const partyAccountPromise =
+      inv.paymentType === "cash" ? getCashBoxAccountId(cid, inv.cashBoxId)
+      : inv.paymentType === "bank" ? getBankAccountAccountId(cid, (inv as any).bankAccountId)
+      : getCustomerAccountId(cid, inv.customerId);
     // AR pass-through (mirrors the supplier AP pass-through on purchases):
     // cash/bank invoices route the sale THROUGH the customer's receivable
     // account (DR AR + CR AR collection leg + DR cash/bank) so the turnover
     // and the immediate collection both show on the customer's ledger.
     // Falls back to the old direct debit when the customer has no GL account.
-    const invCustomerArAccId =
+    const customerArPromise =
       (inv.paymentType === "cash" || inv.paymentType === "bank")
-        ? await getCustomerAccountId(cid, inv.customerId)
-        : null;
+        ? getCustomerAccountId(cid, inv.customerId)
+        : Promise.resolve(null);
+    const [partyAccountId, invCustomerArAccId] = await Promise.all([
+      partyAccountPromise,
+      customerArPromise,
+    ]);
+    timing?.mark("party-accounts");
     if (!partyAccountId) {
       res.status(400).json({ error:
         inv.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
@@ -1759,14 +2170,14 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
           ],
     });
     }  // end JE block
+    timing?.mark("journal-entry");
 
     // ─── ACTUAL STOCK MUTATION ───
     // Now that all validations passed AND the journal entry was created
     // successfully, persist the stock decrements. Doing this after JE
     // creation guarantees a rejected/unbalanced JE leaves stock untouched.
     for (const op of stockOps) {
-      await upsertBalance(cid, op.itemId, op.warehouseId, -op.qty, op.avgCost);
-      const newBal = await getBalance(cid, op.itemId, op.warehouseId);
+      const newBal = await upsertBalance(cid, op.itemId, op.warehouseId, -op.qty, op.avgCost);
       if (!op.picks || op.picks.length === 0) {
         // Legacy single-row WAC issue (batch_tracking_mode='none').
         await addStockLedgerEntry({
@@ -1809,6 +2220,7 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
         }
       }
     }
+    timing?.mark("stock-writes");
 
     const [updated] = await db.update(salesInvoicesTable)
       .set({
@@ -1820,6 +2232,7 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
       })
       .where(eq(salesInvoicesTable.id, id))
       .returning();
+    timing?.mark("invoice-finalize");
 
     // NOTE: لا نُنشئ سند قبض تلقائياً عند ترحيل فاتورة نقدية/بنكية.
     // القيد المحاسبي أعلاه يكفي لتسجيل الأثر النقدي؛ سند القبض يُنشأ يدوياً عند الحاجة.
@@ -2202,7 +2615,7 @@ router.post("/sales-returns", async (req, res) => {
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
-      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageIds = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
       const usageV = await checkItemsUsable(cid, "sales_returns", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
@@ -2980,10 +3393,32 @@ router.get("/sales-quotations/:id", async (req, res) => {
         ...branchScopeSpread(req, salesQuotationsTable.branchId, undefined),
       ));
     if (!q) { res.status(404).json({ error: "العرض غير موجود" }); return; }
-    const lines = await db.select().from(salesQuotationLinesTable)
-      .where(eq(salesQuotationLinesTable.quotationId, id))
-      .orderBy(asc(salesQuotationLinesTable.id));
-    res.json({ ...q, lines });
+    const [lines, currencyRows, customerRows] = await Promise.all([
+      db.select().from(salesQuotationLinesTable)
+        .where(eq(salesQuotationLinesTable.quotationId, id))
+        .orderBy(asc(salesQuotationLinesTable.id)),
+      db.select({
+        code: currenciesTable.code,
+        nameAr: currenciesTable.nameAr,
+        nameEn: currenciesTable.nameEn,
+        symbol: currenciesTable.symbol,
+      }).from(currenciesTable).where(and(
+        eq(currenciesTable.companyId, cid),
+        eq(currenciesTable.code, q.currencyCode),
+      )).limit(1),
+      q.customerId
+        ? db.select().from(customersTable).where(and(
+            eq(customersTable.id, q.customerId),
+            eq(customersTable.companyId, cid),
+          )).limit(1)
+        : Promise.resolve([]),
+    ]);
+    res.json({
+      ...q,
+      lines,
+      currency: currencyRows[0] ?? null,
+      customer: customerRows[0] ?? null,
+    });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
@@ -3014,7 +3449,7 @@ router.post("/sales-quotations", async (req, res) => {
     if (!quotationDate) { res.status(400).json({ error: "تاريخ العرض مطلوب" }); return; }
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
-      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageIds = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
       const usageV = await checkItemsUsable(cid, "sales_quotations", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
@@ -3292,7 +3727,7 @@ router.post("/sales-orders", async (req, res) => {
     if (!orderDate) { res.status(400).json({ error: "تاريخ أمر البيع مطلوب" }); return; }
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
-      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageIds = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
       const usageV = await checkItemsUsable(cid, "sales_orders", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
