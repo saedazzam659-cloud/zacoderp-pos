@@ -282,7 +282,7 @@ function totalRowsHtml(
 ): string {
   const resolvedCurrencyName = currencyNameOverride ?? t.currencyName;
   const currencyName = resolvedCurrencyName
-    ? ` <span class="currency-name">${escapePrintHtml(resolvedCurrencyName)}</span>`
+    ? ` <span class="currency-name">${currencyNameAtLabel ? escapePrintHtml(resolvedCurrencyName) : `(${escapePrintHtml(resolvedCurrencyName)})`}</span>`
     : "";
   const grandLabel = `الصافي شامل الضريبة — Total${currencyNameAtLabel ? currencyName : ""}`;
   const grandValueSuffix = currencyNameAtLabel ? "" : currencyName;
@@ -1260,7 +1260,7 @@ function template8(d: PrintData): string {
     .totals-card { min-width: 260px; border-top: 2px solid #d4af37; padding: 12px 0; }
     .totals-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; color: #475569; }
     .totals-row > .mono { flex:0 0 auto; margin-inline-start:12px; }
-    .totals-row .currency-name { display:inline-block; white-space:nowrap; font-size:.78em; }
+    .totals-row .currency-name { display:inline-block; white-space:nowrap; margin-inline-start:6px; font-size:1em; }
     .totals-row.grand { font-size: 16px; font-weight: 700; color: #0f172a; border-top: 1px solid #e2e8f0; margin-top: 6px; padding-top: 8px; }
     .footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 9px; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; }
   </style>
@@ -2245,7 +2245,7 @@ function template14(d: PrintData): string {
     .totals-card { border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fff; }
     .__totalsRow { display:flex; justify-content:space-between; font-size:11.5px; color:#334155; margin-bottom:5px; }
     .__totalsRow > .mono { flex:0 0 auto; margin-inline-start:12px; }
-    .__totalsRow .currency-name { display:inline-block; white-space:nowrap; font-size:.78em; }
+    .__totalsRow .currency-name { display:inline-block; white-space:nowrap; margin-inline-start:6px; font-size:1em; }
     .__totalsRow.grand {
       border-top:1.5px solid var(--ink); margin-top:6px; padding-top:7px;
       font-size:13.5px; font-weight:800; color:var(--ink);
@@ -2453,7 +2453,7 @@ function template14(d: PrintData): string {
           ${anchorBottom ? `<div class="bottom-spacer"></div>` : ""}
 
           <!-- Bottom : totals + QR (anchored to the page bottom) ──────── -->
-          <div class="bottom" style="${showQrColumn ? "" : "grid-template-columns:1fr;"}">
+          <div class="bottom">
             <div class="totals-card">
               <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)}</span></div>
               <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)}</span></div>
