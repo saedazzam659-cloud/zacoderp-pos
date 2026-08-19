@@ -135,7 +135,6 @@ interface AuthContextType {
     username: string,
     password: string,
     companyCode?: string,
-    options?: { demoPairCode?: string },
   ) => Promise<void>;
   logout: () => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
@@ -462,7 +461,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     username: string,
     password: string,
     companyCode?: string,
-    options?: { demoPairCode?: string },
   ) => {
     // Tenant identity is now (companyCode, username, password). The
     // server requires `companyCode` for tenant logins; it's only
@@ -474,30 +472,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let demoDeviceToken = "";
     try {
       demoDeviceToken = localStorage.getItem(demoDeviceStorageKey) ?? "";
-      if (!/^[A-Za-z0-9_-]{24,256}$/.test(demoDeviceToken)) {
-        const bytes = new Uint8Array(32);
-        crypto.getRandomValues(bytes);
-        demoDeviceToken = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
-        localStorage.setItem(demoDeviceStorageKey, demoDeviceToken);
-      }
+      if (!/^[A-Za-z0-9_-]{24,256}$/.test(demoDeviceToken)) demoDeviceToken = "";
     } catch {
-      // Server will mint and return a token when storage/private-mode access
-      // is unavailable. Login itself must remain usable.
+      // The server mints the HttpOnly browser binding when no legacy token is
+      // available. JavaScript never creates or reads the new binding.
       demoDeviceToken = "";
     }
-    const demoPairCode = options?.demoPairCode?.trim() ?? "";
     const res = await apiFetch("/auth/login", {
       method: "POST",
       body: JSON.stringify({
         username,
         password,
         ...(trimmedCode ? { companyCode: trimmedCode } : {}),
+        // One-time migration only. A successful response clears this old
+        // JavaScript-readable value after the server sets its HttpOnly cookie.
         ...(demoDeviceToken ? { demoDeviceToken } : {}),
-        ...(demoPairCode ? { demoPairCode } : {}),
       }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (data.code === "DEMO_BROWSER_LOCKED" || data.code === "DEMO_BROWSER_RESET") {
+        try { localStorage.removeItem(demoDeviceStorageKey); } catch { /* non-fatal */ }
+      }
       const err: any = new Error(data.error ?? "حدث خطأ في تسجيل الدخول");
       err.status = res.status;
       err.data = data;            // expose body so callers can detect e.g. useSuperAdminFlow
@@ -505,10 +501,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     localStorage.setItem(TOKEN_KEY, data.token);
     localStorage.setItem(SESSION_KEY, data.sessionId);
-    if (typeof data.demoDeviceToken === "string" && data.demoDeviceToken) {
-      try { localStorage.setItem(demoDeviceStorageKey, data.demoDeviceToken); }
-      catch { /* private mode — the next login will receive a fresh workspace */ }
-    }
+    try { localStorage.removeItem(demoDeviceStorageKey); } catch { /* non-fatal */ }
     // Weak-password security notice flag — consumed by <SecurityNotice/>
     // (shows an animated banner right after login + every 30 minutes).
     if (data.weakPassword === true) {

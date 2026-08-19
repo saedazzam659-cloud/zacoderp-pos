@@ -171,7 +171,7 @@ export function attachTrainingP2PHub(httpServer: HttpServer): void {
     const role = url.searchParams.get("role");
 
     try {
-      if (role === "broadcaster") await onBroadcaster(ws, url);
+      if (role === "broadcaster") await onBroadcaster(ws, url, req.headers.cookie);
       else if (role === "viewer") await onViewer(ws, url);
       else ws.close(1008, "bad role");
     } catch (err) {
@@ -185,14 +185,14 @@ export function attachTrainingP2PHub(httpServer: HttpServer): void {
 }
 
 // ─── المدرب ─────────────────────────────────────────────────────────────────
-async function onBroadcaster(ws: WebSocket, url: URL) {
+async function onBroadcaster(ws: WebSocket, url: URL, rawCookieHeader?: string) {
   const sessionId = Number(url.searchParams.get("session"));
   const bearer = (url.searchParams.get("auth") ?? "").trim();
   if (!Number.isInteger(sessionId) || sessionId <= 0 || !bearer) {
     send(ws, { type: "error", message: "بيانات ناقصة" }); ws.close(1008, "missing params"); return;
   }
 
-  const resolved = await resolveBearerToken(bearer).catch(() => null);
+  const resolved = await resolveBearerToken(bearer, rawCookieHeader).catch(() => null);
   if (!resolved) { send(ws, { type: "error", message: "تسجيل الدخول مطلوب" }); ws.close(4401, "auth"); return; }
   const u = resolved.user;
 

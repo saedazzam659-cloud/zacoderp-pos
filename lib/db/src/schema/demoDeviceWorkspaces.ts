@@ -13,10 +13,9 @@ import { usersTable } from "./users";
 import { companiesTable } from "./companies";
 
 /**
- * One row per browser identity for a demo-isolated source user.
- * The browser stores the raw opaque device token; only its SHA-256 hash is
- * persisted. A primary row points at the original tenant/user, while later
- * rows point at hidden cloned companies and shadow users.
+ * Browser-binding history for a demo source user. Under the strict policy
+ * exactly one unrevoked primary row may authorize login. The raw opaque token
+ * lives only in an HttpOnly cookie; only its SHA-256 hash is persisted.
  */
 export const demoDeviceWorkspacesTable = pgTable("demo_device_workspaces", {
   id: serial("id").primaryKey(),
@@ -47,8 +46,8 @@ export const demoDeviceWorkspacesTable = pgTable("demo_device_workspaces", {
 }));
 
 /**
- * Short-lived, one-time codes used to attach another browser to an existing
- * workspace. Codes are stored hashed and consumed transactionally.
+ * Legacy pairing-code history. New codes are disabled by the strict
+ * one-browser policy; retained only so old rows can be invalidated safely.
  */
 export const demoDevicePairCodesTable = pgTable("demo_device_pair_codes", {
   id: serial("id").primaryKey(),

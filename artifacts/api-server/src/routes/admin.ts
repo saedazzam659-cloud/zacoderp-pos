@@ -56,6 +56,7 @@ import { logAiUsage } from "../middleware/requireAiFeature.js";
 import {
   createDemoPairCode,
   DemoDeviceError,
+  enforceSingleDemoBrowser,
   listDemoDevices,
   revokeAllDemoDevices,
   revokeDemoDevice,
@@ -1630,6 +1631,8 @@ router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) =
     }
     if ((isActive === false) || (demoDeviceIsolation === false)) {
       await revokeAllDemoDevices(userId);
+    } else if (demoDeviceIsolation === true) {
+      await enforceSingleDemoBrowser(userId);
     }
     res.json({ ok: true, user: updated });
   });
@@ -1646,6 +1649,7 @@ router.get("/companies/:id/users/:userId/demo-devices", requireSuperAdmin, async
     if (!user) {
       res.status(404).json({ error: "المستخدم غير موجود" }); return;
     }
+    if (user.enabled) await enforceSingleDemoBrowser(userId);
     res.json({ enabled: user.enabled, devices: await listDemoDevices(userId) });
   });
 });

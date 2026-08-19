@@ -4,7 +4,11 @@ import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable,
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
-import { decorateDemoShadowUser } from "../lib/demoDeviceIsolation.js";
+import {
+  decorateDemoShadowUser,
+  readDemoBrowserCookie,
+  verifyStrictDemoBrowserBinding,
+} from "../lib/demoDeviceIsolation.js";
 
 export interface AuthUser {
   id: number;
@@ -93,7 +97,7 @@ export function denyKiosk(req: Request, res: Response): boolean {
  * for client kick-detection, and an `origin` discriminator. Returns null
  * when the token does not match either store.
  */
-export async function resolveBearerToken(token: string): Promise<{
+export async function resolveBearerToken(token: string, rawCookieHeader?: string): Promise<{
   user: {
     id: number; username: string; role: string; companyId: number | null;
     isActive: boolean; permissions: any; postingPermissions?: any; viewAllBranches: boolean; email: string | null;
@@ -112,6 +116,7 @@ export async function resolveBearerToken(token: string): Promise<{
       email: usersTable.email, sessionId: usersTable.sessionId,
       currentSessionId: usersTable.currentSessionId,
       isDemoShadow: usersTable.isDemoShadow,
+      demoDeviceIsolation: usersTable.demoDeviceIsolation,
     })
     .from(usersTable)
     .where(eq(usersTable.sessionToken, token));
@@ -120,6 +125,10 @@ export async function resolveBearerToken(token: string): Promise<{
       const decorated = await decorateDemoShadowUser(u);
       if (!(decorated as any).demoSourceUserId) return null;
       return { user: decorated, origin: "user" };
+    }
+    if (u.demoDeviceIsolation) {
+      const browserToken = readDemoBrowserCookie(rawCookieHeader);
+      if (!await verifyStrictDemoBrowserBinding(u.id, browserToken)) return null;
     }
     return { user: u, origin: "user" };
   }
@@ -230,7 +239,7 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
   if (!auth?.startsWith("Bearer ")) { next(); return; }
   const token = auth.slice(7);
 
-  const resolved = await resolveBearerToken(token);
+  const resolved = await resolveBearerToken(token, req.headers.cookie);
   if (!resolved) { next(); return; }
   const { user } = resolved;
 

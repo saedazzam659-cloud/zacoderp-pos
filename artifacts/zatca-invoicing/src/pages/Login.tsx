@@ -143,10 +143,6 @@ export default function Login() {
   const [loginMode, setLoginMode] = useState<"company" | "trainee">("company");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [demoPairCode, setDemoPairCode] = useState(() => {
-    try { return new URLSearchParams(window.location.search).get("demoPair") ?? ""; }
-    catch { return ""; }
-  });
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -352,9 +348,7 @@ export default function Login() {
       // next visit so returning users only have to type it once.
       try {
         const trimmedCode = loginMode === "trainee" ? "" : companyCode.trim().toUpperCase();
-        await login(username.trim(), password, trimmedCode, {
-          demoPairCode: loginMode === "company" ? demoPairCode : "",
-        });
+        await login(username.trim(), password, trimmedCode);
         if (trimmedCode) {
           try { localStorage.setItem(LAST_COMPANY_CODE_KEY, trimmedCode); }
           catch { /* private mode / quota — non-fatal */ }
@@ -798,27 +792,6 @@ export default function Login() {
                   </button>
                 </div>
               </div>
-
-              {!isSuperAdminFlow && loginMode === "company" && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    رمز ربط جهاز الديمو <span className="text-muted-foreground font-normal">(اختياري)</span>
-                  </label>
-                  <Input
-                    value={demoPairCode}
-                    onChange={e => setDemoPairCode(e.target.value.toUpperCase())}
-                    placeholder="ABCDE-23456"
-                    dir="ltr"
-                    className="text-left font-mono tracking-wider uppercase"
-                    autoComplete="off"
-                    disabled={step === "blocked"}
-                    data-testid="login-demo-pair-code"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    أدخله فقط لربط هذا المتصفح بمساحة ديمو موجودة. اتركه فارغًا لبدء مساحة مستقلة.
-                  </p>
-                </div>
-              )}
 
               {/* Turnstile widget — only shown for SA flow when site key configured */}
               {isSuperAdminFlow && TURNSTILE_SITE_KEY && (

@@ -344,22 +344,33 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
     },
     staleTime: 60_000,
   });
-  // Only agents whose external DB is actually initialized can hold sessions.
-  const initializedAgents = useMemo(
-    () => (agentsQ.data ?? []).filter(a => a.status === "active" && a.dbStatus === "initialized"),
-    [agentsQ.data],
-  );
   const sourceItems: ComboboxItem[] = useMemo(() => [
     { value: "central", label: "المركزي", description: "قاعدة البيانات المركزية" },
     { value: "all", label: "كل السيرفرات", description: "المركزي + كل سيرفرات الوكلاء المهيأة" },
-    ...initializedAgents.map(a => ({
-      value: String(a.id),
-      label: a.name,
-      description: a.domain,
-      badge: "وكيل",
-      badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200",
-    })),
-  ], [initializedAgents]);
+    ...(agentsQ.data ?? []).map(a => {
+      const ready = a.status === "active" && a.dbStatus === "initialized";
+      const statusLabel = ready
+        ? "جاهز"
+        : a.status !== "active"
+          ? "غير نشط"
+          : a.dbStatus === "not_configured"
+            ? "قاعدة البيانات غير مهيأة"
+            : a.dbStatus === "failed"
+              ? "فشل التجهيز"
+              : "قيد التجهيز";
+      return {
+        value: String(a.id),
+        label: a.name,
+        description: `${a.domain} — ${statusLabel}`,
+        badge: ready ? "وكيل جاهز" : statusLabel,
+        badgeClass: ready
+          ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+          : "bg-amber-50 text-amber-700 border-amber-200",
+        disabled: !ready,
+        disabledReason: ready ? undefined : `لا يمكن قراءة الجلسات: ${statusLabel}`,
+      };
+    }),
+  ], [agentsQ.data]);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<{ rows: SessionRow[]; total: number; warnings?: SessionSourceWarning[] }>({
     queryKey: ["security-sessions", source, sessionSearch, sessionPage],
@@ -893,6 +904,14 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
     },
     staleTime: 5 * 60_000,
   });
+  const companyItems: ComboboxItem[] = useMemo(() => [
+    { value: "all", label: "جميع الشركات", description: "عرض محاولات الدخول لكل الشركات" },
+    ...(companies ?? []).map(c => ({
+      value: String(c.id),
+      label: c.nameAr,
+      code: String(c.id),
+    })),
+  ], [companies]);
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
@@ -959,15 +978,15 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">الشركة</label>
-              <Select value={companyId} onValueChange={setCompanyId}>
-                <SelectTrigger data-testid="filter-company"><SelectValue placeholder="الكل" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">جميع الشركات</SelectItem>
-                  {(companies ?? []).map(c => (
-                    <SelectItem key={c.id} value={String(c.id)}>{c.nameAr}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                items={companyItems}
+                value={companyId}
+                onValueChange={setCompanyId}
+                placeholder="جميع الشركات"
+                searchPlaceholder="ابحث باسم الشركة أو رقمها…"
+                emptyText="لا توجد شركة مطابقة"
+                testId="filter-company"
+              />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">من تاريخ</label>

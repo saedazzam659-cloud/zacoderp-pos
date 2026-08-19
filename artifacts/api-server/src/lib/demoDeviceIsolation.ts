@@ -15,11 +15,13 @@ import { cloneCompany } from "./cloneCompany.js";
 const DEVICE_TOKEN_MIN = 24;
 const DEVICE_TOKEN_MAX = 256;
 const PAIR_CODE_TTL_MS = 10 * 60 * 1000;
+export const DEMO_BROWSER_COOKIE = "zacode_demo_browser";
 
 export class DemoDeviceError extends Error {
   constructor(
     message: string,
     public readonly status = 400,
+    public readonly code = "DEMO_BROWSER_ERROR",
   ) {
     super(message);
     this.name = "DemoDeviceError";
@@ -37,6 +39,40 @@ const validDeviceToken = (value: unknown): value is string =>
   && value.length >= DEVICE_TOKEN_MIN
   && value.length <= DEVICE_TOKEN_MAX
   && /^[A-Za-z0-9_-]+$/.test(value);
+
+export function readDemoBrowserCookie(rawHeader: string | undefined): string | undefined {
+  if (!rawHeader) return undefined;
+  for (const part of rawHeader.split(";")) {
+    const [rawKey, ...rest] = part.trim().split("=");
+    if (rawKey !== DEMO_BROWSER_COOKIE) continue;
+    try {
+      const value = decodeURIComponent(rest.join("="));
+      return validDeviceToken(value) ? value : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export async function verifyStrictDemoBrowserBinding(
+  sourceUserId: number,
+  rawDeviceToken: string | undefined,
+): Promise<boolean> {
+  if (!validDeviceToken(rawDeviceToken)) return false;
+  const [binding] = await db.select({ id: demoDeviceWorkspacesTable.id })
+    .from(demoDeviceWorkspacesTable)
+    .where(and(
+      eq(demoDeviceWorkspacesTable.sourceUserId, sourceUserId),
+      eq(demoDeviceWorkspacesTable.workspaceUserId, sourceUserId),
+      eq(demoDeviceWorkspacesTable.deviceTokenHash, sha256(rawDeviceToken)),
+      eq(demoDeviceWorkspacesTable.isPrimary, true),
+      eq(demoDeviceWorkspacesTable.status, "ready"),
+      isNull(demoDeviceWorkspacesTable.revokedAt),
+    ))
+    .limit(1);
+  return !!binding;
+}
 
 export const generateDemoDeviceToken = () =>
   crypto.randomBytes(32).toString("base64url");
@@ -212,6 +248,10 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
   workspaceCompanyId: number | null;
   isPrimary: boolean;
 }> {
+  // Compatibility export for older callers: the legacy workspace-cloning
+  // implementation below is unreachable. All logins now use strict binding.
+  return resolveStrictDemoBrowserLogin(input);
+  /*
   const source = input.sourceUser;
   if (!source.demoDeviceIsolation) {
     return {
@@ -420,6 +460,191 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
     ));
     throw error;
   }
+  */
+}
+
+/**
+ * Collapse the legacy per-browser workspace model to one approved browser.
+ * The original/primary row is kept; every secondary link and shadow session
+ * is revoked. Hidden legacy companies are intentionally preserved.
+ */
+async function normalizeStrictBrowserLinks(tx: any, source: SourceUser) {
+  const links = await tx.select().from(demoDeviceWorkspacesTable).where(and(
+    eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
+    isNull(demoDeviceWorkspacesTable.revokedAt),
+  )).orderBy(
+    desc(demoDeviceWorkspacesTable.isPrimary),
+    demoDeviceWorkspacesTable.createdAt,
+    demoDeviceWorkspacesTable.id,
+  );
+
+  const canonical = links.find((link: typeof demoDeviceWorkspacesTable.$inferSelect) =>
+    link.isPrimary && link.status === "ready",
+  ) ?? null;
+  const now = new Date();
+  const extras = links.filter((link: typeof demoDeviceWorkspacesTable.$inferSelect) =>
+    !canonical || link.id !== canonical.id,
+  );
+
+  if (extras.length) {
+    await tx.update(demoDeviceWorkspacesTable).set({
+      status: "revoked",
+      revokedAt: now,
+      updatedAt: now,
+    }).where(inArray(demoDeviceWorkspacesTable.id, extras.map((link: typeof demoDeviceWorkspacesTable.$inferSelect) => link.id)));
+  }
+
+  const shadowIds = links
+    .map((link: typeof demoDeviceWorkspacesTable.$inferSelect) => link.workspaceUserId)
+    .filter((id: number | null): id is number => id != null && id !== source.id);
+  if (shadowIds.length) {
+    await tx.update(usersTable).set({
+      isActive: false,
+      sessionToken: null,
+      sessionId: null,
+      updatedAt: now,
+    }).where(inArray(usersTable.id, shadowIds));
+  }
+
+  await tx.update(demoDevicePairCodesTable).set({ usedAt: now }).where(and(
+    eq(demoDevicePairCodesTable.sourceUserId, source.id),
+    isNull(demoDevicePairCodesTable.usedAt),
+  ));
+
+  if (!canonical) return null;
+  const [normalized] = await tx.update(demoDeviceWorkspacesTable).set({
+    workspaceCompanyId: source.companyId,
+    workspaceUserId: source.id,
+    isPrimary: true,
+    status: "ready",
+    revokedAt: null,
+    updatedAt: now,
+  }).where(eq(demoDeviceWorkspacesTable.id, canonical.id)).returning();
+  return normalized;
+}
+
+export async function enforceSingleDemoBrowser(sourceUserId: number) {
+  const [source] = await db.select().from(usersTable).where(and(
+    eq(usersTable.id, sourceUserId),
+    eq(usersTable.isDemoShadow, false),
+  )).limit(1);
+  if (!source) throw new DemoDeviceError("مستخدم الديمو غير موجود", 404);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${90_000_000 + source.id})`);
+    return normalizeStrictBrowserLinks(tx, source);
+  });
+}
+
+/**
+ * Strict demo policy: the first browser token becomes the only approved
+ * browser. A second browser is rejected even if it shares the same IP.
+ */
+export async function resolveStrictDemoBrowserLogin(input: ResolveDemoLoginInput): Promise<{
+  effectiveUser: SourceUser;
+  deviceToken: string | null;
+  deviceLinkId: number | null;
+  workspaceCompanyId: number | null;
+  isPrimary: boolean;
+  bindingWasCreated: boolean;
+}> {
+  const source = input.sourceUser;
+  if (!source.demoDeviceIsolation) {
+    return {
+      effectiveUser: source,
+      deviceToken: null,
+      deviceLinkId: null,
+      workspaceCompanyId: source.companyId,
+      isPrimary: true,
+      bindingWasCreated: false,
+    };
+  }
+  if (source.isDemoShadow || !source.companyId) {
+    throw new DemoDeviceError("لا يمكن تسجيل الدخول المباشر إلى مستخدم مساحة ديمو", 403, "DEMO_SHADOW_LOGIN_DENIED");
+  }
+
+  const deviceToken = validDeviceToken(input.deviceToken)
+    ? input.deviceToken
+    : generateDemoDeviceToken();
+  const deviceTokenHash = sha256(deviceToken);
+  const label = typeof input.deviceLabel === "string" && input.deviceLabel.trim()
+    ? input.deviceLabel.trim().slice(0, 180)
+    : requestLabel(input.userAgent);
+
+  const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${90_000_000 + source.id})`);
+    const canonical = await normalizeStrictBrowserLinks(tx, source);
+    const now = new Date();
+
+    if (canonical) {
+      if (canonical.deviceTokenHash !== deviceTokenHash) {
+        return {
+          kind: "locked" as const,
+          deviceLabel: canonical.deviceLabel,
+          lastSeenAt: canonical.lastSeenAt,
+        };
+      }
+      const [updated] = await tx.update(demoDeviceWorkspacesTable).set({
+        deviceLabel: label,
+        userAgent: input.userAgent ?? null,
+        lastIp: input.ip ?? null,
+        lastSeenAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(demoDeviceWorkspacesTable.id, canonical.id),
+        eq(demoDeviceWorkspacesTable.status, "ready"),
+        isNull(demoDeviceWorkspacesTable.revokedAt),
+      )).returning();
+      if (!updated) {
+        throw new DemoDeviceError("تم فك ارتباط متصفح الديمو. سجّل الدخول مرة أخرى.", 403, "DEMO_BROWSER_RESET");
+      }
+      return { kind: "ready" as const, link: updated, bindingWasCreated: false };
+    }
+
+    const [prior] = await tx.select().from(demoDeviceWorkspacesTable).where(and(
+      eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
+      eq(demoDeviceWorkspacesTable.deviceTokenHash, deviceTokenHash),
+    )).limit(1);
+    const values = {
+      sourceCompanyId: source.companyId!,
+      workspaceCompanyId: source.companyId!,
+      workspaceUserId: source.id,
+      deviceLabel: label,
+      userAgent: input.userAgent ?? null,
+      lastIp: input.ip ?? null,
+      isPrimary: true,
+      status: "ready",
+      revokedAt: null,
+      lastSeenAt: now,
+      updatedAt: now,
+    };
+    const [link] = prior
+      ? await tx.update(demoDeviceWorkspacesTable).set(values)
+          .where(eq(demoDeviceWorkspacesTable.id, prior.id)).returning()
+      : await tx.insert(demoDeviceWorkspacesTable).values({
+          ...values,
+          sourceUserId: source.id,
+          deviceTokenHash,
+          firstIp: input.ip ?? null,
+        }).returning();
+    return { kind: "ready" as const, link, bindingWasCreated: true };
+  });
+
+  if (result.kind === "locked") {
+    const detail = result.deviceLabel ? ` (${result.deviceLabel})` : "";
+    throw new DemoDeviceError(
+      `حساب الديمو مرتبط بالفعل بمتصفح آخر${detail}. اطلب من مسؤول النظام فك الارتباط أولاً.`,
+      423,
+      "DEMO_BROWSER_LOCKED",
+    );
+  }
+  return {
+    effectiveUser: source,
+    deviceToken,
+    deviceLinkId: result.link.id,
+    workspaceCompanyId: source.companyId,
+    isPrimary: true,
+    bindingWasCreated: result.bindingWasCreated,
+  };
 }
 
 export async function listDemoDevices(sourceUserId: number) {
@@ -430,6 +655,8 @@ export async function listDemoDevices(sourceUserId: number) {
     status: demoDeviceWorkspacesTable.status,
     revokedAt: demoDeviceWorkspacesTable.revokedAt,
     lastSeenAt: demoDeviceWorkspacesTable.lastSeenAt,
+    lastIp: demoDeviceWorkspacesTable.lastIp,
+    userAgent: demoDeviceWorkspacesTable.userAgent,
     createdAt: demoDeviceWorkspacesTable.createdAt,
     workspaceCompanyId: demoDeviceWorkspacesTable.workspaceCompanyId,
     workspaceName: companiesTable.nameAr,
@@ -440,34 +667,13 @@ export async function listDemoDevices(sourceUserId: number) {
 }
 
 export async function createDemoPairCode(sourceUserId: number, deviceId: number) {
-  const code = generatePairCode();
-  const normalized = normalizedPairCode(code);
-  const expiresAt = new Date(Date.now() + PAIR_CODE_TTL_MS);
-  await db.transaction(async (tx) => {
-    // The same per-source lock is held by code redemption and revocation.
-    // Therefore a code is either inserted before revoke (and revoked with it),
-    // or revoke wins and this request sees no ready device.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${90_000_000 + sourceUserId})`);
-    const [device] = await tx.select().from(demoDeviceWorkspacesTable).where(and(
-      eq(demoDeviceWorkspacesTable.id, deviceId),
-      eq(demoDeviceWorkspacesTable.sourceUserId, sourceUserId),
-      eq(demoDeviceWorkspacesTable.status, "ready"),
-      isNull(demoDeviceWorkspacesTable.revokedAt),
-    )).limit(1);
-    if (!device?.workspaceCompanyId) throw new DemoDeviceError("الجهاز غير متاح للربط", 404);
-    await tx.update(demoDevicePairCodesTable).set({ usedAt: new Date() }).where(and(
-      eq(demoDevicePairCodesTable.sourceUserId, sourceUserId),
-      isNull(demoDevicePairCodesTable.usedAt),
-    ));
-    await tx.insert(demoDevicePairCodesTable).values({
-      sourceUserId,
-      workspaceCompanyId: device.workspaceCompanyId,
-      createdByDeviceId: device.id,
-      codeHash: sha256(normalized),
-      expiresAt,
-    });
-  });
-  return { code, expiresAt };
+  void sourceUserId;
+  void deviceId;
+  throw new DemoDeviceError(
+    "تم إيقاف ربط متصفحات إضافية. حساب الديمو يسمح بمتصفح واحد فقط.",
+    410,
+    "DEMO_PAIRING_DISABLED",
+  );
 }
 
 export async function revokeDemoDevice(sourceUserId: number, deviceId: number) {
@@ -517,31 +723,8 @@ export async function revokeAllDemoDevices(sourceUserId: number) {
 export async function decorateDemoShadowUser<T extends { id: number; isDemoShadow?: boolean }>(
   user: T,
 ): Promise<T & { demoSourceUserId?: number; demoDeviceIsolation?: boolean }> {
-  if (!user.isDemoShadow) return user;
-  const [row] = await db.select({
-    sourceUserId: demoDeviceWorkspacesTable.sourceUserId,
-    sourceUsername: usersTable.username,
-    sourceCode: usersTable.code,
-    sourceNameAr: usersTable.nameAr,
-    sourceNameEn: usersTable.nameEn,
-    demoDeviceIsolation: usersTable.demoDeviceIsolation,
-    sourceActive: usersTable.isActive,
-  }).from(demoDeviceWorkspacesTable)
-    .innerJoin(usersTable, eq(usersTable.id, demoDeviceWorkspacesTable.sourceUserId))
-    .where(and(
-      eq(demoDeviceWorkspacesTable.workspaceUserId, user.id),
-      eq(demoDeviceWorkspacesTable.status, "ready"),
-      isNull(demoDeviceWorkspacesTable.revokedAt),
-    ))
-    .limit(1);
-  if (!row || !row.sourceActive || !row.demoDeviceIsolation) return user;
-  return {
-    ...user,
-    username: row.sourceUsername,
-    code: row.sourceCode,
-    nameAr: row.sourceNameAr,
-    nameEn: row.sourceNameEn,
-    demoSourceUserId: row.sourceUserId,
-    demoDeviceIsolation: true,
-  };
+  // Legacy shadow sessions are intentionally no longer decorated. The bearer
+  // resolver treats the missing demoSourceUserId as invalid, which immediately
+  // retires all sessions created by the old per-browser workspace model.
+  return user;
 }

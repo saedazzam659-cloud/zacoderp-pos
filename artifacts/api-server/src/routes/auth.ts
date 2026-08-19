@@ -66,9 +66,12 @@ import { resolveBearerToken } from "../middleware/auth.js";
 import { runEndOfSessionHooks, loadSessionSettings } from "../lib/workSessionReport.js";
 import { listSessionsForUser } from "./sessions.js";
 import {
+  DEMO_BROWSER_COOKIE,
   decorateDemoShadowUser,
   DemoDeviceError,
-  resolveDemoDeviceLogin,
+  readDemoBrowserCookie,
+  resolveStrictDemoBrowserLogin,
+  revokeDemoDevice,
 } from "../lib/demoDeviceIsolation.js";
 
 const router = Router();
@@ -401,16 +404,15 @@ router.post("/login", async (req, res) => {
     }
   }
 
-  // Demo-device isolation is resolved only AFTER the source tenant's password,
-  // suspension and subscription gates have passed. The effective user may be
-  // a shadow user inside a hidden per-device company; all downstream session,
-  // work-session and audit writes must use that effective identity.
-  let demoLogin: Awaited<ReturnType<typeof resolveDemoDeviceLogin>> | null = null;
+  // Strict demo-browser binding is resolved only after password, suspension,
+  // and subscription gates pass. The HttpOnly cookie wins; the body token is
+  // accepted only as a one-time migration path from the former localStorage
+  // implementation.
+  let demoLogin: Awaited<ReturnType<typeof resolveStrictDemoBrowserLogin>> | null = null;
   try {
-    demoLogin = await resolveDemoDeviceLogin({
+    demoLogin = await resolveStrictDemoBrowserLogin({
       sourceUser: user,
-      deviceToken: req.body?.demoDeviceToken,
-      pairCode: req.body?.demoPairCode,
+      deviceToken: readDemoBrowserCookie(req.headers.cookie) ?? req.body?.demoDeviceToken,
       deviceLabel: req.body?.demoDeviceLabel,
       userAgent: ua,
       ip,
@@ -419,8 +421,11 @@ router.post("/login", async (req, res) => {
     const status = error instanceof DemoDeviceError ? error.status : 500;
     const message = error instanceof DemoDeviceError
       ? error.message
-      : "تعذر تجهيز مساحة الديمو لهذا الجهاز";
-    res.status(status).json({ error: message, code: "DEMO_DEVICE_WORKSPACE_ERROR" });
+      : "تعذر التحقق من متصفح الديمو";
+    res.status(status).json({
+      error: message,
+      code: error instanceof DemoDeviceError ? error.code : "DEMO_BROWSER_ERROR",
+    });
     return;
   }
   const sessionUser = demoLogin.effectiveUser;
@@ -429,34 +434,60 @@ router.post("/login", async (req, res) => {
   const sessionToken = generateToken();
   const sessionId = randomUUID();
 
-  const issuedSession = await db.update(usersTable).set({
-    sessionToken,
-    sessionId,
-    // Bind the session to its opening channel — mobile-app permission
-    // enforcement keys off this (not just the forgeable per-request header).
-    sessionChannel: String(req.headers?.["x-app-channel"] ?? "") === "mobile" ? "mobile" : "web",
-    lastLoginAt: new Date(),
-    updatedAt: new Date(),
-  }).where(and(
-    eq(usersTable.id, sessionUser.id),
-    demoLogin.deviceLinkId == null
-      ? undefined
-      : sql`EXISTS (
-          SELECT 1
-            FROM ${demoDeviceWorkspacesTable} ddw
-           WHERE ddw.id = ${demoLogin.deviceLinkId}
-             AND ddw.source_user_id = ${user.id}
-             AND ddw.workspace_user_id = ${sessionUser.id}
-             AND ddw.status = 'ready'
-             AND ddw.revoked_at IS NULL
-        )`,
-  )).returning({ id: usersTable.id });
+  let issuedSession: Array<{ id: number }>;
+  try {
+    issuedSession = await db.update(usersTable).set({
+      sessionToken,
+      sessionId,
+      // Bind the session to its opening channel — mobile-app permission
+      // enforcement keys off this (not just the forgeable per-request header).
+      sessionChannel: String(req.headers?.["x-app-channel"] ?? "") === "mobile" ? "mobile" : "web",
+      lastLoginAt: new Date(),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(usersTable.id, sessionUser.id),
+      demoLogin.deviceLinkId == null
+        ? undefined
+        : sql`EXISTS (
+            SELECT 1
+              FROM ${demoDeviceWorkspacesTable} ddw
+             WHERE ddw.id = ${demoLogin.deviceLinkId}
+               AND ddw.source_user_id = ${user.id}
+               AND ddw.workspace_user_id = ${sessionUser.id}
+               AND ddw.status = 'ready'
+               AND ddw.revoked_at IS NULL
+          )`,
+    )).returning({ id: usersTable.id });
+  } catch (error) {
+    // A freshly-created binding has not reached the browser yet. Release it so
+    // a transient session-write failure cannot permanently lock the account to
+    // an unknown server-generated token.
+    if (demoLogin.bindingWasCreated && demoLogin.deviceLinkId != null) {
+      await revokeDemoDevice(user.id, demoLogin.deviceLinkId).catch(() => {});
+    }
+    throw error;
+  }
   if (issuedSession.length === 0) {
+    if (demoLogin.bindingWasCreated && demoLogin.deviceLinkId != null) {
+      await revokeDemoDevice(user.id, demoLogin.deviceLinkId).catch(() => {});
+    }
     res.status(403).json({
       error: "تم إلغاء ربط هذا الجهاز. احذف بيانات الموقع ثم سجّل الدخول مجددًا.",
       code: "DEMO_DEVICE_REVOKED",
     });
     return;
+  }
+  // Set the HttpOnly binding immediately after the guarded session write.
+  // Everything below is ancillary login bookkeeping; if any of it fails, the
+  // browser must still retain the token that owns the committed binding.
+  if (demoLogin.deviceToken) {
+    res.cookie(DEMO_BROWSER_COOKIE, demoLogin.deviceToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      path: "/",
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+    });
   }
   // Keep the visible/source account's last-login timestamp accurate even when
   // the actual session belongs to a shadow user in a hidden workspace.
@@ -621,7 +652,6 @@ router.post("/login", async (req, res) => {
   res.json({
     token: sessionToken,
     sessionId,
-    demoDeviceToken: demoLogin.deviceToken,
     demoWorkspace: demoLogin.deviceLinkId ? {
       deviceLinkId: demoLogin.deviceLinkId,
       companyId: demoLogin.workspaceCompanyId,
@@ -666,8 +696,13 @@ router.post("/logout", async (req, res) => {
   if (auth?.startsWith("Bearer ")) {
     const token = auth.slice(7);
 
-    // Legacy single-session: clear users.sessionToken / sessionId.
-    const [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+    // Regular session: strict demo users must also present the approved
+    // HttpOnly browser cookie. A copied bearer token alone cannot log out (or
+    // otherwise act as) the approved browser.
+    const resolvedUserSession = await resolveBearerToken(token, req.headers.cookie);
+    const [user] = resolvedUserSession?.origin === "user"
+      ? await db.select().from(usersTable).where(eq(usersTable.id, resolvedUserSession.user.id))
+      : [null];
     if (user) {
       await db.update(usersTable).set({
         sessionToken: null,
@@ -775,21 +810,16 @@ router.get("/me", async (req, res) => {
   }
   const token = auth.slice(7);
 
-  // Try regular session first, then SuperAdmin multi-session.
+  // Resolve regular and SuperAdmin sessions through the shared resolver so a
+  // strict demo account must present both its bearer token and browser cookie.
   let user: any = null;
   let resolvedSessionId: string | null = null;
-  const [u] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
-  if (u?.isActive) {
-    user = u;
-    resolvedSessionId = u.sessionId;
-  } else {
-    const resolved = await resolveBearerToken(token);
-    if (resolved) {
-      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
-      if (full?.isActive) {
-        user = full;
-        resolvedSessionId = resolved.user.sessionId;
-      }
+  const resolved = await resolveBearerToken(token, req.headers.cookie);
+  if (resolved) {
+    const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+    if (full?.isActive) {
+      user = full;
+      resolvedSessionId = resolved.user.sessionId;
     }
   }
   if (!user) {
@@ -881,6 +911,10 @@ router.get("/me", async (req, res) => {
     return;
   }
 
+  if (user.isDemoShadow) {
+    res.status(401).json({ error: "تم إنهاء جلسة مساحة الديمو القديمة — يرجى تسجيل الدخول مجدداً" });
+    return;
+  }
   user = await decorateDemoShadowUser(user);
 
   // Same "latest subscription" rule as the login gate so /me stays consistent
@@ -946,13 +980,11 @@ router.put("/me/notifications", async (req, res) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
   const token = auth.slice(7);
-  let [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
-  if (!user) {
-    const resolved = await resolveBearerToken(token);
-    if (resolved) {
-      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
-      if (full) user = full;
-    }
+  let user: any = null;
+  const resolved = await resolveBearerToken(token, req.headers.cookie);
+  if (resolved) {
+    const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+    if (full) user = full;
   }
   if (!user || !user.isActive) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
 
@@ -1028,13 +1060,11 @@ router.put("/me/ui-prefs", async (req, res) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
   const token = auth.slice(7);
-  let [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
-  if (!user) {
-    const resolved = await resolveBearerToken(token);
-    if (resolved) {
-      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
-      if (full) user = full;
-    }
+  let user: any = null;
+  const resolved = await resolveBearerToken(token, req.headers.cookie);
+  if (resolved) {
+    const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+    if (full) user = full;
   }
   if (!user || !user.isActive) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
 
@@ -1139,7 +1169,7 @@ router.post("/register", async (req, res, next) => {
       if (bearer) {
         try {
           const { resolveBearerToken } = await import("../middleware/auth.js");
-          const resolved = await resolveBearerToken(bearer);
+          const resolved = await resolveBearerToken(bearer, req.headers.cookie);
           isSuperAdmin = !!resolved && (resolved as any).user?.role === "superadmin";
         } catch { /* fall through to block */ }
       }
@@ -1386,7 +1416,7 @@ router.post("/register", async (req, res) => {
     if (!callerIsSuperAdmin) {
       try {
         const { resolveBearerToken } = await import("../middleware/auth.js");
-        const resolved = await resolveBearerToken(token);
+        const resolved = await resolveBearerToken(token, req.headers.cookie);
         callerIsSuperAdmin = !!resolved && (resolved as any).user?.role === "superadmin";
       } catch { /* keep false */ }
     }
@@ -2025,13 +2055,11 @@ router.put("/profile", async (req, res) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
   const token = auth.slice(7);
-  let [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
-  if (!user) {
-    const resolved = await resolveBearerToken(token);
-    if (resolved) {
-      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
-      if (full) user = full;
-    }
+  let user: any = null;
+  const resolved = await resolveBearerToken(token, req.headers.cookie);
+  if (resolved) {
+    const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+    if (full) user = full;
   }
   if (!user || !user.isActive) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
 

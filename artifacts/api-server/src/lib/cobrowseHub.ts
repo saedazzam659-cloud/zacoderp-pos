@@ -138,7 +138,9 @@ export function attachCobrowseHub(httpServer: HttpServer): void {
     let agentCompanyId: number | null = null;
     if (role === "agent") {
       const bearer = (url.searchParams.get("auth") ?? "").trim();
-      const resolved = bearer ? await resolveBearerToken(bearer).catch(() => null) : null;
+      const resolved = bearer
+        ? await resolveBearerToken(bearer, req.headers.cookie).catch(() => null)
+        : null;
       if (!resolved) {
         send(ws, { type: "error", message: "agent auth required" });
         ws.close(4401, "agent auth required"); return;

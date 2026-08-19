@@ -34,6 +34,7 @@ interface SearchComboboxProps {
   disabled?: boolean;
   grouped?: boolean;
   autoFocus?: boolean;
+  testId?: string;
   renderSelected?: (item: ComboboxItem) => React.ReactNode;
   renderItem?: (item: ComboboxItem, selected: boolean) => React.ReactNode;
 }
@@ -49,6 +50,7 @@ export function SearchCombobox({
   disabled,
   grouped,
   autoFocus,
+  testId,
   renderSelected: _renderSelected,
   renderItem,
 }: SearchComboboxProps) {
@@ -215,6 +217,7 @@ export function SearchCombobox({
             role="combobox"
             aria-expanded={open}
             aria-autocomplete="list"
+            data-testid={testId}
             disabled={disabled}
             value={displayValue}
             placeholder={selectedItem ? "" : (searchPlaceholder ?? placeholder)}

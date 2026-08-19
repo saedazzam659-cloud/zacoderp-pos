@@ -27,7 +27,7 @@ router.get("/session-events", async (req, res) => {
     return;
   }
 
-  const resolved = await resolveBearerToken(token);
+  const resolved = await resolveBearerToken(token, req.headers.cookie);
   if (!resolved) {
     res.status(401).json({ error: "invalid token" });
     return;
@@ -89,7 +89,7 @@ router.get("/data-version", async (req, res) => {
   const headerAuth = req.headers.authorization;
   const token = headerAuth?.startsWith("Bearer ") ? headerAuth.slice(7) : null;
   if (!token) { res.status(401).json({ error: "missing token" }); return; }
-  const resolved = await resolveBearerToken(token);
+  const resolved = await resolveBearerToken(token, req.headers.cookie);
   if (!resolved || resolved.user.companyId == null) {
     res.status(401).json({ error: "invalid token" });
     return;
