@@ -144,6 +144,26 @@ test("two browsers get two isolated workspaces; first is primary in the source c
   );
 });
 
+test("global temporary switch bypasses demo workspace resolution without deleting data", async () => {
+  const source = await loadSource();
+  const prior = process.env.DEMO_DEVICE_ISOLATION_ENABLED;
+  process.env.DEMO_DEVICE_ISOLATION_ENABLED = "false";
+  try {
+    const result = await resolveDemoDeviceLogin({
+      sourceUser: source,
+      deviceToken: randomBytes(32).toString("base64url"),
+      deviceLabel: "temporarily-disabled",
+    });
+    assert.equal(result.effectiveUser.id, source.id);
+    assert.equal(result.deviceLinkId, null);
+    assert.equal(result.deviceToken, null);
+    assert.equal(result.bindingWasCreated, false);
+  } finally {
+    if (prior == null) delete process.env.DEMO_DEVICE_ISOLATION_ENABLED;
+    else process.env.DEMO_DEVICE_ISOLATION_ENABLED = prior;
+  }
+});
+
 test("releaseDemoDeviceLink deletes the link row so the browser can rebind", async () => {
   const source = await loadSource();
   const token = randomBytes(32).toString("base64url");

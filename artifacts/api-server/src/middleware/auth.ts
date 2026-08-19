@@ -6,6 +6,7 @@ import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
 import {
   decorateDemoShadowUser,
+  isDemoDeviceIsolationEnabled,
   readDemoBrowserCookie,
   resolveDemoShadowBinding,
   verifyStrictDemoBrowserBinding,
@@ -122,7 +123,7 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
     .from(usersTable)
     .where(eq(usersTable.sessionToken, token));
   if (u?.isActive) {
-    if (u.isDemoShadow) {
+    if (isDemoDeviceIsolationEnabled() && u.isDemoShadow) {
       // Shadow sessions must present the same per-browser cookie that owns
       // their device link — a copied bearer token alone is useless elsewhere.
       const browserToken = readDemoBrowserCookie(rawCookieHeader);
@@ -132,7 +133,7 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
       if (!(decorated as any).demoSourceUserId) return null;
       return { user: decorated, origin: "user" };
     }
-    if (u.demoDeviceIsolation) {
+    if (isDemoDeviceIsolationEnabled() && u.demoDeviceIsolation) {
       const browserToken = readDemoBrowserCookie(rawCookieHeader);
       if (!await verifyStrictDemoBrowserBinding(u.id, browserToken)) return null;
     }

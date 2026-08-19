@@ -17,6 +17,17 @@ const DEVICE_TOKEN_MAX = 256;
 const PAIR_CODE_TTL_MS = 10 * 60 * 1000;
 export const DEMO_BROWSER_COOKIE = "zacode_demo_browser";
 
+/**
+ * Emergency performance switch for the demo workspace feature.
+ *
+ * The default stays enabled so existing installations retain their policy.
+ * Setting DEMO_DEVICE_ISOLATION_ENABLED=false bypasses device workspace
+ * resolution and browser-cookie binding without deleting any demo data.
+ */
+export function isDemoDeviceIsolationEnabled(): boolean {
+  return process.env.DEMO_DEVICE_ISOLATION_ENABLED !== "false";
+}
+
 export class DemoDeviceError extends Error {
   constructor(
     message: string,
@@ -260,7 +271,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
   bindingWasCreated: boolean;
 }> {
   const source = input.sourceUser;
-  if (!source.demoDeviceIsolation) {
+  if (!isDemoDeviceIsolationEnabled() || !source.demoDeviceIsolation) {
     return {
       effectiveUser: source,
       deviceToken: null,
