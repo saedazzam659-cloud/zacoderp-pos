@@ -19,6 +19,7 @@ import {
   employeesTable, employeeContractsTable, employeeAttendanceTable, employeeLeavesTable,
   attendanceShiftsTable, attendanceMovementsTable, exitPermissionsTable,
   attendanceDayLocksTable, attendancePayrollTransfersTable, attendanceAuditTable,
+  attendanceAiSettingsTable,
 } from "@workspace/db";
 import { and, eq, asc, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -120,6 +121,10 @@ export async function recalcDay(cid: number, date: string, employeeIds?: number[
       .where(and(eq(employeeLeavesTable.companyId, cid), inArray(employeeLeavesTable.employeeId, ids), eq(employeeLeavesTable.status, "approved"), lte(employeeLeavesTable.startDate, date), gte(employeeLeavesTable.endDate, date))),
     loadSchedules(cid, ids, date),
   ]);
+  // Company auto-absence policy (اعتبار المتأخر غائباً بعد X دقيقة)
+  const [aiSettings] = await db.select({ absentAfterMin: attendanceAiSettingsTable.absentAfterMin })
+    .from(attendanceAiSettingsTable).where(eq(attendanceAiSettingsTable.companyId, cid));
+  const absentAfterMin = aiSettings?.absentAfterMin ?? 0;
 
   const movByEmp = new Map<number, any[]>();
   for (const m of movs) { const a = movByEmp.get(m.employeeId) ?? []; a.push(m); movByEmp.set(m.employeeId, a); }
@@ -161,6 +166,7 @@ export async function recalcDay(cid: number, date: string, employeeIds?: number[
       permissions: empPerms.map((p): PermissionInput => ({ startTime: p.startTime, endTime: p.endTime, paid: !!p.paid, id: p.id })),
       onLeave: !!leave,
       leavePaid: leave ? !!leave.paid : undefined,
+      absentAfterMin,
     });
 
     const values = {

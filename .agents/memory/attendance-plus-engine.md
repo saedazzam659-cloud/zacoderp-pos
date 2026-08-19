@@ -17,3 +17,7 @@ description: Web HR attendance & time management module (attendance-plus) — si
 - Cross-midnight shifts: recalc fetches date AND date+1 movements; next-day punches ≤ workEnd fold in, engine offsets times < workStart by +24h.
 - recalc never mutates raw movements; skips employees with no data (no absent-row flooding); manual rows (`calcSource != 'engine'`) without movements/permissions are preserved.
 - New tables were applied by direct DDL in dev; prod schema syncs at Publish (ensureSchema does NOT create tables).
+
+## Auto-absence policy (اعتبار المتأخر غائباً)
+- `attendance_ai_settings.absent_after_min` (null/0=off): computeDay gets `ctx.absentAfterMin`; when lateRaw (pre-grace, permission-overlap already excluded) > cutoff → status "absent" + violation `auto_absent`. Applied in BOTH branches: open-in (no checkout) and full-session — any new status branch must apply it too.
+- recalcDay loads the setting once per company call (not per employee).

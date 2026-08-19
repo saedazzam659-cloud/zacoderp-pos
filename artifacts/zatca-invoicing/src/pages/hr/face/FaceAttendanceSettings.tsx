@@ -84,6 +84,26 @@ export default function FaceAttendanceSettings() {
             <p className="text-xs text-muted-foreground mt-1">منع تسجيل دخول/خروج متكرر خلال نفس الفترة</p>
           </div>
         </div>
+        <div className="border-t pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>اعتبار المتأخر غائباً</Label>
+              <p className="text-xs text-muted-foreground">إذا سجّل الموظف حضوره بعد الحد المسموح، يُحتسب اليوم غياباً (تبقى البصمة موثقة كدليل)</p>
+            </div>
+            <Switch checked={form.absentAfterMin != null && (form as any).absentAfterMin > 0}
+              data-testid="switch-absent-after"
+              onCheckedChange={(v) => setForm({ ...form, absentAfterMin: v ? 30 : null })} />
+          </div>
+          {form.absentAfterMin != null && (form as any).absentAfterMin > 0 && (
+            <div>
+              <Label>الحد الأقصى للتأخير قبل احتساب الغياب (دقائق)</Label>
+              <Input type="number" min="1" max="1440" value={form.absentAfterMin ?? 30}
+                data-testid="input-absent-after-min"
+                onChange={(e) => setForm({ ...form, absentAfterMin: Number(e.target.value) })} />
+              <p className="text-xs text-muted-foreground mt-1">مثال: 30 دقيقة بعد بداية الدوام — من يبصم بعدها يُسجّل اليوم غياباً</p>
+            </div>
+          )}
+        </div>
       </Card>
 
       <Card className="p-5 space-y-3">

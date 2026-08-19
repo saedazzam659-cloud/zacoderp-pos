@@ -85,6 +85,7 @@ export type MeResponse = {
   employee: Employee;
   company: Company;
   shift?: { start: string; end: string };
+  work?: { lat: number; lng: number; radiusM: number } | null;
   today: {
     date: string;
     checkIn?: string;

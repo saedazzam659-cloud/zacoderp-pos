@@ -241,6 +241,10 @@ export const attendanceAiSettingsTable = pgTable("attendance_ai_settings", {
   // When ON, ZacodeHR portal punches require face verification (employee must
   // self-enroll first). When OFF, only already-enrolled employees are verified.
   portalFaceRequired: boolean("portal_face_required").notNull().default(false),
+  // Auto-absence policy: when > 0, a first check-in later than workdayStart +
+  // absentAfterMin marks the whole day "absent" (punch still recorded as
+  // evidence). 0/null = open check-in time (current behavior).
+  absentAfterMin:   integer("absent_after_min"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
   updatedAt:        timestamp("updated_at").defaultNow().notNull(),
 });

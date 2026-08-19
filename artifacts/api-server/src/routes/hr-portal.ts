@@ -167,6 +167,11 @@ router.get("/me", async (req, res) => {
         start: (faceSettings as any).workdayStart ?? "08:00",
         end: (faceSettings as any).workdayEnd ?? "17:00",
       },
+      // Geofence info for the live in/out-of-range indicator (null = no
+      // work location pinned → punch allowed anywhere).
+      work: emp.workLat != null && emp.workLng != null
+        ? { lat: Number(emp.workLat), lng: Number(emp.workLng), radiusM: emp.workRadiusM ?? 200 }
+        : null,
       today: {
         date: today,
         checkIn: todayRow?.checkIn ?? null,

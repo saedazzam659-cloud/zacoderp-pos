@@ -2530,6 +2530,9 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE attendance_movements ADD COLUMN IF NOT EXISTS selfie_url TEXT` },
     { label: "attendance_movements.face_verified",
       sql:   `ALTER TABLE attendance_movements ADD COLUMN IF NOT EXISTS face_verified BOOLEAN` },
+    // Auto-absence policy (اعتبار المتأخر غائباً بعد X دقيقة)
+    { label: "attendance_ai_settings.absent_after_min",
+      sql:   `ALTER TABLE attendance_ai_settings ADD COLUMN IF NOT EXISTS absent_after_min INTEGER` },
     { label: "employees_company_login_username_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS employees_company_login_username_uniq ON employees (company_id, lower(login_username)) WHERE login_username IS NOT NULL` },
 

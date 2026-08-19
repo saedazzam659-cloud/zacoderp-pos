@@ -1,7 +1,7 @@
 import { useMe } from "@/hooks/use-auth";
 import { usePunch as usePunchMutation, useFaceStatus, useFaceEnroll } from "@/hooks/use-hr";
 import { Button } from "@/components/ui/button";
-import { Fingerprint, Clock, AlertCircle, FileText, CheckCircle2, XCircle, ScanFace } from "lucide-react";
+import { Fingerprint, Clock, AlertCircle, FileText, CheckCircle2, XCircle, ScanFace, MapPin } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/ui/use-toast";
@@ -42,14 +42,27 @@ export default function Dashboard() {
       );
     });
 
-  // Warm up GPS on page load: triggers the permission prompt early and primes
-  // the GPS chip so the actual punch gets a cached high-accuracy fix instantly.
+  // Live position: warms up GPS (permission prompt + chip priming, so the
+  // punch-time read is instant) AND feeds the in/out-of-range indicator.
+  // Stops entirely once both punches are done (no idle battery drain).
+  const [livePos, setLivePos] = useState<{ lat: number; lng: number } | null>(null);
+  const bothPunched = !!me?.today.checkIn && !!me?.today.checkOut;
   useEffect(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(() => {}, () => {}, {
-      enableHighAccuracy: true, timeout: 15000, maximumAge: 60000,
-    });
-  }, []);
+    if (!navigator.geolocation || bothPunched) return;
+    const id = navigator.geolocation.watchPosition(
+      (pos) => setLivePos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [bothPunched]);
+
+  const distanceMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+    const R = 6371000, toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  };
 
   const handlePunch = async (type: "in" | "out") => {
     if (needsEnroll) { setFaceMode("enroll"); return; }
@@ -149,6 +162,23 @@ export default function Dashboard() {
       <div className="bg-card rounded-3xl p-8 border shadow-sm flex flex-col items-center text-center">
         {!punchDone ? (
           <>
+            {me.work && livePos && (() => {
+              const dist = Math.round(distanceMeters(livePos.lat, livePos.lng, me.work!.lat, me.work!.lng));
+              const inside = dist <= me.work!.radiusM;
+              return (
+                <div
+                  className={`mb-4 flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1.5 border ${
+                    inside ? "bg-green-50 text-green-700 border-green-200" : "bg-orange-50 text-orange-700 border-orange-200"
+                  }`}
+                  data-testid="chip-geofence"
+                >
+                  <MapPin className="w-3.5 h-3.5" />
+                  {inside
+                    ? "أنت داخل نطاق موقع العمل ✓"
+                    : `أنت خارج نطاق العمل — البعد ${dist >= 1000 ? `${(dist / 1000).toFixed(1)} كم` : `${dist} متر`} (المسموح ${me.work!.radiusM} متر)`}
+                </div>
+              );
+            })()}
             <div className="mb-6 relative">
               <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
               <Button

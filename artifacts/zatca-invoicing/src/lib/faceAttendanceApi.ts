@@ -97,6 +97,9 @@ export interface FaceSettings {
   workdayEnd: string | null;
   notifyOnUnknown: boolean;
   minQualityScore: string;
+  portalFaceRequired?: boolean;
+  /** اعتبار المتأخر غائباً بعد X دقيقة — null/0 = معطّل */
+  absentAfterMin?: number | null;
 }
 
 export interface FaceAnalytics {

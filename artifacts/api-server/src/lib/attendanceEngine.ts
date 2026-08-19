@@ -42,6 +42,10 @@ export interface DayContext {
   onLeave?: boolean;
   leavePaid?: boolean;
   isHoliday?: boolean;                // official holiday
+  // Company policy: first check-in later than schedule start + this many
+  // minutes ⇒ whole day counted "absent" (punch kept as evidence). 0/undefined
+  // = open check-in time.
+  absentAfterMin?: number;
 }
 
 export interface DayResult {
@@ -216,6 +220,10 @@ export function computeDay(ctx: DayContext): DayResult {
       res.lateMinutes = lateRaw > (sched.lateGraceMin || 0) ? lateRaw : 0;
       if (res.lateMinutes > 0) res.violations.push("late");
       res.status = res.lateMinutes > 0 ? "late" : "present";
+      if ((ctx.absentAfterMin ?? 0) > 0 && lateRaw > ctx.absentAfterMin!) {
+        res.status = "absent";
+        res.violations.push("auto_absent");
+      }
       return res;
     }
     // Fully absent day (permission may still cover part of it).
@@ -292,6 +300,12 @@ export function computeDay(ctx: DayContext): DayResult {
   else if (res.lateMinutes > 0) res.status = "late";
   else if (res.missingMinutes > 0 || res.earlyLeaveMinutes > 0) res.status = "partial";
   else res.status = "present";
+  // Auto-absence policy: too-late first check-in voids the day (worked/late
+  // figures stay recorded as evidence, but the day counts as absent).
+  if ((ctx.absentAfterMin ?? 0) > 0 && lateRaw > ctx.absentAfterMin!) {
+    res.status = "absent";
+    res.violations.push("auto_absent");
+  }
   return res;
 }
 

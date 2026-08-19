@@ -243,6 +243,9 @@ router.put("/settings", async (req, res) => {
         notifyOnUnknown: typeof b.notifyOnUnknown === "boolean" ? b.notifyOnUnknown : undefined,
         minQualityScore: b.minQualityScore != null ? String(b.minQualityScore) : undefined,
         portalFaceRequired: typeof b.portalFaceRequired === "boolean" ? b.portalFaceRequired : undefined,
+        // null clears the policy; a number sets it (clamped to sane range)
+        absentAfterMin: b.absentAfterMin === null ? null
+          : b.absentAfterMin != null ? Math.max(1, Math.min(1440, Number(b.absentAfterMin) || 0)) : undefined,
         updatedAt: new Date(),
       })
       .where(eq(attendanceAiSettingsTable.companyId, cid))
