@@ -535,7 +535,7 @@ export default function CompanyDetails() {
                       <input
                         type="checkbox"
                         className="h-4 w-4 accent-primary cursor-pointer"
-                        title="يقفل حساب الديمو على أول متصفح يسجل الدخول"
+                        title="يعزل كل متصفح في مساحة ديمو مستقلة خاصة به"
                         checked={u.demoDeviceIsolation === true}
                         disabled={demoIsolationMutation.isPending}
                         onChange={e => demoIsolationMutation.mutate({
@@ -592,14 +592,15 @@ export default function CompanyDetails() {
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <MonitorSmartphone className="h-5 w-5 text-primary" />
-                  متصفح الديمو المعتمد — {demoDevicesUser?.username}
+                  أجهزة الديمو المعزولة — {demoDevicesUser?.username}
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-                  أول متصفح يسجل الدخول يصبح المتصفح الوحيد المعتمد لهذا الحساب. أي متصفح
-                  أو نافذة خاصة أخرى ستُرفض، حتى لو كانت على الكمبيوتر نفسه. استخدم فك
-                  الارتباط أدناه للسماح لأول دخول لاحق بأن يصبح المتصفح المعتمد الجديد.
+                  كل متصفح يسجل الدخول يحصل على مساحة ديمو معزولة خاصة به: أول جهاز يعمل
+                  داخل الشركة الأصلية، وكل جهاز إضافي يحصل تلقائيًا على نسخة مستقلة من
+                  الشركة حتى لا تتداخل بيانات التجارب. استخدم فك الارتباط لإنهاء جلسة جهاز
+                  معيّن وتعطيل مساحته.
                 </div>
 
                 <div className="rounded-lg border divide-y">
@@ -614,7 +615,11 @@ export default function CompanyDetails() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="font-semibold text-sm truncate">{device.deviceLabel || `جهاز ${device.id}`}</p>
-                          {device.isPrimary && !device.revokedAt && <Badge variant="outline">المتصفح المعتمد</Badge>}
+                          {device.isPrimary && !device.revokedAt && <Badge variant="outline">الجهاز الرئيسي</Badge>}
+                          {!device.isPrimary && !device.revokedAt && device.status === "ready" && (
+                            <Badge variant="secondary">مساحة معزولة</Badge>
+                          )}
+                          {device.status === "provisioning" && <Badge variant="outline">قيد التجهيز</Badge>}
                           {device.revokedAt && <Badge variant="destructive">ملغي</Badge>}
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
@@ -631,10 +636,10 @@ export default function CompanyDetails() {
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8 text-destructive"
-                            title="فك ارتباط المتصفح وإنهاء الجلسة"
+                            title="فك ارتباط الجهاز وإنهاء جلسته"
                             disabled={revokeDemoDeviceMutation.isPending}
                             onClick={() => {
-                              if (confirm("فك ارتباط هذا المتصفح وإنهاء جلسته؟ أول دخول لاحق سيصبح المتصفح المعتمد الجديد.")) {
+                              if (confirm("فك ارتباط هذا الجهاز وإنهاء جلسته؟ سيحتاج المتصفح إلى حذف بيانات الموقع قبل الدخول من جديد بمساحة جديدة.")) {
                                 revokeDemoDeviceMutation.mutate(device.id);
                               }
                             }}

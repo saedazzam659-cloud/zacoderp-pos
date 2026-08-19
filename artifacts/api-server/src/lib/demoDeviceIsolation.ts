@@ -241,17 +241,24 @@ export interface ResolveDemoLoginInput {
   ip?: string | null;
 }
 
+/**
+ * Per-device demo isolation (the active policy): every browser/device that
+ * logs into a demo-isolated account gets its own workspace.
+ *   • The FIRST device becomes primary and works inside the source company.
+ *   • Every additional device gets its own hidden cloned company + shadow
+ *     user, so demos never step on each other's data.
+ * The per-browser token lives in an HttpOnly cookie and is ALSO re-verified
+ * on every authenticated request (see middleware/auth.ts), so a copied
+ * bearer token alone is useless in another browser.
+ */
 export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Promise<{
   effectiveUser: SourceUser;
   deviceToken: string | null;
   deviceLinkId: number | null;
   workspaceCompanyId: number | null;
   isPrimary: boolean;
+  bindingWasCreated: boolean;
 }> {
-  // Compatibility export for older callers: the legacy workspace-cloning
-  // implementation below is unreachable. All logins now use strict binding.
-  return resolveStrictDemoBrowserLogin(input);
-  /*
   const source = input.sourceUser;
   if (!source.demoDeviceIsolation) {
     return {
@@ -260,10 +267,11 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       deviceLinkId: null,
       workspaceCompanyId: source.companyId,
       isPrimary: true,
+      bindingWasCreated: false,
     };
   }
   if (source.isDemoShadow || !source.companyId) {
-    throw new DemoDeviceError("لا يمكن تسجيل الدخول المباشر إلى مستخدم مساحة ديمو", 403);
+    throw new DemoDeviceError("لا يمكن تسجيل الدخول المباشر إلى مستخدم مساحة ديمو", 403, "DEMO_SHADOW_LOGIN_DENIED");
   }
 
   const deviceToken = validDeviceToken(input.deviceToken)
@@ -291,6 +299,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       deviceLinkId: existing.id,
       workspaceCompanyId: existing.workspaceCompanyId,
       isPrimary: existing.isPrimary,
+      bindingWasCreated: false,
     };
   }
   if (existing?.status === "failed") {
@@ -308,7 +317,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
       eq(demoDeviceWorkspacesTable.deviceTokenHash, deviceTokenHash),
     ));
-    if (raced) return { link: raced, targetCompanyId: raced.workspaceCompanyId, pair: false };
+    if (raced) return { link: raced, targetCompanyId: raced.workspaceCompanyId, pair: false, created: false };
 
     let targetCompanyId: number | null = null;
     let isPrimary = false;
@@ -361,7 +370,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       isPrimary,
       status: isPrimary ? "ready" : "provisioning",
     }).returning();
-    return { link, targetCompanyId, pair };
+    return { link, targetCompanyId, pair, created: true };
   });
 
   if (claim.link.status === "ready") {
@@ -372,10 +381,20 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       deviceLinkId: claim.link.id,
       workspaceCompanyId: claim.link.workspaceCompanyId,
       isPrimary: claim.link.isPrimary,
+      bindingWasCreated: claim.created,
     };
   }
   if (claim.link.status !== "provisioning") {
     throw new DemoDeviceError("تعذر تجهيز مساحة الديمو لهذا الجهاز", 500);
+  }
+  // Single-owner provisioning: only the request that INSERTED the link may
+  // clone/provision it or transition it to failed. A raced request that found
+  // someone else's provisioning row must back off and let the owner finish.
+  if (!claim.created) {
+    throw new DemoDeviceError(
+      "مساحة الديمو قيد التجهيز. حاول تسجيل الدخول مرة أخرى بعد لحظات.",
+      409,
+    );
   }
 
   try {
@@ -449,6 +468,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       deviceLinkId: ready.id,
       workspaceCompanyId,
       isPrimary: false,
+      bindingWasCreated: true,
     };
   } catch (error) {
     await db.update(demoDeviceWorkspacesTable).set({
@@ -460,192 +480,53 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
     ));
     throw error;
   }
-  */
 }
 
 /**
- * Collapse the legacy per-browser workspace model to one approved browser.
- * The original/primary row is kept; every secondary link and shadow session
- * is revoked. Hidden legacy companies are intentionally preserved.
+ * Compensation path for a failed login (e.g. session write failed): delete
+ * the freshly-created link row instead of revoking it — revoking would lock
+ * the browser out forever because the cookie token stays in the browser.
+ * A shadow user, if one was already provisioned, is deactivated.
  */
-async function normalizeStrictBrowserLinks(tx: any, source: SourceUser) {
-  const links = await tx.select().from(demoDeviceWorkspacesTable).where(and(
-    eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
-    isNull(demoDeviceWorkspacesTable.revokedAt),
-  )).orderBy(
-    desc(demoDeviceWorkspacesTable.isPrimary),
-    demoDeviceWorkspacesTable.createdAt,
-    demoDeviceWorkspacesTable.id,
-  );
-
-  const canonical = links.find((link: typeof demoDeviceWorkspacesTable.$inferSelect) =>
-    link.isPrimary && link.status === "ready",
-  ) ?? null;
-  const now = new Date();
-  const extras = links.filter((link: typeof demoDeviceWorkspacesTable.$inferSelect) =>
-    !canonical || link.id !== canonical.id,
-  );
-
-  if (extras.length) {
-    await tx.update(demoDeviceWorkspacesTable).set({
-      status: "revoked",
-      revokedAt: now,
-      updatedAt: now,
-    }).where(inArray(demoDeviceWorkspacesTable.id, extras.map((link: typeof demoDeviceWorkspacesTable.$inferSelect) => link.id)));
-  }
-
-  const shadowIds = links
-    .map((link: typeof demoDeviceWorkspacesTable.$inferSelect) => link.workspaceUserId)
-    .filter((id: number | null): id is number => id != null && id !== source.id);
-  if (shadowIds.length) {
-    await tx.update(usersTable).set({
-      isActive: false,
-      sessionToken: null,
-      sessionId: null,
-      updatedAt: now,
-    }).where(inArray(usersTable.id, shadowIds));
-  }
-
-  await tx.update(demoDevicePairCodesTable).set({ usedAt: now }).where(and(
-    eq(demoDevicePairCodesTable.sourceUserId, source.id),
-    isNull(demoDevicePairCodesTable.usedAt),
-  ));
-
-  if (!canonical) return null;
-  const [normalized] = await tx.update(demoDeviceWorkspacesTable).set({
-    workspaceCompanyId: source.companyId,
-    workspaceUserId: source.id,
-    isPrimary: true,
-    status: "ready",
-    revokedAt: null,
-    updatedAt: now,
-  }).where(eq(demoDeviceWorkspacesTable.id, canonical.id)).returning();
-  return normalized;
-}
-
-export async function enforceSingleDemoBrowser(sourceUserId: number) {
-  const [source] = await db.select().from(usersTable).where(and(
-    eq(usersTable.id, sourceUserId),
-    eq(usersTable.isDemoShadow, false),
-  )).limit(1);
-  if (!source) throw new DemoDeviceError("مستخدم الديمو غير موجود", 404);
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${90_000_000 + source.id})`);
-    return normalizeStrictBrowserLinks(tx, source);
-  });
-}
-
-/**
- * Strict demo policy: the first browser token becomes the only approved
- * browser. A second browser is rejected even if it shares the same IP.
- */
-export async function resolveStrictDemoBrowserLogin(input: ResolveDemoLoginInput): Promise<{
-  effectiveUser: SourceUser;
-  deviceToken: string | null;
-  deviceLinkId: number | null;
-  workspaceCompanyId: number | null;
-  isPrimary: boolean;
-  bindingWasCreated: boolean;
-}> {
-  const source = input.sourceUser;
-  if (!source.demoDeviceIsolation) {
-    return {
-      effectiveUser: source,
-      deviceToken: null,
-      deviceLinkId: null,
-      workspaceCompanyId: source.companyId,
-      isPrimary: true,
-      bindingWasCreated: false,
-    };
-  }
-  if (source.isDemoShadow || !source.companyId) {
-    throw new DemoDeviceError("لا يمكن تسجيل الدخول المباشر إلى مستخدم مساحة ديمو", 403, "DEMO_SHADOW_LOGIN_DENIED");
-  }
-
-  const deviceToken = validDeviceToken(input.deviceToken)
-    ? input.deviceToken
-    : generateDemoDeviceToken();
-  const deviceTokenHash = sha256(deviceToken);
-  const label = typeof input.deviceLabel === "string" && input.deviceLabel.trim()
-    ? input.deviceLabel.trim().slice(0, 180)
-    : requestLabel(input.userAgent);
-
-  const result = await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${90_000_000 + source.id})`);
-    const canonical = await normalizeStrictBrowserLinks(tx, source);
-    const now = new Date();
-
-    if (canonical) {
-      if (canonical.deviceTokenHash !== deviceTokenHash) {
-        return {
-          kind: "locked" as const,
-          deviceLabel: canonical.deviceLabel,
-          lastSeenAt: canonical.lastSeenAt,
-        };
-      }
-      const [updated] = await tx.update(demoDeviceWorkspacesTable).set({
-        deviceLabel: label,
-        userAgent: input.userAgent ?? null,
-        lastIp: input.ip ?? null,
-        lastSeenAt: now,
-        updatedAt: now,
-      }).where(and(
-        eq(demoDeviceWorkspacesTable.id, canonical.id),
-        eq(demoDeviceWorkspacesTable.status, "ready"),
-        isNull(demoDeviceWorkspacesTable.revokedAt),
-      )).returning();
-      if (!updated) {
-        throw new DemoDeviceError("تم فك ارتباط متصفح الديمو. سجّل الدخول مرة أخرى.", 403, "DEMO_BROWSER_RESET");
-      }
-      return { kind: "ready" as const, link: updated, bindingWasCreated: false };
+export async function releaseDemoDeviceLink(sourceUserId: number, linkId: number) {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${90_000_000 + sourceUserId})`);
+    const [link] = await tx.delete(demoDeviceWorkspacesTable).where(and(
+      eq(demoDeviceWorkspacesTable.id, linkId),
+      eq(demoDeviceWorkspacesTable.sourceUserId, sourceUserId),
+    )).returning();
+    if (link?.workspaceUserId && link.workspaceUserId !== sourceUserId) {
+      await tx.update(usersTable).set({
+        isActive: false,
+        sessionToken: null,
+        sessionId: null,
+        updatedAt: new Date(),
+      }).where(eq(usersTable.id, link.workspaceUserId));
     }
-
-    const [prior] = await tx.select().from(demoDeviceWorkspacesTable).where(and(
-      eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
-      eq(demoDeviceWorkspacesTable.deviceTokenHash, deviceTokenHash),
-    )).limit(1);
-    const values = {
-      sourceCompanyId: source.companyId!,
-      workspaceCompanyId: source.companyId!,
-      workspaceUserId: source.id,
-      deviceLabel: label,
-      userAgent: input.userAgent ?? null,
-      lastIp: input.ip ?? null,
-      isPrimary: true,
-      status: "ready",
-      revokedAt: null,
-      lastSeenAt: now,
-      updatedAt: now,
-    };
-    const [link] = prior
-      ? await tx.update(demoDeviceWorkspacesTable).set(values)
-          .where(eq(demoDeviceWorkspacesTable.id, prior.id)).returning()
-      : await tx.insert(demoDeviceWorkspacesTable).values({
-          ...values,
-          sourceUserId: source.id,
-          deviceTokenHash,
-          firstIp: input.ip ?? null,
-        }).returning();
-    return { kind: "ready" as const, link, bindingWasCreated: true };
   });
-
-  if (result.kind === "locked") {
-    const detail = result.deviceLabel ? ` (${result.deviceLabel})` : "";
-    throw new DemoDeviceError(
-      `حساب الديمو مرتبط بالفعل بمتصفح آخر${detail}. اطلب من مسؤول النظام فك الارتباط أولاً.`,
-      423,
-      "DEMO_BROWSER_LOCKED",
-    );
-  }
-  return {
-    effectiveUser: source,
-    deviceToken,
-    deviceLinkId: result.link.id,
-    workspaceCompanyId: source.companyId,
-    isPrimary: true,
-    bindingWasCreated: result.bindingWasCreated,
-  };
 }
+
+/**
+ * For an authenticated demo SHADOW session, verify the browser cookie still
+ * matches the device link that owns this shadow user. Returns the source
+ * user id when valid, otherwise null (the middleware must reject).
+ */
+export async function resolveDemoShadowBinding(
+  workspaceUserId: number,
+  rawCookieToken: string | undefined,
+): Promise<number | null> {
+  if (!validDeviceToken(rawCookieToken)) return null;
+  const [link] = await db.select({
+    sourceUserId: demoDeviceWorkspacesTable.sourceUserId,
+  }).from(demoDeviceWorkspacesTable).where(and(
+    eq(demoDeviceWorkspacesTable.workspaceUserId, workspaceUserId),
+    eq(demoDeviceWorkspacesTable.deviceTokenHash, sha256(rawCookieToken)),
+    eq(demoDeviceWorkspacesTable.status, "ready"),
+    isNull(demoDeviceWorkspacesTable.revokedAt),
+  )).limit(1);
+  return link?.sourceUserId ?? null;
+}
+
 
 export async function listDemoDevices(sourceUserId: number) {
   return db.select({
@@ -670,7 +551,7 @@ export async function createDemoPairCode(sourceUserId: number, deviceId: number)
   void sourceUserId;
   void deviceId;
   throw new DemoDeviceError(
-    "تم إيقاف ربط متصفحات إضافية. حساب الديمو يسمح بمتصفح واحد فقط.",
+    "رموز الربط لم تعد مستخدمة. كل متصفح يحصل تلقائيًا على مساحة ديمو مستقلة عند تسجيل الدخول.",
     410,
     "DEMO_PAIRING_DISABLED",
   );
@@ -723,8 +604,14 @@ export async function revokeAllDemoDevices(sourceUserId: number) {
 export async function decorateDemoShadowUser<T extends { id: number; isDemoShadow?: boolean }>(
   user: T,
 ): Promise<T & { demoSourceUserId?: number; demoDeviceIsolation?: boolean }> {
-  // Legacy shadow sessions are intentionally no longer decorated. The bearer
-  // resolver treats the missing demoSourceUserId as invalid, which immediately
-  // retires all sessions created by the old per-browser workspace model.
-  return user;
+  if (!user.isDemoShadow) return user;
+  const [link] = await db.select({
+    sourceUserId: demoDeviceWorkspacesTable.sourceUserId,
+  }).from(demoDeviceWorkspacesTable).where(and(
+    eq(demoDeviceWorkspacesTable.workspaceUserId, user.id),
+    eq(demoDeviceWorkspacesTable.status, "ready"),
+    isNull(demoDeviceWorkspacesTable.revokedAt),
+  )).limit(1);
+  if (!link) return user;
+  return { ...user, demoSourceUserId: link.sourceUserId };
 }

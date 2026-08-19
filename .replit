@@ -61,7 +61,7 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.production]
-PG_POOL_MAX = "30"
+PG_POOL_MAX = "40"
 
 [[ports]]
 localPort = 8080

@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import {
   decorateDemoShadowUser,
   readDemoBrowserCookie,
+  resolveDemoShadowBinding,
   verifyStrictDemoBrowserBinding,
 } from "../lib/demoDeviceIsolation.js";
 
@@ -122,6 +123,11 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
     .where(eq(usersTable.sessionToken, token));
   if (u?.isActive) {
     if (u.isDemoShadow) {
+      // Shadow sessions must present the same per-browser cookie that owns
+      // their device link — a copied bearer token alone is useless elsewhere.
+      const browserToken = readDemoBrowserCookie(rawCookieHeader);
+      const sourceUserId = await resolveDemoShadowBinding(u.id, browserToken);
+      if (sourceUserId == null) return null;
       const decorated = await decorateDemoShadowUser(u);
       if (!(decorated as any).demoSourceUserId) return null;
       return { user: decorated, origin: "user" };

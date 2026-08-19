@@ -70,8 +70,8 @@ import {
   decorateDemoShadowUser,
   DemoDeviceError,
   readDemoBrowserCookie,
-  resolveStrictDemoBrowserLogin,
-  revokeDemoDevice,
+  releaseDemoDeviceLink,
+  resolveDemoDeviceLogin,
 } from "../lib/demoDeviceIsolation.js";
 
 const router = Router();
@@ -404,13 +404,13 @@ router.post("/login", async (req, res) => {
     }
   }
 
-  // Strict demo-browser binding is resolved only after password, suspension,
+  // Per-device demo isolation is resolved only after password, suspension,
   // and subscription gates pass. The HttpOnly cookie wins; the body token is
   // accepted only as a one-time migration path from the former localStorage
   // implementation.
-  let demoLogin: Awaited<ReturnType<typeof resolveStrictDemoBrowserLogin>> | null = null;
+  let demoLogin: Awaited<ReturnType<typeof resolveDemoDeviceLogin>> | null = null;
   try {
-    demoLogin = await resolveStrictDemoBrowserLogin({
+    demoLogin = await resolveDemoDeviceLogin({
       sourceUser: user,
       deviceToken: readDemoBrowserCookie(req.headers.cookie) ?? req.body?.demoDeviceToken,
       deviceLabel: req.body?.demoDeviceLabel,
@@ -463,13 +463,13 @@ router.post("/login", async (req, res) => {
     // a transient session-write failure cannot permanently lock the account to
     // an unknown server-generated token.
     if (demoLogin.bindingWasCreated && demoLogin.deviceLinkId != null) {
-      await revokeDemoDevice(user.id, demoLogin.deviceLinkId).catch(() => {});
+      await releaseDemoDeviceLink(user.id, demoLogin.deviceLinkId).catch(() => {});
     }
     throw error;
   }
   if (issuedSession.length === 0) {
     if (demoLogin.bindingWasCreated && demoLogin.deviceLinkId != null) {
-      await revokeDemoDevice(user.id, demoLogin.deviceLinkId).catch(() => {});
+      await releaseDemoDeviceLink(user.id, demoLogin.deviceLinkId).catch(() => {});
     }
     res.status(403).json({
       error: "تم إلغاء ربط هذا الجهاز. احذف بيانات الموقع ثم سجّل الدخول مجددًا.",

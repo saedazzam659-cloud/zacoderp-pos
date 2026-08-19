@@ -149,4 +149,4 @@
 - [HR violations/custody/travel](hr-violations-custody-travel.md) — payroll consumes locked violations in-tx (server-authoritative); asset custody = admin-only no-JE; attendance defaults from face settings.
 - [ZacodeHR employee portal](zacodehr-portal.md) — separate HMAC auth realm on employees row (fail closed on empty SESSION_SECRET), seat cap = count(login_username) vs max_hr_users w/ post-write revert, punch reuses recalcDay, 401 redirect needs BASE_URL.
 - [External DB storage routing](external-db-storage-routing.md) — SA-only module routing (archive first); tables self-created via lazy DDL (ensureSchema won't); route EVERY consumer incl. delivery-receipt counts.
-- [Strict demo browser binding](demo-device-link-lifecycle.md) — one HttpOnly-cookie browser per demo user; every bearer path, including SSE/WS, must validate the active binding.
+- [Per-device demo isolation + cookie binding](demo-device-link-lifecycle.md) — each browser gets its own demo workspace (clone+shadow); every bearer path incl. shadow must match the HttpOnly cookie; failed login = release (delete) link, never revoke.
