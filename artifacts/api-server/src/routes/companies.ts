@@ -29,7 +29,10 @@ router.get("/", async (req, res) => {
   const companies = await db
     .select()
     .from(companiesTable)
-    .where(isNull(companiesTable.deletedAt))
+    .where(and(
+      isNull(companiesTable.deletedAt),
+      eq(companiesTable.isInternalDemoWorkspace, false),
+    ))
     .orderBy(companiesTable.createdAt);
 
   // SuperAdmin: merge companies that live on agent (full_shell) databases so
@@ -50,7 +53,10 @@ router.get("/", async (req, res) => {
           const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
           const rows = await runWithExternalDb(ctx, async () =>
             db.select().from(companiesTable)
-              .where(isNull(companiesTable.deletedAt))
+              .where(and(
+                isNull(companiesTable.deletedAt),
+                eq(companiesTable.isInternalDemoWorkspace, false),
+              ))
               .orderBy(companiesTable.createdAt),
           );
           for (const r of rows) merged.push({ ...r, agentInstanceId: agent.id, agentName: agent.name });

@@ -47,7 +47,10 @@ async function getUserQuota(companyId: number): Promise<{ limit: number; used: n
   const [{ n }] = await db
     .select({ n: count() })
     .from(usersTable)
-    .where(eq(usersTable.companyId, companyId));
+    .where(and(
+      eq(usersTable.companyId, companyId),
+      eq(usersTable.isDemoShadow, false),
+    ));
   const used = Number(n ?? 0);
   return { limit, used, remaining: Math.max(0, limit - used), hasSubscription: !!sub };
 }

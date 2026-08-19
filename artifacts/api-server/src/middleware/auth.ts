@@ -4,6 +4,7 @@ import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable,
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
+import { decorateDemoShadowUser } from "../lib/demoDeviceIsolation.js";
 
 export interface AuthUser {
   id: number;
@@ -110,10 +111,18 @@ export async function resolveBearerToken(token: string): Promise<{
       viewAllBranches: usersTable.viewAllBranches,
       email: usersTable.email, sessionId: usersTable.sessionId,
       currentSessionId: usersTable.currentSessionId,
+      isDemoShadow: usersTable.isDemoShadow,
     })
     .from(usersTable)
     .where(eq(usersTable.sessionToken, token));
-  if (u?.isActive) return { user: u, origin: "user" };
+  if (u?.isActive) {
+    if (u.isDemoShadow) {
+      const decorated = await decorateDemoShadowUser(u);
+      if (!(decorated as any).demoSourceUserId) return null;
+      return { user: decorated, origin: "user" };
+    }
+    return { user: u, origin: "user" };
+  }
 
   // 2) SuperAdmin multi-session
   const [s] = await db

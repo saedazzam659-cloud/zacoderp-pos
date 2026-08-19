@@ -59,6 +59,12 @@ export interface CloneCompanyOptions {
   identity: CloneCompanyIdentity;
   admin: CloneCompanyAdmin;
   copyUsers?: boolean;        // default true — copy other source users
+  /**
+   * Hidden, non-billable per-device demo tenant. This mode never copies users,
+   * subscriptions, security notification rules, backups, or external/offline
+   * delivery settings. The generated admin is marked as a shadow user.
+   */
+  internalDemoWorkspace?: boolean;
   templateId?: number | null; // for the audit row only
   performedByUserId?: number | null;
 }
@@ -97,7 +103,8 @@ function remapArray(map: Map<number, number>, arr: unknown): number[] {
  */
 export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneCompanyResult> {
   const sourceId = opts.sourceCompanyId;
-  const copyUsers = opts.copyUsers !== false;
+  const internalDemo = opts.internalDemoWorkspace === true;
+  const copyUsers = internalDemo ? false : opts.copyUsers !== false;
 
   // ── SAFETY: source must exist, be live, and never equal the (future) target.
   const [source] = await db.select().from(companiesTable).where(eq(companiesTable.id, sourceId));
@@ -180,19 +187,21 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       printTemplateReceipt:      source.printTemplateReceipt,
       printTemplatePayment:      source.printTemplatePayment,
       printTemplateJournal:      source.printTemplateJournal,
-      autoBackupEnabled:         source.autoBackupEnabled,
+      autoBackupEnabled:         internalDemo ? false : source.autoBackupEnabled,
       autoBackupFrequencyHours:  source.autoBackupFrequencyHours,
       autoBackupRetention:       source.autoBackupRetention,
       taxCalculationMode:        source.taxCalculationMode,
-      enableOfflinePos:          source.enableOfflinePos,
+      enableOfflinePos:          internalDemo ? false : source.enableOfflinePos,
       // reset / safe defaults
       invoiceCounter: 0,
       status:         "active",
-      isSandbox:      false,
+      isSandbox:      internalDemo,
+      isInternalDemoWorkspace: internalDemo,
+      demoParentCompanyId: internalDemo ? sourceId : null,
     } as typeof companiesTable.$inferInsert).returning({ id: companiesTable.id });
 
     const newCompanyId = company.id;
-    const newCompanyCode = `ZTC-${newCompanyId}`;
+    const newCompanyCode = internalDemo ? `DMW-${newCompanyId}` : `ZTC-${newCompanyId}`;
     await tx.update(companiesTable)
       .set({ code: newCompanyCode })
       .where(eq(companiesTable.id, newCompanyId));
@@ -233,6 +242,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       nameAr:       opts.admin.nameAr ?? null,
       nameEn:       opts.admin.nameEn ?? null,
       isActive:     true,
+      isDemoShadow: internalDemo,
     } as typeof usersTable.$inferInsert).returning({ id: usersTable.id });
     const adminUserId = adminUser.id;
     bump("users");
@@ -499,18 +509,20 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     bump("custom_print_templates", printTemplates.length);
 
     // ── 21. Security notification rules ─────────────────────────────────────
-    const rules = await tx.select().from(securityNotificationRulesTable).where(eq(securityNotificationRulesTable.companyId, sourceId));
-    for (const r of rules) {
-      const { id: srcId, createdAt, updatedAt, companyId, createdByUserId, targetUserIds, branchIds, ...rest } = r;
-      await tx.insert(securityNotificationRulesTable).values({
-        ...rest,
-        companyId:       newCompanyId,
-        createdByUserId: remap(userMap, createdByUserId) ?? adminUserId,
-        targetUserIds:   remapArray(userMap, targetUserIds),
-        branchIds:       remapArray(branchMap, branchIds),
-      } as typeof securityNotificationRulesTable.$inferInsert);
+    if (!internalDemo) {
+      const rules = await tx.select().from(securityNotificationRulesTable).where(eq(securityNotificationRulesTable.companyId, sourceId));
+      for (const r of rules) {
+        const { id: srcId, createdAt, updatedAt, companyId, createdByUserId, targetUserIds, branchIds, ...rest } = r;
+        await tx.insert(securityNotificationRulesTable).values({
+          ...rest,
+          companyId:       newCompanyId,
+          createdByUserId: remap(userMap, createdByUserId) ?? adminUserId,
+          targetUserIds:   remapArray(userMap, targetUserIds),
+          branchIds:       remapArray(branchMap, branchIds),
+        } as typeof securityNotificationRulesTable.$inferInsert);
+      }
+      bump("security_notification_rules", rules.length);
     }
-    bump("security_notification_rules", rules.length);
 
     // ── 22. Work session settings (one row per company) ─────────────────────
     const [wss] = await tx.select().from(workSessionSettingsTable).where(eq(workSessionSettingsTable.companyId, sourceId));
@@ -526,33 +538,35 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     }
 
     // ── 23. Subscription (fresh dates; copy plan limits if source had one) ──
-    const [srcSub] = await tx.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, sourceId));
-    const today = new Date();
-    const startDate = today.toISOString().slice(0, 10);
-    const endDate = new Date(today.getFullYear() + 1, today.getMonth(), today.getDate()).toISOString().slice(0, 10);
-    if (srcSub) {
-      await tx.insert(subscriptionsTable).values({
-        companyId:     newCompanyId,
-        plan:          srcSub.plan,
-        maxUsers:      srcSub.maxUsers,
-        maxBranches:   srcSub.maxBranches,
-        maxWarehouses: srcSub.maxWarehouses,
-        maxInvoices:   srcSub.maxInvoices,
-        billingCycle:  srcSub.billingCycle,
-        price:         srcSub.price,
-        isActive:      true,
-        startDate,
-        endDate,
-      } as typeof subscriptionsTable.$inferInsert);
-    } else {
-      await tx.insert(subscriptionsTable).values({
-        companyId: newCompanyId,
-        plan: "starter",
-        startDate,
-        endDate,
-      } as typeof subscriptionsTable.$inferInsert);
+    if (!internalDemo) {
+      const [srcSub] = await tx.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, sourceId));
+      const today = new Date();
+      const startDate = today.toISOString().slice(0, 10);
+      const endDate = new Date(today.getFullYear() + 1, today.getMonth(), today.getDate()).toISOString().slice(0, 10);
+      if (srcSub) {
+        await tx.insert(subscriptionsTable).values({
+          companyId:     newCompanyId,
+          plan:          srcSub.plan,
+          maxUsers:      srcSub.maxUsers,
+          maxBranches:   srcSub.maxBranches,
+          maxWarehouses: srcSub.maxWarehouses,
+          maxInvoices:   srcSub.maxInvoices,
+          billingCycle:  srcSub.billingCycle,
+          price:         srcSub.price,
+          isActive:      true,
+          startDate,
+          endDate,
+        } as typeof subscriptionsTable.$inferInsert);
+      } else {
+        await tx.insert(subscriptionsTable).values({
+          companyId: newCompanyId,
+          plan: "starter",
+          startDate,
+          endDate,
+        } as typeof subscriptionsTable.$inferInsert);
+      }
+      bump("subscriptions");
     }
-    bump("subscriptions");
 
     // ── 24. Back-fill company FK columns now that targets exist ─────────────
     await tx.update(companiesTable).set({

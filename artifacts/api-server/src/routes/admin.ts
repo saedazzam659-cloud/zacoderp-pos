@@ -53,6 +53,13 @@ import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage } from "../middleware/requireAiFeature.js";
+import {
+  createDemoPairCode,
+  DemoDeviceError,
+  listDemoDevices,
+  revokeAllDemoDevices,
+  revokeDemoDevice,
+} from "../lib/demoDeviceIsolation.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const router = Router();
@@ -150,7 +157,10 @@ router.get("/requests", requireSuperAdmin, async (req, res) => {
   // Soft-deleted companies must not appear in the registration-requests
   // queue — their pending/active status snapshot is irrelevant once the
   // tenant is in the trash.
-  .where(isNull(companiesTable.deletedAt));
+  .where(and(
+    isNull(companiesTable.deletedAt),
+    eq(companiesTable.isInternalDemoWorkspace, false),
+  ));
 
   const rows = await query;
 
@@ -1021,8 +1031,14 @@ router.post("/seed", async (req, res) => {
 // companies don't count toward the totals — they live in the recycle bin
 // and shouldn't inflate "active/pending/total" tiles.
 router.get("/stats", requireSuperAdmin, async (_req, res) => {
-  const companies = await db.select().from(companiesTable).where(isNull(companiesTable.deletedAt));
-  const users = await db.select().from(usersTable).where(eq(usersTable.role, "admin"));
+  const companies = await db.select().from(companiesTable).where(and(
+    isNull(companiesTable.deletedAt),
+    eq(companiesTable.isInternalDemoWorkspace, false),
+  ));
+  const users = await db.select().from(usersTable).where(and(
+    eq(usersTable.role, "admin"),
+    eq(usersTable.isDemoShadow, false),
+  ));
   const pending = companies.filter(c => c.status === "pending").length;
   const active = companies.filter(c => c.status === "active").length;
   const rejected = companies.filter(c => c.status === "rejected").length;
@@ -1048,6 +1064,7 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
       db.execute<{ status: string; count: string }>(sql`
         SELECT status, COUNT(*)::text AS count
         FROM companies
+        WHERE is_internal_demo_workspace = FALSE
         GROUP BY status
       `),
       // B) New-company timeline for last 90 days, bucketed by day
@@ -1055,6 +1072,7 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
         SELECT DATE_TRUNC('day', created_at)::date::text AS day, COUNT(*)::text AS count
         FROM companies
         WHERE created_at >= NOW() - INTERVAL '90 days'
+          AND is_internal_demo_workspace = FALSE
         GROUP BY day
         ORDER BY day
       `),
@@ -1065,6 +1083,7 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
           COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '14 days'
                        AND created_at <  NOW() - INTERVAL '7 days')::text         AS last_week
         FROM companies
+        WHERE is_internal_demo_workspace = FALSE
       `),
       // D) User counts (total, active in last 24h, by role)
       db.execute<{ total: string; active_today: string; superadmins: string; admins: string }>(sql`
@@ -1074,6 +1093,7 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
           COUNT(*) FILTER (WHERE role = 'superadmin')::text                         AS superadmins,
           COUNT(*) FILTER (WHERE role = 'admin')::text                              AS admins
         FROM users
+        WHERE is_demo_shadow = FALSE
       `),
       // E) Subscription distribution + revenue + expiry buckets per plan.
       //    end_date is stored as TEXT (default ''); we therefore guard every
@@ -1429,6 +1449,44 @@ async function ensureUsersSecurityNoticeColumn(): Promise<void> {
   try {
     const { sql } = await import("drizzle-orm");
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS security_notice_exempt boolean DEFAULT false NOT NULL`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS demo_device_isolation boolean DEFAULT false NOT NULL`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_demo_shadow boolean DEFAULT false NOT NULL`);
+    await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_internal_demo_workspace boolean DEFAULT false NOT NULL`);
+    await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS demo_parent_company_id integer REFERENCES companies(id) ON DELETE CASCADE`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS demo_device_workspaces (
+        id serial PRIMARY KEY,
+        source_user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_company_id integer NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        workspace_company_id integer REFERENCES companies(id) ON DELETE CASCADE,
+        workspace_user_id integer REFERENCES users(id) ON DELETE CASCADE,
+        device_token_hash varchar(64) NOT NULL,
+        device_label varchar(180),
+        user_agent text,
+        first_ip varchar(64),
+        last_ip varchar(64),
+        is_primary boolean NOT NULL DEFAULT false,
+        status varchar(24) NOT NULL DEFAULT 'provisioning',
+        revoked_at timestamptz,
+        last_seen_at timestamptz NOT NULL DEFAULT now(),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS demo_device_workspaces_source_device_uq ON demo_device_workspaces(source_user_id, device_token_hash)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS demo_device_pair_codes (
+        id serial PRIMARY KEY,
+        source_user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        workspace_company_id integer NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        created_by_device_id integer NOT NULL REFERENCES demo_device_workspaces(id) ON DELETE CASCADE,
+        code_hash varchar(64) NOT NULL,
+        expires_at timestamptz NOT NULL,
+        used_at timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS demo_device_pair_codes_hash_uq ON demo_device_pair_codes(code_hash)`);
   } catch { /* best-effort — the query below will surface a real failure */ }
 }
 
@@ -1442,7 +1500,10 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
   // Older agent DBs may predate newer users columns — heal additively
   // before selecting them (runWithAgentScope does not run ensureSchema).
   if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
-  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
+  const [company] = await db.select().from(companiesTable).where(and(
+    eq(companiesTable.id, id),
+    eq(companiesTable.isInternalDemoWorkspace, false),
+  ));
   if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
 
   const [subscription] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, id));
@@ -1453,9 +1514,13 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
     role: usersTable.role,
     isActive: usersTable.isActive,
     securityNoticeExempt: usersTable.securityNoticeExempt,
+    demoDeviceIsolation: usersTable.demoDeviceIsolation,
     lastLoginAt: usersTable.lastLoginAt,
     createdAt: usersTable.createdAt,
-  }).from(usersTable).where(eq(usersTable.companyId, id));
+  }).from(usersTable).where(and(
+    eq(usersTable.companyId, id),
+    eq(usersTable.isDemoShadow, false),
+  ));
 
   const [[{ invoiceCount }], [{ customerCount }], [{ supplierCount }]] = await Promise.all([
     db.select({ invoiceCount: count() }).from(invoicesTable).where(eq(invoicesTable.companyId, id)),
@@ -1506,33 +1571,121 @@ router.post("/companies/:id/users", requireSuperAdmin, async (req, res) => {
 router.delete("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-    const userId = parseInt(req.params.userId);
-    await db.delete(usersTable).where(eq(usersTable.id, userId));
+    if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
+    const companyId = Number(req.params.id);
+    const userId = Number(req.params.userId);
+    const [deleted] = await db.delete(usersTable).where(and(
+      eq(usersTable.id, userId),
+      eq(usersTable.companyId, companyId),
+      eq(usersTable.isDemoShadow, false),
+    )).returning({ id: usersTable.id });
+    if (!deleted) { res.status(404).json({ error: "المستخدم غير موجود" }); return; }
     res.status(204).send();
   });
 });
+
+async function loadManagedDemoUser(companyId: number, userId: number) {
+  const [user] = await db.select({
+    id: usersTable.id,
+    companyId: usersTable.companyId,
+    enabled: usersTable.demoDeviceIsolation,
+    shadow: usersTable.isDemoShadow,
+  }).from(usersTable).where(and(
+    eq(usersTable.id, userId),
+    eq(usersTable.companyId, companyId),
+    eq(usersTable.isDemoShadow, false),
+  )).limit(1);
+  return user ?? null;
+}
 
 // PUT /api/admin/companies/:id/users/:userId — toggle user active status
 router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-    const userId = parseInt(req.params.userId);
-    const { isActive, password, securityNoticeExempt } = req.body;
+    if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
+    const companyId = Number(req.params.id);
+    const userId = Number(req.params.userId);
+    const managedUser = await loadManagedDemoUser(companyId, userId);
+    if (!managedUser) { res.status(404).json({ error: "المستخدم غير موجود" }); return; }
+    const { isActive, password, securityNoticeExempt, demoDeviceIsolation } = req.body;
     const updates: Record<string, any> = { updatedAt: new Date() };
     if (isActive != null) updates.isActive = isActive;
     if (securityNoticeExempt != null) {
       updates.securityNoticeExempt = !!securityNoticeExempt;
-      if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
+    }
+    if (demoDeviceIsolation != null) {
+      updates.demoDeviceIsolation = !!demoDeviceIsolation;
     }
     if (password) updates.passwordHash = await bcrypt.hash(password, 12);
     // Restrict RETURNING to core columns — a bare .returning() names every
     // schema column and breaks on older agent DBs missing newer columns.
-    const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId))
+    const [updated] = await db.update(usersTable).set(updates).where(and(
+      eq(usersTable.id, userId),
+      eq(usersTable.companyId, companyId),
+      eq(usersTable.isDemoShadow, false),
+    ))
       .returning({ id: usersTable.id, username: usersTable.username, email: usersTable.email, role: usersTable.role, isActive: usersTable.isActive, companyId: usersTable.companyId });
     if (updated?.companyId != null) {
       emitSessionRefresh(updated.companyId, "permissions_changed", { op: "user-update", userId });
     }
+    if ((isActive === false) || (demoDeviceIsolation === false)) {
+      await revokeAllDemoDevices(userId);
+    }
     res.json({ ok: true, user: updated });
+  });
+});
+
+// GET /api/admin/companies/:id/users/:userId/demo-devices
+router.get("/companies/:id/users/:userId/demo-devices", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
+    const companyId = Number(req.params.id);
+    const userId = Number(req.params.userId);
+    const user = await loadManagedDemoUser(companyId, userId);
+    if (!user) {
+      res.status(404).json({ error: "المستخدم غير موجود" }); return;
+    }
+    res.json({ enabled: user.enabled, devices: await listDemoDevices(userId) });
+  });
+});
+
+// POST /api/admin/companies/:id/users/:userId/demo-devices/:deviceId/pair-code
+router.post("/companies/:id/users/:userId/demo-devices/:deviceId/pair-code", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    try {
+      if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
+      const companyId = Number(req.params.id);
+      const userId = Number(req.params.userId);
+      const user = await loadManagedDemoUser(companyId, userId);
+      if (!user) { res.status(404).json({ error: "المستخدم غير موجود" }); return; }
+      if (!user.enabled) { res.status(409).json({ error: "عزل الديمو غير مفعّل لهذا المستخدم" }); return; }
+      const result = await createDemoPairCode(userId, Number(req.params.deviceId));
+      res.status(201).json(result);
+    } catch (error) {
+      const status = error instanceof DemoDeviceError ? error.status : 500;
+      res.status(status).json({ error: error instanceof Error ? error.message : "فشل إنشاء رمز الربط" });
+    }
+  });
+});
+
+// DELETE /api/admin/companies/:id/users/:userId/demo-devices/:deviceId
+router.delete("/companies/:id/users/:userId/demo-devices/:deviceId", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    try {
+      if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
+      const companyId = Number(req.params.id);
+      const userId = Number(req.params.userId);
+      const user = await loadManagedDemoUser(companyId, userId);
+      if (!user) { res.status(404).json({ error: "المستخدم غير موجود" }); return; }
+      await revokeDemoDevice(userId, Number(req.params.deviceId));
+      res.json({ ok: true });
+    } catch (error) {
+      const status = error instanceof DemoDeviceError ? error.status : 500;
+      res.status(status).json({ error: error instanceof Error ? error.message : "فشل إلغاء ربط الجهاز" });
+    }
   });
 });
 
@@ -1669,7 +1822,10 @@ router.get("/companies", requireSuperAdmin, async (_req, res) => {
   const rows = await db.select({
     id: companiesTable.id, nameAr: companiesTable.nameAr, nameEn: companiesTable.nameEn, status: companiesTable.status,
   }).from(companiesTable)
-    .where(isNull(companiesTable.deletedAt))
+    .where(and(
+      isNull(companiesTable.deletedAt),
+      eq(companiesTable.isInternalDemoWorkspace, false),
+    ))
     .orderBy(asc(companiesTable.nameAr));
   res.json(rows);
 });
@@ -2661,14 +2817,48 @@ interface LatestLoginRow {
   created_at: string;
 }
 
-// GET /api/admin/security/sessions — list every user with a non-null sessionToken.
-// Augments each row with the IP/User-Agent of their latest successful login
-// from audit_log (action="login", module="auth").
-router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
-  try {
-    // Active sessions = any user with a non-null sessionToken. We deliberately
-    // do NOT return the token itself; only the sessionId (UUID, opaque).
-    const sessions = await db.select({
+// A single active-session row (source-agnostic). The `source`/`rowId` fields
+// are stamped by the caller AFTER collectSessions returns, because the same
+// numeric user id can exist in BOTH the central DB and an agent DB — the
+// source-qualified `rowId` (e.g. "central:12" / "agent:5:12") is what the UI
+// selects on and what the terminate endpoints route by.
+interface SessionRowBase {
+  userId: number;
+  username: string;
+  email: string | null;
+  role: string;
+  companyId: number | null;
+  companyName: string | null;
+  companyLoginCount: number | null;
+  zatcaStatus: "production" | "sandbox" | "not_linked" | null;
+  sessionId: string | null;
+  lastLoginAt: string | Date | null;
+  ip: string | null;
+  country: string | null;
+  ipCity: string | null;
+  ipRegion: string | null;
+  ipCountryName: string | null;
+  ipLat: number | null;
+  ipLng: number | null;
+  userAgent: string | null;
+  loginPlace: string | null;
+  loginAddress: string | null;
+  loginLat: number | null;
+  loginLng: number | null;
+  loginAccuracy: number | null;
+  loginZoneName: string | null;
+  loginAt: string | null;
+}
+
+// Collect active sessions from whatever database the ambient `db` proxy is
+// currently bound to. Called once for the central DB and once (inside an
+// agent-DB ALS scope) per selected agent instance. NEVER selects or returns
+// the session token, password hash, or any DB credential — only the opaque
+// sessionId UUID leaves the server.
+async function collectSessions(): Promise<SessionRowBase[]> {
+  // Active sessions = any user with a non-null sessionToken. We deliberately
+  // do NOT return the token itself; only the sessionId (UUID, opaque).
+  const sessions = await db.select({
       id:          usersTable.id,
       username:    usersTable.username,
       email:       usersTable.email,
@@ -2870,7 +3060,7 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
       for (const z of zs) zoneNameMap.set(`${z.companyId}:${z.id}`, z.name);
     }
 
-    const rows = sessions.map(s => {
+  const rows: SessionRowBase[] = sessions.map(s => {
       const lg = loginByUser.get(s.id);
       const ipLoc = lg?.ip ? (ipLocMap.get(lg.ip) ?? null) : null;
       const country = ipLoc?.country ?? (lg?.ip ? (ipCountry.get(lg.ip) ?? null) : null);
@@ -2907,43 +3097,186 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
         loginAt:       v?.checkinAt ? new Date(v.checkinAt).toISOString() : null,
       };
     });
-    res.json({ rows, total: rows.length });
+  return rows;
+}
+
+// GET /api/admin/security/sessions — list every user with a non-null
+// sessionToken across the CENTRAL DB and (optionally) initialized Agent
+// Instance databases.
+//
+// Query params:
+//   source  — "central" (default) | "all" | "<agentInstanceId>" (numeric).
+//             "all" merges central + every initialized agent DB. A numeric
+//             value returns ONLY that agent's sessions.
+//   search, limit, offset — applied globally AFTER all requested sources have
+//             been merged, so paging never drops rows from later sources.
+//
+// Each returned row carries a source-qualified `rowId`:
+//   central       → "central:<userId>"
+//   agent <id>    → "agent:<id>:<userId>"
+// so the numeric user ids never collide across databases. Per-source
+// failures are surfaced in `warnings[]` WITHOUT dropping the healthy rows
+// gathered from the other sources.
+router.get("/security/sessions", requireSuperAdmin, async (req, res) => {
+  try {
+    const rawSource = req.query.source;
+    const source = String(Array.isArray(rawSource) ? rawSource[0] : rawSource ?? "central").trim() || "central";
+
+    const warnings: { source: string; name: string; error: string }[] = [];
+    const allRows: (SessionRowBase & { source: string; rowId: string; agentInstanceId: number | null; agentName: string | null })[] = [];
+
+    if (source === "central" || source === "all") {
+      try {
+        const centralRows = await collectSessions();
+        for (const r of centralRows) {
+          allRows.push({ ...r, source: "central", rowId: `central:${r.userId}`, agentInstanceId: null, agentName: null });
+        }
+      } catch (e: unknown) {
+        console.error("[admin/security/sessions] central DB session query failed:", e);
+        warnings.push({ source: "central", name: "المركزي", error: "تعذّر قراءة الجلسات من المصدر المركزي" });
+      }
+    }
+
+    // Resolve which agents to include.
+    if (source === "all" || /^\d+$/.test(source)) {
+      const { listInitializedAgents } = await import("../lib/agentScope.js");
+      const { runWithExternalDb } = await import("@workspace/db");
+      const { getAgentDbContext } = await import("../lib/agentDb.js");
+      const initialized = await listInitializedAgents();
+      const wanted = source === "all"
+        ? initialized
+        : initialized.filter(a => a.id === Number(source));
+      for (const agent of wanted) {
+        try {
+          const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
+          const agentRows = await runWithExternalDb(ctx, async () => collectSessions());
+          for (const r of agentRows) {
+            allRows.push({
+              ...r, source: `agent:${agent.id}`, rowId: `agent:${agent.id}:${r.userId}`,
+              agentInstanceId: agent.id, agentName: agent.name,
+            });
+          }
+        } catch (e: unknown) {
+          console.error("[admin/security/sessions] agent DB unreachable:", agent.id, e);
+          warnings.push({
+            source: `agent:${agent.id}`,
+            name: agent.name,
+            error: "تعذّر الاتصال بقاعدة بيانات سيرفر الوكيل",
+          });
+        }
+      }
+    }
+
+    const search = String(Array.isArray(req.query.search) ? req.query.search[0] : req.query.search ?? "")
+      .trim().toLocaleLowerCase();
+    const filtered = search
+      ? allRows.filter((row) => [
+          row.username,
+          row.email,
+          row.companyName,
+          row.agentName,
+          row.ip,
+        ].some((value) => String(value ?? "").toLocaleLowerCase().includes(search)))
+      : allRows;
+    filtered.sort((a, b) => {
+      const bt = b.lastLoginAt ? new Date(b.lastLoginAt).getTime() : 0;
+      const at = a.lastLoginAt ? new Date(a.lastLoginAt).getTime() : 0;
+      return bt - at || a.username.localeCompare(b.username, "ar");
+    });
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    res.json({
+      rows: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      limit,
+      offset,
+      warnings,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب الجلسات النشطة";
     res.status(500).json({ error: msg });
   }
 });
 
+// ─── Source-qualified session id routing ────────────────────────────────
+// The sessions list stamps each row with a source-qualified `rowId` so the
+// same numeric user id in the central DB and an agent DB never collide:
+//   "central:<userId>"        → central DB
+//   "agent:<agentId>:<userId>" → that agent's external DB
+//   "<userId>" (bare number)   → central DB (back-compat with older clients)
+// parseSessionRef normalizes any of those into a { source, userId } pair.
+type SessionRef = { source: "central" } | { source: "agent"; agentId: number };
+function parseSessionRef(raw: unknown): { ref: SessionRef; userId: number } | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) {
+    // Bare numeric id → central (preserves existing central-only behavior).
+    return { ref: { source: "central" }, userId: Number(s) };
+  }
+  const central = s.match(/^central:(\d+)$/);
+  if (central) return { ref: { source: "central" }, userId: Number(central[1]) };
+  const agent = s.match(/^agent:(\d+):(\d+)$/);
+  if (agent) return { ref: { source: "agent", agentId: Number(agent[1]) }, userId: Number(agent[2]) };
+  return null;
+}
+
+// Run `fn` bound to the DB the SessionRef points at. Central runs directly on
+// the ambient proxy; an agent ref RE-VALIDATES the target server against the
+// central registry (must exist, be active, and have an initialized DB) before
+// entering its ALS scope. Never exposes DB credentials — only the encrypted
+// blob is read, decrypted inside the pool cache, and discarded.
+async function runInSessionScope<T>(ref: SessionRef, fn: () => Promise<T>): Promise<T> {
+  if (ref.source === "central") return fn();
+  const { centralDb, runWithExternalDb, agentInstancesTable } = await import("@workspace/db");
+  const [inst] = await centralDb.select().from(agentInstancesTable)
+    .where(eq(agentInstancesTable.id, ref.agentId)).limit(1);
+  if (!inst || inst.status !== "active" || inst.dbStatus !== "initialized" || !inst.dbUrlEnc) {
+    throw new Error("الوكيل غير موجود أو قاعدته غير مهيأة");
+  }
+  const { getAgentDbContext } = await import("../lib/agentDb.js");
+  const ctx = getAgentDbContext(inst.id, inst.dbUrlEnc);
+  return runWithExternalDb(ctx, fn);
+}
+
 // POST /api/admin/security/sessions/:userId/end — force a single user logout
 // by clearing both sessionToken AND sessionId (the auth middleware checks
-// sessionToken so this immediately invalidates the bearer token).
+// sessionToken so this immediately invalidates the bearer token). The
+// `:userId` path segment is a source-qualified ref (see parseSessionRef).
 router.post("/security/sessions/:userId/end", requireSuperAdmin, async (req, res) => {
   try {
-    const userId = Number(req.params.userId);
-    if (!Number.isFinite(userId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
-    const [target] = await db.select({
-      id: usersTable.id, username: usersTable.username, role: usersTable.role,
-      companyId: usersTable.companyId, sessionToken: usersTable.sessionToken,
-    }).from(usersTable).where(eq(usersTable.id, userId));
-    if (!target)             { res.status(404).json({ error: "المستخدم غير موجود" }); return; }
-    if (!target.sessionToken){ res.status(400).json({ error: "لا توجد جلسة نشطة لهذا المستخدم" }); return; }
+    const parsed = parseSessionRef(req.params.userId);
+    if (!parsed || !Number.isFinite(parsed.userId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const { ref, userId } = parsed;
 
-    await db.update(usersTable)
-      .set({ sessionToken: null, sessionId: null, updatedAt: new Date() })
-      .where(eq(usersTable.id, userId));
+    const result = await runInSessionScope(ref, async () => {
+      const [target] = await db.select({
+        id: usersTable.id, username: usersTable.username, role: usersTable.role,
+        companyId: usersTable.companyId, sessionToken: usersTable.sessionToken,
+      }).from(usersTable).where(eq(usersTable.id, userId));
+      if (!target) return { status: 404, body: { error: "المستخدم غير موجود" } } as const;
+      if (!target.sessionToken) return { status: 400, body: { error: "لا توجد جلسة نشطة لهذا المستخدم" } } as const;
 
-    await writeAudit({
-      userId: req.adminUser?.id ?? null,
-      username: req.adminUser?.username ?? null,
-      role: "superadmin",
-      companyId: target.companyId,
-      module: "security",
-      action: "edit",
-      entityType: "user_session",
-      entityId: String(userId),
-      metadata: { op: "force-logout", target: target.username, targetRole: target.role },
+      await db.update(usersTable)
+        .set({ sessionToken: null, sessionId: null, updatedAt: new Date() })
+        .where(eq(usersTable.id, userId));
+
+      await writeAudit({
+        userId: ref.source === "agent" ? null : (req.adminUser?.id ?? null),
+        username: req.adminUser?.username ?? null,
+        role: "superadmin",
+        companyId: target.companyId,
+        module: "security",
+        action: "edit",
+        entityType: "user_session",
+        entityId: String(userId),
+        metadata: {
+          op: "force-logout", target: target.username, targetRole: target.role,
+          source: ref.source === "agent" ? `agent:${ref.agentId}` : "central",
+        },
+      });
+      return { status: 200, body: { ok: true, userId } } as const;
     });
-    res.json({ ok: true, userId });
+    res.status(result.status).json(result.body);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر إنهاء الجلسة";
     res.status(500).json({ error: msg });
@@ -2951,39 +3284,61 @@ router.post("/security/sessions/:userId/end", requireSuperAdmin, async (req, res
 });
 
 // POST /api/admin/security/sessions/bulk-end — force-logout many users at once.
+// `userIds` is an array of source-qualified refs; they're grouped by source so
+// each target DB is touched exactly once.
 router.post("/security/sessions/bulk-end", requireSuperAdmin, async (req, res) => {
   try {
-    const userIds: number[] = Array.isArray(req.body?.userIds)
-      ? req.body.userIds.map(Number).filter((n: number) => Number.isFinite(n))
-      : [];
-    if (userIds.length === 0) { res.status(400).json({ error: "حدد مستخدماً واحداً على الأقل" }); return; }
+    const rawIds: unknown[] = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+    const parsed = rawIds.map(parseSessionRef).filter((p): p is { ref: SessionRef; userId: number } => !!p && Number.isFinite(p.userId));
+    if (parsed.length === 0) { res.status(400).json({ error: "حدد مستخدماً واحداً على الأقل" }); return; }
 
-    const targets = await db.select({
-      id: usersTable.id, username: usersTable.username, companyId: usersTable.companyId,
-    }).from(usersTable)
-      .where(and(inArray(usersTable.id, userIds), sql`${usersTable.sessionToken} IS NOT NULL`));
-
-    if (targets.length === 0) { res.json({ ok: true, ended: 0, skipped: userIds.length }); return; }
-
-    const targetIds = targets.map(t => t.id);
-    await db.update(usersTable)
-      .set({ sessionToken: null, sessionId: null, updatedAt: new Date() })
-      .where(inArray(usersTable.id, targetIds));
-
-    for (const t of targets) {
-      await writeAudit({
-        userId: req.adminUser?.id ?? null,
-        username: req.adminUser?.username ?? null,
-        role: "superadmin",
-        companyId: t.companyId,
-        module: "security",
-        action: "edit",
-        entityType: "user_session",
-        entityId: String(t.id),
-        metadata: { op: "bulk-force-logout", target: t.username },
-      });
+    // Group requested user ids by source (central + one bucket per agent).
+    const buckets = new Map<string, { ref: SessionRef; ids: number[] }>();
+    for (const p of parsed) {
+      const key = p.ref.source === "agent" ? `agent:${p.ref.agentId}` : "central";
+      if (!buckets.has(key)) buckets.set(key, { ref: p.ref, ids: [] });
+      buckets.get(key)!.ids.push(p.userId);
     }
-    res.json({ ok: true, ended: targets.length, skipped: userIds.length - targets.length, endedIds: targetIds });
+
+    let ended = 0;
+    const endedIds: string[] = [];
+    const warnings: { source: string; error: string }[] = [];
+
+    for (const [key, { ref, ids }] of buckets) {
+      try {
+        const bucketEnded = await runInSessionScope(ref, async () => {
+          const targets = await db.select({
+            id: usersTable.id, username: usersTable.username, companyId: usersTable.companyId,
+          }).from(usersTable)
+            .where(and(inArray(usersTable.id, ids), sql`${usersTable.sessionToken} IS NOT NULL`));
+          if (targets.length === 0) return [] as { id: number; username: string; companyId: number | null }[];
+          const targetIds = targets.map(t => t.id);
+          await db.update(usersTable)
+            .set({ sessionToken: null, sessionId: null, updatedAt: new Date() })
+            .where(inArray(usersTable.id, targetIds));
+          for (const t of targets) {
+            await writeAudit({
+      userId: req.adminUser?.id ?? null,
+              username: req.adminUser?.username ?? null,
+              role: "superadmin",
+              companyId: t.companyId,
+              module: "security",
+              action: "edit",
+              entityType: "user_session",
+              entityId: String(t.id),
+              metadata: { op: "bulk-force-logout", target: t.username, source: key },
+            });
+          }
+          return targets;
+        });
+        ended += bucketEnded.length;
+        for (const t of bucketEnded) endedIds.push(ref.source === "agent" ? `agent:${ref.agentId}:${t.id}` : `central:${t.id}`);
+      } catch (e: unknown) {
+        console.error("[admin/security/sessions/bulk-end] source failed:", key, e);
+        warnings.push({ source: key, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    res.json({ ok: true, ended, skipped: parsed.length - ended, endedIds, warnings });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر إنهاء الجلسات";
     res.status(500).json({ error: msg });

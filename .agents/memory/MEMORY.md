@@ -149,3 +149,4 @@
 - [HR violations/custody/travel](hr-violations-custody-travel.md) — payroll consumes locked violations in-tx (server-authoritative); asset custody = admin-only no-JE; attendance defaults from face settings.
 - [ZacodeHR employee portal](zacodehr-portal.md) — separate HMAC auth realm on employees row (fail closed on empty SESSION_SECRET), seat cap = count(login_username) vs max_hr_users w/ post-write revert, punch reuses recalcDay, 401 redirect needs BASE_URL.
 - [External DB storage routing](external-db-storage-routing.md) — SA-only module routing (archive first); tables self-created via lazy DDL (ensureSchema won't); route EVERY consumer incl. delivery-receipt counts.
+- [Demo-device link lifecycle](demo-device-link-lifecycle.md) — pair-code create/redeem/revoke must serialize per source user; session issuance must atomically require an active ready link.

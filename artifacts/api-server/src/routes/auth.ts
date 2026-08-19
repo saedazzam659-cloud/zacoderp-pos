@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable, demoDeviceWorkspacesTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -65,6 +65,11 @@ async function homeDomainBlocked(req: { headers: Record<string, unknown> }, comp
 import { resolveBearerToken } from "../middleware/auth.js";
 import { runEndOfSessionHooks, loadSessionSettings } from "../lib/workSessionReport.js";
 import { listSessionsForUser } from "./sessions.js";
+import {
+  decorateDemoShadowUser,
+  DemoDeviceError,
+  resolveDemoDeviceLogin,
+} from "../lib/demoDeviceIsolation.js";
 
 const router = Router();
 
@@ -236,6 +241,7 @@ router.post("/login", async (req, res) => {
       .where(and(
         sql`lower(${usersTable.username}) = lower(${String(username)})`,
         eq(usersTable.isTrainee, true),
+        eq(usersTable.isDemoShadow, false),
       ));
     if (trainee?.companyId) {
       // «النطاق الموطن» — trainees must respect the same restriction as
@@ -257,8 +263,12 @@ router.post("/login", async (req, res) => {
     }
   }
 
-  const [user] = await db.select().from(usersTable)
-    .where(and(eq(usersTable.username, username), eq(usersTable.companyId, tenantCompanyId)));
+  let [user] = await db.select().from(usersTable)
+    .where(and(
+      eq(usersTable.username, username),
+      eq(usersTable.companyId, tenantCompanyId),
+      eq(usersTable.isDemoShadow, false),
+    ));
   if (!user) {
     // Failed login → record as denied so the Security Center can show it.
     await writeAudit({
@@ -391,11 +401,35 @@ router.post("/login", async (req, res) => {
     }
   }
 
+  // Demo-device isolation is resolved only AFTER the source tenant's password,
+  // suspension and subscription gates have passed. The effective user may be
+  // a shadow user inside a hidden per-device company; all downstream session,
+  // work-session and audit writes must use that effective identity.
+  let demoLogin: Awaited<ReturnType<typeof resolveDemoDeviceLogin>> | null = null;
+  try {
+    demoLogin = await resolveDemoDeviceLogin({
+      sourceUser: user,
+      deviceToken: req.body?.demoDeviceToken,
+      pairCode: req.body?.demoPairCode,
+      deviceLabel: req.body?.demoDeviceLabel,
+      userAgent: ua,
+      ip,
+    });
+  } catch (error) {
+    const status = error instanceof DemoDeviceError ? error.status : 500;
+    const message = error instanceof DemoDeviceError
+      ? error.message
+      : "تعذر تجهيز مساحة الديمو لهذا الجهاز";
+    res.status(status).json({ error: message, code: "DEMO_DEVICE_WORKSPACE_ERROR" });
+    return;
+  }
+  const sessionUser = demoLogin.effectiveUser;
+
   // Single-session enforcement — generate new token (invalidates old)
   const sessionToken = generateToken();
   const sessionId = randomUUID();
 
-  await db.update(usersTable).set({
+  const issuedSession = await db.update(usersTable).set({
     sessionToken,
     sessionId,
     // Bind the session to its opening channel — mobile-app permission
@@ -403,7 +437,33 @@ router.post("/login", async (req, res) => {
     sessionChannel: String(req.headers?.["x-app-channel"] ?? "") === "mobile" ? "mobile" : "web",
     lastLoginAt: new Date(),
     updatedAt: new Date(),
-  }).where(eq(usersTable.id, user.id));
+  }).where(and(
+    eq(usersTable.id, sessionUser.id),
+    demoLogin.deviceLinkId == null
+      ? undefined
+      : sql`EXISTS (
+          SELECT 1
+            FROM ${demoDeviceWorkspacesTable} ddw
+           WHERE ddw.id = ${demoLogin.deviceLinkId}
+             AND ddw.source_user_id = ${user.id}
+             AND ddw.workspace_user_id = ${sessionUser.id}
+             AND ddw.status = 'ready'
+             AND ddw.revoked_at IS NULL
+        )`,
+  )).returning({ id: usersTable.id });
+  if (issuedSession.length === 0) {
+    res.status(403).json({
+      error: "تم إلغاء ربط هذا الجهاز. احذف بيانات الموقع ثم سجّل الدخول مجددًا.",
+      code: "DEMO_DEVICE_REVOKED",
+    });
+    return;
+  }
+  // Keep the visible/source account's last-login timestamp accurate even when
+  // the actual session belongs to a shadow user in a hidden workspace.
+  if (sessionUser.id !== user.id) {
+    await db.update(usersTable).set({ lastLoginAt: new Date(), updatedAt: new Date() })
+      .where(eq(usersTable.id, user.id));
+  }
 
   // Open a "work session" row to underpin the Work Sessions screen + AI
   // activity report. We:
@@ -418,7 +478,7 @@ router.post("/login", async (req, res) => {
   // (`startedAt`, now()). If the audit row were written first, its timestamp
   // would fall a few ms before `startedAt` and the login event would be
   // filtered out of the work-session activity preview / AI report.
-  if (user.companyId) {
+  if (sessionUser.companyId) {
     try {
       // Atomic close-then-insert. Two concurrent logins for the same
       // (userId, companyId) race past a non-transactional version and end
@@ -426,7 +486,7 @@ router.post("/login", async (req, res) => {
       // status='active' guarantees the second INSERT fails, and the
       // surrounding transaction makes the close-and-insert pair all-or-
       // nothing so we never strand both the old and the new in 'active'.
-      const cid = user.companyId;
+      const cid = sessionUser.companyId;
 
       // Pick a sensible default branch for this login row so reports and
       // filters can attribute the session to a branch. Resolution order:
@@ -441,7 +501,7 @@ router.post("/login", async (req, res) => {
         const grants = await db
           .select({ branchId: userBranchesTable.branchId })
           .from(userBranchesTable)
-          .where(eq(userBranchesTable.userId, user.id));
+          .where(eq(userBranchesTable.userId, sessionUser.id));
         if (grants.length === 1) {
           loginBranchId = grants[0].branchId;
         } else {
@@ -461,12 +521,12 @@ router.post("/login", async (req, res) => {
             endReason: "new_login",
             updatedAt: new Date(),
           }).where(and(
-            eq(workSessionsTable.userId, user.id),
+            eq(workSessionsTable.userId, sessionUser.id),
             eq(workSessionsTable.status, "active"),
           ));
           await tx.insert(workSessionsTable).values({
             companyId: cid,
-            userId:    user.id,
+            userId:    sessionUser.id,
             username:  user.username,
             status:    "active",
             ip,
@@ -490,7 +550,7 @@ router.post("/login", async (req, res) => {
           userAgent: ua,
           updatedAt: new Date(),
         }).where(and(
-          eq(workSessionsTable.userId, user.id),
+          eq(workSessionsTable.userId, sessionUser.id),
           eq(workSessionsTable.status, "active"),
         ));
       }
@@ -503,24 +563,26 @@ router.post("/login", async (req, res) => {
   // Successful login → audit row so the Security Center can list it AND
   // so it falls inside the freshly-opened work session window above.
   await writeAudit({
-    userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+    userId: sessionUser.id, username: user.username, role: sessionUser.role, companyId: sessionUser.companyId,
     module: "auth", action: "login",
     method: "POST", path: "/api/auth/login", statusCode: 200,
-    ip, userAgent: ua, metadata: null,
+    ip, userAgent: ua, metadata: demoLogin.deviceLinkId
+      ? { demoDeviceLinkId: demoLogin.deviceLinkId, demoPrimary: demoLogin.isPrimary }
+      : null,
   });
 
   // Get subscription — pick the LATEST row (same rule as the expiry gate's CTE:
   // ORDER BY end_date DESC, id DESC) so the returned endDate / dashboard banner
   // always reflect the exact subscription the login gate evaluated.
-  const [subscription] = user.companyId
+  const [subscription] = sessionUser.companyId
     ? await db.select().from(subscriptionsTable)
-        .where(eq(subscriptionsTable.companyId, user.companyId))
+        .where(eq(subscriptionsTable.companyId, sessionUser.companyId))
         .orderBy(desc(subscriptionsTable.endDate), desc(subscriptionsTable.id))
         .limit(1)
     : [null];
 
-  const [company] = user.companyId
-    ? await db.select().from(companiesTable).where(eq(companiesTable.id, user.companyId))
+  const [company] = sessionUser.companyId
+    ? await db.select().from(companiesTable).where(eq(companiesTable.id, sessionUser.companyId))
     : [null];
 
   const subscriptionNotice = await getSubscriptionNotice();
@@ -529,7 +591,7 @@ router.post("/login", async (req, res) => {
   const branchLinks = await db
     .select({ branchId: userBranchesTable.branchId })
     .from(userBranchesTable)
-    .where(eq(userBranchesTable.userId, user.id));
+    .where(eq(userBranchesTable.userId, sessionUser.id));
 
   // Manual sessions (admin-managed entity, see routes/sessions.ts).
   // The client uses this list to drive the post-login session picker:
@@ -538,17 +600,17 @@ router.post("/login", async (req, res) => {
   //   selection (cleared if it points to a session no longer assigned).
   let manualSessions: Array<{ id: number; name: string; status: string }> = [];
   let currentSessionId: number | null = null;
-  if (user.companyId) {
+  if (sessionUser.companyId) {
     try {
-      manualSessions = await listSessionsForUser(user.id, user.companyId);
-      const persisted = (user as any).currentSessionId ?? null;
+      manualSessions = await listSessionsForUser(sessionUser.id, sessionUser.companyId);
+      const persisted = (sessionUser as any).currentSessionId ?? null;
       currentSessionId = persisted && manualSessions.find(s => s.id === persisted)
         ? persisted
         : null;
       if (persisted && currentSessionId == null) {
         // Self-heal stale persisted selection
         await db.update(usersTable).set({ currentSessionId: null })
-          .where(eq(usersTable.id, user.id));
+          .where(eq(usersTable.id, sessionUser.id));
       }
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -559,17 +621,25 @@ router.post("/login", async (req, res) => {
   res.json({
     token: sessionToken,
     sessionId,
+    demoDeviceToken: demoLogin.deviceToken,
+    demoWorkspace: demoLogin.deviceLinkId ? {
+      deviceLinkId: demoLogin.deviceLinkId,
+      companyId: demoLogin.workspaceCompanyId,
+      isPrimary: demoLogin.isPrimary,
+    } : null,
     user: {
-      id: user.id,
+      id: sessionUser.id,
       username: user.username,
       email: user.email,
-      role: user.role,
-      companyId: user.companyId,
+      role: sessionUser.role,
+      companyId: sessionUser.companyId,
       code: (user as any).code ?? null,
       nameAr: (user as any).nameAr ?? null,
       nameEn: (user as any).nameEn ?? null,
-      permissions: (user as any).permissions ?? {},
-      viewAllBranches: (user as any).viewAllBranches ?? true,
+      permissions: (sessionUser as any).permissions ?? {},
+      viewAllBranches: (sessionUser as any).viewAllBranches ?? true,
+      demoSourceUserId: sessionUser.id === user.id ? undefined : user.id,
+      demoDeviceIsolation: user.demoDeviceIsolation === true,
       branchIds: branchLinks.map(l => l.branchId),
       company,
       subscription,
@@ -810,6 +880,8 @@ router.get("/me", async (req, res) => {
     res.status(401).json({ error: "الجلسة منتهية — يرجى تسجيل الدخول مجدداً" });
     return;
   }
+
+  user = await decorateDemoShadowUser(user);
 
   // Same "latest subscription" rule as the login gate so /me stays consistent
   // with the gate decision (see login handler above).

@@ -16,10 +16,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   Shield, ShieldAlert, Loader2, RefreshCw, LogOut, Users, History, KeyRound, Activity,
-  LogIn, XCircle, Timer, Lock, AlertTriangle, Building2,
+  LogIn, XCircle, Timer, Lock, AlertTriangle, Building2, Server,
   ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -28,6 +29,11 @@ interface SessionRow {
   userId: number; username: string; email: string | null;
   role: string; companyId: number | null; companyName: string | null;
   companyLoginCount: number | null;
+  // Source-qualified identity. `rowId` uniquely keys the row across the
+  // central DB and every agent DB ("central:12" / "agent:5:12"), so the same
+  // numeric user id in two databases never collides in selection/termination.
+  source: string; rowId: string;
+  agentInstanceId: number | null; agentName: string | null;
   zatcaStatus: "production" | "sandbox" | "not_linked" | null;
   sessionId: string | null; lastLoginAt: string | null;
   ip: string | null; country: string | null; userAgent: string | null;
@@ -304,42 +310,99 @@ function shortUA(ua: string | null): string {
 // ─────────────────────────────────────────────────────────────────────────
 //  ACTIVE SESSIONS TAB
 // ─────────────────────────────────────────────────────────────────────────
+// Minimal shape of an agent instance for the source picker (list endpoint
+// returns much more, but we only need id/name/domain/status here — secrets
+// are never present in that payload).
+interface AgentOption {
+  id: number; name: string; domain: string;
+  status: string; dbStatus: string;
+}
+interface SessionSourceWarning { source: string; name: string; error: string }
+
 function ActiveSessionsTab({ token }: { token: string | null }) {
   const headers = { Authorization: `Bearer ${token}` };
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [confirmEnd, setConfirmEnd] = useState<{ kind: "single" | "bulk"; userId?: number; username?: string } | null>(null);
+  // Source filter: "central" (default) | "all" | "<agentInstanceId>".
+  const [source, setSource] = useState<string>("central");
+  const [sessionSearch, setSessionSearch] = useState("");
+  const [sessionPage, setSessionPage] = useState(1);
+  const SESSION_PAGE_SIZE = 50;
+  // Selection is keyed by source-qualified rowId (see SessionRow.rowId) so the
+  // same numeric user id in two databases can be individually selected.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmEnd, setConfirmEnd] = useState<{ kind: "single" | "bulk"; rowId?: string; username?: string } | null>(null);
 
-  const { data, isLoading, error, refetch, isFetching } = useQuery<{ rows: SessionRow[]; total: number }>({
-    queryKey: ["security-sessions"],
+  // Load initialized agent servers so the SA can scope the view to one.
+  const agentsQ = useQuery<AgentOption[]>({
+    queryKey: ["agent-instances", "session-sources"],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/security/sessions`, { headers });
+      const r = await fetch(`${API}/api/admin/agent-instances`, { headers });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+  // Only agents whose external DB is actually initialized can hold sessions.
+  const initializedAgents = useMemo(
+    () => (agentsQ.data ?? []).filter(a => a.status === "active" && a.dbStatus === "initialized"),
+    [agentsQ.data],
+  );
+  const sourceItems: ComboboxItem[] = useMemo(() => [
+    { value: "central", label: "المركزي", description: "قاعدة البيانات المركزية" },
+    { value: "all", label: "كل السيرفرات", description: "المركزي + كل سيرفرات الوكلاء المهيأة" },
+    ...initializedAgents.map(a => ({
+      value: String(a.id),
+      label: a.name,
+      description: a.domain,
+      badge: "وكيل",
+      badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    })),
+  ], [initializedAgents]);
+
+  const { data, isLoading, error, refetch, isFetching } = useQuery<{ rows: SessionRow[]; total: number; warnings?: SessionSourceWarning[] }>({
+    queryKey: ["security-sessions", source, sessionSearch, sessionPage],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        source,
+        search: sessionSearch.trim(),
+        limit: String(SESSION_PAGE_SIZE),
+        offset: String((sessionPage - 1) * SESSION_PAGE_SIZE),
+      });
+      const r = await fetch(`${API}/api/admin/security/sessions?${params.toString()}`, { headers });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
     refetchInterval: 30_000,
   });
   const rows = data?.rows ?? [];
+  const warnings = data?.warnings ?? [];
+  const sessionTotal = data?.total ?? 0;
+  const sessionPageCount = Math.max(1, Math.ceil(sessionTotal / SESSION_PAGE_SIZE));
+  useEffect(() => {
+    if (sessionPage > sessionPageCount) setSessionPage(sessionPageCount);
+  }, [sessionPage, sessionPageCount]);
 
-  // Helper: optimistically remove the targeted user(s) from the cached sessions
+  // Helper: optimistically remove the targeted row(s) from the cached sessions
   // list so the row disappears immediately; rolls back if the mutation fails;
-  // always invalidates on settle to reconcile with the server. SessionRow keys
-  // each row by `userId` (not `id`) — see the interface at the top of this file.
-  type SessionsCache = { rows: SessionRow[]; total: number };
+  // always invalidates on settle to reconcile with the server. Rows are keyed
+  // by their source-qualified `rowId` (see SessionRow).
+  type SessionsCache = { rows: SessionRow[]; total: number; warnings?: SessionSourceWarning[] };
   // Snapshot of the cache returned from removeFromCache so onError can roll back.
   type MutationCtx = { previous: SessionsCache | undefined };
   // Bulk-end response shape from /api/admin/security/sessions/bulk-end.
   type BulkEndResp = { ended: number };
-  const removeFromCache = async (userIds: number[]): Promise<SessionsCache | undefined> => {
-    await qc.cancelQueries({ queryKey: ["security-sessions"] });
-    const previous = qc.getQueryData<SessionsCache>(["security-sessions"]);
+  const cacheKey = ["security-sessions", source, sessionSearch, sessionPage];
+  const removeFromCache = async (rowIds: string[]): Promise<SessionsCache | undefined> => {
+    await qc.cancelQueries({ queryKey: cacheKey });
+    const previous = qc.getQueryData<SessionsCache>(cacheKey);
     if (previous) {
-      const set = new Set(userIds);
-      const removed = previous.rows.filter(r => set.has(r.userId)).length;
-      qc.setQueryData<SessionsCache>(["security-sessions"], {
-        rows: previous.rows.filter(r => !set.has(r.userId)),
+      const set = new Set(rowIds);
+      const removed = previous.rows.filter(r => set.has(r.rowId)).length;
+      qc.setQueryData<SessionsCache>(cacheKey, {
+        ...previous,
+        rows: previous.rows.filter(r => !set.has(r.rowId)),
         total: Math.max(0, previous.total - removed),
       });
     }
@@ -347,41 +410,41 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
   };
 
   const endOne = useMutation({
-    mutationFn: async (userId: number) => {
-      const r = await fetch(`${API}/api/admin/security/sessions/${userId}/end`, {
+    mutationFn: async (rowId: string) => {
+      const r = await fetch(`${API}/api/admin/security/sessions/${encodeURIComponent(rowId)}/end`, {
         method: "POST", headers,
       });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-    onMutate: async (userId: number): Promise<MutationCtx> => ({
-      previous: await removeFromCache([userId]),
+    onMutate: async (rowId: string): Promise<MutationCtx> => ({
+      previous: await removeFromCache([rowId]),
     }),
-    onError: (e: unknown, _vars: number, ctx: MutationCtx | undefined) => {
-      if (ctx?.previous) qc.setQueryData(["security-sessions"], ctx.previous);
+    onError: (e: unknown, _vars: string, ctx: MutationCtx | undefined) => {
+      if (ctx?.previous) qc.setQueryData(cacheKey, ctx.previous);
       toast({ title: "تعذر إنهاء الجلسة", description: errorMessage(e), variant: "destructive" });
     },
     onSuccess: () => {
       toast({ title: "✓ تم إنهاء الجلسة" });
       setConfirmEnd(null);
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ["security-sessions"] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: cacheKey }),
   });
 
-  const endBulk = useMutation<BulkEndResp, unknown, number[], MutationCtx>({
-    mutationFn: async (userIds: number[]): Promise<BulkEndResp> => {
+  const endBulk = useMutation<BulkEndResp, unknown, string[], MutationCtx>({
+    mutationFn: async (rowIds: string[]): Promise<BulkEndResp> => {
       const r = await fetch(`${API}/api/admin/security/sessions/bulk-end`, {
         method: "POST", headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ userIds }),
+        body: JSON.stringify({ userIds: rowIds }),
       });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-    onMutate: async (userIds: number[]): Promise<MutationCtx> => ({
-      previous: await removeFromCache(userIds),
+    onMutate: async (rowIds: string[]): Promise<MutationCtx> => ({
+      previous: await removeFromCache(rowIds),
     }),
-    onError: (e: unknown, _vars: number[], ctx: MutationCtx | undefined) => {
-      if (ctx?.previous) qc.setQueryData(["security-sessions"], ctx.previous);
+    onError: (e: unknown, _vars: string[], ctx: MutationCtx | undefined) => {
+      if (ctx?.previous) qc.setQueryData(cacheKey, ctx.previous);
       toast({ title: "تعذر إنهاء الجلسات", description: errorMessage(e), variant: "destructive" });
     },
     onSuccess: (out: BulkEndResp) => {
@@ -389,30 +452,61 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
       setConfirmEnd(null);
       setSelected(new Set());
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ["security-sessions"] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: cacheKey }),
   });
 
-  const toggle = (id: number) => {
+  const toggle = (rowId: string) => {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(rowId)) next.delete(rowId); else next.add(rowId);
       return next;
     });
   };
-  const allChecked = rows.length > 0 && rows.every(r => selected.has(r.userId));
+  const allChecked = rows.length > 0 && rows.every(r => selected.has(r.rowId));
   const toggleAll = () => {
     if (allChecked) setSelected(new Set());
-    else setSelected(new Set(rows.map(r => r.userId)));
+    else setSelected(new Set(rows.map(r => r.rowId)));
   };
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-sm text-muted-foreground">
-          إجمالي الجلسات النشطة:{" "}
-          <span className="font-mono font-semibold text-foreground" data-testid="sessions-total">
-            {rows.length.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
-          </span>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Server className="h-3.5 w-3.5" />
+            <span>السيرفر</span>
+          </div>
+          <div className="w-64 max-w-full" data-testid="session-source-combobox">
+            <SearchCombobox
+              items={sourceItems}
+              value={source}
+              onValueChange={(v) => {
+                setSource(v);
+                setSessionPage(1);
+                setSelected(new Set());
+              }}
+              placeholder="اختر السيرفر"
+              searchPlaceholder="ابحث بالاسم أو الدومين…"
+              emptyText="لا توجد سيرفرات مطابقة"
+            />
+          </div>
+          <Input
+            value={sessionSearch}
+            onChange={(e) => {
+              setSessionSearch(e.target.value);
+              setSessionPage(1);
+              setSelected(new Set());
+            }}
+            placeholder="ابحث بالمستخدم أو الشركة أو البريد أو IP"
+            className="w-72 max-w-full h-9"
+            data-testid="session-search"
+          />
+          <div className="text-sm text-muted-foreground">
+            إجمالي الجلسات:{" "}
+            <span className="font-mono font-semibold text-foreground" data-testid="sessions-total">
+              {sessionTotal.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -430,6 +524,23 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
         </div>
       </div>
 
+      {/* Per-source warnings: an unreachable agent DB must NOT hide the healthy
+          sessions gathered from the other sources. */}
+      {warnings.length > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 space-y-1" data-testid="session-source-warnings">
+          <div className="flex items-center gap-1.5 font-medium">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            تعذّر جلب الجلسات من بعض المصادر — النتائج أدناه جزئية
+          </div>
+          {warnings.map(w => (
+            <div key={w.source} className="ps-5">
+              <span className="font-medium">{w.name}</span>
+              <span className="text-amber-600"> — {w.error}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -446,18 +557,26 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                 <span className="text-xs text-muted-foreground">تحديد الكل</span>
               </div>
               {rows.map(r => (
-                <Card key={r.userId} className="border" data-testid={`session-card-${r.userId}`}>
+                <Card key={r.rowId} className="border" data-testid={`session-card-${r.rowId}`}>
                   <CardContent className="p-3 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-start gap-2 min-w-0">
                         <Checkbox
-                          checked={selected.has(r.userId)}
-                          onCheckedChange={() => toggle(r.userId)}
-                          data-testid={`session-select-${r.userId}-m`}
+                          checked={selected.has(r.rowId)}
+                          onCheckedChange={() => toggle(r.rowId)}
+                          data-testid={`session-select-${r.rowId}-m`}
                           className="mt-0.5"
                         />
                         <div className="min-w-0">
-                          <div className="font-medium truncate">{r.username}</div>
+                          <div className="font-medium truncate flex items-center gap-1.5">
+                            {r.username}
+                            {r.agentName && (
+                              <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1" title={`سيرفر الوكيل: ${r.agentName}`}>
+                                <Server className="h-2.5 w-2.5" />
+                                {r.agentName}
+                              </Badge>
+                            )}
+                          </div>
                           {r.email && <div className="text-[11px] text-muted-foreground truncate">{r.email}</div>}
                         </div>
                       </div>
@@ -477,7 +596,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                             variant="outline"
                             className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-mono px-1.5 py-0 h-4"
                             title={`إجمالي تسجيلات الدخول لهذه الشركة: ${r.companyLoginCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}`}
-                            data-testid={`session-company-logins-${r.userId}-m`}
+                            data-testid={`session-company-logins-${r.rowId}-m`}
                           >
                             {r.companyLoginCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                           </Badge>
@@ -489,7 +608,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                               variant="outline"
                               className={`${z.cls} text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1`}
                               title={z.title}
-                              data-testid={`session-zatca-${r.userId}-m`}
+                              data-testid={`session-zatca-${r.rowId}-m`}
                             >
                               <span className={`inline-block w-1.5 h-1.5 rounded-full ${z.dot}`} aria-hidden />
                               {z.label}
@@ -518,13 +637,13 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                         ipCountryName={r.ipCountryName}
                         ipLat={r.ipLat}
                         ipLng={r.ipLng}
-                        testId={`session-location-${r.userId}-m`}
+                        testId={`session-location-${r.rowId}-m`}
                       />
                     </div>
 
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="text-muted-foreground">الدولة</span>
-                      <span data-testid={`session-country-${r.userId}-m`}>
+                      <span data-testid={`session-country-${r.rowId}-m`}>
                         {r.country ? (
                           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l from-sky-50 to-indigo-50 border border-sky-200">
                             <span className="text-base leading-none" aria-hidden>{countryFlag(r.country)}</span>
@@ -545,8 +664,8 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                     <div className="flex flex-wrap gap-2 pt-2">
                       <Button
                         variant="outline" size="sm" className="text-rose-600 border-rose-200 hover:bg-rose-50"
-                        onClick={() => setConfirmEnd({ kind: "single", userId: r.userId, username: r.username })}
-                        data-testid={`session-end-${r.userId}-m`}
+                        onClick={() => setConfirmEnd({ kind: "single", rowId: r.rowId, username: r.username })}
+                        data-testid={`session-end-${r.rowId}-m`}
                       >
                         <LogOut className="h-3.5 w-3.5 ml-1" />
                         إنهاء
@@ -578,16 +697,24 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                 </thead>
                 <tbody>
                   {rows.map(r => (
-                    <tr key={r.userId} className="border-b last:border-0 hover:bg-muted/20" data-testid={`session-row-${r.userId}`}>
+                    <tr key={r.rowId} className="border-b last:border-0 hover:bg-muted/20" data-testid={`session-row-${r.rowId}`}>
                       <td className="px-3 py-2">
                         <Checkbox
-                          checked={selected.has(r.userId)}
-                          onCheckedChange={() => toggle(r.userId)}
-                          data-testid={`session-select-${r.userId}`}
+                          checked={selected.has(r.rowId)}
+                          onCheckedChange={() => toggle(r.rowId)}
+                          data-testid={`session-select-${r.rowId}`}
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <div className="font-medium">{r.username}</div>
+                        <div className="font-medium flex items-center gap-1.5">
+                          {r.username}
+                          {r.agentName && (
+                            <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1" title={`سيرفر الوكيل: ${r.agentName}`} data-testid={`session-agent-${r.rowId}`}>
+                              <Server className="h-2.5 w-2.5" />
+                              {r.agentName}
+                            </Badge>
+                          )}
+                        </div>
                         {r.email && <div className="text-[11px] text-muted-foreground">{r.email}</div>}
                       </td>
                       <td className="px-3 py-2">
@@ -605,7 +732,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                               variant="outline"
                               className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-mono px-1.5 py-0 h-4"
                               title={`إجمالي تسجيلات الدخول لهذه الشركة: ${r.companyLoginCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}`}
-                              data-testid={`session-company-logins-${r.userId}`}
+                              data-testid={`session-company-logins-${r.rowId}`}
                             >
                               {r.companyLoginCount.toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                             </Badge>
@@ -617,7 +744,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                                 variant="outline"
                                 className={`${z.cls} text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1`}
                                 title={z.title}
-                                data-testid={`session-zatca-${r.userId}`}
+                                data-testid={`session-zatca-${r.rowId}`}
                               >
                                 <span className={`inline-block w-1.5 h-1.5 rounded-full ${z.dot}`} aria-hidden />
                                 {z.label}
@@ -640,10 +767,10 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                           ipCountryName={r.ipCountryName}
                           ipLat={r.ipLat}
                           ipLng={r.ipLng}
-                          testId={`session-location-${r.userId}`}
+                          testId={`session-location-${r.rowId}`}
                         />
                       </td>
-                      <td className="px-3 py-2" data-testid={`session-country-${r.userId}`}>
+                      <td className="px-3 py-2" data-testid={`session-country-${r.rowId}`}>
                         {r.country ? (
                           <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l from-sky-50 to-indigo-50 border border-sky-200 text-xs">
                             <span className="text-base leading-none" aria-hidden>{countryFlag(r.country)}</span>
@@ -659,8 +786,8 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                       <td className="px-3 py-2">
                         <Button
                           variant="outline" size="sm" className="text-rose-600 border-rose-200 hover:bg-rose-50"
-                          onClick={() => setConfirmEnd({ kind: "single", userId: r.userId, username: r.username })}
-                          data-testid={`session-end-${r.userId}`}
+                          onClick={() => setConfirmEnd({ kind: "single", rowId: r.rowId, username: r.username })}
+                          data-testid={`session-end-${r.rowId}`}
                         >
                           <LogOut className="h-3.5 w-3.5 ml-1" />
                           إنهاء
@@ -675,6 +802,39 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
           )}
         </CardContent>
       </Card>
+
+      {sessionTotal > SESSION_PAGE_SIZE && (
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <span className="text-muted-foreground">
+            صفحة {sessionPage.toLocaleString("ar-SA-u-nu-latn")} من{" "}
+            {sessionPageCount.toLocaleString("ar-SA-u-nu-latn")}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={sessionPage <= 1}
+              onClick={() => {
+                setSessionPage(p => Math.max(1, p - 1));
+                setSelected(new Set());
+              }}
+            >
+              <ChevronRight className="h-4 w-4" />السابق
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={sessionPage >= sessionPageCount}
+              onClick={() => {
+                setSessionPage(p => Math.min(sessionPageCount, p + 1));
+                setSelected(new Set());
+              }}
+            >
+              التالي<ChevronLeft className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Destructive force-logout confirmation — pattern: AlertDialog. */}
       <AlertDialog open={!!confirmEnd} onOpenChange={(o) => !o && setConfirmEnd(null)}>
@@ -692,7 +852,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
             <AlertDialogAction
               className="bg-rose-600 hover:bg-rose-700"
               onClick={() => {
-                if (confirmEnd?.kind === "single" && confirmEnd.userId != null) endOne.mutate(confirmEnd.userId);
+                if (confirmEnd?.kind === "single" && confirmEnd.rowId != null) endOne.mutate(confirmEnd.rowId);
                 else endBulk.mutate(Array.from(selected));
               }}
               data-testid="confirm-end-confirm"

@@ -16,8 +16,10 @@ import {
   ArrowRight, Building2, Users, FileText, Package, CheckCircle2,
   XCircle, Plus, Trash2, RefreshCw, Calendar, ShieldCheck,
   UserPlus, Eye, EyeOff, TrendingUp, AlertTriangle, Pencil,
-  UserCheck, UserX, Truck, BarChart3, Key, Link2
+  UserCheck, UserX, Truck, BarChart3, Key, Link2, MonitorSmartphone,
+  Copy, Unlink
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import ZatcaIntegration from "@/pages/ZatcaIntegration";
 import { cn } from "@/lib/utils";
 
@@ -94,6 +96,8 @@ export default function CompanyDetails() {
   const [newUser, setNewUser] = useState({ username: "", email: "", password: "", role: "admin" });
   const [resetPassDialog, setResetPassDialog] = useState<any | null>(null);
   const [newPass, setNewPass] = useState("");
+  const [demoDevicesUser, setDemoDevicesUser] = useState<any | null>(null);
+  const [pairCode, setPairCode] = useState<{ code: string; expiresAt: string } | null>(null);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -185,6 +189,69 @@ export default function CompanyDetails() {
       return res.json();
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-company", id] }),
+  });
+
+  const demoIsolationMutation = useMutation({
+    mutationFn: async ({ userId, enabled }: { userId: number; enabled: boolean }) => {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}${agentQS}`, {
+        method: "PUT", headers, body: JSON.stringify({ demoDeviceIsolation: enabled }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "تعذر تحديث عزل الديمو");
+      return json;
+    },
+    onSuccess: () => {
+      toast({ title: "✓ تم تحديث عزل حساب الديمو" });
+      qc.invalidateQueries({ queryKey: ["admin-company", id] });
+      qc.invalidateQueries({ queryKey: ["admin-demo-devices", id] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const { data: demoDevicesData, isLoading: demoDevicesLoading } = useQuery({
+    queryKey: ["admin-demo-devices", id, demoDevicesUser?.id, agentId],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API}/api/admin/companies/${id}/users/${demoDevicesUser.id}/demo-devices${agentQS}`,
+        { headers },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "تعذر تحميل الأجهزة");
+      return json;
+    },
+    enabled: !!demoDevicesUser?.id,
+  });
+
+  const createPairCodeMutation = useMutation({
+    mutationFn: async (deviceId: number) => {
+      const res = await fetch(
+        `${API}/api/admin/companies/${id}/users/${demoDevicesUser.id}/demo-devices/${deviceId}/pair-code${agentQS}`,
+        { method: "POST", headers },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "تعذر إنشاء رمز الربط");
+      return json;
+    },
+    onSuccess: (result) => setPairCode(result),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const revokeDemoDeviceMutation = useMutation({
+    mutationFn: async (deviceId: number) => {
+      const res = await fetch(
+        `${API}/api/admin/companies/${id}/users/${demoDevicesUser.id}/demo-devices/${deviceId}${agentQS}`,
+        { method: "DELETE", headers },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "تعذر إلغاء ربط الجهاز");
+      return json;
+    },
+    onSuccess: () => {
+      setPairCode(null);
+      qc.invalidateQueries({ queryKey: ["admin-demo-devices", id] });
+      toast({ title: "✓ تم إلغاء ربط الجهاز وإنهاء جلسته" });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   const resetPassMutation = useMutation({
@@ -446,17 +513,18 @@ export default function CompanyDetails() {
               <div className="divide-y">
                 {/* Header */}
                 <div className="grid items-center gap-3 px-4 py-2.5 bg-muted/40 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
-                  style={{ gridTemplateColumns: "1fr 1fr 0.7fr 0.7fr auto" }}>
+                  style={{ gridTemplateColumns: "1fr 1fr 0.7fr 0.7fr 1.2fr auto" }}>
                   <span>المستخدم</span>
                   <span>البريد</span>
                   <span>الصلاحية</span>
                   <span>الحالة</span>
+                  <span>ديمو مستقل لكل جهاز</span>
                   <span className="w-20 text-center">إجراءات</span>
                 </div>
                 {users.map((u: any) => (
                   <div key={u.id} className={cn("grid items-center gap-3 px-4 py-3.5 hover:bg-muted/20 transition-colors",
                     !u.isActive && "bg-muted/10 opacity-70")}
-                    style={{ gridTemplateColumns: "1fr 1fr 0.7fr 0.7fr auto" }}>
+                    style={{ gridTemplateColumns: "1fr 1fr 0.7fr 0.7fr 1.2fr auto" }}>
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="h-8 w-8 rounded-lg bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">
                         {u.username?.[0]?.toUpperCase() ?? "م"}
@@ -480,6 +548,32 @@ export default function CompanyDetails() {
                       <span className={cn("text-xs", u.isActive ? "text-green-700" : "text-muted-foreground")}>
                         {u.isActive ? "نشط" : "موقوف"}
                       </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary cursor-pointer"
+                        title="يعزل بيانات هذا الحساب في مساحة مستقلة لكل جهاز جديد"
+                        checked={u.demoDeviceIsolation === true}
+                        disabled={demoIsolationMutation.isPending}
+                        onChange={e => demoIsolationMutation.mutate({
+                          userId: u.id,
+                          enabled: e.target.checked,
+                        })}
+                        data-testid={`demo-device-isolation-${u.id}`}
+                      />
+                      <button
+                        type="button"
+                        className="text-xs text-primary hover:underline inline-flex items-center gap-1 disabled:text-muted-foreground"
+                        disabled={!u.demoDeviceIsolation}
+                        onClick={() => {
+                          setPairCode(null);
+                          setDemoDevicesUser(u);
+                        }}
+                      >
+                        <MonitorSmartphone className="h-3.5 w-3.5" />
+                        إدارة
+                      </button>
                     </div>
                     <div className="flex items-center gap-1 w-20 justify-end">
                       <input
@@ -507,6 +601,130 @@ export default function CompanyDetails() {
               </div>
             )}
           </div>
+
+          <Dialog open={!!demoDevicesUser} onOpenChange={open => {
+            if (!open) {
+              setDemoDevicesUser(null);
+              setPairCode(null);
+            }
+          }}>
+            <DialogContent className="sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <MonitorSmartphone className="h-5 w-5 text-primary" />
+                  أجهزة الديمو — {demoDevicesUser?.username}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  أول متصفح يحتفظ ببيانات الشركة الحالية. كل متصفح جديد بلا رمز ربط يبدأ
+                  بمساحة مستقلة. لربط متصفح آخر بنفس المساحة، أنشئ رمزًا من الجهاز المطلوب
+                  ثم افتح الرابط أو امسح QR خلال عشر دقائق.
+                </div>
+
+                {pairCode && (() => {
+                  const pairUrl = `${window.location.origin}${import.meta.env.BASE_URL}login?demoPair=${encodeURIComponent(pairCode.code)}`;
+                  return (
+                    <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4">
+                      <div className="grid sm:grid-cols-[140px_1fr] gap-4 items-center">
+                        <div className="bg-white rounded-lg p-2 w-fit mx-auto">
+                          <QRCodeSVG value={pairUrl} size={124} level="M" />
+                        </div>
+                        <div className="space-y-2 min-w-0">
+                          <p className="text-sm font-semibold">رمز ربط أحادي الاستخدام</p>
+                          <p className="text-2xl font-mono font-bold tracking-widest" dir="ltr">
+                            {pairCode.code}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            صالح حتى {new Date(pairCode.expiresAt).toLocaleTimeString("ar-SA-u-nu-latn")}
+                          </p>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(pairCode.code);
+                                toast({ title: "تم نسخ الرمز" });
+                              }}
+                            >
+                              <Copy className="h-3.5 w-3.5" />نسخ الرمز
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(pairUrl);
+                                toast({ title: "تم نسخ رابط الربط" });
+                              }}
+                            >
+                              <Link2 className="h-3.5 w-3.5" />نسخ الرابط
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="rounded-lg border divide-y">
+                  {demoDevicesLoading ? (
+                    <div className="p-6 text-center text-sm text-muted-foreground">جاري تحميل الأجهزة...</div>
+                  ) : (demoDevicesData?.devices ?? []).length === 0 ? (
+                    <div className="p-6 text-center text-sm text-muted-foreground">
+                      لم يسجّل هذا المستخدم الدخول بعد تفعيل العزل.
+                    </div>
+                  ) : (demoDevicesData?.devices ?? []).map((device: any) => (
+                    <div key={device.id} className="p-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-sm truncate">{device.deviceLabel || `جهاز ${device.id}`}</p>
+                          {device.isPrimary && <Badge variant="outline">الجهاز الأول</Badge>}
+                          {device.revokedAt && <Badge variant="destructive">ملغي</Badge>}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {device.workspaceName || "مساحة قيد التجهيز"} · آخر ظهور{" "}
+                          {device.lastSeenAt
+                            ? new Date(device.lastSeenAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")
+                            : "—"}
+                        </p>
+                      </div>
+                      {!device.revokedAt && device.status === "ready" && (
+                        <div className="flex gap-1 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={createPairCodeMutation.isPending}
+                            onClick={() => createPairCodeMutation.mutate(device.id)}
+                          >
+                            رمز ربط
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-destructive"
+                            title="إلغاء ربط الجهاز وإنهاء الجلسة"
+                            disabled={revokeDemoDeviceMutation.isPending}
+                            onClick={() => {
+                              if (confirm("إلغاء ربط هذا الجهاز وإنهاء جلسته؟")) {
+                                revokeDemoDeviceMutation.mutate(device.id);
+                              }
+                            }}
+                          >
+                            <Unlink className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setDemoDevicesUser(null)}>إغلاق</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       )}
 

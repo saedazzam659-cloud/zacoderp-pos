@@ -278,6 +278,54 @@ async function ensureColumns(
 async function ensureTenantIdentityIndexes(): Promise<string[]> {
   const applied: string[] = [];
   const stmts: { label: string; sql: string }[] = [
+    { label: "users.demo_device_isolation",
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS demo_device_isolation BOOLEAN NOT NULL DEFAULT FALSE` },
+    { label: "users.is_demo_shadow",
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_demo_shadow BOOLEAN NOT NULL DEFAULT FALSE` },
+    { label: "companies.is_internal_demo_workspace",
+      sql: `ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_internal_demo_workspace BOOLEAN NOT NULL DEFAULT FALSE` },
+    { label: "companies.demo_parent_company_id",
+      sql: `ALTER TABLE companies ADD COLUMN IF NOT EXISTS demo_parent_company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE` },
+    { label: "create demo_device_workspaces table",
+      sql: `CREATE TABLE IF NOT EXISTS demo_device_workspaces (
+        id SERIAL PRIMARY KEY,
+        source_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        workspace_company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        workspace_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        device_token_hash VARCHAR(64) NOT NULL,
+        device_label VARCHAR(180),
+        user_agent TEXT,
+        first_ip VARCHAR(64),
+        last_ip VARCHAR(64),
+        is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+        status VARCHAR(24) NOT NULL DEFAULT 'provisioning',
+        revoked_at TIMESTAMPTZ,
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "demo_device_workspaces_source_device_uq",
+      sql: `CREATE UNIQUE INDEX IF NOT EXISTS demo_device_workspaces_source_device_uq ON demo_device_workspaces(source_user_id, device_token_hash)` },
+    { label: "demo_device_workspaces_source_idx",
+      sql: `CREATE INDEX IF NOT EXISTS demo_device_workspaces_source_idx ON demo_device_workspaces(source_user_id)` },
+    { label: "demo_device_workspaces_company_idx",
+      sql: `CREATE INDEX IF NOT EXISTS demo_device_workspaces_company_idx ON demo_device_workspaces(workspace_company_id)` },
+    { label: "create demo_device_pair_codes table",
+      sql: `CREATE TABLE IF NOT EXISTS demo_device_pair_codes (
+        id SERIAL PRIMARY KEY,
+        source_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        workspace_company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        created_by_device_id INTEGER NOT NULL REFERENCES demo_device_workspaces(id) ON DELETE CASCADE,
+        code_hash VARCHAR(64) NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )` },
+    { label: "demo_device_pair_codes_hash_uq",
+      sql: `CREATE UNIQUE INDEX IF NOT EXISTS demo_device_pair_codes_hash_uq ON demo_device_pair_codes(code_hash)` },
+    { label: "demo_device_pair_codes_source_idx",
+      sql: `CREATE INDEX IF NOT EXISTS demo_device_pair_codes_source_idx ON demo_device_pair_codes(source_user_id)` },
     // Create the replacement partial-unique indexes BEFORE dropping the legacy
     // global constraint, so users.username uniqueness is NEVER absent — even if a
     // later step is skipped by lock_timeout or the boot budget opens the port

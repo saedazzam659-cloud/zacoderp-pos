@@ -131,7 +131,12 @@ interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   loading: boolean;
-  login: (username: string, password: string, companyCode?: string) => Promise<void>;
+  login: (
+    username: string,
+    password: string,
+    companyCode?: string,
+    options?: { demoPairCode?: string },
+  ) => Promise<void>;
   logout: () => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
   setUser: React.Dispatch<React.SetStateAction<AuthUser | null>>;
@@ -453,19 +458,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; closeStream(); };
   }, [user, checkSession, qc]);
 
-  const login = async (username: string, password: string, companyCode?: string) => {
+  const login = async (
+    username: string,
+    password: string,
+    companyCode?: string,
+    options?: { demoPairCode?: string },
+  ) => {
     // Tenant identity is now (companyCode, username, password). The
     // server requires `companyCode` for tenant logins; it's only
     // optional in the SuperAdmin-fast-path case where the universal
     // login endpoint will return 409 + useSuperAdminFlow=true and the
     // page will pivot to the dedicated SuperAdmin flow.
     const trimmedCode = (companyCode ?? "").trim();
+    const demoDeviceStorageKey = "zatca_demo_device_token";
+    let demoDeviceToken = "";
+    try {
+      demoDeviceToken = localStorage.getItem(demoDeviceStorageKey) ?? "";
+      if (!/^[A-Za-z0-9_-]{24,256}$/.test(demoDeviceToken)) {
+        const bytes = new Uint8Array(32);
+        crypto.getRandomValues(bytes);
+        demoDeviceToken = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+        localStorage.setItem(demoDeviceStorageKey, demoDeviceToken);
+      }
+    } catch {
+      // Server will mint and return a token when storage/private-mode access
+      // is unavailable. Login itself must remain usable.
+      demoDeviceToken = "";
+    }
+    const demoPairCode = options?.demoPairCode?.trim() ?? "";
     const res = await apiFetch("/auth/login", {
       method: "POST",
       body: JSON.stringify({
         username,
         password,
         ...(trimmedCode ? { companyCode: trimmedCode } : {}),
+        ...(demoDeviceToken ? { demoDeviceToken } : {}),
+        ...(demoPairCode ? { demoPairCode } : {}),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -477,6 +505,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     localStorage.setItem(TOKEN_KEY, data.token);
     localStorage.setItem(SESSION_KEY, data.sessionId);
+    if (typeof data.demoDeviceToken === "string" && data.demoDeviceToken) {
+      try { localStorage.setItem(demoDeviceStorageKey, data.demoDeviceToken); }
+      catch { /* private mode — the next login will receive a fresh workspace */ }
+    }
     // Weak-password security notice flag — consumed by <SecurityNotice/>
     // (shows an animated banner right after login + every 30 minutes).
     if (data.weakPassword === true) {

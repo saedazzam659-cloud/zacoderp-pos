@@ -19,6 +19,10 @@ export const companiesTable = pgTable("companies", {
   industryName: text("industry_name"),
   invoiceType: text("invoice_type").notNull().default("both"),
   isSandbox: boolean("is_sandbox").notNull().default(false),
+  // Operational tenant boundary for an isolated demo browser. Hidden from
+  // commercial company lists, quotas, billing, backups, and integrations.
+  isInternalDemoWorkspace: boolean("is_internal_demo_workspace").notNull().default(false),
+  demoParentCompanyId: integer("demo_parent_company_id"),
   zatcaEnvironment: text("zatca_environment"),
   serialNumber: text("serial_number"),
   deviceSerial1: text("device_serial1"),

@@ -102,6 +102,12 @@ export const usersTable = pgTable("users", {
   // When true, the post-login "change your default/weak password" security
   // notice is suppressed for this user (SA checkbox in company users grid).
   securityNoticeExempt: boolean("security_notice_exempt").notNull().default(false),
+  // Optional per-user demo isolation. When enabled, every unpaired browser
+  // receives its own hidden company workspace at login.
+  demoDeviceIsolation: boolean("demo_device_isolation").notNull().default(false),
+  // Shadow users live only inside hidden demo workspaces. They are excluded
+  // from quotas and normal user-management screens and cannot password-login.
+  isDemoShadow: boolean("is_demo_shadow").notNull().default(false),
   lastLoginAt: timestamp("last_login_at"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
