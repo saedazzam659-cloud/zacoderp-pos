@@ -111,7 +111,7 @@ const total = (set: Interval[]): number => set.reduce((s, [a, b]) => s + (b - a)
  * For cross-midnight shifts, times < workStart are treated as next-day
  * (offset +24h) so ordering stays monotonic.
  */
-function buildSessions(movs: MovementInput[], crossRef: number | null): { sessions: Interval[]; flags: string[] } {
+function buildSessions(movs: MovementInput[], crossRef: number | null): { sessions: Interval[]; flags: string[]; openIn: number | null } {
   const flags: string[] = [];
   const norm = movs
     .map((m) => {
@@ -133,7 +133,7 @@ function buildSessions(movs: MovementInput[], crossRef: number | null): { sessio
     }
   }
   if (open != null) flags.push("missing_out");
-  return { sessions: mergeIntervals(sessions), flags };
+  return { sessions: mergeIntervals(sessions), flags, openIn: open };
 }
 
 export function computeDay(ctx: DayContext): DayResult {
@@ -155,13 +155,19 @@ export function computeDay(ctx: DayContext): DayResult {
   const schedEnd = sched ? toMin(sched.workEnd) + (crosses ? 1440 : 0) : null;
   const crossRef = crosses && schedStart != null ? schedStart : null;
 
-  const { sessions, flags } = buildSessions(ctx.movements, crossRef);
+  const { sessions, flags, openIn } = buildSessions(ctx.movements, crossRef);
   res.violations.push(...new Set(flags));
 
+  const fmt = (m: number) => `${String(Math.floor((m % 1440) / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   if (sessions.length) {
-    const fmt = (m: number) => `${String(Math.floor((m % 1440) / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
     res.firstIn = fmt(sessions[0][0]);
     res.lastOut = fmt(sessions[sessions.length - 1][1]);
+  } else if (openIn != null) {
+    // An unmatched "in" (no checkout yet — e.g. mid-workday, or forgot the out
+    // punch). The check-in itself is real and verified: record it and mark the
+    // day present/late instead of absent. Worked minutes stay 0 until an "out"
+    // arrives and the day is recalculated.
+    res.firstIn = fmt(openIn);
   }
   res.workedMinutes = total(sessions);
 
@@ -173,7 +179,7 @@ export function computeDay(ctx: DayContext): DayResult {
   if (!sched || schedStart == null || schedEnd == null) {
     // No schedule: presence-only
     res.netMinutes = res.workedMinutes;
-    res.status = sessions.length ? "present" : "absent";
+    res.status = sessions.length || openIn != null ? "present" : "absent";
     return res;
   }
 
@@ -201,6 +207,17 @@ export function computeDay(ctx: DayContext): DayResult {
   res.permissionUnpaidMinutes = absentDuringPerm(unpaidPermSet);
 
   if (!sessions.length) {
+    if (openIn != null) {
+      // Checked in, no checkout yet: day in progress. Report lateness against
+      // the schedule start, leave worked/missing to the recalc after checkout.
+      const lateRaw = openIn > schedStart
+        ? Math.max(0, Math.min(openIn, schedEnd) - schedStart - overlap([schedStart, Math.min(openIn, schedEnd)], allPermSet))
+        : 0;
+      res.lateMinutes = lateRaw > (sched.lateGraceMin || 0) ? lateRaw : 0;
+      if (res.lateMinutes > 0) res.violations.push("late");
+      res.status = res.lateMinutes > 0 ? "late" : "present";
+      return res;
+    }
     // Fully absent day (permission may still cover part of it).
     // Absent scheduled-work minutes = span − break allowance − permission.
     res.missingMinutes = Math.max(0, span - breakAllow - res.permissionPaidMinutes - res.permissionUnpaidMinutes);

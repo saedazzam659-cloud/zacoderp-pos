@@ -28,7 +28,14 @@ export default function Dashboard() {
       if (!navigator.geolocation) { reject(new Error("خدمة تحديد الموقع غير مدعومة في متصفحك.")); return; }
       navigator.geolocation.getCurrentPosition(
         (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
-        () => reject(new Error("يرجى السماح بصلاحيات الموقع لتتمكن من تسجيل البصمة.")),
+        (err) => {
+          if (err.code === err.PERMISSION_DENIED)
+            reject(new Error("متصفحك يمنع الوصول للموقع. افتح إعدادات الموقع في كروم (⋮ ← الإعدادات ← إعدادات المواقع ← الموقع الجغرافي) واسمح لـ zacoderp.com."));
+          else if (err.code === err.POSITION_UNAVAILABLE)
+            reject(new Error("تعذّر تحديد موقعك — تأكد من تشغيل خدمة الموقع (GPS) في الجوال ثم أعد المحاولة."));
+          else
+            reject(new Error("انتهت مهلة تحديد الموقع — تأكد أنك في مكان مكشوف أو فعّل «الدقة العالية» في إعدادات الموقع."));
+        },
         // Accept a fix from the last 20s — the mount-time warm-up below usually
         // makes the punch-time read instant instead of a cold GPS lock.
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 20000 },
