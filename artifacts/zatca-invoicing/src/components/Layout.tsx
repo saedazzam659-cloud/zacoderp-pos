@@ -36,6 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermission } from "@/hooks/usePermission";
 import { useIdleLogout } from "@/hooks/useIdleLogout";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -44,6 +45,12 @@ import {
 import { cn } from "@/lib/utils";
 import { companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
 import { LEGACY_DEFAULT_ON_MENU_KEYS } from "@/lib/menuItems";
+import {
+  companyAllowsPermissionGroup,
+  GROUP_COMPANY_MENU_KEYS,
+  GROUP_USER_PERMISSION_KEYS,
+  userAllowsPermissionGroup,
+} from "@/lib/permissionGroupPolicy";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import CheckInWidget from "@/components/CheckInWidget";
@@ -126,7 +133,7 @@ const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_ret
 const PURCHASING_REPORTS_PERMS  = ["suppliers","purchase_invoices","purchase_returns"];
 const CASH_GROUP_PERMS          = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
 const CASH_REPORTS_PERMS        = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
-const INVENTORY_GROUP_PERMS     = ["items","brands","warehouses","stock_transfers","stock_adjustments","stock_counts"];
+const INVENTORY_GROUP_PERMS     = ["items","brands","warehouses","stock_transfers","stock_adjustments","stock_counts","inventory_reports"];
 // Sister-companies module promoted to its own top-level sidebar group
 // ("معاملات الشركات الشقيقة"). Single permission key gates the whole
 // group (master, transfers, returns, settlements, statement report).
@@ -142,10 +149,7 @@ const DELIVERY_DOCS_GROUP_PERMS = ["delivery_receipt_docs"];
 // قاعة التدريب المباشر (LiveKit training hall) — single-screen top-level
 // entry gated by the `training_room` permission key.
 const TRAINING_ROOM_GROUP_PERMS = ["training_room"];
-// All inventory report routes are gated as module="items" in App.tsx, so the
-// group should mirror that exactly — a user with only `warehouses.view` has
-// nothing accessible inside this group.
-const INVENTORY_REPORTS_PERMS   = ["items"];
+const INVENTORY_REPORTS_PERMS   = ["inventory_reports"];
 // Includes "accounting_reports" so users who only have the reports
 // permission still see the (now-parent) Accounting menu, since the
 // accounting reports section is nested INSIDE this group.
@@ -640,17 +644,17 @@ const deliveryDocsSubNav: NavDef[] = [
   { nameKey: "nav.goodsDeliveries", href: "/goods-deliveries", icon: Truck,         permKey: "delivery_receipt_docs" },
 ];
 
-const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
+const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true, permKey: "inventory_reports" };
 const inventoryReportsSubNav: NavDef[] = [
-  { nameKey: "navExtra.stockBalance", href: "/inventory/reports/stock-balance", icon: BarChart2,         permKey: "items" },
-  { nameKey: "navExtra.stockLedger",  href: "/inventory/reports/stock-ledger",  icon: BookOpen,          permKey: "items" },
-  { nameKey: "navExtra.itemCard",     href: "/inventory/reports/item-card",     icon: ClipboardList,     permKey: "items" },
-  { nameKey: "navExtra.lowStock",     href: "/inventory/reports/low-stock",     icon: SlidersHorizontal, permKey: "items" },
-  { nameKey: "navExtra.valuation",    href: "/inventory/reports/valuation",     icon: Wallet,            permKey: "items" },
-  { nameKey: "navExtra.slowMoving",   href: "/inventory/reports/slow-moving",   icon: Layers,            permKey: "items" },
-  { nameKey: "navExtra.freeQuantities",     href: "/inventory/reports/free-quantities",      icon: Gift,        permKey: "items" },
-  { nameKey: "navExtra.itemSalesValuation", href: "/inventory/reports/item-sales-valuation", icon: ReceiptText, permKey: "items" },
-  { nameKey: "navExtra.stocktake",          href: "/inventory/reports/stocktake",            icon: ClipboardList, permKey: "items" },
+  { nameKey: "navExtra.stockBalance", href: "/inventory/reports/stock-balance", icon: BarChart2,         permKey: "inventory_reports" },
+  { nameKey: "navExtra.stockLedger",  href: "/inventory/reports/stock-ledger",  icon: BookOpen,          permKey: "inventory_reports" },
+  { nameKey: "navExtra.itemCard",     href: "/inventory/reports/item-card",     icon: ClipboardList,     permKey: "inventory_reports" },
+  { nameKey: "navExtra.lowStock",     href: "/inventory/reports/low-stock",     icon: SlidersHorizontal, permKey: "inventory_reports" },
+  { nameKey: "navExtra.valuation",    href: "/inventory/reports/valuation",     icon: Wallet,            permKey: "inventory_reports" },
+  { nameKey: "navExtra.slowMoving",   href: "/inventory/reports/slow-moving",   icon: Layers,            permKey: "inventory_reports" },
+  { nameKey: "navExtra.freeQuantities",     href: "/inventory/reports/free-quantities",      icon: Gift,        permKey: "inventory_reports" },
+  { nameKey: "navExtra.itemSalesValuation", href: "/inventory/reports/item-sales-valuation", icon: ReceiptText, permKey: "inventory_reports" },
+  { nameKey: "navExtra.stocktake",          href: "/inventory/reports/stocktake",            icon: ClipboardList, permKey: "inventory_reports" },
 ];
 
 // ─── HubGroupButton ───────────────────────────────────────────────────────────
@@ -905,45 +909,6 @@ function parseMenuPerms(raw: string | null | undefined): Record<string, boolean>
   });
 }
 
-// Each top-level sidebar group is allowed when ANY of these granular
-// permission keys is true. We accept BOTH the old high-level keys
-// (inventory/sales/purchasing/cash/accounting/hr/security) AND the new
-// granular keys so partially-migrated tenants stay functional. The
-// "new" groups (production, contracting, pos) only have a single key.
-const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
-  dashboard:   ["dashboard"],
-  zatca:       ["zatca"],
-  inventory:   ["inventory", "inventory_mobile", "inventory_reports"],
-  sister:      ["sister_companies"],
-  office:      ["office"],
-  deliveryDocs:["delivery_receipt_docs"],
-  trainingRoom:["training_room"],
-  sales:       ["sales", "sales_module", "sales_reports", "customers"],
-  purchasing:  ["purchasing", "purchases_module", "purchases_reports", "suppliers"],
-  cash:        ["cash", "cash_module", "cash_reports"],
-  accounting:  ["accounting", "accounts", "accounting_reports", "accounting_maintenance"],
-  hr:          ["hr", "hr_module", "hr_employees", "hr_attendance", "hr_face_attendance", "hr_loans", "hr_payroll", "hr_eos", "hr_calculators", "hr_settings"],
-  production:  ["production"],
-  safety:      ["safety", "safety_dashboard", "safety_risk", "safety_incidents"],
-  contracting: ["contracting"],
-  maintenance: ["maintenance"],
-  installments: ["installments"],
-  hotel:       ["hotel"],
-  hospital:    ["hospital"],
-  crm:         ["crm"],
-  fixedAssets: ["fixed_assets"],
-  pos:         ["pos"],
-  security:    ["security", "security_events"],
-  aiTools:     ["ai_tools"],
-  voiceAssistant: ["voice_assistant"],
-  sessions:    ["sessions"],
-  chat:        ["chat"],
-  companyMaintenance: ["company_maintenance"],
-  extensions:  ["extensions"],
-  multiLink:   ["multi_link"],
-  liveMonitoring: LIVE_MONITORING_GROUP_PERMS,
-};
-
 // Returns true when the user may see the given top-level sidebar group.
 //
 // Two independent permission layers must BOTH allow the group:
@@ -965,29 +930,14 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
 //     don't suddenly lose their entire sidebar.
 function isGroupAllowed(
   menuPerms: Record<string, boolean>,
-  group: keyof typeof GROUP_PERMISSION_KEYS,
+  group: keyof typeof GROUP_COMPANY_MENU_KEYS,
   isSuperAdmin: boolean,
   user?: { role?: string; permissions?: Record<string, any> } | null,
 ): boolean {
   if (isSuperAdmin) return true;
-  // Defensive: a group whose key is missing from GROUP_PERMISSION_KEYS must
-  // never crash the whole sidebar (a single `undefined.some()` here white-screens
-  // the entire authenticated app). Fall back to an empty key set → group hides.
-  const keys = GROUP_PERMISSION_KEYS[group] ?? [];
-  // Company-level gate (existing behavior).
-  if (!keys.some(k => menuPerms[k] === true)) return false;
-  // Admin bypasses per-user perm check (matches `usePermission` policy).
-  if (user?.role === "admin") return true;
-  const userPerms = (user?.permissions ?? {}) as Record<string, { view?: boolean } | undefined>;
-  // USER-level legacy fallback (not group-level): only when the user has NO
-  // per-user permissions configured AT ALL do we trust the company gate alone
-  // — this protects legacy tenants who never set up per-user RBAC. Once ANY
-  // permission is defined on the user, enforce a STRICT per-group check so a
-  // group the user wasn't granted can't leak in just because it has no key in
-  // their perm map (mirrors `groupVisible`: company-enabled AND view granted).
-  const hasAnyPerm = Object.keys(userPerms).length > 0;
-  if (!hasAnyPerm) return true;
-  return keys.some(k => menuPerms[k] === true && userPerms[k]?.view === true);
+  if (!companyAllowsPermissionGroup(menuPerms, group)) return false;
+  const userKeys = GROUP_USER_PERMISSION_KEYS[group] ?? [];
+  return userAllowsPermissionGroup(user, userKeys);
 }
 const PLAN_KEYS: Record<string, string> = {
   starter: "plans.starter", professional: "plans.professional", enterprise: "plans.enterprise",
@@ -1285,6 +1235,7 @@ function InventoryNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
+  const canViewInventoryMaster = usePermission("items", "view");
   if (!groupVisible(user, INVENTORY_GROUP_PERMS)) return null;
   // Treat /inventory/reports as part of the parent group so the parent stays
   // highlighted while the user is browsing inside its nested reports.
@@ -1293,7 +1244,7 @@ function InventoryNavGroup({
     <div>
       {/* Toggle button */}
       <HubGroupButton
-        hubHref="/inventory"
+        hubHref={canViewInventoryMaster ? "/inventory" : "/inventory/reports"}
         icon={Warehouse}
         label={t("navExtra.inventoryModule")}
         isOn={isOnInventory}
@@ -2622,7 +2573,12 @@ function TopNavBar(props: any) {
       data-testid="topnav-bar"
     >
       {groups
-        .filter(g => isGroupAllowed(menuPerms, g.key, isSuperAdmin, user))
+        .filter(g => isGroupAllowed(
+          menuPerms,
+          g.key as keyof typeof GROUP_COMPANY_MENU_KEYS,
+          isSuperAdmin,
+          user,
+        ))
         .map(g => (
           <TopNavDropdown key={g.key} label={g.label}>
             {close => <div className="space-y-0.5">{g.node(close)}</div>}

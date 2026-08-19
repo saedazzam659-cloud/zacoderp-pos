@@ -1017,16 +1017,16 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/ledger"  module="items" component={StockLedger} />}
             {!isSuperAdmin && <PermRoute path="/inventory/balance" module="items" component={StockBalance} />}
             {/* Inventory Reports */}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports"                  module="items" component={InventoryReportsHub} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-balance"    module="items" component={StockBalance} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-ledger"     module="items" component={StockLedger} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/item-card"        module="items" component={ItemCard} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/low-stock"        module="items" component={LowStockReport} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/valuation"        module="items" component={ValuationByWarehouse} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/slow-moving"      module="items" component={SlowMovingItems} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/free-quantities"      module="items" component={FreeQuantitiesReport} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/item-sales-valuation" module="items" component={ItemSalesValuationReport} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports/stocktake"            module="items" component={Stocktake} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports"                  module="inventory_reports" component={InventoryReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-balance"    module="inventory_reports" component={StockBalance} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-ledger"     module="inventory_reports" component={StockLedger} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/item-card"        module="inventory_reports" component={ItemCard} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/low-stock"        module="inventory_reports" component={LowStockReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/valuation"        module="inventory_reports" component={ValuationByWarehouse} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/slow-moving"      module="inventory_reports" component={SlowMovingItems} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/free-quantities"      module="inventory_reports" component={FreeQuantitiesReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/item-sales-valuation" module="inventory_reports" component={ItemSalesValuationReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/stocktake"            module="inventory_reports" component={Stocktake} />}
             {!isSuperAdmin && <PermRoute path="/inventory/alerts"                   module="items" component={SmartAlerts} />}
 
             {/* Accounting routes */}

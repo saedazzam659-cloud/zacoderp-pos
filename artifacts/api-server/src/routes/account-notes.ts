@@ -28,7 +28,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
-import { requireModulePermission } from "../middleware/permissions.js";
+import { canAccessModule, requireModulePermission } from "../middleware/permissions.js";
 import { nextSequenceNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -101,12 +101,29 @@ async function checkModule(req: any, res: any, partyType: "customer" | "supplier
 router.get("/", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const u = (req as any).authUser;
+  const allowedCustomer = canAccessModule(u, "customer_notes", "view");
+  const allowedSupplier = canAccessModule(u, "supplier_notes", "view");
+  const requestedPartyType = req.query.partyType;
+
+  if (
+    (requestedPartyType === "customer" && !allowedCustomer)
+    || (requestedPartyType === "supplier" && !allowedSupplier)
+    || (!allowedCustomer && !allowedSupplier)
+  ) {
+    res.status(403).json({ error: "لا تملك صلاحية الوصول لهذا القسم" });
+    return;
+  }
+
   const filters: any[] = [eq(accountNotesTable.companyId, cid)];
   // Branch scope (same semantics as JEs/sales): specific ?branchId → branch_id = X OR NULL;
   // restricted users auto-capped to assigned branches; admin w/o filter sees all.
   filters.push(...branchScopeSpread(req, accountNotesTable.branchId, req.query.branchId));
   if (req.query.partyType === "customer" || req.query.partyType === "supplier") {
     filters.push(eq(accountNotesTable.partyType, req.query.partyType as any));
+  } else if (!allowedCustomer) {
+    filters.push(eq(accountNotesTable.partyType, "supplier"));
+  } else if (!allowedSupplier) {
+    filters.push(eq(accountNotesTable.partyType, "customer"));
   }
   if (req.query.noteType === "credit" || req.query.noteType === "debit") {
     filters.push(eq(accountNotesTable.noteType, req.query.noteType as any));
@@ -115,16 +132,9 @@ router.get("/", async (req, res) => {
   if (req.query.status === "draft" || req.query.status === "posted" || req.query.status === "cancelled") {
     filters.push(eq(accountNotesTable.status, req.query.status as any));
   }
-  let rows = await db.select().from(accountNotesTable)
+  const rows = await db.select().from(accountNotesTable)
     .where(and(...filters))
     .orderBy(desc(accountNotesTable.id));
-  // Filter by module access if non-SA — drop rows from disallowed party type.
-  if (u?.role !== "superadmin") {
-    const mp = u?.menuPermissions ?? {};
-    const allowedCustomer = mp.customer_notes !== false;
-    const allowedSupplier = mp.supplier_notes !== false;
-    rows = rows.filter(r => (r.partyType === "customer" ? allowedCustomer : allowedSupplier));
-  }
   res.json(rows);
 });
 
@@ -152,6 +162,7 @@ router.get("/defaults", async (req, res) => {
   if (partyType !== "customer" && partyType !== "supplier") {
     res.status(400).json({ error: "نوع الطرف غير صالح" }); return;
   }
+  if (!(await checkModule(req, res, partyType))) return;
   const docType = partyType === "customer" ? "sales_invoice" : "purchase_invoice";
   const map = await loadMappings(cid, docType);
 

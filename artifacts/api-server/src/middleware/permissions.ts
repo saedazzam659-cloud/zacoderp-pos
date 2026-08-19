@@ -70,6 +70,8 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   stock_transfers: "inventory_reports",
   stock_adjustments: "inventory_reports",
   stock_counts: "inventory_reports",
+  inventory_reports: "inventory_reports",
+  item_usage_override: "inventory_reports",
   // HR
   hr_employees: "hr_module",
   hr_attendance: "hr_module",
@@ -117,6 +119,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   voiceAssistant: "voice_assistant",
   sessions: "sessions",
   chat: "chat",
+  ai_tools: "ai_tools",
   ai_reports: "ai_tools",
   // VAT / general invoices
   vat_declaration: "reports",
@@ -150,6 +153,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // قاعة التدريب المباشر (LiveKit training room) — standalone company toggle.
   // Mirror in frontend companyModuleGate.ts + Layout.tsx + MenuPermissions.tsx.
   training_room: "training_room",
+  multi_link: "multi_link",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be
@@ -175,6 +179,7 @@ const LEGACY_DEFAULT_ON_GATE_KEYS = new Set<string>([
   "pos", "production", "purchases_module", "reports", "safety",
   "sales_module", "sales_reports", "security_events", "seo_dashboard",
   "sessions", "training_room", "user_tracking", "voice_assistant", "zatca",
+  "multi_link",
 ]);
 
 // True when the company has NOT explicitly disabled the high-level module

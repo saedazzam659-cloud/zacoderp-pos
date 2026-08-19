@@ -21,6 +21,7 @@ const G = {
   sales:       "perms.groups.sales",
   purchasing:  "perms.groups.purchasing",
   inventory:   "perms.groups.inventory",
+  cash:        "perms.groups.cash",
   accounting:  "perms.groups.accounting",
   accountingMaintenance: "perms.groups.accountingMaintenance",
   tax:         "perms.groups.tax",
@@ -100,11 +101,11 @@ export const PERMISSION_MODULES: ModuleDef[] = [
 
   { key: "accounts",             label: "perms.modules.accounts",             group: G.accounting, actions: VC },
   { key: "journal_entries",      label: "perms.modules.journal_entries",      group: G.accounting, actions: ALL },
-  { key: "cash_boxes",           label: "perms.modules.cash_boxes",           group: G.accounting, actions: VC },
-  { key: "bank_accounts",        label: "perms.modules.bank_accounts",        group: G.accounting, actions: VC },
-  { key: "receipt_vouchers",     label: "perms.modules.receipt_vouchers",     group: G.accounting, actions: ALL },
-  { key: "payment_vouchers",     label: "perms.modules.payment_vouchers",     group: G.accounting, actions: ALL },
   { key: "accounting_reports",   label: "perms.modules.accounting_reports",   group: G.accounting, actions: ["view", "export"] },
+  { key: "cash_boxes",           label: "perms.modules.cash_boxes",           group: G.cash, actions: VC },
+  { key: "bank_accounts",        label: "perms.modules.bank_accounts",        group: G.cash, actions: VC },
+  { key: "receipt_vouchers",     label: "perms.modules.receipt_vouchers",     group: G.cash, actions: ALL },
+  { key: "payment_vouchers",     label: "perms.modules.payment_vouchers",     group: G.cash, actions: ALL },
   { key: "accounting_maintenance", label: "perms.modules.accounting_maintenance", group: G.accountingMaintenance, actions: ALL },
 
   { key: "vat_declaration",      label: "perms.modules.vat_declaration",      group: G.tax,        actions: ["view", "export"] },

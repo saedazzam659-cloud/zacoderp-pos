@@ -4,6 +4,7 @@ import {
   BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell,
   Gift, ReceiptText, ClipboardCheck,
 } from "lucide-react";
+import { usePermission } from "@/hooks/usePermission";
 
 const REPORTS = [
   {
@@ -70,7 +71,11 @@ const REPORTS = [
 
 export default function InventoryReportsHub() {
   const { t, i18n } = useTranslation();
+  const canViewSmartAlerts = usePermission("items", "view");
   const isRtl = i18n.language === "ar";
+  const visibleReports = REPORTS.filter(
+    report => report.href !== "/inventory/alerts" || canViewSmartAlerts,
+  );
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div>
@@ -83,7 +88,7 @@ export default function InventoryReportsHub() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {REPORTS.map(r => (
+        {visibleReports.map(r => (
           <Link key={r.href} href={r.href}>
             <a className={`group rounded-xl border bg-gradient-to-br ${r.color} p-5 transition-all hover:shadow-md hover:-translate-y-0.5 cursor-pointer block`}>
               <div className="flex items-start justify-between mb-3">

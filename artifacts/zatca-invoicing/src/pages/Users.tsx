@@ -25,61 +25,10 @@ import {
 } from "lucide-react";
 import {
   PERMISSION_MODULES, PERMISSION_GROUPS, ACTION_LABELS,
-  emptyPermissions, fullPermissions, viewOnlyPermissions,
+  emptyPermissions,
   type PermissionMap, type Action,
 } from "@/lib/permissions";
-
-// Mapping permission-group key (i18n) → company menuPermissions JSON keys.
-// A group is shown only if AT LEAST ONE of its mapped menu keys is enabled
-// for the active company (matches the SuperAdmin → MenuPermissions screen).
-// Groups not listed here (currently only "dashboard") are always visible
-// because they cover core settings every user needs (regions, branches,
-// users, currencies, sequences, ZATCA setup, general settings).
-// Missing key in the JSON = enabled (legacy-friendly), only explicit
-// `false` hides the group — same semantics used by Layout.tsx sidebar.
-const GROUP_TO_MENU_KEYS: Record<string, string[]> = {
-  "perms.groups.sales":                 ["sales_module", "sales_reports"],
-  "perms.groups.purchasing":            ["purchases_module", "purchases_reports"],
-  "perms.groups.inventory":             ["inventory_mobile", "inventory_reports"],
-  "perms.groups.accounting":            ["accounts", "accounting_reports", "cash_module", "cash_reports"],
-  "perms.groups.accountingMaintenance": ["accounting_maintenance"],
-  "perms.groups.tax":                   ["reports"],
-  "perms.groups.pos":                   ["pos"],
-  "perms.groups.hr":                    ["hr_module"],
-  "perms.groups.production":            ["production"],
-  "perms.groups.contracting":           ["contracting"],
-  "perms.groups.maintenance":           ["maintenance"],
-  "perms.groups.hotel":                 ["hotel"],
-  "perms.groups.hospital":              ["hospital"],
-  "perms.groups.crm":                   ["crm"],
-  "perms.groups.fixedAssets":           ["fixed_assets"],
-  "perms.groups.security":              ["security_events"],
-  "perms.groups.aiTools":               ["ai_tools"],
-  "perms.groups.multiLink":             ["multi_link"],
-  "perms.groups.office":                ["office"],
-  "perms.groups.deliveryDocs":          ["delivery_receipt_docs"],
-  "perms.groups.trainingRoom":          ["training_room"],
-  "perms.groups.safety":                ["safety"],
-  "perms.groups.voiceAssistant":        ["voice_assistant"],
-  "perms.groups.sessions":              ["sessions"],
-  "perms.groups.chat":                  ["chat"],
-  "perms.groups.companyMaintenance":    ["company_maintenance"],
-  "perms.groups.fieldService":          ["field_service"],
-};
-
-function parseCompanyMenuPerms(raw: string | null | undefined): Record<string, boolean> {
-  let parsed: Record<string, boolean> = {};
-  try { parsed = JSON.parse(raw ?? "{}") || {}; } catch { parsed = {}; }
-  if (!parsed || typeof parsed !== "object") parsed = {};
-  return parsed;
-}
-
-function isGroupEnabled(group: string, menuPerms: Record<string, boolean>): boolean {
-  const keys = GROUP_TO_MENU_KEYS[group];
-  if (!keys || keys.length === 0) return true; // core/dashboard group — always shown
-  // Missing key = enabled (legacy-friendly); only explicit `false` hides it.
-  return keys.some(k => menuPerms[k] !== false);
-}
+import { companyAllowsPermissionModule } from "@/lib/companyModuleGate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -296,13 +245,18 @@ export default function Users() {
     user?.role === "superadmin"
       ? targetCompany?.menuPermissions ?? null
       : user?.company?.menuPermissions ?? null;
-  const companyMenuPerms = useMemo(
-    () => parseCompanyMenuPerms(companyMenuPermsRaw),
+  // Filter at the permission-row level, not only at the group level. This
+  // prevents a partially enabled product group from leaking disabled rows
+  // into the user editor (for example cash rows inside general accounting).
+  const visiblePermissionModules = useMemo(
+    () => PERMISSION_MODULES.filter(m =>
+      companyAllowsPermissionModule(companyMenuPermsRaw, m.key)),
     [companyMenuPermsRaw],
   );
   const visibleGroups = useMemo(
-    () => PERMISSION_GROUPS.filter(g => isGroupEnabled(g, companyMenuPerms)),
-    [companyMenuPerms],
+    () => PERMISSION_GROUPS.filter(g =>
+      visiblePermissionModules.some(m => m.group === g)),
+    [visiblePermissionModules],
   );
   const hiddenGroupsCount = PERMISSION_GROUPS.length - visibleGroups.length;
 
@@ -583,7 +537,7 @@ export default function Users() {
   const setGroupAll = (group: string, val: boolean) => {
     setForm(f => {
       const next = { ...f.permissions };
-      PERMISSION_MODULES.filter(m => m.group === group).forEach(m => {
+      visiblePermissionModules.filter(m => m.group === group).forEach(m => {
         next[m.key] = {};
         m.actions.forEach(a => { next[m.key][a] = val; });
       });
@@ -592,7 +546,14 @@ export default function Users() {
   };
 
   const applyPreset = (preset: "full" | "view" | "none") => {
-    const p = preset === "full" ? fullPermissions() : preset === "view" ? viewOnlyPermissions() : emptyPermissions();
+    const p = emptyPermissions();
+    if (preset !== "none") {
+      visiblePermissionModules.forEach(m => {
+        m.actions.forEach(a => {
+          p[m.key][a] = preset === "full" || a === "view";
+        });
+      });
+    }
     setForm(f => ({ ...f, permissions: p }));
   };
 
@@ -1201,7 +1162,7 @@ export default function Users() {
                     </div>
                   ) : null}
                   {visibleGroups.map(group => {
-                    const mods = PERMISSION_MODULES.filter(m => m.group === group);
+                    const mods = visiblePermissionModules.filter(m => m.group === group);
                     return (
                       <div key={group} className="border rounded-lg overflow-hidden">
                         <div className="bg-muted/50 px-4 py-2 flex items-center justify-between">

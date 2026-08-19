@@ -26,11 +26,13 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   sales_returns: "sales_module",
   sales_settlements: "sales_module",
   sales_reports: "sales_reports",
+  customer_notes: "sales_module",
   // Purchasing / Suppliers
   suppliers: "purchases_module",
   purchase_invoices: "purchases_module",
   purchase_returns: "purchases_module",
   supplier_settlements: "purchases_module",
+  supplier_notes: "purchases_module",
   // Cash & Banks
   cash_boxes: "cash_module",
   bank_accounts: "cash_module",
@@ -52,6 +54,8 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   stock_transfers: "inventory_reports",
   stock_adjustments: "inventory_reports",
   stock_counts: "inventory_reports",
+  inventory_reports: "inventory_reports",
+  item_usage_override: "inventory_reports",
   // HR
   hr_employees: "hr_module",
   hr_attendance: "hr_module",
@@ -79,6 +83,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   maintenance: "maintenance",
   hotel: "hotel",
   hospital: "hospital",
+  crm: "crm",
   fixed_assets: "fixed_assets",
   security_events: "security_events",
   // SEO Manager — site analytics dashboard granted per company.
@@ -93,6 +98,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   voiceAssistant: "voice_assistant",
   sessions: "sessions",
   chat: "chat",
+  ai_tools: "ai_tools",
   ai_reports: "ai_tools",
   // Tax / general invoices
   vat_declaration: "reports",
@@ -122,6 +128,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   // قاعة التدريب المباشر (LiveKit) — standalone company toggle. Mirror of the
   // backend COMPANY_MODULE_GATE in permissions.ts.
   training_room: "training_room",
+  multi_link: "multi_link",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse
@@ -143,6 +150,7 @@ const LEGACY_DEFAULT_ON_GATE_KEYS = new Set<string>([
   "pos", "production", "purchases_module", "reports", "safety",
   "sales_module", "sales_reports", "security_events", "seo_dashboard",
   "sessions", "training_room", "user_tracking", "voice_assistant", "zatca",
+  "multi_link",
 ]);
 
 // True when the company has NOT explicitly disabled the high-level module
@@ -154,12 +162,24 @@ const LEGACY_DEFAULT_ON_GATE_KEYS = new Set<string>([
 // Pass the auth user object (must have .company.menuPermissions populated by
 // /api/auth/me).
 export function companyAllowsModule(user: any, permKey?: string): boolean {
+  return companyAllowsPermissionModule(user?.company?.menuPermissions, permKey);
+}
+
+/**
+ * Pure company-level gate used by permission editors that already have the
+ * target company's menuPermissions value but do not have an auth-user object.
+ * Keeping it here makes the editor, sidebar and route guards interpret missing
+ * legacy keys and default-off modules identically.
+ */
+export function companyAllowsPermissionModule(
+  raw: string | Record<string, boolean> | null | undefined,
+  permKey?: string,
+): boolean {
   if (!permKey) return true;
   const gateKey = COMPANY_MODULE_GATE[permKey];
   if (!gateKey) return true;
   const defaultOff = MODULE_GATE_DEFAULT_OFF.has(gateKey)
     || !LEGACY_DEFAULT_ON_GATE_KEYS.has(gateKey);
-  const raw = user?.company?.menuPermissions;
   if (raw == null) return !defaultOff;
   let parsed: Record<string, boolean>;
   try {
