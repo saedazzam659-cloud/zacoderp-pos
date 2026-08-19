@@ -278,8 +278,12 @@ function totalRowsHtml(
   rowClass = "totals-row",
   grandClass = "grand",
   currencyNameAtLabel = false,
+  currencyNameOverride?: string,
 ): string {
-  const currencyName = t.currencyName ? ` <span class="currency-name">(${escapePrintHtml(t.currencyName)})</span>` : "";
+  const resolvedCurrencyName = currencyNameOverride ?? t.currencyName;
+  const currencyName = resolvedCurrencyName
+    ? ` <span class="currency-name">${escapePrintHtml(resolvedCurrencyName)}</span>`
+    : "";
   const grandLabel = `الصافي شامل الضريبة — Total${currencyNameAtLabel ? currencyName : ""}`;
   const grandValueSuffix = currencyNameAtLabel ? "" : currencyName;
   return `
@@ -1220,6 +1224,13 @@ function template8(d: PrintData): string {
   const safeLogo = safeLogoSrc(company?.logo);
   const safeBrandLogo = safeLogoSrc(company?.brandLogo);
   const hasLogoPair = !!(safeLogo && safeBrandLogo);
+  const printLanguage: PrintLang = (d as any)._lang === "en" ? "en" : "ar";
+  // Resolve this directly from the quotation payload. The generic totals
+  // calculator can be used without its print context in a few preview paths,
+  // which used to leave this small label empty even though the amount rendered.
+  const quotationCurrencyName = d.type === "quotation"
+    ? resolveQuotationCurrencyName(company, d.currency ?? (doc as any)?.currency, printLanguage)
+    : "";
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
   ${baseStyles("#0f172a")}
   <style>
@@ -1287,7 +1298,13 @@ function template8(d: PrintData): string {
       <div style="font-size:9px;color:#0f172a;margin-top:4px;letter-spacing:2px;text-transform:uppercase;">QR — ZATCA</div>
     </div>` : ""}
     <div class="totals-card" style="flex:1;max-width:360px;">
-      ${totalRowsHtml(computeFullTotals(doc, lines), "totals-row", "grand", d.type === "quotation")}
+       ${totalRowsHtml(
+         computeFullTotals(doc, lines),
+         "totals-row",
+         "grand",
+         d.type === "quotation",
+         quotationCurrencyName,
+       )}
       ${summaryFooterHtml(computeFullTotals(doc, lines))}
     </div>
   </div>
@@ -2025,7 +2042,7 @@ function template14(d: PrintData): string {
     ? resolveQuotationCurrencyName(company, d.currency ?? (doc as any)?.currency, lang)
     : "";
   const quotationCurrencyHtml = quotationCurrencyName
-    ? ` <span class="currency-name">(${escapePrintHtml(quotationCurrencyName)})</span>`
+    ? ` <span class="currency-name">${escapePrintHtml(quotationCurrencyName)}</span>`
     : "";
   const showQrInDocument = !isQuot || quotationOptions.showQr;
   const bankText = (company?.bankAccountText ?? "").toString().trim();
