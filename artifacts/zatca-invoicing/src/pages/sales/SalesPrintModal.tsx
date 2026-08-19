@@ -273,15 +273,22 @@ function sarEqRowsHtml(
 // Standardised 5‑row totals body matching the screenshot reference. Caller
 // provides the CSS row class (so each template keeps its native styling)
 // plus an optional grand‑row class for the final highlighted line.
-function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "grand"): string {
+function totalRowsHtml(
+  t: FullTotals,
+  rowClass = "totals-row",
+  grandClass = "grand",
+  currencyNameAtLabel = false,
+): string {
   const currencyName = t.currencyName ? ` <span class="currency-name">(${escapePrintHtml(t.currencyName)})</span>` : "";
+  const grandLabel = `الصافي شامل الضريبة — Total${currencyNameAtLabel ? currencyName : ""}`;
+  const grandValueSuffix = currencyNameAtLabel ? "" : currencyName;
   return `
     <div class="${rowClass}" style="font-size:9px;opacity:.7;"><span>نوع التسعير</span><span>${vatModeLabel(t.priceIncludesVat)}</span></div>
     <div class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
-    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}${currencyName}</span></div>`;
+    <div class="${rowClass} ${grandClass}"><span>${grandLabel}</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}${grandValueSuffix}</span></div>`;
 }
 
 // Universal summary footer (tafqeet + total items + total qty inc. free) shown
@@ -1211,12 +1218,16 @@ function template7(d: PrintData): string {
 function template8(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const safeLogo = safeLogoSrc(company?.logo);
+  const safeBrandLogo = safeLogoSrc(company?.brandLogo);
+  const hasLogoPair = !!(safeLogo && safeBrandLogo);
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
   ${baseStyles("#0f172a")}
   <style>
     body { font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif; }
     .top { border-bottom: 1px solid #0f172a; padding-bottom: 14px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
     .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-logos { display:flex; direction:ltr; align-items:center; gap:10px; }
+    .brand-logos.pair img { width:90px; height:50px; object-fit:contain; display:block; }
     .brand-name { font-size: 22px; font-weight: 300; letter-spacing: 4px; color: #0f172a; text-transform: uppercase; }
     .brand-name b { font-weight: 700; }
     .doc-title { text-align: left; }
@@ -1237,13 +1248,18 @@ function template8(d: PrintData): string {
     .totals { margin-top: 18px; display: flex; justify-content: flex-start; }
     .totals-card { min-width: 260px; border-top: 2px solid #d4af37; padding: 12px 0; }
     .totals-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; color: #475569; }
+    .totals-row > .mono { flex:0 0 auto; margin-inline-start:12px; }
+    .totals-row .currency-name { display:inline-block; white-space:nowrap; font-size:.78em; }
     .totals-row.grand { font-size: 16px; font-weight: 700; color: #0f172a; border-top: 1px solid #e2e8f0; margin-top: 6px; padding-top: 8px; }
     .footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 9px; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; }
   </style>
   </head><body>
   <div class="top">
     <div class="brand">
-      ${safeLogo ? `<img src="${safeLogo}" alt="" style="max-height:50px;max-width:120px;object-fit:contain;display:block;"/>` : ""}
+       ${(safeLogo || safeBrandLogo) ? `<div class="brand-logos${hasLogoPair ? " pair" : ""}">
+         ${safeBrandLogo ? `<img src="${safeBrandLogo}" alt="علامة تجارية" ${hasLogoPair ? "" : 'style="max-height:50px;max-width:120px;object-fit:contain;display:block;"'}/>` : ""}
+         ${safeLogo ? `<img src="${safeLogo}" alt="شعار الشركة" ${hasLogoPair ? "" : 'style="max-height:50px;max-width:120px;object-fit:contain;display:block;"'}/>` : ""}
+       </div>` : ""}
       <div>
         <div class="brand-name">${company?.nameAr ?? "اسم الشركة"}</div>
         ${company?.nameEn ? `<div style="font-size:10px;color:#94a3b8;letter-spacing:3px;">${company.nameEn}</div>` : ""}
@@ -1271,7 +1287,7 @@ function template8(d: PrintData): string {
       <div style="font-size:9px;color:#0f172a;margin-top:4px;letter-spacing:2px;text-transform:uppercase;">QR — ZATCA</div>
     </div>` : ""}
     <div class="totals-card" style="flex:1;max-width:360px;">
-      ${totalRowsHtml(computeFullTotals(doc, lines), "totals-row", "grand")}
+      ${totalRowsHtml(computeFullTotals(doc, lines), "totals-row", "grand", d.type === "quotation")}
       ${summaryFooterHtml(computeFullTotals(doc, lines))}
     </div>
   </div>
@@ -1957,6 +1973,7 @@ function template14(d: PrintData): string {
   };
   const totals = computeFullTotals(doc, lines);
   const safeLogo = safeLogoSrc(company?.logo);
+  const safeBrandLogo = safeLogoSrc(company?.brandLogo);
   const isReturn = d.type === "return";
   const isQuot   = d.type === "quotation";
   const isOrder  = d.type === "order";
@@ -2132,10 +2149,12 @@ function template14(d: PrintData): string {
     .col-mid::after  { bottom:0; }
     .logo-wrap {
       background:#fff; border:1px solid var(--line); border-radius:14px;
-      padding:8px 14px; display:inline-flex; align-items:center; justify-content:center;
+      padding:8px 14px; display:inline-flex; direction:ltr; align-items:center; justify-content:center;
       box-shadow: 0 2px 8px rgba(184,138,42,.10);
     }
     .logo-wrap img { max-height:62px; max-width:170px; object-fit:contain; display:block; }
+    .logo-wrap.logo-pair { gap:10px; }
+    .logo-wrap.logo-pair img { width:90px; height:62px; max-width:none; max-height:none; }
     /* Classic, borderless title — no dark pill, no surrounding frame.
        Two thin gold accent lines above/below give it an elegant feel
        without the heavy "badge" look. */
@@ -2208,6 +2227,8 @@ function template14(d: PrintData): string {
     .qr-card .lbl { font-size:9px; color:#64748b; margin-top:4px; letter-spacing:.08em; }
     .totals-card { border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fff; }
     .__totalsRow { display:flex; justify-content:space-between; font-size:11.5px; color:#334155; margin-bottom:5px; }
+    .__totalsRow > .mono { flex:0 0 auto; margin-inline-start:12px; }
+    .__totalsRow .currency-name { display:inline-block; white-space:nowrap; font-size:.78em; }
     .__totalsRow.grand {
       border-top:1.5px solid var(--ink); margin-top:6px; padding-top:7px;
       font-size:13.5px; font-weight:800; color:var(--ink);
@@ -2268,7 +2289,7 @@ function template14(d: PrintData): string {
 
       <!-- LOGO + TITLE + META (center) -->
       <div class="col-mid">
-        ${safeLogo ? `<div class="logo-wrap"><img src="${safeLogo}" alt="logo" /></div>` : ""}
+        ${(safeLogo || safeBrandLogo) ? `<div class="logo-wrap${safeLogo && safeBrandLogo ? " logo-pair" : ""}">${safeBrandLogo ? `<img src="${safeBrandLogo}" alt="علامة تجارية" />` : ""}${safeLogo ? `<img src="${safeLogo}" alt="شعار الشركة" />` : ""}</div>` : ""}
         <div class="doc-title-pill">
           ${titleMain}
           ${(!isEn && t14ShowEnSub) ? `<span class="en">${titleSub}</span>` : ""}
@@ -2421,7 +2442,7 @@ function template14(d: PrintData): string {
               <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)}</span></div>
               <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)}</span></div>
               <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono" style="color:#b45309;">${nf(totals.vatAmount)}</span></div>
-              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}</span><span class="mono">${nf(totals.grandTotal)}${quotationCurrencyHtml}</span></div>
+              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}${quotationCurrencyHtml}</span><span class="mono">${nf(totals.grandTotal)}</span></div>
               ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
               ${(company?.printShowItemsSummary !== false) ? (isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)) : ""}
             </div>
