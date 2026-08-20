@@ -19,7 +19,7 @@ import { DateField } from "@/components/ui/date-field";
 import {
   Server, Plus, Pencil, Trash2, Database, KeyRound, ShieldAlert, Globe,
   Plug, Loader2, CheckCircle2, XCircle, Ban, Play, Copy, Palette, RefreshCw,
-  HeartPulse, AlertTriangle, UploadCloud, FileDown, Mail, Check,
+  HeartPulse, AlertTriangle, UploadCloud, FileDown, Mail, Check, LockKeyhole,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -60,6 +60,7 @@ type Agent = {
   id: number; name: string; contactPhone: string | null; contactEmail: string | null;
   domain: string; extraDomains: string[] | null;
   status: "active" | "suspended"; mode: "frontend_only" | "full_shell" | "full";
+  packageSource: "central" | "external";
   installationId: string; licenseKey: string | null; licenseExpiresAt: string | null;
   maxCompanies: number | null;
   dbUrlSet: boolean; dbStatus: string; dbLastCheckAt: string | null; dbLastError: string | null;
@@ -68,8 +69,23 @@ type Agent = {
   lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
   deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
   saUsername: string | null; saEmail: string | null; saPasswordSet: boolean;
+  externalPackage: PackageStatus;
   notes: string | null; createdAt: string;
 };
+
+type PackageKind = "backend" | "frontend" | "db";
+type PackageInfo = {
+  filename: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string;
+  version: string | null;
+  format: "tgz" | "pg_custom" | "sql" | "sql_gzip";
+  encrypted: true;
+  verified: true;
+  origin: "generated" | "uploaded";
+};
+type PackageStatus = Record<PackageKind, PackageInfo | null>;
 
 type SecEvent = {
   id: number; agentId: number | null; agentName: string | null; eventType: string;
@@ -100,7 +116,7 @@ type DomainCheckResp = {
 
 const emptyForm = {
   id: 0, name: "", contactPhone: "", contactEmail: "", domain: "", extraDomainsText: "",
-  mode: "frontend_only", maxCompanies: "", licenseExpiresAt: "",
+  mode: "frontend_only", packageSource: "central", maxCompanies: "", licenseExpiresAt: "",
   dbUrl: "", sshHost: "", sshPort: "22", sshUser: "", sshSecret: "",
   brandName: "", brandLogoUrl: "", brandColor: "", notes: "",
   saUsername: "", saEmail: "", saPassword: "",
@@ -137,6 +153,8 @@ export default function AgentServers() {
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
+  const [formPackageFiles, setFormPackageFiles] = useState<Record<PackageKind, File | null>>({ backend: null, frontend: null, db: null });
+  const [formPackageProgress, setFormPackageProgress] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // "<action>-<id>"
   const [logView, setLogView] = useState<{ title: string; text: string } | null>(null);
   const [showLogoDialog, setShowLogoDialog] = useState(false);
@@ -148,6 +166,7 @@ export default function AgentServers() {
   // فحص الحظر — هل سيرفر الوكيل حاظر عنوان المنصة (fail2ban)؟
   const [banCheck, setBanCheck] = useState<{ agent: Agent; loading: boolean; data?: any } | null>(null);
   const isEdit = form.id > 0;
+  const editingAgent = (listQ.data ?? []).find(x => x.id === form.id) ?? null;
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
 
   const invalidate = () => {
@@ -157,11 +176,14 @@ export default function AgentServers() {
 
   const saveMut = useMutation({
     mutationFn: async () => {
+      const wasEdit = form.id > 0;
+      const wantsExternal = form.mode === "full" && form.packageSource === "external";
       const payload: any = {
         name: form.name, domain: form.domain,
         contactPhone: form.contactPhone || null, contactEmail: form.contactEmail || null,
         extraDomains: form.extraDomainsText.split(/[\n,،]+/).map(s => s.trim()).filter(Boolean),
         mode: form.mode,
+        packageSource: wantsExternal && editingAgent?.packageSource === "external" ? "external" : "central",
         maxCompanies: form.maxCompanies ? Number(form.maxCompanies) : null,
         licenseExpiresAt: form.licenseExpiresAt || null,
         brandName: form.brandName || null, brandColor: form.brandColor || null,
@@ -184,13 +206,78 @@ export default function AgentServers() {
       // Secrets: send ONLY when a new value was typed (never echo back).
       if (form.dbUrl.trim()) payload.dbUrl = form.dbUrl.trim();
       if (form.sshSecret.trim()) payload.sshSecret = form.sshSecret.trim();
-      const r = await fetch(`${API}/api/admin/agent-instances${isEdit ? `/${form.id}` : ""}`, {
-        method: isEdit ? "PUT" : "POST", headers, body: JSON.stringify(payload),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "فشل الحفظ");
-      return r.json();
+      let createdId: number | null = null;
+      const rollbackKinds: PackageKind[] = [];
+      try {
+        // When creating an external edition, first create its identity as a
+        // normal full agent. This gives the encrypted package an installation-
+        // specific key; packageSource is flipped only after all three verify.
+        const r = await fetch(`${API}/api/admin/agent-instances${wasEdit ? `/${form.id}` : ""}`, {
+          method: wasEdit ? "PUT" : "POST", headers, body: JSON.stringify(payload),
+        });
+        const initial = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(initial.error ?? "فشل الحفظ");
+        const agentId = Number(initial.id ?? form.id);
+        if (!wasEdit) createdId = agentId;
+        if (!wantsExternal) return initial;
+
+        const allKinds: PackageKind[] = ["backend", "frontend", "db"];
+        const selected = allKinds.filter(kind => !!formPackageFiles[kind]);
+        const missingAfterSelection = allKinds.filter(kind =>
+          !formPackageFiles[kind] && !editingAgent?.externalPackage?.[kind],
+        );
+        if (selected.length > 0) {
+          if (missingAfterSelection.length > 0) {
+            throw new Error(`أكمل ملفات النسخة الخارجية: ${missingAfterSelection.map(packageLabel).join("، ")}`);
+          }
+          for (const kind of selected) {
+            setFormPackageProgress(`رفع ${packageLabel(kind)}`);
+            await uploadPackageOrThrow(agentId, kind, formPackageFiles[kind]!);
+            if (!editingAgent?.externalPackage?.[kind]) rollbackKinds.push(kind);
+          }
+        } else {
+          const existingReady = (["backend", "frontend", "db"] as PackageKind[])
+            .every(kind => !!editingAgent?.externalPackage?.[kind]);
+          if (existingReady) {
+            // Existing verified package can be adopted without rebuilding.
+          } else {
+          setFormPackageProgress("تجهيز الحزمة المشفّرة من قاعدة بيانات الوكيل");
+          const prep = await fetch(`${API}/api/admin/agent-instances/${agentId}/external-package/prepare`, { method: "POST", headers });
+          const prepJson = await prep.json().catch(() => ({}));
+          if (!prep.ok) throw new Error(prepJson.error ?? "فشل تجهيز الحزمة الخارجية");
+          }
+        }
+
+        setFormPackageProgress("اعتماد النسخة الخارجية");
+        const finalize = await fetch(`${API}/api/admin/agent-instances/${agentId}`, {
+          method: "PUT", headers, body: JSON.stringify({ packageSource: "external", mode: "full" }),
+        });
+        const finalJson = await finalize.json().catch(() => ({}));
+        if (!finalize.ok) throw new Error(finalJson.error ?? "فشل اعتماد النسخة الخارجية");
+        return finalJson;
+      } catch (error) {
+        // A failed multi-step create must not leave a half-created agent.
+        if (createdId) {
+          await fetch(`${API}/api/admin/agent-instances/${createdId}`, { method: "DELETE", headers }).catch(() => {});
+        } else if (editingAgent?.packageSource !== "external") {
+          await Promise.all(rollbackKinds.map(kind =>
+            fetch(`${API}/api/admin/agent-instances/${form.id}/custom-package/${kind}`, {
+              method: "DELETE",
+              headers,
+            }).catch(() => null),
+          ));
+        }
+        throw error;
+      } finally {
+        setFormPackageProgress(null);
+      }
     },
-    onSuccess: () => { invalidate(); setShowForm(false); toast({ title: "تم الحفظ" }); },
+    onSuccess: () => {
+      invalidate();
+      setFormPackageFiles({ backend: null, frontend: null, db: null });
+      setShowForm(false);
+      toast({ title: "تم الحفظ", description: form.packageSource === "external" ? "النسخة الخارجية مكتملة ومشفّرة وجاهزة للتسطيب" : undefined });
+    },
     onError: (e: any) => toast({ title: "فشل الحفظ", description: String(e.message ?? e), variant: "destructive" }),
   });
 
@@ -305,8 +392,12 @@ export default function AgentServers() {
   // نافذة اختيار طريقة التسطيب: كامل / بدون قاعدة بيانات / برفع ملفات (+ تشفير)
   const [installDlg, setInstallDlg] = useState<{ agentId: number; variant: "full" | "no_db" | "upload"; encrypt: boolean } | null>(null);
   const installAgent = (listQ.data ?? []).find(x => x.id === installDlg?.agentId) ?? null;
-  const [pkgStatus, setPkgStatus] = useState<Record<string, { filename: string; sizeBytes: number; uploadedAt: string } | null> | null>(null);
+  const [pkgStatus, setPkgStatus] = useState<PackageStatus | null>(null);
   const [pkgBusy, setPkgBusy] = useState<string | null>(null);
+
+  function packageLabel(kind: PackageKind): string {
+    return kind === "backend" ? "Backend" : kind === "frontend" ? "Frontend" : "قاعدة البيانات";
+  }
 
   async function refreshPkgStatus(agentId: number) {
     try {
@@ -318,16 +409,38 @@ export default function AgentServers() {
     if (installDlg?.variant === "upload") void refreshPkgStatus(installDlg.agentId);
   }, [installDlg?.agentId, installDlg?.variant]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function uploadPkg(agentId: number, kind: "backend" | "frontend" | "db", f: File) {
+  async function uploadPackageOrThrow(agentId: number, kind: PackageKind, f: File): Promise<PackageInfo> {
+    if (f.size <= 0 || f.size > 800 * 1024 * 1024) throw new Error("حجم الملف يجب أن يكون بين 1 بايت و800MB");
+    const init = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}/upload-url`, {
+      method: "POST", headers, body: JSON.stringify({ filename: f.name, sizeBytes: f.size }),
+    });
+    const target = await init.json().catch(() => ({}));
+    if (!init.ok) throw new Error(target.error ?? "تعذّر بدء الرفع المباشر");
+    const put = await fetch(target.uploadURL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: f,
+    });
+    if (!put.ok) throw new Error(`فشل الرفع المباشر إلى التخزين (${put.status})`);
+    const complete = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}/complete`, {
+      method: "POST", headers, body: JSON.stringify({
+        objectPath: target.objectPath,
+        filename: f.name,
+        sizeBytes: f.size,
+      }),
+    });
+    const verified = await complete.json().catch(() => ({}));
+    if (!complete.ok) throw new Error(verified.error ?? "فشل التحقق من الملف أو تشفير الحزمة");
+    return verified as PackageInfo;
+  }
+
+  async function uploadPkg(agentId: number, kind: PackageKind, f: File) {
     setPkgBusy(kind);
     try {
-      const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}?filename=${encodeURIComponent(f.name)}`, {
-        method: "PUT", headers: { ...headers, "Content-Type": "application/octet-stream" }, body: f,
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error ?? "فشل الرفع");
-      toast({ title: "تم رفع الملف", description: f.name });
+      const verified = await uploadPackageOrThrow(agentId, kind, f);
+      toast({ title: "تم الرفع المباشر والتشفير والتحقق", description: `${f.name} · ${String(verified.sha256 ?? "").slice(0, 12)}…` });
       await refreshPkgStatus(agentId);
+      invalidate();
     } catch (e: any) {
       toast({ title: "فشل رفع الملف", description: String(e.message ?? e), variant: "destructive" });
     } finally { setPkgBusy(null); }
@@ -335,8 +448,44 @@ export default function AgentServers() {
   async function deletePkg(agentId: number, kind: "backend" | "frontend" | "db") {
     setPkgBusy(kind);
     try {
-      await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}`, { method: "DELETE", headers });
+      const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}`, { method: "DELETE", headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل الحذف");
       await refreshPkgStatus(agentId);
+      invalidate();
+    } catch (e: any) {
+      toast({ title: "فشل حذف الحزمة", description: String(e.message ?? e), variant: "destructive" });
+    } finally { setPkgBusy(null); }
+  }
+
+  async function prepareExternalPackage(a: Agent) {
+    setPkgBusy("prepare");
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/external-package/prepare`, { method: "POST", headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل تجهيز الحزمة");
+      await refreshPkgStatus(a.id);
+      invalidate();
+      toast({ title: "تم تجهيز النسخة الخارجية", description: `الإصدار ${j.version} — الملفات الثلاثة مشفّرة ومتحقق منها` });
+    } catch (e: any) {
+      toast({ title: "فشل تجهيز النسخة الخارجية", description: String(e.message ?? e), variant: "destructive" });
+    } finally { setPkgBusy(null); }
+  }
+
+  async function downloadPkg(agentId: number, kind: PackageKind) {
+    setPkgBusy(`download-${kind}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}/download`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "فشل التنزيل");
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const filename = cd.match(/filename="([^"]+)"/)?.[1] ?? `${kind}.zacpkg.enc`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e: any) {
+      toast({ title: "فشل تنزيل الحزمة", description: String(e.message ?? e), variant: "destructive" });
     } finally { setPkgBusy(null); }
   }
   const provisionAgent = (listQ.data ?? []).find(x => x.id === provisionAgentId) ?? null;
@@ -364,12 +513,16 @@ export default function AgentServers() {
     } finally { setBusy(null); }
   }
 
-  function openCreate() { setForm({ ...emptyForm }); setShowForm(true); }
+  function openCreate() {
+    setForm({ ...emptyForm });
+    setFormPackageFiles({ backend: null, frontend: null, db: null });
+    setShowForm(true);
+  }
   function openEdit(a: Agent) {
     setForm({
       id: a.id, name: a.name, contactPhone: a.contactPhone ?? "", contactEmail: a.contactEmail ?? "",
       domain: a.domain, extraDomainsText: (a.extraDomains ?? []).join("\n"),
-      mode: a.mode, maxCompanies: a.maxCompanies != null ? String(a.maxCompanies) : "",
+      mode: a.mode, packageSource: a.packageSource ?? "central", maxCompanies: a.maxCompanies != null ? String(a.maxCompanies) : "",
       licenseExpiresAt: a.licenseExpiresAt ? String(a.licenseExpiresAt).slice(0, 10) : "",
       dbUrl: "", sshHost: a.sshHost ?? "", sshPort: a.sshPort != null ? String(a.sshPort) : "22",
       sshUser: a.sshUser ?? "", sshSecret: "",
@@ -377,6 +530,7 @@ export default function AgentServers() {
       notes: a.notes ?? "",
       saUsername: a.saUsername ?? "", saEmail: a.saEmail ?? "", saPassword: "",
     });
+    setFormPackageFiles({ backend: null, frontend: null, db: null });
     setShowForm(true);
   }
 
@@ -398,7 +552,7 @@ export default function AgentServers() {
           <h1 className="text-xl font-bold flex items-center gap-2"><Server className="h-5 w-5" />سيرفرات الوكلاء</h1>
           <p className="text-sm text-muted-foreground mt-1">
             نسخ الوكلاء على دوميناتهم وسيرفراتهم — قاعدة بيانات خارجية، ترخيص موقّع، هوية خاصة، وحماية من التلاعب.
-            الباك اند والمنطق يبقيان مركزيين هنا.
+            تدعم الواجهة المركزية والنسخة الكاملة الخارجية المشفّرة.
           </p>
         </div>
         <Button onClick={openCreate} data-testid="button-add-agent"><Plus className="h-4 w-4 ms-1" />وكيل جديد</Button>
@@ -434,7 +588,11 @@ export default function AgentServers() {
                       {a.status === "active"
                         ? <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">نشط</Badge>
                         : <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200"><Ban className="h-3 w-3 ms-1" />موقوف</Badge>}
-                      <Badge variant="outline" className="text-[10px]">{a.mode === "full" ? "نسخة كاملة (مستقلة)" : a.mode === "frontend_only" ? "واجهة فقط + API مركزي" : "نسخة قشرة كاملة"}</Badge>
+                      <Badge variant="outline" className="text-[10px]">
+                        {a.mode === "full"
+                          ? a.packageSource === "external" ? "نسخة كاملة خارجية" : "نسخة كاملة (إصدار مركزي)"
+                          : a.mode === "frontend_only" ? "واجهة فقط + API مركزي" : "نسخة قشرة كاملة"}
+                      </Badge>
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1" dir="ltr">
                       <Globe className="h-3 w-3" />{a.domain}
@@ -513,7 +671,11 @@ export default function AgentServers() {
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || busy === `test-ssh-${a.id}`} onClick={() => action(a.id, "test-ssh", "فحص السيرفر")}>
                       {busy === `test-ssh-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3 ms-1" />}اختبار الوصول
                     </Button>
-                    <Button size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || busy === `provision-${a.id}` || a.deployStatus === "deploying"} onClick={() => setInstallDlg({ agentId: a.id, variant: "full", encrypt: false })} data-testid={`button-provision-${a.id}`}>
+                    <Button size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || busy === `provision-${a.id}` || a.deployStatus === "deploying"} onClick={() => setInstallDlg({
+                      agentId: a.id,
+                      variant: a.packageSource === "external" ? "upload" : "full",
+                      encrypt: a.packageSource === "external",
+                    })} data-testid={`button-provision-${a.id}`}>
                       {busy === `provision-${a.id}` || a.deployStatus === "deploying" ? <Loader2 className="h-3 w-3 animate-spin ms-1" /> : <UploadCloud className="h-3 w-3 ms-1" />}تسطيب كامل
                     </Button>
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}` || a.deployStatus === "deploying"} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
@@ -570,6 +732,52 @@ export default function AgentServers() {
                   <div className="text-[11px] text-muted-foreground" dir="ltr">ID: {a.installationId.slice(0, 8)}…</div>
                 </div>
               </div>
+              {a.mode === "full" && a.packageSource === "external" && (
+                <div className="border rounded-lg p-3 bg-slate-50/70 dark:bg-slate-950/20 space-y-2" data-testid={`external-package-${a.id}`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <div className="text-xs font-semibold flex items-center gap-1.5"><LockKeyhole className="h-3.5 w-3.5" />حزمة النسخة الكاملة الخارجية</div>
+                      <div className="text-[11px] text-muted-foreground">تُخزّن مشفّرة في التخزين الخاص؛ التنزيل والتسطيب يتحققان من البصمة والتوقيع.</div>
+                    </div>
+                    <Button variant="outline" size="sm" className="h-7 text-xs"
+                      disabled={!a.dbUrlSet || pkgBusy === "prepare" || a.deployStatus === "deploying"}
+                      onClick={() => prepareExternalPackage(a)} data-testid={`button-prepare-external-${a.id}`}>
+                      {pkgBusy === "prepare" ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}
+                      تجهيز إصدار جديد
+                    </Button>
+                  </div>
+                  <div className="grid md:grid-cols-3 gap-2">
+                    {(["backend", "frontend", "db"] as PackageKind[]).map(kind => {
+                      const info = a.externalPackage?.[kind] ?? null;
+                      return (
+                        <div key={kind} className="border rounded-md bg-card p-2 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-medium">{packageLabel(kind)}</span>
+                            {info
+                              ? <Badge variant="outline" className="h-5 px-1.5 text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200">مشفّر ✓</Badge>
+                              : <Badge variant="destructive" className="h-5 px-1.5 text-[9px]">ناقص</Badge>}
+                          </div>
+                          {info ? (
+                            <>
+                              <div className="mt-1 text-[10px] text-muted-foreground truncate" dir="ltr" title={info.filename}>{info.filename}</div>
+                              <div className="text-[10px] font-mono text-muted-foreground" dir="ltr">SHA {info.sha256.slice(0, 12)}…</div>
+                              <Button variant="ghost" size="sm" className="h-6 mt-1 px-1.5 text-[10px]"
+                                disabled={pkgBusy === `download-${kind}`}
+                                onClick={() => downloadPkg(a.id, kind)}>
+                                {pkgBusy === `download-${kind}` ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <FileDown className="h-3 w-3 ms-1" />}
+                                تنزيل
+                              </Button>
+                            </>
+                          ) : <div className="mt-1 text-[10px] text-rose-600">لا يمكن بدء التسطيب قبل اكتمال الملفات الثلاثة.</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    الإصدارات المركزية اللاحقة تظهر داخل النسخة المثبتة، ولا تُثبّت إلا بعد موافقة السوبر أدمن المحلي؛ لا توجد إعادة تشغيل تلقائية.
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </TabsContent>
@@ -979,8 +1187,14 @@ export default function AgentServers() {
               {([
                 { v: "full" as const, title: "تسطيب كامل (الافتراضي)", desc: "فحص السيرفر، تثبيت PostgreSQL وإنشاء قاعدة البيانات، Caddy والنبض، السكيما والبصمة" + (installAgent.mode === "full" ? "، وتثبيت التطبيق الكامل كخدمة مع محدّث تلقائي." : ".") },
                 { v: "no_db" as const, title: "تسطيب بدون قاعدة بيانات", desc: "يستخدم رابط قاعدة البيانات المسجّل في بيانات الوكيل كما هو — لا يثبّت PostgreSQL ولا ينشئ قاعدة جديدة. يفشل برسالة واضحة إذا لم يكن الرابط مُدخلًا." },
-                { v: "upload" as const, title: "تسطيب برفع ملفات", desc: "يثبّت حزمة Backend وFrontend ونسخة قاعدة بيانات ترفعها أنت بدل حزمة المنصة (النسخة الكاملة فقط، بدون تحديث تلقائي)." },
-              ]).map(opt => (
+                {
+                  v: "upload" as const,
+                  title: installAgent.packageSource === "external" ? "تسطيب النسخة الكاملة الخارجية" : "تسطيب برفع ملفات",
+                  desc: installAgent.packageSource === "external"
+                    ? "يثبّت Backend وFrontend وقاعدة البيانات من الحزم المشفّرة والموقّعة الخاصة بهذا الوكيل. تبقى تحديثات المنصة متاحة لاحقًا، لكن تثبيتها يتطلب موافقة المسؤول المحلي ولا توجد إعادة تشغيل تلقائية."
+                    : "ترفع ملفات Backend وFrontend وقاعدة البيانات مباشرة إلى التخزين الخاص؛ يتحقق الخادم منها ويحوّلها إلى حزم مشفّرة قبل اعتمادها (للنسخة الكاملة فقط).",
+                },
+              ]).filter(opt => installAgent.packageSource !== "external" || opt.v === "upload").map(opt => (
                 <button key={opt.v} type="button" onClick={() => setInstallDlg(p => p && { ...p, variant: opt.v })}
                   className={`w-full text-start border rounded-xl p-3 transition-colors ${installDlg.variant === opt.v ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40"}`}
                   data-testid={`install-variant-${opt.v}`}>
@@ -995,10 +1209,10 @@ export default function AgentServers() {
               {installDlg.variant === "upload" && (
                 <div className="border rounded-xl p-3 space-y-2 bg-muted/30">
                   <div className="text-xs font-medium">ملفات التسطيب</div>
-                  {([
-                    { k: "backend" as const, label: "حزمة Backend (tar.gz — يجب أن تحتوي index.mjs)", required: true, accept: ".tgz,.tar.gz,.gz" },
-                    { k: "frontend" as const, label: "حزمة Frontend (tar.gz — تُفك داخل public/)", required: false, accept: ".tgz,.tar.gz,.gz" },
-                    { k: "db" as const, label: "نسخة قاعدة البيانات (.sql / .sql.gz / .dump)", required: false, accept: ".sql,.gz,.dump,.backup" },
+                    {([
+                    { k: "backend" as const, label: "ملف Backend (tar.gz)", required: true, accept: ".tgz,.tar.gz,.gz" },
+                    { k: "frontend" as const, label: "ملف Frontend (tar.gz)", required: installAgent.packageSource === "external", accept: ".tgz,.tar.gz,.gz" },
+                    { k: "db" as const, label: "نسخة قاعدة البيانات", required: installAgent.packageSource === "external", accept: ".dump,.backup,.sql,.gz" },
                   ]).map(row => {
                     const st = pkgStatus?.[row.k] ?? null;
                     return (
@@ -1006,7 +1220,7 @@ export default function AgentServers() {
                         <div className="min-w-0">
                           <div className="text-[11px] font-medium">{row.label}{row.required && <span className="text-rose-600"> *</span>}</div>
                           {st
-                            ? <div className="text-[11px] text-emerald-700 truncate" dir="ltr">✓ {st.filename} ({Math.max(1, Math.round(st.sizeBytes / 1024 / 1024))}MB)</div>
+                            ? <div className="text-[11px] text-emerald-700 truncate" dir="ltr">✓ {st.filename} ({Math.max(1, Math.round(st.sizeBytes / 1024 / 1024))}MB) · SHA {st.sha256.slice(0, 10)}…</div>
                             : <div className="text-[11px] text-muted-foreground">لم يُرفع</div>}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
@@ -1019,7 +1233,7 @@ export default function AgentServers() {
                               {pkgBusy === row.k ? <Loader2 className="h-3 w-3 animate-spin" /> : <UploadCloud className="h-3 w-3 ms-1" />}رفع
                             </span>
                           </label>
-                          {st && (
+                          {st && installAgent.packageSource !== "external" && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" disabled={pkgBusy === row.k} onClick={() => void deletePkg(installDlg.agentId, row.k)}>
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -1031,12 +1245,13 @@ export default function AgentServers() {
                 </div>
               )}
 
-              <label className="flex items-center gap-2 border rounded-xl p-3 cursor-pointer text-sm">
+              <label className={`flex items-center gap-2 border rounded-xl p-3 text-sm ${installDlg.variant === "upload" ? "cursor-not-allowed bg-muted/40" : "cursor-pointer"}`}>
                 <input type="checkbox" className="h-4 w-4 accent-primary" checked={installDlg.encrypt}
+                  disabled={installDlg.variant === "upload"}
                   onChange={e => setInstallDlg(p => p && { ...p, encrypt: e.target.checked })} data-testid="checkbox-encrypt-bundle" />
                 <span>
                   إرسال الحزمة <b>مشفّرة</b> (AES-256)
-                  <span className="block text-[11px] text-muted-foreground">تُنقل الحزمة مشفّرة ويفكّها سيرفر الوكيل بمفتاح يُسلَّم عبر SSH فقط.</span>
+                  <span className="block text-[11px] text-muted-foreground">{installDlg.variant === "upload" ? "إلزامي للحزم الخارجية: مخزنة ومنقولة مشفّرة، ويُسلّم مفتاح الفك عبر جلسة SSH فقط دون حفظه." : "تُنقل الحزمة مشفّرة ويفكّها سيرفر الوكيل بمفتاح يُسلَّم عبر SSH فقط."}</span>
                 </span>
               </label>
             </div>
@@ -1044,7 +1259,10 @@ export default function AgentServers() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setInstallDlg(null)}>إلغاء</Button>
             <Button
-              disabled={!installAgent || busy === `provision-${installDlg?.agentId}` || (installDlg?.variant === "upload" && !pkgStatus?.backend)}
+              disabled={!installAgent
+                || busy === `provision-${installDlg?.agentId}`
+                || (installDlg?.variant === "upload" && !pkgStatus?.backend)
+                || (installAgent?.packageSource === "external" && (!pkgStatus?.backend || !pkgStatus?.frontend || !pkgStatus?.db))}
               onClick={() => installAgent && installDlg && provisionNow(installAgent, { variant: installDlg.variant, encryptBundle: installDlg.encrypt })}
               data-testid="button-start-provision">
               {busy === `provision-${installDlg?.agentId}` ? <Loader2 className="h-4 w-4 ms-1 animate-spin" /> : <UploadCloud className="h-4 w-4 ms-1" />}
@@ -1072,7 +1290,8 @@ export default function AgentServers() {
                 if (!form.name.trim() || !form.domain.trim()) { toast({ title: "الاسم والدومين مطلوبان", variant: "destructive" }); return; }
                 saveMut.mutate();
               }} disabled={saveMut.isPending} data-testid="button-save-agent">
-                {saveMut.isPending && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}حفظ
+                {saveMut.isPending && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}
+                {formPackageProgress ?? "حفظ"}
               </Button>
             </div>
           </div>
@@ -1083,6 +1302,7 @@ export default function AgentServers() {
               <TabsTrigger value="db">قاعدة البيانات</TabsTrigger>
               <TabsTrigger value="server">السيرفر</TabsTrigger>
               <TabsTrigger value="brand">الهوية</TabsTrigger>
+              {form.mode === "full" && form.packageSource === "external" && <TabsTrigger value="packages">الحزمة الخارجية</TabsTrigger>}
             </TabsList>
 
             <TabsContent value="basic" className="mt-3 grid grid-cols-2 gap-3">
@@ -1094,12 +1314,18 @@ export default function AgentServers() {
                 <Textarea dir="ltr" rows={2} value={form.extraDomainsText} onChange={e => set("extraDomainsText", e.target.value)} /></div>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">نوع النسخة</label>
-                <Select value={form.mode} onValueChange={v => set("mode", v)}>
+                <Select
+                  value={form.mode === "full" && form.packageSource === "external" ? "full_external" : form.mode}
+                  onValueChange={v => setForm(p => v === "full_external"
+                    ? { ...p, mode: "full", packageSource: "external" }
+                    : { ...p, mode: v, packageSource: "central" })}
+                >
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="frontend_only">واجهة فقط + API مركزي (موصى به)</SelectItem>
                     <SelectItem value="full_shell">نسخة قشرة كاملة (فرونت + باك قشرة)</SelectItem>
-                    <SelectItem value="full">نسخة كاملة — تعمل بدون API المركزي (تحديث تلقائي مع كل نشر)</SelectItem>
+                    <SelectItem value="full">نسخة كاملة — إصدار مركزي</SelectItem>
+                    <SelectItem value="full_external">نسخة كاملة خارجية</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1134,6 +1360,102 @@ export default function AgentServers() {
                 <Input dir="ltr" type="password" placeholder="postgresql://user:pass@host:5432/dbname?sslmode=require" value={form.dbUrl} onChange={e => set("dbUrl", e.target.value)} data-testid="input-agent-dburl" />
               </div>
             </TabsContent>
+
+            {form.mode === "full" && form.packageSource === "external" && (
+              <TabsContent value="packages" className="mt-3 space-y-3">
+                <div className="text-xs bg-sky-50 text-sky-900 border border-sky-200 rounded-lg p-3 leading-relaxed">
+                  <div className="font-semibold flex items-center gap-1.5 mb-1"><LockKeyhole className="h-3.5 w-3.5" />نسخة كاملة خارجية مشفّرة</div>
+                  تُخزّن ملفات Backend وFrontend وقاعدة البيانات في التخزين الخاص فقط، بصيغة AES-256 مع بصمة SHA-256 وتوقيع تحقق.
+                  عند التسطيب يُرسل مفتاح الفك خلال جلسة SSH ولا يُحفظ داخل إعدادات التطبيق.
+                  الرفع الكبير يذهب مباشرةً إلى مساحة خاصة مؤقتة، ثم يتحقق الخادم من الملف ويشفّره قبل اعتماده ويحذف النسخة المؤقتة.
+                </div>
+
+                <div className="grid gap-2">
+                  {([
+                    { kind: "backend" as const, hint: "ملف tar.gz خام يحتوي index.mjs؛ سيُشفّر بعد الرفع" },
+                    { kind: "frontend" as const, hint: "ملف tar.gz خام يحتوي index.html؛ سيُشفّر بعد الرفع" },
+                    { kind: "db" as const, hint: "PostgreSQL dump أو SQL أو SQL.gz؛ سيُشفّر بعد الرفع" },
+                  ]).map(row => {
+                    const existing = editingAgent?.externalPackage?.[row.kind] ?? null;
+                    const selected = formPackageFiles[row.kind];
+                    return (
+                      <div key={row.kind} className="border rounded-lg p-3 bg-card" data-testid={`form-package-${row.kind}`}>
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold">{packageLabel(row.kind)} <span className="text-rose-600">*</span></div>
+                            <div className="text-[10px] text-muted-foreground">{row.hint}</div>
+                            {selected ? (
+                              <div className="text-[11px] text-blue-700 truncate mt-1" dir="ltr">جاهز للرفع عند الحفظ: {selected.name} ({Math.max(1, Math.round(selected.size / 1024 / 1024))}MB)</div>
+                            ) : existing ? (
+                              <>
+                                <div className="text-[11px] text-emerald-700 truncate mt-1" dir="ltr">✓ {existing.filename} ({Math.max(1, Math.round(existing.sizeBytes / 1024 / 1024))}MB)</div>
+                                <div className="text-[10px] font-mono text-muted-foreground" dir="ltr">SHA-256 {existing.sha256.slice(0, 16)}…</div>
+                              </>
+                            ) : <div className="text-[11px] text-rose-600 mt-1">غير موجود</div>}
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <label className="inline-flex">
+                              <input
+                                type="file"
+                                accept={row.kind === "db" ? ".dump,.backup,.sql,.gz" : ".tgz,.tar.gz,.gz"}
+                                className="hidden"
+                                onChange={e => {
+                                  const file = e.target.files?.[0] ?? null;
+                                  e.target.value = "";
+                                  if (file) setFormPackageFiles(p => ({ ...p, [row.kind]: file }));
+                                }}
+                                data-testid={`input-form-package-${row.kind}`}
+                              />
+                              <span className="h-8 px-2.5 text-[11px] inline-flex items-center rounded-md border cursor-pointer hover:bg-accent">
+                                <UploadCloud className="h-3.5 w-3.5 ms-1" />{existing ? "استبدال بملف خام" : "اختيار ملف خام"}
+                              </span>
+                            </label>
+                            {selected && (
+                              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-rose-600"
+                                onClick={() => setFormPackageFiles(p => ({ ...p, [row.kind]: null }))}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {existing && (
+                              <Button type="button" variant="ghost" size="sm" className="h-8 text-[11px]"
+                                disabled={pkgBusy === `download-${row.kind}`}
+                                onClick={() => downloadPkg(form.id, row.kind)}>
+                                <FileDown className="h-3.5 w-3.5 ms-1" />تنزيل
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
+                  <div className="text-xs font-medium">أو جهّز الملفات الثلاثة من المنصة</div>
+                  <div className="text-[11px] text-muted-foreground leading-relaxed">
+                    يُستخدم إصدار Backend/Frontend المنشور حاليًا، وتُؤخذ نسخة كاملة من <b>قاعدة بيانات الوكيل الخارجية</b> المسجّلة.
+                    لا تُنسخ هوية المنصة المركزية أو جلسات السوبر أدمن، وتُعاد هوية هذا الوكيل وبصمته بعد الاستعادة.
+                    {!isEdit && " عند إنشاء الوكيل ستتم هذه الخطوة تلقائيًا إذا لم تختر ملفات."}
+                  </div>
+                  {isEdit && (
+                    <Button type="button" variant="outline" size="sm"
+                      disabled={!editingAgent?.dbUrlSet || editingAgent?.mode !== "full" || pkgBusy === "prepare"}
+                      onClick={() => editingAgent && prepareExternalPackage(editingAgent)}
+                      data-testid="button-prepare-external-form">
+                      {pkgBusy === "prepare" ? <Loader2 className="h-3.5 w-3.5 ms-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 ms-1" />}
+                      تجهيز Backend + Frontend + Database
+                    </Button>
+                  )}
+                  {isEdit && editingAgent?.mode !== "full" && (
+                    <div className="text-[10px] text-amber-700">احفظ الوكيل أولًا كنسخة كاملة؛ بعدها يمكن تجهيز الحزمة من قاعدة بياناته.</div>
+                  )}
+                </div>
+
+                <div className="text-[11px] text-muted-foreground border-s-2 border-emerald-400 ps-3">
+                  بعد التثبيت تظل الإصدارات المركزية الجديدة قابلة للتثبيت يدويًا من داخل السيرفر الخارجي. يلزم تأكيد السوبر أدمن المحلي، ويُجرى فحص صحة ورجوع تلقائي عند الفشل، ولا يُعاد تشغيل السيرفر دون الموافقة.
+                </div>
+              </TabsContent>
+            )}
 
             <TabsContent value="server" className="mt-3 grid grid-cols-2 gap-3">
               <div className="col-span-2 text-xs text-muted-foreground bg-muted/40 border rounded-lg p-3">
@@ -1197,7 +1519,8 @@ export default function AgentServers() {
               if (!form.name.trim() || !form.domain.trim()) { toast({ title: "الاسم والدومين مطلوبان", variant: "destructive" }); return; }
               saveMut.mutate();
             }} disabled={saveMut.isPending} data-testid="button-save-agent-bottom">
-              {saveMut.isPending && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}حفظ
+              {saveMut.isPending && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}
+              {formPackageProgress ?? "حفظ"}
             </Button>
           </div>
         </div>

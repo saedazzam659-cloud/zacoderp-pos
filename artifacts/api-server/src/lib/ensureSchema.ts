@@ -2734,6 +2734,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
         extra_domains      JSONB,
         status             TEXT NOT NULL DEFAULT 'active',
         mode               TEXT NOT NULL DEFAULT 'frontend_only',
+        package_source     TEXT NOT NULL DEFAULT 'central',
+        external_package_meta JSONB,
         installation_id    TEXT NOT NULL,
         license_key        TEXT,
         license_expires_at TIMESTAMP,

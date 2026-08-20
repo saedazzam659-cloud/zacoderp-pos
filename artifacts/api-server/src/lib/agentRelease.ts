@@ -41,7 +41,7 @@ async function releaseInfo(tarPath: string, knownSha256?: string): Promise<Relea
   };
 }
 
-function findDistDir(): Promise<string> {
+export function findDistDir(): Promise<string> {
   const candidates = [
     path.resolve(process.cwd(), "dist"),
     path.resolve(process.cwd(), "artifacts/api-server/dist"),

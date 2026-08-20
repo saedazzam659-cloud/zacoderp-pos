@@ -24,8 +24,8 @@
 import express, { Router, type Request } from "express";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
-import { pbkdf2Sync, createCipheriv, createHash } from "node:crypto";
+import { promises as fsp } from "node:fs";
+import { pbkdf2Sync, createCipheriv, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 // Control-plane module: ALL registry reads/writes here must hit the CENTRAL
 // DB even when the request is running inside an agent-DB ALS context (an
 // agent's cloned DB has an empty registry — following the proxy would
@@ -37,7 +37,6 @@ import { z } from "zod/v4";
 import { PgPool, type PgPoolType } from "@workspace/db";
 import net from "node:net";
 import { request as httpsRequest } from "node:https";
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { extractAuth } from "../middleware/auth.js";
 import { normalizeHost } from "../middleware/domainResolver.js";
 import { encryptSecret, decryptSecret } from "../lib/encryption.js";
@@ -48,6 +47,28 @@ import {
   stripAgentReleaseCredentialsFromUrl,
   buildCustomAgentReleaseUrl,
 } from "../lib/agentReleasePolicy.js";
+import {
+  EXTERNAL_PACKAGE_KINDS,
+  type ExternalPackageEntry,
+  type ExternalPackageKind,
+  type ExternalPackageMap,
+  buildAgentDatabaseDump,
+  buildFrontendArchive,
+  createDirectUploadTarget,
+  encryptLocalFileToPrivateObject,
+  inspectPlainPackagePath,
+  packageFileExists,
+  packageObjectKey,
+  packageSignature,
+  privateFileForObjectPath,
+  promoteStagedUploadToEncryptedPackage,
+  removeAllAgentPackageObjects,
+  removePackageObject,
+  streamPrivatePackage,
+  sweepStalePackageUploads,
+  verifyEncryptedPackageObject,
+  verifyPackageEntry,
+} from "../lib/agentExternalPackages.js";
 
 /**
  * SSRF guard for agent-server probes: the SA may point tests at any PUBLIC
@@ -366,7 +387,7 @@ router.use((req, res, next) => {
 
 /** Public projection — secrets replaced with set/masked flags. */
 function publicRow(r: typeof agentInstancesTable.$inferSelect) {
-  const { dbUrlEnc, sshSecretEnc, proxySecretEnc, saPasswordEnc, sshHostKeyFp: _fp, ...rest } = r as any;
+  const { dbUrlEnc, sshSecretEnc, proxySecretEnc, saPasswordEnc, sshHostKeyFp: _fp, externalPackageMeta, ...rest } = r as any;
   // Secrets are STRICTLY write-only: only boolean presence flags leave the
   // server — never the ciphertext and never any plaintext fragment.
   return {
@@ -375,7 +396,71 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
     sshSecretSet: !!sshSecretEnc,
     proxyTokenSet: !!proxySecretEnc,
     saPasswordSet: !!saPasswordEnc,
+    externalPackage: publicPackageMap(readPackageMap(externalPackageMeta)),
   };
+}
+
+function readPackageMap(value: unknown): ExternalPackageMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as ExternalPackageMap;
+}
+
+function publicPackageMap(meta: ExternalPackageMap): Record<ExternalPackageKind, Omit<ExternalPackageEntry, "objectPath" | "signature"> | null> {
+  const out = {} as Record<ExternalPackageKind, Omit<ExternalPackageEntry, "objectPath" | "signature"> | null>;
+  for (const kind of EXTERNAL_PACKAGE_KINDS) {
+    const entry = meta[kind];
+    if (!entry) { out[kind] = null; continue; }
+    const { objectPath: _objectPath, signature: _signature, ...safe } = entry;
+    out[kind] = safe;
+  }
+  return out;
+}
+
+function packageMapSigned(agentId: number, meta: ExternalPackageMap, requireAll: boolean): boolean {
+  const required = requireAll ? EXTERNAL_PACKAGE_KINDS : (["backend"] as const);
+  return required.every(kind => {
+    const entry = meta[kind];
+    return !!entry && verifyPackageEntry(agentId, kind, entry);
+  });
+}
+
+async function packageMapAvailable(agentId: number, meta: ExternalPackageMap, requireAll: boolean): Promise<boolean> {
+  if (!packageMapSigned(agentId, meta, requireAll)) return false;
+  const required = requireAll ? EXTERNAL_PACKAGE_KINDS : (["backend"] as const);
+  return (await Promise.all(required.map(kind => packageFileExists(meta[kind]!)))).every(Boolean);
+}
+
+async function replacePackageEntry(agentId: number, kind: ExternalPackageKind, entry: ExternalPackageEntry | null): Promise<ExternalPackageEntry | null> {
+  return db.transaction(async tx => {
+    const [row] = await tx.select({ externalPackageMeta: agentInstancesTable.externalPackageMeta })
+      .from(agentInstancesTable)
+      .where(eq(agentInstancesTable.id, agentId))
+      .for("update")
+      .limit(1);
+    if (!row) throw Object.assign(new Error("غير موجود"), { httpStatus: 404 });
+    const meta = readPackageMap(row.externalPackageMeta);
+    const previous = meta[kind] ?? null;
+    if (entry) meta[kind] = entry;
+    else delete meta[kind];
+    await tx.update(agentInstancesTable).set({ externalPackageMeta: meta, updatedAt: new Date() })
+      .where(eq(agentInstancesTable.id, agentId));
+    return previous;
+  });
+}
+
+async function replacePackageMap(agentId: number, next: ExternalPackageMap): Promise<ExternalPackageMap> {
+  return db.transaction(async tx => {
+    const [row] = await tx.select({ externalPackageMeta: agentInstancesTable.externalPackageMeta })
+      .from(agentInstancesTable)
+      .where(eq(agentInstancesTable.id, agentId))
+      .for("update")
+      .limit(1);
+    if (!row) throw Object.assign(new Error("غير موجود"), { httpStatus: 404 });
+    const previous = readPackageMap(row.externalPackageMeta);
+    await tx.update(agentInstancesTable).set({ externalPackageMeta: next, updatedAt: new Date() })
+      .where(eq(agentInstancesTable.id, agentId));
+    return previous;
+  });
 }
 
 // GET /api/admin/agent-instances
@@ -391,6 +476,7 @@ const upsertSchema = z.object({
   domain: z.string().min(3).max(255),
   extraDomains: z.array(z.string().min(3).max(255)).max(20).nullish(),
   mode: z.enum(["frontend_only", "full_shell", "full"]).optional(),
+  packageSource: z.enum(["central", "external"]).optional(),
   maxCompanies: z.number().int().positive().nullish(),
   licenseExpiresAt: z.string().nullish(),           // ISO date
   // Secrets — write-only. Empty string / undefined = keep existing.
@@ -448,11 +534,15 @@ router.post("/", async (req, res) => {
   if (conflict) { res.status(409).json({ error: `الدومين ${conflict} مسجّل لوكيل آخر` }); return; }
   const saErr = validateSaFields(d);
   if (saErr) { res.status(400).json({ error: saErr }); return; }
+  if (d.packageSource === "external") {
+    res.status(400).json({ error: "ارفع ملفات النسخة الخارجية الثلاثة وتحقق منها قبل حفظ نوع النسخة" });
+    return;
+  }
 
   const installationId = randomUUID();
   const [row] = await db.insert(agentInstancesTable).values({
     name: d.name, contactPhone: d.contactPhone ?? null, contactEmail: d.contactEmail ?? null,
-    domain, extraDomains: extras, mode: d.mode ?? "frontend_only",
+    domain, extraDomains: extras, mode: d.mode ?? "frontend_only", packageSource: "central",
     installationId,
     licenseKey: mintLicenseKey(installationId, domain),
     licenseExpiresAt: d.licenseExpiresAt ? new Date(d.licenseExpiresAt) : null,
@@ -524,6 +614,21 @@ router.put("/:id", async (req, res) => {
   }
   const saErr = validateSaFields(d);
   if (saErr) { res.status(400).json({ error: saErr }); return; }
+  const effectiveMode = d.mode ?? existing.mode;
+  const effectivePackageSource = d.packageSource ?? existing.packageSource;
+  if (effectivePackageSource === "external") {
+    if (effectiveMode !== "full") {
+      res.status(400).json({ error: "«نسخة كاملة خارجية» متاحة لوضع النسخة الكاملة فقط" });
+      return;
+    }
+    const packageMeta = readPackageMap(existing.externalPackageMeta);
+    if (!await packageMapAvailable(id, packageMeta, true)) {
+      res.status(400).json({ error: "أكمل رفع Backend وFrontend وقاعدة البيانات المشفّرة قبل حفظ النسخة الخارجية" });
+      return;
+    }
+  }
+  if (d.packageSource !== undefined) patch.packageSource = d.packageSource;
+  if (effectiveMode !== "full" && effectivePackageSource !== "central") patch.packageSource = "central";
   if (d.saUsername !== undefined) patch.saUsername = (d.saUsername ?? "").trim().toLowerCase() || null;
   if (d.saEmail !== undefined) patch.saEmail = (d.saEmail ?? "").trim().toLowerCase() || null;
   // Secrets: only overwrite when a NON-EMPTY value is sent (empty = keep).
@@ -544,7 +649,16 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!id) { res.status(400).json({ error: "بيانات غير صالحة" }); return; }
+  const [existing] = await db.select({ externalPackageMeta: agentInstancesTable.externalPackageMeta })
+    .from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
   await db.delete(agentInstancesTable).where(eq(agentInstancesTable.id, id));
+  if (existing) {
+    const meta = readPackageMap(existing.externalPackageMeta);
+    await Promise.all([
+      ...EXTERNAL_PACKAGE_KINDS.map(kind => removePackageObject(meta[kind]?.objectPath)),
+      removeAllAgentPackageObjects(id),
+    ]);
+  }
   clearAgentHostCache();
   const { evictAgentDb } = await import("../lib/agentDb.js");
   evictAgentDb(id);
@@ -1880,24 +1994,10 @@ function streamFileMaybeEncrypted(res: any, filePath: string, downloadName: stri
   src.on("error", () => { try { res.destroy(); } catch { /* noop */ } });
 }
 
-// الملفات المرفوعة للتسطيب المخصّص تُخزَّن مؤقتًا على قرص المنصة لكل وكيل.
-const CUSTOM_KINDS = ["backend", "frontend", "db"] as const;
-type CustomKind = (typeof CUSTOM_KINDS)[number];
-function customPkgDir(agentId: number): string {
-  const dir = path.join(os.tmpdir(), "zacod-custom-pkg", String(agentId));
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-function customPkgMeta(agentId: number): Record<string, { filename: string; sizeBytes: number; uploadedAt: string }> {
-  try { return JSON.parse(fs.readFileSync(path.join(customPkgDir(agentId), "meta.json"), "utf8")); }
-  catch { return {}; }
-}
-function saveCustomPkgMeta(agentId: number, meta: Record<string, any>): void {
-  fs.writeFileSync(path.join(customPkgDir(agentId), "meta.json"), JSON.stringify(meta, null, 2));
-}
-function customPkgPath(agentId: number, kind: CustomKind): string {
-  return path.join(customPkgDir(agentId), `${kind}.bin`);
-}
+// كل حزم التسطيب المخصّص تُحفظ مشفّرة في التخزين الخاص الدائم. الاسم القديم
+// محفوظ محليًا داخل هذا الملف فقط لتقليل التغيير في مسار التسطيب القائم.
+const CUSTOM_KINDS = EXTERNAL_PACKAGE_KINDS;
+type CustomKind = ExternalPackageKind;
 
 function shQ(s: string): string {
   // Single-quote for bash. Values we interpolate are validated/hex, but keep
@@ -2033,8 +2133,8 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
     // والبصمة (الخطوة 4)، وإلا مسحت الاستعادةُ بصمةَ التركيب وجدول التنصيب
     // فيتعطل النبض. أي فشل هنا يُسقط التسطيب كاملًا (لا استعادة صامتة).
     if (opts.variant === "upload" && inst.mode === "full") {
-      const metaR = customPkgMeta(inst.id);
-      if (metaR.db && fs.existsSync(customPkgPath(inst.id, "db"))) {
+      const metaR = readPackageMap(inst.externalPackageMeta);
+      if (metaR.db && verifyPackageEntry(inst.id, "db", metaR.db)) {
         await step("استعادة نسخة قاعدة البيانات المرفوعة");
         await reload();
         const originR = resolveCentralOrigin();
@@ -2046,14 +2146,16 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
           if (u.hostname === inst.sshHost) { u.hostname = "127.0.0.1"; u.searchParams.delete("sslmode"); restoreDbUrl = u.toString().replace(/\?$/, ""); }
         } catch { /* keep stored URL as-is */ }
         assertShellSafeDbUrl(restoreDbUrl);
-        const encR = opts.encryptBundle;
-        const passR = encR ? bundlePassphrase(inst) : "";
-        const dUrl = buildCustomAgentReleaseUrl(originR, "db", encR);
+        // الحزم المرفوعة/الخارجية تكون مشفّرة دائمًا في التخزين وعند النقل.
+        const encR = true;
+        const passR = bundlePassphrase(inst);
+        const dUrl = buildCustomAgentReleaseUrl(originR, "db", true);
         const releaseAuthPathR = "/opt/zacod/.release-auth.curl";
-        const isGz = /\.gz$/i.test(metaR.db.filename);
-        const isSql = /\.sql(\.gz)?$/i.test(metaR.db.filename);
+        const isGz = metaR.db.format === "sql_gzip";
+        const isSql = metaR.db.format === "sql" || metaR.db.format === "sql_gzip";
         const dlR = encR
           ? `curl --config ${releaseAuthPathR} -fsS ${shQ(dUrl)} -o /tmp/zacod-db.bak.enc
+printf '%s  %s\\n' ${shQ(metaR.db.sha256)} /tmp/zacod-db.bak.enc | sha256sum -c -
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 10000 -md sha256 -pass "pass:$ZACOD_BUNDLE_KEY" -in /tmp/zacod-db.bak.enc -out /tmp/zacod-db.bak
 rm -f /tmp/zacod-db.bak.enc`
           : `curl --config ${releaseAuthPathR} -fsS ${shQ(dUrl)} -o /tmp/zacod-db.bak`;
@@ -2128,43 +2230,43 @@ echo ZACOD_DB_RESTORED`, "ZACOD_DB_RESTORED", 600_000);
         if (u.hostname === inst.sshHost) { u.hostname = "127.0.0.1"; u.searchParams.delete("sslmode"); localDbUrl = u.toString().replace(/\?$/, ""); }
       } catch { /* keep stored URL as-is */ }
       assertShellSafeDbUrl(localDbUrl);
-      const enc = opts.encryptBundle;
+      // Custom/external packages are always encrypted. The checkbox remains
+      // relevant only to central-release installs for backwards compatibility.
+      const enc = opts.variant === "upload" ? true : opts.encryptBundle;
       const encQ = enc ? "&enc=1" : "";
       const pass = enc ? bundlePassphrase(inst) : "";
       // أمر تنزيل موحّد: عند تفعيل «حزمة مشفّرة» تُنزَّل الحزمة مشفّرة
       // (AES-256-CBC/PBKDF2 بصيغة openssl القياسية) وتُفكّ على السيرفر.
       const releaseAuthPath = "/opt/zacod/.release-auth.curl";
-      const dlCmd = (url: string, out: string, withReleaseAuth = false) => {
+      const dlCmd = (url: string, out: string, withReleaseAuth = false, expectedSha256 = "") => {
         const auth = withReleaseAuth ? `--config ${releaseAuthPath} ` : "";
+        const verifySha = expectedSha256
+          ? `printf '%s  %s\\n' ${shQ(expectedSha256)} ${shQ(`${out}.enc`)} | sha256sum -c -`
+          : "true";
         return enc
         ? `curl ${auth}-fsS ${shQ(url)} -o ${out}.enc
+${verifySha}
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 10000 -md sha256 -pass "pass:$ZACOD_BUNDLE_KEY" -in ${out}.enc -out ${out}
 rm -f ${out}.enc`
         : `curl ${auth}-fsS ${shQ(url)} -o ${out}`;
       };
       const keyExport = enc ? `export ZACOD_BUNDLE_KEY=${shQ(pass)}` : `export ZACOD_BUNDLE_KEY=`;
-      const keyEnvLine = enc ? `echo "ZACOD_BUNDLE_KEY=$ZACOD_BUNDLE_KEY";` : "";
 
       // مصدر التطبيق: حزمة المنصة (الافتراضي) أو الملفات المرفوعة يدويًا.
       let bundleUrl = `${origin}/api/agent/release/bundle?manual=1${encQ}`;
       let relVersion = "";
       let frontendCmd = "";
-      let dbRestoreCmd = "";
       if (opts.variant === "upload") {
-        const meta = customPkgMeta(inst.id);
-        if (!meta.backend || !fs.existsSync(customPkgPath(inst.id, "backend"))) {
+        const meta = readPackageMap(inst.externalPackageMeta);
+        if (!meta.backend || !verifyPackageEntry(inst.id, "backend", meta.backend)) {
           throw new Error("لم تُرفع حزمة Backend — ارفع الملفات من نافذة «تسطيب برفع ملفات» أولًا.");
         }
-        const hashFile = (p: string) => new Promise<string>((resolve, reject) => {
-          const h = createHash("sha256");
-          fs.createReadStream(p).on("data", (d) => h.update(d)).on("end", () => resolve(h.digest("hex").slice(0, 16))).on("error", reject);
-        });
-        relVersion = `custom-${await hashFile(customPkgPath(inst.id, "backend"))}`;
-        bundleUrl = buildCustomAgentReleaseUrl(origin, "backend", enc);
-        log.push(`مصدر التطبيق: ملفات مرفوعة (${meta.backend.filename}, ${Math.round(meta.backend.sizeBytes / 1024 / 1024)}MB)${enc ? " — مشفّرة أثناء النقل" : ""}`);
-        if (meta.frontend && fs.existsSync(customPkgPath(inst.id, "frontend"))) {
-          const fUrl = buildCustomAgentReleaseUrl(origin, "frontend", enc);
-          frontendCmd = `${dlCmd(fUrl, "/tmp/zacod-front.tgz", true)}
+        relVersion = meta.backend.version || `external-${meta.backend.sha256.slice(0, 16)}`;
+        bundleUrl = buildCustomAgentReleaseUrl(origin, "backend", true);
+        log.push(`مصدر التطبيق: ${inst.packageSource === "external" ? "نسخة كاملة خارجية" : "ملفات مرفوعة"} (${meta.backend.filename}, ${Math.round(meta.backend.sizeBytes / 1024 / 1024)}MB) — مشفّرة ومتحقق من بصمتها`);
+        if (meta.frontend && verifyPackageEntry(inst.id, "frontend", meta.frontend)) {
+          const fUrl = buildCustomAgentReleaseUrl(origin, "frontend", true);
+          frontendCmd = `${dlCmd(fUrl, "/tmp/zacod-front.tgz", true, meta.frontend.sha256)}
 mkdir -p /opt/zacod/app.new/public
 tar -xzf /tmp/zacod-front.tgz -C /opt/zacod/app.new/public
 rm -f /tmp/zacod-front.tgz
@@ -2196,7 +2298,7 @@ RELEASE_INSTALLATION_ID=${shQ(inst.installationId)}
 RELEASE_LICENSE_KEY=${shQ(inst.licenseKey ?? "")}
 printf 'header = "X-Zacod-Installation-Id: %s"\\nheader = "X-Zacod-License-Key: %s"\\n' "$RELEASE_INSTALLATION_ID" "$RELEASE_LICENSE_KEY" > ${releaseAuthPath}
 unset RELEASE_INSTALLATION_ID RELEASE_LICENSE_KEY
-${dlCmd(bundleUrl, "/tmp/zacod-app.tgz", true)}
+${dlCmd(bundleUrl, "/tmp/zacod-app.tgz", true, opts.variant === "upload" ? readPackageMap(inst.externalPackageMeta).backend?.sha256 ?? "" : "")}
 rm -f ${releaseAuthPath}
 trap - EXIT
 rm -rf /opt/zacod/app.new && mkdir -p /opt/zacod/app.new
@@ -2205,9 +2307,9 @@ rm -f /tmp/zacod-app.tgz
 echo ${shQ(relVersion)} > /opt/zacod/app.new/VERSION
 ${frontendCmd || "true"}
 if [ -f /opt/zacod/app.env ] && grep -q '^SESSION_SECRET=' /opt/zacod/app.env; then SS=$(grep '^SESSION_SECRET=' /opt/zacod/app.env | cut -d= -f2-); else SS=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \\n'); fi
-{ echo "NODE_ENV=production"; echo "PORT=8080"; echo "DATABASE_URL=${localDbUrl}"; echo "SESSION_SECRET=$SS"; echo "PUBLIC_BASE_URL=https://${inst.domain}"; ${keyEnvLine} } > /opt/zacod/app.env
+{ echo "NODE_ENV=production"; echo "PORT=8080"; echo "DATABASE_URL=${localDbUrl}"; echo "SESSION_SECRET=$SS"; echo "PUBLIC_BASE_URL=https://${inst.domain}"; } > /opt/zacod/app.env
 chmod 600 /opt/zacod/app.env
-${dbRestoreCmd || "true"}
+true
 rm -rf /opt/zacod/app.old; [ -d /opt/zacod/app ] && mv /opt/zacod/app /opt/zacod/app.old; mv /opt/zacod/app.new /opt/zacod/app
 NODE_BIN=$(command -v node)
 cat > /etc/systemd/system/zacod-app.service <<EOF
@@ -2258,17 +2360,27 @@ router.post("/:id/provision", async (req, res) => {
   if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
   if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) { res.status(400).json({ error: "أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا" }); return; }
   // خيارات التسطيب (إضافية — الافتراضي يطابق السلوك الحالي تمامًا)
-  const variant: ProvisionOpts["variant"] =
+  const requestedVariant: ProvisionOpts["variant"] =
     req.body?.variant === "no_db" ? "no_db" : req.body?.variant === "upload" ? "upload" : "full";
-  const encryptBundle = req.body?.encryptBundle === true;
+  // External full editions always reuse the existing upload-based installer.
+  // Do not introduce a fourth runtime mode: that would bypass existing license
+  // and local-manual-update policy checks.
+  const variant: ProvisionOpts["variant"] = inst.packageSource === "external" ? "upload" : requestedVariant;
+  const encryptBundle = variant === "upload" ? true : req.body?.encryptBundle === true;
   if (variant === "no_db" && !inst.dbUrlEnc) {
     res.status(400).json({ error: "«تسطيب بدون قاعدة بيانات» يتطلب إدخال رابط قاعدة البيانات في بيانات الوكيل أولًا" }); return;
   }
   if (variant === "upload") {
     if (inst.mode !== "full") { res.status(400).json({ error: "التسطيب برفع ملفات متاح للنسخة الكاملة فقط — غيّر نوع النسخة إلى «كاملة» أولًا" }); return; }
-    const meta = customPkgMeta(id);
-    if (!meta.backend || !fs.existsSync(customPkgPath(id, "backend"))) {
-      res.status(400).json({ error: "ارفع حزمة Backend أولًا من نافذة التسطيب" }); return;
+    const meta = readPackageMap(inst.externalPackageMeta);
+    const requireAll = inst.packageSource === "external";
+    if (!await packageMapAvailable(id, meta, requireAll)) {
+      res.status(400).json({
+        error: requireAll
+          ? "النسخة الخارجية غير مكتملة — ارفع Backend وFrontend وقاعدة البيانات المشفّرة أولًا"
+          : "ارفع حزمة Backend المشفّرة أولًا من نافذة التسطيب",
+      });
+      return;
     }
   }
   try { await assertProbeTargetAllowed(inst.sshHost); }
@@ -2291,26 +2403,201 @@ router.post("/:id/provision", async (req, res) => {
   }
   // Re-read the claimed row so the pipeline works off fresh state.
   const [fresh] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
-  await logAgentEvent(id, "provision_started", { by: (req as any).authUser?.username ?? null, mode: inst.mode, variant, encryptBundle }, req);
+  await logAgentEvent(id, "provision_started", {
+    by: (req as any).authUser?.username ?? null,
+    mode: inst.mode,
+    packageSource: inst.packageSource,
+    variant,
+    encryptBundle,
+  }, req);
   res.json({ ok: true, started: true });
   void runProvision(fresh ?? inst, { variant, encryptBundle });
 });
 
-// ── حزم التسطيب المرفوعة (Backend / Frontend / Database Backup) ────────────
-// تُخزَّن مؤقتًا على قرص المنصة لكل وكيل، ويسحبها سيرفر الوكيل أثناء
-// «التسطيب برفع ملفات» عبر قناة الإصدارات المصادَق عليها (مشفّرة اختياريًا).
+// ── حزم التسطيب الخارجية (Backend / Frontend / Database Backup) ────────────
+// تحفظ دائمًا في App Storage الخاصة وهي مشفّرة قبل التخزين. لا يخرج للمتصفح
+// إلا اسم/حجم/بصمة الملف، ولا تظهر مفاتيح الفك أو مسارات التخزين الخاصة.
+
+router.post("/:id/external-package/prepare", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.mode !== "full") { res.status(400).json({ error: "تجهيز الحزمة الخارجية متاح للنسخة الكاملة فقط" }); return; }
+  if (!inst.dbUrlEnc) {
+    res.status(400).json({ error: "أدخل رابط قاعدة بيانات الوكيل واختبره قبل تجهيز النسخة الكاملة" });
+    return;
+  }
+  if (inst.deployStatus === "deploying") {
+    res.status(409).json({ error: "انتظر انتهاء التسطيب الجاري قبل تجهيز حزمة جديدة" });
+    return;
+  }
+  let workDir = "";
+  const created: ExternalPackageMap = {};
+  const createdObjectPaths: string[] = [];
+  try {
+    const dbUrl = decryptSecret(inst.dbUrlEnc);
+    if (!dbUrl) throw new Error("تعذّر قراءة رابط قاعدة بيانات الوكيل");
+    const dbHost = new URL(dbUrl).hostname;
+    await assertProbeTargetAllowed(dbHost);
+    workDir = await fsp.mkdtemp(path.join("/tmp", ".zacod-external-build-"));
+    const [{ getReleaseInfo, findDistDir }] = await Promise.all([import("../lib/agentRelease.js")]);
+    const release = await getReleaseInfo();
+    const distDir = await findDistDir();
+    const frontendPath = await buildFrontendArchive(distDir, workDir);
+    const databasePath = await buildAgentDatabaseDump(dbUrl, workDir);
+    const passphrase = bundlePassphrase(inst);
+    const inputs: Record<ExternalPackageKind, { path: string; filename: string }> = {
+      backend: { path: release.tarPath, filename: `zacod-backend-${release.version}.tgz` },
+      frontend: { path: frontendPath, filename: `zacod-frontend-${release.version}.tgz` },
+      db: { path: databasePath, filename: `zacod-database-${release.version}.dump` },
+    };
+    for (const kind of EXTERNAL_PACKAGE_KINDS) {
+      const inspected = await inspectPlainPackagePath(inputs[kind].path, kind);
+      const objectKey = packageObjectKey(id, kind, "packages");
+      const encrypted = await encryptLocalFileToPrivateObject(inputs[kind].path, objectKey, passphrase);
+      createdObjectPaths.push(encrypted.objectPath);
+      const verified = await verifyEncryptedPackageObject(
+        privateFileForObjectPath(encrypted.objectPath),
+        passphrase,
+        { sha256: inspected.sha256, sizeBytes: inspected.sizeBytes },
+      );
+      const entry: ExternalPackageEntry = {
+        objectPath: encrypted.objectPath,
+        filename: inputs[kind].filename,
+        sizeBytes: verified.sizeBytes,
+        sha256: verified.sha256,
+        signature: "",
+        uploadedAt: new Date().toISOString(),
+        version: release.version,
+        format: inspected.format,
+        encrypted: true,
+        verified: true,
+        origin: "generated",
+      };
+      entry.signature = packageSignature({ agentId: id, kind, sha256: entry.sha256, sizeBytes: entry.sizeBytes, format: entry.format });
+      created[kind] = entry;
+    }
+    const previous = await replacePackageMap(id, created);
+    createdObjectPaths.length = 0;
+    await Promise.all(EXTERNAL_PACKAGE_KINDS.map(kind => removePackageObject(previous[kind]?.objectPath)));
+    await logAgentEvent(id, "external_package_prepared", {
+      by: (req as any).authUser?.username ?? null,
+      version: release.version,
+      files: EXTERNAL_PACKAGE_KINDS.map(kind => ({ kind, sizeBytes: created[kind]!.sizeBytes, sha256: created[kind]!.sha256 })),
+      databaseSource: "agent_database",
+      excludedIdentityData: true,
+    }, req);
+    res.json({ ok: true, version: release.version, externalPackage: publicPackageMap(created) });
+  } catch (error: any) {
+    await Promise.all(createdObjectPaths.map(objectPath => removePackageObject(objectPath)));
+    res.status(502).json({ error: String(error?.message ?? error).slice(0, 500) });
+  } finally {
+    if (workDir) await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
 
 router.get("/:id/custom-package", async (req, res) => {
   const id = Number(req.params.id);
-  const meta = customPkgMeta(id);
-  const out: Record<string, any> = {};
-  for (const kind of CUSTOM_KINDS) {
-    const p = customPkgPath(id, kind);
-    out[kind] = meta[kind] && fs.existsSync(p) ? meta[kind] : null;
-  }
-  res.json(out);
+  const [inst] = await db.select({
+    id: agentInstancesTable.id,
+    externalPackageMeta: agentInstancesTable.externalPackageMeta,
+  }).from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  res.json(publicPackageMap(readPackageMap(inst.externalPackageMeta)));
 });
 
+router.post("/:id/custom-package/:kind/upload-url", async (req, res) => {
+  const id = Number(req.params.id);
+  const kind = String(req.params.kind) as CustomKind;
+  if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "نوع ملف غير معروف" }); return; }
+  const [inst] = await db.select({ id: agentInstancesTable.id, deployStatus: agentInstancesTable.deployStatus })
+    .from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.deployStatus === "deploying") { res.status(409).json({ error: "لا يمكن استبدال الحزمة أثناء التسطيب" }); return; }
+  try {
+    await sweepStalePackageUploads().catch(() => {});
+    const target = await createDirectUploadTarget(
+      id,
+      kind,
+      Number(req.body?.sizeBytes),
+      req.get("origin") ?? undefined,
+    );
+    res.json({ ...target, expiresInSeconds: 900 });
+  } catch (error: any) {
+    res.status(400).json({ error: String(error?.message ?? error).slice(0, 300) });
+  }
+});
+
+router.post("/:id/custom-package/:kind/complete", async (req, res) => {
+  const id = Number(req.params.id);
+  const kind = String(req.params.kind) as CustomKind;
+  if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "نوع ملف غير معروف" }); return; }
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.deployStatus === "deploying") { res.status(409).json({ error: "لا يمكن استبدال الحزمة أثناء التسطيب" }); return; }
+  const objectPath = String(req.body?.objectPath ?? "");
+  const expectedPrefix = `/objects/agent-packages/${id}/staging/${kind}-`;
+  if (!objectPath.startsWith(expectedPrefix) || !objectPath.endsWith(".upload")) {
+    res.status(400).json({ error: "ملف الرفع لا يخص هذا الوكيل أو هذا النوع" });
+    return;
+  }
+  const filename = String(req.body?.filename ?? `${kind}.bin`).slice(0, 200)
+    .replace(/[^\w.\-()\u0600-\u06FF ]+/g, "_")
+    .replace(/\.(enc|zacpkg)$/i, "");
+  let promotedObjectPath: string | null = null;
+  try {
+    const source = privateFileForObjectPath(objectPath);
+    const [exists] = await source.exists();
+    if (!exists) throw new Error("لم يكتمل رفع الملف إلى التخزين");
+    const requestedSize = Number(req.body?.sizeBytes);
+    if (!Number.isSafeInteger(requestedSize) || requestedSize <= 0) {
+      throw new Error("حجم الملف المعلن غير صالح");
+    }
+    const finalKey = packageObjectKey(id, kind, "packages");
+    const promoted = await promoteStagedUploadToEncryptedPackage({
+      sourceObjectPath: objectPath,
+      finalObjectKey: finalKey,
+      passphrase: bundlePassphrase(inst),
+      kind,
+      expectedRawSize: requestedSize,
+    });
+    promotedObjectPath = promoted.objectPath;
+    const entry: ExternalPackageEntry = {
+      objectPath: promoted.objectPath,
+      filename,
+      sizeBytes: promoted.sizeBytes,
+      sha256: promoted.sha256,
+      signature: "",
+      uploadedAt: new Date().toISOString(),
+      version: null,
+      format: promoted.format,
+      encrypted: true,
+      verified: true,
+      origin: "uploaded",
+    };
+    entry.signature = packageSignature({ agentId: id, kind, sha256: entry.sha256, sizeBytes: entry.sizeBytes, format: entry.format });
+    const previous = await replacePackageEntry(id, kind, entry);
+    promotedObjectPath = null;
+    await removePackageObject(previous?.objectPath);
+    await logAgentEvent(id, "custom_package_uploaded", {
+      kind,
+      filename,
+      sizeBytes: entry.sizeBytes,
+      sha256: entry.sha256,
+      encrypted: true,
+      verified: true,
+      by: (req as any).authUser?.username ?? null,
+    }, req);
+    res.json({ ok: true, kind, ...publicPackageMap({ [kind]: entry })[kind] });
+  } catch (error: any) {
+    await removePackageObject(objectPath);
+    await removePackageObject(promotedObjectPath);
+    res.status(400).json({ error: String(error?.message ?? error).slice(0, 500) });
+  }
+});
+
+// Legacy compatibility: old clients may still send the raw package to the API.
+// It is immediately encrypted before durable storage; new UI uses direct upload.
 router.put("/:id/custom-package/:kind",
   express.raw({ type: () => true, limit: "800mb" }),
   async (req, res) => {
@@ -2322,27 +2609,90 @@ router.put("/:id/custom-package/:kind",
     const body: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!body.length) { res.status(400).json({ error: "الملف فارغ" }); return; }
     const filename = String(req.query.filename ?? `${kind}.bin`).slice(0, 200).replace(/[^\w.\-()\u0600-\u06FF ]+/g, "_");
-    // فحص بسيط للصيَغ: backend/frontend يجب أن تكون tar.gz (تبدأ بـ gzip magic)
+    if (inst.deployStatus === "deploying") { res.status(409).json({ error: "لا يمكن استبدال الحزمة أثناء التسطيب" }); return; }
     if ((kind === "backend" || kind === "frontend") && !(body[0] === 0x1f && body[1] === 0x8b)) {
       res.status(400).json({ error: "يجب أن تكون الحزمة بصيغة tar.gz (مضغوطة gzip)" }); return;
     }
-    fs.writeFileSync(customPkgPath(id, kind), body);
-    const meta = customPkgMeta(id);
-    meta[kind] = { filename, sizeBytes: body.length, uploadedAt: new Date().toISOString() };
-    saveCustomPkgMeta(id, meta);
-    await logAgentEvent(id, "custom_package_uploaded", { kind, filename, sizeBytes: body.length }, req);
-    res.json({ ok: true, kind, filename, sizeBytes: body.length });
+    const workDir = await fsp.mkdtemp(path.join("/tmp", ".zacod-legacy-upload-"));
+    const plainPath = path.join(workDir, "package.bin");
+    let objectPath: string | null = null;
+    try {
+      await fsp.writeFile(plainPath, body, { mode: 0o600 });
+      const inspected = await inspectPlainPackagePath(plainPath, kind);
+      const objectKey = packageObjectKey(id, kind, "packages");
+      const encrypted = await encryptLocalFileToPrivateObject(plainPath, objectKey, bundlePassphrase(inst));
+      objectPath = encrypted.objectPath;
+      const verified = await verifyEncryptedPackageObject(
+        privateFileForObjectPath(objectPath),
+        bundlePassphrase(inst),
+        { sha256: inspected.sha256, sizeBytes: inspected.sizeBytes },
+      );
+      const entry: ExternalPackageEntry = {
+        objectPath,
+        filename,
+        sizeBytes: verified.sizeBytes,
+        sha256: verified.sha256,
+        signature: "",
+        uploadedAt: new Date().toISOString(),
+        version: null,
+        format: inspected.format,
+        encrypted: true,
+        verified: true,
+        origin: "uploaded",
+      };
+      entry.signature = packageSignature({ agentId: id, kind, sha256: entry.sha256, sizeBytes: entry.sizeBytes, format: entry.format });
+      const previous = await replacePackageEntry(id, kind, entry);
+      await removePackageObject(previous?.objectPath);
+      await logAgentEvent(id, "custom_package_uploaded", { kind, filename, sizeBytes: entry.sizeBytes, sha256: entry.sha256, encrypted: true, verified: true, legacyUpload: true }, req);
+      res.json({ ok: true, kind, ...publicPackageMap({ [kind]: entry })[kind] });
+    } catch (error: any) {
+      await removePackageObject(objectPath);
+      res.status(400).json({ error: String(error?.message ?? error).slice(0, 500) });
+    } finally {
+      await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
 router.delete("/:id/custom-package/:kind", async (req, res) => {
   const id = Number(req.params.id);
   const kind = String(req.params.kind) as CustomKind;
   if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "نوع ملف غير معروف" }); return; }
-  try { fs.rmSync(customPkgPath(id, kind), { force: true }); } catch { /* noop */ }
-  const meta = customPkgMeta(id);
-  delete meta[kind];
-  saveCustomPkgMeta(id, meta);
+  const [inst] = await db.select({
+    id: agentInstancesTable.id,
+    packageSource: agentInstancesTable.packageSource,
+    deployStatus: agentInstancesTable.deployStatus,
+  }).from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.deployStatus === "deploying") { res.status(409).json({ error: "لا يمكن حذف الحزمة أثناء التسطيب" }); return; }
+  if (inst.packageSource === "external") {
+    res.status(409).json({ error: "حوّل نوع النسخة إلى إصدار مركزي قبل حذف أحد ملفات النسخة الخارجية" });
+    return;
+  }
+  const previous = await replacePackageEntry(id, kind, null);
+  await removePackageObject(previous?.objectPath);
+  await logAgentEvent(id, "custom_package_deleted", { kind, by: (req as any).authUser?.username ?? null }, req);
   res.json({ ok: true });
+});
+
+router.get("/:id/custom-package/:kind/download", async (req, res) => {
+  const id = Number(req.params.id);
+  const kind = String(req.params.kind) as CustomKind;
+  if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "نوع ملف غير معروف" }); return; }
+  const [inst] = await db.select({
+    id: agentInstancesTable.id,
+    externalPackageMeta: agentInstancesTable.externalPackageMeta,
+  }).from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  const entry = readPackageMap(inst.externalPackageMeta)[kind];
+  if (!entry || !verifyPackageEntry(id, kind, entry)) { res.status(404).json({ error: "الملف غير متاح" }); return; }
+  try {
+    res.setHeader("Content-Disposition", `attachment; filename="${kind}-${entry.sha256.slice(0, 12)}.zacpkg.enc"`);
+    await logAgentEvent(id, "external_package_downloaded", { kind, sha256: entry.sha256, by: (req as any).authUser?.username ?? null }, req);
+    await streamPrivatePackage(res, entry);
+  } catch (error: any) {
+    if (!res.headersSent) res.status(503).json({ error: String(error?.message ?? error).slice(0, 300) });
+    else res.destroy();
+  }
 });
 
 // ── Security events ────────────────────────────────────────────────────────
@@ -2548,12 +2898,24 @@ agentPublicRouter.get("/agent/release/custom", async (req, res) => {
   if (!inst) return;
   const kind = String(req.query.kind ?? "") as CustomKind;
   if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "bad_kind" }); return; }
-  const p = customPkgPath(inst.id, kind);
-  const meta = customPkgMeta(inst.id);
-  if (!meta[kind] || !fs.existsSync(p)) { res.status(404).json({ error: "not_uploaded" }); return; }
-  await logAgentEvent(inst.id, "custom_package_downloaded", { kind, filename: meta[kind].filename }, req);
-  const enc = req.query.enc === "1";
-  streamFileMaybeEncrypted(res, p, enc ? `${kind}.enc` : meta[kind].filename, enc ? bundlePassphrase(inst) : null);
+  const meta = readPackageMap(inst.externalPackageMeta);
+  const entry = meta[kind];
+  if (!entry || !verifyPackageEntry(inst.id, kind, entry)) { res.status(404).json({ error: "not_uploaded" }); return; }
+  // Stored custom packages are always encrypted. `enc=1` remains accepted for
+  // URL compatibility but never causes double encryption.
+  await logAgentEvent(inst.id, "custom_package_downloaded", {
+    kind,
+    filename: entry.filename,
+    sha256: entry.sha256,
+    encrypted: true,
+  }, req);
+  try {
+    res.setHeader("Content-Disposition", `attachment; filename="${kind}.enc"`);
+    await streamPrivatePackage(res, entry);
+  } catch (error: any) {
+    if (!res.headersSent) res.status(503).json({ error: "package_unavailable" });
+    else res.destroy();
+  }
 });
 
 // POST /api/agent/heartbeat — instance validation. Body:

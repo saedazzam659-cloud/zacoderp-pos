@@ -30,6 +30,14 @@ export const agentInstancesTable = pgTable("agent_instances", {
   status:    text("status").notNull().default("active"),
   // frontend_only (React build + central API)  |  full_shell (thin backend shell)
   mode:      text("mode").notNull().default("frontend_only"),
+  // central = install the currently published central release
+  // external = install a durable, encrypted backend/frontend/database package
+  // uploaded for this full-edition instance. Runtime mode deliberately remains
+  // "full" so licensing, heartbeats, and manual central updates stay compatible.
+  packageSource: text("package_source").notNull().default("central"),
+  // Private object paths + integrity metadata. publicRow() must strip paths and
+  // signatures before returning an agent to the browser.
+  externalPackageMeta: jsonb("external_package_meta"),
 
   // Identity & license
   installationId:   text("installation_id").notNull(),  // opaque unique id baked into the instance

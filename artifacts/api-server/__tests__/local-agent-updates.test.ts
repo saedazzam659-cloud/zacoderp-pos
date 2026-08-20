@@ -17,6 +17,19 @@ import {
   buildManualUpdateScript,
   stripLegacyUpdateCron,
 } from "../src/routes/localAgentUpdates.ts";
+import {
+  AGENT_DB_EXCLUDED_TABLE_DATA,
+  EXTERNAL_PACKAGE_KINDS,
+  createDirectUploadTarget,
+  encryptedPackageSize,
+  objectPathToPrivateKey,
+  packageObjectKey,
+  packageSignature,
+  privateFileForObjectPath,
+  removePackageObject,
+  verifyPackageEntry,
+  type ExternalPackageEntry,
+} from "../src/lib/agentExternalPackages.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -65,6 +78,121 @@ test("custom uploaded-package URLs never contain release credentials", () => {
   assert.equal(url, "https://central.example/api/agent/release/custom?kind=backend&enc=1");
   assert.equal(url.includes("installationId"), false);
   assert.equal(url.includes("licenseKey"), false);
+});
+
+test("external package integrity signature is bound to agent, kind, size, digest, and format", () => {
+  const previous = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = "test-session-secret-at-least-sixteen-characters";
+  try {
+    const base = {
+      agentId: 17,
+      kind: "backend" as const,
+      sha256: "a".repeat(64),
+      sizeBytes: 12_345,
+      format: "tgz" as const,
+    };
+    const entry: ExternalPackageEntry = {
+      objectPath: "/objects/agent-packages/17/packages/backend-test.enc",
+      filename: "backend.tgz",
+      sizeBytes: base.sizeBytes,
+      sha256: base.sha256,
+      signature: packageSignature(base),
+      uploadedAt: new Date(0).toISOString(),
+      version: "test-version",
+      format: base.format,
+      encrypted: true,
+      verified: true,
+      origin: "generated",
+    };
+    assert.equal(verifyPackageEntry(17, "backend", entry), true);
+    assert.equal(verifyPackageEntry(18, "backend", entry), false);
+    assert.equal(verifyPackageEntry(17, "frontend", entry), false);
+    assert.equal(verifyPackageEntry(17, "backend", { ...entry, sizeBytes: entry.sizeBytes + 1 }), false);
+    assert.equal(verifyPackageEntry(17, "backend", { ...entry, sha256: "b".repeat(64) }), false);
+  } finally {
+    if (previous === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = previous;
+  }
+});
+
+test("private package paths remain under the caller-owned agent namespace", () => {
+  assert.equal(
+    objectPathToPrivateKey("/objects/agent-packages/17/packages/backend-test.enc"),
+    "agent-packages/17/packages/backend-test.enc",
+  );
+  assert.throws(() => objectPathToPrivateKey("/public/backend.enc"));
+  assert.throws(() => objectPathToPrivateKey("/objects/agent-packages/17/../other.enc"));
+  assert.match(packageObjectKey(17, "backend", "staging"), /^agent-packages\/17\/staging\/backend-\d+-[a-f0-9]{16}\.upload$/);
+  assert.match(packageObjectKey(17, "backend", "packages"), /^agent-packages\/17\/packages\/backend-\d+-[a-f0-9]{16}\.enc$/);
+});
+
+test("encrypted package sizing accounts for the OpenSSL header and CBC padding at the raw upload limit", () => {
+  const rawLimit = 800 * 1024 * 1024;
+  assert.equal(encryptedPackageSize(0), 32);
+  assert.equal(encryptedPackageSize(1), 32);
+  assert.equal(encryptedPackageSize(16), 48);
+  assert.equal(encryptedPackageSize(rawLimit), rawLimit + 32);
+});
+
+test("direct upload session enforces the declared size before creating a staging object", async t => {
+  if (!process.env.PRIVATE_OBJECT_DIR) {
+    t.skip("private object storage is unavailable");
+    return;
+  }
+  const origin = "https://direct-upload-test.example";
+  const oversized = await createDirectUploadTarget(2_147_483_000, "backend", 3, origin);
+  try {
+    const response = await fetch(oversized.uploadURL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: Buffer.from("1234"),
+    });
+    assert.equal(response.ok, false);
+    assert.equal((await privateFileForObjectPath(oversized.objectPath).exists())[0], false);
+  } finally {
+    await removePackageObject(oversized.objectPath);
+  }
+
+  const exact = await createDirectUploadTarget(2_147_483_000, "backend", 3, origin);
+  try {
+    const preflight = await fetch(exact.uploadURL, {
+      method: "OPTIONS",
+      headers: {
+        Origin: origin,
+        "Access-Control-Request-Method": "PUT",
+        "Access-Control-Request-Headers": "content-type",
+      },
+    });
+    assert.equal(preflight.ok, true);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), origin);
+    assert.match(preflight.headers.get("access-control-allow-methods") ?? "", /\bPUT\b/);
+    const response = await fetch(exact.uploadURL, {
+      method: "PUT",
+      headers: { Origin: origin, "Content-Type": "application/octet-stream" },
+      body: Buffer.from("123"),
+    });
+    assert.equal(response.ok, true);
+    assert.equal(response.headers.get("access-control-allow-origin"), origin);
+    const file = privateFileForObjectPath(exact.objectPath);
+    assert.equal((await file.exists())[0], true);
+    assert.equal(Number((await file.getMetadata())[0].size), 3);
+  } finally {
+    await removePackageObject(exact.objectPath);
+  }
+});
+
+test("external edition requires all three encrypted artifacts and strips control-plane identity data from DB exports", () => {
+  assert.deepEqual(EXTERNAL_PACKAGE_KINDS, ["backend", "frontend", "db"]);
+  for (const table of [
+    "agent_instances",
+    "agent_servers",
+    "agent_security_events",
+    "zacod_installation",
+    "sa_sessions",
+    "sa_otp_codes",
+  ]) {
+    assert.equal(AGENT_DB_EXCLUDED_TABLE_DATA.includes(table as any), true, `${table} must not be copied into an external agent DB package`);
+  }
 });
 
 test("release ID changes when only a public frontend asset changes", async () => {
