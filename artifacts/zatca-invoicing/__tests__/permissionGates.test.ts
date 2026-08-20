@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  companyExplicitlyEnablesModule,
   companyAllowsPermissionModule,
 } from "../src/lib/companyModuleGate.ts";
 import {
@@ -130,4 +131,19 @@ test("customer and supplier note permissions follow their company modules", () =
 test("legacy defaults and locked defaults remain unchanged", () => {
   assert.equal(companyAllowsPermissionModule({}, "cash_boxes"), true);
   assert.equal(companyAllowsPermissionModule({}, "office"), false);
+});
+
+test("optional ZATCA prompts require the module to be explicitly enabled", () => {
+  assert.equal(
+    companyExplicitlyEnablesModule({ company: { menuPermissions: {} } }, "zatca_setup"),
+    false,
+  );
+  assert.equal(
+    companyExplicitlyEnablesModule({ company: { menuPermissions: { zatca: true } } }, "zatca_setup"),
+    true,
+  );
+  assert.equal(
+    companyExplicitlyEnablesModule({ company: { menuPermissions: "{\"zatca\":false}" } }, "zatca_setup"),
+    false,
+  );
 });

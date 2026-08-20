@@ -28,6 +28,7 @@ import { usePermission } from "@/hooks/usePermission";
 import { useFmt } from "@/hooks/use-fmt";
 import BranchFilter from "@/components/BranchFilter";
 import { dashboardOverviewApi, type DashboardOverview } from "@/lib/dashboardOverviewApi";
+import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 
 // ─── KPI Tile (SAP Fiori-style) ────────────────────────────────────────────────
 type Tone = "primary" | "success" | "warning" | "danger" | "info" | "violet" | "amber";
@@ -207,7 +208,12 @@ export default function Dashboard() {
   });
 
   const ownCompany = user?.company;
-  const isNotRegistered = ownCompany && !ownCompany.zatcaPcsid;
+  // This is an optional ZATCA onboarding prompt, not a general company
+  // warning. Keep it hidden until the company explicitly enables the ZATCA
+  // module, then remove it as soon as its PCSID registration is complete.
+  const showZatcaOnboarding = !!ownCompany
+    && companyExplicitlyEnablesModule(user, "zatca_setup")
+    && !ownCompany.zatcaPcsid;
 
   // Subscription expiry warning: show an eye-catching banner once the company's
   // subscription is within `warningDays` of (or past) its end date. Days/contact
@@ -277,7 +283,7 @@ export default function Dashboard() {
       )}
 
       {/* ZATCA onboarding banner */}
-      {isNotRegistered && (
+      {showZatcaOnboarding && (
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
             <ShieldCheck className="h-5 w-5 text-amber-600" />

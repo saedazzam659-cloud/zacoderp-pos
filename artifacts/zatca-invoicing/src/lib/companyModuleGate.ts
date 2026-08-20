@@ -166,6 +166,26 @@ export function companyAllowsModule(user: any, permKey?: string): boolean {
 }
 
 /**
+ * True only when a company has explicitly selected the high-level module.
+ *
+ * Unlike companyAllowsModule(), this deliberately does not inherit legacy
+ * default-on behavior. Use it for optional prompts that must stay hidden
+ * until the company actively enables a paid/integration module.
+ */
+export function companyExplicitlyEnablesModule(user: any, permKey?: string): boolean {
+  const gateKey = permKey ? COMPANY_MODULE_GATE[permKey] : undefined;
+  if (!gateKey) return false;
+  const raw = user?.company?.menuPermissions;
+  if (raw == null) return false;
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return !!parsed && typeof parsed === "object" && parsed[gateKey] === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Pure company-level gate used by permission editors that already have the
  * target company's menuPermissions value but do not have an auth-user object.
  * Keeping it here makes the editor, sidebar and route guards interpret missing
