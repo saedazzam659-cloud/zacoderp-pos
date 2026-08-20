@@ -16,3 +16,4 @@ Active policy (reverted from strict single-browser after it locked out a legitim
 - Revoking a device must clear the workspace user's sessionToken/sessionId (and deactivate shadows) so old bearers die even with the old cookie.
 - All login/link mutations serialize on `pg_advisory_xact_lock(90_000_000 + sourceUserId)`.
 - SameSite=None seen in the Replit preview is proxy rewriting, not a bug.
+- First-device preparation UX must use a credential-gated, read-only server probe against the HttpOnly cookie binding before the mutating login; never infer demo setup from request duration or a localStorage “seen” marker. **Why:** the authoritative new-binding signal otherwise arrives only after the slow clone has already finished.

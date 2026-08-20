@@ -69,6 +69,7 @@ import {
   DEMO_BROWSER_COOKIE,
   decorateDemoShadowUser,
   DemoDeviceError,
+  needsDemoDevicePreparation,
   readDemoBrowserCookie,
   releaseDemoDeviceLink,
   resolveDemoDeviceLogin,
@@ -408,6 +409,15 @@ router.post("/login", async (req, res) => {
   // and subscription gates pass. The HttpOnly cookie wins; the body token is
   // accepted only as a one-time migration path from the former localStorage
   // implementation.
+  if (req.body?.intent === "check_demo_preparation") {
+    const needsPreparation = await needsDemoDevicePreparation(
+      user,
+      readDemoBrowserCookie(req.headers.cookie) ?? req.body?.demoDeviceToken,
+    );
+    res.json({ needsPreparation });
+    return;
+  }
+
   let demoLogin: Awaited<ReturnType<typeof resolveDemoDeviceLogin>> | null = null;
   try {
     demoLogin = await resolveDemoDeviceLogin({

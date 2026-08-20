@@ -66,6 +66,29 @@ export function readDemoBrowserCookie(rawHeader: string | undefined): string | u
   return undefined;
 }
 
+/**
+ * Read-only probe used by the login screen before the real login request.
+ * It lets the browser show the first-device preparation experience only for
+ * demo-isolated users whose current HttpOnly browser token has no ready link.
+ */
+export async function needsDemoDevicePreparation(
+  sourceUser: SourceUser,
+  rawDeviceToken: unknown,
+): Promise<boolean> {
+  if (!isDemoDeviceIsolationEnabled() || !sourceUser.demoDeviceIsolation) return false;
+  if (!validDeviceToken(rawDeviceToken)) return true;
+
+  const [binding] = await db.select({
+    status: demoDeviceWorkspacesTable.status,
+    revokedAt: demoDeviceWorkspacesTable.revokedAt,
+  }).from(demoDeviceWorkspacesTable).where(and(
+    eq(demoDeviceWorkspacesTable.sourceUserId, sourceUser.id),
+    eq(demoDeviceWorkspacesTable.deviceTokenHash, sha256(rawDeviceToken)),
+  )).limit(1);
+
+  return !binding || binding.status !== "ready" || binding.revokedAt != null;
+}
+
 export async function verifyStrictDemoBrowserBinding(
   sourceUserId: number,
   rawDeviceToken: string | undefined,

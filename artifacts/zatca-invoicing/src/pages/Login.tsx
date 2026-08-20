@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { CountrySelector } from "@/components/CountrySelector";
+import { DemoProvisioningOverlay } from "@/components/DemoProvisioningOverlay";
 import { useVisitorCountry } from "@/lib/useVisitorCountry";
 import { getCountryByCode } from "@/lib/countries";
 
@@ -145,6 +146,8 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showDemoPreparation, setShowDemoPreparation] = useState(false);
+  const [demoPreparationProgress, setDemoPreparationProgress] = useState(0);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
@@ -330,11 +333,47 @@ export default function Login() {
     return s;
   };
 
+  const checkDemoPreparation = async (
+    cleanUsername: string,
+    cleanCompanyCode: string,
+  ): Promise<boolean> => {
+    if (!cleanCompanyCode || loginMode !== "company") return false;
+    let legacyDeviceToken = "";
+    try {
+      const stored = localStorage.getItem("zatca_demo_device_token") ?? "";
+      if (/^[A-Za-z0-9_-]{24,256}$/.test(stored)) legacyDeviceToken = stored;
+    } catch { /* HttpOnly cookie remains the primary device identity */ }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: cleanUsername,
+          password,
+          companyCode: cleanCompanyCode,
+          intent: "check_demo_preparation",
+          ...(legacyDeviceToken ? { demoDeviceToken: legacyDeviceToken } : {}),
+        }),
+      });
+      if (!response.ok) return false;
+      const data = await response.json().catch(() => ({}));
+      return data.needsPreparation === true;
+    } catch {
+      // The real login request below remains the source of truth for errors.
+      return false;
+    }
+  };
+
   // ── Submit credentials ─────────────────────────────────────────────────
   const submitCreds = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(""); setInfo("");
     setLoading(true);
+    let preparationShownForAttempt = false;
+    let preparationStartedAt = 0;
+    let loginSucceeded = false;
     try {
       // If we're already in SA mode (e.g. user clicked "أنا سوبر أدمن" first,
       // or Turnstile required them to retry), go straight to SA login.
@@ -348,11 +387,25 @@ export default function Login() {
       // next visit so returning users only have to type it once.
       try {
         const trimmedCode = loginMode === "trainee" ? "" : companyCode.trim().toUpperCase();
-        await login(username.trim(), password, trimmedCode);
+        const trimmedUsername = username.trim();
+        if (await checkDemoPreparation(trimmedUsername, trimmedCode)) {
+          preparationShownForAttempt = true;
+          preparationStartedAt = Date.now();
+          setDemoPreparationProgress(0);
+          setShowDemoPreparation(true);
+        }
+
+        await login(trimmedUsername, password, trimmedCode);
         if (trimmedCode) {
           try { localStorage.setItem(LAST_COMPANY_CODE_KEY, trimmedCode); }
           catch { /* private mode / quota — non-fatal */ }
         }
+        if (preparationShownForAttempt) {
+          setDemoPreparationProgress(100);
+          const elapsed = Date.now() - preparationStartedAt;
+          await new Promise(resolve => window.setTimeout(resolve, Math.max(250, 900 - elapsed)));
+        }
+        loginSucceeded = true;
         goAfterLogin();
         return;
       } catch (err: any) {
@@ -388,6 +441,10 @@ export default function Login() {
       );
     } finally {
       setLoading(false);
+      if (!loginSucceeded) {
+        setShowDemoPreparation(false);
+        setDemoPreparationProgress(0);
+      }
     }
   };
 
@@ -511,6 +568,10 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4 py-8">
+      <DemoProvisioningOverlay
+        isVisible={showDemoPreparation}
+        progress={demoPreparationProgress}
+      />
       <div className="w-full max-w-6xl">
         <div className="flex justify-end items-center gap-2 mb-4">
           {/* Country picker is normally hidden — auto-detection (cookie →

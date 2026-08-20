@@ -14,6 +14,7 @@ import {
   createDemoPairCode,
   DEMO_BROWSER_COOKIE,
   DemoDeviceError,
+  needsDemoDevicePreparation,
   releaseDemoDeviceLink,
   resolveDemoDeviceLogin,
   revokeDemoDevice,
@@ -84,6 +85,11 @@ test("two browsers get two isolated workspaces; first is primary in the source c
   const tokenA = randomBytes(32).toString("base64url");
   const tokenB = randomBytes(32).toString("base64url");
 
+  assert.equal(
+    await needsDemoDevicePreparation(source, tokenA),
+    true,
+    "a new browser should trigger the first-device preparation overlay",
+  );
   const first = await resolveDemoDeviceLogin({
     sourceUser: source, deviceToken: tokenA, deviceLabel: "browser-a",
   });
@@ -91,6 +97,11 @@ test("two browsers get two isolated workspaces; first is primary in the source c
   assert.equal(first.bindingWasCreated, true);
   assert.equal(first.effectiveUser.id, sourceUserId);
   assert.equal(first.workspaceCompanyId, companyId);
+  assert.equal(
+    await needsDemoDevicePreparation(source, tokenA),
+    false,
+    "a ready browser binding should not show preparation again",
+  );
 
   // Same browser returns to the SAME workspace, no new binding.
   const returning = await resolveDemoDeviceLogin({
@@ -257,6 +268,7 @@ test("non-isolated user passes through untouched", async () => {
   await db.update(usersTable).set({ demoDeviceIsolation: false }).where(eq(usersTable.id, sourceUserId));
   try {
     const source = await loadSource();
+    assert.equal(await needsDemoDevicePreparation(source, undefined), false);
     const result = await resolveDemoDeviceLogin({ sourceUser: source, deviceToken: undefined });
     assert.equal(result.deviceToken, null);
     assert.equal(result.deviceLinkId, null);
