@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { useAgentBrandName, useIsAgentDomain } from "@/lib/agentBranding";
+import { useAgentBrandName, useIsAgentDomain, useLocalSuperadminScreens } from "@/lib/agentBranding";
+import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import AgentServerUpdateDialog from "@/components/AgentServerUpdateDialog";
 import {
   LayoutDashboard, Building2, FileText, FileSpreadsheet, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning,
@@ -2372,6 +2373,7 @@ function TopNavDropdown({
 function TopNavBar(props: any) {
   const { t } = useTranslation();
   const { location, isSuperAdmin, user, menuPerms, onNavigate } = props;
+  const localSuperadminScreens = useLocalSuperadminScreens();
   const NOOP = () => {};
   const nav = (close: () => void) => () => {
     close();
@@ -2384,7 +2386,7 @@ function TopNavBar(props: any) {
         className="hidden md:flex items-center gap-1 overflow-x-auto border-b border-sidebar-border bg-sidebar px-3 py-1.5"
         data-testid="topnav-bar"
       >
-        {superAdminNav.map(item => (
+        {superAdminNav.filter(item => isLocalSuperadminScreenAllowed(item.href, localSuperadminScreens)).map(item => (
           <div key={item.href} className="shrink-0">
             <NavItem item={item} location={location} onClick={onNavigate} />
           </div>
@@ -2768,6 +2770,7 @@ function SidebarInner({
   const { t } = useTranslation();
   // Agent-domain brand (e.g. «طفرة») replaces the default app name.
   const agentBrand = useAgentBrandName();
+  const localSuperadminScreens = useLocalSuperadminScreens();
   const filteredBusiness = useMemo(() => companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
   const filteredSystem   = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
@@ -2846,7 +2849,7 @@ function SidebarInner({
       <nav className="flex-1 px-3 py-2 space-y-4 overflow-y-auto">
         {isSuperAdmin ? (
           <div className="space-y-0.5">
-            {superAdminNav.map(item => (
+            {superAdminNav.filter(item => isLocalSuperadminScreenAllowed(item.href, localSuperadminScreens)).map(item => (
               <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
             ))}
           </div>

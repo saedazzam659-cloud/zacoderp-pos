@@ -142,6 +142,7 @@ import extensionsRouter from "../extensions/index.js";
 import { marketplaceRouter, marketplaceAdminRouter } from "./marketplace.js";
 import { resolveDomainCompany } from "../middleware/domainResolver";
 import { dataVersionMiddleware } from "../lib/dataVersion.js";
+import { blockDisabledLocalSuperadmin } from "../lib/localAgentSuperadmin.js";
 
 const router: IRouter = Router();
 
@@ -156,6 +157,12 @@ router.use(dataVersionMiddleware);
 // served from the AGENT's external PostgreSQL (or 403 when suspended).
 // Must run before any data-touching route; public branding/heartbeat exempt.
 router.use(agentDataSourceRouter);
+// Full local agents carry an explicit, trusted edition entitlement in
+// /opt/zacod/config.json. When disabled, hide and deny the entire local
+// Super Admin control plane before auth/session handlers can run.
+router.use("/admin", blockDisabledLocalSuperadmin);
+router.use("/auth/superadmin", blockDisabledLocalSuperadmin);
+router.use("/agent-updates", blockDisabledLocalSuperadmin);
 // لوحة السوبر أدمن ممنوعة نهائيًا من دومينات الوكلاء (نسخ الوكلاء بدون
 // لوحة تحكم مركزية): أي /admin/* عبر دومين وكيل → 404 + تنبيه أمان.
 router.use("/admin", blockSuperadminOnAgentDomains);

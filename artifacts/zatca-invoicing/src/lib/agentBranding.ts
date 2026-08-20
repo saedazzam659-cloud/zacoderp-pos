@@ -7,7 +7,12 @@ import { useEffect, useState } from "react";
  * — instead of the default Zacode name on every screen inside agent
  * companies). One fetch per session, module-level cache.
  */
-type AgentBranding = { isAgentDomain: boolean; brandName: string | null; brandLogoUrl: string | null };
+type AgentBranding = {
+  isAgentDomain: boolean;
+  brandName: string | null;
+  brandLogoUrl: string | null;
+  localSuperadminScreens: string[] | null;
+};
 
 let cache: AgentBranding | null = null;
 let inflight: Promise<AgentBranding> | null = null;
@@ -21,8 +26,11 @@ function fetchBranding(): Promise<AgentBranding> {
         isAgentDomain: !!j?.isAgentDomain,
         brandName: typeof j?.brandName === "string" && j.brandName.trim() ? j.brandName.trim() : null,
         brandLogoUrl: typeof j?.brandLogoUrl === "string" && j.brandLogoUrl ? j.brandLogoUrl : null,
+        localSuperadminScreens: Array.isArray(j?.localSuperadminScreens)
+          ? j.localSuperadminScreens.filter((id: unknown): id is string => typeof id === "string")
+          : null,
       }))
-      .catch(() => (cache = { isAgentDomain: false, brandName: null, brandLogoUrl: null }))
+      .catch(() => (cache = { isAgentDomain: false, brandName: null, brandLogoUrl: null, localSuperadminScreens: null }))
       .then(b => { try { applyDocumentBranding(b); } catch { /* cosmetic only */ } return b; });
   }
   return inflight;
@@ -80,6 +88,15 @@ export function useIsAgentDomain(): boolean {
   const [v, setV] = useState<boolean>(cache?.isAgentDomain ?? false);
   useEffect(() => {
     if (cache == null) fetchBranding().then(b => setV(b.isAgentDomain));
+  }, []);
+  return v;
+}
+
+/** Null means the central platform/default policy: every SA screen is allowed. */
+export function useLocalSuperadminScreens(): string[] | null {
+  const [v, setV] = useState<string[] | null>(cache?.localSuperadminScreens ?? null);
+  useEffect(() => {
+    if (cache == null) fetchBranding().then(b => setV(b.localSuperadminScreens));
   }, []);
   return v;
 }

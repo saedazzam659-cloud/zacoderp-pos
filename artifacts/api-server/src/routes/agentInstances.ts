@@ -69,6 +69,14 @@ import {
   verifyEncryptedPackageObject,
   verifyPackageEntry,
 } from "../lib/agentExternalPackages.js";
+import {
+  effectiveLocalSuperadminEnabled,
+  LOCAL_SUPERADMIN_SCREEN_IDS,
+  normalizeLocalSuperadminScreens,
+  readLocalAgentRuntimeState,
+  validateAgentLocalSuperadmin,
+  validateLocalSuperadminScreenSelection,
+} from "../lib/localAgentSuperadmin.js";
 
 /**
  * SSRF guard for agent-server probes: the SA may point tests at any PUBLIC
@@ -392,6 +400,10 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
   // server — never the ciphertext and never any plaintext fragment.
   return {
     ...rest,
+    localSuperadminEnabled: effectiveLocalSuperadminEnabled(r.mode, r.localSuperadminEnabled),
+    localSuperadminScreens: effectiveLocalSuperadminEnabled(r.mode, r.localSuperadminEnabled)
+      ? normalizeLocalSuperadminScreens(r.localSuperadminScreens)
+      : [],
     dbUrlSet: !!dbUrlEnc,
     sshSecretSet: !!sshSecretEnc,
     proxyTokenSet: !!proxySecretEnc,
@@ -477,6 +489,10 @@ const upsertSchema = z.object({
   extraDomains: z.array(z.string().min(3).max(255)).max(20).nullish(),
   mode: z.enum(["frontend_only", "full_shell", "full"]).optional(),
   packageSource: z.enum(["central", "external"]).optional(),
+  localSuperadminEnabled: z.boolean().optional(),
+  localSuperadminScreens: z.array(z.enum(LOCAL_SUPERADMIN_SCREEN_IDS))
+    .max(LOCAL_SUPERADMIN_SCREEN_IDS.length)
+    .nullish(),
   maxCompanies: z.number().int().positive().nullish(),
   licenseExpiresAt: z.string().nullish(),           // ISO date
   // Secrets — write-only. Empty string / undefined = keep existing.
@@ -500,21 +516,6 @@ const upsertSchema = z.object({
   saPassword: z.string().max(200).nullish(),
 });
 
-/** يتحقق من حقول سوبر أدمن الوكيل (نفس قواعد حسابات السوبر أدمن المركزية).
- *  يعيد رسالة الخطأ أو null. */
-function validateSaFields(d: { saUsername?: string | null; saEmail?: string | null; saPassword?: string | null }): string | null {
-  const u = (d.saUsername ?? "").trim().toLowerCase();
-  if (u && !/^[a-z0-9._-]{3,32}$/.test(u)) return "اسم مستخدم السوبر أدمن يجب أن يكون 3-32 حرفًا (أحرف إنجليزية صغيرة وأرقام و . _ -)";
-  const e = (d.saEmail ?? "").trim().toLowerCase();
-  if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return "إيميل السوبر أدمن (OTP) غير صالح";
-  const p = d.saPassword ?? "";
-  if (p) {
-    if (p.length < 10) return "كلمة مرور السوبر أدمن يجب أن تكون 10 أحرف فأكثر";
-    if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) return "كلمة مرور السوبر أدمن يجب أن تحتوي على أحرف وأرقام";
-  }
-  return null;
-}
-
 // POST /api/admin/agent-instances
 router.post("/", async (req, res) => {
   const p = upsertSchema.safeParse(req.body);
@@ -532,8 +533,19 @@ router.post("/", async (req, res) => {
   catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 120) }); return; }
   const conflict = await findDomainConflict([domain, ...extras], null);
   if (conflict) { res.status(409).json({ error: `الدومين ${conflict} مسجّل لوكيل آخر` }); return; }
-  const saErr = validateSaFields(d);
+  const mode = d.mode ?? "frontend_only";
+  const localSuperadminEnabled = effectiveLocalSuperadminEnabled(mode, d.localSuperadminEnabled);
+  const localSuperadminScreens = localSuperadminEnabled ? normalizeLocalSuperadminScreens(d.localSuperadminScreens) : [];
+  const saErr = validateAgentLocalSuperadmin({
+    mode,
+    enabled: localSuperadminEnabled,
+    username: localSuperadminEnabled ? d.saUsername : null,
+    email: localSuperadminEnabled ? d.saEmail : null,
+    password: localSuperadminEnabled ? d.saPassword : null,
+  });
   if (saErr) { res.status(400).json({ error: saErr }); return; }
+  const screenErr = validateLocalSuperadminScreenSelection(localSuperadminEnabled, localSuperadminScreens);
+  if (screenErr) { res.status(400).json({ error: screenErr }); return; }
   if (d.packageSource === "external") {
     res.status(400).json({ error: "ارفع ملفات النسخة الخارجية الثلاثة وتحقق منها قبل حفظ نوع النسخة" });
     return;
@@ -542,7 +554,7 @@ router.post("/", async (req, res) => {
   const installationId = randomUUID();
   const [row] = await db.insert(agentInstancesTable).values({
     name: d.name, contactPhone: d.contactPhone ?? null, contactEmail: d.contactEmail ?? null,
-    domain, extraDomains: extras, mode: d.mode ?? "frontend_only", packageSource: "central",
+    domain, extraDomains: extras, mode, packageSource: "central", localSuperadminEnabled, localSuperadminScreens,
     installationId,
     licenseKey: mintLicenseKey(installationId, domain),
     licenseExpiresAt: d.licenseExpiresAt ? new Date(d.licenseExpiresAt) : null,
@@ -556,9 +568,9 @@ router.post("/", async (req, res) => {
       : (d.brandLogoUrl ?? null),
     brandColor: d.brandColor ?? null,
     notes: d.notes ?? null,
-    saUsername: (d.saUsername ?? "").trim().toLowerCase() || null,
-    saEmail: (d.saEmail ?? "").trim().toLowerCase() || null,
-    saPasswordEnc: d.saPassword ? encryptSecret(d.saPassword) : null,
+    saUsername: localSuperadminEnabled ? ((d.saUsername ?? "").trim().toLowerCase() || null) : null,
+    saEmail: localSuperadminEnabled ? ((d.saEmail ?? "").trim().toLowerCase() || null) : null,
+    saPasswordEnc: localSuperadminEnabled && d.saPassword ? encryptSecret(d.saPassword) : null,
     createdByUserId: (req as any).authUser?.id ?? null,
   }).returning();
   clearAgentHostCache();
@@ -612,10 +624,32 @@ router.put("/:id", async (req, res) => {
     const conflict = await findDomainConflict(all, id);
     if (conflict) { res.status(409).json({ error: `الدومين ${conflict} مسجّل لوكيل آخر` }); return; }
   }
-  const saErr = validateSaFields(d);
-  if (saErr) { res.status(400).json({ error: saErr }); return; }
   const effectiveMode = d.mode ?? existing.mode;
   const effectivePackageSource = d.packageSource ?? existing.packageSource;
+  const localSuperadminEnabled = effectiveLocalSuperadminEnabled(
+    effectiveMode,
+    d.localSuperadminEnabled ?? existing.localSuperadminEnabled,
+  );
+  const localSuperadminScreens = localSuperadminEnabled
+    ? normalizeLocalSuperadminScreens(d.localSuperadminScreens ?? existing.localSuperadminScreens)
+    : [];
+  const effectiveSaUsername = d.saUsername !== undefined
+    ? (d.saUsername ?? "").trim().toLowerCase()
+    : (existing.saUsername ?? "").trim().toLowerCase();
+  const effectiveSaEmail = d.saEmail !== undefined
+    ? (d.saEmail ?? "").trim().toLowerCase()
+    : (existing.saEmail ?? "").trim().toLowerCase();
+  const saErr = validateAgentLocalSuperadmin({
+    mode: effectiveMode,
+    enabled: localSuperadminEnabled,
+    username: localSuperadminEnabled ? effectiveSaUsername : null,
+    email: localSuperadminEnabled ? effectiveSaEmail : null,
+    password: localSuperadminEnabled ? d.saPassword : null,
+    passwordAlreadySet: !!existing.saPasswordEnc,
+  });
+  if (saErr) { res.status(400).json({ error: saErr }); return; }
+  const screenErr = validateLocalSuperadminScreenSelection(localSuperadminEnabled, localSuperadminScreens);
+  if (screenErr) { res.status(400).json({ error: screenErr }); return; }
   if (effectivePackageSource === "external") {
     if (effectiveMode !== "full") {
       res.status(400).json({ error: "«نسخة كاملة خارجية» متاحة لوضع النسخة الكاملة فقط" });
@@ -629,12 +663,45 @@ router.put("/:id", async (req, res) => {
   }
   if (d.packageSource !== undefined) patch.packageSource = d.packageSource;
   if (effectiveMode !== "full" && effectivePackageSource !== "central") patch.packageSource = "central";
-  if (d.saUsername !== undefined) patch.saUsername = (d.saUsername ?? "").trim().toLowerCase() || null;
-  if (d.saEmail !== undefined) patch.saEmail = (d.saEmail ?? "").trim().toLowerCase() || null;
+  if (d.localSuperadminEnabled !== undefined || d.mode !== undefined) patch.localSuperadminEnabled = localSuperadminEnabled;
+  if (d.localSuperadminScreens !== undefined || d.localSuperadminEnabled !== undefined || d.mode !== undefined) {
+    patch.localSuperadminScreens = localSuperadminScreens;
+  }
+  if (localSuperadminEnabled) {
+    if (d.saUsername !== undefined) patch.saUsername = effectiveSaUsername || null;
+    if (d.saEmail !== undefined) patch.saEmail = effectiveSaEmail || null;
+  } else {
+    patch.saUsername = null;
+    patch.saEmail = null;
+    patch.saPasswordEnc = null;
+  }
   // Secrets: only overwrite when a NON-EMPTY value is sent (empty = keep).
   if (d.dbUrl) { patch.dbUrlEnc = encryptSecret(d.dbUrl); patch.dbStatus = "not_configured"; patch.dbLastError = null; }
   if (d.sshSecret) { patch.sshSecretEnc = encryptSecret(d.sshSecret); patch.sshStatus = "not_configured"; }
-  if (d.saPassword) patch.saPasswordEnc = encryptSecret(d.saPassword);
+  if (localSuperadminEnabled && d.saPassword) patch.saPasswordEnc = encryptSecret(d.saPassword);
+
+  const candidate = { ...existing, ...patch } as typeof agentInstancesTable.$inferSelect;
+  const existingEntitlement = effectiveLocalSuperadminEnabled(existing.mode, existing.localSuperadminEnabled);
+  const entitlementChanged = existingEntitlement !== localSuperadminEnabled || existing.mode !== effectiveMode;
+  const credentialsChanged = d.saUsername !== undefined || d.saEmail !== undefined || !!d.saPassword;
+  const screensChanged = d.localSuperadminScreens !== undefined
+    && JSON.stringify(normalizeLocalSuperadminScreens(existing.localSuperadminScreens))
+      !== JSON.stringify(localSuperadminScreens);
+  if (existing.deployStatus === "ok" && (entitlementChanged || credentialsChanged || screensChanged)) {
+    try {
+      if (entitlementChanged || credentialsChanged) {
+        await syncInstalledAgentSuperadminPolicy(candidate);
+      } else {
+        await syncInstalledAgentConfigEntitlement(candidate);
+      }
+    } catch (e: any) {
+      res.status(502).json({
+        error: "تعذّر تطبيق إعداد لوحة Super Admin على السيرفر المثبّت — لم تُحفظ التغييرات المركزية",
+        detail: String(e?.message ?? e).slice(0, 400),
+      });
+      return;
+    }
+  }
 
   const [row] = await db.update(agentInstancesTable).set(patch).where(eq(agentInstancesTable.id, id)).returning();
   clearAgentHostCache();
@@ -684,31 +751,105 @@ async function withAgentPool<T>(dbUrlEnc: string, fn: (pool: PgPoolType) => Prom
   try { return await fn(pool); } finally { await pool.end().catch(() => {}); }
 }
 
-/** يزرع/يحدّث حساب السوبر أدمن في قاعدة بيانات الوكيل (النسخة الكاملة).
- *  upsert باسم المستخدم (company_id IS NULL) — يعيد وصفًا للسجل أو null إذا
- *  لم تُدخل بيانات دخول على صف الوكيل. */
-async function seedAgentSuperadmin(inst: typeof agentInstancesTable.$inferSelect): Promise<string | null> {
+/** يطبّق استحقاق السوبر أدمن على قاعدة الوكيل ويُلغي كل الجلسات القديمة.
+ *  عند التعطيل: يُعطّل كل حسابات SA المحلية ويمسح أسرارها المؤقتة.
+ *  عند التفعيل: يعيد زرع الحساب المحدد فقط ويُبقي بقية حسابات SA معطّلة. */
+async function syncAgentSuperadminAccount(inst: typeof agentInstancesTable.$inferSelect): Promise<string> {
+  if (!inst.dbUrlEnc) throw new Error("لا يوجد رابط قاعدة بيانات لتطبيق سياسة السوبر أدمن");
+  const enabled = effectiveLocalSuperadminEnabled(inst.mode, inst.localSuperadminEnabled);
   const username = (inst.saUsername ?? "").trim().toLowerCase();
   const passwordPlain = inst.saPasswordEnc ? (decryptSecret(inst.saPasswordEnc) ?? "") : "";
-  if (!username || !passwordPlain) return null;
+  if (enabled && (!username || !passwordPlain)) throw new Error("بيانات حساب السوبر أدمن المحلي غير مكتملة");
   const email = (inst.saEmail ?? "").trim().toLowerCase() || null;
-  const bcrypt = (await import("bcryptjs")).default;
-  const passwordHash = await bcrypt.hash(passwordPlain, 12);
   return withAgentPool(inst.dbUrlEnc!, async (pool) => {
-    const existing = await pool.query(
-      `SELECT id FROM users WHERE username = $1 AND company_id IS NULL LIMIT 1`, [username]);
-    if (existing.rows.length) {
-      await pool.query(
-        `UPDATE users SET password_hash = $2, email = COALESCE($3, email), role = 'superadmin', is_active = true, view_all_branches = true WHERE id = $1`,
-        [existing.rows[0].id, passwordHash, email]);
-      return `تم تحديث حساب السوبر أدمن (${username}) في قاعدة الوكيل${email ? ` — إيميل OTP: ${email}` : ""}`;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const superRows = await client.query(
+        `SELECT id FROM users WHERE role = 'superadmin' AND company_id IS NULL FOR UPDATE`,
+      );
+      const ids = superRows.rows.map((row: any) => Number(row.id)).filter(Number.isFinite);
+      if (ids.length) {
+        await client.query(
+          `UPDATE users SET is_active = false, session_token = NULL
+           WHERE id = ANY($1::int[])`,
+          [ids],
+        );
+        await client.query(
+          `UPDATE sa_sessions SET revoked_at = NOW(), revoked_reason = 'local_superadmin_disabled'
+           WHERE user_id = ANY($1::int[]) AND revoked_at IS NULL`,
+          [ids],
+        );
+        await client.query(`DELETE FROM sa_otp_codes WHERE user_id = ANY($1::int[])`, [ids]);
+        await client.query(`DELETE FROM sa_trusted_devices WHERE user_id = ANY($1::int[])`, [ids]);
+        await client.query(`DELETE FROM sa_device_approvals WHERE user_id = ANY($1::int[])`, [ids]);
+        await client.query(`DELETE FROM sa_recovery_links WHERE user_id = ANY($1::int[])`, [ids]);
+        await client.query(`DELETE FROM sa_recovery_codes WHERE user_id = ANY($1::int[])`, [ids]);
+      }
+      if (!enabled) {
+        await client.query("COMMIT");
+        return "تم تعطيل لوحة Super Admin المحلية وإلغاء حساباتها وجلساتها";
+      }
+
+      const bcrypt = (await import("bcryptjs")).default;
+      const passwordHash = await bcrypt.hash(passwordPlain, 12);
+      const existing = await client.query(
+        `SELECT id FROM users WHERE lower(username) = $1 AND company_id IS NULL LIMIT 1`,
+        [username],
+      );
+      if (existing.rows.length) {
+        await client.query(
+          `UPDATE users SET username = $2, password_hash = $3, email = $4,
+             role = 'superadmin', is_active = true, view_all_branches = true
+           WHERE id = $1`,
+          [existing.rows[0].id, username, passwordHash, email],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO users (username, email, password_hash, role, name_ar, is_active, view_all_branches)
+           VALUES ($1, $2, $3, 'superadmin', $4, true, true)`,
+          [username, email, passwordHash, inst.name || "SuperAdmin"],
+        );
+      }
+      await client.query("COMMIT");
+      return `${existing.rows.length ? "تم تحديث" : "تم إنشاء"} حساب السوبر أدمن (${username}) في قاعدة الوكيل — إيميل OTP: ${email}`;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
     }
-    await pool.query(
-      `INSERT INTO users (username, email, password_hash, role, name_ar, is_active, view_all_branches)
-       VALUES ($1, $2, $3, 'superadmin', $4, true, true)`,
-      [username, email, passwordHash, inst.name || "SuperAdmin"]);
-    return `تم إنشاء حساب السوبر أدمن (${username}) في قاعدة الوكيل${email ? ` — إيميل OTP: ${email}` : ""}`;
   });
+}
+
+async function syncInstalledAgentConfigEntitlement(inst: typeof agentInstancesTable.$inferSelect): Promise<void> {
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
+    throw new Error("بيانات SSH غير مكتملة لمزامنة إعداد لوحة Super Admin");
+  }
+  const flag = effectiveLocalSuperadminEnabled(inst.mode, inst.localSuperadminEnabled) ? "1" : "0";
+  const screensB64 = Buffer.from(JSON.stringify(
+    flag === "1" ? normalizeLocalSuperadminScreens(inst.localSuperadminScreens) : [],
+  ), "utf8").toString("base64");
+  const result = await sshRunScript(inst, `set -e
+test -f /opt/zacod/config.json
+ZACOD_LOCAL_SA=${flag} ZACOD_LOCAL_SA_SCREENS_B64=${screensB64} python3 -c "import base64,json,os; p='/opt/zacod/config.json'; c=json.load(open(p)); c['localSuperadminEnabled']=os.environ['ZACOD_LOCAL_SA']=='1'; c['localSuperadminScreens']=json.loads(base64.b64decode(os.environ['ZACOD_LOCAL_SA_SCREENS_B64'])); json.dump(c,open(p,'w'),indent=2,ensure_ascii=False)"
+echo ZACOD_LOCAL_SA_SYNCED`, { timeoutMs: 60_000 });
+  if (result.code !== 0 || !result.out.includes("ZACOD_LOCAL_SA_SYNCED")) {
+    throw new Error("تعذّر تحديث config.json على سيرفر الوكيل");
+  }
+}
+
+async function syncInstalledAgentSuperadminPolicy(inst: typeof agentInstancesTable.$inferSelect): Promise<void> {
+  const enabled = effectiveLocalSuperadminEnabled(inst.mode, inst.localSuperadminEnabled);
+  if (enabled) {
+    // Seed first while the old disabled gate still blocks all access, then open it.
+    await syncAgentSuperadminAccount(inst);
+    await syncInstalledAgentConfigEntitlement(inst);
+    return;
+  }
+  // Close the trusted runtime gate first, then revoke every account/session.
+  await syncInstalledAgentConfigEntitlement(inst);
+  await syncAgentSuperadminAccount(inst);
 }
 
 // POST /:id/test-db — connectivity + fingerprint verification.
@@ -1284,6 +1425,10 @@ async function buildSetupKit(
   const config = {
     domain: inst.domain,
     mode: inst.mode,
+    localSuperadminEnabled: effectiveLocalSuperadminEnabled(inst.mode, inst.localSuperadminEnabled),
+    localSuperadminScreens: effectiveLocalSuperadminEnabled(inst.mode, inst.localSuperadminEnabled)
+      ? normalizeLocalSuperadminScreens(inst.localSuperadminScreens)
+      : [],
     installationId: inst.installationId,
     licenseKey: inst.licenseKey ?? "",
     fingerprint: inst.dbFingerprint ?? "",
@@ -2206,13 +2351,11 @@ echo ZACOD_DB_RESTORED`, "ZACOD_DB_RESTORED", 600_000);
       throw e;
     }
 
-    // 4.5) زرع حساب السوبر أدمن (النسخة الكاملة فقط) — من الحقول المسجلة
-    // على صف الوكيل (اسم مستخدم + كلمة مرور مشفّرة + إيميل OTP اختياري).
+    // 4.5) تطبيق استحقاق لوحة السوبر أدمن المحلية. النسخة بدون لوحة تُعطّل
+    // الحسابات والجلسات القديمة؛ النسخة المفعلة تزرع الحساب المحدد فقط.
     if (inst.mode === "full") {
       await reload();
-      const seeded = await seedAgentSuperadmin(inst);
-      if (seeded) log.push(seeded);
-      else log.push("لم تُدخل بيانات سوبر أدمن للنسخة (اسم مستخدم/كلمة مرور) — تخطّي زرع الحساب. يمكن إضافتها من نموذج التعديل ثم إعادة التسطيب.");
+      log.push(await syncAgentSuperadminAccount(inst));
     }
 
     // 5) full edition: the app itself
@@ -2730,9 +2873,25 @@ export const agentPublicRouter = Router();
 agentPublicRouter.get("/branding", async (req, res) => {
   const host = typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
   const hit = await lookupAgentByHost(host);
-  if (!hit) { res.json({ isAgentDomain: false }); return; }
+  if (!hit) {
+    const local = await readLocalAgentRuntimeState();
+    if (local.isLocalAgent) {
+      res.json({
+        isAgentDomain: true,
+        localSuperadminEnabled: local.localSuperadminEnabled,
+        localSuperadminScreens: local.localSuperadminScreens,
+      });
+      return;
+    }
+    res.json({ isAgentDomain: false, localSuperadminEnabled: true, localSuperadminScreens: [...LOCAL_SUPERADMIN_SCREEN_IDS] });
+    return;
+  }
   res.json({
     isAgentDomain: true,
+    // Requests served by the central control plane never expose a local SA
+    // panel, even if the registered full edition will expose one after install.
+    localSuperadminEnabled: false,
+    localSuperadminScreens: [],
     suspended: hit.status !== "active",
     brandName: hit.brandName, brandLogoUrl: hit.brandLogoUrl, brandColor: hit.brandColor,
   });

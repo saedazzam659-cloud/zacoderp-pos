@@ -10,6 +10,7 @@ import NotFound from "@/pages/not-found";
 import InAppNotFound from "@/components/InAppNotFound";
 import Layout from "@/components/Layout";
 import { useAutoCheckinOnLogin } from "@/hooks/useAutoCheckinOnLogin";
+import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
 import UserTracking from "@/pages/admin/UserTracking";
@@ -505,33 +506,54 @@ function safeRedirectTarget(raw: string | null | undefined): string | null {
   return v;
 }
 
-// نسخ الوكلاء بدون لوحة سوبر أدمن نهائيًا — كاش على مستوى الموديول حتى
-// لا يُستعلم /api/branding إلا مرة واحدة لكل جلسة.
-let __agentDomainCache: boolean | null = null;
-let __agentDomainPromise: Promise<boolean> | null = null;
-function fetchIsAgentDomain(): Promise<boolean> {
+// سياسة نطاق/لوحة الوكيل — كاش على مستوى الموديول حتى لا يُستعلم
+// /api/branding إلا مرة واحدة لكل جلسة.
+type AgentDomainPolicy = { isAgentDomain: boolean; localSuperadminEnabled: boolean; localSuperadminScreens: string[] | null };
+let __agentDomainCache: AgentDomainPolicy | null = null;
+let __agentDomainPromise: Promise<AgentDomainPolicy> | null = null;
+function fetchAgentDomainPolicy(): Promise<AgentDomainPolicy> {
   if (!__agentDomainPromise) {
     const base = import.meta.env.VITE_API_URL ?? "";
     __agentDomainPromise = fetch(`${base}/api/branding?host=${encodeURIComponent(window.location.hostname)}`)
       .then(r => r.json())
-      .then(j => (__agentDomainCache = !!j?.isAgentDomain))
-      .catch(() => (__agentDomainCache = false));
+      .then(j => (__agentDomainCache = {
+        isAgentDomain: !!j?.isAgentDomain,
+        localSuperadminEnabled: j?.localSuperadminEnabled !== false,
+        localSuperadminScreens: Array.isArray(j?.localSuperadminScreens)
+          ? j.localSuperadminScreens.filter((id: unknown): id is string => typeof id === "string")
+          : null,
+      }))
+      .catch(() => (__agentDomainCache = { isAgentDomain: false, localSuperadminEnabled: true, localSuperadminScreens: null }));
   }
   return __agentDomainPromise;
 }
 function useIsAgentDomain(): boolean {
-  const [v, setV] = useState<boolean>(__agentDomainCache ?? false);
+  const [v, setV] = useState<boolean>(__agentDomainCache?.isAgentDomain ?? false);
   useEffect(() => {
-    if (__agentDomainCache == null) fetchIsAgentDomain().then(setV);
+    if (__agentDomainCache == null) fetchAgentDomainPolicy().then(p => setV(p.isAgentDomain));
   }, []);
   return v;
 }
 // نفس الهوك لكن يميّز «غير معروف بعد» (null) عن «ليس دومين وكيل» (false) —
 // تحتاجه صفحات التسويق حتى لا تومض الصفحة الرئيسية قبل قرار التحويل للدخول.
 function useIsAgentDomainNullable(): boolean | null {
-  const [v, setV] = useState<boolean | null>(__agentDomainCache);
+  const [v, setV] = useState<boolean | null>(__agentDomainCache?.isAgentDomain ?? null);
   useEffect(() => {
-    if (__agentDomainCache == null) fetchIsAgentDomain().then(setV);
+    if (__agentDomainCache == null) fetchAgentDomainPolicy().then(p => setV(p.isAgentDomain));
+  }, []);
+  return v;
+}
+function useLocalSuperadminEnabled(): boolean {
+  const [v, setV] = useState<boolean>(__agentDomainCache?.localSuperadminEnabled ?? true);
+  useEffect(() => {
+    if (__agentDomainCache == null) fetchAgentDomainPolicy().then(p => setV(p.localSuperadminEnabled));
+  }, []);
+  return v;
+}
+function useLocalSuperadminScreens(): string[] | null {
+  const [v, setV] = useState<string[] | null>(__agentDomainCache?.localSuperadminScreens ?? null);
+  useEffect(() => {
+    if (__agentDomainCache == null) fetchAgentDomainPolicy().then(p => setV(p.localSuperadminScreens));
   }, []);
   return v;
 }
@@ -548,11 +570,18 @@ function AppRoutes() {
   // يجب أن يبقى هذا الهوك قبل أي early-return (قاعدة الهوكس).
   const isAgentDomain = useIsAgentDomain();
   const agentDomainState = useIsAgentDomainNullable();
+  const localSuperadminEnabled = useLocalSuperadminEnabled();
+  const localSuperadminScreens = useLocalSuperadminScreens();
   // Auto check-in for users explicitly assigned to a tracking zone — runs
   // once per page lifetime, silently skips users with no zone assignment.
   useAutoCheckinOnLogin();
 
   if (loading) return <LoadingScreen />;
+  const isRestrictedLocalSuperadmin = user?.role === "superadmin"
+    && isAgentDomain
+    && localSuperadminEnabled;
+  const localSuperadminRouteAllowed = !isRestrictedLocalSuperadmin
+    || isLocalSuperadminScreenAllowed(location, localSuperadminScreens);
 
   // DevStudio ("التطوير من خلال زاكود") — externally-registered developers are a
   // wholly separate identity (dev_studio_developers + own bearer token in
@@ -664,9 +693,10 @@ function AppRoutes() {
   // to FALSE so all `!isSuperAdmin` tenant routes (Dashboard, Sales,
   // Inventory, …) take over the same paths and the SA actually sees the
   // company's UI instead of the SA shell.
-  // نسخ الوكلاء بدون لوحة سوبر أدمن نهائيًا: على دومين وكيل مسجّل تُخفى
-  // كل مسارات/قوائم السوبر أدمن (والباك اند يحجب /api/admin/* أيضًا).
-  const rawIsSuperAdmin = user?.role === "superadmin" && !isAgentDomain;
+  // نطاقات الوكيل المركزية تبقى بلا لوحة. النسخة الكاملة المحلية تسمح بها
+  // فقط عندما يعلن ملف التثبيت الموثوق الاستحقاق صراحةً/بالتوافق القديم.
+  const rawIsSuperAdmin = user?.role === "superadmin"
+    && (!isAgentDomain || localSuperadminEnabled);
   const isSuperAdmin = rawIsSuperAdmin && !actingCompanyId;
 
   // Reseller (Agent) portal — a wholly separate, self-contained shell with its
@@ -712,7 +742,7 @@ function AppRoutes() {
       {/* Protected routes */}
       <Route>
         <Layout>
-          <Switch>
+          {!localSuperadminRouteAllowed ? <NotFound /> : <Switch>
             {/* Superadmin routes */}
             {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
             {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
@@ -1213,7 +1243,7 @@ function AppRoutes() {
                 above, so SEO crawlers continue to get a proper noindex
                 404 page. */}
             <Route component={InAppNotFound} />
-          </Switch>
+          </Switch>}
         </Layout>
       </Route>
     </Switch>

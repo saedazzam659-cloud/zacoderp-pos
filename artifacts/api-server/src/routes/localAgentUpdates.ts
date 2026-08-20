@@ -11,6 +11,7 @@ const router = Router();
 
 type AgentConfig = {
   mode?: string;
+  localSuperadminEnabled?: boolean;
   domain?: string;
   installationId?: string;
   licenseKey?: string;
@@ -96,6 +97,7 @@ async function readAgentConfig(): Promise<{ config: AgentConfig; paths: AgentPat
   if (
     !config ||
     config.mode !== "full" ||
+    config.localSuperadminEnabled === false ||
     !/^[A-Za-z0-9._-]{8,200}$/.test(safeText(config.installationId, 200)) ||
     !/^[A-Za-z0-9._-]{8,500}$/.test(safeText(config.licenseKey, 500)) ||
     !safeText(config.centralOrigin, 1000)

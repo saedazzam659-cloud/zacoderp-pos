@@ -21,6 +21,7 @@ import {
   Plug, Loader2, CheckCircle2, XCircle, Ban, Play, Copy, Palette, RefreshCw,
   HeartPulse, AlertTriangle, UploadCloud, FileDown, Mail, Check, LockKeyhole,
 } from "lucide-react";
+import { DEFAULT_LOCAL_SUPERADMIN_SCREENS, LOCAL_SUPERADMIN_SCREENS } from "@/lib/localSuperadminScreens";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -61,6 +62,8 @@ type Agent = {
   domain: string; extraDomains: string[] | null;
   status: "active" | "suspended"; mode: "frontend_only" | "full_shell" | "full";
   packageSource: "central" | "external";
+  localSuperadminEnabled: boolean;
+  localSuperadminScreens: string[];
   installationId: string; licenseKey: string | null; licenseExpiresAt: string | null;
   maxCompanies: number | null;
   dbUrlSet: boolean; dbStatus: string; dbLastCheckAt: string | null; dbLastError: string | null;
@@ -116,7 +119,7 @@ type DomainCheckResp = {
 
 const emptyForm = {
   id: 0, name: "", contactPhone: "", contactEmail: "", domain: "", extraDomainsText: "",
-  mode: "frontend_only", packageSource: "central", maxCompanies: "", licenseExpiresAt: "",
+  mode: "frontend_only", packageSource: "central", localSuperadminEnabled: false, localSuperadminScreens: [...DEFAULT_LOCAL_SUPERADMIN_SCREENS], maxCompanies: "", licenseExpiresAt: "",
   dbUrl: "", sshHost: "", sshPort: "22", sshUser: "", sshSecret: "",
   brandName: "", brandLogoUrl: "", brandColor: "", notes: "",
   saUsername: "", saEmail: "", saPassword: "",
@@ -183,17 +186,21 @@ export default function AgentServers() {
         contactPhone: form.contactPhone || null, contactEmail: form.contactEmail || null,
         extraDomains: form.extraDomainsText.split(/[\n,،]+/).map(s => s.trim()).filter(Boolean),
         mode: form.mode,
+        localSuperadminEnabled: form.mode === "full" && form.localSuperadminEnabled,
+        localSuperadminScreens: form.mode === "full" && form.localSuperadminEnabled ? form.localSuperadminScreens : [],
         packageSource: wantsExternal && editingAgent?.packageSource === "external" ? "external" : "central",
         maxCompanies: form.maxCompanies ? Number(form.maxCompanies) : null,
         licenseExpiresAt: form.licenseExpiresAt || null,
         brandName: form.brandName || null, brandColor: form.brandColor || null,
         sshHost: form.sshHost || null, sshPort: form.sshPort ? Number(form.sshPort) : null, sshUser: form.sshUser || null,
         notes: form.notes || null,
-        saUsername: form.saUsername.trim() || null,
-        saEmail: form.saEmail.trim() || null,
       };
-      // كلمة مرور السوبر أدمن: تُرسل فقط عند إدخال قيمة جديدة (فارغ = الإبقاء).
-      if (form.saPassword.trim()) payload.saPassword = form.saPassword.trim();
+      if (form.mode === "full" && form.localSuperadminEnabled) {
+        payload.saUsername = form.saUsername.trim() || null;
+        payload.saEmail = form.saEmail.trim() || null;
+        // كلمة مرور السوبر أدمن: تُرسل فقط عند إدخال قيمة جديدة (فارغ = الإبقاء).
+        if (form.saPassword.trim()) payload.saPassword = form.saPassword.trim();
+      }
       // اللوجو: الـ WAF في الإنتاج يمنع data: URIs داخل جسم الطلب — نرسل
       // base64 + mime منفصلين ويعيد السيرفر بناء الرابط.
       const logo = form.brandLogoUrl.trim();
@@ -250,7 +257,12 @@ export default function AgentServers() {
 
         setFormPackageProgress("اعتماد النسخة الخارجية");
         const finalize = await fetch(`${API}/api/admin/agent-instances/${agentId}`, {
-          method: "PUT", headers, body: JSON.stringify({ packageSource: "external", mode: "full" }),
+          method: "PUT", headers, body: JSON.stringify({
+            packageSource: "external",
+            mode: "full",
+            localSuperadminEnabled: form.localSuperadminEnabled,
+            localSuperadminScreens: form.localSuperadminScreens,
+          }),
         });
         const finalJson = await finalize.json().catch(() => ({}));
         if (!finalize.ok) throw new Error(finalJson.error ?? "فشل اعتماد النسخة الخارجية");
@@ -522,7 +534,12 @@ export default function AgentServers() {
     setForm({
       id: a.id, name: a.name, contactPhone: a.contactPhone ?? "", contactEmail: a.contactEmail ?? "",
       domain: a.domain, extraDomainsText: (a.extraDomains ?? []).join("\n"),
-      mode: a.mode, packageSource: a.packageSource ?? "central", maxCompanies: a.maxCompanies != null ? String(a.maxCompanies) : "",
+      mode: a.mode, packageSource: a.packageSource ?? "central",
+      localSuperadminEnabled: a.mode === "full" && a.localSuperadminEnabled !== false,
+      localSuperadminScreens: Array.isArray(a.localSuperadminScreens)
+        ? a.localSuperadminScreens
+        : [...DEFAULT_LOCAL_SUPERADMIN_SCREENS],
+      maxCompanies: a.maxCompanies != null ? String(a.maxCompanies) : "",
       licenseExpiresAt: a.licenseExpiresAt ? String(a.licenseExpiresAt).slice(0, 10) : "",
       dbUrl: "", sshHost: a.sshHost ?? "", sshPort: a.sshPort != null ? String(a.sshPort) : "22",
       sshUser: a.sshUser ?? "", sshSecret: "",
@@ -593,6 +610,20 @@ export default function AgentServers() {
                           ? a.packageSource === "external" ? "نسخة كاملة خارجية" : "نسخة كاملة (إصدار مركزي)"
                           : a.mode === "frontend_only" ? "واجهة فقط + API مركزي" : "نسخة قشرة كاملة"}
                       </Badge>
+                      {a.mode === "full" && (
+                        <Badge variant="outline" className={`text-[10px] ${
+                          a.localSuperadminEnabled
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-slate-50 text-slate-600 border-slate-200"
+                        }`} data-testid={`badge-agent-local-sa-${a.id}`}>
+                          {a.localSuperadminEnabled ? "مع لوحة Super Admin" : "بدون لوحة Super Admin"}
+                        </Badge>
+                      )}
+                      {a.mode === "full" && a.localSuperadminEnabled && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {a.localSuperadminScreens.length} شاشة محددة
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1" dir="ltr">
                       <Globe className="h-3 w-3" />{a.domain}
@@ -1288,6 +1319,16 @@ export default function AgentServers() {
               <Button variant="outline" onClick={() => setShowForm(false)} data-testid="button-cancel-agent-form">إلغاء</Button>
               <Button onClick={() => {
                 if (!form.name.trim() || !form.domain.trim()) { toast({ title: "الاسم والدومين مطلوبان", variant: "destructive" }); return; }
+                const existingPassword = agents.find(x => x.id === form.id)?.saPasswordSet;
+                if (form.mode === "full" && form.localSuperadminEnabled
+                  && (!form.saUsername.trim() || !form.saEmail.trim() || (!existingPassword && !form.saPassword.trim()))) {
+                  toast({ title: "أكمل بيانات السوبر أدمن المحلي: اسم المستخدم وكلمة المرور وإيميل OTP", variant: "destructive" });
+                  return;
+                }
+                if (form.mode === "full" && form.localSuperadminEnabled && form.localSuperadminScreens.length === 0) {
+                  toast({ title: "اختر شاشة واحدة على الأقل للوحة Super Admin", variant: "destructive" });
+                  return;
+                }
                 saveMut.mutate();
               }} disabled={saveMut.isPending} data-testid="button-save-agent">
                 {saveMut.isPending && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}
@@ -1316,9 +1357,12 @@ export default function AgentServers() {
                 <label className="text-xs text-muted-foreground block mb-1">نوع النسخة</label>
                 <Select
                   value={form.mode === "full" && form.packageSource === "external" ? "full_external" : form.mode}
-                  onValueChange={v => setForm(p => v === "full_external"
-                    ? { ...p, mode: "full", packageSource: "external" }
-                    : { ...p, mode: v, packageSource: "central" })}
+                  onValueChange={v => setForm(p => {
+                    const nextFull = v === "full" || v === "full_external";
+                    return v === "full_external"
+                      ? { ...p, mode: "full", packageSource: "external", localSuperadminEnabled: p.mode === "full" ? p.localSuperadminEnabled : true, localSuperadminScreens: p.mode === "full" ? p.localSuperadminScreens : [...DEFAULT_LOCAL_SUPERADMIN_SCREENS] }
+                      : { ...p, mode: v, packageSource: "central", localSuperadminEnabled: nextFull ? (p.mode === "full" ? p.localSuperadminEnabled : true) : false, localSuperadminScreens: nextFull ? (p.mode === "full" ? p.localSuperadminScreens : [...DEFAULT_LOCAL_SUPERADMIN_SCREENS]) : [] };
+                  })}
                 >
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1329,8 +1373,22 @@ export default function AgentServers() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">لوحة Super Admin المحلية</label>
+                <Select
+                  value={form.localSuperadminEnabled ? "enabled" : "disabled"}
+                  disabled={form.mode !== "full"}
+                  onValueChange={v => set("localSuperadminEnabled", v === "enabled")}
+                >
+                  <SelectTrigger className="h-9" data-testid="select-agent-local-sa"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="enabled">نسخة مع لوحة التحكم Super Admin</SelectItem>
+                    <SelectItem value="disabled">نسخة بدون لوحة التحكم Super Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div><label className="text-xs text-muted-foreground block mb-1">أقصى عدد شركات</label><Input inputMode="numeric" dir="ltr" value={form.maxCompanies} onChange={e => set("maxCompanies", e.target.value)} /></div>
-              {form.mode === "full" && (
+              {form.mode === "full" && form.localSuperadminEnabled && (
                 <div className="col-span-2 border rounded-lg p-3 bg-muted/30 space-y-3">
                   <div className="text-xs font-medium">حساب السوبر أدمن للنسخة الكاملة <span className="text-muted-foreground font-normal">— يُزرع في قاعدة بيانات الوكيل عند التسطيب ليدخل به الوكيل للوحة التحكم</span></div>
                   <div className="grid grid-cols-3 gap-3">
@@ -1341,7 +1399,39 @@ export default function AgentServers() {
                     <div><label className="text-xs text-muted-foreground block mb-1">إيميل استقبال OTP</label>
                       <Input dir="ltr" placeholder="owner@agent.com" value={form.saEmail} onChange={e => set("saEmail", e.target.value)} data-testid="input-agent-sa-email" /></div>
                   </div>
-                  <div className="text-[11px] text-muted-foreground leading-relaxed">كلمة المرور تُحفظ مشفّرة ولا تُعرض بعد الحفظ. عند الدخول للوحة تحكم نسخة الوكيل يصل رمز التحقق (OTP) إلى هذا الإيميل. لو كانت النسخة مسطّبة بالفعل: عدّل البيانات هنا ثم أعد «تسطيب كامل» لتطبيقها.</div>
+                  <div className="text-[11px] text-muted-foreground leading-relaxed">كلمة المرور تُحفظ مشفّرة ولا تُعرض بعد الحفظ. عند الدخول للوحة تحكم نسخة الوكيل يصل رمز التحقق (OTP) إلى هذا الإيميل. إذا كانت النسخة مسطّبة، يطبّق الحفظ التغيير مباشرةً على إعداد السيرفر والحساب والجلسات.</div>
+                </div>
+              )}
+              {form.mode === "full" && form.localSuperadminEnabled && (
+                <div className="col-span-2 border rounded-lg p-3 space-y-3" data-testid="local-superadmin-screens">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <div className="text-xs font-medium">شاشات لوحة Super Admin للوكيل</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">تظهر فقط الشاشات المحددة، والرابط المباشر للشاشة غير المحددة يعرض صفحة غير موجودة.</div>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() =>
+                      set("localSuperadminScreens", form.localSuperadminScreens.length === DEFAULT_LOCAL_SUPERADMIN_SCREENS.length
+                        ? []
+                        : [...DEFAULT_LOCAL_SUPERADMIN_SCREENS])}
+                      data-testid="button-toggle-all-local-sa-screens">
+                      {form.localSuperadminScreens.length === DEFAULT_LOCAL_SUPERADMIN_SCREENS.length ? "إلغاء تحديد الكل" : "تحديد الكل"}
+                    </Button>
+                  </div>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
+                    {LOCAL_SUPERADMIN_SCREENS.map(screen => {
+                      const selected = form.localSuperadminScreens.includes(screen.id);
+                      return (
+                        <label key={screen.id} className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                          <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={selected}
+                            onChange={e => set("localSuperadminScreens", e.target.checked
+                              ? [...form.localSuperadminScreens, screen.id]
+                              : form.localSuperadminScreens.filter(id => id !== screen.id))}
+                            data-testid={`checkbox-local-sa-screen-${screen.id}`} />
+                          <span>{screen.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
               <div><label className="text-xs text-muted-foreground block mb-1">انتهاء الترخيص</label><DateField value={form.licenseExpiresAt} onChange={e => set("licenseExpiresAt", e.target.value)} /></div>

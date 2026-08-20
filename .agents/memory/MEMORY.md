@@ -141,7 +141,7 @@
 - [Demo-edition company seed](demo-edition-seed.md) — register edition:"demo" seeds starter master data after template defaults; SA-only server-side (public signup ignores the flag); master data consumes no doc sequences.
 - [Company template defaults](company-template-defaults.md) — new tenants seeded from template company 10 (settings/sequences/COA); party accounts excluded via refs + container rule + name pattern; zero-COA fallback to default seed.
 - [Purchase return JE two flavors](purchase-return-je-flavors.md) — post_variance flag: default OFF = Cr inventory at DOC net (scale buckets to subtotal, never dump into last); ON = actual cost + variance line.
-- [Agent full edition + provisioning](agent-full-edition-provisioning.md) — mode=full runs the whole bundle locally; release=tar of own dist; shell-safety validators + claim-before-mint + loopback DB URL.
+- [Agent full edition + provisioning](agent-full-edition-provisioning.md) — full local bundle; local-SA entitlement is independent, trusted from local config, fail-closed on corruption, legacy-missing means enabled.
 - [External agent package lifecycle](external-agent-package-lifecycle.md) — external stays mode=full; raw fixed-length private staging is server-validated/encrypted; later updates remain local-admin approved.
 - [Full-agent manual updates](agent-manual-update-policy.md) — central publish never restarts agents; local server SA confirms install, with health-gated rollback and one-time scheduled legacy migration.
 - [Mobile companion app](mobile-companion-app.md) — Expo app calls api-server directly; branchId+customer+warehouseId mandatory on sales create, invoiceType is derived server-side, vouchers need explicit /post.

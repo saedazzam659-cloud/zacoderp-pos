@@ -35,6 +35,13 @@ export const agentInstancesTable = pgTable("agent_instances", {
   // uploaded for this full-edition instance. Runtime mode deliberately remains
   // "full" so licensing, heartbeats, and manual central updates stay compatible.
   packageSource: text("package_source").notNull().default("central"),
+  // Whether a full local edition exposes its own Super Admin control plane.
+  // Default true preserves already-installed full agents; non-full modes are
+  // normalized to false by the API because the entitlement is meaningless there.
+  localSuperadminEnabled: boolean("local_superadmin_enabled").notNull().default(true),
+  // Stable identifiers for the Super Admin screens visible in a full local
+  // edition. NULL means the compatibility default: all known screens.
+  localSuperadminScreens: jsonb("local_superadmin_screens"),
   // Private object paths + integrity metadata. publicRow() must strip paths and
   // signatures before returning an agent to the browser.
   externalPackageMeta: jsonb("external_package_meta"),

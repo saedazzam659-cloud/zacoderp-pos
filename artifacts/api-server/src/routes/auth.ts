@@ -7,6 +7,7 @@ import { randomUUID } from "crypto";
 import dnsPromises from "node:dns/promises";
 import { writeAudit } from "../middleware/permissions.js";
 import { normalizeHost } from "../middleware/domainResolver.js";
+import { isLocalAgentSuperadminDisabled } from "../lib/localAgentSuperadmin.js";
 
 // «النطاق الموطن» — true when the request arrives on a REGISTERED main
 // multi-company domain the company is NOT homed to. Unregistered hosts
@@ -227,7 +228,7 @@ router.post("/login", async (req, res) => {
     const [maybeSuper] = await db.select({ role: usersTable.role })
       .from(usersTable)
       .where(and(eq(usersTable.username, username), isNull(usersTable.companyId)));
-    if (maybeSuper?.role === "superadmin") {
+    if (maybeSuper?.role === "superadmin" && !await isLocalAgentSuperadminDisabled()) {
       res.status(409).json({
         error: "هذا الحساب يتطلب تسجيل دخول السوبر أدمن",
         useSuperAdminFlow: true,

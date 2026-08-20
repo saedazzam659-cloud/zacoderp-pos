@@ -11,6 +11,7 @@ import {
   resolveDemoShadowBinding,
   verifyStrictDemoBrowserBinding,
 } from "../lib/demoDeviceIsolation.js";
+import { isLocalAgentSuperadminDisabled } from "../lib/localAgentSuperadmin.js";
 
 export interface AuthUser {
   id: number;
@@ -21,6 +22,7 @@ export interface AuthUser {
   // Loaded from users.permissions jsonb. May be null/undefined for legacy users
   // and is always undefined for superadmin/admin (they bypass granular checks).
   permissions?: Record<string, Record<string, boolean>> | null;
+  postingPermissions?: Record<string, boolean> | null;
   // Branch-scope visibility. true → user can see every branch of their company.
   // false → user can only see data from branchIds they are linked to.
   viewAllBranches: boolean;
@@ -123,6 +125,7 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
     .from(usersTable)
     .where(eq(usersTable.sessionToken, token));
   if (u?.isActive) {
+    if (u.role === "superadmin" && await isLocalAgentSuperadminDisabled()) return null;
     if (isDemoDeviceIsolationEnabled() && u.isDemoShadow) {
       // Shadow sessions must present the same per-browser cookie that owns
       // their device link — a copied bearer token alone is useless elsewhere.
@@ -164,6 +167,7 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
     .from(usersTable)
     .where(eq(usersTable.id, s.userId));
   if (!su?.isActive || su.role !== "superadmin") return null;
+  if (await isLocalAgentSuperadminDisabled()) return null;
 
   // Use the SA session row id as the stable sessionId so the client
   // /api/auth/me poll matches what was stored on login (multi-session safe).

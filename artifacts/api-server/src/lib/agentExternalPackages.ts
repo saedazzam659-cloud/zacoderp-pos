@@ -20,6 +20,7 @@ export const AGENT_DB_EXCLUDED_TABLE_DATA = [
   "sa_trusted_devices",
   "sa_login_attempts",
   "sa_recovery_codes",
+  "sa_recovery_links",
   "sa_device_approvals",
 ] as const;
 export type ExternalPackageKind = (typeof EXTERNAL_PACKAGE_KINDS)[number];
