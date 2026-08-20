@@ -341,3 +341,24 @@ id = "hh2hVdUy7NhUWXCArMh6O"
 uri = "file://exports/zacode-database.sql.gz"
 type = "unspecified"
 title = "قاعدة بيانات التطوير (SQL مضغوط)"
+
+[[outputs]]
+id = "R8dGcrPobZlOA03e3izzS"
+uri = "file://exports/agent-external-package-dev-2026-08-20/zacode-backend-dev.tar.gz"
+type = "unspecified"
+title = "Backend — بيئة التطوير"
+description = "حزمة Backend جاهزة للرفع في خانة Backend؛ تحتوي index.mjs في جذر الأرشيف."
+
+[[outputs]]
+id = "-EaMxI8t1vy7zuUmU3_vE"
+uri = "file://exports/agent-external-package-dev-2026-08-20/zacode-frontend-dev.tar.gz"
+type = "unspecified"
+title = "Frontend — بيئة التطوير"
+description = "حزمة Frontend جاهزة للرفع في خانة Frontend؛ تحتوي index.html وملفات assets في جذر الأرشيف."
+
+[[outputs]]
+id = "vwr0UPkBHfddoecEe4-fE"
+uri = "file://exports/agent-external-package-dev-2026-08-20/zacode-database-dev.sql.gz"
+type = "unspecified"
+title = "قاعدة البيانات — بيئة التطوير"
+description = "نسخة PostgreSQL كاملة من قاعدة بيانات التطوير، مضغوطة بصيغة SQL.gz وجاهزة للرفع في خانة قاعدة البيانات."
