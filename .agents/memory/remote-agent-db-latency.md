@@ -15,8 +15,8 @@ The pair-lock protocol must be system-wide: protecting one sales path does not p
 
 ## Agent-domain startup traffic
 
-Per-boot additive schema reconciliation for an external agent database must run single-flight in the background. Agent-domain middleware must enter the existing database context and serve login/invoice traffic immediately rather than awaiting the full remote schema scan.
+Shell-agent domains share the central runtime while routing data to a remote agent DB. Per-boot compatibility reconciliation must be single-flight and **fail closed**: no downstream query or mutation may run until a strict columns/enums readiness pass succeeds. A bounded wait may return retryable 503, but never serve against a partially reconciled schema.
 
-**Why:** A central publish once made the first agent request wait behind reconciliation for roughly 160 seconds; the session request timed out and made a healthy company look stopped even though its data was intact.
+**Why:** Awaiting the old full remote scan made the first request hang for roughly 160 seconds; detaching it into the background then let sales queries race missing columns and return HTTP 500. The full scan was slow because it replayed a large serial identity/table/index DDL list over the network.
 
-**How to apply:** Keep reconciliation tenant-bound and retryable, but never put its promise on the request critical path. Regression tests must hold the heal promise open and prove multiple requests proceed immediately while only one heal runs.
+**How to apply:** Request readiness uses the fast strict columns/enums pass only; any DDL failure or required missing table returns 503 and evicts the failed flight for retry. Full structural reconciliation remains an explicit init/preflight operation. Tests must prove pending/failed heals never call downstream handlers.

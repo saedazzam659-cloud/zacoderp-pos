@@ -197,13 +197,16 @@ export async function resolveAgentRequestHost(req: Request): Promise<string | nu
   return normalizeHost((Array.isArray(fwd) ? fwd[0] : fwd) || req.headers.host);
 }
 
-// ── Per-agent, per-boot schema auto-heal ─────────────────────────────────
+// ── Per-agent, per-boot schema readiness ─────────────────────────────────
 // Keyed by agent id + ctx identity so a rotated DB URL (new pool/context)
-// re-heals. Single-flight: concurrent requests start only one background
-// reconciliation; a FAILED heal is retried on the next request (promise
-// removed), while a successful one stays cached for the life of the process.
-// Heal failures are logged but never block traffic.
-const agentHealDone = new Map<number, { ctx: unknown; promise: Promise<void> }>();
+// re-heals. Requests MUST NOT run against the external DB while this pass is
+// pending: new central code can reference a column that the shell agent DB
+// does not have yet. Concurrent requests share one flight; failed flights are
+// removed so the next request can retry.
+type AgentSchemaHealResult =
+  | { ok: true }
+  | { ok: false; error: string };
+const agentHealDone = new Map<number, { ctx: unknown; promise: Promise<AgentSchemaHealResult> }>();
 type AgentDbContext = { db: unknown; pool: unknown };
 type ExternalDbRunner = (c: any, fn: () => any) => any;
 type AgentSchemaHealRunner = () => Promise<void> | void;
@@ -213,32 +216,80 @@ export function startAgentSchemaHeal(
   ctx: AgentDbContext,
   runWithExternalDb: ExternalDbRunner,
   healRunner?: AgentSchemaHealRunner,
-): void {
+): Promise<AgentSchemaHealResult> {
   const prev = agentHealDone.get(agentId);
-  if (prev && prev.ctx === ctx) return;
+  if (prev && prev.ctx === ctx) return prev.promise;
   const promise = (async () => {
-    const runSchemaHealOnActiveDb = healRunner
-      ?? (await import("../lib/ensureSchema.js")).runSchemaHealOnActiveDb;
-    await runWithExternalDb(ctx, () => runSchemaHealOnActiveDb());
+    try {
+      const runSchemaHealOnActiveDb = healRunner
+        ?? (await import("../lib/ensureSchema.js")).runAgentRequestSchemaHealOnActiveDb;
+      await runWithExternalDb(ctx, () => runSchemaHealOnActiveDb());
+      return { ok: true } as const;
+    } catch (e) {
+      const error = String((e as any)?.message ?? e).slice(0, 500);
+      void logAgentEvent(agentId, "schema_heal_failed", { error });
+      return { ok: false, error } as const;
+    }
   })();
   agentHealDone.set(agentId, { ctx, promise });
-  void promise.catch((e) => {
-    // Retry on next request; meanwhile serve traffic (same behavior as before).
+  void promise.then((result) => {
+    if (result.ok) return;
+    // Retry on the next request, but never let an older failed flight remove
+    // a newer context's entry after the agent DB URL rotates.
     if (agentHealDone.get(agentId)?.promise === promise) {
       agentHealDone.delete(agentId);
     }
-    void logAgentEvent(agentId, "schema_heal_failed", { error: String((e as any)?.message ?? e).slice(0, 500) });
   });
+  return promise;
 }
 
-export function serveAgentRequestWhileHealing(
+const AGENT_SCHEMA_REQUEST_WAIT_MS = (() => {
+  const n = Number(process.env.AGENT_SCHEMA_REQUEST_WAIT_MS);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 12_000;
+})();
+
+export async function serveAgentRequestAfterSchemaReady(
   agentId: number,
   ctx: AgentDbContext,
   runWithExternalDb: ExternalDbRunner,
+  res: {
+    setHeader(name: string, value: string): void;
+    status(code: number): { json(body: unknown): void };
+  },
   next: (err?: unknown) => void,
   healRunner?: AgentSchemaHealRunner,
-): void {
-  startAgentSchemaHeal(agentId, ctx, runWithExternalDb, healRunner);
+  waitMs = AGENT_SCHEMA_REQUEST_WAIT_MS,
+): Promise<void> {
+  const heal = startAgentSchemaHeal(agentId, ctx, runWithExternalDb, healRunner);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const result = await Promise.race([
+    heal,
+    new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), waitMs);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+
+  if (result === "timeout") {
+    res.setHeader("Retry-After", "3");
+    res.status(503).json({
+      error: "جاري تجهيز قاعدة بيانات الشركة للإصدار الجديد — أعد المحاولة خلال لحظات",
+      code: "AGENT_SCHEMA_PREPARING",
+      agentSchemaPreparing: true,
+      retryAfterSeconds: 3,
+    });
+    return;
+  }
+  if (!result.ok) {
+    res.setHeader("Retry-After", "5");
+    res.status(503).json({
+      error: "تعذّر تجهيز قاعدة بيانات الشركة بأمان — لم يُنفّذ الطلب",
+      code: "AGENT_SCHEMA_FAILED",
+      agentSchemaFailed: true,
+      retryAfterSeconds: 5,
+    });
+    return;
+  }
   runWithExternalDb(ctx, () => next());
 }
 
@@ -259,19 +310,18 @@ export async function agentDataSourceRouter(req: Request, res: any, next: (err?:
       const { getAgentDbContext } = await import("../lib/agentDb.js");
       const ctx = getAgentDbContext(hit.id, hit.dbUrlEnc);
       const { runWithExternalDb } = await import("@workspace/db");
-      // ── Auto schema heal (once per agent per server boot) ────────────
+      // ── Schema readiness gate (once per agent per server boot) ──────
       // Central deploys add columns/enums the agent DB doesn't have yet;
       // previously the agent DB was only reconciled during the privileged
       // init/تهيئة flow, so every central schema addition broke agent-domain
-      // requests (e.g. login 500) until a manual re-init. Here we run the
-      // same idempotent additive reconciliation (ADD COLUMN/VALUE IF NOT
-      // EXISTS) against the agent DB in the background. Existing traffic
-      // must not wait for a remote schema scan after every central publish.
+      // requests (e.g. login 500) until a manual re-init. Never let a request
+      // race the additive reconciliation: wait briefly, then return a
+      // retryable 503 without executing the downstream query or mutation.
       // This touches
       // ONLY schema — it never reads or writes zacod_installation, the
       // fingerprint, or any encrypted material, so identity/fingerprint
       // guarantees are untouched.
-      serveAgentRequestWhileHealing(hit.id, ctx, runWithExternalDb, next);
+      await serveAgentRequestAfterSchemaReady(hit.id, ctx, runWithExternalDb, res, next);
       return;
     }
     next();

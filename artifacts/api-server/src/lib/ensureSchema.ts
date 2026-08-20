@@ -114,9 +114,29 @@ function collectSchemaEntities(): {
   return { tables, enums };
 }
 
-async function ensureEnums(enums: { name: string; values: readonly string[] }[]): Promise<string[]> {
+export function assertStrictSchemaReady(input: {
+  failures: string[];
+  missingTables?: string[];
+  optionalMissingTables?: readonly string[];
+}): void {
+  const optional = new Set(input.optionalMissingTables ?? []);
+  const blockingMissingTables = (input.missingTables ?? []).filter((name) => !optional.has(name));
+  if (!input.failures.length && !blockingMissingTables.length) return;
+  const parts: string[] = [];
+  if (input.failures.length) parts.push(`DDL failures: ${input.failures.slice(0, 5).join("; ")}`);
+  if (blockingMissingTables.length) {
+    parts.push(`missing tables: ${blockingMissingTables.slice(0, 10).join(", ")}`);
+  }
+  throw new Error(`schema reconciliation incomplete — ${parts.join(" | ")}`);
+}
+
+async function ensureEnums(
+  enums: { name: string; values: readonly string[] }[],
+  options: { strict?: boolean } = {},
+): Promise<string[]> {
   if (enums.length === 0) return [];
   const applied: string[] = [];
+  const failures: string[] = [];
 
   // Pull existing enum types + their labels in one round-trip.
   const existingTypes = (await db.execute<ExistingEnum>(sql`
@@ -144,6 +164,7 @@ async function ensureEnums(enums: { name: string; values: readonly string[] }[])
         applied.push(stmt);
       } catch (err) {
         logger.warn({ err, stmt }, "ensureSchema: failed to create enum type (continuing)");
+        failures.push(`${e.name}: ${String((err as any)?.message ?? err).slice(0, 180)}`);
       }
       continue;
     }
@@ -157,19 +178,23 @@ async function ensureEnums(enums: { name: string; values: readonly string[] }[])
           applied.push(stmt);
         } catch (err) {
           logger.warn({ err, stmt }, "ensureSchema: failed to add enum value (continuing)");
+          failures.push(`${e.name}.${v}: ${String((err as any)?.message ?? err).slice(0, 180)}`);
         }
       }
     }
   }
 
+  if (options.strict) assertStrictSchemaReady({ failures });
   return applied;
 }
 
 async function ensureColumns(
   tables: { name: string; columns: ReturnType<typeof getTableConfig>["columns"] }[],
+  options: { strict?: boolean; optionalMissingTables?: readonly string[] } = {},
 ): Promise<{ applied: string[]; missingTables: string[] }> {
   const applied: string[] = [];
   const missingTables: string[] = [];
+  const failures: string[] = [];
 
   // Snapshot which tables / columns currently exist in the public schema.
   const tableRows = (await db.execute<ExistingTable>(sql`
@@ -257,10 +282,18 @@ async function ensureColumns(
         applied.push(stmt);
       } catch (err) {
         logger.warn({ err, stmt }, "ensureSchema: failed to add column (continuing)");
+        failures.push(`${t.name}.${col.name}: ${String((err as any)?.message ?? err).slice(0, 180)}`);
       }
     }
   }
 
+  if (options.strict) {
+    assertStrictSchemaReady({
+      failures,
+      missingTables,
+      optionalMissingTables: options.optionalMissingTables,
+    });
+  }
   return { applied, missingTables };
 }
 
@@ -2784,21 +2817,31 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
   return applied;
 }
 
-async function runHeal(): Promise<void> {
+async function runHeal(options: {
+  includeIdentitySteps?: boolean;
+  strictSchema?: boolean;
+  optionalMissingTables?: readonly string[];
+} = {}): Promise<void> {
+  const includeIdentitySteps = options.includeIdentitySteps !== false;
+  const strictSchema = options.strictSchema === true;
   const { tables, enums } = collectSchemaEntities();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
 
   let appliedEnumStmts: string[] = [];
   try {
-    appliedEnumStmts = await ensureEnums(enums);
+    appliedEnumStmts = await ensureEnums(enums, { strict: strictSchema });
   } catch (err) {
-    logger.error({ err }, "ensureSchema: enum reconciliation failed (continuing to columns)");
+    logger.error({ err }, "ensureSchema: enum reconciliation failed");
+    if (strictSchema) throw err;
   }
 
   let appliedColStmts: string[] = [];
   let missingTables: string[] = [];
   try {
-    const r = await ensureColumns(tables);
+    const r = await ensureColumns(tables, {
+      strict: strictSchema,
+      optionalMissingTables: options.optionalMissingTables,
+    });
     appliedColStmts = r.applied;
     missingTables = r.missingTables;
   } catch (err) {
@@ -2809,10 +2852,12 @@ async function runHeal(): Promise<void> {
   // Tenant identity indexes depend on the columns above (companies.code in
   // particular), so they must run AFTER ensureColumns.
   let appliedIdentitySteps: string[] = [];
-  try {
-    appliedIdentitySteps = await ensureTenantIdentityIndexes();
-  } catch (err) {
-    logger.error({ err }, "ensureSchema: tenant identity reconciliation failed (continuing)");
+  if (includeIdentitySteps) {
+    try {
+      appliedIdentitySteps = await ensureTenantIdentityIndexes();
+    } catch (err) {
+      logger.error({ err }, "ensureSchema: tenant identity reconciliation failed (continuing)");
+    }
   }
 
   if (missingTables.length) {
@@ -2863,4 +2908,24 @@ export function ensureSchemaUpToDate(): Promise<void> {
  */
 export function runSchemaHealOnActiveDb(): Promise<void> {
   return runHeal();
+}
+
+/**
+ * Fast request-readiness pass for an EXISTING shell-agent database.
+ *
+ * The full heal includes a long legacy list of idempotent CREATE TABLE/INDEX
+ * statements. Running that list serially over a remote PostgreSQL connection
+ * can take minutes even when every object already exists. Request routing only
+ * needs to close the common central-release race (new columns / enum labels);
+ * full structural setup remains the responsibility of init-db / release
+ * preflight, which continues to call runSchemaHealOnActiveDb().
+ */
+export function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
+  return runHeal({
+    includeIdentitySteps: false,
+    strictSchema: true,
+    // This queue is intentionally lazy-created by its integration module and
+    // is unrelated to the shell-agent request path.
+    optionalMissingTables: ["integration_invoice_queue"],
+  });
 }
