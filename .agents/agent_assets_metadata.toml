@@ -383,3 +383,10 @@ uri = "file://exports/personal-development-backup-2026-08-20/zacode-database-dev
 type = "unspecified"
 title = "قاعدة بيانات التطوير الكاملة — نسخة شخصية"
 description = "نسخة PostgreSQL كاملة من مخطط وبيانات بيئة التطوير للاحتفاظ والاستعادة الشخصية. تحتوي بيانات حساسة ويجب حفظها بأمان."
+
+[[outputs]]
+id = "cOeu4EDIXs5zVuY865cVP"
+uri = "file://exports/personal-development-backup-2026-08-20/Zacode-Run-Guide-AR.md"
+type = "text"
+title = "دليل تشغيل Zacode — عربي"
+description = "خطوات فك السورس، تثبيت الحزم، استعادة PostgreSQL، تشغيل Backend وFrontend، البناء، وتسطيب وكيل خارجي وتحديثه."
