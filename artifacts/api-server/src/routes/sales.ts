@@ -31,7 +31,14 @@ import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { usersTable } from "@workspace/db";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
-import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type BatchPick } from "../lib/stockHelpers.js";
+import {
+  upsertBalance,
+  getBalance,
+  addStockLedgerEntry,
+  allocateBatchPicks,
+  readBatchRemainingBulk,
+  type BatchPick,
+} from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber, nextSequenceForPayment, nextPosStationNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -90,6 +97,28 @@ function queryRows<T>(result: unknown): T[] {
   return [];
 }
 
+function invoiceLinesFingerprint(lines: Array<Record<string, any>>): string {
+  return JSON.stringify(
+    lines
+      .map((line) => [
+        line.id,
+        line.itemId,
+        line.warehouseId,
+        line.qty,
+        line.freeQty,
+        line.conversionFactor,
+        line.unitPrice,
+        line.discount,
+        line.discountAmount,
+        line.vatRate,
+        line.lineTotal,
+        line.costCenter,
+        line.appliedOfferId,
+      ])
+      .sort((a, b) => Number(a[0] ?? 0) - Number(b[0] ?? 0)),
+  );
+}
+
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
 export async function createJournalEntry(opts: {
@@ -113,7 +142,9 @@ export async function createJournalEntry(opts: {
   sourceType?: string;
   sourceId?: number;
   lines: JLine[];
+  executor?: any;
 }): Promise<number> {
+  const executor = opts.executor ?? db;
   const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
   if (cleanLines.length < 2) {
     // Build a diagnostic showing which proposed lines were rejected and why,
@@ -175,9 +206,10 @@ export async function createJournalEntry(opts: {
     branchId:   opts.branchId ?? null,
     docDate:    opts.date,
     userId:     (opts.audit?.req as any)?.authUser?.id ?? null,
+    dx:         executor,
   });
   const jeDocNumber = seqDocNumber ?? (opts.docNumber ?? null);
-  const [entry] = await db.insert(journalEntriesTable).values({
+  const [entry] = await executor.insert(journalEntriesTable).values({
     companyId: opts.companyId, branchId: opts.branchId ?? null,
     docNumber: jeDocNumber, entryDate: opts.date,
     currency: "SAR", exchangeRate: opts.exchangeRate ?? "1",
@@ -186,7 +218,7 @@ export async function createJournalEntry(opts: {
     periodId: writability.period?.id ?? null,
     ...auditFields,
   }).returning();
-  await db.insert(journalEntryLinesTable).values(
+  await executor.insert(journalEntryLinesTable).values(
     cleanLines.map((l, i) => ({
       entryId: entry.id, accountId: l.accountId!,
       debit: String((l.debit ?? 0).toFixed(2)),
@@ -292,11 +324,13 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
   return out;
 }
 
-type StockSnapshot = { qty: number; avgCost: number };
+type StockSnapshot = { id: number; qty: number; avgCost: number };
 
 async function loadStockSnapshots(
   cid: number,
   pairs: Array<{ itemId: number; warehouseId: number }>,
+  executor: any = db,
+  forUpdate = false,
 ): Promise<Map<string, StockSnapshot>> {
   const requested = new Set(
     pairs
@@ -305,24 +339,123 @@ async function loadStockSnapshots(
   );
   const out = new Map<string, StockSnapshot>();
   if (!requested.size) return out;
-  const itemIds = [...new Set(pairs.map((p) => p.itemId).filter(Number.isInteger))];
-  const warehouseIds = [...new Set(pairs.map((p) => p.warehouseId).filter(Number.isInteger))];
-  const rows = await db.select({
-    itemId: stockBalanceTable.itemId,
-    warehouseId: stockBalanceTable.warehouseId,
-    qty: stockBalanceTable.qty,
-    avgCost: stockBalanceTable.avgCost,
-  }).from(stockBalanceTable).where(and(
-    eq(stockBalanceTable.companyId, cid),
-    inArray(stockBalanceTable.itemId, itemIds),
-    inArray(stockBalanceTable.warehouseId, warehouseIds),
-  ));
+  const tuples = [...requested].map((key) => {
+    const [itemId, warehouseId] = key.split(":").map(Number);
+    return sql`(${itemId}::integer, ${warehouseId}::integer)`;
+  });
+  const result = await executor.execute(sql`
+    WITH requested(item_id, warehouse_id) AS (
+      VALUES ${sql.join(tuples, sql`, `)}
+    )
+    SELECT
+      balance.id AS "id",
+      balance.item_id AS "itemId",
+      balance.warehouse_id AS "warehouseId",
+      balance.qty AS "qty",
+      balance.avg_cost AS "avgCost"
+    FROM stock_balance AS balance
+    JOIN requested
+      ON requested.item_id = balance.item_id
+     AND requested.warehouse_id = balance.warehouse_id
+    WHERE balance.company_id = ${cid}
+    ${forUpdate ? sql`FOR UPDATE OF balance` : sql``}
+  `);
+  const rows = queryRows<{
+    id: number;
+    itemId: number;
+    warehouseId: number;
+    qty: string;
+    avgCost: string;
+  }>(result);
   for (const row of rows) {
     const key = `${row.itemId}:${row.warehouseId}`;
-    if (!requested.has(key)) continue;
-    out.set(key, { qty: Number(row.qty ?? 0), avgCost: Number(row.avgCost ?? 0) });
+    out.set(key, { id: row.id, qty: Number(row.qty ?? 0), avgCost: Number(row.avgCost ?? 0) });
   }
   return out;
+}
+
+async function lockStockPairs(
+  cid: number,
+  pairKeys: string[],
+  executor: any,
+): Promise<void> {
+  const keys = [...new Set(pairKeys)].sort();
+  if (!keys.length) return;
+  const tuples = keys.map((key) => sql`(${key}::text)`);
+  await executor.execute(sql`
+    SELECT pg_advisory_xact_lock(${cid}::integer, hashtext(ordered.lock_key))
+    FROM (
+      SELECT lock_key
+      FROM (VALUES ${sql.join(tuples, sql`, `)}) AS requested(lock_key)
+      ORDER BY lock_key
+    ) AS ordered
+  `);
+}
+
+type StockBalanceDelta = {
+  itemId: number;
+  warehouseId: number;
+  deltaQty: number;
+  costPrice: number;
+};
+
+async function applyStockBalanceDeltasBulk(
+  cid: number,
+  deltas: StockBalanceDelta[],
+  snapshots: Map<string, StockSnapshot>,
+  executor: any,
+): Promise<Map<string, number>> {
+  const balances = new Map<string, number>();
+  if (!deltas.length) return balances;
+
+  const existing = deltas.filter((delta) => snapshots.has(`${delta.itemId}:${delta.warehouseId}`));
+  if (existing.length) {
+    const tuples = existing.map((delta) => sql`
+      (${delta.itemId}::integer, ${delta.warehouseId}::integer, ${delta.deltaQty}::numeric)
+    `);
+    const result = await executor.execute(sql`
+      WITH deltas(item_id, warehouse_id, delta_qty) AS (
+        VALUES ${sql.join(tuples, sql`, `)}
+      )
+      UPDATE stock_balance AS balance
+      SET
+        qty = balance.qty + deltas.delta_qty,
+        updated_at = NOW()
+      FROM deltas
+      WHERE balance.company_id = ${cid}
+        AND balance.item_id = deltas.item_id
+        AND balance.warehouse_id = deltas.warehouse_id
+      RETURNING
+        balance.item_id AS "itemId",
+        balance.warehouse_id AS "warehouseId",
+        balance.qty AS "qty"
+    `);
+    for (const row of queryRows<{ itemId: number; warehouseId: number; qty: string }>(result)) {
+      balances.set(`${Number(row.itemId)}:${Number(row.warehouseId)}`, Number(row.qty));
+    }
+  }
+
+  const missing = deltas.filter((delta) => !snapshots.has(`${delta.itemId}:${delta.warehouseId}`));
+  if (missing.length) {
+    const inserted = await executor.insert(stockBalanceTable).values(
+      missing.map((delta) => ({
+        companyId: cid,
+        itemId: delta.itemId,
+        warehouseId: delta.warehouseId,
+        qty: String(delta.deltaQty),
+        avgCost: String(delta.costPrice),
+      })),
+    ).returning({
+      itemId: stockBalanceTable.itemId,
+      warehouseId: stockBalanceTable.warehouseId,
+      qty: stockBalanceTable.qty,
+    });
+    for (const row of inserted) {
+      balances.set(`${row.itemId}:${row.warehouseId}`, Number(row.qty));
+    }
+  }
+
+  return balances;
 }
 
 const router = Router();
@@ -1253,11 +1386,22 @@ router.post("/sales-invoices", async (req, res) => {
     // immediately even if the app UI is stale. NULL map = all allowed.
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "create"))) return;
     timing?.mark("mobile-rights");
-    // Plan-based monthly cap. Re-checked on every POST so SuperAdmin
-    // upgrades take effect immediately. Returns the limit + used count
-    // so the frontend can render an actionable message.
-    const invQuota = await getInvoiceQuota(cid);
-    timing?.mark("quota");
+    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
+            posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
+    const usageIds = Array.from(new Set<number>(
+      (lines ?? [])
+        .map((line: any) => Number(line?.itemId))
+        .filter((itemId: number) => Number.isInteger(itemId) && itemId > 0),
+    ));
+    // These are independent read-only preflights. Running them together saves
+    // one remote-agent round trip without changing which validation wins.
+    const [invQuota, usageV] = await Promise.all([
+      getInvoiceQuota(cid),
+      checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "save"),
+    ]);
+    timing?.mark("quota-and-item-validation");
     if (invQuota.used >= invQuota.limit) {
       res.status(403).json({
         error: `وصلت إلى الحد الأقصى للفواتير الشهرية المسموح به في خطتك (${invQuota.limit} فاتورة/شهر). يرجى ترقية الخطة لإضافة المزيد.`,
@@ -1267,16 +1411,15 @@ router.post("/sales-invoices", async (req, res) => {
       });
       return;
     }
-    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
-            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
-            posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
     // Item Usage Control (Phase ب): block a save containing items routed
     // hidden/readonly/requires_permission for this screen (unprivileged).
-    {
-      const usageIds = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
-      const usageV = await checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "save");
-      if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+    if (usageV.length) {
+      res.status(403).json({
+        error: usageViolationMessage(usageV, "save"),
+        code: "ITEM_USAGE_BLOCKED",
+        violations: usageV,
+      });
+      return;
     }
     // If the user picked an existing quotation as the source via the
     // "بناءً على عرض سعر" combobox on the new-invoice form, validate it
@@ -1323,36 +1466,32 @@ router.post("/sales-invoices", async (req, res) => {
     // FIFO-applies posted receipts + posted credit returns to oldest invoices
     // first, then checks the oldest remaining one. Cash invoices and customers
     // without payment terms bypass the guard entirely.
-    if (pType === "credit" && customerId) {
-      const overdue = await findOldestOutstandingCredit(cid, Number(customerId));
-      if (overdue) {
-        const refMs = new Date(invoiceDate).getTime();
-        const days = Math.floor((refMs - new Date(overdue.invoiceDate).getTime()) / 86400000);
-        if (days > overdue.paymentTermsDays) {
-          res.status(409).json({
-            error:
-              `لا يمكن إصدار فاتورة جديدة للعميل "${overdue.customerName}" — يوجد فاتورة سابقة بتاريخ ${overdue.invoiceDate} ` +
-              `بمبلغ مستحق ${overdue.outstandingAmount.toFixed(2)} ر.س لم تُسدَّد خلال مدة الاستحقاق (${overdue.paymentTermsDays} يوم — تأخر ${days} يوماً). ` +
-              `الرجاء سرعة السداد لاستكمال عمليات البيع.`,
-            code: "OVERDUE_PAYMENT",
-            overdueDays: days,
-            paymentTermsDays: overdue.paymentTermsDays,
-            outstandingAmount: Number(overdue.outstandingAmount.toFixed(2)),
-            oldestUnpaidInvoiceDate: overdue.invoiceDate,
-          });
-          return;
-        }
-      }
-    }
-    timing?.mark("credit-guard");
-    // Reject the request before INSERT if any offer id (line-level or
-    // document-level) doesn't belong to this tenant. Prevents cross-tenant
-    // FK pollution and the resulting offer-name leak via the GET join.
-    await Promise.all([
+    const [overdue] = await Promise.all([
+      pType === "credit" && customerId
+        ? findOldestOutstandingCredit(cid, Number(customerId))
+        : Promise.resolve(null),
       validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines)),
       validateBrandLinesBelongToCompany(cid, lines),
     ]);
-    timing?.mark("offer-and-brand-validation");
+    if (overdue) {
+      const refMs = new Date(invoiceDate).getTime();
+      const days = Math.floor((refMs - new Date(overdue.invoiceDate).getTime()) / 86400000);
+      if (days > overdue.paymentTermsDays) {
+        res.status(409).json({
+          error:
+            `لا يمكن إصدار فاتورة جديدة للعميل "${overdue.customerName}" — يوجد فاتورة سابقة بتاريخ ${overdue.invoiceDate} ` +
+            `بمبلغ مستحق ${overdue.outstandingAmount.toFixed(2)} ر.س لم تُسدَّد خلال مدة الاستحقاق (${overdue.paymentTermsDays} يوم — تأخر ${days} يوماً). ` +
+            `الرجاء سرعة السداد لاستكمال عمليات البيع.`,
+          code: "OVERDUE_PAYMENT",
+          overdueDays: days,
+          paymentTermsDays: overdue.paymentTermsDays,
+          outstandingAmount: Number(overdue.outstandingAmount.toFixed(2)),
+          oldestUnpaidInvoiceDate: overdue.invoiceDate,
+        });
+        return;
+      }
+    }
+    timing?.mark("credit-offer-and-brand-validation");
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // Snapshot the rep's commission % at save time so historical invoices keep
     // their commission even if the rep's % changes later.
@@ -1616,43 +1755,73 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // sales invoice number is assigned (by the central sequence engine or by
     // the user on creation) it is immutable, both for ZATCA audit compliance
     // and to keep the sequence log consistent.
-    const [inv] = await db.update(salesInvoicesTable).set({
-      branchId: branchId ? Number(branchId) : null,
-      invoiceDate,
-      customerId: customerId ? Number(customerId) : null,
-      paymentType: pType,
-      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
-      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
-      currencyCode: currencyCode || "SAR",
-      exchangeRate: String(exchangeRate || "1"),
-      subtotal: totals.subtotal, vatAmount: totals.vatAmount,
-      discountAmount: totals.discountAmount,
-      totalAmount: totals.totalAmount,
-      priceIncludesVat: asBool(priceIncludesVat),
-      notes: notes || null, updatedAt: new Date(),
-      cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
-      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
-      salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
-      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
-      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
-      // documentOfferId is allowed to be cleared (set to null) on edit when
-      // the matcher decides the doc-level promo no longer qualifies — the
-      // explicit `documentOfferId === undefined` ? skip : write semantics
-      // would be safer but, since the form always sends it, an unconditional
-      // write is fine here and keeps the audit trail honest.
-      documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
-      costCenter:         costCenter ? String(costCenter).trim() || null : null,
-      taxId:              taxId ? Number(taxId) : null,
-      ...repPatch,
-    }).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))).returning();
-    if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
-    if (lines !== undefined) {
-      await db.delete(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, id));
-      if (lines.length) {
-        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-        await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, id, cid, resolvedRate)));
+    const resolvedLineTaxRate = lines !== undefined
+      ? await resolveTaxRate(cid, taxId ? Number(taxId) : null)
+      : null;
+    const inv = await db.transaction(async (tx) => {
+      const [locked] = await tx.select({ status: salesInvoicesTable.status })
+        .from(salesInvoicesTable)
+        .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)))
+        .for("update");
+      if (!locked) {
+        const err: any = new Error("الفاتورة غير موجودة");
+        err.status = 404;
+        throw err;
       }
-    }
+      if (locked.status === "posted") {
+        const err: any = new Error("لا يمكن تعديل فاتورة مُرحَّلة. قم بفك الترحيل أولاً.");
+        err.status = 409;
+        throw err;
+      }
+
+      const [updated] = await tx.update(salesInvoicesTable).set({
+        branchId: branchId ? Number(branchId) : null,
+        invoiceDate,
+        customerId: customerId ? Number(customerId) : null,
+        paymentType: pType,
+        cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+        bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
+        currencyCode: currencyCode || "SAR",
+        exchangeRate: String(exchangeRate || "1"),
+        subtotal: totals.subtotal, vatAmount: totals.vatAmount,
+        discountAmount: totals.discountAmount,
+        totalAmount: totals.totalAmount,
+        priceIncludesVat: asBool(priceIncludesVat),
+        notes: notes || null, updatedAt: new Date(),
+        cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
+        inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+        salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
+        taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+        discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+        // documentOfferId is allowed to be cleared (set to null) on edit when
+        // the matcher decides the doc-level promo no longer qualifies — the
+        // explicit `documentOfferId === undefined` ? skip : write semantics
+        // would be safer but, since the form always sends it, an unconditional
+        // write is fine here and keeps the audit trail honest.
+        documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
+        costCenter:         costCenter ? String(costCenter).trim() || null : null,
+        taxId:              taxId ? Number(taxId) : null,
+        ...repPatch,
+      }).where(and(
+        eq(salesInvoicesTable.id, id),
+        eq(salesInvoicesTable.companyId, cid),
+        eq(salesInvoicesTable.status, "draft"),
+      )).returning();
+      if (!updated) {
+        const err: any = new Error("تعذر تعديل الفاتورة بعد تغير حالتها — أعد المحاولة");
+        err.status = 409;
+        throw err;
+      }
+      if (lines !== undefined) {
+        await tx.delete(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, id));
+        if (lines.length) {
+          await tx.insert(salesInvoiceLinesTable).values(
+            lines.map((l: any) => mapInvoiceLine(l, id, cid, resolvedLineTaxRate ?? "15")),
+          );
+        }
+      }
+      return updated;
+    });
     timing?.mark("invoice-and-lines-write");
     // Bump times_used for offers that are NEW to this invoice on this edit
     // (didn't exist before the update). Re-saving the same invoice with the
@@ -1682,21 +1851,23 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
     // Branch-scope guard: a restricted user must not be able to post
     // another branch's invoice by guessing the id. Shared (branch_id NULL)
     // rows remain visible, mirroring the GET-by-id route at L459.
-    const [inv] = await db.select().from(salesInvoicesTable)
-      .where(and(
-        eq(salesInvoicesTable.id, id),
-        eq(salesInvoicesTable.companyId, cid),
-        ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
-      ));
+    const [[initialInvoice], initialLines] = await Promise.all([
+      db.select().from(salesInvoicesTable)
+        .where(and(
+          eq(salesInvoicesTable.id, id),
+          eq(salesInvoicesTable.companyId, cid),
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+        )),
+      db.select().from(salesInvoiceLinesTable)
+        .where(eq(salesInvoiceLinesTable.invoiceId, id)),
+    ]);
+    let inv = initialInvoice;
+    let lines = initialLines;
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status === "posted") { res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" }); return; }
-    timing?.mark("invoice-read");
-
-    const lines = await db.select().from(salesInvoiceLinesTable)
-      .where(eq(salesInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
     timing?.setLineCount(lines.length);
-    timing?.mark("lines-read");
+    timing?.mark("invoice-and-lines-read");
 
     // When this invoice was created from a Goods Delivery Note (GDN), the
     // stock movement (and inventory credit) already happened at GDN-post
@@ -1751,38 +1922,89 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
       .filter((l) => l.itemId && l.warehouseId && !isServiceLine(l))
       .map((l) => ({ itemId: Number(l.itemId), warehouseId: Number(l.warehouseId) }));
     let whInfo: Record<number, WarehouseInfo> = {};
-    let stockSnapshots = new Map<string, StockSnapshot>();
     if (!gdnSourced) {
-      [whInfo, stockSnapshots] = await Promise.all([
-        loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]),
-        loadStockSnapshots(cid, stockPairs),
-      ]);
+      whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
     }
-    timing?.mark("warehouse-and-stock-snapshots");
+    timing?.mark("warehouse-info");
 
-    // Validate stock availability first (qty * conversionFactor = base-unit qty)
-    // Skip the check for warehouses that explicitly allow negative stock.
+    // Aggregate demand per item/warehouse before checking stock. Checking every
+    // line independently against the same snapshot lets two lines each pass
+    // while their combined quantity exceeds the available balance.
+    const demandByPair = new Map<string, {
+      itemId: number;
+      warehouseId: number;
+      qty: number;
+      itemName: string;
+    }>();
     if (!gdnSourced) {
       for (const line of lines) {
-        if (!line.itemId || !line.warehouseId) continue;
-        const wh = whInfo[line.warehouseId];
-        if (wh?.allowNegative) continue;
+        if (!line.itemId || !line.warehouseId || isServiceLine(line)) continue;
         const factor = Number(line.conversionFactor || "1") || 1;
-        // Free qty leaves the warehouse exactly like paid qty — include it
-        // in the availability check so a 5-paid + 3-free line that exceeds
-        // stock fails up-front instead of going negative on the COGS leg.
         const qty = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
-        const cur = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.qty ?? 0;
-        if (cur < qty) {
-          res.status(400).json({
-            error: `رصيد الصنف "${line.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? line.warehouseId}" — المتاح ${cur} والمطلوب ${qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
-          });
-          return;
-        }
+        if (qty <= 0) continue;
+        const key = `${line.itemId}:${line.warehouseId}`;
+        const current = demandByPair.get(key);
+        if (current) current.qty += qty;
+        else demandByPair.set(key, {
+          itemId: line.itemId,
+          warehouseId: line.warehouseId,
+          qty,
+          itemName: line.itemName ?? "صنف",
+        });
       }
     }
 
-    // ─── PRE-COMPUTE COGS (no mutation) ───
+    const postedInvoice = await db.transaction(async (tx) => {
+      // Serialize repeated clicks on the same invoice and re-check status after
+      // the row lock. Without this, two requests can both observe "draft" and
+      // create duplicate stock/JE effects.
+      const [lockedInvoice] = await tx
+        .select()
+        .from(salesInvoicesTable)
+        .where(and(
+          eq(salesInvoicesTable.id, id),
+          eq(salesInvoicesTable.companyId, cid),
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+        ))
+        .for("update");
+      if (!lockedInvoice) {
+        res.status(404).json({ error: "الفاتورة غير موجودة" });
+        return;
+      }
+      if (lockedInvoice.status === "posted") {
+        res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" });
+        return;
+      }
+      const lockedLines = await tx
+        .select()
+        .from(salesInvoiceLinesTable)
+        .where(eq(salesInvoiceLinesTable.invoiceId, id));
+      if (invoiceLinesFingerprint(lockedLines) !== invoiceLinesFingerprint(lines)) {
+        res.status(409).json({ error: "تم تعديل بنود الفاتورة أثناء الترحيل — أعد المحاولة" });
+        return;
+      }
+      inv = lockedInvoice;
+      lines = lockedLines;
+
+      let stockSnapshots = new Map<string, StockSnapshot>();
+      if (!gdnSourced) {
+        await lockStockPairs(cid, [...demandByPair.keys()], tx);
+        stockSnapshots = await loadStockSnapshots(cid, stockPairs, tx, true);
+        timing?.mark("stock-locks-and-snapshots");
+        for (const [key, demand] of demandByPair) {
+          const wh = whInfo[demand.warehouseId];
+          if (wh?.allowNegative) continue;
+          const cur = stockSnapshots.get(key)?.qty ?? 0;
+          if (cur < demand.qty) {
+            res.status(400).json({
+              error: `رصيد الصنف "${demand.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? demand.warehouseId}" — المتاح ${cur} والمطلوب ${demand.qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
+            });
+            return;
+          }
+        }
+      }
+
+      // ─── PRE-COMPUTE COGS (no mutation) ───
     // Two-pass design: first pass walks the lines without mutating stock so
     // the zero-value early guard below can fire BEFORE any side effect. The
     // second pass (after all validations) actually decrements stock and
@@ -1805,6 +2027,21 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
       picks: BatchPick[] | null; // null = legacy single-row, [] = nothing to pick
     };
     const stockOps: StockOp[] = [];
+    const batchPlans = !gdnSourced
+      ? await readBatchRemainingBulk(
+          cid,
+          [...demandByPair.values()]
+            .map((demand) => ({
+              itemId: demand.itemId,
+              warehouseId: demand.warehouseId,
+              mode: modeById.get(demand.itemId) ?? "none",
+            }))
+            .filter((request): request is { itemId: number; warehouseId: number; mode: "fifo" | "fefo" } =>
+              request.mode === "fifo" || request.mode === "fefo"),
+          tx,
+        )
+      : new Map();
+    timing?.mark("batch-plans");
     if (!gdnSourced) {
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId) continue;
@@ -1825,9 +2062,13 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
           avgCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
           picks = null;
         } else {
-          // pickBatches throws when stock is insufficient — surface as 400.
+          // Consume the preloaded plan in line order. The allocator mutates the
+          // pair plan so repeated lines never re-use the same lot.
           try {
-            picks = await pickBatches(cid, line.itemId, line.warehouseId, qty, mode);
+            picks = allocateBatchPicks(
+              batchPlans.get(`${line.itemId}:${line.warehouseId}`) ?? [],
+              qty,
+            );
           } catch (e: any) {
             res.status(400).json({ error: `${line.itemName ?? "صنف"}: ${e?.message ?? "كمية غير متاحة"}` });
             return;
@@ -2119,6 +2360,7 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
       sourceType: "sales_invoice",
       sourceId: inv.id,
       exchangeRate: inv.exchangeRate,
+      executor: tx,
       // Header-level cost center tags every JE line for cost-center reports.
       costCenter: (inv as any).costCenter ?? null,
       description: `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`,
@@ -2173,56 +2415,107 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
     timing?.mark("journal-entry");
 
     // ─── ACTUAL STOCK MUTATION ───
-    // Now that all validations passed AND the journal entry was created
-    // successfully, persist the stock decrements. Doing this after JE
-    // creation guarantees a rejected/unbalanced JE leaves stock untouched.
+    // Group repeated lines by item/warehouse so each balance is touched once.
+    // Distinct balances are independent and can be updated with modest
+    // concurrency; remote agent DBs otherwise pay two serial round trips per
+    // invoice line inside upsertBalance. Ledger rows are then inserted in one
+    // bulk statement while preserving per-pair running balances.
+    type StockOpGroup = {
+      itemId: number;
+      warehouseId: number;
+      totalQty: number;
+      totalCost: number;
+      ops: StockOp[];
+    };
+    const stockGroups = new Map<string, StockOpGroup>();
     for (const op of stockOps) {
-      const newBal = await upsertBalance(cid, op.itemId, op.warehouseId, -op.qty, op.avgCost);
-      if (!op.picks || op.picks.length === 0) {
-        // Legacy single-row WAC issue (batch_tracking_mode='none').
-        await addStockLedgerEntry({
-          companyId:   cid,
-          itemId:      op.itemId,
-          warehouseId: op.warehouseId,
-          txDate:      inv.invoiceDate,
-          txType:      "sale",
-          qty:         String(-op.qty),
-          costPrice:   String(op.avgCost.toFixed(4)),
-          totalCost:   String((-op.qty * op.avgCost).toFixed(2)),
-          balanceQty:  String(newBal),
-          refId:       id,
-          refType:     "sales_invoice",
-          notes:       op.notes ?? undefined,
-        });
+      const key = `${op.itemId}:${op.warehouseId}`;
+      const group = stockGroups.get(key);
+      if (group) {
+        group.totalQty += op.qty;
+        group.totalCost += op.qty * op.avgCost;
+        group.ops.push(op);
       } else {
-        // FIFO/FEFO — write one stamped ledger row per pick.
-        // balance_qty walks down from the pre-issue total so each row reflects
-        // the post-row running balance (mirrors production_issue pattern).
-        let cursor = newBal + op.qty; // pre-issue total
-        for (const p of op.picks) {
-          cursor -= p.takeQty;
-          await addStockLedgerEntry({
+        stockGroups.set(key, {
+          itemId: op.itemId,
+          warehouseId: op.warehouseId,
+          totalQty: op.qty,
+          totalCost: op.qty * op.avgCost,
+          ops: [op],
+        });
+      }
+    }
+    const groups = [...stockGroups.values()];
+    const newBalances = await applyStockBalanceDeltasBulk(
+      cid,
+      groups.map((group) => ({
+        itemId: group.itemId,
+        warehouseId: group.warehouseId,
+        deltaQty: -group.totalQty,
+        costPrice: group.totalQty > 0 ? group.totalCost / group.totalQty : 0,
+      })),
+      stockSnapshots,
+      tx,
+    );
+    const appliedGroups = groups.map((group) => {
+      const key = `${group.itemId}:${group.warehouseId}`;
+      const newBalance = newBalances.get(key);
+      if (newBalance === undefined) {
+        throw new Error(`تعذر تحديث رصيد المخزون للصنف ${group.itemId} في المخزن ${group.warehouseId}`);
+      }
+      return { group, newBalance };
+    });
+    timing?.mark("stock-balances");
+
+    const ledgerEntries: Array<typeof stockLedgerTable.$inferInsert> = [];
+    for (const { group, newBalance } of appliedGroups) {
+      let cursor = newBalance + group.totalQty;
+      for (const op of group.ops) {
+        if (!op.picks || op.picks.length === 0) {
+          cursor -= op.qty;
+          ledgerEntries.push({
             companyId:   cid,
             itemId:      op.itemId,
             warehouseId: op.warehouseId,
             txDate:      inv.invoiceDate,
             txType:      "sale",
-            qty:         String(-p.takeQty),
-            costPrice:   String(p.costPrice.toFixed(4)),
-            totalCost:   String((-p.takeQty * p.costPrice).toFixed(2)),
+            qty:         String(-op.qty),
+            costPrice:   String(op.avgCost.toFixed(4)),
+            totalCost:   String((-op.qty * op.avgCost).toFixed(2)),
             balanceQty:  String(cursor.toFixed(4)),
             refId:       id,
             refType:     "sales_invoice",
-            batchNumber: p.batchNumber,
-            expiryDate:  p.expiryDate,
-            notes:       `${op.notes ?? ""}${p.batchNumber ? ` — تشغيلة ${p.batchNumber}` : ""}`.trim() || undefined,
+            notes:       op.notes ?? undefined,
+          });
+          continue;
+        }
+        for (const pick of op.picks) {
+          cursor -= pick.takeQty;
+          ledgerEntries.push({
+            companyId:   cid,
+            itemId:      op.itemId,
+            warehouseId: op.warehouseId,
+            txDate:      inv.invoiceDate,
+            txType:      "sale",
+            qty:         String(-pick.takeQty),
+            costPrice:   String(pick.costPrice.toFixed(4)),
+            totalCost:   String((-pick.takeQty * pick.costPrice).toFixed(2)),
+            balanceQty:  String(cursor.toFixed(4)),
+            refId:       id,
+            refType:     "sales_invoice",
+            batchNumber: pick.batchNumber,
+            expiryDate:  pick.expiryDate,
+            notes:       `${op.notes ?? ""}${pick.batchNumber ? ` — تشغيلة ${pick.batchNumber}` : ""}`.trim() || undefined,
           });
         }
       }
     }
-    timing?.mark("stock-writes");
+    if (ledgerEntries.length) {
+      await tx.insert(stockLedgerTable).values(ledgerEntries);
+    }
+    timing?.mark("stock-ledger-bulk");
 
-    const [updated] = await db.update(salesInvoicesTable)
+    const [updated] = await tx.update(salesInvoicesTable)
       .set({
         status: "posted",
         journalEntryId: journalId,
@@ -2237,7 +2530,10 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
     // NOTE: لا نُنشئ سند قبض تلقائياً عند ترحيل فاتورة نقدية/بنكية.
     // القيد المحاسبي أعلاه يكفي لتسجيل الأثر النقدي؛ سند القبض يُنشأ يدوياً عند الحاجة.
 
-    res.json(updated);
+    return updated;
+    });
+    if (!postedInvoice) return;
+    res.json(postedInvoice);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 

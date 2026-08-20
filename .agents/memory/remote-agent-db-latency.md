@@ -9,4 +9,6 @@ Do not bulk or defer inventory balance and ledger writes merely to save round tr
 
 **Why:** Network latency makes small serial queries expensive, but a read-before-write snapshot plus later bulk mutation can oversell stock or leave balances without ledger evidence if a later step fails.
 
-**How to apply:** Batch tenant-scoped warehouse, balance, and cost reads freely. For FIFO/FEFO or balance writes, require transaction-aware helpers, conditional quantity enforcement, deterministic lot locking/reservation, rollback tests, and concurrent-post tests before batching.
+The pair-lock protocol must be system-wide: protecting one sales path does not prevent a legacy purchase/return/production writer from reading an old balance, waiting on its update, then overwriting the newer quantity.
+
+**How to apply:** Batch tenant-scoped warehouse, balance, and cost reads freely. For FIFO/FEFO or balance writes, use the same deterministic exact-pair lock order in every writer, reload after locking, keep balance+ledger+document status in one transaction, and require rollback plus cross-document concurrency tests before batching.

@@ -17,6 +17,21 @@ export interface BatchPick {
   costPrice: number;          // weighted-avg of the original receipts for this batch
 }
 
+export interface BatchRemaining {
+  batchNumber: string | null;
+  expiryDate: string | null;
+  remaining: number;
+  inboundQty: number;
+  inboundCost: number;
+  earliestInDate: string | null;
+}
+
+export interface BatchReadRequest {
+  itemId: number;
+  warehouseId: number;
+  mode: "fifo" | "fefo";
+}
+
 // Build a per-batch remaining-qty + cost map for a given (company, item,
 // warehouse) by aggregating stock_ledger. Returns rows where remaining > 0.
 // Each "batch" is keyed by batch_number (NULL is a valid bucket — it groups
@@ -38,14 +53,7 @@ export async function readBatchRemaining(
   warehouseId: number,
   mode: "fifo" | "fefo",
   executor: any = db,
-): Promise<Array<{
-  batchNumber: string | null;
-  expiryDate: string | null;
-  remaining: number;
-  inboundQty: number;
-  inboundCost: number;
-  earliestInDate: string | null;
-}>> {
+): Promise<BatchRemaining[]> {
   // Aggregate per batch_number: SUM(qty) and SUM(positive*cost) so we can
   // derive an avg cost for what's left in that batch. Earliest inbound
   // tx_date is used to break FEFO ties (and is FIFO's primary key).
@@ -84,6 +92,114 @@ export async function readBatchRemaining(
   }));
 }
 
+// Read every requested item/warehouse batch plan in ONE query. Remote agent
+// databases magnify each round trip, so calling readBatchRemaining once per
+// invoice line makes posting latency grow linearly with the number of tracked
+// items. The result retains an independently ordered list per pair: FEFO sorts
+// expiry first, FIFO sorts receipt date first.
+export async function readBatchRemainingBulk(
+  companyId: number,
+  requests: BatchReadRequest[],
+  executor: any = db,
+): Promise<Map<string, BatchRemaining[]>> {
+  const unique = new Map<string, BatchReadRequest>();
+  for (const request of requests) {
+    if (!Number.isInteger(request.itemId) || !Number.isInteger(request.warehouseId)) continue;
+    unique.set(`${request.itemId}:${request.warehouseId}`, request);
+  }
+  const out = new Map<string, BatchRemaining[]>();
+  if (!unique.size) return out;
+
+  const tuples = [...unique.values()].map((request) => sql`
+    (${request.itemId}::integer, ${request.warehouseId}::integer, ${request.mode}::text)
+  `);
+  const result = await executor.execute(sql`
+    WITH requested(item_id, warehouse_id, mode) AS (
+      VALUES ${sql.join(tuples, sql`, `)}
+    )
+    SELECT
+      requested.item_id                                               AS "itemId",
+      requested.warehouse_id                                          AS "warehouseId",
+      stock_ledger.batch_number                                       AS "batchNumber",
+      stock_ledger.expiry_date                                        AS "expiryDate",
+      SUM(stock_ledger.qty)::numeric                                  AS "remaining",
+      SUM(CASE WHEN stock_ledger.qty > 0 THEN stock_ledger.qty ELSE 0 END)::numeric
+                                                                        AS "inboundQty",
+      SUM(CASE WHEN stock_ledger.qty > 0
+               THEN stock_ledger.qty * stock_ledger.cost_price ELSE 0 END)::numeric
+                                                                        AS "inboundCost",
+      MIN(CASE WHEN stock_ledger.qty > 0 THEN stock_ledger.tx_date END) AS "earliestInDate",
+      requested.mode                                                   AS "mode"
+    FROM requested
+    JOIN stock_ledger
+      ON stock_ledger.company_id = ${companyId}
+     AND stock_ledger.item_id = requested.item_id
+     AND stock_ledger.warehouse_id = requested.warehouse_id
+    GROUP BY
+      requested.item_id,
+      requested.warehouse_id,
+      requested.mode,
+      stock_ledger.batch_number,
+      stock_ledger.expiry_date
+    HAVING SUM(stock_ledger.qty) > 0.0001
+    ORDER BY
+      requested.item_id,
+      requested.warehouse_id,
+      CASE WHEN requested.mode = 'fefo' THEN stock_ledger.expiry_date END ASC NULLS LAST,
+      MIN(CASE WHEN stock_ledger.qty > 0 THEN stock_ledger.tx_date END) ASC NULLS LAST,
+      stock_ledger.batch_number ASC NULLS LAST
+  `);
+  const rows = (result as any).rows ?? (result as any);
+  for (const row of rows as any[]) {
+    const key = `${Number(row.itemId)}:${Number(row.warehouseId)}`;
+    const bucket: BatchRemaining = {
+      batchNumber: row.batchNumber ?? null,
+      expiryDate: row.expiryDate ?? null,
+      remaining: Number(row.remaining),
+      inboundQty: Number(row.inboundQty),
+      inboundCost: Number(row.inboundCost),
+      earliestInDate: row.earliestInDate ?? null,
+    };
+    const list = out.get(key);
+    if (list) list.push(bucket);
+    else out.set(key, [bucket]);
+  }
+  return out;
+}
+
+// Allocates from (and mutates) a preloaded pair plan. Mutating remaining is
+// deliberate: multiple invoice lines for the same item/warehouse must consume
+// each lot only once instead of repeatedly selecting the same database rows.
+export function allocateBatchPicks(
+  batches: BatchRemaining[],
+  requestedQty: number,
+): BatchPick[] {
+  if (requestedQty <= 0) return [];
+  const picks: BatchPick[] = [];
+  let remaining = requestedQty;
+  for (const batch of batches) {
+    if (remaining <= 0.0001) break;
+    if (batch.remaining <= 0.0001) continue;
+    const take = Math.min(batch.remaining, remaining);
+    const cost = batch.inboundQty > 0 ? batch.inboundCost / batch.inboundQty : 0;
+    picks.push({
+      batchNumber: batch.batchNumber,
+      expiryDate: batch.expiryDate,
+      remaining: batch.remaining,
+      takeQty: take,
+      costPrice: cost,
+    });
+    batch.remaining -= take;
+    remaining -= take;
+  }
+  if (remaining > 0.0001) {
+    throw new Error(
+      `الكمية المتاحة عبر التشغيلات لا تكفي. مطلوب ${requestedQty}، متاح ${requestedQty - remaining}.`,
+    );
+  }
+  return picks;
+}
+
 // Allocate `requestedQty` across available batches in the requested mode.
 // Returns the per-batch picks; total of picks[].takeQty equals requestedQty
 // when there's enough stock. Throws when there isn't (caller validates
@@ -98,29 +214,7 @@ export async function pickBatches(
 ): Promise<BatchPick[]> {
   if (requestedQty <= 0) return [];
   const batches = await readBatchRemaining(companyId, itemId, warehouseId, mode, executor);
-  const picks: BatchPick[] = [];
-  let remaining = requestedQty;
-  for (const b of batches) {
-    if (remaining <= 0.0001) break;
-    const take = Math.min(b.remaining, remaining);
-    // Weighted-average inbound cost for the batch (falls back to 0 when
-    // every inbound row was zero — e.g. opening balance with no cost).
-    const cost = b.inboundQty > 0 ? b.inboundCost / b.inboundQty : 0;
-    picks.push({
-      batchNumber: b.batchNumber,
-      expiryDate: b.expiryDate,
-      remaining: b.remaining,
-      takeQty: take,
-      costPrice: cost,
-    });
-    remaining -= take;
-  }
-  if (remaining > 0.0001) {
-    throw new Error(
-      `الكمية المتاحة عبر التشغيلات لا تكفي. مطلوب ${requestedQty}، متاح ${requestedQty - remaining}.`,
-    );
-  }
-  return picks;
+  return allocateBatchPicks(batches, requestedQty);
 }
 
 export async function getBalance(companyId: number, itemId: number, warehouseId: number): Promise<number> {
