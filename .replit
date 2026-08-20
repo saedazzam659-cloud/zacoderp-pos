@@ -62,7 +62,7 @@ channel = "stable-25_05"
 
 [userenv.production]
 PG_POOL_MAX = "40"
-DEMO_DEVICE_ISOLATION_ENABLED = "false"
+DEMO_DEVICE_ISOLATION_ENABLED = "true"
 
 [[ports]]
 localPort = 8080
