@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { fieldApi, type FieldVisit } from "@/lib/fieldServiceApi";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,7 @@ const STATUS_LABEL: Record<string, { ar: string; tone: "ok" | "warn" | "err" }> 
 interface GpsState { lat: number | null; lng: number | null; accuracy: number | null; busy: boolean; error: string | null; }
 
 export default function FieldCheckIn() {
+  const { i18n } = useTranslation();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -148,7 +150,7 @@ export default function FieldCheckIn() {
   });
 
   return (
-    <div className="p-4 max-w-2xl mx-auto space-y-4" dir="rtl" data-testid="page-field-checkin">
+    <div className="p-4 max-w-2xl mx-auto space-y-4" dir={i18n.dir()} data-testid="page-field-checkin">
       <div className="flex items-center gap-2">
         <Smartphone className="h-6 w-6 text-primary" />
         <h1 className="text-2xl font-bold">تسجيل زيارة ميدانية</h1>
@@ -200,7 +202,7 @@ export default function FieldCheckIn() {
             <span className="text-sm">{openVisit.locationName ?? "—"}</span>
           </div>
           <div className="text-xs text-muted-foreground mb-3">
-            بدأت في: {new Date(openVisit.arrivedAt).toLocaleTimeString("ar-SA-u-nu-latn")}
+            بدأت في: <span dir="ltr">{new Date(openVisit.arrivedAt).toLocaleTimeString("ar-SA-u-nu-latn")}</span>
           </div>
           <div className="space-y-2">
             <div><Label>نتيجة الزيارة</Label>
@@ -256,7 +258,7 @@ export default function FieldCheckIn() {
             )}
             {gps.lat && (
               <div className="text-xs text-muted-foreground flex items-center gap-1">
-                <MapPin className="h-3 w-3" /> {gps.lat.toFixed(5)}, {gps.lng?.toFixed(5)} • دقة {gps.accuracy?.toFixed(0)} م
+                <MapPin className="h-3 w-3" /> <span dir="ltr">{gps.lat.toFixed(5)}, {gps.lng?.toFixed(5)}</span> • دقة {gps.accuracy?.toFixed(0)} م
               </div>
             )}
           </div>
@@ -274,7 +276,7 @@ export default function FieldCheckIn() {
                   {v.status === "open" ? "مفتوحة" : v.status === "completed" ? "مكتملة" : "ملغاة"}
                 </Badge>
                 <span className="flex-1">{v.locationName ?? "—"}</span>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground" dir="ltr">
                   {new Date(v.arrivedAt).toLocaleTimeString("ar-SA-u-nu-latn")}
                   {v.durationMin ? ` • ${v.durationMin} د` : ""}
                 </span>

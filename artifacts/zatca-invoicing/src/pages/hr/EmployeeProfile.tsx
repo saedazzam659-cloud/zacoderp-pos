@@ -3,6 +3,7 @@
 // الأسرة، المؤهلات، الشهادات، المستندات (+أرشفة سحابية/محلية مثل القيود)، السجل، نهاية الخدمة.
 // كل الجداول تستخدم AdvancedReportGrid (نفس جريدات النظام: بحث/فرز/فلاتر/ألوان/ترقيم).
 import React, { useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { employeesApi } from "@/lib/employeesApi";
@@ -685,6 +686,7 @@ function HistoryTab({ empId, cid }: { empId: number; cid?: number }) {
 
 // ─── الصفحة الرئيسية ─────────────────────────────────────────────────────────
 export default function EmployeeProfile() {
+  const { i18n } = useTranslation();
   const [, params] = useRoute("/hr/employees/:id/profile");
   const empId = Number(params?.id);
   const { user, token } = useAuth();
@@ -702,7 +704,7 @@ export default function EmployeeProfile() {
 
   if (!empId) return null;
   return (
-    <div className="p-4 space-y-4" dir="rtl">
+    <div className="p-4 space-y-4" dir={i18n.dir()}>
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/hr/employees"><Button variant="ghost" size="icon"><ArrowRight className="h-4 w-4" /></Button></Link>
         {empQ.isLoading ? <Skeleton className="h-10 w-64" /> : (

@@ -1,5 +1,6 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { fieldApi } from "@/lib/fieldServiceApi";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +10,7 @@ import {
 } from "lucide-react";
 
 export default function FieldServiceHub() {
+  const { i18n } = useTranslation();
   const { data: sla } = useQuery({ queryKey: ["fsm-sla"], queryFn: () => fieldApi.sla({}) });
   const { data: live } = useQuery({ queryKey: ["fsm-live"], queryFn: () => fieldApi.liveTracking(), refetchInterval: 30_000 });
   const { data: summary } = useQuery({ queryKey: ["fsm-summary"], queryFn: () => fieldApi.summary({}) });
@@ -34,7 +36,7 @@ export default function FieldServiceHub() {
   ];
 
   return (
-    <div className="p-6 space-y-6" dir="rtl" data-testid="page-field-hub">
+    <div className="p-6 space-y-6" dir={i18n.dir()} data-testid="page-field-hub">
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-3">
           <div className="p-2 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5"><Building2 className="h-7 w-7 text-primary" /></div>

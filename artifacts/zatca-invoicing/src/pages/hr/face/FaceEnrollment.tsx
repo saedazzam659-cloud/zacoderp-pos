@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
 import { faceApi } from "@/lib/faceAttendanceApi";
@@ -14,6 +15,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, Camera as CameraIcon, ScanFace, Trash2, CheckCircle2, AlertTriangle, Sparkles } from "lucide-react";
 
 export default function FaceEnrollment() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const qc = useQueryClient();
   const { toast } = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -168,7 +171,7 @@ export default function FaceEnrollment() {
   });
 
   return (
-    <div className="p-6 space-y-6" data-testid="page-face-enrollment">
+    <div className="p-6 space-y-6" dir={pageDir} data-testid="page-face-enrollment">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -188,7 +191,7 @@ export default function FaceEnrollment() {
                 <SelectTrigger data-testid="select-employee"><SelectValue placeholder="اختر موظفاً" /></SelectTrigger>
                 <SelectContent>
                   {employees.map((e: any) => (
-                    <SelectItem key={e.id} value={String(e.id)}>{e.code} — {e.nameAr}</SelectItem>
+                    <SelectItem key={e.id} value={String(e.id)}>{e.nameAr} — <span dir="ltr">{e.code}</span></SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -210,12 +213,12 @@ export default function FaceEnrollment() {
           <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
             {modelLoading && (
               <div className="absolute inset-0 flex items-center justify-center text-white">
-                <Loader2 className="h-8 w-8 animate-spin mr-2" /> جاري تحميل نماذج الذكاء الاصطناعي...
+                <Loader2 className="h-8 w-8 animate-spin me-2" /> جاري تحميل نماذج الذكاء الاصطناعي...
               </div>
             )}
             {modelError && (
               <div className="absolute inset-0 flex items-center justify-center text-rose-300 p-4 text-center text-sm">
-                <AlertTriangle className="h-6 w-6 mr-2" /> {modelError}
+                <AlertTriangle className="h-6 w-6 me-2" /> {modelError}
               </div>
             )}
             <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
@@ -226,7 +229,7 @@ export default function FaceEnrollment() {
             <div className="flex items-center justify-between text-sm">
               <span className="font-medium">جودة الصورة</span>
               <Badge variant={quality.score > 0.7 ? "default" : quality.score > 0.4 ? "secondary" : "destructive"}>
-                {(quality.score * 100).toFixed(0)}%
+                <span dir="ltr">{(quality.score * 100).toFixed(0)}%</span>
               </Badge>
             </div>
             <div className="h-2 bg-muted rounded overflow-hidden">
@@ -252,7 +255,7 @@ export default function FaceEnrollment() {
             disabled={busy || modelLoading || !employeeId || quality.score < 0.5 || livenessStage !== "passed"}
             data-testid="btn-capture-enroll"
           >
-            {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CameraIcon className="h-4 w-4 mr-2" />}
+            {busy ? <Loader2 className="h-4 w-4 me-2 animate-spin" /> : <CameraIcon className="h-4 w-4 me-2" />}
             التقاط وتسجيل البصمة
           </Button>
         </Card>
@@ -261,17 +264,17 @@ export default function FaceEnrollment() {
           <h2 className="font-semibold mb-3 flex items-center gap-2">
             <ScanFace className="h-4 w-4" /> البصمات المسجلة {employeeId ? `(للموظف المحدد)` : `(جميع الموظفين)`}
           </h2>
-          <div className="space-y-2 max-h-[600px] overflow-y-auto">
+          <div className="space-y-2 max-h-[600px] overflow-y-auto pe-1">
             {enrollments.length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-8">لا توجد بصمات بعد</p>
             )}
             {enrollments.map((e) => (
               <div key={e.id} className="flex items-center justify-between p-3 rounded-lg border bg-card">
                 <div className="text-sm">
-                  <div className="font-medium">{e.employeeName ?? "—"} <span className="text-muted-foreground">({e.employeeCode})</span></div>
+                  <div className="font-medium">{e.employeeName ?? "—"} <span className="text-muted-foreground" dir="ltr">({e.employeeCode})</span></div>
                   <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center">
                     <Badge variant="outline" className="text-xs">{e.pose}</Badge>
-                    <span>جودة: {(Number(e.qualityScore) * 100).toFixed(0)}%</span>
+                    <span dir="ltr">جودة: {(Number(e.qualityScore) * 100).toFixed(0)}%</span>
                     {e.livenessPassed && <Badge variant="secondary" className="text-xs">حي ✓</Badge>}
                     {e.isPrimary && <Badge className="text-xs">رئيسي</Badge>}
                   </div>

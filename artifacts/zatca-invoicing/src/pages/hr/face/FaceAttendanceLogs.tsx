@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { faceApi, type FaceLog } from "@/lib/faceAttendanceApi";
 import { Card } from "@/components/ui/card";
@@ -21,6 +22,8 @@ const ACTION_LABEL: Record<string, string> = {
 };
 
 export default function FaceAttendanceLogs() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const [status, setStatus] = useState<string>("");
 
   const { data: logs = [], isLoading } = useQuery<FaceLog[]>({
@@ -31,7 +34,7 @@ export default function FaceAttendanceLogs() {
   const fmt = (s: string) => new Date(s).toLocaleString("ar-SA-u-nu-latn", { dateStyle: "short", timeStyle: "medium" });
 
   return (
-    <div className="p-6 space-y-6" data-testid="page-face-logs">
+    <div className="p-6 space-y-6" dir={pageDir} data-testid="page-face-logs">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -61,14 +64,14 @@ export default function FaceAttendanceLogs() {
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="text-right p-3">الوقت</th>
-                  <th className="text-right p-3">الموظف</th>
-                  <th className="text-right p-3">الكاميرا</th>
-                  <th className="text-right p-3">العملية</th>
-                  <th className="text-right p-3">الحالة</th>
-                  <th className="text-right p-3">الثقة</th>
-                  <th className="text-right p-3">الكشف الحي</th>
-                  <th className="text-right p-3">سبب</th>
+                  <th className="text-start p-3">الوقت</th>
+                  <th className="text-start p-3">الموظف</th>
+                  <th className="text-start p-3">الكاميرا</th>
+                  <th className="text-start p-3">العملية</th>
+                  <th className="text-start p-3">الحالة</th>
+                  <th className="text-start p-3">الثقة</th>
+                  <th className="text-start p-3">الكشف الحي</th>
+                  <th className="text-start p-3">سبب</th>
                 </tr>
               </thead>
               <tbody>
@@ -77,23 +80,23 @@ export default function FaceAttendanceLogs() {
                   const Icon = sb.icon;
                   return (
                     <tr key={l.id} className="border-t hover:bg-muted/30">
-                      <td className="p-3 font-mono text-xs">{fmt(l.createdAt)}</td>
+                      <td className="p-3 font-mono text-xs" dir="ltr">{fmt(l.createdAt)}</td>
                       <td className="p-3">
                         {l.employeeName ? (
                           <div>
                             <div className="font-medium">{l.employeeName}</div>
-                            <div className="text-xs text-muted-foreground">{l.employeeCode}</div>
+                            <div className="text-xs text-muted-foreground" dir="ltr">{l.employeeCode}</div>
                           </div>
                         ) : <span className="text-muted-foreground">غير معروف</span>}
                       </td>
-                      <td className="p-3">{l.cameraName ?? <span className="text-muted-foreground">—</span>}</td>
+                      <td className="p-3" dir="ltr">{l.cameraName ?? <span className="text-muted-foreground">—</span>}</td>
                       <td className="p-3"><Badge variant="outline">{ACTION_LABEL[l.action ?? ""] ?? l.action ?? "—"}</Badge></td>
                       <td className="p-3">
                         <Badge className={sb.cls} variant="outline">
-                          <Icon className="h-3 w-3 mr-1" /> {sb.label}
+                          <Icon className="h-3 w-3 me-1" /> {sb.label}
                         </Badge>
                       </td>
-                      <td className="p-3 font-mono">{l.matchedConfidence ? `${(Number(l.matchedConfidence) * 100).toFixed(1)}%` : "—"}</td>
+                      <td className="p-3 font-mono" dir="ltr">{l.matchedConfidence ? `${(Number(l.matchedConfidence) * 100).toFixed(1)}%` : "—"}</td>
                       <td className="p-3">{l.livenessPassed ? <Badge variant="secondary">✓</Badge> : <Badge variant="outline">—</Badge>}</td>
                       <td className="p-3 text-xs text-muted-foreground">{l.spoofReason ?? "—"}</td>
                     </tr>

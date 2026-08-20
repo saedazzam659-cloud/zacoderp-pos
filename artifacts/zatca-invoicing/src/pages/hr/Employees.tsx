@@ -179,7 +179,7 @@ export default function Employees() {
   const alerts = alertsQ.data ?? { expiringIqamas: [], expiringContracts: [], expiringPassports: [], expiringWorkPermits: [] };
   const totalAlerts = (alerts.expiringIqamas?.length ?? 0) + (alerts.expiringContracts?.length ?? 0) + (alerts.expiringPassports?.length ?? 0) + (alerts.expiringWorkPermits?.length ?? 0);
 
-  const align = isRtl ? "text-right" : "text-left";
+  const align = "text-start";
 
   return (
     <div className="space-y-5 p-4 md:p-6" dir={isRtl ? "rtl" : "ltr"}>
@@ -209,8 +209,8 @@ export default function Employees() {
         <TabsContent value="employees" className="space-y-4">
           <div className="flex flex-col md:flex-row gap-2">
             <div className="relative flex-1">
-              <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tr("searchPh")} className={isRtl ? "pr-9" : "pl-9"} />
+              <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tr("searchPh")} className="ps-9" />
             </div>
             <div className="flex gap-1 flex-wrap">
               {[["all", tr("filterAll")], ["active", tr("statusActive")], ["vacation", tr("statusVacation")], ["suspended", tr("statusSuspended")], ["terminated", tr("statusTerminated")]].map(([v, l]) => (
@@ -240,7 +240,7 @@ export default function Employees() {
 
                 <TabsContent value="info" className="space-y-4">
                   <FormGrid>
-                    <Field label={tr("fEmpCode")}><Input value={editing.code} onChange={e => setF("code", e.target.value)} placeholder={tr("fEmpCodePh")} /></Field>
+                    <Field label={tr("fEmpCode")}><Input dir="ltr" value={editing.code} onChange={e => setF("code", e.target.value)} placeholder={tr("fEmpCodePh")} /></Field>
                     <Field label={tr("fStatus")}>
                       <SearchCombobox
                         items={[
@@ -269,7 +269,7 @@ export default function Employees() {
                         className="w-full"
                       />
                     </Field>
-                    <Field label={tr("fIdNumber")}><Input value={editing.idNumber} onChange={e => setF("idNumber", e.target.value)} /></Field>
+                    <Field label={tr("fIdNumber")}><Input dir="ltr" value={editing.idNumber} onChange={e => setF("idNumber", e.target.value)} /></Field>
                     <Field label={tr("fIqamaExpiry")}><DateField value={editing.iqamaExpiry || ""} onChange={e => setF("iqamaExpiry", e.target.value)} /></Field>
                     {/* National-ID holders track expiry in Hijri — two-way
                         Umm al-Qura companion bound to the SAME stored
@@ -285,7 +285,7 @@ export default function Employees() {
                       </Field>
                     )}
                     <Field label={tr("fNationality")}><Input value={editing.nationality} onChange={e => setF("nationality", e.target.value)} placeholder={tr("fNationalityPh")} /></Field>
-                    <Field label={tr("fPassportNumber")}><Input value={editing.passportNumber} onChange={e => setF("passportNumber", e.target.value)} /></Field>
+                    <Field label={tr("fPassportNumber")}><Input dir="ltr" value={editing.passportNumber} onChange={e => setF("passportNumber", e.target.value)} /></Field>
                     <Field label={tr("fPassportExpiry")}><DateField value={editing.passportExpiry || ""} onChange={e => setF("passportExpiry", e.target.value)} /></Field>
                     <Field label={tr("fMobile")}><Input value={editing.mobile} onChange={e => setF("mobile", e.target.value)} dir="ltr" /></Field>
                     <Field label={tr("fEmail")}><Input type="email" value={editing.email} onChange={e => setF("email", e.target.value)} dir="ltr" /></Field>
@@ -352,10 +352,10 @@ export default function Employees() {
                     <Field label={tr("fSponsor")}><Input value={editing.sponsor} onChange={e => setF("sponsor", e.target.value)} /></Field>
                     <Field label={tr("fHireDate")}><DateField value={editing.hireDate || ""} onChange={e => setF("hireDate", e.target.value)} /></Field>
                     <Field label={tr("fEndDate")}><DateField value={editing.endDate || ""} onChange={e => setF("endDate", e.target.value)} /></Field>
-                    <Field label={tr("fBasicSalary")}><Input type="number" min="0" value={editing.basicSalary} onChange={e => setF("basicSalary", e.target.value)} /></Field>
-                    <Field label={tr("fHousingAllow")}><Input type="number" min="0" value={editing.housingAllow} onChange={e => setF("housingAllow", e.target.value)} /></Field>
-                    <Field label={tr("fTransportAllow")}><Input type="number" min="0" value={editing.transportAllow} onChange={e => setF("transportAllow", e.target.value)} /></Field>
-                    <Field label={tr("fOtherAllow")}><Input type="number" min="0" value={editing.otherAllow} onChange={e => setF("otherAllow", e.target.value)} /></Field>
+                    <Field label={tr("fBasicSalary")}><Input dir="ltr" type="number" min="0" value={editing.basicSalary} onChange={e => setF("basicSalary", e.target.value)} /></Field>
+                    <Field label={tr("fHousingAllow")}><Input dir="ltr" type="number" min="0" value={editing.housingAllow} onChange={e => setF("housingAllow", e.target.value)} /></Field>
+                    <Field label={tr("fTransportAllow")}><Input dir="ltr" type="number" min="0" value={editing.transportAllow} onChange={e => setF("transportAllow", e.target.value)} /></Field>
+                    <Field label={tr("fOtherAllow")}><Input dir="ltr" type="number" min="0" value={editing.otherAllow} onChange={e => setF("otherAllow", e.target.value)} /></Field>
                     <Field label={tr("fBankName")}><Input value={editing.bankName} onChange={e => setF("bankName", e.target.value)} /></Field>
                     <Field label={tr("fIban")}><Input value={editing.bankAccountIban} onChange={e => setF("bankAccountIban", e.target.value)} dir="ltr" /></Field>
                   </FormGrid>
@@ -477,15 +477,15 @@ export default function Employees() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 text-xs uppercase">
-                    <tr className={isRtl ? "text-end" : "text-start"}>
+                    <tr>
                       <th className={`px-3 py-2.5 ${align}`}>{tr("colCode")}</th>
                       <th className={`px-3 py-2.5 ${align}`}>{tr("colEmployee")}</th>
                       <th className={`px-3 py-2.5 ${align}`}>{tr("colJob")}</th>
                       <th className={`px-3 py-2.5 ${align}`}>{tr("colIdNumber")}</th>
                       <th className={`px-3 py-2.5 ${align}`}>{tr("colIqamaExpiry")}</th>
-                      <th className={`px-3 py-2.5 ${align}`}>{tr("colSalary")}</th>
+                      <th className={`px-3 py-2.5 text-end`}>{tr("colSalary")}</th>
                       <th className={`px-3 py-2.5 ${align}`}>{tr("colStatus")}</th>
-                      <th className={`px-3 py-2.5 ${isRtl ? "text-end" : "text-start"}`}>{tr("colActions")}</th>
+                      <th className={`px-3 py-2.5 text-end`}>{tr("colActions")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -494,7 +494,7 @@ export default function Employees() {
                       const st = STATUS[e.status] || STATUS.active;
                       return (
                         <tr key={e.id} className="hover:bg-muted/30">
-                          <td className="px-3 py-2.5 font-mono text-xs">{e.code}</td>
+                          <td className="px-3 py-2.5 font-mono text-xs" dir="ltr">{e.code}</td>
                           <td className="px-3 py-2.5">
                             <div className="font-medium">{pickName(e.nameAr, e.nameEn)}</div>
                             {(isRtl ? e.nameEn : e.nameAr) && <div className="text-xs text-muted-foreground" dir={isRtl ? "ltr" : "rtl"}>{isRtl ? e.nameEn : e.nameAr}</div>}
@@ -503,9 +503,9 @@ export default function Employees() {
                             <div>{e.jobTitle || "—"}</div>
                             {e.department && <div className="text-muted-foreground">{e.department}</div>}
                           </td>
-                          <td className="px-3 py-2.5 font-mono text-xs">{e.idNumber || "—"}</td>
+                          <td className="px-3 py-2.5 font-mono text-xs" dir="ltr">{e.idNumber || "—"}</td>
                           <td className="px-3 py-2.5"><ExpiryBadge date={e.iqamaExpiry} tr={tr} /></td>
-                          <td className="px-3 py-2.5 text-xs">{total > 0 ? `${fmt2(total)} ${tr("currencySAR")}` : "—"}</td>
+                          <td className="px-3 py-2.5 text-xs text-end tabular-nums" dir="ltr">{total > 0 ? `${fmt2(total)} ${tr("currencySAR")}` : "—"}</td>
                           <td className="px-3 py-2.5"><Badge className={cn("border", st.cls)}>{st.label}</Badge></td>
                           <td className="px-3 py-2.5">
                             <div className="flex items-center justify-end gap-1">

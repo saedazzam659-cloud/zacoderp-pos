@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { fieldApi } from "@/lib/fieldServiceApi";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -6,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Activity, MapPin, ExternalLink, Clock } from "lucide-react";
 
 export default function FieldTracking() {
+  const { i18n } = useTranslation();
   const { data, isLoading } = useQuery({
     queryKey: ["fsm-live-track"],
     queryFn: () => fieldApi.liveTracking(),
@@ -13,7 +15,7 @@ export default function FieldTracking() {
   });
 
   return (
-    <div className="p-6 space-y-4" dir="rtl" data-testid="page-field-tracking">
+    <div className="p-6 space-y-4" dir={i18n.dir()} data-testid="page-field-tracking">
       <div className="flex items-center gap-2">
         <Activity className="h-6 w-6 text-rose-500" />
         <h1 className="text-2xl font-bold">التتبع المباشر للفريق</h1>
@@ -36,12 +38,12 @@ export default function FieldTracking() {
                     </Badge>
                   </div>
                   <div className="font-semibold">{r.employee_name}</div>
-                  <div className="text-xs text-muted-foreground">{r.employee_code}</div>
+                  <div className="text-xs text-muted-foreground" dir="ltr">{r.employee_code}</div>
                   <div className="flex items-center gap-1 text-sm mt-2">
                     <MapPin className="h-4 w-4 text-blue-500" />
                     <span className="truncate">{r.location_name ?? "—"}</span>
                   </div>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1" dir="ltr">
                     <Clock className="h-3 w-3" />
                     {new Date(r.arrived_at).toLocaleTimeString("ar-SA-u-nu-latn")}
                     {r.duration_min ? ` • ${r.duration_min} د` : ""}

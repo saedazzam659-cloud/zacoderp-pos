@@ -20,14 +20,16 @@ const tiles: HubTile[] = [
 ];
 
 export default function HrHub() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   return (
-    <MenuHub
-      title={t("nav.hrEmployees")}
-      subtitle={t("hub.hrSubtitle")}
-      icon={Users}
-      headerTone="blue"
-      tiles={tiles}
-    />
+    <div dir={i18n.dir()}>
+      <MenuHub
+        title={t("nav.hrEmployees")}
+        subtitle={t("hub.hrSubtitle")}
+        icon={Users}
+        headerTone="blue"
+        tiles={tiles}
+      />
+    </div>
   );
 }

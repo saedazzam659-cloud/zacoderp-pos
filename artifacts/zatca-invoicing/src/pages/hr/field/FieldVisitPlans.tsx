@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { fieldApi } from "@/lib/fieldServiceApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +40,7 @@ const STATUSES = [
 const today = () => new Date().toISOString().slice(0, 10);
 
 export default function FieldVisitPlans() {
+  const { i18n } = useTranslation();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -146,7 +148,7 @@ export default function FieldVisitPlans() {
   });
 
   return (
-    <div className="space-y-4 p-4" dir="rtl" data-testid="page-field-plans">
+    <div className="space-y-4 p-4" dir={i18n.dir()} data-testid="page-field-plans">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -257,7 +259,7 @@ export default function FieldVisitPlans() {
 
       <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs" dir="rtl">
+          <table className="w-full text-xs" dir={i18n.dir()}>
             <thead className="bg-gradient-to-b from-emerald-50 to-emerald-100 text-emerald-900 border-b">
               <tr>
                 <th className="px-3 py-2 text-start font-semibold">رقم</th>
@@ -277,8 +279,8 @@ export default function FieldVisitPlans() {
                 const st = STATUSES.find(([v]) => v === p.status);
                 return (
                   <tr key={p.id} className="hover:bg-emerald-50/40" data-testid={`row-plan-${p.id}`}>
-                    <td className="px-3 py-2 font-mono font-bold">#{p.id}</td>
-                    <td className="px-3 py-2 tabular-nums">{p.date}</td>
+                    <td className="px-3 py-2 font-mono font-bold" dir="ltr">#{p.id}</td>
+                    <td className="px-3 py-2 tabular-nums" dir="ltr">{p.date}</td>
                     <td className="px-3 py-2 font-semibold">{p.employeeName ?? `#${p.employeeId}`}</td>
                     <td className="px-3 py-2">
                       {st
@@ -310,7 +312,7 @@ export default function FieldVisitPlans() {
       {/* Detail viewer */}
       {viewingId && detail && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setViewingId(null)}>
-          <div className="bg-white rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto" dir="rtl" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto" dir={i18n.dir()} onClick={(e) => e.stopPropagation()}>
             <div className="bg-gradient-to-l from-emerald-600 to-emerald-700 text-white p-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold flex items-center gap-2">
@@ -401,7 +403,7 @@ export default function FieldVisitPlans() {
 
       {/* Delete confirmation */}
       <AlertDialog open={!!del} onOpenChange={(o) => { if (!o) setDel(null); }}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={i18n.dir()}>
           <AlertDialogHeader>
             <AlertDialogTitle>حذف الخطة؟</AlertDialogTitle>
             <AlertDialogDescription>

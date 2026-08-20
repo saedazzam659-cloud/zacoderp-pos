@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { faceApi, type Camera } from "@/lib/faceAttendanceApi";
 import { branchesApi } from "@/lib/branchesApi";
@@ -22,6 +23,8 @@ const KIND_LABELS: Record<string, string> = {
 };
 
 export default function AttendanceCameras() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -94,7 +97,7 @@ export default function AttendanceCameras() {
   });
 
   return (
-    <div className="p-6 space-y-6" data-testid="page-attendance-cameras">
+    <div className="p-6 space-y-6" dir={pageDir} data-testid="page-attendance-cameras">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -103,7 +106,7 @@ export default function AttendanceCameras() {
           <p className="text-sm text-muted-foreground mt-1">إدارة الكاميرات وأجهزة DVR للتعرف الذكي على الوجوه</p>
         </div>
         <Button onClick={openNew} data-testid="btn-add-camera">
-          <Plus className="h-4 w-4 mr-2" /> إضافة كاميرا
+          <Plus className="h-4 w-4 me-2" /> إضافة كاميرا
         </Button>
       </div>
 
@@ -121,14 +124,14 @@ export default function AttendanceCameras() {
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="text-right p-3">الاسم</th>
-                  <th className="text-right p-3">النوع</th>
-                  <th className="text-right p-3">الفرع</th>
-                  <th className="text-right p-3">الموقع</th>
-                  <th className="text-right p-3">العنوان</th>
-                  <th className="text-right p-3">AI</th>
-                  <th className="text-right p-3">الحالة</th>
-                  <th className="text-right p-3"></th>
+                  <th className="text-start p-3">الاسم</th>
+                  <th className="text-start p-3">النوع</th>
+                  <th className="text-start p-3">الفرع</th>
+                  <th className="text-start p-3">الموقع</th>
+                  <th className="text-start p-3">العنوان</th>
+                  <th className="text-start p-3">AI</th>
+                  <th className="text-start p-3">الحالة</th>
+                  <th className="text-start p-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -138,7 +141,7 @@ export default function AttendanceCameras() {
                     <td className="p-3"><Badge variant="outline">{KIND_LABELS[c.kind] ?? c.kind}</Badge></td>
                     <td className="p-3">{c.branchName ?? "—"}</td>
                     <td className="p-3 text-muted-foreground">{c.location ?? "—"}</td>
-                    <td className="p-3 font-mono text-xs">
+                    <td className="p-3 font-mono text-xs" dir="ltr">
                       {c.kind === "webcam" ? "—" : c.streamUrl ?? `${c.dvrIp ?? ""}${c.port ? `:${c.port}` : ""}${c.channel ? `/ch${c.channel}` : ""}`}
                     </td>
                     <td className="p-3">{c.aiEnabled ? <Badge>مفعّل</Badge> : <Badge variant="secondary">معطّل</Badge>}</td>
@@ -165,7 +168,7 @@ export default function AttendanceCameras() {
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" dir={pageDir}>
           <DialogHeader>
             <DialogTitle>{editing ? "تعديل كاميرا" : "إضافة كاميرا جديدة"}</DialogTitle>
           </DialogHeader>
@@ -203,15 +206,15 @@ export default function AttendanceCameras() {
               <>
                 <div>
                   <Label>عنوان IP / DVR</Label>
-                  <Input value={form.dvrIp} onChange={(e) => setForm({ ...form, dvrIp: e.target.value })} placeholder="192.168.1.10" />
+                  <Input value={form.dvrIp} onChange={(e) => setForm({ ...form, dvrIp: e.target.value })} placeholder="192.168.1.10" dir="ltr" />
                 </div>
                 <div>
                   <Label>المنفذ</Label>
-                  <Input value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} placeholder="554" />
+                  <Input value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} placeholder="554" dir="ltr" />
                 </div>
                 <div>
                   <Label>القناة</Label>
-                  <Input value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })} placeholder="1" />
+                  <Input value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })} placeholder="1" dir="ltr" />
                 </div>
                 <div>
                   <Label>البروتوكول</Label>
@@ -226,16 +229,16 @@ export default function AttendanceCameras() {
                 </div>
                 <div>
                   <Label>المستخدم</Label>
-                  <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+                  <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} dir="ltr" />
                 </div>
                 <div>
                   <Label>كلمة المرور</Label>
-                  <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                  <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} dir="ltr" />
                 </div>
                 <div className="col-span-2">
                   <Label>عنوان البث الكامل (اختياري)</Label>
                   <Input value={form.streamUrl} onChange={(e) => setForm({ ...form, streamUrl: e.target.value })}
-                    placeholder="rtsp://user:pass@192.168.1.10:554/Streaming/Channels/101" />
+                    placeholder="rtsp://user:pass@192.168.1.10:554/Streaming/Channels/101" dir="ltr" />
                 </div>
               </>
             )}

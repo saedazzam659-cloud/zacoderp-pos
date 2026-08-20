@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { faceApi } from "@/lib/faceAttendanceApi";
 import { loadFaceApi } from "@/lib/faceapi/loader";
 import { evaluateFaceQuality } from "@/lib/faceapi/quality";
@@ -31,6 +32,8 @@ const STATUS_LABEL: Record<string, { ar: string; tone: "ok" | "warn" | "err" }> 
 };
 
 export default function MobileCheckIn() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const { toast } = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -198,7 +201,7 @@ export default function MobileCheckIn() {
     : "err";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-4 pb-12">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-4 pb-12" dir={pageDir}>
       <div className="max-w-md mx-auto space-y-4">
         <div className="text-center pt-4">
           <div className="inline-flex h-16 w-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 items-center justify-center mb-3 shadow-xl">

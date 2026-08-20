@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Sparkles, Loader2, AlertTriangle, Lightbulb, TrendingUp, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { employeesApi } from "@/lib/employeesApi";
@@ -20,6 +21,7 @@ type AIResult = {
 };
 
 export default function AIInsightsPanel({ reportType, title, summary, rows, period }: Props) {
+  const { i18n } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AIResult | null>(null);
@@ -42,7 +44,7 @@ export default function AIInsightsPanel({ reportType, title, summary, rows, peri
   }
 
   return (
-    <div className="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50/60 via-white to-indigo-50/40 p-4 sm:p-5" dir="rtl">
+    <div className="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50/60 via-white to-indigo-50/40 p-4 sm:p-5" dir={i18n.dir()}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="rounded-lg bg-violet-100 p-2">
@@ -108,7 +110,7 @@ export default function AIInsightsPanel({ reportType, title, summary, rows, peri
             />
           )}
 
-          <div className="text-[11px] text-slate-500 text-left">
+          <div className="text-[11px] text-slate-500 text-end">
             المصدر: {result.source === "ai" ? "تحليل ذكاء اصطناعي" : "تحليل تلقائي محلي"}
           </div>
         </div>

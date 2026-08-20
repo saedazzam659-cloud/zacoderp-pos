@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { fieldApi, type FieldLocation } from "@/lib/fieldServiceApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +36,7 @@ const EMPTY_FORM = {
 };
 
 export default function FieldLocations() {
+  const { i18n } = useTranslation();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -151,7 +153,7 @@ export default function FieldLocations() {
   });
 
   return (
-    <div className="space-y-4 p-4" dir="rtl" data-testid="page-field-locations">
+    <div className="space-y-4 p-4" dir={i18n.dir()} data-testid="page-field-locations">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -211,11 +213,11 @@ export default function FieldLocations() {
             </div>
             <div>
               <Label>خط العرض (lat) *</Label>
-              <Input value={form.lat} onChange={(e) => setForm({ ...form, lat: e.target.value })} data-testid="input-lat" />
+              <Input dir="ltr" value={form.lat} onChange={(e) => setForm({ ...form, lat: e.target.value })} data-testid="input-lat" />
             </div>
             <div>
               <Label>خط الطول (lng) *</Label>
-              <Input value={form.lng} onChange={(e) => setForm({ ...form, lng: e.target.value })} data-testid="input-lng" />
+              <Input dir="ltr" value={form.lng} onChange={(e) => setForm({ ...form, lng: e.target.value })} data-testid="input-lng" />
             </div>
             <div className="md:col-span-2">
               <Button type="button" variant="outline" size="sm" onClick={useCurrentLocation} data-testid="btn-current-location">
@@ -224,7 +226,7 @@ export default function FieldLocations() {
             </div>
             <div>
               <Label>نصف القطر (متر)</Label>
-              <Input type="number" min="10" value={form.radiusM} onChange={(e) => setForm({ ...form, radiusM: e.target.value })} />
+               <Input dir="ltr" type="number" min="10" value={form.radiusM} onChange={(e) => setForm({ ...form, radiusM: e.target.value })} />
             </div>
             <div>
               <Label>المدينة</Label>
@@ -240,7 +242,7 @@ export default function FieldLocations() {
             </div>
             <div>
               <Label>هاتف</Label>
-              <Input value={form.contactPhone} onChange={(e) => setForm({ ...form, contactPhone: e.target.value })} />
+               <Input dir="ltr" value={form.contactPhone} onChange={(e) => setForm({ ...form, contactPhone: e.target.value })} />
             </div>
             <div className="md:col-span-2">
               <Label>ملاحظات</Label>
@@ -252,7 +254,7 @@ export default function FieldLocations() {
 
       <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs" dir="rtl">
+          <table className="w-full text-xs" dir={i18n.dir()}>
             <thead className="bg-gradient-to-b from-emerald-50 to-emerald-100 text-emerald-900 border-b">
               <tr>
                 <th className="px-3 py-2 text-start font-semibold">الاسم</th>
@@ -285,14 +287,14 @@ export default function FieldLocations() {
                       {l.contactPerson || l.contactPhone ? (
                         <div>
                           {l.contactPerson && <div className="font-medium">{l.contactPerson}</div>}
-                          {l.contactPhone && <div className="text-[10px] text-muted-foreground font-mono">{l.contactPhone}</div>}
+                          {l.contactPhone && <div className="text-[10px] text-muted-foreground font-mono" dir="ltr">{l.contactPhone}</div>}
                         </div>
                       ) : "—"}
                     </td>
-                    <td className="px-3 py-2 font-mono text-[10px] tabular-nums">
+                    <td className="px-3 py-2 font-mono text-[10px] tabular-nums" dir="ltr">
                       {Number(l.lat).toFixed(5)}, {Number(l.lng).toFixed(5)}
                     </td>
-                    <td className="px-3 py-2 tabular-nums">{l.radiusM} م</td>
+                    <td className="px-3 py-2 tabular-nums"><span dir="ltr">{l.radiusM}</span> م</td>
                     <td className="px-3 py-2">
                       {l.isActive
                         ? <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-800">نشط</span>
@@ -330,7 +332,7 @@ export default function FieldLocations() {
       {/* Detail viewer */}
       {viewing && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setViewing(null)}>
-          <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" dir="rtl" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" dir={i18n.dir()} onClick={(e) => e.stopPropagation()}>
             <div className="bg-gradient-to-l from-emerald-600 to-emerald-700 text-white p-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold flex items-center gap-2">
@@ -348,11 +350,11 @@ export default function FieldLocations() {
             </div>
             <div className="p-4 grid grid-cols-2 gap-4 text-sm">
               <div><div className="text-xs text-muted-foreground">العنوان</div><div className="font-medium">{viewing.address || "—"}</div></div>
-              <div><div className="text-xs text-muted-foreground">الإحداثيات</div><div className="font-mono tabular-nums">{Number(viewing.lat).toFixed(6)}, {Number(viewing.lng).toFixed(6)}</div></div>
-              <div><div className="text-xs text-muted-foreground">نصف القطر</div><div className="tabular-nums">{viewing.radiusM} متر</div></div>
+              <div><div className="text-xs text-muted-foreground">الإحداثيات</div><div className="font-mono tabular-nums" dir="ltr">{Number(viewing.lat).toFixed(6)}, {Number(viewing.lng).toFixed(6)}</div></div>
+              <div><div className="text-xs text-muted-foreground">نصف القطر</div><div className="tabular-nums"><span dir="ltr">{viewing.radiusM}</span> متر</div></div>
               <div><div className="text-xs text-muted-foreground">الحالة</div><div>{viewing.isActive ? "نشط" : "معطّل"}</div></div>
               <div><div className="text-xs text-muted-foreground">جهة الاتصال</div><div>{viewing.contactPerson || "—"}</div></div>
-              <div><div className="text-xs text-muted-foreground">الهاتف</div><div className="font-mono">{viewing.contactPhone || "—"}</div></div>
+              <div><div className="text-xs text-muted-foreground">الهاتف</div><div className="font-mono" dir="ltr">{viewing.contactPhone || "—"}</div></div>
               {viewing.notes && (
                 <div className="col-span-2"><div className="text-xs text-muted-foreground">ملاحظات</div><div>{viewing.notes}</div></div>
               )}
@@ -373,7 +375,7 @@ export default function FieldLocations() {
 
       {/* Delete confirmation */}
       <AlertDialog open={!!del} onOpenChange={(o) => { if (!o) setDel(null); }}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={i18n.dir()}>
           <AlertDialogHeader>
             <AlertDialogTitle>تعطيل الموقع؟</AlertDialogTitle>
             <AlertDialogDescription>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { faceApi, KIOSK_TOKEN_KEY, type Camera, type RecognizeResult } from "@/lib/faceAttendanceApi";
 import { loadFaceApi } from "@/lib/faceapi/loader";
@@ -24,6 +25,8 @@ interface RecentMatch {
 }
 
 export default function LiveAttendanceKiosk() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const { toast } = useToast();
   const { user } = useAuth() as any;
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -291,7 +294,7 @@ export default function LiveAttendanceKiosk() {
   // Tells the operator how to get a pairing link from the admin.
   if (pairProcessed && !isAuthed) {
     return (
-      <div className="min-h-screen p-4 flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white" data-testid="page-kiosk-unpaired">
+      <div className="min-h-screen p-4 flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white" dir={pageDir} data-testid="page-kiosk-unpaired">
         <Card className="max-w-lg w-full p-8 bg-slate-800/80 border-slate-700 text-center space-y-5">
           <div className="flex justify-center">
             <div className="h-20 w-20 rounded-full bg-emerald-500/20 flex items-center justify-center">
@@ -304,7 +307,7 @@ export default function LiveAttendanceKiosk() {
               هذا الجهاز يحتاج إلى ربط بحساب الشركة قبل استخدامه لتسجيل الحضور بالتعرف على الوجه.
             </p>
           </div>
-          <div className="text-right text-sm space-y-3 bg-slate-900/60 rounded-lg p-4">
+          <div className="text-start text-sm space-y-3 bg-slate-900/60 rounded-lg p-4">
             <div className="font-bold text-emerald-400">خطوات الربط:</div>
             <ol className="space-y-2 list-decimal list-inside text-slate-200">
               <li>من حساب المدير، افتح: <span className="font-mono text-emerald-300">الحضور الذكي ← أجهزة الكشك</span></li>
@@ -314,7 +317,7 @@ export default function LiveAttendanceKiosk() {
             </ol>
           </div>
           {pairError && (
-            <div className="text-right p-3 rounded-lg bg-rose-900/30 border border-rose-700/50 text-rose-200 text-sm flex items-start gap-2">
+            <div className="text-start p-3 rounded-lg bg-rose-900/30 border border-rose-700/50 text-rose-200 text-sm flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
               <div>{pairError}</div>
             </div>
@@ -328,7 +331,7 @@ export default function LiveAttendanceKiosk() {
   }
 
   return (
-    <div className="min-h-screen p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white" data-testid="page-live-kiosk">
+    <div className="min-h-screen p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white" dir={pageDir} data-testid="page-live-kiosk">
       <div className="max-w-7xl mx-auto space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -341,7 +344,7 @@ export default function LiveAttendanceKiosk() {
             )}
           </h1>
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="text-3xl font-mono">{fmtTime(now)}</div>
+            <div className="text-3xl font-mono" dir="ltr">{fmtTime(now)}</div>
             <div className="flex items-center gap-2">
               <Switch checked={scanning} onCheckedChange={setScanning} data-testid="switch-scanning" />
               <span className="text-sm">{scanning ? "نشط" : "متوقف"}</span>
@@ -387,20 +390,20 @@ export default function LiveAttendanceKiosk() {
                 </Select>
               </div>
               <Badge variant={livenessOk ? "default" : "secondary"} className={livenessOk ? "bg-emerald-600" : ""}>
-                <Sparkles className="h-3 w-3 mr-1" /> الكشف الحي: {livenessOk ? "✓" : "..."}
+                <Sparkles className="h-3 w-3 me-1" /> الكشف الحي: {livenessOk ? "✓" : "..."}
               </Badge>
             </div>
 
             <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
               {modelLoading && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <Loader2 className="h-8 w-8 animate-spin mr-2" /> جاري التهيئة...
+                  <Loader2 className="h-8 w-8 animate-spin me-2" /> جاري التهيئة...
                 </div>
               )}
               <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
               <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
               {lastMatch && (
-                <div className={`absolute bottom-0 left-0 right-0 p-3 backdrop-blur-md ${lastMatch.matched ? "bg-emerald-500/40" : "bg-rose-500/40"}`}>
+                <div className={`absolute bottom-0 start-0 end-0 p-3 backdrop-blur-md ${lastMatch.matched ? "bg-emerald-500/40" : "bg-rose-500/40"}`}>
                   <div className="flex items-center gap-3">
                     {lastMatch.matched ? <CheckCircle2 className="h-8 w-8" /> : <XCircle className="h-8 w-8" />}
                     <div className="flex-1">
@@ -408,7 +411,7 @@ export default function LiveAttendanceKiosk() {
                         {lastMatch.matched ? lastMatch.employeeName : "وجه غير معروف"}
                       </div>
                       {lastMatch.matched && (
-                        <div className="text-xs opacity-90">{lastMatch.employeeCode} — تطابق {((lastMatch.confidence ?? 0) * 100).toFixed(1)}%</div>
+                        <div className="text-xs opacity-90" dir="ltr">{lastMatch.employeeCode} — تطابق {((lastMatch.confidence ?? 0) * 100).toFixed(1)}%</div>
                       )}
                     </div>
                   </div>
@@ -421,7 +424,7 @@ export default function LiveAttendanceKiosk() {
             <div className="flex items-center gap-2 mb-3 font-semibold">
               <Users className="h-4 w-4" /> آخر الحضور
             </div>
-            <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-[480px] overflow-y-auto pe-1">
               {matches.length === 0 && (
                 <p className="text-sm text-slate-400 text-center py-8">في انتظار وجوه...</p>
               )}
@@ -435,10 +438,10 @@ export default function LiveAttendanceKiosk() {
                   <div className="flex justify-between items-start">
                     <div>
                       <div className="font-medium">{m.employeeName ?? "غير معروف"}</div>
-                      <div className="text-xs opacity-70">{m.employeeCode ?? "—"}</div>
+                      <div className="text-xs opacity-70" dir="ltr">{m.employeeCode ?? "—"}</div>
                     </div>
                     <div className="text-xs opacity-70 flex items-center gap-1">
-                      <Clock className="h-3 w-3" /> {fmtRelative(m.at)}
+                      <Clock className="h-3 w-3" /> <span dir="ltr">{fmtRelative(m.at)}</span>
                     </div>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-xs">
@@ -448,7 +451,7 @@ export default function LiveAttendanceKiosk() {
                     {m.status === "cooldown" && <Badge variant="secondary">فترة انتظار</Badge>}
                     {m.status === "unknown" && <Badge variant="destructive">غير معروف</Badge>}
                     {m.status === "low" && <Badge variant="secondary">{m.action}</Badge>}
-                    <span className="opacity-70">{(m.confidence * 100).toFixed(0)}%</span>
+                    <span className="opacity-70" dir="ltr">{(m.confidence * 100).toFixed(0)}%</span>
                   </div>
                 </div>
               ))}

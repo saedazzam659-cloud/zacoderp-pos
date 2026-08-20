@@ -1,6 +1,7 @@
 import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { employeesApi } from "@/lib/employeesApi";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -20,6 +21,8 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function DocumentsExpiryReport() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const [days, setDays] = useState(90);
   const [activeDays, setActiveDays] = useState(90);
 
@@ -46,7 +49,7 @@ export default function DocumentsExpiryReport() {
   }
 
   return (
-    <div className="space-y-5" dir="rtl">
+    <div className="space-y-5" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -92,13 +95,13 @@ export default function DocumentsExpiryReport() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b">
-              <tr className="text-right">
-                <th className="px-3 py-2.5 font-semibold">الموظف</th>
-                <th className="px-3 py-2.5 font-semibold">الجنسية</th>
-                <th className="px-3 py-2.5 font-semibold">نوع الوثيقة</th>
-                <th className="px-3 py-2.5 font-semibold">الرقم</th>
-                <th className="px-3 py-2.5 font-semibold">تاريخ الانتهاء</th>
-                <th className="px-3 py-2.5 font-semibold">المتبقي</th>
+              <tr>
+                <th className="px-3 py-2.5 font-semibold text-start">الموظف</th>
+                <th className="px-3 py-2.5 font-semibold text-start">الجنسية</th>
+                <th className="px-3 py-2.5 font-semibold text-start">نوع الوثيقة</th>
+                <th className="px-3 py-2.5 font-semibold text-start">الرقم</th>
+                <th className="px-3 py-2.5 font-semibold text-start">تاريخ الانتهاء</th>
+                <th className="px-3 py-2.5 font-semibold text-end">المتبقي</th>
                 <th className="px-3 py-2.5 font-semibold">الحالة</th>
               </tr>
             </thead>
@@ -111,12 +114,12 @@ export default function DocumentsExpiryReport() {
                 <tr><td colSpan={7} className="px-3 py-10 text-center text-muted-foreground">لا توجد وثائق</td></tr>
               ) : rows.map((r: any, i: number) => (
                 <tr key={`${r.employeeId}-${r.docType}-${i}`} className="border-b hover:bg-slate-50">
-                  <td className="px-3 py-2"><div className="font-medium">{r.empName}</div><div className="text-xs text-muted-foreground">{r.empCode} • {r.department || "—"}</div></td>
+                  <td className="px-3 py-2"><div className="font-medium">{r.empName}</div><div className="text-xs text-muted-foreground font-mono" dir="ltr">{r.empCode} • {r.department || "—"}</div></td>
                   <td className="px-3 py-2 text-xs">{r.nationality || "—"}</td>
                   <td className="px-3 py-2 text-xs">{r.docTypeAr}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{r.docNumber || "—"}</td>
-                  <td className="px-3 py-2 text-xs">{r.expiryDate}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 font-mono text-xs" dir="ltr">{r.docNumber || "—"}</td>
+                  <td className="px-3 py-2 text-xs" dir="ltr">{r.expiryDate}</td>
+                  <td className="px-3 py-2 text-end tabular-nums" dir="ltr">
                     <span className={r.isExpired ? "text-rose-700 font-bold" : r.isExpiringSoon ? "text-amber-700 font-semibold" : ""}>
                       {r.remainingDays} يوم
                     </span>

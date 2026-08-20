@@ -1,6 +1,7 @@
 import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { employeesApi } from "@/lib/employeesApi";
 import { fmtNum } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,8 @@ const TYPE_AR: Record<string, string> = {
 };
 
 export default function LeavesReport() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const [from, setFrom] = useState("");
   const [to, setTo]     = useState("");
   const [filters, setFilters] = useState<{ from?: string; to?: string }>({});
@@ -61,7 +64,7 @@ export default function LeavesReport() {
   }
 
   return (
-    <div className="space-y-5" dir="rtl">
+    <div className="space-y-5" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -111,13 +114,13 @@ export default function LeavesReport() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b">
-              <tr className="text-right">
-                <th className="px-3 py-2.5 font-semibold">الموظف</th>
-                <th className="px-3 py-2.5 font-semibold">القسم</th>
-                <th className="px-3 py-2.5 font-semibold">النوع</th>
-                <th className="px-3 py-2.5 font-semibold">بداية</th>
-                <th className="px-3 py-2.5 font-semibold">نهاية</th>
-                <th className="px-3 py-2.5 font-semibold">أيام</th>
+              <tr>
+                <th className="px-3 py-2.5 font-semibold text-start">الموظف</th>
+                <th className="px-3 py-2.5 font-semibold text-start">القسم</th>
+                <th className="px-3 py-2.5 font-semibold text-start">النوع</th>
+                <th className="px-3 py-2.5 font-semibold text-start">بداية</th>
+                <th className="px-3 py-2.5 font-semibold text-start">نهاية</th>
+                <th className="px-3 py-2.5 font-semibold text-end">أيام</th>
                 <th className="px-3 py-2.5 font-semibold">مدفوعة</th>
                 <th className="px-3 py-2.5 font-semibold">الحالة</th>
               </tr>
@@ -131,12 +134,12 @@ export default function LeavesReport() {
                 <tr><td colSpan={8} className="px-3 py-10 text-center text-muted-foreground">لا توجد طلبات إجازة</td></tr>
               ) : rows.map((r: any) => (
                 <tr key={r.id} className="border-b hover:bg-slate-50">
-                  <td className="px-3 py-2"><div className="font-medium">{r.empName}</div><div className="text-xs text-muted-foreground">{r.empCode}</div></td>
+                  <td className="px-3 py-2"><div className="font-medium">{r.empName}</div><div className="text-xs text-muted-foreground font-mono" dir="ltr">{r.empCode}</div></td>
                   <td className="px-3 py-2 text-xs">{r.empDept || "—"}</td>
                   <td className="px-3 py-2 text-xs">{TYPE_AR[r.leaveType] || r.leaveType}</td>
-                  <td className="px-3 py-2 text-xs">{r.startDate}</td>
-                  <td className="px-3 py-2 text-xs">{r.endDate}</td>
-                  <td className="px-3 py-2 font-semibold">{r.days}</td>
+                  <td className="px-3 py-2 text-xs" dir="ltr">{r.startDate}</td>
+                  <td className="px-3 py-2 text-xs" dir="ltr">{r.endDate}</td>
+                  <td className="px-3 py-2 text-end tabular-nums font-semibold" dir="ltr">{r.days}</td>
                   <td className="px-3 py-2 text-xs">{r.paid ? "نعم" : "لا"}</td>
                   <td className="px-3 py-2">
                     {r.status === "approved" ? (

@@ -1,6 +1,7 @@
 import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { employeesApi } from "@/lib/employeesApi";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -21,6 +22,8 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function EmployeeCostReport() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const fmt = useFmt();
   const [gosi, setGosi] = useState(11.75);
   const [activeGosi, setActiveGosi] = useState(11.75);
@@ -48,7 +51,7 @@ export default function EmployeeCostReport() {
   }
 
   return (
-    <div className="space-y-5" dir="rtl">
+    <div className="space-y-5" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -96,17 +99,17 @@ export default function EmployeeCostReport() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b">
-              <tr className="text-right">
-                <th className="px-3 py-2.5 font-semibold">الكود</th>
-                <th className="px-3 py-2.5 font-semibold">الاسم</th>
-                <th className="px-3 py-2.5 font-semibold">القسم</th>
-                <th className="px-3 py-2.5 font-semibold text-left">أساسي</th>
-                <th className="px-3 py-2.5 font-semibold text-left">سكن</th>
-                <th className="px-3 py-2.5 font-semibold text-left">نقل</th>
-                <th className="px-3 py-2.5 font-semibold text-left">إجمالي شهري</th>
-                <th className="px-3 py-2.5 font-semibold text-left">GOSI</th>
-                <th className="px-3 py-2.5 font-semibold text-left">تكلفة شهرية</th>
-                <th className="px-3 py-2.5 font-semibold text-left">تكلفة سنوية</th>
+              <tr>
+                <th className="px-3 py-2.5 font-semibold text-start">الكود</th>
+                <th className="px-3 py-2.5 font-semibold text-start">الاسم</th>
+                <th className="px-3 py-2.5 font-semibold text-start">القسم</th>
+                <th className="px-3 py-2.5 font-semibold text-end">أساسي</th>
+                <th className="px-3 py-2.5 font-semibold text-end">سكن</th>
+                <th className="px-3 py-2.5 font-semibold text-end">نقل</th>
+                <th className="px-3 py-2.5 font-semibold text-end">إجمالي شهري</th>
+                <th className="px-3 py-2.5 font-semibold text-end">GOSI</th>
+                <th className="px-3 py-2.5 font-semibold text-end">تكلفة شهرية</th>
+                <th className="px-3 py-2.5 font-semibold text-end">تكلفة سنوية</th>
               </tr>
             </thead>
             <tbody>
@@ -118,16 +121,16 @@ export default function EmployeeCostReport() {
                 <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">لا توجد بيانات</td></tr>
               ) : rows.map((r: any) => (
                 <tr key={r.id} className="border-b hover:bg-slate-50">
-                  <td className="px-3 py-2 font-mono text-xs">{r.code}</td>
+                  <td className="px-3 py-2 font-mono text-xs" dir="ltr">{r.code}</td>
                   <td className="px-3 py-2 font-medium">{r.nameAr}</td>
                   <td className="px-3 py-2 text-xs">{r.department || "—"}</td>
-                  <td className="px-3 py-2 text-left font-mono">{fmt.fmt(r.basic)}</td>
-                  <td className="px-3 py-2 text-left font-mono">{fmt.fmt(r.housing)}</td>
-                  <td className="px-3 py-2 text-left font-mono">{fmt.fmt(r.transport)}</td>
-                  <td className="px-3 py-2 text-left font-mono">{fmt.fmt(r.gross)}</td>
-                  <td className="px-3 py-2 text-left font-mono text-amber-700">{fmt.fmt(r.gosiEmployer)}</td>
-                  <td className="px-3 py-2 text-left font-mono font-semibold text-rose-700">{fmt.fmt(r.monthlyCost)}</td>
-                  <td className="px-3 py-2 text-left font-mono font-bold text-emerald-700">{fmt.fmt(r.annualCost)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.basic)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.housing)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.transport)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.gross)}</td>
+                  <td className="px-3 py-2 text-end font-mono text-amber-700" dir="ltr">{fmt.fmt(r.gosiEmployer)}</td>
+                  <td className="px-3 py-2 text-end font-mono font-semibold text-rose-700" dir="ltr">{fmt.fmt(r.monthlyCost)}</td>
+                  <td className="px-3 py-2 text-end font-mono font-bold text-emerald-700" dir="ltr">{fmt.fmt(r.annualCost)}</td>
                 </tr>
               ))}
             </tbody>

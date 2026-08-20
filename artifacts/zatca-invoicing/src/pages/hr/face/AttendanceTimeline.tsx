@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { faceApi, type TimelineResponse } from "@/lib/faceAttendanceApi";
 import { fmtNum } from "@/lib/format";
@@ -29,6 +30,8 @@ const STATUS_LABEL: Record<string, { ar: string; cls: string }> = {
 };
 
 export default function AttendanceTimeline() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const [employeeId, setEmployeeId] = useState<string>("");
   const [from, setFrom] = useState<string>(daysAgoISO(6));
   const [to, setTo] = useState<string>(todayISO());
@@ -72,7 +75,7 @@ export default function AttendanceTimeline() {
   };
 
   return (
-    <div className="p-6 space-y-5" data-testid="page-timeline">
+    <div className="p-6 space-y-5" dir={pageDir} data-testid="page-timeline">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -150,10 +153,10 @@ export default function AttendanceTimeline() {
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-lg">{data.employee.nameAr}</div>
                 <div className="text-sm text-muted-foreground">
-                  {data.employee.code} · {data.employee.jobTitle ?? "—"} · {data.employee.department ?? "—"}
+                  <span dir="ltr">{data.employee.code}</span> · {data.employee.jobTitle ?? "—"} · {data.employee.department ?? "—"}
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  من {from} إلى {to}
+                <div className="text-xs text-muted-foreground mt-1" dir="ltr">
+                  {from} — {to}
                 </div>
               </div>
               {isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
@@ -168,8 +171,8 @@ export default function AttendanceTimeline() {
             </Card>
           ) : (
             <div className="relative space-y-6 ps-6">
-              {/* Vertical line */}
-              <div className="absolute right-2 top-2 bottom-2 w-0.5 bg-gradient-to-b from-indigo-200 via-indigo-100 to-transparent" />
+              {/* Vertical line — logical-start so it flips with dir */}
+              <div className="absolute start-2 top-2 bottom-2 w-0.5 bg-gradient-to-b from-indigo-200 via-indigo-100 to-transparent" />
               {days.map((day) => (
                 <DayBlock key={day.date} day={day} />
               ))}
@@ -218,8 +221,8 @@ function DayBlock({ day }: { day: { date: string; attendance: any; activity: any
 
   return (
     <div className="relative">
-      {/* Date header */}
-      <div className="absolute -right-[26px] top-0 h-6 w-6 rounded-full bg-indigo-600 ring-4 ring-white shadow flex items-center justify-center">
+      {/* Date dot — positioned at logical-start of the timeline gutter */}
+      <div className="absolute -start-[26px] top-0 h-6 w-6 rounded-full bg-indigo-600 ring-4 ring-white shadow flex items-center justify-center">
         <Calendar className="h-3 w-3 text-white" />
       </div>
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -277,7 +280,7 @@ function DayBlock({ day }: { day: { date: string; attendance: any; activity: any
                   <Badge variant="outline" className={STATUS_LABEL[a.checkInLocStatus]?.cls}>
                     {STATUS_LABEL[a.checkInLocStatus]?.ar ?? a.checkInLocStatus}
                   </Badge>
-                  {a.checkInDistanceM && <span className="text-muted-foreground">({Math.round(Number(a.checkInDistanceM))} م)</span>}
+                  {a.checkInDistanceM && <span className="text-muted-foreground" dir="ltr">({Math.round(Number(a.checkInDistanceM))} م)</span>}
                 </span>
               )}
               {a.checkOutLocStatus && (
@@ -286,7 +289,7 @@ function DayBlock({ day }: { day: { date: string; attendance: any; activity: any
                   <Badge variant="outline" className={STATUS_LABEL[a.checkOutLocStatus]?.cls}>
                     {STATUS_LABEL[a.checkOutLocStatus]?.ar ?? a.checkOutLocStatus}
                   </Badge>
-                  {a.checkOutDistanceM && <span className="text-muted-foreground">({Math.round(Number(a.checkOutDistanceM))} م)</span>}
+                  {a.checkOutDistanceM && <span className="text-muted-foreground" dir="ltr">({Math.round(Number(a.checkOutDistanceM))} م)</span>}
                 </span>
               )}
             </div>

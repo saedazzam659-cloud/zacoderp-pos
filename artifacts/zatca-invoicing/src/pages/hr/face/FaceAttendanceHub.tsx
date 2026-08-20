@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { faceApi, type FaceAnalytics } from "@/lib/faceAttendanceApi";
 import { Card } from "@/components/ui/card";
@@ -35,6 +36,8 @@ function computeInsight(a: FaceAnalytics | undefined): string {
 }
 
 export default function FaceAttendanceHub() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const { data: a } = useQuery<FaceAnalytics>({ queryKey: ["face-analytics"], queryFn: () => faceApi.analytics(), refetchInterval: 30_000 });
   const localInsight = computeInsight(a);
 
@@ -79,7 +82,7 @@ export default function FaceAttendanceHub() {
   ];
 
   return (
-    <div className="p-6 space-y-6" data-testid="page-face-hub">
+    <div className="p-6 space-y-6" dir={pageDir} data-testid="page-face-hub">
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-3">
           <div className="p-2 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5"><ScanFace className="h-7 w-7 text-primary" /></div>
@@ -159,9 +162,9 @@ export default function FaceAttendanceHub() {
                 <div key={t.employeeId} className="flex items-center justify-between p-2 rounded border">
                   <div>
                     <div className="font-medium text-sm">{t.employeeName ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">{t.employeeCode}</div>
+                    <div className="text-xs text-muted-foreground" dir="ltr">{t.employeeCode}</div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-start">
                     <Badge variant="secondary">{t.lateDays} يوم</Badge>
                     <div className="text-xs text-muted-foreground mt-0.5">{t.totalLateMin} دقيقة</div>
                   </div>
@@ -188,7 +191,7 @@ function HeatmapStrip({ heatmap }: { heatmap: Array<{ hour: number; cnt: number 
   const map = new Map(heatmap.map((h) => [h.hour, h.cnt]));
   const max = Math.max(1, ...heatmap.map((h) => h.cnt));
   return (
-    <div className="grid grid-cols-12 gap-1 text-center">
+    <div className="grid grid-cols-12 gap-1 text-center" dir="ltr">
       {Array.from({ length: 24 }).map((_, h) => {
         const cnt = map.get(h) ?? 0;
         const intensity = cnt / max;

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { fieldApi, type FieldServiceTicket } from "@/lib/fieldServiceApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,7 @@ const EMPTY_FORM = {
 };
 
 export default function FieldServiceTickets() {
+  const { i18n } = useTranslation();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -174,7 +176,7 @@ export default function FieldServiceTickets() {
   });
 
   return (
-    <div className="space-y-4 p-4" dir="rtl" data-testid="page-field-tickets">
+    <div className="space-y-4 p-4" dir={i18n.dir()} data-testid="page-field-tickets">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -256,7 +258,7 @@ export default function FieldServiceTickets() {
 
       <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs" dir="rtl">
+          <table className="w-full text-xs" dir={i18n.dir()}>
             <thead className="bg-gradient-to-b from-emerald-50 to-emerald-100 text-emerald-900 border-b">
               <tr>
                 <th className="px-3 py-2 text-start font-semibold">رقم التذكرة</th>
@@ -282,7 +284,7 @@ export default function FieldServiceTickets() {
                 const breached = t.slaResponseBreached || t.slaResolutionBreached;
                 return (
                   <tr key={t.id} className="hover:bg-emerald-50/40" data-testid={`row-ticket-${t.id}`}>
-                    <td className="px-3 py-2 font-mono font-bold">{t.ticketNo}</td>
+                    <td className="px-3 py-2 font-mono font-bold" dir="ltr">{t.ticketNo}</td>
                     <td className="px-3 py-2 max-w-[220px] truncate" title={t.title}>{t.title}</td>
                     <td className="px-3 py-2">{cat?.[1] ?? t.category}</td>
                     <td className="px-3 py-2">{t.customerName ?? "—"}</td>
@@ -323,7 +325,7 @@ export default function FieldServiceTickets() {
       {/* Detail viewer */}
       {viewingId && detail && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setViewingId(null)}>
-          <div className="bg-white rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto" dir="rtl" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto" dir={i18n.dir()} onClick={(e) => e.stopPropagation()}>
             <div className="bg-gradient-to-l from-emerald-600 to-emerald-700 text-white p-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold flex items-center gap-2">
@@ -359,11 +361,11 @@ export default function FieldServiceTickets() {
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div><div className="text-muted-foreground">المُسند إليه</div><div className="font-medium">{detail.assignedToName ?? "—"}</div></div>
                 <div><div className="text-muted-foreground">العميل</div><div className="font-medium">{detail.customerName ?? "—"}</div></div>
-                <div><div className="text-muted-foreground">SLA استجابة</div><div className="tabular-nums">{detail.slaResponseMin} د</div></div>
-                <div><div className="text-muted-foreground">SLA حل</div><div className="tabular-nums">{detail.slaResolutionMin} د</div></div>
-                <div><div className="text-muted-foreground">فُتحت</div><div>{new Date(detail.openedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>
-                {detail.respondedAt && <div><div className="text-muted-foreground">رُد عليها</div><div>{new Date(detail.respondedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>}
-                {detail.resolvedAt && <div><div className="text-muted-foreground">حُلّت</div><div>{new Date(detail.resolvedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>}
+                <div><div className="text-muted-foreground">SLA استجابة</div><div className="tabular-nums" dir="ltr">{detail.slaResponseMin} د</div></div>
+                <div><div className="text-muted-foreground">SLA حل</div><div className="tabular-nums" dir="ltr">{detail.slaResolutionMin} د</div></div>
+                <div><div className="text-muted-foreground">فُتحت</div><div dir="ltr">{new Date(detail.openedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>
+                {detail.respondedAt && <div><div className="text-muted-foreground">رُد عليها</div><div dir="ltr">{new Date(detail.respondedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>}
+                {detail.resolvedAt && <div><div className="text-muted-foreground">حُلّت</div><div dir="ltr">{new Date(detail.resolvedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div></div>}
               </div>
 
               {/* Assign */}
@@ -387,8 +389,8 @@ export default function FieldServiceTickets() {
                     {detail.visits.map((v) => (
                       <div key={v.id} className="flex items-center gap-2 text-xs border-b py-1">
                         <Badge variant="outline">{v.status}</Badge>
-                        <span className="flex-1">{new Date(v.arrivedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
-                        {v.durationMin && <span className="text-muted-foreground">{v.durationMin} د</span>}
+                        <span className="flex-1" dir="ltr">{new Date(v.arrivedAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
+                        {v.durationMin && <span className="text-muted-foreground" dir="ltr">{v.durationMin} د</span>}
                       </div>
                     ))}
                   </div>
@@ -401,7 +403,7 @@ export default function FieldServiceTickets() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs">
                       <span className="text-muted-foreground">الأصل المرتبط: </span>
-                      <span className="font-mono">{assets?.find(a => a.id === detail.assetId)?.code ?? `#${detail.assetId}`}</span>
+                      <span className="font-mono" dir="ltr">{assets?.find(a => a.id === detail.assetId)?.code ?? `#${detail.assetId}`}</span>
                       {" — "}
                       {assets?.find(a => a.id === detail.assetId)?.nameAr ?? ""}
                     </div>

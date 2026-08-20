@@ -106,7 +106,7 @@ export function AssetCustodyTab({ employees, pickName, isRtl }: Common) {
   const FILTERS: Array<[string, string]> = [["all", "الكل"], ["delivered", "مُسلَّمة"], ["returned", "مسترجعة"]];
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">الحالة:</span>
@@ -148,10 +148,10 @@ export function AssetCustodyTab({ employees, pickName, isRtl }: Common) {
                   <div className="font-medium">{c.assetNameAr}</div>
                   <div className="text-xs text-muted-foreground">{c.assetCode}{c.assetLocation ? ` — ${c.assetLocation}` : ""}</div>
                 </td>
-                <td className="p-2 text-center text-xs tabular-nums">{fmt2(num(c.assetValue))}</td>
-                <td className="p-2 text-center text-xs">{c.deliveryDate}</td>
-                <td className="p-2 text-center text-xs">{c.expectedReturnDate || "—"}</td>
-                <td className="p-2 text-center text-xs">{c.actualReturnDate || "—"}</td>
+                <td className="p-2 text-end text-xs tabular-nums" dir="ltr">{fmt2(num(c.assetValue))}</td>
+                <td className="p-2 text-center text-xs" dir="ltr">{c.deliveryDate}</td>
+                <td className="p-2 text-center text-xs" dir="ltr">{c.expectedReturnDate || "—"}</td>
+                <td className="p-2 text-center text-xs" dir="ltr">{c.actualReturnDate || "—"}</td>
                 <td className="p-2 text-center">
                   {c.status === "delivered"
                     ? <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">بعهدة الموظف</Badge>
@@ -390,7 +390,7 @@ export function CustodyReportTab({ employees, pickName, isRtl }: Common) {
   const selectedEmpName = empFilter ? (empOptions.find((o) => o.value === empFilter)?.label || "") : "";
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-end gap-2 flex-wrap">
         <div className="w-56">
           <label className="text-xs font-medium">الموظف</label>
@@ -449,9 +449,9 @@ export function CustodyReportTab({ employees, pickName, isRtl }: Common) {
                 <td className="p-2"><div className="font-medium">{r.employee}</div><div className="text-xs text-muted-foreground">{r.empCode}</div></td>
                 <td className="p-2 text-center"><Badge variant="outline" className={r.kind === "مالية" ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-violet-50 text-violet-700 border-violet-200"}>{r.kind}</Badge></td>
                 <td className="p-2 text-xs">{r.item}{r.code ? ` (${r.code})` : ""}</td>
-                <td className="p-2 text-center text-xs">{r.date}</td>
-                <td className="p-2 text-center text-xs tabular-nums">{fmt2(r.value)}</td>
-                <td className="p-2 text-center text-xs tabular-nums font-medium">{fmt2(r.remaining)}</td>
+                <td className="p-2 text-center text-xs" dir="ltr">{r.date}</td>
+                <td className="p-2 text-end text-xs tabular-nums" dir="ltr">{fmt2(r.value)}</td>
+                <td className="p-2 text-end text-xs tabular-nums font-medium" dir="ltr">{fmt2(r.remaining)}</td>
                 <td className="p-2 text-center text-xs">{r.status}</td>
               </tr>
             ))}

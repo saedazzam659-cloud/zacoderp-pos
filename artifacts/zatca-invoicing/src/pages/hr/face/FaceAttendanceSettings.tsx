@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { faceApi, type FaceSettings } from "@/lib/faceAttendanceApi";
 import { useToast } from "@/hooks/use-toast";
@@ -11,6 +12,8 @@ import { Switch } from "@/components/ui/switch";
 import { Settings2, Save, Loader2 } from "lucide-react";
 
 export default function FaceAttendanceSettings() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data, isLoading } = useQuery<FaceSettings>({ queryKey: ["face-settings"], queryFn: () => faceApi.getSettings() });
@@ -31,7 +34,7 @@ export default function FaceAttendanceSettings() {
   if (isLoading) return <div className="p-6"><Loader2 className="animate-spin" /></div>;
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl" data-testid="page-face-settings">
+    <div className="p-6 space-y-6 max-w-3xl" dir={pageDir} data-testid="page-face-settings">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Settings2 className="h-6 w-6 text-primary" /> إعدادات الحضور بالذكاء الاصطناعي
@@ -44,7 +47,7 @@ export default function FaceAttendanceSettings() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <Label>حد التطابق (0.4 — صارم، 0.7 — مرن)</Label>
-            <Input type="number" step="0.05" min="0.3" max="0.8"
+            <Input type="number" step="0.05" min="0.3" max="0.8" dir="ltr"
               value={form.matchThreshold ?? ""}
               onChange={(e) => setForm({ ...form, matchThreshold: e.target.value })}
               data-testid="input-match-threshold" />
@@ -52,7 +55,7 @@ export default function FaceAttendanceSettings() {
           </div>
           <div>
             <Label>الحد الأدنى لجودة الصورة عند التسجيل</Label>
-            <Input type="number" step="0.05" min="0.3" max="0.95"
+            <Input type="number" step="0.05" min="0.3" max="0.95" dir="ltr"
               value={form.minQualityScore ?? ""}
               onChange={(e) => setForm({ ...form, minQualityScore: e.target.value })} />
           </div>
@@ -64,22 +67,22 @@ export default function FaceAttendanceSettings() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <Label>بداية الدوام</Label>
-            <Input type="time" value={form.workdayStart ?? ""}
+            <Input type="time" dir="ltr" value={form.workdayStart ?? ""}
               onChange={(e) => setForm({ ...form, workdayStart: e.target.value })} />
           </div>
           <div>
             <Label>نهاية الدوام</Label>
-            <Input type="time" value={form.workdayEnd ?? ""}
+            <Input type="time" dir="ltr" value={form.workdayEnd ?? ""}
               onChange={(e) => setForm({ ...form, workdayEnd: e.target.value })} />
           </div>
           <div>
             <Label>سماحية التأخير (دقائق)</Label>
-            <Input type="number" min="0" value={form.lateToleranceMin ?? 0}
+            <Input type="number" min="0" dir="ltr" value={form.lateToleranceMin ?? 0}
               onChange={(e) => setForm({ ...form, lateToleranceMin: Number(e.target.value) })} />
           </div>
           <div>
             <Label>فترة الانتظار بين العمليات (ثانية)</Label>
-            <Input type="number" min="30" value={form.cooldownSeconds ?? 0}
+            <Input type="number" min="30" dir="ltr" value={form.cooldownSeconds ?? 0}
               onChange={(e) => setForm({ ...form, cooldownSeconds: Number(e.target.value) })} />
             <p className="text-xs text-muted-foreground mt-1">منع تسجيل دخول/خروج متكرر خلال نفس الفترة</p>
           </div>
@@ -97,7 +100,7 @@ export default function FaceAttendanceSettings() {
           {form.absentAfterMin != null && (form as any).absentAfterMin > 0 && (
             <div>
               <Label>الحد الأقصى للتأخير قبل احتساب الغياب (دقائق)</Label>
-              <Input type="number" min="1" max="1440" value={form.absentAfterMin ?? 30}
+              <Input type="number" min="1" max="1440" dir="ltr" value={form.absentAfterMin ?? 30}
                 data-testid="input-absent-after-min"
                 onChange={(e) => setForm({ ...form, absentAfterMin: Number(e.target.value) })} />
               <p className="text-xs text-muted-foreground mt-1">مثال: 30 دقيقة بعد بداية الدوام — من يبصم بعدها يُسجّل اليوم غياباً</p>
@@ -144,7 +147,7 @@ export default function FaceAttendanceSettings() {
 
       <div className="flex justify-end">
         <Button onClick={() => saveMut.mutate(form)} disabled={saveMut.isPending} data-testid="btn-save-settings">
-          {saveMut.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+          {saveMut.isPending ? <Loader2 className="h-4 w-4 me-2 animate-spin" /> : <Save className="h-4 w-4 me-2" />}
           حفظ الإعدادات
         </Button>
       </div>

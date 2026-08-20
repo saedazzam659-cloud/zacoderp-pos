@@ -1,6 +1,7 @@
 import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { employeesApi } from "@/lib/employeesApi";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -26,6 +27,8 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function PayrollReport() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const fmt = useFmt();
   const now = new Date();
   const [year, setYear] = useState<number>(now.getFullYear());
@@ -59,7 +62,7 @@ export default function PayrollReport() {
   const years = Array.from({ length: 6 }, (_, i) => now.getFullYear() - i);
 
   return (
-    <div className="space-y-5" dir="rtl">
+    <div className="space-y-5" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -128,16 +131,16 @@ export default function PayrollReport() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b">
-              <tr className="text-right">
-                <th className="px-3 py-2.5 font-semibold">الكود</th>
-                <th className="px-3 py-2.5 font-semibold">الاسم</th>
-                <th className="px-3 py-2.5 font-semibold">القسم</th>
-                <th className="px-3 py-2.5 font-semibold">أشهر</th>
-                <th className="px-3 py-2.5 font-semibold text-left">الإجمالي</th>
-                <th className="px-3 py-2.5 font-semibold text-left">GOSI</th>
-                <th className="px-3 py-2.5 font-semibold text-left">السلف</th>
-                <th className="px-3 py-2.5 font-semibold text-left">إجمالي الاستقطاعات</th>
-                <th className="px-3 py-2.5 font-semibold text-left">الصافي</th>
+              <tr>
+                <th className="px-3 py-2.5 font-semibold text-start">الكود</th>
+                <th className="px-3 py-2.5 font-semibold text-start">الاسم</th>
+                <th className="px-3 py-2.5 font-semibold text-start">القسم</th>
+                <th className="px-3 py-2.5 font-semibold text-end">أشهر</th>
+                <th className="px-3 py-2.5 font-semibold text-end">الإجمالي</th>
+                <th className="px-3 py-2.5 font-semibold text-end">GOSI</th>
+                <th className="px-3 py-2.5 font-semibold text-end">السلف</th>
+                <th className="px-3 py-2.5 font-semibold text-end">إجمالي الاستقطاعات</th>
+                <th className="px-3 py-2.5 font-semibold text-end">الصافي</th>
               </tr>
             </thead>
             <tbody>
@@ -149,15 +152,15 @@ export default function PayrollReport() {
                 <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">لا توجد بيانات لهذه الفترة</td></tr>
               ) : employees.map((e: any) => (
                 <tr key={e.employeeId} className="border-b hover:bg-slate-50">
-                  <td className="px-3 py-2 font-mono text-xs">{e.empCode}</td>
+                  <td className="px-3 py-2 font-mono text-xs" dir="ltr">{e.empCode}</td>
                   <td className="px-3 py-2 font-medium">{e.empName}</td>
                   <td className="px-3 py-2">{e.department || "—"}</td>
-                  <td className="px-3 py-2">{e.months}</td>
-                  <td className="px-3 py-2 text-left font-mono">{fmt.fmt(e.gross)}</td>
-                  <td className="px-3 py-2 text-left font-mono text-amber-700">{fmt.fmt(e.gosi)}</td>
-                  <td className="px-3 py-2 text-left font-mono text-orange-700">{fmt.fmt(e.loans)}</td>
-                  <td className="px-3 py-2 text-left font-mono text-rose-700">{fmt.fmt(e.deductions)}</td>
-                  <td className="px-3 py-2 text-left font-mono font-bold text-emerald-700">{fmt.fmt(e.net)}</td>
+                  <td className="px-3 py-2 text-end tabular-nums" dir="ltr">{e.months}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(e.gross)}</td>
+                  <td className="px-3 py-2 text-end font-mono text-amber-700" dir="ltr">{fmt.fmt(e.gosi)}</td>
+                  <td className="px-3 py-2 text-end font-mono text-orange-700" dir="ltr">{fmt.fmt(e.loans)}</td>
+                  <td className="px-3 py-2 text-end font-mono text-rose-700" dir="ltr">{fmt.fmt(e.deductions)}</td>
+                  <td className="px-3 py-2 text-end font-mono font-bold text-emerald-700" dir="ltr">{fmt.fmt(e.net)}</td>
                 </tr>
               ))}
             </tbody>

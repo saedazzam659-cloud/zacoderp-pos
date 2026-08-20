@@ -1,6 +1,7 @@
 import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { employeesApi } from "@/lib/employeesApi";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -24,6 +25,8 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function EmployeesReport() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const fmt = useFmt();
   const [status, setStatus] = useState<string>("active");
   const [department, setDepartment] = useState<string>("all");
@@ -60,7 +63,7 @@ export default function EmployeesReport() {
   const rows = data?.rows ?? [];
 
   return (
-    <div className="space-y-5" dir="rtl">
+    <div className="space-y-5" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -128,15 +131,15 @@ export default function EmployeesReport() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b">
-              <tr className="text-right">
-                <th className="px-3 py-2.5 font-semibold">الكود</th>
-                <th className="px-3 py-2.5 font-semibold">الاسم</th>
-                <th className="px-3 py-2.5 font-semibold">القسم</th>
-                <th className="px-3 py-2.5 font-semibold">المسمى</th>
-                <th className="px-3 py-2.5 font-semibold">الجنسية</th>
-                <th className="px-3 py-2.5 font-semibold">تاريخ التعيين</th>
-                <th className="px-3 py-2.5 font-semibold">الحالة</th>
-                <th className="px-3 py-2.5 font-semibold text-left">الإجمالي</th>
+              <tr>
+                <th className="px-3 py-2.5 font-semibold text-start">الكود</th>
+                <th className="px-3 py-2.5 font-semibold text-start">الاسم</th>
+                <th className="px-3 py-2.5 font-semibold text-start">القسم</th>
+                <th className="px-3 py-2.5 font-semibold text-start">المسمى</th>
+                <th className="px-3 py-2.5 font-semibold text-start">الجنسية</th>
+                <th className="px-3 py-2.5 font-semibold text-start">تاريخ التعيين</th>
+                <th className="px-3 py-2.5 font-semibold text-start">الحالة</th>
+                <th className="px-3 py-2.5 font-semibold text-end">الإجمالي</th>
               </tr>
             </thead>
             <tbody>
@@ -152,18 +155,18 @@ export default function EmployeesReport() {
                 const total = Number(r.basicSalary || 0) + Number(r.housingAllow || 0) + Number(r.transportAllow || 0) + Number(r.otherAllow || 0);
                 return (
                   <tr key={r.id} className="border-b hover:bg-slate-50">
-                    <td className="px-3 py-2 font-mono text-xs">{r.code}</td>
+                    <td className="px-3 py-2 font-mono text-xs" dir="ltr">{r.code}</td>
                     <td className="px-3 py-2 font-medium">{r.nameAr}</td>
                     <td className="px-3 py-2">{r.department || "—"}</td>
                     <td className="px-3 py-2">{r.jobTitle || "—"}</td>
                     <td className="px-3 py-2">{r.nationality || "—"}</td>
-                    <td className="px-3 py-2 text-xs">{r.hireDate || "—"}</td>
+                    <td className="px-3 py-2 text-xs" dir="ltr">{r.hireDate || "—"}</td>
                     <td className="px-3 py-2">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${r.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
                         {r.status === "active" ? "نشط" : "غير نشط"}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-left font-mono">{fmt.fmt(total)}</td>
+                    <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(total)}</td>
                   </tr>
                 );
               })}

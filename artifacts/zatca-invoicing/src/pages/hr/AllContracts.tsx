@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { employeesApi } from "@/lib/employeesApi";
 import { fmt2 } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,9 @@ function ExpiryBadge({ date }: { date?: string }) {
 }
 
 export default function AllContracts() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+
   const [statusFilter, setStatusFilter] = useState<string>("active");
   const [expFilter, setExpFilter] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -70,7 +74,7 @@ export default function AllContracts() {
   }, [contracts]);
 
   return (
-    <div className="space-y-4 p-2 md:p-4" data-testid="page-all-contracts">
+    <div className="space-y-4 p-2 md:p-4" data-testid="page-all-contracts" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <FileSignature className="size-6 text-primary" />
@@ -140,17 +144,17 @@ export default function AllContracts() {
               const st = STATUS[c.status] || STATUS.active;
               return (
                 <tr key={c.id} className="border-t" data-testid={`row-contract-${c.id}`}>
-                  <td className="p-2 font-medium text-xs">{c.contractNumber}</td>
+                  <td className="p-2 font-medium text-xs" dir="ltr">{c.contractNumber}</td>
                   <td className="p-2">
                     <div className="font-medium">{c.empNameAr}</div>
                     <div className="text-xs text-muted-foreground">{c.empCode} {c.nationality && <span>· {c.nationality}</span>}</div>
                   </td>
                   <td className="p-2 text-xs">{c.jobTitle || "—"}</td>
                   <td className="p-2 text-xs">{TYPE[c.contractType] || c.contractType}</td>
-                  <td className="p-2 text-xs">{c.startDate}</td>
-                  <td className="p-2 text-xs">{c.endDate || <span className="text-muted-foreground">—</span>}</td>
+                  <td className="p-2 text-xs" dir="ltr">{c.startDate}</td>
+                  <td className="p-2 text-xs" dir="ltr">{c.endDate || <span className="text-muted-foreground">—</span>}</td>
                   <td className="p-2"><ExpiryBadge date={c.endDate} /></td>
-                  <td className="p-2 text-xs tabular-nums font-medium">{fmt2(total)}</td>
+                  <td className="p-2 text-xs tabular-nums font-medium text-end" dir="ltr">{fmt2(total)}</td>
                   <td className="p-2 text-center text-xs">{c.vacationDays || 21} يوم</td>
                   <td className="p-2"><Badge variant="outline" className={st.cls}>{st.label}</Badge></td>
                   <td className="p-2">

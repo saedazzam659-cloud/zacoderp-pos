@@ -1,6 +1,7 @@
 import { saveBlob } from "@/lib/saveFile";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { employeesApi } from "@/lib/employeesApi";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -23,6 +24,8 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function LoansReport() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const fmt = useFmt();
   const [status, setStatus] = useState("all");
   const [filters, setFilters] = useState<{ status: string }>({ status: "all" });
@@ -54,7 +57,7 @@ export default function LoansReport() {
   }
 
   return (
-    <div className="space-y-5" dir="rtl">
+    <div className="space-y-5" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -107,14 +110,14 @@ export default function LoansReport() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b">
-              <tr className="text-right">
-                <th className="px-3 py-2.5 font-semibold">الموظف</th>
-                <th className="px-3 py-2.5 font-semibold">النوع</th>
-                <th className="px-3 py-2.5 font-semibold">التاريخ</th>
-                <th className="px-3 py-2.5 font-semibold text-left">المبلغ</th>
-                <th className="px-3 py-2.5 font-semibold">قسط</th>
-                <th className="px-3 py-2.5 font-semibold text-left">مسدد</th>
-                <th className="px-3 py-2.5 font-semibold text-left">متبقي</th>
+              <tr>
+                <th className="px-3 py-2.5 font-semibold text-start">الموظف</th>
+                <th className="px-3 py-2.5 font-semibold text-start">النوع</th>
+                <th className="px-3 py-2.5 font-semibold text-start">التاريخ</th>
+                <th className="px-3 py-2.5 font-semibold text-end">المبلغ</th>
+                <th className="px-3 py-2.5 font-semibold text-end">قسط</th>
+                <th className="px-3 py-2.5 font-semibold text-end">مسدد</th>
+                <th className="px-3 py-2.5 font-semibold text-end">متبقي</th>
                 <th className="px-3 py-2.5 font-semibold">التقدم</th>
                 <th className="px-3 py-2.5 font-semibold">الحالة</th>
               </tr>
@@ -128,13 +131,13 @@ export default function LoansReport() {
                 <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">لا توجد سلف</td></tr>
               ) : rows.map((r: any) => (
                 <tr key={r.id} className="border-b hover:bg-slate-50">
-                  <td className="px-3 py-2"><div className="font-medium">{r.empName}</div><div className="text-xs text-muted-foreground">{r.empCode}</div></td>
+                  <td className="px-3 py-2"><div className="font-medium">{r.empName}</div><div className="text-xs text-muted-foreground font-mono" dir="ltr">{r.empCode}</div></td>
                   <td className="px-3 py-2 text-xs">{r.loanType === "loan" ? "سلفة" : r.loanType}</td>
-                  <td className="px-3 py-2 text-xs">{r.loanDate}</td>
-                  <td className="px-3 py-2 text-left font-mono">{fmt.fmt(r.amountNum)}</td>
-                  <td className="px-3 py-2 text-xs">{r.installments}</td>
-                  <td className="px-3 py-2 text-left font-mono text-emerald-700">{fmt.fmt(r.paidNum)}</td>
-                  <td className="px-3 py-2 text-left font-mono text-rose-700">{fmt.fmt(r.remaining)}</td>
+                  <td className="px-3 py-2 text-xs" dir="ltr">{r.loanDate}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.amountNum)}</td>
+                  <td className="px-3 py-2 text-end tabular-nums" dir="ltr">{r.installments}</td>
+                  <td className="px-3 py-2 text-end font-mono text-emerald-700" dir="ltr">{fmt.fmt(r.paidNum)}</td>
+                  <td className="px-3 py-2 text-end font-mono text-rose-700" dir="ltr">{fmt.fmt(r.remaining)}</td>
                   <td className="px-3 py-2 min-w-[120px]">
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">

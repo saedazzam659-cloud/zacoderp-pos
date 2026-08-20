@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { faceApi } from "@/lib/faceAttendanceApi";
 import { useToast } from "@/hooks/use-toast";
@@ -21,6 +22,8 @@ interface Draft {
 const DEFAULT_RADIUS = "200";
 
 export default function WorkLocations() {
+  const { i18n } = useTranslation();
+  const pageDir = i18n.dir();
   const { toast } = useToast();
   const qc = useQueryClient();
   const { data: rows = [], isLoading } = useQuery<EmpRow[]>({
@@ -85,7 +88,7 @@ export default function WorkLocations() {
   const configured = rows.filter((r) => r.workLat && r.workLng).length;
 
   return (
-    <div className="p-6 space-y-5" data-testid="page-work-locations">
+    <div className="p-6 space-y-5" dir={pageDir} data-testid="page-work-locations">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -109,18 +112,18 @@ export default function WorkLocations() {
           <div>
             الموظف بدون إحداثيات يستطيع التسجيل من أي مكان — مفيد للموظفين المكتبيين.
             لتطبيق نطاق صارم اضبط الإحداثيات + نصف القطر، ثم اطلب من الموظفين استخدام
-            <span className="font-mono mx-1">/hr/check-in</span> من جوّالاتهم.
+            <span className="font-mono mx-1" dir="ltr">/hr/check-in</span> من جوّالاتهم.
           </div>
         </div>
       </Card>
 
       <div className="relative max-w-sm">
-        <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="بحث بالاسم أو الكود أو القسم..."
-          className="pr-9"
+          className="ps-9"
           data-testid="input-search"
         />
       </div>
@@ -150,7 +153,7 @@ export default function WorkLocations() {
                     )}
                     <div className="min-w-0">
                       <div className="font-semibold truncate">{r.nameAr}</div>
-                      <div className="text-xs text-muted-foreground">{r.code} · {r.jobTitle ?? "—"}</div>
+                      <div className="text-xs text-muted-foreground"><span dir="ltr">{r.code}</span> · {r.jobTitle ?? "—"}</div>
                       <div className="text-xs text-muted-foreground">{r.department ?? "—"}</div>
                       {hasCoords && (
                         <a
@@ -196,6 +199,7 @@ export default function WorkLocations() {
                         type="number"
                         min={10}
                         max={5000}
+                        dir="ltr"
                         data-testid={`input-radius-${r.id}`}
                       />
                     </div>

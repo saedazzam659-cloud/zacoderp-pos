@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { fieldApi } from "@/lib/fieldServiceApi";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,7 @@ import { BarChart3, Clock, AlertTriangle, CheckCircle2, Star } from "lucide-reac
 import { DateField } from "@/components/ui/date-field";
 
 export default function FieldReports() {
+  const { i18n } = useTranslation();
   const today = new Date().toISOString().slice(0, 10);
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   const [from, setFrom] = useState(weekAgo);
@@ -18,7 +20,7 @@ export default function FieldReports() {
   const { data: sla }     = useQuery({ queryKey: ["fsm-sla-rep", from, to], queryFn: () => fieldApi.sla({ from, to }) });
 
   return (
-    <div className="p-6 space-y-4" dir="rtl" data-testid="page-field-reports">
+    <div className="p-6 space-y-4" dir={i18n.dir()} data-testid="page-field-reports">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 className="h-6 w-6" /> تقارير الخدمة الميدانية</h1>
@@ -65,19 +67,19 @@ export default function FieldReports() {
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr>
-                <th className="text-right p-2">الأولوية</th>
-                <th className="text-right p-2">إجمالي</th>
-                <th className="text-right p-2">خرق استجابة</th>
-                <th className="text-right p-2">خرق حل</th>
+                <th className="text-start p-2">الأولوية</th>
+                <th className="text-start p-2">إجمالي</th>
+                <th className="text-start p-2">خرق استجابة</th>
+                <th className="text-start p-2">خرق حل</th>
               </tr>
             </thead>
             <tbody>
               {sla.byPriority.map((r) => (
                 <tr key={r.priority} className="border-t">
-                  <td className="p-2"><Badge variant="outline">{r.priority}</Badge></td>
-                  <td className="p-2">{r.total}</td>
-                  <td className="p-2">{r.respBreached}</td>
-                  <td className="p-2">{r.resBreached}</td>
+                  <td className="p-2"><Badge variant="outline" dir="ltr">{r.priority}</Badge></td>
+                  <td className="p-2 tabular-nums" dir="ltr">{r.total}</td>
+                  <td className="p-2 tabular-nums" dir="ltr">{r.respBreached}</td>
+                  <td className="p-2 tabular-nums" dir="ltr">{r.resBreached}</td>
                 </tr>
               ))}
             </tbody>
@@ -93,25 +95,25 @@ export default function FieldReports() {
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="text-right p-2">الموظف</th>
-                  <th className="text-right p-2">إجمالي زيارات</th>
-                  <th className="text-right p-2">مكتملة</th>
-                  <th className="text-right p-2">مفتوحة</th>
-                  <th className="text-right p-2">إجمالي الدقائق</th>
-                  <th className="text-right p-2">مواقع فريدة</th>
-                  <th className="text-right p-2">زيارات بحالة شاذة</th>
+                  <th className="text-start p-2">الموظف</th>
+                  <th className="text-end p-2">إجمالي زيارات</th>
+                  <th className="text-end p-2">مكتملة</th>
+                  <th className="text-end p-2">مفتوحة</th>
+                  <th className="text-end p-2">إجمالي الدقائق</th>
+                  <th className="text-end p-2">مواقع فريدة</th>
+                  <th className="text-end p-2">زيارات بحالة شاذة</th>
                 </tr>
               </thead>
               <tbody>
                 {summary.rows.map((r) => (
                   <tr key={r.employeeId} className="border-t">
                     <td className="p-2 font-medium">{r.employeeName}</td>
-                    <td className="p-2">{r.totalVisits}</td>
-                    <td className="p-2">{r.completedVisits}</td>
-                    <td className="p-2">{r.openVisits}</td>
-                    <td className="p-2">{r.totalMinutes}</td>
-                    <td className="p-2">{r.uniqueLocations}</td>
-                    <td className="p-2">{r.flaggedVisits > 0 ? <Badge variant="destructive">{r.flaggedVisits}</Badge> : "0"}</td>
+                    <td className="p-2 text-end tabular-nums" dir="ltr">{r.totalVisits}</td>
+                    <td className="p-2 text-end tabular-nums" dir="ltr">{r.completedVisits}</td>
+                    <td className="p-2 text-end tabular-nums" dir="ltr">{r.openVisits}</td>
+                    <td className="p-2 text-end tabular-nums" dir="ltr">{r.totalMinutes}</td>
+                    <td className="p-2 text-end tabular-nums" dir="ltr">{r.uniqueLocations}</td>
+                    <td className="p-2 text-end">{r.flaggedVisits > 0 ? <Badge variant="destructive" dir="ltr">{r.flaggedVisits}</Badge> : "0"}</td>
                   </tr>
                 ))}
                 {summary.rows.length === 0 && <tr><td colSpan={7} className="p-4 text-center text-muted-foreground">لا توجد بيانات في الفترة المحددة</td></tr>}
