@@ -74,3 +74,12 @@ export function useAgentBrandName(): string | null {
   }, []);
   return v;
 }
+
+/** True when the current host is registered as an agent domain. */
+export function useIsAgentDomain(): boolean {
+  const [v, setV] = useState<boolean>(cache?.isAgentDomain ?? false);
+  useEffect(() => {
+    if (cache == null) fetchBranding().then(b => setV(b.isAgentDomain));
+  }, []);
+  return v;
+}

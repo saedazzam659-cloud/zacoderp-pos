@@ -1,11 +1,11 @@
 // Release bundle for «full» edition agent servers.
 //
-// The bundle is a tar.gz of the api-server's own built dist directory
-// (single esbuild bundle + pino/pdf workers + public/ SPA assets). Version is
-// the sha256 of index.mjs — every central Publish changes it, and the agents'
-// cron updater picks the new version automatically (same publish policy).
+// The bundle is a deterministic tar.gz of the api-server's complete built dist
+// directory (server bundle + workers + public SPA assets). Its release ID is
+// derived from the final archive, so a frontend-only change is a new release.
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -13,9 +13,33 @@ export interface ReleaseInfo {
   version: string;
   tarPath: string;
   sizeBytes: number;
+  sha256: string;
+  publishedAt: string;
 }
 
 let inFlight: Promise<ReleaseInfo> | null = null;
+
+async function hashFile(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    createReadStream(filePath)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("error", reject)
+      .on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+async function releaseInfo(tarPath: string, knownSha256?: string): Promise<ReleaseInfo> {
+  const stat = await fs.stat(tarPath);
+  const sha256 = knownSha256 ?? await hashFile(tarPath);
+  return {
+    version: sha256.slice(0, 16),
+    tarPath,
+    sizeBytes: stat.size,
+    sha256,
+    publishedAt: stat.mtime.toISOString(),
+  };
+}
 
 function findDistDir(): Promise<string> {
   const candidates = [
@@ -34,39 +58,66 @@ function findDistDir(): Promise<string> {
   })();
 }
 
-async function buildRelease(): Promise<ReleaseInfo> {
-  const distDir = await findDistDir();
-  const bundle = await fs.readFile(path.join(distDir, "index.mjs"));
-  const version = createHash("sha256").update(bundle).digest("hex").slice(0, 16);
-  const tarPath = path.join("/tmp", `zacod-release-${version}.tgz`);
+export async function buildReleaseFromDist(distDir: string, releaseDir = "/tmp"): Promise<ReleaseInfo> {
+  await fs.access(path.join(distDir, "index.mjs"));
+  const workDir = await fs.mkdtemp(path.join(releaseDir, ".zacod-release-build-"));
+  const partial = path.join(workDir, "release.tgz");
   try {
-    const st = await fs.stat(tarPath);
-    return { version, tarPath, sizeBytes: st.size };
-  } catch { /* build below */ }
-  const partial = `${tarPath}.partial-${process.pid}`;
-  await new Promise<void>((resolve, reject) => {
-    execFile("tar", ["-czf", partial, "--exclude=*.map", "-C", distDir, "."],
-      { timeout: 120_000 }, (err, _o, stderr) => {
+    await new Promise<void>((resolve, reject) => {
+      execFile("tar", [
+        "--sort=name",
+        "--mtime=@0",
+        "--owner=0",
+        "--group=0",
+        "--numeric-owner",
+        "--format=gnu",
+        "--exclude=*.map",
+        "-czf",
+        partial,
+        "-C",
+        distDir,
+        ".",
+      ], { timeout: 120_000 }, (err, _o, stderr) => {
         if (err) reject(new Error(`تعذّر بناء حزمة النسخة: ${String(stderr || err.message).slice(0, 200)}`));
         else resolve();
       });
-  });
-  await fs.rename(partial, tarPath);
+    });
+    const sha256 = await hashFile(partial);
+    const version = sha256.slice(0, 16);
+    const tarPath = path.join(releaseDir, `zacod-release-${version}.tgz`);
+    try {
+      const existingSha = await hashFile(tarPath);
+      if (existingSha !== sha256) throw new Error("تعارض نادر في معرّف حزمة التحديث");
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error;
+      await fs.rename(partial, tarPath);
+    }
+    return releaseInfo(tarPath, sha256);
+  } finally {
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function buildRelease(): Promise<ReleaseInfo> {
+  const distDir = await findDistDir();
+  const rel = await buildReleaseFromDist(distDir);
   // Best-effort cleanup of older cached releases.
   try {
     const entries = await fs.readdir("/tmp");
     await Promise.all(entries
-      .filter(f => f.startsWith("zacod-release-") && f !== path.basename(tarPath) && !f.includes(".partial"))
+      .filter(f => f.startsWith("zacod-release-") && f !== path.basename(rel.tarPath))
       .map(f => fs.rm(path.join("/tmp", f), { force: true })));
   } catch { /* ignore */ }
-  const st = await fs.stat(tarPath);
-  return { version, tarPath, sizeBytes: st.size };
+  return rel;
 }
 
-/** Version+cached tarball of the current running build (single-flight). */
+/** Immutable version+tarball of the current running build (single-flight). */
 export async function getReleaseInfo(): Promise<ReleaseInfo> {
   if (!inFlight) {
-    inFlight = buildRelease().finally(() => { inFlight = null; });
+    inFlight = buildRelease().catch((error) => {
+      inFlight = null;
+      throw error;
+    });
   }
   return inFlight;
 }

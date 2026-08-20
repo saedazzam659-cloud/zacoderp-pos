@@ -135,6 +135,7 @@ import traineeRequestsRouter from "./trainee-requests";
 import domainsRouter from "./domains";
 import externalDatabasesRouter from "./externalDatabases";
 import agentInstancesRouter, { agentPublicRouter, agentDataSourceRouter, blockSuperadminOnAgentDomains } from "./agentInstances";
+import localAgentUpdatesRouter from "./localAgentUpdates";
 import devCloudAdminRouter from "./dev-cloud-admin";
 import { devStudioRouter, devStudioAdminRouter } from "./dev-studio";
 import extensionsRouter from "../extensions/index.js";
@@ -185,6 +186,9 @@ router.use("/admin/external-databases", externalDatabasesRouter);
 // fetch branding without a token.
 router.use("/admin/agent-instances", agentInstancesRouter);
 router.use(agentPublicRouter);
+// Full-agent local control plane. Self-authenticates as the agent's own
+// superadmin and is a 404/no-op on the central platform.
+router.use("/agent-updates", localAgentUpdatesRouter);
 // Reseller (Agent) management — Task #237. Both routers MUST be mounted BEFORE
 // the path-less zatcaRouter: the reseller portal uses its own bearer token
 // (absent from usersTable) and would otherwise be 401-ed by zatca's global

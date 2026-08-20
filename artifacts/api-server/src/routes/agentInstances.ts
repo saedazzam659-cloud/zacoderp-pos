@@ -42,6 +42,12 @@ import { extractAuth } from "../middleware/auth.js";
 import { normalizeHost } from "../middleware/domainResolver.js";
 import { encryptSecret, decryptSecret } from "../lib/encryption.js";
 import { lookup as dnsLookup } from "node:dns/promises";
+import {
+  isManualAgentReleaseRequest,
+  resolveAgentReleaseCredentials,
+  stripAgentReleaseCredentialsFromUrl,
+  buildCustomAgentReleaseUrl,
+} from "../lib/agentReleasePolicy.js";
 
 /**
  * SSRF guard for agent-server probes: the SA may point tests at any PUBLIC
@@ -1096,6 +1102,7 @@ async function buildSetupKit(
   if (!/^[a-f0-9]{64}$/.test(proxyToken)) throw new Error("رمز الوكيل غير صالح — أعد توليده");
   const config = {
     domain: inst.domain,
+    mode: inst.mode,
     installationId: inst.installationId,
     licenseKey: inst.licenseKey ?? "",
     fingerprint: inst.dbFingerprint ?? "",
@@ -1108,12 +1115,13 @@ async function buildSetupKit(
 # On a definitive 403 (suspended / revoked license) the local proxy is stopped.
 CFG=/opt/zacod/config.json
 URL=$(grep -o '"heartbeatUrl": *"[^"]*"' $CFG | cut -d'"' -f4)
-BODY=$(printf '{"installationId":"%s","licenseKey":"%s","domain":"%s","fingerprint":"%s","serverMarker":"%s"}' \\
+BODY=$(printf '{"installationId":"%s","licenseKey":"%s","domain":"%s","fingerprint":"%s","serverMarker":"%s","version":"%s"}' \\
   "$(grep -o '"installationId": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
   "$(grep -o '"licenseKey": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
   "$(grep -o '"domain": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
   "$(grep -o '"fingerprint": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
-  "$(grep -o '"serverMarker": *"[^"]*"' $CFG | cut -d'"' -f4)")
+  "$(grep -o '"serverMarker": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
+  "$(cat /opt/zacod/app/VERSION 2>/dev/null || true)")
 CODE=$(curl -s -o /tmp/zacod_hb.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$BODY" "$URL")
 if [ "$CODE" = "403" ]; then
   touch /opt/zacod/SUSPENDED
@@ -1973,21 +1981,29 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
         assertShellSafeDbUrl(restoreDbUrl);
         const encR = opts.encryptBundle;
         const passR = encR ? bundlePassphrase(inst) : "";
-        const qR = `installationId=${encodeURIComponent(inst.installationId)}&licenseKey=${encodeURIComponent(inst.licenseKey ?? "")}`;
-        const dUrl = `${originR}/api/agent/release/custom?${qR}&kind=db${encR ? "&enc=1" : ""}`;
+        const dUrl = buildCustomAgentReleaseUrl(originR, "db", encR);
+        const releaseAuthPathR = "/opt/zacod/.release-auth.curl";
         const isGz = /\.gz$/i.test(metaR.db.filename);
         const isSql = /\.sql(\.gz)?$/i.test(metaR.db.filename);
         const dlR = encR
-          ? `curl -fsSL ${shQ(dUrl)} -o /tmp/zacod-db.bak.enc
+          ? `curl --config ${releaseAuthPathR} -fsS ${shQ(dUrl)} -o /tmp/zacod-db.bak.enc
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 10000 -md sha256 -pass "pass:$ZACOD_BUNDLE_KEY" -in /tmp/zacod-db.bak.enc -out /tmp/zacod-db.bak
 rm -f /tmp/zacod-db.bak.enc`
-          : `curl -fsSL ${shQ(dUrl)} -o /tmp/zacod-db.bak`;
+          : `curl --config ${releaseAuthPathR} -fsS ${shQ(dUrl)} -o /tmp/zacod-db.bak`;
         await runSsh(`set -e
 export DEBIAN_FRONTEND=noninteractive
 export ZACOD_BUNDLE_KEY=${shQ(passR)}
+umask 077
+trap 'rm -f ${releaseAuthPathR}' EXIT
+RELEASE_INSTALLATION_ID=${shQ(inst.installationId)}
+RELEASE_LICENSE_KEY=${shQ(inst.licenseKey ?? "")}
+printf 'header = "X-Zacod-Installation-Id: %s"\\nheader = "X-Zacod-License-Key: %s"\\n' "$RELEASE_INSTALLATION_ID" "$RELEASE_LICENSE_KEY" > ${releaseAuthPathR}
+unset RELEASE_INSTALLATION_ID RELEASE_LICENSE_KEY
 command -v psql >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y postgresql-client >/dev/null; }
 ${encR ? `command -v openssl >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y openssl >/dev/null; }` : `true`}
 ${dlR}
+rm -f ${releaseAuthPathR}
+trap - EXIT
 ${isSql
   ? (isGz
       ? `gunzip -c /tmp/zacod-db.bak | psql "${restoreDbUrl}" -v ON_ERROR_STOP=1 >/dev/null`
@@ -2045,24 +2061,26 @@ echo ZACOD_DB_RESTORED`, "ZACOD_DB_RESTORED", 600_000);
         if (u.hostname === inst.sshHost) { u.hostname = "127.0.0.1"; u.searchParams.delete("sslmode"); localDbUrl = u.toString().replace(/\?$/, ""); }
       } catch { /* keep stored URL as-is */ }
       assertShellSafeDbUrl(localDbUrl);
-      const q = `installationId=${encodeURIComponent(inst.installationId)}&licenseKey=${encodeURIComponent(inst.licenseKey ?? "")}`;
       const enc = opts.encryptBundle;
       const encQ = enc ? "&enc=1" : "";
       const pass = enc ? bundlePassphrase(inst) : "";
       // أمر تنزيل موحّد: عند تفعيل «حزمة مشفّرة» تُنزَّل الحزمة مشفّرة
       // (AES-256-CBC/PBKDF2 بصيغة openssl القياسية) وتُفكّ على السيرفر.
-      const dlCmd = (url: string, out: string) => enc
-        ? `curl -fsSL ${shQ(url)} -o ${out}.enc
+      const releaseAuthPath = "/opt/zacod/.release-auth.curl";
+      const dlCmd = (url: string, out: string, withReleaseAuth = false) => {
+        const auth = withReleaseAuth ? `--config ${releaseAuthPath} ` : "";
+        return enc
+        ? `curl ${auth}-fsS ${shQ(url)} -o ${out}.enc
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 10000 -md sha256 -pass "pass:$ZACOD_BUNDLE_KEY" -in ${out}.enc -out ${out}
 rm -f ${out}.enc`
-        : `curl -fsSL ${shQ(url)} -o ${out}`;
+        : `curl ${auth}-fsS ${shQ(url)} -o ${out}`;
+      };
       const keyExport = enc ? `export ZACOD_BUNDLE_KEY=${shQ(pass)}` : `export ZACOD_BUNDLE_KEY=`;
       const keyEnvLine = enc ? `echo "ZACOD_BUNDLE_KEY=$ZACOD_BUNDLE_KEY";` : "";
 
       // مصدر التطبيق: حزمة المنصة (الافتراضي) أو الملفات المرفوعة يدويًا.
-      let bundleUrl = `${origin}/api/agent/release/bundle?${q}${encQ}`;
+      let bundleUrl = `${origin}/api/agent/release/bundle?manual=1${encQ}`;
       let relVersion = "";
-      let autoUpdater = true;
       let frontendCmd = "";
       let dbRestoreCmd = "";
       if (opts.variant === "upload") {
@@ -2075,12 +2093,11 @@ rm -f ${out}.enc`
           fs.createReadStream(p).on("data", (d) => h.update(d)).on("end", () => resolve(h.digest("hex").slice(0, 16))).on("error", reject);
         });
         relVersion = `custom-${await hashFile(customPkgPath(inst.id, "backend"))}`;
-        autoUpdater = false; // الحزم المرفوعة لا تُحدَّث تلقائيًا من المنصة
-        bundleUrl = `${origin}/api/agent/release/custom?${q}&kind=backend${encQ}`;
+        bundleUrl = buildCustomAgentReleaseUrl(origin, "backend", enc);
         log.push(`مصدر التطبيق: ملفات مرفوعة (${meta.backend.filename}, ${Math.round(meta.backend.sizeBytes / 1024 / 1024)}MB)${enc ? " — مشفّرة أثناء النقل" : ""}`);
         if (meta.frontend && fs.existsSync(customPkgPath(inst.id, "frontend"))) {
-          const fUrl = `${origin}/api/agent/release/custom?${q}&kind=frontend${encQ}`;
-          frontendCmd = `${dlCmd(fUrl, "/tmp/zacod-front.tgz")}
+          const fUrl = buildCustomAgentReleaseUrl(origin, "frontend", enc);
+          frontendCmd = `${dlCmd(fUrl, "/tmp/zacod-front.tgz", true)}
 mkdir -p /opt/zacod/app.new/public
 tar -xzf /tmp/zacod-front.tgz -C /opt/zacod/app.new/public
 rm -f /tmp/zacod-front.tgz
@@ -2094,25 +2111,9 @@ echo "Frontend مرفوع: تم فكّه"`;
         const { getReleaseInfo } = await import("../lib/agentRelease.js");
         const rel = await getReleaseInfo();
         relVersion = rel.version;
+        bundleUrl = `${origin}/api/agent/release/bundle?manual=1&version=${encodeURIComponent(rel.version)}${encQ}`;
         log.push(`إصدار الحزمة: ${rel.version} (${Math.round(rel.sizeBytes / 1024 / 1024)}MB)${enc ? " — مشفّرة أثناء النقل" : ""}`);
       }
-      const manifestUrl = `${origin}/api/agent/release/manifest?${q}`;
-      const updater = `#!/usr/bin/env bash
-set -e
-[ -f /opt/zacod/SUSPENDED ] && exit 0
-ZACOD_BUNDLE_KEY=$(grep '^ZACOD_BUNDLE_KEY=' /opt/zacod/app.env 2>/dev/null | cut -d= -f2-)
-export ZACOD_BUNDLE_KEY
-MAN=$(curl -fsS ${shQ(manifestUrl)}) || exit 0
-VER=$(echo "$MAN" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
-CUR=$(cat /opt/zacod/app/VERSION 2>/dev/null || echo none)
-{ [ -n "$VER" ] && [ "$VER" != "$CUR" ]; } || exit 0
-${dlCmd(bundleUrl, "/tmp/zacod-app.tgz")}
-rm -rf /opt/zacod/app.new && mkdir -p /opt/zacod/app.new
-tar -xzf /tmp/zacod-app.tgz -C /opt/zacod/app.new
-echo "$VER" > /opt/zacod/app.new/VERSION
-rm -rf /opt/zacod/app.old; [ -d /opt/zacod/app ] && mv /opt/zacod/app /opt/zacod/app.old; mv /opt/zacod/app.new /opt/zacod/app
-systemctl restart zacod-app
-`;
       await runSsh(`set -e
 export DEBIAN_FRONTEND=noninteractive
 ${keyExport}
@@ -2122,7 +2123,15 @@ if [ "$NEED_NODE" = "1" ]; then curl -fsSL https://deb.nodesource.com/setup_22.x
 echo "Node: $(node -v)"
 ${enc ? `command -v openssl >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y openssl >/dev/null; }` : `true`}
 mkdir -p /opt/zacod
-${dlCmd(bundleUrl, "/tmp/zacod-app.tgz")}
+umask 077
+trap 'rm -f ${releaseAuthPath}' EXIT
+RELEASE_INSTALLATION_ID=${shQ(inst.installationId)}
+RELEASE_LICENSE_KEY=${shQ(inst.licenseKey ?? "")}
+printf 'header = "X-Zacod-Installation-Id: %s"\\nheader = "X-Zacod-License-Key: %s"\\n' "$RELEASE_INSTALLATION_ID" "$RELEASE_LICENSE_KEY" > ${releaseAuthPath}
+unset RELEASE_INSTALLATION_ID RELEASE_LICENSE_KEY
+${dlCmd(bundleUrl, "/tmp/zacod-app.tgz", true)}
+rm -f ${releaseAuthPath}
+trap - EXIT
 rm -rf /opt/zacod/app.new && mkdir -p /opt/zacod/app.new
 tar -xzf /tmp/zacod-app.tgz -C /opt/zacod/app.new
 rm -f /tmp/zacod-app.tgz
@@ -2147,13 +2156,9 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-cat > /opt/zacod/update.sh <<'ZACOD_UPD'
-${updater}
-ZACOD_UPD
-chmod 700 /opt/zacod/update.sh
-${autoUpdater
-  ? `( crontab -l 2>/dev/null | grep -v zacod-update ; echo "*/10 * * * * /opt/zacod/update.sh # zacod-update" ) | crontab -`
-  : `( crontab -l 2>/dev/null | grep -v zacod-update ) | crontab - || true`}
+# لا يوجد cron للتحديث: تنزيل/تثبيت النسخ يبدأ فقط من زر مسؤول الوكيل.
+rm -f /opt/zacod/update.sh
+( crontab -l 2>/dev/null | grep -v zacod-update | grep -v '/opt/zacod/update.sh' ) | crontab - || true
 systemctl daemon-reload
 systemctl enable zacod-app >/dev/null 2>&1
 systemctl restart zacod-app
@@ -2387,9 +2392,16 @@ agentPublicRouter.get("/branding/index", async (req, res) => {
 // Authenticated by installationId + licenseKey (same trust model as the
 // heartbeat). Suspended/expired agents get 403 — the kill-switch also stops
 // updates.
-async function authReleaseRequest(req: any, res: any): Promise<typeof agentInstancesTable.$inferSelect | null> {
-  const installationId = typeof req.query.installationId === "string" ? req.query.installationId : "";
-  const licenseKey = typeof req.query.licenseKey === "string" ? req.query.licenseKey : "";
+async function authReleaseRequest(
+  req: any,
+  res: any,
+  options: { headersOnly?: boolean } = {},
+): Promise<typeof agentInstancesTable.$inferSelect | null> {
+  const { installationId, licenseKey } = resolveAgentReleaseCredentials({
+    manual: options.headersOnly === true || isManualAgentReleaseRequest(req.query.manual),
+    headers: req.headers ?? {},
+    query: req.query ?? {},
+  });
   if (!installationId || !licenseKey) { res.status(400).json({ error: "bad_request" }); return null; }
   const [inst] = await db.select().from(agentInstancesTable)
     .where(eq(agentInstancesTable.installationId, installationId)).limit(1);
@@ -2404,21 +2416,48 @@ async function authReleaseRequest(req: any, res: any): Promise<typeof agentInsta
 }
 
 agentPublicRouter.get("/agent/release/manifest", async (req, res) => {
+  const manual = isManualAgentReleaseRequest(req.query.manual);
+  // Old cron scripts include release credentials in the URL. They no longer
+  // need authentication because this branch exposes no release metadata.
+  // Scrub both URL fields before any finish-time application log serializer.
+  req.url = stripAgentReleaseCredentialsFromUrl(req.url);
+  req.originalUrl = stripAgentReleaseCredentialsFromUrl(req.originalUrl);
+  res.setHeader("Cache-Control", "no-store");
+  if (!manual) {
+    res.json({ manualRequired: true });
+    return;
+  }
   const inst = await authReleaseRequest(req, res);
   if (!inst) return;
   try {
     const { getReleaseInfo } = await import("../lib/agentRelease.js");
     const rel = await getReleaseInfo();
-    res.json({ version: rel.version, sizeBytes: rel.sizeBytes });
+    res.json({
+      version: rel.version,
+      sizeBytes: rel.sizeBytes,
+      sha256: rel.sha256,
+      publishedAt: rel.publishedAt,
+    });
   } catch (e: any) { res.status(503).json({ error: String(e?.message ?? e).slice(0, 200) }); }
 });
 
 agentPublicRouter.get("/agent/release/bundle", async (req, res) => {
+  req.url = stripAgentReleaseCredentialsFromUrl(req.url);
+  req.originalUrl = stripAgentReleaseCredentialsFromUrl(req.originalUrl);
   const inst = await authReleaseRequest(req, res);
   if (!inst) return;
+  if (!isManualAgentReleaseRequest(req.query.manual)) {
+    res.status(409).json({ error: "manual_update_required" });
+    return;
+  }
   try {
     const { getReleaseInfo } = await import("../lib/agentRelease.js");
     const rel = await getReleaseInfo();
+    const expectedVersion = typeof req.query.version === "string" ? req.query.version : "";
+    if (expectedVersion && expectedVersion !== rel.version) {
+      res.status(409).json({ error: "release_changed", version: rel.version });
+      return;
+    }
     const enc = req.query.enc === "1";
     await logAgentEvent(inst.id, "release_downloaded", { version: rel.version, encrypted: enc }, req);
     if (enc) {
@@ -2433,10 +2472,12 @@ agentPublicRouter.get("/agent/release/bundle", async (req, res) => {
   } catch (e: any) { res.status(503).json({ error: String(e?.message ?? e).slice(0, 200) }); }
 });
 
-// GET /api/agent/release/custom?installationId&licenseKey&kind=backend|frontend|db[&enc=1]
-// قناة سحب الملفات المرفوعة للتسطيب المخصّص — نفس مصادقة قناة الإصدارات.
+// GET /api/agent/release/custom?kind=backend|frontend|db[&enc=1]
+// قناة سحب الملفات المرفوعة للتسطيب المخصّص — مصادقة الرؤوس فقط.
 agentPublicRouter.get("/agent/release/custom", async (req, res) => {
-  const inst = await authReleaseRequest(req, res);
+  req.url = stripAgentReleaseCredentialsFromUrl(req.url);
+  req.originalUrl = stripAgentReleaseCredentialsFromUrl(req.originalUrl);
+  const inst = await authReleaseRequest(req, res, { headersOnly: true });
   if (!inst) return;
   const kind = String(req.query.kind ?? "") as CustomKind;
   if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "bad_kind" }); return; }

@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { useAgentBrandName } from "@/lib/agentBranding";
+import { useAgentBrandName, useIsAgentDomain } from "@/lib/agentBranding";
+import AgentServerUpdateDialog from "@/components/AgentServerUpdateDialog";
 import {
   LayoutDashboard, Building2, FileText, FileSpreadsheet, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning,
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
@@ -2677,6 +2678,7 @@ function SidebarInner({
   onLiveMonitoringToggle,
   onNavigate,
   onLogout,
+  onAgentUpdate,
   onClose,
 }: {
   location: string;
@@ -2755,6 +2757,7 @@ function SidebarInner({
   onExtensionsToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
+  onAgentUpdate?: () => void;
   /** Optional close handler. When provided we render a close button in
       the header — only visible on mobile (`md:hidden`) — so the mobile
       drawer offers an obvious way to dismiss itself in addition to the
@@ -3289,8 +3292,11 @@ function SidebarInner({
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => clearAppCacheAndReload(t("topbar.clearCacheConfirm"))}
+              onClick={() => onAgentUpdate
+                ? onAgentUpdate()
+                : clearAppCacheAndReload(t("topbar.clearCacheConfirm"))}
               className="gap-2 cursor-pointer"
+              data-testid={onAgentUpdate ? "open-agent-update" : "refresh-app-cache"}
             >
               <HardDrive className="h-4 w-4" />{t("topbar.clearCache")}
             </DropdownMenuItem>
@@ -3448,13 +3454,14 @@ function getBreadcrumbs(location: string, t: (k: string) => string): { label: st
 
 // ─── TopBar (Odoo-style header) ───────────────────────────────────────────────
 function TopBar({
-  location, user, isSuperAdmin, onMobileMenu, onLogout,
+  location, user, isSuperAdmin, onMobileMenu, onLogout, onAgentUpdate,
 }: {
   location: string;
   user: any;
   isSuperAdmin: boolean;
   onMobileMenu: () => void;
   onLogout: () => void;
+  onAgentUpdate?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const [, navigate] = useLocation();
@@ -3608,8 +3615,11 @@ function TopBar({
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={() => clearAppCacheAndReload(t("topbar.clearCacheConfirm"))}
+                onClick={() => onAgentUpdate
+                  ? onAgentUpdate()
+                  : clearAppCacheAndReload(t("topbar.clearCacheConfirm"))}
                 className="gap-2 cursor-pointer"
+                data-testid={onAgentUpdate ? "open-agent-update" : "refresh-app-cache"}
               >
                 <HardDrive className="h-4 w-4" />{t("topbar.clearCache")}
               </DropdownMenuItem>
@@ -3665,6 +3675,8 @@ function TopBar({
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location, navigate] = useLocation();
   const { user, logout, actingCompanyId } = useAuth() as any;
+  const isAgentDomain = useIsAgentDomain();
+  const [agentUpdateOpen, setAgentUpdateOpen] = useState(false);
 
   // Explicit sign-out should ALWAYS return the user to a clean login form so
   // the next sign-in lands on the home dashboard. Without this, App.tsx's
@@ -3851,6 +3863,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleSalesReportsToggle      = () => setSalesReportsOpen(v => !v);
   const handleCashReportsToggle       = () => setCashReportsOpen(v => !v);
   const closeMobile = useCallback(() => setMobileOpen(false), []);
+  const canManageAgentUpdates = isAgentDomain && user?.role === "superadmin" && !actingCompanyId;
+  const openAgentUpdates = useCallback(() => {
+    setMobileOpen(false);
+    setAgentUpdateOpen(true);
+  }, []);
 
   // Lock body scroll while the mobile drawer is open so the page behind
   // the dim backdrop doesn't scroll under the user's finger when they
@@ -4043,6 +4060,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onNavigate: closeMobile,
     onClose: closeMobile,
     onLogout: handleLogout,
+    onAgentUpdate: canManageAgentUpdates ? openAgentUpdates : undefined,
   };
 
   // Company-wide menu placement. 'topnav' renders a horizontal top bar instead
@@ -4133,6 +4151,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             isSuperAdmin={isSuperAdmin}
             onMobileMenu={() => setMobileOpen(true)}
             onLogout={handleLogout}
+            onAgentUpdate={canManageAgentUpdates ? openAgentUpdates : undefined}
           />
           {/* Horizontal top navigation — only when the company opted into the
               top-nav layout. Mobile keeps the drawer (hidden md:flex inside). */}
@@ -4154,6 +4173,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           session-picker modal is for genuine company employees only — an
           impersonating SA must never be forced to "pick a session". */}
       {user?.role !== "superadmin" && user?.role !== "admin" && <SessionPickerModal />}
+      {canManageAgentUpdates && (
+        <AgentServerUpdateDialog open={agentUpdateOpen} onOpenChange={setAgentUpdateOpen} />
+      )}
 
       {/* Global AI assistant — floating widget rendered on every authenticated
           screen. The component itself self-hides when the user is not

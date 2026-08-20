@@ -1,5 +1,6 @@
 import http from "node:http";
 import app, { rebrandSpaIndexOnDiskForAgent } from "./app";
+import { disableLegacyAgentAutoUpdater } from "./routes/localAgentUpdates";
 import { logger } from "./lib/logger";
 import { ensureSchemaUpToDate } from "./lib/ensureSchema";
 import { attachCobrowseHub } from "./lib/cobrowseHub";
@@ -352,6 +353,9 @@ async function bootstrap() {
   // Agent «full» servers: rewrite the on-disk SPA index.html with the agent's
   // brand before serving starts (no-op elsewhere — see app.ts).
   await rebrandSpaIndexOnDiskForAgent();
+  // Full-agent migration: remove the legacy ten-minute auto-update cron.
+  // No-op on the central deployment and in development.
+  await disableLegacyAgentAutoUpdater();
 
   const httpServer = http.createServer(app);
   // Attach the WebSocket signaling hub for the Co-browse feature. It hooks
