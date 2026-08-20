@@ -369,3 +369,17 @@ uri = "file://exports/agent-external-package-dev-2026-08-20/zacode-database-dev-
 type = "unspecified"
 title = "قاعدة بيانات الوكيل الآمنة — بيئة التطوير"
 description = "نسخة PostgreSQL لرفعها مع حزمة وكيل خارجي: تحتوي بيانات التطبيق كاملة وتستثني بيانات الوكلاء وجلسات وأكواد حماية Super Admin التي يجب إنشاؤها على الخادم المستهدف. استخدم هذه النسخة بدل ملف قاعدة البيانات السابق."
+
+[[outputs]]
+id = "waP8xdT7n4yu93VCl-lAm"
+uri = "file://exports/personal-development-backup-2026-08-20/zacode-source-development.tar.gz"
+type = "unspecified"
+title = "سورس Zacode الكامل — بيئة التطوير"
+description = "نسخة كاملة من سورس جميع التطبيقات والمكتبات والإعدادات والأصول، من دون node_modules أو نتائج البناء أو ملفات الأسرار."
+
+[[outputs]]
+id = "_4SRGR5NQsBuRb2V8eG1z"
+uri = "file://exports/personal-development-backup-2026-08-20/zacode-database-development-full.sql.gz"
+type = "unspecified"
+title = "قاعدة بيانات التطوير الكاملة — نسخة شخصية"
+description = "نسخة PostgreSQL كاملة من مخطط وبيانات بيئة التطوير للاحتفاظ والاستعادة الشخصية. تحتوي بيانات حساسة ويجب حفظها بأمان."

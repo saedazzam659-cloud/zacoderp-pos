@@ -1,1 +1,2 @@
 exports/zacode-source-code.zip filter=lfs diff=lfs merge=lfs -text
+exports/personal-development-backup-2026-08-20/zacode-source-development.tar.gz filter=lfs diff=lfs merge=lfs -text
