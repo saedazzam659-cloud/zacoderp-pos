@@ -155,3 +155,4 @@
 - [Remote agent DB latency](remote-agent-db-latency.md) — batch read-only SQL round trips; never batch stock writes without one transaction plus conditional quantity/lot reservation.
 - [Agent control-plane recovery](agent-control-plane-recovery.md) — recovery fences DB, remote generation/flock, and bounded provider calls; heartbeat starts at claim.
 - [Agent invoice acceleration boundary](agent-invoice-acceleration-boundary.md) — control/telemetry stay central; active requests fence mode changes at middleware entry, while cached Off has no central dependency.
+- [RTL top-navigation overflow](rtl-topnav-overflow.md) — enabled groups must wrap; invisible horizontal clipping made valid permissions look broken at laptop widths.

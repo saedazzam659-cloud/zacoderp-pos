@@ -2572,7 +2572,7 @@ function TopNavBar(props: any) {
 
   return (
     <div
-      className="hidden md:flex items-center gap-1 overflow-x-auto border-b border-sidebar-border bg-sidebar px-3 py-1.5"
+      className="hidden md:flex flex-wrap items-center gap-1 border-b border-sidebar-border bg-sidebar px-3 py-1.5"
       data-testid="topnav-bar"
     >
       {groups
