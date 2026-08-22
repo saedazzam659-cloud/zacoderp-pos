@@ -364,6 +364,16 @@ test("legacy handoff keeps the most recently used shadow workspace", async () =>
     ))?.user.id,
     shadowUser.id,
   );
+
+  const authRouteSource = readFileSync(
+    new URL("../src/routes/auth.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    authRouteSource,
+    /if\s*\(\s*user\.isDemoShadow\s*\)\s*\{\s*res\.status\(401\)/,
+    "/auth/me must not reject a shadow session after resolveBearerToken accepted its active cookie binding",
+  );
 });
 
 test("simultaneous confirmed transfers leave exactly one active browser binding", async () => {

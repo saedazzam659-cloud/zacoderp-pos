@@ -5,6 +5,7 @@ import { eq, and, asc, ne, inArray, desc, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { sanitizeMobilePermissions } from "../lib/mobilePerms.js";
+import { emitSessionRefresh } from "../lib/sessionEvents.js";
 
 const router = Router();
 
@@ -334,6 +335,16 @@ router.patch("/:id", async (req, res) => {
       if (valid.length) {
         await db.insert(userBranchesTable).values(valid.map(bid => ({ userId: id, branchId: bid })));
       }
+    }
+
+    // Permission edits must reach an already-open session immediately. Emit
+    // only after every user/branch write is complete so /auth/me cannot race
+    // this request and reload a half-updated user.
+    if (permissions !== undefined) {
+      emitSessionRefresh(cid, "permissions_changed", {
+        op: "user-permissions-update",
+        userId: id,
+      });
     }
 
     res.json({ ok: true });

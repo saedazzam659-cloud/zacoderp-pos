@@ -937,10 +937,11 @@ router.get("/me", async (req, res) => {
     return;
   }
 
-  if (user.isDemoShadow) {
-    res.status(401).json({ error: "تم إنهاء جلسة مساحة الديمو القديمة — يرجى تسجيل الدخول مجدداً" });
-    return;
-  }
+  // Active legacy demo workspaces may still use a shadow user. The shared
+  // bearer resolver above already proves that the shadow belongs to a ready,
+  // non-revoked browser binding and that its HttpOnly cookie matches. Do not
+  // reject it a second time here: doing so made login succeed, then `/me`
+  // log the user out as soon as the tab became visible again.
   user = await decorateDemoShadowUser(user);
 
   // Same "latest subscription" rule as the login gate so /me stays consistent

@@ -18,5 +18,6 @@ A demo-isolated account has one active browser binding:
 - In one DB transaction, revoke prior links, retain that workspace/user, create the replacement link, and issue its bearer. Any issuance failure must roll the whole handoff back.
 - Disable only superseded legacy shadow users; keep the retained shadow active.
 - `decorateDemoShadowUser` must resolve `demoSourceUserId` from the ready, non-revoked link.
+- `/auth/me` must not reject every `isDemoShadow` user after `resolveBearerToken` succeeds; the resolver's ready-link + cookie check is the authority. Otherwise login succeeds but the first focus refresh logs out a retained legacy workspace.
 - SameSite=None seen in the Replit preview is proxy rewriting, not a bug.
 - First-browser preparation and transfer UX must use the credential-gated, read-only server probe against the HttpOnly cookie.
