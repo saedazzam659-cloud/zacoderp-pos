@@ -84,13 +84,26 @@ export type LoginResponse = {
 export type MeResponse = {
   employee: Employee;
   company: Company;
-  shift?: { start: string; end: string };
+  shift?: { start: string; end: string; crossesMidnight?: boolean };
   work?: { lat: number; lng: number; radiusM: number } | null;
   today: {
     date: string;
     checkIn?: string;
     checkOut?: string;
     status: string;
+    state: "not_started" | "working" | "completed" | "needs_hr_review";
+    canCheckIn: boolean;
+    canCheckOut: boolean;
+    permissionActive: boolean;
+    approvedPermissions: Array<{
+      id: number;
+      startTime: string;
+      endTime: string;
+      minutes: number;
+      paid: boolean;
+      permissionType: string;
+    }>;
+    permissionMinutes: number;
   };
   month: {
     presentDays: number;
@@ -119,6 +132,8 @@ export type PunchResponse = {
   ok: boolean;
   time: string;
   gpsStatus: "ok" | "out_of_range" | "no_gps";
+  workdayDate: string;
+  state: "working" | "completed";
 };
 
 export type AttendanceRow = {

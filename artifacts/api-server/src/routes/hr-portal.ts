@@ -25,12 +25,78 @@ import {
 // Face logic reused from the admin face-attendance module — single source of
 // truth for descriptors/matching/settings (no duplication).
 import { getFaceSettings, parseDescriptor, euclidean } from "./faceAttendance.js";
-import { and, eq, desc, asc, gte, lte, sql } from "drizzle-orm";
+import { and, eq, desc, asc, gte, lte, or, sql } from "drizzle-orm";
 import { requireDate, timeOrNull, oneOf, respondHrError, HrValidationError } from "../lib/hrValidate.js";
 import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
-import { recalcDay } from "./attendance-plus.js";
+import { loadEffectiveEmployeeSchedule, recalcDay } from "./attendance-plus.js";
+import {
+  addIsoDays,
+  derivePortalPunchState,
+  isOvernightTailTime,
+  isTimeInWindow,
+  scheduleCrossesMidnight,
+  zonedDateAndTime,
+} from "../lib/portalAttendanceState.js";
 
 const router = Router();
+
+async function resolvePortalScheduleContext(
+  cid: number,
+  employeeId: number,
+  calendarDate: string,
+  localTime: string,
+) {
+  const previousDate = addIsoDays(calendarDate, -1);
+  const [previousSchedule, currentSchedule] = await Promise.all([
+    loadEffectiveEmployeeSchedule(cid, employeeId, previousDate),
+    loadEffectiveEmployeeSchedule(cid, employeeId, calendarDate),
+  ]);
+  if (
+    previousSchedule
+    && isOvernightTailTime(localTime, previousSchedule)
+  ) {
+    return { workdayDate: previousDate, schedule: previousSchedule };
+  }
+  return { workdayDate: calendarDate, schedule: currentSchedule };
+}
+
+async function loadPortalWorkdayMovements(
+  queryDb: any,
+  cid: number,
+  employeeId: number,
+  workdayDate: string,
+  schedule: Awaited<ReturnType<typeof loadEffectiveEmployeeSchedule>>,
+) {
+  const base = [
+    eq(attendanceMovementsTable.companyId, cid),
+    eq(attendanceMovementsTable.employeeId, employeeId),
+  ];
+  const dateCondition = scheduleCrossesMidnight(schedule) && schedule
+    ? or(
+        eq(attendanceMovementsTable.date, workdayDate),
+        and(
+          eq(attendanceMovementsTable.date, addIsoDays(workdayDate, 1)),
+          lte(attendanceMovementsTable.time, schedule.workEnd),
+        ),
+      )
+    : eq(attendanceMovementsTable.date, workdayDate);
+  return queryDb
+    .select({
+      id: attendanceMovementsTable.id,
+      time: attendanceMovementsTable.time,
+      type: attendanceMovementsTable.type,
+    })
+    .from(attendanceMovementsTable)
+    .where(and(...base, dateCondition))
+    .orderBy(asc(attendanceMovementsTable.date), asc(attendanceMovementsTable.time));
+}
+
+function punchConflict(code: string, message: string): Error {
+  const error = new Error(message) as Error & { status: number; code: string };
+  error.status = 409;
+  error.code = code;
+  return error;
+}
 
 // ── Stateless portal token (HMAC-SHA256, SESSION_SECRET) ────────────────────
 const SECRET = process.env.SESSION_SECRET || "";
@@ -141,31 +207,64 @@ router.get("/me", async (req, res) => {
     const { employee: emp, companyId: cid } = ctx;
     const [company] = await db.select({ nameAr: companiesTable.nameAr, code: companiesTable.code })
       .from(companiesTable).where(eq(companiesTable.id, cid));
-    // Same local-date convention as /punch — toISOString() is UTC and shifts
-    // the calendar date around midnight, desyncing "today" from the punch row.
     const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    const today = local.toISOString().slice(0, 10);
-    const monthStart = today.slice(0, 8) + "01";
-    const [todayRow] = await db.select().from(employeeAttendanceTable)
-      .where(and(eq(employeeAttendanceTable.companyId, cid), eq(employeeAttendanceTable.employeeId, emp.id), eq(employeeAttendanceTable.date, today)));
-    const monthRows = await db.select({ status: employeeAttendanceTable.status, late: employeeAttendanceTable.lateMinutes })
-      .from(employeeAttendanceTable)
-      .where(and(
-        eq(employeeAttendanceTable.companyId, cid), eq(employeeAttendanceTable.employeeId, emp.id),
-        gte(employeeAttendanceTable.date, monthStart), lte(employeeAttendanceTable.date, today),
-      ));
-    const [pendPerm] = await db.select({ c: sql<number>`count(*)::int` }).from(exitPermissionsTable)
-      .where(and(eq(exitPermissionsTable.companyId, cid), eq(exitPermissionsTable.employeeId, emp.id), eq(exitPermissionsTable.status, "pending")));
-    const [pendLeave] = await db.select({ c: sql<number>`count(*)::int` }).from(employeeLeavesTable)
-      .where(and(eq(employeeLeavesTable.companyId, cid), eq(employeeLeavesTable.employeeId, emp.id), eq(employeeLeavesTable.status, "pending")));
-    const faceSettings = await getFaceSettings(cid);
+    const calendar = zonedDateAndTime(now);
+    const scheduleContext = await resolvePortalScheduleContext(cid, emp.id, calendar.date, calendar.time);
+    const { schedule, workdayDate } = scheduleContext;
+    const monthStart = workdayDate.slice(0, 8) + "01";
+    const [todayRows, monthRows, pendPermRows, pendLeaveRows, faceSettings, movements, approvedPermissions] = await Promise.all([
+      db.select().from(employeeAttendanceTable)
+        .where(and(
+          eq(employeeAttendanceTable.companyId, cid),
+          eq(employeeAttendanceTable.employeeId, emp.id),
+          eq(employeeAttendanceTable.date, workdayDate),
+        )).limit(1),
+      db.select({ status: employeeAttendanceTable.status, late: employeeAttendanceTable.lateMinutes })
+        .from(employeeAttendanceTable)
+        .where(and(
+          eq(employeeAttendanceTable.companyId, cid), eq(employeeAttendanceTable.employeeId, emp.id),
+          gte(employeeAttendanceTable.date, monthStart), lte(employeeAttendanceTable.date, workdayDate),
+        )),
+      db.select({ c: sql<number>`count(*)::int` }).from(exitPermissionsTable)
+        .where(and(eq(exitPermissionsTable.companyId, cid), eq(exitPermissionsTable.employeeId, emp.id), eq(exitPermissionsTable.status, "pending"))),
+      db.select({ c: sql<number>`count(*)::int` }).from(employeeLeavesTable)
+        .where(and(eq(employeeLeavesTable.companyId, cid), eq(employeeLeavesTable.employeeId, emp.id), eq(employeeLeavesTable.status, "pending"))),
+      getFaceSettings(cid),
+      loadPortalWorkdayMovements(db, cid, emp.id, workdayDate, schedule),
+      db.select({
+        id: exitPermissionsTable.id,
+        startTime: exitPermissionsTable.startTime,
+        endTime: exitPermissionsTable.endTime,
+        minutes: exitPermissionsTable.minutes,
+        paid: exitPermissionsTable.paid,
+        permissionType: exitPermissionsTable.permissionType,
+      }).from(exitPermissionsTable)
+        .where(and(
+          eq(exitPermissionsTable.companyId, cid),
+          eq(exitPermissionsTable.employeeId, emp.id),
+          eq(exitPermissionsTable.date, workdayDate),
+          eq(exitPermissionsTable.status, "approved"),
+        ))
+        .orderBy(asc(exitPermissionsTable.startTime)),
+    ]);
+    const todayRow = todayRows[0];
+    const pendPerm = pendPermRows[0];
+    const pendLeave = pendLeaveRows[0];
+    const permissionActive = approvedPermissions.some((permission) =>
+      isTimeInWindow(calendar.time, permission.startTime, permission.endTime),
+    );
+    const punchState = derivePortalPunchState(
+      movements.map((movement: any) => ({ time: movement.time, type: movement.type as "in" | "out" })),
+      schedule,
+      todayRow,
+    );
     res.json({
       employee: empPublic(emp),
       company: company ?? null,
       shift: {
-        start: (faceSettings as any).workdayStart ?? "08:00",
-        end: (faceSettings as any).workdayEnd ?? "17:00",
+        start: schedule?.workStart ?? (faceSettings as any).workdayStart ?? "08:00",
+        end: schedule?.workEnd ?? (faceSettings as any).workdayEnd ?? "17:00",
+        crossesMidnight: scheduleCrossesMidnight(schedule),
       },
       // Geofence info for the live in/out-of-range indicator (null = no
       // work location pinned → punch allowed anywhere).
@@ -173,10 +272,16 @@ router.get("/me", async (req, res) => {
         ? { lat: Number(emp.workLat), lng: Number(emp.workLng), radiusM: emp.workRadiusM ?? 200 }
         : null,
       today: {
-        date: today,
-        checkIn: todayRow?.checkIn ?? null,
-        checkOut: todayRow?.checkOut ?? null,
+        date: workdayDate,
+        checkIn: punchState.checkIn ?? todayRow?.checkIn ?? null,
+        checkOut: punchState.checkOut ?? todayRow?.checkOut ?? null,
         status: todayRow?.status ?? null,
+        state: punchState.state,
+        canCheckIn: punchState.canCheckIn,
+        canCheckOut: punchState.canCheckOut && !permissionActive,
+        permissionActive,
+        approvedPermissions,
+        permissionMinutes: approvedPermissions.reduce((sum, permission) => sum + (permission.minutes ?? 0), 0),
       },
       month: {
         presentDays: monthRows.filter((r) => ["present", "late"].includes(String(r.status))).length,
@@ -337,24 +442,102 @@ router.post("/punch", async (req, res) => {
       return;
     }
 
-    // Local date + local time from the SAME instant — toISOString() is UTC and
-    // records a punch around midnight under the wrong attendance date.
     const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    const date = local.toISOString().slice(0, 10);
-    const time = now.toTimeString().slice(0, 5);
-    await assertDayOpen(cid, date);
-    await assertPeriodNotTransferred(cid, date);
+    const calendar = zonedDateAndTime(now);
+    const scheduleContext = await resolvePortalScheduleContext(cid, emp.id, calendar.date, calendar.time);
+    const { schedule, workdayDate } = scheduleContext;
+    await assertDayOpen(cid, workdayDate);
+    await assertPeriodNotTransferred(cid, workdayDate);
 
     const location = hasGps ? `${lat.toFixed(6)},${lng.toFixed(6)}` : null;
-    const r = await db.insert(attendanceMovementsTable).values({
-      companyId: cid, employeeId: emp.id, date, time, type,
-      source: "mobile", location, selfieUrl, faceVerified,
-    }).onConflictDoNothing({
-      target: [attendanceMovementsTable.employeeId, attendanceMovementsTable.date, attendanceMovementsTable.time, attendanceMovementsTable.type],
-    }).returning({ id: attendanceMovementsTable.id });
-    if (r.length) await recalcDay(cid, date, [emp.id]);
-    res.json({ ok: true, time, gpsStatus });
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`portal-punch:${cid}:${emp.id}:${workdayDate}`}))`);
+      const [movements, approvedPermissions, derivedRows] = await Promise.all([
+        loadPortalWorkdayMovements(tx, cid, emp.id, workdayDate, schedule),
+        tx.select({
+          startTime: exitPermissionsTable.startTime,
+          endTime: exitPermissionsTable.endTime,
+        }).from(exitPermissionsTable)
+          .where(and(
+            eq(exitPermissionsTable.companyId, cid),
+            eq(exitPermissionsTable.employeeId, emp.id),
+            eq(exitPermissionsTable.date, workdayDate),
+            eq(exitPermissionsTable.status, "approved"),
+          )),
+        tx.select({
+          checkIn: employeeAttendanceTable.checkIn,
+          checkOut: employeeAttendanceTable.checkOut,
+        }).from(employeeAttendanceTable)
+          .where(and(
+            eq(employeeAttendanceTable.companyId, cid),
+            eq(employeeAttendanceTable.employeeId, emp.id),
+            eq(employeeAttendanceTable.date, workdayDate),
+          )).limit(1),
+      ]);
+      const state = derivePortalPunchState(
+        movements.map((movement: any) => ({ time: movement.time, type: movement.type as "in" | "out" })),
+        schedule,
+        derivedRows[0],
+      );
+      if (type === "in" && !state.canCheckIn) {
+        if (state.checkIn) {
+          throw punchConflict(
+            "ATTENDANCE_ALREADY_RECORDED",
+            `تم تسجيل حضورك بالفعل الساعة ${state.checkIn}. لا يلزم تسجيل حضور جديد بعد الاستئذان؛ سجّل الانصراف في نهاية الدوام فقط.`,
+          );
+        }
+        throw punchConflict("ATTENDANCE_NEEDS_HR_REVIEW", "سجل اليوم يحتاج مراجعة الموارد البشرية قبل إضافة بصمة حضور.");
+      }
+      if (type === "out" && !state.canCheckOut) {
+        if (state.checkOut) {
+          throw punchConflict("CHECKOUT_ALREADY_RECORDED", `تم تسجيل انصرافك بالفعل الساعة ${state.checkOut}.`);
+        }
+        if (state.state === "needs_hr_review") {
+          throw punchConflict("ATTENDANCE_NEEDS_HR_REVIEW", "سجل اليوم يحتاج مراجعة الموارد البشرية قبل تسجيل الانصراف.");
+        }
+        throw punchConflict("CHECKIN_REQUIRED", "يجب تسجيل الحضور أولاً قبل تسجيل الانصراف.");
+      }
+      if (
+        type === "out"
+        && approvedPermissions.some((permission) =>
+          isTimeInWindow(calendar.time, permission.startTime, permission.endTime),
+        )
+      ) {
+        throw punchConflict(
+          "CHECKOUT_BLOCKED_DURING_PERMISSION",
+          "الاستئذان المعتمد مسجّل تلقائيًا الآن. لا تسجّل انصرافًا أو حضورًا جديدًا؛ سيستمر يوم العمل حتى الانصراف النهائي.",
+        );
+      }
+      const inserted = await tx.insert(attendanceMovementsTable).values({
+        companyId: cid,
+        employeeId: emp.id,
+        date: workdayDate,
+        time: calendar.time,
+        type,
+        source: "mobile",
+        location,
+        selfieUrl,
+        faceVerified,
+      }).onConflictDoNothing({
+        target: [
+          attendanceMovementsTable.employeeId,
+          attendanceMovementsTable.date,
+          attendanceMovementsTable.time,
+          attendanceMovementsTable.type,
+        ],
+      }).returning({ id: attendanceMovementsTable.id });
+      if (!inserted.length) {
+        throw punchConflict("PUNCH_ALREADY_RECORDED", "تم تسجيل هذه البصمة بالفعل.");
+      }
+    });
+    await recalcDay(cid, workdayDate, [emp.id]);
+    res.json({
+      ok: true,
+      time: calendar.time,
+      gpsStatus,
+      workdayDate,
+      state: type === "in" ? "working" : "completed",
+    });
   } catch (e: any) { respondHrError(req, res, e); }
 });
 

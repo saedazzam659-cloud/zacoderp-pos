@@ -1,7 +1,7 @@
 import { useMe } from "@/hooks/use-auth";
 import { usePunch as usePunchMutation, useFaceStatus, useFaceEnroll } from "@/hooks/use-hr";
 import { Button } from "@/components/ui/button";
-import { Fingerprint, Clock, AlertCircle, FileText, CheckCircle2, XCircle, ScanFace, MapPin } from "lucide-react";
+import { Fingerprint, Clock, AlertCircle, FileText, CheckCircle2, XCircle, ScanFace, MapPin, LogOut, ShieldCheck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/ui/use-toast";
@@ -22,6 +22,8 @@ export default function Dashboard() {
 
   const needsFace = !!faceStatus.data && (faceStatus.data.enrolled || faceStatus.data.required);
   const needsEnroll = !!faceStatus.data && faceStatus.data.required && !faceStatus.data.enrolled;
+  const canCheckIn = me?.today.canCheckIn ?? !me?.today.checkIn;
+  const canCheckOut = me?.today.canCheckOut ?? (!!me?.today.checkIn && !me?.today.checkOut);
 
   const getGps = () =>
     new Promise<{ lat?: number; lng?: number; accuracy?: number }>((resolve, reject) => {
@@ -65,6 +67,22 @@ export default function Dashboard() {
   };
 
   const handlePunch = async (type: "in" | "out") => {
+    if (type === "in" && !canCheckIn) {
+      toast({
+        title: "الحضور مسجّل بالفعل",
+        description: "لا تحتاج إلى تسجيل حضور جديد بعد الاستئذان. سجّل الانصراف في نهاية الدوام فقط.",
+      });
+      return;
+    }
+    if (type === "out" && !canCheckOut) {
+      toast({
+        title: me?.today.checkOut ? "الانصراف مسجّل بالفعل" : "سجّل الحضور أولاً",
+        description: me?.today.checkOut
+          ? `تم تسجيل الانصراف الساعة ${me.today.checkOut}.`
+          : "لا يمكن تسجيل الانصراف قبل تسجيل الحضور.",
+      });
+      return;
+    }
     if (needsEnroll) { setFaceMode("enroll"); return; }
     setGpsLoading(true);
     try {
@@ -119,12 +137,17 @@ export default function Dashboard() {
 
   if (!me) return null;
 
-  const needsCheckIn = !me.today.checkIn;
-  const needsCheckOut = !!me.today.checkIn && !me.today.checkOut;
-  const punchDone = !!me.today.checkIn && !!me.today.checkOut;
+  const needsCheckIn = me.today.canCheckIn;
+  const needsCheckOut = me.today.canCheckOut;
+  const punchDone = me.today.state === "completed";
 
   // Reminder: shift started and no check-in yet.
-  const nowHM = format(new Date(), "HH:mm");
+  const nowHM = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Riyadh",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date());
   const shiftStart = me.shift?.start ?? "08:00";
   const showReminder = needsCheckIn && nowHM >= shiftStart;
 
@@ -158,68 +181,94 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Big Punch Button Area */}
-      <div className="bg-card rounded-3xl p-8 border shadow-sm flex flex-col items-center text-center">
-        {!punchDone ? (
-          <>
-            {me.work && livePos && (() => {
-              const dist = Math.round(distanceMeters(livePos.lat, livePos.lng, me.work!.lat, me.work!.lng));
-              const inside = dist <= me.work!.radiusM;
-              return (
-                <div
-                  className={`mb-4 flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1.5 border ${
-                    inside ? "bg-green-50 text-green-700 border-green-200" : "bg-orange-50 text-orange-700 border-orange-200"
-                  }`}
-                  data-testid="chip-geofence"
-                >
-                  <MapPin className="w-3.5 h-3.5" />
-                  {inside
-                    ? "أنت داخل نطاق موقع العمل ✓"
-                    : `أنت خارج نطاق العمل — البعد ${dist >= 1000 ? `${(dist / 1000).toFixed(1)} كم` : `${dist} متر`} (المسموح ${me.work!.radiusM} متر)`}
-                </div>
-              );
-            })()}
-            <div className="mb-6 relative">
-              <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
-              <Button
-                size="icon"
-                onClick={() => handlePunch(needsCheckIn ? "in" : "out")}
-                disabled={gpsLoading || punch.isPending}
-                className={`w-32 h-32 rounded-full shadow-2xl transition-transform hover:scale-105 active:scale-95 ${
-                  needsCheckIn 
-                    ? "bg-primary hover:bg-primary/90 shadow-primary/30" 
-                    : "bg-orange-500 hover:bg-orange-600 shadow-orange-500/30"
-                }`}
-              >
-                <Fingerprint className="w-16 h-16 text-white" />
-              </Button>
+      {me.today.approvedPermissions.length > 0 && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-900" data-testid="approved-permission-notice">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" />
+            <div className="space-y-1">
+              <p className="font-bold">استئذان معتمد اليوم</p>
+              {me.today.approvedPermissions.map((permission) => (
+                <p key={permission.id} className="text-sm">
+                  من {permission.startTime} إلى {permission.endTime}
+                  {" — "}
+                  {permission.paid ? "مدفوع" : "غير مدفوع"}
+                </p>
+              ))}
+              <p className="text-sm font-medium">
+                ستُخصم فترة الاستئذان تلقائيًا من حساب اليوم، ولا تحتاج إلى تسجيل حضور جديد بعد انتهائها.
+              </p>
             </div>
-            <h3 className="text-xl font-bold mb-2">
-              {needsCheckIn ? "تسجيل الحضور" : "تسجيل الانصراف"}
-            </h3>
-            <p className="text-muted-foreground text-sm flex items-center gap-1.5 justify-center">
-              <AlertCircle className="w-4 h-4" />
-              {needsFace ? "يتطلب تحديد الموقع (GPS) والتحقق بالوجه" : "يتطلب تحديد الموقع الجغرافي (GPS)"}
-            </p>
-            {needsEnroll && (
-              <button
-                onClick={() => setFaceMode("enroll")}
-                className="mt-4 flex items-center gap-2 text-sm font-semibold text-primary bg-primary/10 rounded-full px-4 py-2"
-                data-testid="button-face-enroll"
-              >
-                <ScanFace className="w-4 h-4" />
-                سجّل وجهك أول مرة لتفعيل البصمة
-              </button>
-            )}
-          </>
-        ) : (
-          <div className="py-8 flex flex-col items-center">
-            <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4">
-              <CheckCircle2 className="w-10 h-10" />
-            </div>
-            <h3 className="text-xl font-bold mb-2">اكتملت بصمات اليوم</h3>
-            <p className="text-muted-foreground">يعطيك العافية، نراكم غداً!</p>
           </div>
+        </div>
+      )}
+
+      {/* One workday = one employee-portal check-in and one checkout. */}
+      <div className="bg-card rounded-3xl p-8 border shadow-sm flex flex-col items-center text-center">
+        {me.work && livePos && !punchDone && (() => {
+          const dist = Math.round(distanceMeters(livePos.lat, livePos.lng, me.work!.lat, me.work!.lng));
+          const inside = dist <= me.work!.radiusM;
+          return (
+            <div
+              className={`mb-5 flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1.5 border ${
+                inside ? "bg-green-50 text-green-700 border-green-200" : "bg-orange-50 text-orange-700 border-orange-200"
+              }`}
+              data-testid="chip-geofence"
+            >
+              <MapPin className="w-3.5 h-3.5" />
+              {inside
+                ? "أنت داخل نطاق موقع العمل ✓"
+                : `أنت خارج نطاق العمل — البعد ${dist >= 1000 ? `${(dist / 1000).toFixed(1)} كم` : `${dist} متر`} (المسموح ${me.work!.radiusM} متر)`}
+            </div>
+          );
+        })()}
+
+        <div className="grid w-full max-w-xl grid-cols-1 gap-4 sm:grid-cols-2">
+          <Button
+            onClick={() => handlePunch("in")}
+            disabled={!needsCheckIn || gpsLoading || punch.isPending}
+            className="h-28 rounded-2xl flex-col gap-2 text-base"
+            data-testid="button-check-in"
+          >
+            {me.today.checkIn ? <CheckCircle2 className="h-8 w-8" /> : <Fingerprint className="h-8 w-8" />}
+            <span>{me.today.checkIn ? `تم الحضور ${me.today.checkIn}` : "تسجيل الحضور"}</span>
+          </Button>
+          <Button
+            onClick={() => handlePunch("out")}
+            disabled={!needsCheckOut || gpsLoading || punch.isPending}
+            className="h-28 rounded-2xl flex-col gap-2 bg-orange-500 text-base hover:bg-orange-600 disabled:bg-muted disabled:text-muted-foreground"
+            data-testid="button-check-out"
+          >
+            {me.today.checkOut ? <CheckCircle2 className="h-8 w-8" /> : <LogOut className="h-8 w-8" />}
+            <span>{me.today.checkOut ? `تم الانصراف ${me.today.checkOut}` : "تسجيل الانصراف"}</span>
+          </Button>
+        </div>
+
+        <p className="mt-5 text-sm text-muted-foreground flex items-center gap-1.5 justify-center">
+          <AlertCircle className="w-4 h-4" />
+          {punchDone
+            ? "اكتملت بصمات يوم العمل. يعطيك العافية!"
+            : me.today.permissionActive
+              ? "الاستئذان المعتمد جارٍ الآن؛ لا تسجّل انصرافًا أو حضورًا جديدًا."
+            : needsCheckOut
+              ? "الحضور مسجّل؛ سجّل الانصراف مرة واحدة عند نهاية الدوام."
+              : needsFace
+                ? "يتطلب تحديد الموقع (GPS) والتحقق بالوجه"
+                : "يتطلب تحديد الموقع الجغرافي (GPS)"}
+        </p>
+        {me.today.state === "needs_hr_review" && (
+          <p className="mt-3 text-sm font-semibold text-destructive">
+            سجل اليوم يحتاج مراجعة الموارد البشرية قبل إضافة أي بصمة.
+          </p>
+        )}
+        {needsEnroll && (
+          <button
+            onClick={() => setFaceMode("enroll")}
+            className="mt-4 flex items-center gap-2 text-sm font-semibold text-primary bg-primary/10 rounded-full px-4 py-2"
+            data-testid="button-face-enroll"
+          >
+            <ScanFace className="w-4 h-4" />
+            سجّل وجهك أول مرة لتفعيل البصمة
+          </button>
         )}
       </div>
 

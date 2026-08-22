@@ -204,11 +204,14 @@ export function computeDay(ctx: DayContext): DayResult {
   const unpaidPermSet = subtract(mergeIntervals(permsRaw.filter((p) => !p.paid).map((p) => p.iv)), paidPermSet);
   const allPermSet = mergeIntervals([...paidPermSet, ...unpaidPermSet]);
 
-  // Permission minutes counted ONLY where the employee was actually absent
-  // during the window (present minutes stay "worked" — one bucket per minute).
-  const absentDuringPerm = (set: Interval[]) => total(subtract(set, sessions));
-  res.permissionPaidMinutes = absentDuringPerm(paidPermSet);
-  res.permissionUnpaidMinutes = absentDuringPerm(unpaidPermSet);
+  // An approved permission is authoritative for its whole scheduled window.
+  // The employee keeps one continuous portal session (no out/in around the
+  // permission), so the permission interval itself overrides that apparent
+  // presence and is removed from worked hours.
+  res.permissionPaidMinutes = total(paidPermSet);
+  res.permissionUnpaidMinutes = total(unpaidPermSet);
+  const effectiveSessions = subtract(sessions, allPermSet);
+  res.workedMinutes = total(effectiveSessions);
 
   if (!sessions.length) {
     if (openIn != null) {
@@ -235,7 +238,7 @@ export function computeDay(ctx: DayContext): DayResult {
   }
 
   // ── Single-bucket partition of the schedule window [schedStart, schedEnd] ──
-  // span = workedInSched + perm(absent-only) + lateRaw + earlyRaw + break + missing
+  // span = workedInSched + approved permission + lateRaw + earlyRaw + break + missing
   // Grace-forgiven late/early minutes stay inside lateRaw/earlyRaw (they are
   // simply not REPORTED as late/early), so they never leak into "missing".
 
@@ -262,7 +265,7 @@ export function computeDay(ctx: DayContext): DayResult {
 
   // Presence clipped to the schedule window
   const workedInSched = total(
-    sessions.map((s) => [clamp(s[0], schedStart, schedEnd), clamp(s[1], schedStart, schedEnd)] as Interval)
+    effectiveSessions.map((s) => [clamp(s[0], schedStart, schedEnd), clamp(s[1], schedStart, schedEnd)] as Interval)
       .filter(([a, b]) => b > a),
   );
 
@@ -270,7 +273,7 @@ export function computeDay(ctx: DayContext): DayResult {
   // by presence or permission) → allowed break first, remainder → missing.
   const midIv: Interval[] = [[Math.max(schedStart, Math.min(firstIn, schedEnd)), Math.min(Math.max(lastOut, schedStart), schedEnd)]]
     .filter(([a, b]) => b > a) as Interval[];
-  const gaps = subtract(subtract(midIv, sessions), allPermSet);
+  const gaps = subtract(subtract(midIv, effectiveSessions), allPermSet);
   const gapMinutes = total(gaps);
   res.breakMinutes = Math.min(gapMinutes, breakAllow);
   const excessGap = gapMinutes - res.breakMinutes;
@@ -288,7 +291,7 @@ export function computeDay(ctx: DayContext): DayResult {
 
   // ── Overtime: presence OUTSIDE the schedule window, threshold-gated ──
   if ((sched.overtimePolicy || "after_shift") !== "none") {
-    const outside = subtract(sessions, [[schedStart, schedEnd]]);
+    const outside = subtract(effectiveSessions, [[schedStart, schedEnd]]);
     const ot = total(outside);
     res.overtimeMinutes = ot >= (sched.overtimeMinMinutes || 0) ? ot : 0;
   }

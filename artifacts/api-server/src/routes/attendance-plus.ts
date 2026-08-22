@@ -94,6 +94,12 @@ async function loadSchedules(cid: number, employeeIds: number[], date: string) {
   return out;
 }
 
+export async function loadEffectiveEmployeeSchedule(cid: number, employeeId: number, date: string) {
+  const schedules = await loadSchedules(cid, [employeeId], date);
+  const row = schedules.get(employeeId);
+  return resolveSchedule(row?.contract ?? null, row?.shift ?? null);
+}
+
 // ═══════════════════ Recalc core (قاعدة 29) ═══════════════════
 
 export async function recalcDay(cid: number, date: string, employeeIds?: number[]) {

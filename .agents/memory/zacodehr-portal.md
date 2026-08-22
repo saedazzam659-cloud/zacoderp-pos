@@ -9,8 +9,11 @@ description: Separate employee self-service portal (artifacts/zacodehr) — auth
 - **Why:** employees are not `users` rows; reusing the users session table would mix tenants/roles and consume ERP seats.
 - Every request re-loads the employee and 401s if creds removed / `portal_active=false` / status≠active — revocation is instant despite stateless tokens.
 - **Seat limit** = count of employees with `login_username IS NOT NULL` vs `subscriptions.max_hr_users` (default 10; editable in إدارة التراخيص). Pre-check + post-write recount-and-revert (`hrSeatOverflowRevert`) because the pre-check alone races.
-- **No HR engine duplication:** punch inserts `attendance_movements` (source "mobile", onConflictDoNothing) then calls exported `recalcDay` from attendance-plus; استئذان/إجازات insert PENDING rows approved from existing HR screens; payslips join payroll runs with status <> 'draft'.
-- Punch date/time must both be LOCAL (toISOString date + local time mixes days around midnight). Geofence vs employee workLat/workLng/workRadiusM (default 200 m); GPS is client-attested — bounds-check and reject 0,0.
+- **No HR engine duplication:** portal punches feed the shared attendance movement/recalculation engine; استئذان/إجازات insert PENDING rows approved from existing HR screens; payslips join payroll runs with status <> 'draft'.
+- **Portal attendance is one workday session:** one employee check-in, one final checkout; approved exit permission stays inside that open session and its full approved interval overrides apparent presence when calculating worked minutes.
+- **Why:** requiring an out/re-check-in around permission both invites duplicate sessions and prevents automatic permission deduction; repeated `in` movements also corrupt the shared pairing engine.
+- **How to apply:** resolve workdays and punch time in `Asia/Riyadh`; an overnight tail uses the schedule effective on the shift's starting date. Serialize portal punch decisions per employee/workday. Partial legacy derived rows without raw evidence are HR-review-only; HR manual corrections stay outside the portal action flow.
+- Geofence uses employee workLat/workLng/workRadiusM (default 200 m); GPS is client-attested — bounds-check and reject 0,0.
 - Login endpoint is public → in-memory rate limiter per IP and per company+username (10 fails / 10 min).
 - Frontend: 401 redirect must use `import.meta.env.BASE_URL + "login"` — the app is served under /zacodehr/, bare "/login" escapes to the main app.
 - Employee API responses always pass through `stripCreds` (drops hash, adds `hasPortalPassword` for the "leave blank to keep" UI).

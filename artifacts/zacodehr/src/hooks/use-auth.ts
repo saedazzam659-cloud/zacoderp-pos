@@ -40,5 +40,6 @@ export function useMe() {
     queryKey: ["me"],
     queryFn: api.me,
     retry: false,
+    refetchInterval: 60_000,
   });
 }
