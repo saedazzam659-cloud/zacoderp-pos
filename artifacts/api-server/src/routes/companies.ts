@@ -11,6 +11,8 @@ import { logger } from "../lib/logger.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 import { encryptSecret, testCompanySender } from "../lib/email.js";
+import { propagateDemoWorkspaceMenuPermissions } from "../lib/demoDeviceIsolation.js";
+import { emitSessionRefreshMany } from "../lib/sessionEvents.js";
 
 const router = Router();
 
@@ -889,6 +891,14 @@ router.patch("/:id/menu-permissions", async (req, res) => {
       updatedAt: new Date(),
     }).where(eq(companiesTable.id, id)).returning();
     if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+    const demoWorkspaceCompanyIds = await propagateDemoWorkspaceMenuPermissions(
+      id,
+      menuPermissions,
+    );
+    emitSessionRefreshMany([id, ...demoWorkspaceCompanyIds], "permissions_changed", {
+      op: "company-menu-permissions-update",
+      sourceCompanyId: id,
+    });
     res.json(company);
   });
 });

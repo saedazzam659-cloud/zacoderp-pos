@@ -17,6 +17,9 @@ import {
   DemoDeviceError,
   getDemoBrowserLoginPreflight,
   needsDemoDevicePreparation,
+  propagateDemoSourcePermissions,
+  propagateDemoWorkspaceMenuPermissions,
+  refreshDemoShadowAuthorization,
   releaseDemoDeviceLink,
   resolveDemoDeviceLogin,
   revokeDemoDevice,
@@ -185,6 +188,125 @@ test("a new browser requires confirmation, then atomically replaces the prior de
       isNull(demoDeviceWorkspacesTable.revokedAt),
     ));
   assert.deepEqual(active.map((row) => row.id), [transferred.deviceLinkId]);
+});
+
+test("source RBAC and menu grants propagate to an active retained demo workspace", async () => {
+  const localTag = `${tag}_perm_sync`;
+  const [sourceCompany, workspaceCompany] = await db.insert(companiesTable).values([
+    {
+      nameAr: `${localTag}_source`,
+      nameEn: `${localTag}_source`,
+      code: `DPS-${randomBytes(3).toString("hex").toUpperCase()}`,
+      crNumber: `CR-${localTag}-S`,
+      buildingNumber: "1",
+      vatNumber: "300000000000003",
+      city: "Riyadh",
+      street: "Test",
+      postalCode: "12345",
+      country: "SA",
+      invoiceType: "both",
+      status: "active",
+      menuPermissions: JSON.stringify({ fixed_assets: false }),
+    },
+    {
+      nameAr: `${localTag}_workspace`,
+      nameEn: `${localTag}_workspace`,
+      code: `DPW-${randomBytes(3).toString("hex").toUpperCase()}`,
+      crNumber: `CR-${localTag}-W`,
+      buildingNumber: "1",
+      vatNumber: "300000000000003",
+      city: "Riyadh",
+      street: "Test",
+      postalCode: "12345",
+      country: "SA",
+      invoiceType: "both",
+      status: "active",
+      menuPermissions: JSON.stringify({ fixed_assets: false }),
+      isInternalDemoWorkspace: true,
+    },
+  ]).returning({ id: companiesTable.id });
+  cleanupCompanyIds.push(sourceCompany.id, workspaceCompany.id);
+
+  const [sourceUser, workspaceUser] = await db.insert(usersTable).values([
+    {
+      username: `${localTag}_source`,
+      passwordHash: "not-used",
+      companyId: sourceCompany.id,
+      role: "user",
+      isActive: true,
+      demoDeviceIsolation: true,
+      isDemoShadow: false,
+      permissions: { fixed_assets: { view: false } },
+    },
+    {
+      username: `${localTag}_workspace`,
+      passwordHash: "not-used",
+      companyId: workspaceCompany.id,
+      role: "user",
+      isActive: true,
+      demoDeviceIsolation: false,
+      isDemoShadow: true,
+      permissions: { fixed_assets: { view: false } },
+    },
+  ]).returning({ id: usersTable.id });
+  cleanupUserIds.push(sourceUser.id, workspaceUser.id);
+
+  await db.insert(demoDeviceWorkspacesTable).values({
+    sourceUserId: sourceUser.id,
+    sourceCompanyId: sourceCompany.id,
+    workspaceCompanyId: workspaceCompany.id,
+    workspaceUserId: workspaceUser.id,
+    deviceTokenHash: deviceHash(randomBytes(32).toString("base64url")),
+    status: "ready",
+    isPrimary: true,
+  });
+
+  const permissions = { fixed_assets: { view: true } };
+  const permissionTargets = await propagateDemoSourcePermissions(sourceUser.id, permissions);
+  assert.deepEqual(permissionTargets.workspaceUserIds, [workspaceUser.id]);
+  assert.deepEqual(permissionTargets.workspaceCompanyIds, [workspaceCompany.id]);
+
+  const enabledMenus = JSON.stringify({ fixed_assets: true });
+  const companyTargets = await propagateDemoWorkspaceMenuPermissions(
+    sourceCompany.id,
+    enabledMenus,
+  );
+  assert.deepEqual(companyTargets, [workspaceCompany.id]);
+
+  const [updatedUser] = await db.select({
+    permissions: usersTable.permissions,
+  }).from(usersTable).where(eq(usersTable.id, workspaceUser.id));
+  const [updatedCompany] = await db.select({
+    menuPermissions: companiesTable.menuPermissions,
+  }).from(companiesTable).where(eq(companiesTable.id, workspaceCompany.id));
+  assert.deepEqual(updatedUser.permissions, permissions);
+  assert.equal(updatedCompany.menuPermissions, enabledMenus);
+
+  // Existing workspaces that were stale before the propagation hooks shipped
+  // must repair themselves on the next /auth/me refresh.
+  await db.update(usersTable).set({ permissions })
+    .where(eq(usersTable.id, sourceUser.id));
+  await db.update(companiesTable).set({ menuPermissions: enabledMenus })
+    .where(eq(companiesTable.id, sourceCompany.id));
+  await db.update(usersTable).set({ permissions: { fixed_assets: { view: false } } })
+    .where(eq(usersTable.id, workspaceUser.id));
+  await db.update(companiesTable).set({
+    menuPermissions: JSON.stringify({ fixed_assets: false }),
+  }).where(eq(companiesTable.id, workspaceCompany.id));
+
+  const refreshed = await refreshDemoShadowAuthorization({
+    id: workspaceUser.id,
+    isDemoShadow: true,
+  });
+  assert.equal(refreshed.id, workspaceUser.id);
+  const [healedUser] = await db.select({
+    permissions: usersTable.permissions,
+  }).from(usersTable).where(eq(usersTable.id, workspaceUser.id));
+  const [healedCompany] = await db.select({
+    menuPermissions: companiesTable.menuPermissions,
+  }).from(companiesTable).where(eq(companiesTable.id, workspaceCompany.id));
+  assert.deepEqual(healedUser.permissions, permissions);
+  assert.equal(healedCompany.menuPermissions, enabledMenus);
 });
 
 test("a failed atomic session write rolls the whole handoff back", async () => {

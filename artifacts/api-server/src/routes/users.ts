@@ -5,7 +5,8 @@ import { eq, and, asc, ne, inArray, desc, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { sanitizeMobilePermissions } from "../lib/mobilePerms.js";
-import { emitSessionRefresh } from "../lib/sessionEvents.js";
+import { propagateDemoSourcePermissions } from "../lib/demoDeviceIsolation.js";
+import { emitSessionRefresh, emitSessionRefreshMany } from "../lib/sessionEvents.js";
 
 const router = Router();
 
@@ -341,9 +342,14 @@ router.patch("/:id", async (req, res) => {
     // only after every user/branch write is complete so /auth/me cannot race
     // this request and reload a half-updated user.
     if (permissions !== undefined) {
+      const shadowTargets = await propagateDemoSourcePermissions(id, permissions);
       emitSessionRefresh(cid, "permissions_changed", {
         op: "user-permissions-update",
         userId: id,
+      });
+      emitSessionRefreshMany(shadowTargets.workspaceCompanyIds, "permissions_changed", {
+        op: "demo-shadow-permissions-update",
+        sourceUserId: id,
       });
     }
 

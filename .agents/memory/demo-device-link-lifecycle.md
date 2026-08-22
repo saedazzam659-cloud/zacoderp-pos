@@ -19,5 +19,7 @@ A demo-isolated account has one active browser binding:
 - Disable only superseded legacy shadow users; keep the retained shadow active.
 - `decorateDemoShadowUser` must resolve `demoSourceUserId` from the ready, non-revoked link.
 - `/auth/me` must not reject every `isDemoShadow` user after `resolveBearerToken` succeeds; the resolver's ready-link + cookie check is the authority. Otherwise login succeeds but the first focus refresh logs out a retained legacy workspace.
+- Source-user RBAC edits and source-company menu grants must propagate to every ready, non-revoked retained shadow workspace and emit a refresh for the shadow company. A normal user needs both layers; an admin can hide this drift because it bypasses per-user RBAC.
+- `/auth/me` must self-heal a retained shadow's user permissions and company menu permissions from its source records. This repairs workspaces that were already stale before live propagation existed, without making the admin toggle settings again.
 - SameSite=None seen in the Replit preview is proxy rewriting, not a bug.
 - First-browser preparation and transfer UX must use the credential-gated, read-only server probe against the HttpOnly cookie.

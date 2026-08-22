@@ -72,6 +72,7 @@ import {
   DemoDeviceError,
   getDemoBrowserLoginPreflight,
   readDemoBrowserCookie,
+  refreshDemoShadowAuthorization,
   releaseDemoDeviceLink,
   resolveDemoDeviceLogin,
 } from "../lib/demoDeviceIsolation.js";
@@ -942,6 +943,7 @@ router.get("/me", async (req, res) => {
   // non-revoked browser binding and that its HttpOnly cookie matches. Do not
   // reject it a second time here: doing so made login succeed, then `/me`
   // log the user out as soon as the tab became visible again.
+  user = await refreshDemoShadowAuthorization(user);
   user = await decorateDemoShadowUser(user);
 
   // Same "latest subscription" rule as the login gate so /me stays consistent

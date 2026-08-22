@@ -228,6 +228,133 @@ async function syncShadowUser(
   return shadow;
 }
 
+/**
+ * Keep an already-open demo workspace aligned with permission edits made on
+ * its source user. Login-time synchronization alone is not enough: admins can
+ * change RBAC while the retained shadow session is still active.
+ */
+export async function propagateDemoSourcePermissions(
+  sourceUserId: number,
+  permissions: SourceUser["permissions"],
+): Promise<{ workspaceCompanyIds: number[]; workspaceUserIds: number[] }> {
+  const links = await db.select({
+    workspaceCompanyId: demoDeviceWorkspacesTable.workspaceCompanyId,
+    workspaceUserId: demoDeviceWorkspacesTable.workspaceUserId,
+  }).from(demoDeviceWorkspacesTable).where(and(
+    eq(demoDeviceWorkspacesTable.sourceUserId, sourceUserId),
+    eq(demoDeviceWorkspacesTable.status, "ready"),
+    isNull(demoDeviceWorkspacesTable.revokedAt),
+  ));
+
+  const workspaceUserIds = [...new Set(
+    links
+      .map((link) => link.workspaceUserId)
+      .filter((id): id is number => id != null && id !== sourceUserId),
+  )];
+  const workspaceCompanyIds = [...new Set(
+    links
+      .map((link) => link.workspaceCompanyId)
+      .filter((id): id is number => id != null),
+  )];
+
+  if (workspaceUserIds.length) {
+    await db.update(usersTable).set({
+      permissions,
+      updatedAt: new Date(),
+    }).where(and(
+      inArray(usersTable.id, workspaceUserIds),
+      eq(usersTable.isDemoShadow, true),
+    ));
+  }
+
+  return { workspaceCompanyIds, workspaceUserIds };
+}
+
+/**
+ * Company menu grants are the upper permission bound for normal users. Mirror
+ * them into retained demo workspace companies so a source-company toggle does
+ * not remain visible only to admins (who bypass per-user RBAC).
+ */
+export async function propagateDemoWorkspaceMenuPermissions(
+  sourceCompanyId: number,
+  menuPermissions: string,
+): Promise<number[]> {
+  const links = await db.select({
+    workspaceCompanyId: demoDeviceWorkspacesTable.workspaceCompanyId,
+  }).from(demoDeviceWorkspacesTable).where(and(
+    eq(demoDeviceWorkspacesTable.sourceCompanyId, sourceCompanyId),
+    eq(demoDeviceWorkspacesTable.status, "ready"),
+    isNull(demoDeviceWorkspacesTable.revokedAt),
+  ));
+
+  const workspaceCompanyIds = [...new Set(
+    links
+      .map((link) => link.workspaceCompanyId)
+      .filter((id): id is number => id != null && id !== sourceCompanyId),
+  )];
+
+  if (workspaceCompanyIds.length) {
+    await db.update(companiesTable).set({
+      menuPermissions,
+      updatedAt: new Date(),
+    }).where(inArray(companiesTable.id, workspaceCompanyIds));
+  }
+
+  return workspaceCompanyIds;
+}
+
+async function syncRetainedWorkspaceMenuPermissions(
+  sourceCompanyId: number,
+  workspaceCompanyId: number,
+): Promise<void> {
+  if (sourceCompanyId === workspaceCompanyId) return;
+  const [sourceCompany, workspaceCompany] = await Promise.all([
+    db.select({
+      menuPermissions: companiesTable.menuPermissions,
+    }).from(companiesTable).where(eq(companiesTable.id, sourceCompanyId)).limit(1),
+    db.select({
+      menuPermissions: companiesTable.menuPermissions,
+    }).from(companiesTable).where(eq(companiesTable.id, workspaceCompanyId)).limit(1),
+  ]).then(([sourceRows, workspaceRows]) => [sourceRows[0], workspaceRows[0]]);
+  if (!sourceCompany || !workspaceCompany) return;
+  if (sourceCompany.menuPermissions === workspaceCompany.menuPermissions) return;
+  await db.update(companiesTable).set({
+    menuPermissions: sourceCompany.menuPermissions,
+    updatedAt: new Date(),
+  }).where(eq(companiesTable.id, workspaceCompanyId));
+}
+
+/**
+ * Self-heal a retained shadow when `/auth/me` is refreshed. This repairs
+ * workspaces that were already stale before the propagation hooks were
+ * deployed, without requiring the admin to toggle permissions a second time.
+ */
+export async function refreshDemoShadowAuthorization<
+  T extends { id: number; isDemoShadow?: boolean },
+>(user: T): Promise<T | SourceUser> {
+  if (!user.isDemoShadow) return user;
+  const [link] = await db.select().from(demoDeviceWorkspacesTable).where(and(
+    eq(demoDeviceWorkspacesTable.workspaceUserId, user.id),
+    eq(demoDeviceWorkspacesTable.status, "ready"),
+    isNull(demoDeviceWorkspacesTable.revokedAt),
+  )).limit(1);
+  if (!link?.workspaceCompanyId) return user;
+  const [source] = await db.select().from(usersTable)
+    .where(eq(usersTable.id, link.sourceUserId))
+    .limit(1);
+  if (!source) return user;
+  await syncRetainedWorkspaceMenuPermissions(
+    link.sourceCompanyId,
+    link.workspaceCompanyId,
+  );
+  return syncShadowUser(
+    source,
+    user.id,
+    link.workspaceCompanyId,
+    link.id,
+  );
+}
+
 async function loadReadyWorkspace(source: SourceUser, link: typeof demoDeviceWorkspacesTable.$inferSelect) {
   if (link.revokedAt || link.status === "revoked") {
     throw new DemoDeviceError("تم إلغاء ربط هذا الجهاز. احذف بيانات الموقع ثم سجّل الدخول مجددًا.", 403);
@@ -239,6 +366,9 @@ async function loadReadyWorkspace(source: SourceUser, link: typeof demoDeviceWor
         : "مساحة الديمو قيد التجهيز. حاول تسجيل الدخول مرة أخرى بعد لحظات.",
       link.status === "failed" ? 500 : 409,
     );
+  }
+  if (link.workspaceCompanyId !== source.companyId && source.companyId != null) {
+    await syncRetainedWorkspaceMenuPermissions(source.companyId, link.workspaceCompanyId);
   }
   const effectiveUser = link.workspaceUserId === source.id
     ? source
