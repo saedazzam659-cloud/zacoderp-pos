@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { randomUUID } from "node:crypto";
-import { db } from "@workspace/db";
+import { db, getActiveExternalDb } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -49,42 +49,129 @@ import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH, csidEnvMismatchMessage 
 import { boundedOffsetPage } from "../lib/boundedPagination.js";
 import { logger } from "../lib/logger.js";
 import { getAgentDbPoolStats } from "../lib/agentDb.js";
+import {
+  admitInvoiceAcceleration,
+  getInvoiceAccelerationMode,
+  recordInvoiceSampleOnFinish,
+} from "../lib/agentInvoiceAcceleration.js";
 
-function beginAgentInvoiceTiming(
+type AgentInvoiceTiming = {
+  mark: (stage: string) => void;
+  setLineCount: (count: number) => void;
+  completeBusinessOutcome: (status: number) => void;
+};
+
+type AgentInvoiceTimingStart = {
+  timing: AgentInvoiceTiming | null;
+  accelerated: boolean;
+  blockedReason: string | null;
+};
+
+async function beginAgentInvoiceTiming(
   req: any,
   res: any,
   operation: "create" | "update" | "post",
   lineCount: number,
-): { mark: (stage: string) => void; setLineCount: (count: number) => void } | null {
+): Promise<AgentInvoiceTimingStart> {
   const agentId = Number(req?.agentDomainHit?.id);
-  if (!Number.isInteger(agentId) || agentId <= 0) return null;
-  if (process.env.AGENT_INVOICE_TIMING_LOG === "0" || process.env.AGENT_INVOICE_TIMING_LOG === "false") return null;
+  if (!Number.isInteger(agentId) || agentId <= 0) {
+    return { timing: null, accelerated: false, blockedReason: null };
+  }
+  // Never let an agent-domain invoice write fall through to the central
+  // business database, even if another API replica has a stale host-mode cache.
+  if (!getActiveExternalDb()) {
+    return {
+      timing: null,
+      accelerated: false,
+      blockedReason: "قاعدة بيانات الوكيل غير جاهزة — تم إيقاف الطلب لحماية البيانات من الكتابة في القاعدة المركزية",
+    };
+  }
+  const logEnabled = process.env.AGENT_INVOICE_TIMING_LOG !== "0"
+    && process.env.AGENT_INVOICE_TIMING_LOG !== "false";
+  // Install this before central admission: close can fire while admission is
+  // awaited, and EventEmitter will not replay it to the recorder added later.
+  let responseClosedBeforeRecorder = !!res.destroyed && !res.writableFinished;
+  res.once("close", () => {
+    if (!res.writableFinished) responseClosedBeforeRecorder = true;
+  });
   const startedAt = Date.now();
   let previousAt = startedAt;
   let observedLineCount = lineCount;
   const stages: Record<string, number> = {};
   const poolStart = getAgentDbPoolStats(agentId);
-  res.once("finish", () => {
-    logger.info({
-      agentId,
-      operation,
-      statusCode: res.statusCode,
-      lineCount: observedLineCount,
-      totalMs: Date.now() - startedAt,
-      stages,
-      poolStart,
-      poolEnd: getAgentDbPoolStats(agentId),
-    }, "Agent sales invoice timing");
-  });
+  let accelerationMode = getInvoiceAccelerationMode(req);
+  let accelerated = false;
+  let trialStartAt: Date | null = null;
+  let trialClaimId: number | null = null;
+  const controlPlaneAdmissionRequired = (operation === "create" || operation === "update")
+    && (accelerationMode === "trial" || accelerationMode === "on");
+  if (controlPlaneAdmissionRequired) {
+    try {
+      const admission = await admitInvoiceAcceleration(agentId, operation, {
+        mode: accelerationMode as "trial" | "on",
+        generation: Number.isInteger(req?.agentDomainHit?.accelerationRequestGeneration)
+          ? req.agentDomainHit.accelerationRequestGeneration
+          : null,
+      });
+      accelerationMode = admission.mode;
+      accelerated = admission.accelerated;
+      trialStartAt = admission.trialStartAt;
+      trialClaimId = admission.trialClaimId;
+      stages["central-admission"] = Date.now() - startedAt;
+      previousAt = Date.now();
+    } catch (err) {
+      logger.warn({ err, agentId, operation }, "Agent invoice acceleration admission failed closed");
+      return {
+        timing: null,
+        accelerated: false,
+        blockedReason: "تعذّر التحقق من حالة تسريع الوكيل — أُوقف الطلب بأمان ولم تُكتب أي بيانات",
+      };
+    }
+  }
+
+  const recorder = recordInvoiceSampleOnFinish(res, {
+    agentId,
+    operation,
+    accelerated,
+    get totalMs() { return Date.now() - startedAt; },
+    get stages() { return { ...stages }; },
+    get lineCount() { return observedLineCount; },
+    poolStart,
+    get poolEnd() { return getAgentDbPoolStats(agentId); },
+  }, trialStartAt, trialClaimId, responseClosedBeforeRecorder || (!!res.destroyed && !res.writableFinished));
+
+  if (logEnabled) {
+    res.once("finish", () => {
+      logger.info({
+        agentId,
+        operation,
+        accelerationMode,
+        accelerated,
+        statusCode: res.statusCode,
+        lineCount: observedLineCount,
+        totalMs: Date.now() - startedAt,
+        stages,
+        poolStart,
+        poolEnd: getAgentDbPoolStats(agentId),
+      }, "Agent sales invoice timing");
+    });
+  }
   return {
-    mark(stage: string) {
-      const now = Date.now();
-      stages[stage] = now - previousAt;
-      previousAt = now;
+    timing: {
+      mark(stage: string) {
+        const now = Date.now();
+        stages[stage] = now - previousAt;
+        previousAt = now;
+      },
+      setLineCount(count: number) {
+        observedLineCount = count;
+      },
+      completeBusinessOutcome(status: number) {
+        recorder.completeBusinessOutcome(status);
+      },
     },
-    setLineCount(count: number) {
-      observedLineCount = count;
-    },
+    accelerated,
+    blockedReason: null,
   };
 }
 
@@ -95,6 +182,33 @@ function queryRows<T>(result: unknown): T[] {
     if (Array.isArray(rows)) return rows as T[];
   }
   return [];
+}
+
+type CapturedRead<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: unknown };
+
+/**
+ * Attach a rejection handler immediately to every speculative read. This lets
+ * the accelerated agent path overlap independent WAN database round-trips
+ * without creating unhandled rejections, while `readCaptured` still rethrows
+ * failures in the same business-validation order as the legacy path.
+ */
+function captureRead<T>(promise: PromiseLike<T>): Promise<CapturedRead<T>> {
+  return Promise.resolve(promise).then(
+    value => ({ ok: true as const, value }),
+    error => ({ ok: false as const, error }),
+  );
+}
+
+async function readCaptured<T>(captured: Promise<CapturedRead<T>>): Promise<T> {
+  const result = await captured;
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
+function usesAcceleratedAgentInvoicePath(timingStart: AgentInvoiceTimingStart): boolean {
+  return timingStart.accelerated;
 }
 
 function invoiceLinesFingerprint(lines: Array<Record<string, any>>): string {
@@ -1378,7 +1492,12 @@ async function enforceMobileSalesRights(
 }
 
 router.post("/sales-invoices", async (req, res) => {
-  const timing = beginAgentInvoiceTiming(req, res, "create", Array.isArray(req.body?.lines) ? req.body.lines.length : 0);
+  const timingStart = await beginAgentInvoiceTiming(req, res, "create", Array.isArray(req.body?.lines) ? req.body.lines.length : 0);
+  if (timingStart.blockedReason) {
+    res.status(503).json({ error: timingStart.blockedReason });
+    return;
+  }
+  const timing = timingStart.timing;
   try {
     const cid = guard(req, res); if (!cid) return;
     // ─── Mobile-app rights (صلاحيات تطبيق الموبايل) ───
@@ -1395,11 +1514,84 @@ router.post("/sales-invoices", async (req, res) => {
         .map((line: any) => Number(line?.itemId))
         .filter((itemId: number) => Number.isInteger(itemId) && itemId > 0),
     ));
+    const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
+    const pType = paymentType || "credit";
+    const offerIds = collectInvoiceOfferIds(documentOfferId, lines);
+    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
+    const repRole = req.authUser?.role;
+    const isManagerRole = repRole === "admin" || repRole === "superadmin";
+
+    const loadSourceQuotation = () => {
+      if (!sourceQuotationId) {
+        return Promise.resolve([] as Array<{
+          id: number;
+          docNumber: string | null;
+          status: string;
+          convertedInvoiceId: number | null;
+        }>);
+      }
+      return db.select({
+        id: salesQuotationsTable.id,
+        docNumber: salesQuotationsTable.docNumber,
+        status: salesQuotationsTable.status,
+        convertedInvoiceId: salesQuotationsTable.convertedInvoiceId,
+      }).from(salesQuotationsTable)
+        .where(and(
+          eq(salesQuotationsTable.id, Number(sourceQuotationId)),
+          eq(salesQuotationsTable.companyId, cid),
+        ));
+    };
+    const loadRepInfo = async () => {
+      const effectiveRepId = salesRepId
+        ?? (isManagerRole ? null : await repIdForUser(cid, req.authUser?.id));
+      return resolveRepCommission(cid, effectiveRepId, totals.totalAmount);
+    };
+    const loadBuyerCountry = () => customerId
+      ? db.select({ country: customersTable.country })
+          .from(customersTable)
+          .where(and(eq(customersTable.id, Number(customerId)), eq(customersTable.companyId, cid)))
+          .limit(1)
+      : Promise.resolve([] as Array<{ country: string | null }>);
+    const loadTaxRate = () => lines?.length
+      ? resolveTaxRate(cid, taxId ? Number(taxId) : null)
+      : Promise.resolve("15");
+    const loadPosSession = () => posSessionId
+      ? db.select({
+          id: posSessionsTable.id,
+          companyId: posSessionsTable.companyId,
+          status: posSessionsTable.status,
+        }).from(posSessionsTable)
+          .where(eq(posSessionsTable.id, Number(posSessionId)))
+          .limit(1)
+      : Promise.resolve([] as Array<{ id: number; companyId: number; status: string }>);
+
+    // In trial/on mode only, overlap independent read-only checks across the
+    // remote agent DB. Captured promises attach rejection handlers immediately;
+    // each result is still consumed at its legacy validation point below.
+    const fastReads = acceleratedPath ? {
+      quota: captureRead(getInvoiceQuota(cid)),
+      usage: captureRead(checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "save")),
+      sourceQuotation: captureRead(loadSourceQuotation()),
+      overdue: captureRead(
+        pType === "credit" && customerId
+          ? findOldestOutstandingCredit(cid, Number(customerId))
+          : Promise.resolve(null),
+      ),
+      offers: captureRead(validateOffersBelongToCompany(cid, offerIds)),
+      brands: captureRead(validateBrandLinesBelongToCompany(cid, lines)),
+      repInfo: captureRead(loadRepInfo()),
+      buyerCountry: captureRead(loadBuyerCountry()),
+      taxRate: captureRead(loadTaxRate()),
+      posSession: captureRead(loadPosSession()),
+    } : null;
+
     // These are independent read-only preflights. Running them together saves
     // one remote-agent round trip without changing which validation wins.
     const [invQuota, usageV] = await Promise.all([
-      getInvoiceQuota(cid),
-      checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "save"),
+      fastReads ? readCaptured(fastReads.quota) : getInvoiceQuota(cid),
+      fastReads
+        ? readCaptured(fastReads.usage)
+        : checkItemsUsable(cid, "sales_invoices", usageIds, req.authUser, "save"),
     ]);
     timing?.mark("quota-and-item-validation");
     if (invQuota.used >= invQuota.limit) {
@@ -1431,14 +1623,9 @@ router.post("/sales-invoices", async (req, res) => {
     //   3. Must not already be converted (one quotation → one invoice).
     let validatedSourceQuotation: { id: number; docNumber: string | null } | null = null;
     if (sourceQuotationId) {
-      const sqId = Number(sourceQuotationId);
-      const [sq] = await db.select({
-        id: salesQuotationsTable.id,
-        docNumber: salesQuotationsTable.docNumber,
-        status: salesQuotationsTable.status,
-        convertedInvoiceId: salesQuotationsTable.convertedInvoiceId,
-      }).from(salesQuotationsTable)
-        .where(and(eq(salesQuotationsTable.id, sqId), eq(salesQuotationsTable.companyId, cid)));
+      const [sq] = fastReads
+        ? await readCaptured(fastReads.sourceQuotation)
+        : await loadSourceQuotation();
       if (!sq) { res.status(404).json({ error: "عرض السعر غير موجود" }); return; }
       if (sq.convertedInvoiceId) { res.status(400).json({ error: "تم تحويل عرض السعر مسبقاً إلى فاتورة" }); return; }
       if (sq.status !== "accepted") { res.status(400).json({ error: "يجب قبول عرض السعر قبل التحويل لفاتورة" }); return; }
@@ -1456,7 +1643,6 @@ router.post("/sales-invoices", async (req, res) => {
     // rule. Branch is ALWAYS required (POS auto-fills it from the session).
     if (!posSessionId && !customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
-    const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     // ── Overdue-payment guard ──
@@ -1467,11 +1653,17 @@ router.post("/sales-invoices", async (req, res) => {
     // first, then checks the oldest remaining one. Cash invoices and customers
     // without payment terms bypass the guard entirely.
     const [overdue] = await Promise.all([
-      pType === "credit" && customerId
-        ? findOldestOutstandingCredit(cid, Number(customerId))
-        : Promise.resolve(null),
-      validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines)),
-      validateBrandLinesBelongToCompany(cid, lines),
+      fastReads
+        ? readCaptured(fastReads.overdue)
+        : pType === "credit" && customerId
+          ? findOldestOutstandingCredit(cid, Number(customerId))
+          : Promise.resolve(null),
+      fastReads
+        ? readCaptured(fastReads.offers)
+        : validateOffersBelongToCompany(cid, offerIds),
+      fastReads
+        ? readCaptured(fastReads.brands)
+        : validateBrandLinesBelongToCompany(cid, lines),
     ]);
     if (overdue) {
       const refMs = new Date(invoiceDate).getTime();
@@ -1492,7 +1684,6 @@ router.post("/sales-invoices", async (req, res) => {
       }
     }
     timing?.mark("credit-offer-and-brand-validation");
-    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // Snapshot the rep's commission % at save time so historical invoices keep
     // their commission even if the rep's % changes later.
     // ─── Auto-attribution ───
@@ -1504,37 +1695,11 @@ router.post("/sales-invoices", async (req, res) => {
     // auto-attributed to their own linked rep — they must pick a rep explicitly
     // (or leave it blank for a no-rep invoice). This mirrors the unlocked rep
     // picker they get in the UI (sales-reps /me/current returns "not linked").
-    const repRole = req.authUser?.role;
-    const isManagerRole = repRole === "admin" || repRole === "superadmin";
-    const repInfoPromise = (async () => {
-      const effectiveRepId = salesRepId
-        ?? (isManagerRole ? null : await repIdForUser(cid, req.authUser?.id));
-      return resolveRepCommission(cid, effectiveRepId, totals.totalAmount);
-    })();
-    const buyerCountryPromise = customerId
-      ? db.select({ country: customersTable.country })
-          .from(customersTable)
-          .where(and(eq(customersTable.id, Number(customerId)), eq(customersTable.companyId, cid)))
-          .limit(1)
-      : Promise.resolve([]);
-    const taxRatePromise = lines?.length
-      ? resolveTaxRate(cid, taxId ? Number(taxId) : null)
-      : Promise.resolve("15");
-    const posSessionPromise = posSessionId
-      ? db.select({
-          id: posSessionsTable.id,
-          companyId: posSessionsTable.companyId,
-          status: posSessionsTable.status,
-        }).from(posSessionsTable)
-          .where(eq(posSessionsTable.id, Number(posSessionId)))
-          .limit(1)
-      : Promise.resolve([]);
-
     const [repInfo, buyerCountryRows, resolvedRate, posSessionRows] = await Promise.all([
-      repInfoPromise,
-      buyerCountryPromise,
-      taxRatePromise,
-      posSessionPromise,
+      fastReads ? readCaptured(fastReads.repInfo) : loadRepInfo(),
+      fastReads ? readCaptured(fastReads.buyerCountry) : loadBuyerCountry(),
+      fastReads ? readCaptured(fastReads.taxRate) : loadTaxRate(),
+      fastReads ? readCaptured(fastReads.posSession) : loadPosSession(),
     ]);
     const buyerIsForeign = !!buyerCountryRows[0]
       && String(buyerCountryRows[0].country ?? "SA").toUpperCase() !== "SA";
@@ -1676,12 +1841,22 @@ router.post("/sales-invoices", async (req, res) => {
       }
     }
     timing?.mark("post-write-links");
+    timing?.completeBusinessOutcome(201);
     res.status(201).json(inv);
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  } finally {
+    timing?.completeBusinessOutcome(res.statusCode);
+  }
 });
 
 router.put("/sales-invoices/:id", async (req, res) => {
-  const timing = beginAgentInvoiceTiming(req, res, "update", Array.isArray(req.body?.lines) ? req.body.lines.length : 0);
+  const timingStart = await beginAgentInvoiceTiming(req, res, "update", Array.isArray(req.body?.lines) ? req.body.lines.length : 0);
+  if (timingStart.blockedReason) {
+    res.status(503).json({ error: timingStart.blockedReason });
+    return;
+  }
+  const timing = timingStart.timing;
   try {
     const cid = guard(req, res); if (!cid) return;
     // Mobile-app rights — same gate as POST (see enforceMobileSalesRights).
@@ -1713,51 +1888,93 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // strip the customer/branch off an existing invoice on edit.
     if (!customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
+    const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
+    const incomingOfferIds = collectInvoiceOfferIds(documentOfferId, lines);
+    const pType = paymentType || "credit";
+    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
+    const newTotalBase = (parseFloat(String(totals.totalAmount)) || 0)
+      * (parseFloat(String(exchangeRate)) || 1);
+    const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");
+    const loadRepPatch = async () => {
+      if (!hasRepKey) return {};
+      const r = await resolveRepCommission(cid, (req.body as any).salesRepId, totals.totalAmount);
+      return {
+        salesRepId: r.salesRepId,
+        commissionPct: r.commissionPct,
+        commissionAmount: r.commissionAmount,
+      };
+    };
+    const loadLineTaxRate = () => lines !== undefined
+      ? resolveTaxRate(cid, taxId ? Number(taxId) : null)
+      : Promise.resolve(null);
+
+    const fastReads = acceleratedPath ? {
+      previousLineOffers: captureRead(
+        db.select({ aoid: salesInvoiceLinesTable.appliedOfferId })
+          .from(salesInvoiceLinesTable)
+          .where(eq(salesInvoiceLinesTable.invoiceId, id)),
+      ),
+      previousInvoiceOffer: captureRead(
+        db.select({ doid: salesInvoicesTable.documentOfferId })
+          .from(salesInvoicesTable)
+          .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))),
+      ),
+      offers: captureRead(validateOffersBelongToCompany(cid, incomingOfferIds)),
+      brands: captureRead(validateBrandLinesBelongToCompany(cid, lines)),
+      settlements: captureRead(assertInvoiceEditKeepsSettlementsCovered(cid, "sales", id, newTotalBase)),
+      repPatch: captureRead(loadRepPatch()),
+      lineTaxRate: captureRead(loadLineTaxRate()),
+    } : null;
+
     // Snapshot offer ids that were already attached to this invoice BEFORE
     // we delete-and-reinsert lines, so we can bump times_used for the offers
     // that are NEW on this update (and not double-count the ones already
     // there). Computed before the update so we don't lose them when the
     // line-level FKs are cascaded away.
-    const prevLineOffers = await db.select({ aoid: salesInvoiceLinesTable.appliedOfferId })
-      .from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, id));
-    const [prevInvRow] = await db.select({ doid: salesInvoicesTable.documentOfferId })
-      .from(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+    const prevLineOffers = fastReads
+      ? await readCaptured(fastReads.previousLineOffers)
+      : await db.select({ aoid: salesInvoiceLinesTable.appliedOfferId })
+          .from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, id));
+    const [prevInvRow] = fastReads
+      ? await readCaptured(fastReads.previousInvoiceOffer)
+      : await db.select({ doid: salesInvoicesTable.documentOfferId })
+          .from(salesInvoicesTable)
+          .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
     const prevOfferIds = new Set<number>();
     for (const r of prevLineOffers) if (r.aoid) prevOfferIds.add(r.aoid);
     if (prevInvRow?.doid) prevOfferIds.add(prevInvRow.doid);
     // Same tenant guard as POST — incoming payload can't reference a foreign
     // company's offer.
-    await validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines));
-    await validateBrandLinesBelongToCompany(cid, lines);
+    if (fastReads) {
+      await readCaptured(fastReads.offers);
+      await readCaptured(fastReads.brands);
+    } else {
+      await validateOffersBelongToCompany(cid, incomingOfferIds);
+      await validateBrandLinesBelongToCompany(cid, lines);
+    }
     timing?.mark("validation");
-    const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
-    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // حارس ما بعد السداد: لا يجوز أن يصبح صافي الفاتورة أقل من المسدَّد عليها.
     try {
-      const newTotalBase = (parseFloat(String(totals.totalAmount)) || 0) * (parseFloat(String(exchangeRate)) || 1);
-      await assertInvoiceEditKeepsSettlementsCovered(cid, "sales", id, newTotalBase);
+      if (fastReads) await readCaptured(fastReads.settlements);
+      else await assertInvoiceEditKeepsSettlementsCovered(cid, "sales", id, newTotalBase);
     } catch (e: any) {
       res.status(e?.status ?? 400).json({ error: e?.message || "التعديل يتعارض مع دفعات مسجَّلة على الفاتورة" });
       return;
     }
     // Only re-snapshot commission when the caller explicitly sent salesRepId
     // (so existing forms that don't know about reps don't wipe historical data).
-    const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");
-    const repPatch = hasRepKey
-      ? await (async () => {
-          const r = await resolveRepCommission(cid, (req.body as any).salesRepId, totals.totalAmount);
-          return { salesRepId: r.salesRepId, commissionPct: r.commissionPct, commissionAmount: r.commissionAmount };
-        })()
-      : {};
+    const repPatch = fastReads
+      ? await readCaptured(fastReads.repPatch)
+      : await loadRepPatch();
     // Note: docNumber is intentionally omitted from the update set — once a
     // sales invoice number is assigned (by the central sequence engine or by
     // the user on creation) it is immutable, both for ZATCA audit compliance
     // and to keep the sequence log consistent.
-    const resolvedLineTaxRate = lines !== undefined
-      ? await resolveTaxRate(cid, taxId ? Number(taxId) : null)
-      : null;
+    const resolvedLineTaxRate = fastReads
+      ? await readCaptured(fastReads.lineTaxRate)
+      : await loadLineTaxRate();
     const inv = await db.transaction(async (tx) => {
       const [locked] = await tx.select({ status: salesInvoicesTable.status })
         .from(salesInvoicesTable)
@@ -1838,12 +2055,22 @@ router.put("/sales-invoices/:id", async (req, res) => {
       await bumpOffersTimesUsed(cid, toBump);
     }
     timing?.mark("offer-links");
+    timing?.completeBusinessOutcome(200);
     res.json(inv);
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  } finally {
+    timing?.completeBusinessOutcome(res.statusCode);
+  }
 });
 
 router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, res) => {
-  const timing = beginAgentInvoiceTiming(req, res, "post", 0);
+  const timingStart = await beginAgentInvoiceTiming(req, res, "post", 0);
+  if (timingStart.blockedReason) {
+    res.status(503).json({ error: timingStart.blockedReason });
+    return;
+  }
+  const timing = timingStart.timing;
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

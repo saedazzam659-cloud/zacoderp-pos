@@ -1,4 +1,4 @@
-import { db, pool } from "@workspace/db";
+import { centralDb, db, pool } from "@workspace/db";
 import * as schema from "@workspace/db";
 import { sql, is } from "drizzle-orm";
 import { PgTable, PgEnumColumn } from "drizzle-orm/pg-core";
@@ -7,6 +7,19 @@ import { PgEnum } from "drizzle-orm/pg-core";
 import { logger } from "./logger";
 
 let healPromise: Promise<void> | null = null;
+
+// These columns are platform control state. The shared Drizzle schema must
+// expose them to central routes, but external-agent schema healing must never
+// materialize them in an agent business database.
+const CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS = [
+  "agent_instances.invoice_acceleration_mode",
+  "agent_instances.invoice_trial_remaining",
+  "agent_instances.invoice_acceleration_last_error",
+  "agent_instances.invoice_acceleration_reason",
+  "agent_instances.invoice_acceleration_updated_at",
+  "agent_instances.invoice_acceleration_generation",
+  "agent_instances.invoice_acceleration_baseline",
+] as const;
 
 // Boot-time DDL (ALTER TABLE ADD COLUMN / CREATE INDEX) must never hang forever
 // waiting on a relation lock held by another backend — most importantly the
@@ -24,6 +37,14 @@ const DDL_LOCK_TIMEOUT_MS = (() => {
 
 async function execDDL(stmt: string): Promise<void> {
   await db.transaction(async (tx) => {
+    await tx.execute(sql.raw(`SET LOCAL lock_timeout = '${DDL_LOCK_TIMEOUT_MS}ms'`));
+    await tx.execute(sql.raw(stmt));
+  });
+}
+
+/** Control-plane DDL must never follow the active external-agent ALS context. */
+async function execCentralDDL(stmt: string): Promise<void> {
+  await centralDb.transaction(async (tx) => {
     await tx.execute(sql.raw(`SET LOCAL lock_timeout = '${DDL_LOCK_TIMEOUT_MS}ms'`));
     await tx.execute(sql.raw(stmt));
   });
@@ -190,11 +211,16 @@ async function ensureEnums(
 
 async function ensureColumns(
   tables: { name: string; columns: ReturnType<typeof getTableConfig>["columns"] }[],
-  options: { strict?: boolean; optionalMissingTables?: readonly string[] } = {},
+  options: {
+    strict?: boolean;
+    optionalMissingTables?: readonly string[];
+    excludedColumns?: readonly string[];
+  } = {},
 ): Promise<{ applied: string[]; missingTables: string[] }> {
   const applied: string[] = [];
   const missingTables: string[] = [];
   const failures: string[] = [];
+  const excludedColumns = new Set(options.excludedColumns ?? []);
 
   // Snapshot which tables / columns currently exist in the public schema.
   const tableRows = (await db.execute<ExistingTable>(sql`
@@ -224,6 +250,7 @@ async function ensureColumns(
     }
     const haveCols = existingColsByTable.get(t.name) ?? new Set<string>();
     for (const col of t.columns) {
+      if (excludedColumns.has(`${t.name}.${col.name}`)) continue;
       if (haveCols.has(col.name)) continue;
 
       // Column type comes from drizzle's column.getSQLType() (e.g. "text",
@@ -2867,10 +2894,62 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
   return applied;
 }
 
+/**
+ * Acceleration state and telemetry belong to the CENTRAL control plane only.
+ * Keep this out of ensureTenantIdentityIndexes(): that function also runs
+ * during full external-agent schema setup inside runWithExternalDb().
+ */
+async function ensureCentralAgentInvoiceAccelerationSchema(): Promise<void> {
+  const stmts: { label: string; sql: string }[] = [
+    { label: "agent_instances.invoice_acceleration_mode column",
+      sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS invoice_acceleration_mode TEXT NOT NULL DEFAULT 'off'` },
+    { label: "agent_instances.invoice_trial_remaining column",
+      sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS invoice_trial_remaining INTEGER` },
+    { label: "agent_instances.invoice_acceleration_last_error column",
+      sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS invoice_acceleration_last_error TEXT` },
+    { label: "agent_instances.invoice_acceleration_reason column",
+      sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS invoice_acceleration_reason TEXT` },
+    { label: "agent_instances.invoice_acceleration_updated_at column",
+      sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS invoice_acceleration_updated_at TIMESTAMP` },
+    { label: "agent_instances.invoice_acceleration_generation column",
+      sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS invoice_acceleration_generation INTEGER NOT NULL DEFAULT 0` },
+    { label: "agent_instances.invoice_acceleration_baseline column",
+      sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS invoice_acceleration_baseline JSONB` },
+    { label: "create central agent_invoice_samples table",
+      sql: `CREATE TABLE IF NOT EXISTS agent_invoice_samples (
+        id           SERIAL PRIMARY KEY,
+        agent_id     INTEGER NOT NULL REFERENCES agent_instances(id) ON DELETE CASCADE,
+        operation    TEXT NOT NULL,
+        accelerated  BOOLEAN NOT NULL DEFAULT FALSE,
+        status       INTEGER NOT NULL,
+        total_ms     INTEGER NOT NULL,
+        stages       JSONB,
+        line_count   INTEGER,
+        pool_start   JSONB,
+        pool_end     JSONB,
+        created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "central agent_invoice_samples_agent_created_idx",
+      sql: `CREATE INDEX IF NOT EXISTS agent_invoice_samples_agent_created_idx ON agent_invoice_samples (agent_id, created_at)` },
+    { label: "central agent_invoice_samples_agent_op_idx",
+      sql: `CREATE INDEX IF NOT EXISTS agent_invoice_samples_agent_op_idx ON agent_invoice_samples (agent_id, operation, accelerated)` },
+    { label: "central agent_invoice_samples_agent_claim_idx",
+      sql: `CREATE INDEX IF NOT EXISTS agent_invoice_samples_agent_claim_idx ON agent_invoice_samples (agent_id, status, created_at)` },
+  ];
+  for (const { label, sql: stmt } of stmts) {
+    try {
+      await execCentralDDL(stmt);
+    } catch (err) {
+      logger.warn({ err, label, stmt }, "ensureSchema: central invoice-acceleration step failed (continuing)");
+    }
+  }
+}
+
 async function runHeal(options: {
   includeIdentitySteps?: boolean;
   strictSchema?: boolean;
   optionalMissingTables?: readonly string[];
+  excludedColumns?: readonly string[];
 } = {}): Promise<void> {
   const includeIdentitySteps = options.includeIdentitySteps !== false;
   const strictSchema = options.strictSchema === true;
@@ -2891,6 +2970,7 @@ async function runHeal(options: {
     const r = await ensureColumns(tables, {
       strict: strictSchema,
       optionalMissingTables: options.optionalMissingTables,
+      excludedColumns: options.excludedColumns,
     });
     appliedColStmts = r.applied;
     missingTables = r.missingTables;
@@ -2910,9 +2990,11 @@ async function runHeal(options: {
     }
   }
 
-  if (missingTables.length) {
+  const optionalMissing = new Set(options.optionalMissingTables ?? []);
+  const requiredMissingTables = missingTables.filter(name => !optionalMissing.has(name));
+  if (requiredMissingTables.length) {
     logger.warn(
-      { missingTables },
+      { missingTables: requiredMissingTables },
       "ensureSchema: schema declares tables that don't exist in DB — run `pnpm db:push` or write a migration",
     );
   }
@@ -2946,7 +3028,12 @@ async function runHeal(options: {
  * race the migration. Safe to call repeatedly.
  */
 export function ensureSchemaUpToDate(): Promise<void> {
-  if (!healPromise) healPromise = runHeal();
+  if (!healPromise) {
+    healPromise = (async () => {
+      await runHeal();
+      await ensureCentralAgentInvoiceAccelerationSchema();
+    })();
+  }
   return healPromise;
 }
 
@@ -2957,7 +3044,10 @@ export function ensureSchemaUpToDate(): Promise<void> {
  * promise (which is bound to the central DB).
  */
 export function runSchemaHealOnActiveDb(): Promise<void> {
-  return runHeal();
+  return runHeal({
+    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples"],
+    excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
+  });
 }
 
 /**
@@ -2976,6 +3066,10 @@ export function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
     strictSchema: true,
     // This queue is intentionally lazy-created by its integration module and
     // is unrelated to the shell-agent request path.
-    optionalMissingTables: ["integration_invoice_queue"],
+    // Both are intentionally lazy/control-plane-only and must not block an
+    // external agent request. agent_invoice_samples is created only on the
+    // central DB by ensureCentralAgentInvoiceAccelerationSchema().
+    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples"],
+    excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
   });
 }

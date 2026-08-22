@@ -154,3 +154,4 @@
 - [Per-device demo isolation + cookie binding](demo-device-link-lifecycle.md) — each browser gets its own demo workspace (clone+shadow); every bearer path incl. shadow must match the HttpOnly cookie; failed login = release (delete) link, never revoke.
 - [Remote agent DB latency](remote-agent-db-latency.md) — batch read-only SQL round trips; never batch stock writes without one transaction plus conditional quantity/lot reservation.
 - [Agent control-plane recovery](agent-control-plane-recovery.md) — recovery fences DB, remote generation/flock, and bounded provider calls; heartbeat starts at claim.
+- [Agent invoice acceleration boundary](agent-invoice-acceleration-boundary.md) — control/telemetry stay central; active requests fence mode changes at middleware entry, while cached Off has no central dependency.

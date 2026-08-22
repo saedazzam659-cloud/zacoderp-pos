@@ -20,6 +20,7 @@ import {
   Server, Plus, Pencil, Trash2, Database, KeyRound, ShieldAlert, Globe,
   Plug, Loader2, CheckCircle2, XCircle, Ban, Play, Copy, Palette, RefreshCw,
   HeartPulse, AlertTriangle, UploadCloud, FileDown, Mail, Check, LockKeyhole,
+  Zap, Activity, BarChart, ServerCog,
 } from "lucide-react";
 import { DEFAULT_LOCAL_SUPERADMIN_SCREENS, LOCAL_SUPERADMIN_SCREENS } from "@/lib/localSuperadminScreens";
 
@@ -80,6 +81,10 @@ type Agent = {
   autoDomainLastCheckAt?: string | null; autoDomainLastSuccessAt?: string | null;
   autoDomainLastError?: string | null; autoDomainLog?: string | null;
   cloudflareConnected: boolean;
+  invoiceAccelerationMode?: "off" | "trial" | "on";
+  invoiceTrialRemaining?: number | null;
+  invoiceAccelerationLastError?: string | null;
+  invoiceAccelerationUpdatedAt?: string | null;
 };
 
 type AutoDomainPreviewResp = {
@@ -168,6 +173,241 @@ function fmtDate(s: string | null | undefined) {
   if (!s) return "—";
   return String(s).slice(0, 16).replace("T", " ");
 }
+
+function AgentAccelerationCard({ agent, invalidate }: { agent: Agent; invalidate: () => void }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [showDiag, setShowDiag] = useState(false);
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  if (agent.mode === "full") {
+    return (
+      <div className="border border-slate-200 dark:border-slate-800 rounded-lg p-3 bg-slate-50/50 dark:bg-slate-900/30 text-xs text-muted-foreground flex items-start gap-2">
+        <ServerCog className="h-4 w-4 shrink-0 text-slate-400" />
+        <div className="space-y-1">
+          <div className="font-semibold text-slate-700 dark:text-slate-300">تسريع الفواتير (غير متاح)</div>
+          <p>تسريع الفواتير غير متاح: النسخة تعمل محليًا بالكامل وتتطلب تعديلات مباشرة على الخادم الوسيط (Caddy) و(Proxy).</p>
+        </div>
+      </div>
+    );
+  }
+
+  const mode = agent.invoiceAccelerationMode || "off";
+
+  async function loadDiagnostics() {
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${agent.id}/invoice-acceleration/diagnostics`, { method: "POST", headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "فشل جلب التشخيص");
+      setDiagnostics(j);
+      setShowDiag(true);
+    } catch (e: any) {
+      toast({ title: "فشل فحص التسريع", description: String(e.message || e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setTrial() {
+    if (!confirm("هل أنت متأكد من بدء تجربة تسريع الفواتير لهذا الوكيل؟\nستبقى البيانات في قاعدة الوكيل نفسها، وستُستخدم خوارزمية القراءات المتوازية لخمس عمليات حفظ ناجحة.")) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${agent.id}/invoice-acceleration/trial`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ confirm: true })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "فشل بدء التجربة");
+      toast({ title: "تم بدء التجربة بنجاح" });
+      invalidate();
+    } catch (e: any) {
+      toast({ title: "خطأ", description: String(e.message || e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function turnOff() {
+    if (!confirm("إيقاف تسريع الفواتير والعودة للوضع القياسي؟")) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${agent.id}/invoice-acceleration/off`, {
+        method: "POST",
+        headers
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "فشل الإيقاف");
+      toast({ title: "تم الإيقاف بنجاح" });
+      invalidate();
+    } catch (e: any) {
+      toast({ title: "خطأ", description: String(e.message || e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="border border-indigo-100 dark:border-indigo-900/50 rounded-lg p-3 bg-indigo-50/30 dark:bg-indigo-950/10" data-testid={`acceleration-card-${agent.id}`}>
+        <div className="flex items-start justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <div className={`p-1.5 rounded-md ${mode === 'on' ? 'bg-indigo-100 text-indigo-700' : mode === 'trial' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+              <Zap className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold flex items-center gap-1.5">
+                تسريع الفواتير
+                {mode === "on" ? <Badge variant="outline" className="text-[10px] h-4 px-1.5 bg-indigo-50 text-indigo-700 border-indigo-200">مفعّل</Badge>
+                : mode === "trial" ? <Badge variant="outline" className="text-[10px] h-4 px-1.5 bg-amber-50 text-amber-700 border-amber-200">تجربة ({agent.invoiceTrialRemaining ?? 0} متبقية)</Badge>
+                : <Badge variant="outline" className="text-[10px] h-4 px-1.5 bg-slate-50 text-slate-600 border-slate-200">متوقف</Badge>}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                الخادم المركزي لا يزال يكتب إلى قاعدة الوكيل فقط. لا يتم تعديل ملفات السيرفر أو (SSH).
+              </div>
+              {agent.invoiceAccelerationLastError && (
+                <div className="text-[10px] text-rose-600 mt-1 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  {agent.invoiceAccelerationLastError}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={loadDiagnostics} disabled={busy} data-testid={`btn-diag-${agent.id}`}>
+              {busy ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <Activity className="h-3 w-3 ms-1" />}
+              فحص وتشخيص
+            </Button>
+            {mode === "off" && (
+              <Button size="sm" className="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white" onClick={setTrial} disabled={busy} data-testid={`btn-trial-${agent.id}`}>
+                {busy ? <Loader2 className="h-3 w-3 animate-spin ms-1" /> : <Play className="h-3 w-3 ms-1" />}
+                بدء تجربة
+              </Button>
+            )}
+            {(mode === "trial" || mode === "on") && (
+              <Button variant="outline" size="sm" className="h-7 text-xs text-rose-600 border-rose-200 hover:bg-rose-50" onClick={turnOff} disabled={busy} data-testid={`btn-off-${agent.id}`}>
+                إيقاف
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <Dialog open={showDiag} onOpenChange={setShowDiag}>
+        <DialogContent className="max-w-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-indigo-600" />
+              تشخيص تسريع الفواتير — {agent.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          {diagnostics ? (
+            <div className="space-y-4 py-2 text-sm">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="border rounded-md p-3 space-y-2">
+                  <div className="font-semibold text-xs text-muted-foreground mb-1 flex items-center gap-1"><Globe className="h-4 w-4" /> الشبكة</div>
+                  <div className="flex justify-between">
+                    <span>DNS:</span>
+                    <span dir="ltr" className={diagnostics.dnsProbe?.ok ? "text-emerald-600" : "text-rose-600"}>
+                      {diagnostics.dnsProbe?.ok ? diagnostics.dnsProbe.ips?.join(", ") || "OK" : "Failed"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>HTTPS:</span>
+                    <span dir="ltr">{diagnostics.httpsProbe?.latencyMs != null ? `${diagnostics.httpsProbe.latencyMs} ms` : "—"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Status:</span>
+                    <span dir="ltr" className={diagnostics.httpsProbe?.ok ? "text-emerald-600" : "text-rose-600"}>
+                      {diagnostics.httpsProbe?.statusCode ?? "—"}
+                    </span>
+                  </div>
+                  {(diagnostics.dnsProbe?.error || diagnostics.httpsProbe?.error) && (
+                    <div className="text-xs text-rose-600 mt-1">
+                      {diagnostics.dnsProbe?.error || diagnostics.httpsProbe?.error}
+                    </div>
+                  )}
+                </div>
+
+                <div className="border rounded-md p-3 space-y-2">
+                  <div className="font-semibold text-xs text-muted-foreground mb-1 flex items-center gap-1"><Database className="h-4 w-4" /> قاعدة البيانات</div>
+                  <div className="flex justify-between">
+                    <span>عينات SELECT 1:</span>
+                    <span dir="ltr">{diagnostics.dbProbe?.samples?.map((s: any) => s.ok ? `${s.ms}ms` : "failed").join(" / ") || "—"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Pool:</span>
+                    <span dir="ltr" className="text-xs">
+                      {diagnostics.dbProbe?.poolStats
+                        ? `${diagnostics.dbProbe.poolStats.idle}/${diagnostics.dbProbe.poolStats.total} idle`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border rounded-md overflow-hidden">
+                <div className="bg-slate-50 dark:bg-slate-900 px-3 py-2 border-b text-xs font-semibold text-muted-foreground flex items-center gap-1">
+                  <BarChart className="h-4 w-4" /> مقارنة الأداء (حفظ الفاتورة)
+                </div>
+                <div className="grid grid-cols-2 divide-x divide-x-reverse divide-border">
+                  <div className="p-3 space-y-2">
+                    <div className="text-xs font-semibold mb-2">الأداء القياسي (Baseline)</div>
+                    <div className="flex justify-between text-xs"><span>العينة:</span> <span dir="ltr">{diagnostics.sampleStats?.baseline?.count ?? 0}</span></div>
+                    <div className="flex justify-between text-xs"><span>Avg:</span> <span dir="ltr">{diagnostics.sampleStats?.baseline?.avg ? `${diagnostics.sampleStats.baseline.avg} ms` : "—"}</span></div>
+                    <div className="flex justify-between text-xs"><span>P95:</span> <span dir="ltr">{diagnostics.sampleStats?.baseline?.p95 ? `${diagnostics.sampleStats.baseline.p95} ms` : "—"}</span></div>
+                  </div>
+                  <div className="p-3 space-y-2 bg-indigo-50/30">
+                    <div className="text-xs font-semibold mb-2 text-indigo-800">الأداء المسرّع (Accelerated)</div>
+                    <div className="flex justify-between text-xs"><span>العينة:</span> <span dir="ltr">{diagnostics.sampleStats?.accelerated?.count ?? 0}</span></div>
+                    <div className="flex justify-between text-xs"><span>Avg:</span> <span dir="ltr">{diagnostics.sampleStats?.accelerated?.avg ? `${diagnostics.sampleStats.accelerated.avg} ms` : "—"}</span></div>
+                    <div className="flex justify-between text-xs">
+                      <span>P95:</span>
+                      <span dir="ltr" className={diagnostics.sampleStats?.accelerated?.p95 > 0 && diagnostics.sampleStats.accelerated.p95 < 1000 ? "text-emerald-600 font-semibold" : ""}>
+                        {diagnostics.sampleStats?.accelerated?.p95 ? `${diagnostics.sampleStats.accelerated.p95} ms` : "—"}
+                      </span>
+                    </div>
+                    {diagnostics.sampleStats?.improvementPct != null && (
+                      <div className="flex justify-between text-xs mt-1 pt-1 border-t border-indigo-100">
+                        <span>نسبة التحسن:</span>
+                        <span dir="ltr" className={diagnostics.sampleStats.improvementPct > 0 ? "text-emerald-600 font-bold" : "text-rose-600 font-bold"}>
+                          {diagnostics.sampleStats.improvementPct}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {!diagnostics.eligibility?.eligible && diagnostics.eligibility?.reason && (
+                <div className="bg-rose-50 text-rose-700 p-3 rounded-md text-xs flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold mb-0.5">غير مؤهل للتسريع</div>
+                    <p>{diagnostics.eligibility.reason}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="py-8 flex justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDiag(false)}>إغلاق</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 
 export default function AgentServers() {
   const { token } = useAuth();
@@ -959,6 +1199,9 @@ export default function AgentServers() {
                   <div className="text-[11px] text-muted-foreground" dir="ltr">ID: {a.installationId.slice(0, 8)}…</div>
                 </div>
               </div>
+
+              <AgentAccelerationCard agent={a} invalidate={invalidate} />
+
               {a.mode === "full" && a.packageSource === "external" && (
                 <div className="border rounded-lg p-3 bg-slate-50/70 dark:bg-slate-950/20 space-y-2" data-testid={`external-package-${a.id}`}>
                   <div className="flex items-center justify-between gap-2 flex-wrap">

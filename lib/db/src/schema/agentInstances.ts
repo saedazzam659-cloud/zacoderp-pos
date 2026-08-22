@@ -124,6 +124,22 @@ export const agentInstancesTable = pgTable("agent_instances", {
   // نبضه لصف الوكيل نفسه (انظر agent_servers.hb_marker).
   primaryHbMarker: text("primary_hb_marker"),
 
+  // ── Invoice-acceleration control state ──────────────────────────────────
+  // Central-only feature flag: routes eligible invoice operations through the
+  // agent's own external DB pool for measurable latency improvement.
+  // off (default) | trial | on
+  invoiceAccelerationMode:      text("invoice_acceleration_mode").notNull().default("off"),
+  invoiceTrialRemaining:        integer("invoice_trial_remaining"),
+  invoiceAccelerationLastError: text("invoice_acceleration_last_error"),
+  invoiceAccelerationReason:    text("invoice_acceleration_reason"),
+  invoiceAccelerationUpdatedAt: timestamp("invoice_acceleration_updated_at"),
+  // Monotonic central fence. Request-start readers take a row-share lock and
+  // snapshot this generation; every control transition increments it.
+  invoiceAccelerationGeneration: integer("invoice_acceleration_generation").notNull().default(0),
+  // Frozen pre-trial latency snapshot. Central control-plane metadata only;
+  // external-agent schema reconciliation explicitly excludes this field.
+  invoiceAccelerationBaseline:  jsonb("invoice_acceleration_baseline"),
+
   notes:     text("notes"),
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -191,6 +207,34 @@ export const agentServersTable = pgTable("agent_servers", {
   markerIdx: index("agent_servers_marker_idx").on(t.agentId, t.hbMarker),
 }));
 
+// ─────────────────────────────────────────────────────────────────────────
+// Invoice Performance Samples — central telemetry for acceleration.
+//
+// Written by the non-blocking recorder in agentInvoiceAcceleration.ts after
+// each invoice create/update/post on an agent domain. Never written to the
+// agent's own external DB. History is bounded (newest 200 rows per agent).
+// ─────────────────────────────────────────────────────────────────────────
+export const agentInvoiceSamplesTable = pgTable("agent_invoice_samples", {
+  id:          serial("id").primaryKey(),
+  agentId:     integer("agent_id").notNull().references(() => agentInstancesTable.id, { onDelete: "cascade" }),
+  operation:   text("operation").notNull(),   // create | update | post
+  accelerated: boolean("accelerated").notNull().default(false),
+  status:      integer("status").notNull(),   // HTTP response status code
+  totalMs:     integer("total_ms").notNull(),
+  stages:      jsonb("stages"),               // { [stageName]: ms }
+  lineCount:   integer("line_count"),
+  poolStart:   jsonb("pool_start"),           // pool stats snapshot at request start
+  poolEnd:     jsonb("pool_end"),             // pool stats snapshot at request finish
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  agentCreatedIdx: index("agent_invoice_samples_agent_created_idx").on(t.agentId, t.createdAt),
+  agentOpIdx:      index("agent_invoice_samples_agent_op_idx").on(t.agentId, t.operation, t.accelerated),
+  // status=0 rows are live trial reservations. This index keeps admission and
+  // stale-claim recovery bounded without touching the agent business DB.
+  agentClaimIdx:   index("agent_invoice_samples_agent_claim_idx").on(t.agentId, t.status, t.createdAt),
+}));
+
 export type AgentInstance = typeof agentInstancesTable.$inferSelect;
 export type AgentSecurityEvent = typeof agentSecurityEventsTable.$inferSelect;
 export type AgentServer = typeof agentServersTable.$inferSelect;
+export type AgentInvoiceSample = typeof agentInvoiceSamplesTable.$inferSelect;

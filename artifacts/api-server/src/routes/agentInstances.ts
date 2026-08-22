@@ -31,8 +31,8 @@ import { pbkdf2Sync, createCipheriv, createHmac, randomBytes, randomUUID, timing
 // agent's cloned DB has an empty registry — following the proxy would
 // silently disable suspend/register-block enforcement).
 import { centralDb as db } from "@workspace/db";
-import { agentInstancesTable, agentSecurityEventsTable, agentServersTable } from "@workspace/db";
-import { eq, desc, and, or, ne, lt } from "drizzle-orm";
+import { agentInstancesTable, agentSecurityEventsTable, agentServersTable, agentInvoiceSamplesTable } from "@workspace/db";
+import { eq, desc, and, or, ne, lt, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { PgPool, type PgPoolType } from "@workspace/db";
 import net from "node:net";
@@ -87,6 +87,14 @@ import {
   type AppliedRecord,
   type CloudflareARecordPlan,
 } from "../lib/cloudflareDns.js";
+import {
+  type InvoiceAccelerationMode,
+  computeSampleStats,
+  captureInvoiceAccelerationRequestGeneration,
+  _logCentralEvent,
+} from "../lib/agentInvoiceAcceleration.js";
+import { logger } from "../lib/logger.js";
+import { sanitizeSchemaDumpForExternalAgent } from "../lib/agentExternalSchema.js";
 
 /**
  * SSRF guard for agent-server probes: the SA may point tests at any PUBLIC
@@ -157,10 +165,44 @@ type AgentHostHit = {
   id: number; domain: string; status: string; dbStatus: string; dbUrlEnc: string | null;
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
   proxyToken: string | null; // decrypted per-agent proxy secret (null = not issued)
+  accelerationMode: InvoiceAccelerationMode; // snapshotted per request
+  // Trial start boundary — the invoiceAccelerationUpdatedAt value when mode=trial.
+  // Used by the recorder to guard auto-transitions against races.
+  trialStartAt: Date | null;
+  controlGeneration: number;
 } | null;
 const hostCache = new Map<string, { hit: AgentHostHit; expires: number }>();
 
 export function clearAgentHostCache(): void { hostCache.clear(); }
+
+function liveCachedAgentHit(host: string | null): AgentHostHit {
+  if (!host) return null;
+  const cached = hostCache.get(host);
+  return cached && cached.expires > Date.now() ? cached.hit : null;
+}
+
+/**
+ * Synchronous entry peek used only to place the active-request generation
+ * fence before the router's first await. Claimed proxy headers are trusted only
+ * after the same constant-time token check as resolveAgentRequestHost().
+ */
+function peekCachedAgentHitAtRequestEntry(req: Request): AgentHostHit {
+  const claimed = req.headers["x-zacod-agent-host"];
+  const token = req.headers["x-zacod-agent-token"];
+  if (typeof claimed === "string" && typeof token === "string" && token.length >= 32) {
+    const claimedHit = liveCachedAgentHit(normalizeHost(claimed));
+    const expected = claimedHit?.proxyToken;
+    if (expected) {
+      try {
+        const a = Buffer.from(token); const b = Buffer.from(expected);
+        if (a.length === b.length && timingSafeEqual(a, b)) return claimedHit;
+      } catch { /* use standard host below */ }
+    }
+  }
+  const fwd = req.headers["x-forwarded-host"];
+  const standardHost = normalizeHost((Array.isArray(fwd) ? fwd[0] : fwd) || req.headers.host);
+  return liveCachedAgentHit(standardHost);
+}
 
 export async function lookupAgentByHost(host: string | null): Promise<AgentHostHit> {
   if (!host) return null;
@@ -175,14 +217,21 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
       dbStatus: agentInstancesTable.dbStatus, dbUrlEnc: agentInstancesTable.dbUrlEnc,
       brandName: agentInstancesTable.brandName, brandLogoUrl: agentInstancesTable.brandLogoUrl,
       brandColor: agentInstancesTable.brandColor, proxySecretEnc: agentInstancesTable.proxySecretEnc,
+      invoiceAccelerationMode: agentInstancesTable.invoiceAccelerationMode,
+      invoiceAccelerationUpdatedAt: agentInstancesTable.invoiceAccelerationUpdatedAt,
+      invoiceAccelerationGeneration: agentInstancesTable.invoiceAccelerationGeneration,
     }).from(agentInstancesTable);
     for (const r of rows) {
       const extras = Array.isArray(r.extraDomains) ? (r.extraDomains as string[]) : [];
       if (r.domain === host || extras.includes(host)) {
+        const mode = (r.invoiceAccelerationMode ?? "off") as InvoiceAccelerationMode;
         hit = {
           id: r.id, domain: r.domain, status: r.status, dbStatus: r.dbStatus, dbUrlEnc: r.dbUrlEnc,
           brandName: r.brandName, brandLogoUrl: r.brandLogoUrl, brandColor: r.brandColor,
           proxyToken: r.proxySecretEnc ? decryptSecret(r.proxySecretEnc) : null,
+          accelerationMode: mode,
+          trialStartAt: mode === "trial" ? (r.invoiceAccelerationUpdatedAt ?? null) : null,
+          controlGeneration: r.invoiceAccelerationGeneration ?? 0,
         };
         break;
       }
@@ -334,12 +383,35 @@ export async function serveAgentRequestAfterSchemaReady(
 
 export async function agentDataSourceRouter(req: Request, res: any, next: (err?: unknown) => void): Promise<void> {
   try {
+    const entryHit = peekCachedAgentHitAtRequestEntry(req);
+    // For the normal cached-host path this is deliberately the FIRST await in
+    // the middleware. A manual Off UPDATE and this FOR SHARE read therefore
+    // have one authoritative row-lock order before host/auth/schema awaits.
+    const entryGeneration =
+      entryHit && (entryHit.accelerationMode === "trial" || entryHit.accelerationMode === "on")
+        ? await captureInvoiceAccelerationRequestGeneration(entryHit.id)
+        : null;
     const host = await resolveAgentRequestHost(req);
     const hit = await lookupAgentByHost(host);
     if (!hit) { next(); return; }
+    const accelerationRequestGeneration = hit.accelerationMode === "trial" || hit.accelerationMode === "on"
+      ? entryHit?.id === hit.id && entryGeneration !== null
+        ? entryGeneration
+        // Cache miss: lookupAgentByHost's first central SELECT is the request
+        // boundary and returns mode+generation from one MVCC row snapshot.
+        : hit.controlGeneration
+      : null;
     // Stamp the request so downstream guards (e.g. superadmin-panel block)
-    // can tell it arrived via a registered agent domain.
-    (req as any).agentDomainHit = { id: hit.id, domain: hit.domain };
+    // can tell it arrived via a registered agent domain. Acceleration mode and
+    // trial start boundary are snapshotted here so all handlers in the chain
+    // see consistent values regardless of concurrent mode transitions.
+    (req as any).agentDomainHit = {
+      id: hit.id,
+      domain: hit.domain,
+      accelerationMode: hit.accelerationMode,
+      trialStartAt: hit.trialStartAt,
+      accelerationRequestGeneration,
+    };
     if (AGENT_PUBLIC_PATHS.some(p => req.path === p || req.path.startsWith(p + "/"))) { next(); return; }
     if (hit.status !== "active") {
       res.status(403).json({ error: "هذه النسخة موقوفة — تواصل مع مزوّد النظام", agentSuspended: true });
@@ -356,11 +428,26 @@ export async function agentDataSourceRouter(req: Request, res: any, next: (err?:
       // requests (e.g. login 500) until a manual re-init. Never let a request
       // race the additive reconciliation: wait briefly, then return a
       // retryable 503 without executing the downstream query or mutation.
-      // This touches
-      // ONLY schema — it never reads or writes zacod_installation, the
-      // fingerprint, or any encrypted material, so identity/fingerprint
+      // This touches ONLY schema — it never reads or writes zacod_installation,
+      // the fingerprint, or any encrypted material, so identity/fingerprint
       // guarantees are untouched.
       await serveAgentRequestAfterSchemaReady(hit.id, ctx, runWithExternalDb, res, next);
+      return;
+    }
+    // Fail-closed: ANY accelerated mode (trial OR on) without a working
+    // external DB must NEVER fall through to the central DB. This protects
+    // the invariant that accelerated requests always hit the agent's own DB.
+    if (hit.accelerationMode === "on" || hit.accelerationMode === "trial") {
+      logger.warn({
+        agentId: hit.id,
+        accelerationMode: hit.accelerationMode,
+        dbStatus: hit.dbStatus,
+        hasDbUrl: !!hit.dbUrlEnc,
+      }, "agentDataSourceRouter: accelerated mode but agent DB not initialized — failing closed");
+      res.status(503).json({
+        error: "تسريع الفاتورة مفعّل لكن قاعدة بيانات الوكيل غير مهيّأة — يرجى تعطيل التسريع أو إعادة تهيئة قاعدة البيانات",
+        code: "ACCELERATION_DB_NOT_INITIALIZED",
+      });
       return;
     }
     next();
@@ -410,7 +497,10 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
     externalPackageMeta, autoDomainZoneId: _autoZoneId,
     autoDomainRecordId: _autoRecordId, autoDomainLeaseAt: _autoLeaseAt,
     deployLeaseId: _deployLeaseId, deployOperationPhase: _deployOperationPhase,
-    deployProviderMutationUntil: _deployProviderMutationUntil, ...rest
+    deployProviderMutationUntil: _deployProviderMutationUntil,
+    invoiceAccelerationBaseline: _invoiceAccelerationBaseline,
+    invoiceAccelerationGeneration: _invoiceAccelerationGeneration,
+    ...rest
   } = r as any;
   // Secrets are STRICTLY write-only: only boolean presence flags leave the
   // server — never the ciphertext and never any plaintext fragment.
@@ -426,6 +516,12 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
     saPasswordSet: !!saPasswordEnc,
     cloudflareConnected: !!(process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN),
     externalPackage: publicPackageMap(readPackageMap(externalPackageMeta)),
+    // Safe acceleration metadata — never exposes secrets.
+    invoiceAccelerationMode:      r.invoiceAccelerationMode ?? "off",
+    invoiceTrialRemaining:        r.invoiceTrialRemaining ?? null,
+    invoiceAccelerationLastError: r.invoiceAccelerationLastError ?? null,
+    invoiceAccelerationReason:    r.invoiceAccelerationReason ?? null,
+    invoiceAccelerationUpdatedAt: r.invoiceAccelerationUpdatedAt ?? null,
   };
 }
 
@@ -675,6 +771,16 @@ router.put("/:id", async (req, res) => {
     }
   }
   const effectiveMode = d.mode ?? existing.mode;
+  // Invariant: if agent mode becomes "full", force acceleration off immediately
+  // (full agents run locally, so central-routing acceleration is meaningless).
+  if (effectiveMode === "full" && (existing.invoiceAccelerationMode ?? "off") !== "off") {
+    patch.invoiceAccelerationMode      = "off";
+    patch.invoiceTrialRemaining        = null;
+    patch.invoiceAccelerationLastError = null;
+    patch.invoiceAccelerationReason    = "forced_off_mode_full";
+    patch.invoiceAccelerationUpdatedAt = new Date();
+    patch.invoiceAccelerationGeneration = sql`${agentInstancesTable.invoiceAccelerationGeneration} + 1`;
+  }
   const effectivePackageSource = d.packageSource ?? existing.packageSource;
   const localSuperadminEnabled = effectiveLocalSuperadminEnabled(
     effectiveMode,
@@ -1039,6 +1145,8 @@ async function initAgentDatabaseCore(inst: typeof agentInstancesTable.$inferSele
         const dumpSql = await new Promise<string>((resolve, reject) => {
           execFile("pg_dump", [
             "--schema-only", "--no-owner", "--no-privileges", "--no-comments",
+             "--exclude-table=public.agent_invoice_samples",
+             "--exclude-table=public.agent_invoice_samples_id_seq",
             process.env.DATABASE_URL!,
           ], { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
             if (err) reject(new Error(`pg_dump غير متاح أو فشل: ${String(stderr || err.message).slice(0, 200)}`));
@@ -1048,7 +1156,7 @@ async function initAgentDatabaseCore(inst: typeof agentInstancesTable.$inferSele
         // Strip psql meta-commands (\restrict etc. in newer pg_dump) — the
         // dump is applied through the pg driver, not psql. Apply inside ONE
         // transaction so a mid-dump failure leaves the agent DB untouched.
-        const cleaned = dumpSql.split("\n").filter(l => !l.startsWith("\\")).join("\n");
+        const cleaned = sanitizeSchemaDumpForExternalAgent(dumpSql);
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
@@ -1404,6 +1512,284 @@ router.post("/:id/check-domains", async (req, res) => {
 
   const results = await Promise.all(domains.map(checkOne));
   res.json({ ok: true, serverHost: inst.sshHost ?? null, serverIps, results, checkedAt: new Date().toISOString() });
+});
+
+// ── Invoice acceleration ────────────────────────────────────────────────────
+
+/** Eligibility check: only frontend_only or full_shell agents with status=active
+ *  and an initialized external DB URL are eligible for invoice acceleration. */
+function isAccelerationEligible(inst: typeof agentInstancesTable.$inferSelect): {
+  eligible: boolean; reason: string;
+} {
+  if (inst.mode === "full") {
+    return { eligible: false, reason: "full mode agents run locally — acceleration is only for central-routed agents" };
+  }
+  if (inst.status !== "active") {
+    return { eligible: false, reason: "agent must be active" };
+  }
+  if (inst.dbStatus !== "initialized" || !inst.dbUrlEnc) {
+    return { eligible: false, reason: "agent external database must be initialized" };
+  }
+  return { eligible: true, reason: "eligible" };
+}
+
+// POST /:id/invoice-acceleration/diagnostics — SA-only, read-only.
+// Runs a DNS+HTTPS public probe and 3 SELECT 1 samples via the cached pool,
+// then aggregates baseline vs accelerated sample stats from the central store.
+// Never persists the probe results. No schema heal, no tx, no writes.
+router.post("/:id/invoice-acceleration/diagnostics", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+
+  const eligibility = isAccelerationEligible(inst);
+  const currentState = {
+    mode:      inst.invoiceAccelerationMode ?? "off",
+    remaining: inst.invoiceTrialRemaining ?? null,
+    lastError: inst.invoiceAccelerationLastError ?? null,
+    reason:    inst.invoiceAccelerationReason ?? null,
+    updatedAt: inst.invoiceAccelerationUpdatedAt ?? null,
+  };
+
+  // If mode is "full", reject clearly — acceleration is meaningless.
+  if (inst.mode === "full") {
+    res.status(422).json({
+      ok: false,
+      error: "تشخيص تسريع الفاتورة غير متاح لوضع النسخة الكاملة",
+      eligibility,
+      currentState,
+    });
+    return;
+  }
+
+  // ── DNS + HTTPS public probe ────────────────────────────────────────────
+  let dnsProbe: { ips: string[]; ok: boolean; error: string | null } = { ips: [], ok: false, error: null };
+  let httpsProbe: { ok: boolean; statusCode: number | null; latencyMs: number | null; error: string | null } =
+    { ok: false, statusCode: null, latencyMs: null, error: null };
+
+  try {
+    await assertProbeTargetAllowed(inst.domain);
+    try {
+      const addrs = await dnsLookup(inst.domain, { all: true });
+      dnsProbe.ips = addrs.map(a => a.address);
+      dnsProbe.ok  = addrs.length > 0;
+    } catch (e: any) {
+      dnsProbe.error = String(e?.message ?? e).slice(0, 200);
+    }
+    if (dnsProbe.ok && dnsProbe.ips.length) {
+      const pinnedIp = dnsProbe.ips[0];
+      const t0 = Date.now();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const probe = httpsRequest({
+            host: inst.domain, servername: inst.domain, port: 443, path: "/", method: "HEAD",
+            timeout: 6000,
+            lookup: ((_h: string, opts: any, cb: any) => {
+              const fam = net.isIP(pinnedIp);
+              if (typeof opts === "function") { opts(null, pinnedIp, fam); return; }
+              if (opts?.all) cb(null, [{ address: pinnedIp, family: fam }]);
+              else cb(null, pinnedIp, fam);
+            }) as any,
+          }, (resp) => {
+            httpsProbe.latencyMs  = Date.now() - t0;
+            httpsProbe.statusCode = resp.statusCode ?? null;
+            httpsProbe.ok         = true;
+            resp.resume();
+            resolve();
+          });
+          probe.on("timeout", () => probe.destroy(new Error("probe-timeout")));
+          probe.on("error", reject);
+          probe.end();
+        });
+      } catch (e: any) {
+        httpsProbe.latencyMs = Date.now() - t0;
+        httpsProbe.error = String(e?.message ?? "").includes("probe-timeout")
+          ? "timeout (6s)" : String(e?.message ?? e).slice(0, 200);
+      }
+    }
+  } catch (e: any) {
+    dnsProbe.error = String(e?.message ?? e).slice(0, 200);
+  }
+
+  // ── DB SELECT 1 samples via cached pool ────────────────────────────────
+  const dbSamples: { ok: boolean; ms: number; error: string | null }[] = [];
+  let poolStats: { waiting: number; total: number; idle: number; max: number } | null = null;
+
+  if (eligibility.eligible && inst.dbUrlEnc) {
+    const { getAgentDbContext, getAgentDbPoolStats } = await import("../lib/agentDb.js");
+    try {
+      const ctx = getAgentDbContext(id, inst.dbUrlEnc);
+      for (let i = 0; i < 3; i++) {
+        const t0 = Date.now();
+        try {
+          const client = await ctx.pool.connect();
+          try { await client.query("SELECT 1"); }
+          finally { client.release(); }
+          dbSamples.push({ ok: true, ms: Date.now() - t0, error: null });
+        } catch (e: any) {
+          dbSamples.push({ ok: false, ms: Date.now() - t0, error: String(e?.message ?? e).slice(0, 200) });
+        }
+      }
+      poolStats = getAgentDbPoolStats(id);
+    } catch (e: any) {
+      dbSamples.push({ ok: false, ms: 0, error: String(e?.message ?? e).slice(0, 200) });
+    }
+  }
+
+  // ── Aggregate baseline / accelerated sample stats ──────────────────────
+  const recentSamples = await db
+    .select()
+    .from(agentInvoiceSamplesTable)
+    .where(eq(agentInvoiceSamplesTable.agentId, id))
+    .orderBy(desc(agentInvoiceSamplesTable.id))
+    .limit(100);
+
+  // Compare only the operations that use the accelerated read algorithm.
+  // Posting is measured separately but must not distort create/update p95.
+  const comparableInvoiceSave = (s: typeof recentSamples[number]) =>
+    (s.operation === "create" || s.operation === "update")
+    && s.status >= 200
+    && s.status < 400;
+  const baselineSamples = recentSamples.filter(s => !s.accelerated && comparableInvoiceSave(s));
+  const acceleratedSamples = recentSamples.filter(s => s.accelerated && comparableInvoiceSave(s));
+
+  const baselineStats    = computeSampleStats(baselineSamples.map(s => s.totalMs));
+  const acceleratedStats = computeSampleStats(acceleratedSamples.map(s => s.totalMs));
+  const improvementPct   = (baselineStats.count >= 3 && acceleratedStats.count >= 3 && baselineStats.p95 > 0)
+    ? Math.round((1 - acceleratedStats.p95 / baselineStats.p95) * 100)
+    : null;
+
+  res.json({
+    ok: true,
+    eligibility,
+    currentState,
+    dnsProbe,
+    httpsProbe,
+    dbProbe: { samples: dbSamples, poolStats },
+    sampleStats: {
+      baseline:    { ...baselineStats },
+      accelerated: { ...acceleratedStats },
+      improvementPct,
+      totalRecentSamples: recentSamples.length,
+    },
+    checkedAt: new Date().toISOString(),
+  });
+});
+
+// POST /:id/invoice-acceleration/trial
+// Starts an acceleration trial (5 slots). Requires:
+//   • agent is frontend_only or full_shell, active, initialized DB URL
+//   • at least 3 successful non-accelerated recent invoice samples (for baseline)
+//   • body: { confirm: true }
+// Atomically sets mode=trial, remaining=5. Clears cache. Logs central event.
+router.post("/:id/invoice-acceleration/trial", async (req, res) => {
+  const id = Number(req.params.id);
+  if (req.body?.confirm !== true) {
+    res.status(400).json({ error: "يجب إرسال { confirm: true } لتأكيد بدء التجربة" });
+    return;
+  }
+
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+
+  const eligibility = isAccelerationEligible(inst);
+  if (!eligibility.eligible) {
+    res.status(422).json({ error: `الوكيل غير مؤهل للتسريع: ${eligibility.reason}`, eligibility });
+    return;
+  }
+  if ((inst.invoiceAccelerationMode ?? "off") !== "off") {
+    res.status(409).json({ error: "أوقف وضع التسريع الحالي قبل بدء تجربة جديدة" });
+    return;
+  }
+
+  // Require at least 3 successful non-accelerated recent samples as baseline.
+  // "Successful" means HTTP 2xx/3xx only — business 4xx errors are excluded.
+  const baselineSamples = await db
+    .select({
+      id: agentInvoiceSamplesTable.id,
+      totalMs: agentInvoiceSamplesTable.totalMs,
+    })
+    .from(agentInvoiceSamplesTable)
+    .where(
+      and(
+        eq(agentInvoiceSamplesTable.agentId, id),
+        eq(agentInvoiceSamplesTable.accelerated, false),
+        sql`operation IN ('create', 'update')`,
+        sql`status >= 200 AND status < 400`,
+      ),
+    )
+    .orderBy(desc(agentInvoiceSamplesTable.id))
+    .limit(20);
+
+  if (baselineSamples.length < 3) {
+    res.status(422).json({
+      error: "التجربة تحتاج على الأقل 3 عيّنات فاتورة غير مسرّعة ناجحة كخط أساس — سجّل بعض العمليات أولًا",
+      baselineSamplesFound: baselineSamples.length,
+    });
+    return;
+  }
+
+  const now = new Date();
+  const baselineStats = computeSampleStats(baselineSamples.map(s => s.totalMs));
+  const [updated] = await db.update(agentInstancesTable).set({
+    invoiceAccelerationMode:      "trial",
+    invoiceTrialRemaining:        5,
+    invoiceAccelerationLastError: null,
+    invoiceAccelerationReason:    "trial_started",
+    invoiceAccelerationUpdatedAt: now,
+    invoiceAccelerationGeneration: sql`${agentInstancesTable.invoiceAccelerationGeneration} + 1`,
+    invoiceAccelerationBaseline: {
+      ...baselineStats,
+      measuredAt: now.toISOString(),
+    },
+    updatedAt:                    now,
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    eq(agentInstancesTable.invoiceAccelerationMode, "off"),
+  )).returning();
+  if (!updated) {
+    res.status(409).json({ error: "تغيّرت حالة التسريع أثناء بدء التجربة — حدّث الصفحة وحاول مجددًا" });
+    return;
+  }
+
+  clearAgentHostCache();
+  await _logCentralEvent(id, "invoice_acceleration_trial_started", {
+    by:                (req as any).authUser?.username ?? null,
+    baselineSamples:   baselineSamples.length,
+    baselineAvg:       baselineStats.avg,
+    baselineP95:       baselineStats.p95,
+  });
+
+  res.json({ ok: true, agent: publicRow(updated) });
+});
+
+// POST /:id/invoice-acceleration/off
+// Switches acceleration off for new requests. Clears trial remaining.
+// Preserves all business data and sample history. Clears cache. Logs event.
+router.post("/:id/invoice-acceleration/off", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+
+  const now = new Date();
+  await db.update(agentInstancesTable).set({
+    invoiceAccelerationMode:      "off",
+    invoiceTrialRemaining:        null,
+    invoiceAccelerationLastError: null,
+    invoiceAccelerationReason:    "manually_disabled",
+    invoiceAccelerationUpdatedAt: now,
+    invoiceAccelerationGeneration: sql`${agentInstancesTable.invoiceAccelerationGeneration} + 1`,
+    updatedAt:                    now,
+  }).where(eq(agentInstancesTable.id, id));
+
+  clearAgentHostCache();
+  await _logCentralEvent(id, "invoice_acceleration_manual_disabled", {
+    by:          (req as any).authUser?.username ?? null,
+    previousMode: inst.invoiceAccelerationMode ?? "off",
+  });
+
+  const [updated] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  res.json({ ok: true, agent: updated ? publicRow(updated) : null });
 });
 
 // ── License / kill-switch ──────────────────────────────────────────────────
