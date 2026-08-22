@@ -70,7 +70,7 @@ import {
   DEMO_BROWSER_COOKIE,
   decorateDemoShadowUser,
   DemoDeviceError,
-  needsDemoDevicePreparation,
+  getDemoBrowserLoginPreflight,
   readDemoBrowserCookie,
   releaseDemoDeviceLink,
   resolveDemoDeviceLogin,
@@ -411,19 +411,36 @@ router.post("/login", async (req, res) => {
   // accepted only as a one-time migration path from the former localStorage
   // implementation.
   if (req.body?.intent === "check_demo_preparation") {
-    const needsPreparation = await needsDemoDevicePreparation(
+    const preflight = await getDemoBrowserLoginPreflight(
       user,
       readDemoBrowserCookie(req.headers.cookie) ?? req.body?.demoDeviceToken,
     );
-    res.json({ needsPreparation });
+    res.json(preflight);
     return;
   }
+
+  // Generate the candidate session before demo handoff. A confirmed transfer
+  // writes this token in the same transaction that revokes the old binding, so
+  // a failed session write rolls the entire handoff back.
+  const sessionToken = generateToken();
+  const sessionId = randomUUID();
+  const sessionChannel = String(req.headers?.["x-app-channel"] ?? "") === "mobile"
+    ? "mobile" as const
+    : "web" as const;
+  const sessionIssuedAt = new Date();
 
   let demoLogin: Awaited<ReturnType<typeof resolveDemoDeviceLogin>> | null = null;
   try {
     demoLogin = await resolveDemoDeviceLogin({
       sourceUser: user,
       deviceToken: readDemoBrowserCookie(req.headers.cookie) ?? req.body?.demoDeviceToken,
+      confirmTransfer: req.body?.confirmDemoSessionTransfer === true,
+      sessionIssue: {
+        sessionToken,
+        sessionId,
+        sessionChannel,
+        issuedAt: sessionIssuedAt,
+      },
       deviceLabel: req.body?.demoDeviceLabel,
       userAgent: ua,
       ip,
@@ -441,20 +458,18 @@ router.post("/login", async (req, res) => {
   }
   const sessionUser = demoLogin.effectiveUser;
 
-  // Single-session enforcement — generate new token (invalidates old)
-  const sessionToken = generateToken();
-  const sessionId = randomUUID();
-
   let issuedSession: Array<{ id: number }>;
-  try {
+  if (demoLogin.sessionIssuedAtomically) {
+    issuedSession = [{ id: sessionUser.id }];
+  } else try {
     issuedSession = await db.update(usersTable).set({
       sessionToken,
       sessionId,
       // Bind the session to its opening channel — mobile-app permission
       // enforcement keys off this (not just the forgeable per-request header).
-      sessionChannel: String(req.headers?.["x-app-channel"] ?? "") === "mobile" ? "mobile" : "web",
-      lastLoginAt: new Date(),
-      updatedAt: new Date(),
+      sessionChannel,
+      lastLoginAt: sessionIssuedAt,
+      updatedAt: sessionIssuedAt,
     }).where(and(
       eq(usersTable.id, sessionUser.id),
       demoLogin.deviceLinkId == null

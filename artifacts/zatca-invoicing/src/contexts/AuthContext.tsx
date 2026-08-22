@@ -135,6 +135,7 @@ interface AuthContextType {
     username: string,
     password: string,
     companyCode?: string,
+    options?: { confirmDemoSessionTransfer?: boolean },
   ) => Promise<void>;
   logout: () => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
@@ -461,6 +462,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     username: string,
     password: string,
     companyCode?: string,
+    options?: { confirmDemoSessionTransfer?: boolean },
   ) => {
     // Tenant identity is now (companyCode, username, password). The
     // server requires `companyCode` for tenant logins; it's only
@@ -484,6 +486,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         username,
         password,
         ...(trimmedCode ? { companyCode: trimmedCode } : {}),
+        ...(options?.confirmDemoSessionTransfer === true
+          ? { confirmDemoSessionTransfer: true }
+          : {}),
         // One-time migration only. A successful response clears this old
         // JavaScript-readable value after the server sets its HttpOnly cookie.
         ...(demoDeviceToken ? { demoDeviceToken } : {}),

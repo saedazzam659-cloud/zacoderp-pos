@@ -15,6 +15,16 @@ import {
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { CountrySelector } from "@/components/CountrySelector";
 import { DemoProvisioningOverlay } from "@/components/DemoProvisioningOverlay";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useVisitorCountry } from "@/lib/useVisitorCountry";
 import { getCountryByCode } from "@/lib/countries";
 
@@ -148,6 +158,9 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [showDemoPreparation, setShowDemoPreparation] = useState(false);
   const [demoPreparationProgress, setDemoPreparationProgress] = useState(0);
+  const [showDemoTransfer, setShowDemoTransfer] = useState(false);
+  const [demoTransferLoading, setDemoTransferLoading] = useState(false);
+  const [demoTransferError, setDemoTransferError] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
@@ -336,8 +349,10 @@ export default function Login() {
   const checkDemoPreparation = async (
     cleanUsername: string,
     cleanCompanyCode: string,
-  ): Promise<boolean> => {
-    if (!cleanCompanyCode || loginMode !== "company") return false;
+  ): Promise<{ needsPreparation: boolean; transferRequired: boolean }> => {
+    if (!cleanCompanyCode || loginMode !== "company") {
+      return { needsPreparation: false, transferRequired: false };
+    }
     let legacyDeviceToken = "";
     try {
       const stored = localStorage.getItem("zatca_demo_device_token") ?? "";
@@ -357,12 +372,44 @@ export default function Login() {
           ...(legacyDeviceToken ? { demoDeviceToken: legacyDeviceToken } : {}),
         }),
       });
-      if (!response.ok) return false;
+      if (!response.ok) return { needsPreparation: false, transferRequired: false };
       const data = await response.json().catch(() => ({}));
-      return data.needsPreparation === true;
+      return {
+        needsPreparation: data.needsPreparation === true,
+        transferRequired: data.transferRequired === true,
+      };
     } catch {
       // The real login request below remains the source of truth for errors.
-      return false;
+      return { needsPreparation: false, transferRequired: false };
+    }
+  };
+
+  const rememberCompanyCode = (cleanCompanyCode: string) => {
+    if (!cleanCompanyCode) return;
+    try { localStorage.setItem(LAST_COMPANY_CODE_KEY, cleanCompanyCode); }
+    catch { /* private mode / quota — non-fatal */ }
+  };
+
+  const confirmDemoSessionTransfer = async () => {
+    const cleanCompanyCode = companyCode.trim().toUpperCase();
+    const cleanUsername = username.trim();
+    setDemoTransferLoading(true);
+    setDemoTransferError("");
+    try {
+      await login(cleanUsername, password, cleanCompanyCode, {
+        confirmDemoSessionTransfer: true,
+      });
+      rememberCompanyCode(cleanCompanyCode);
+      setShowDemoTransfer(false);
+      goAfterLogin();
+    } catch (err: any) {
+      setDemoTransferError(
+        isServerUnreachable(err)
+          ? SERVER_UPDATING_MSG
+          : friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")),
+      );
+    } finally {
+      setDemoTransferLoading(false);
     }
   };
 
@@ -388,7 +435,13 @@ export default function Login() {
       try {
         const trimmedCode = loginMode === "trainee" ? "" : companyCode.trim().toUpperCase();
         const trimmedUsername = username.trim();
-        if (await checkDemoPreparation(trimmedUsername, trimmedCode)) {
+        const demoPreflight = await checkDemoPreparation(trimmedUsername, trimmedCode);
+        if (demoPreflight.transferRequired) {
+          setDemoTransferError("");
+          setShowDemoTransfer(true);
+          return;
+        }
+        if (demoPreflight.needsPreparation) {
           preparationShownForAttempt = true;
           preparationStartedAt = Date.now();
           setDemoPreparationProgress(0);
@@ -396,10 +449,7 @@ export default function Login() {
         }
 
         await login(trimmedUsername, password, trimmedCode);
-        if (trimmedCode) {
-          try { localStorage.setItem(LAST_COMPANY_CODE_KEY, trimmedCode); }
-          catch { /* private mode / quota — non-fatal */ }
-        }
+        rememberCompanyCode(trimmedCode);
         if (preparationShownForAttempt) {
           setDemoPreparationProgress(100);
           const elapsed = Date.now() - preparationStartedAt;
@@ -409,6 +459,11 @@ export default function Login() {
         goAfterLogin();
         return;
       } catch (err: any) {
+        if (err?.status === 409 && err?.data?.code === "DEMO_SESSION_TRANSFER_REQUIRED") {
+          setDemoTransferError("");
+          setShowDemoTransfer(true);
+          return;
+        }
         // 409 + useSuperAdminFlow signals: this account requires the SA flow.
         const isSAHint = err?.status === 409 && err?.data?.useSuperAdminFlow === true;
         if (!isSAHint) {
@@ -572,6 +627,57 @@ export default function Login() {
         isVisible={showDemoPreparation}
         progress={demoPreparationProgress}
       />
+      <AlertDialog
+        open={showDemoTransfer}
+        onOpenChange={(open) => {
+          if (demoTransferLoading) return;
+          setShowDemoTransfer(open);
+          if (!open) setDemoTransferError("");
+        }}
+      >
+        <AlertDialogContent dir="rtl" data-testid="demo-session-transfer-dialog">
+          <AlertDialogHeader className="text-right sm:text-right">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700 sm:mx-0">
+              <Smartphone className="h-6 w-6" />
+            </div>
+            <AlertDialogTitle>نقل جلسة الديمو إلى هذا المتصفح؟</AlertDialogTitle>
+            <AlertDialogDescription className="text-right leading-6">
+              يوجد تسجيل ديمو نشط في متصفح آخر. عند المتابعة سيتم تسجيل الخروج من
+              المتصفح السابق وفتح الحساب هنا، مع الاحتفاظ ببيانات الديمو الحالية.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {demoTransferError && (
+            <div
+              className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive"
+              data-testid="demo-session-transfer-error"
+            >
+              {demoTransferError}
+            </div>
+          )}
+          <AlertDialogFooter className="gap-2 sm:space-x-0">
+            <AlertDialogCancel
+              disabled={demoTransferLoading}
+              data-testid="demo-session-transfer-cancel"
+            >
+              إبقاء الجلسة السابقة
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={demoTransferLoading}
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDemoSessionTransfer();
+              }}
+              data-testid="demo-session-transfer-confirm"
+              className="gap-2"
+            >
+              {demoTransferLoading
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : <RefreshCw className="h-4 w-4" />}
+              {demoTransferLoading ? "جارٍ نقل الجلسة..." : "نقل الجلسة والدخول"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="w-full max-w-6xl">
         <div className="flex justify-end items-center gap-2 mb-4">
           {/* Country picker is normally hidden — auto-detection (cookie →

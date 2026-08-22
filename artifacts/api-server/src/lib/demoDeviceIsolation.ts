@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
-import bcrypt from "bcryptjs";
-import { and, desc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import {
   db,
   branchesTable,
@@ -10,11 +9,9 @@ import {
   userBranchesTable,
   usersTable,
 } from "@workspace/db";
-import { cloneCompany } from "./cloneCompany.js";
 
 const DEVICE_TOKEN_MIN = 24;
 const DEVICE_TOKEN_MAX = 256;
-const PAIR_CODE_TTL_MS = 10 * 60 * 1000;
 export const DEMO_BROWSER_COOKIE = "zacode_demo_browser";
 
 /**
@@ -42,9 +39,6 @@ export class DemoDeviceError extends Error {
 const sha256 = (value: string) =>
   crypto.createHash("sha256").update(value).digest("hex");
 
-const normalizedPairCode = (value: string) =>
-  value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-
 const validDeviceToken = (value: unknown): value is string =>
   typeof value === "string"
   && value.length >= DEVICE_TOKEN_MIN
@@ -66,27 +60,60 @@ export function readDemoBrowserCookie(rawHeader: string | undefined): string | u
   return undefined;
 }
 
+export interface DemoBrowserLoginPreflight {
+  needsPreparation: boolean;
+  transferRequired: boolean;
+}
+
 /**
- * Read-only probe used by the login screen before the real login request.
- * It lets the browser show the first-device preparation experience only for
- * demo-isolated users whose current HttpOnly browser token has no ready link.
+ * Credential-gated, read-only login probe. It distinguishes a first browser
+ * from a different browser attempting to take over an existing demo session,
+ * without revoking or otherwise mutating the active binding.
  */
+export async function getDemoBrowserLoginPreflight(
+  sourceUser: SourceUser,
+  rawDeviceToken: unknown,
+): Promise<DemoBrowserLoginPreflight> {
+  if (!isDemoDeviceIsolationEnabled() || !sourceUser.demoDeviceIsolation) {
+    return { needsPreparation: false, transferRequired: false };
+  }
+
+  const tokenHash = validDeviceToken(rawDeviceToken) ? sha256(rawDeviceToken) : null;
+  const [current, active] = await Promise.all([
+    tokenHash
+      ? db.select({
+          status: demoDeviceWorkspacesTable.status,
+          revokedAt: demoDeviceWorkspacesTable.revokedAt,
+        }).from(demoDeviceWorkspacesTable).where(and(
+          eq(demoDeviceWorkspacesTable.sourceUserId, sourceUser.id),
+          eq(demoDeviceWorkspacesTable.deviceTokenHash, tokenHash),
+        )).limit(1)
+      : Promise.resolve([]),
+    db.select({ id: demoDeviceWorkspacesTable.id })
+      .from(demoDeviceWorkspacesTable)
+      .where(and(
+        eq(demoDeviceWorkspacesTable.sourceUserId, sourceUser.id),
+        isNull(demoDeviceWorkspacesTable.revokedAt),
+        ne(demoDeviceWorkspacesTable.status, "failed"),
+      ))
+      .limit(1),
+  ]);
+
+  const currentBinding = current[0];
+  if (currentBinding?.status === "ready" && currentBinding.revokedAt == null) {
+    return { needsPreparation: false, transferRequired: false };
+  }
+  if (active.length > 0) {
+    return { needsPreparation: false, transferRequired: true };
+  }
+  return { needsPreparation: true, transferRequired: false };
+}
+
 export async function needsDemoDevicePreparation(
   sourceUser: SourceUser,
   rawDeviceToken: unknown,
 ): Promise<boolean> {
-  if (!isDemoDeviceIsolationEnabled() || !sourceUser.demoDeviceIsolation) return false;
-  if (!validDeviceToken(rawDeviceToken)) return true;
-
-  const [binding] = await db.select({
-    status: demoDeviceWorkspacesTable.status,
-    revokedAt: demoDeviceWorkspacesTable.revokedAt,
-  }).from(demoDeviceWorkspacesTable).where(and(
-    eq(demoDeviceWorkspacesTable.sourceUserId, sourceUser.id),
-    eq(demoDeviceWorkspacesTable.deviceTokenHash, sha256(rawDeviceToken)),
-  )).limit(1);
-
-  return !binding || binding.status !== "ready" || binding.revokedAt != null;
+  return (await getDemoBrowserLoginPreflight(sourceUser, rawDeviceToken)).needsPreparation;
 }
 
 export async function verifyStrictDemoBrowserBinding(
@@ -110,15 +137,6 @@ export async function verifyStrictDemoBrowserBinding(
 
 export const generateDemoDeviceToken = () =>
   crypto.randomBytes(32).toString("base64url");
-
-const generatePairCode = () => {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let raw = "";
-  for (let i = 0; i < 10; i++) {
-    raw += alphabet[crypto.randomInt(0, alphabet.length)];
-  }
-  return `${raw.slice(0, 5)}-${raw.slice(5)}`;
-};
 
 function requestLabel(userAgent?: string | null): string {
   const ua = String(userAgent ?? "");
@@ -210,33 +228,6 @@ async function syncShadowUser(
   return shadow;
 }
 
-async function createShadowUser(source: SourceUser, workspaceCompanyId: number, linkId: number) {
-  const passwordHash = await bcrypt.hash(crypto.randomBytes(48).toString("base64url"), 12);
-  const [shadow] = await db.insert(usersTable).values({
-    username: `__demo_${source.id}_${linkId}`,
-    passwordHash,
-    companyId: workspaceCompanyId,
-    role: source.role === "superadmin" ? "admin" : source.role,
-    email: null,
-    code: source.code,
-    nameAr: source.nameAr,
-    nameEn: source.nameEn,
-    permissions: source.permissions,
-    postingPermissions: source.postingPermissions,
-    mobilePermissions: source.mobilePermissions,
-    viewAllBranches: source.viewAllBranches,
-    scopeOwnCustomersOnly: source.scopeOwnCustomersOnly,
-    canApprove: source.canApprove,
-    approvalLevel: source.approvalLevel,
-    maxApprovalAmount: source.maxApprovalAmount,
-    requireSecondApproval: source.requireSecondApproval,
-    isActive: true,
-    isDemoShadow: true,
-  } as typeof usersTable.$inferInsert).returning();
-  await copyBranchScope(source, shadow.id, workspaceCompanyId);
-  return shadow;
-}
-
 async function loadReadyWorkspace(source: SourceUser, link: typeof demoDeviceWorkspacesTable.$inferSelect) {
   if (link.revokedAt || link.status === "revoked") {
     throw new DemoDeviceError("تم إلغاء ربط هذا الجهاز. احذف بيانات الموقع ثم سجّل الدخول مجددًا.", 403);
@@ -270,17 +261,24 @@ export interface ResolveDemoLoginInput {
   sourceUser: SourceUser;
   deviceToken?: unknown;
   pairCode?: unknown;
+  confirmTransfer?: unknown;
+  sessionIssue?: {
+    sessionToken: string;
+    sessionId: string;
+    sessionChannel: "web" | "mobile";
+    issuedAt: Date;
+  };
   deviceLabel?: unknown;
   userAgent?: string | null;
   ip?: string | null;
 }
 
 /**
- * Per-device demo isolation (the active policy): every browser/device that
- * logs into a demo-isolated account gets its own workspace.
- *   • The FIRST device becomes primary and works inside the source company.
- *   • Every additional device gets its own hidden cloned company + shadow
- *     user, so demos never step on each other's data.
+ * One-browser demo handoff policy:
+ *   • The first browser becomes the active primary binding.
+ *   • The active browser can sign in again without confirmation.
+ *   • A different browser must explicitly confirm a transfer. That revokes
+ *     every prior binding/session and makes the new browser primary.
  * The per-browser token lives in an HttpOnly cookie and is ALSO re-verified
  * on every authenticated request (see middleware/auth.ts), so a copied
  * bearer token alone is useless in another browser.
@@ -292,6 +290,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
   workspaceCompanyId: number | null;
   isPrimary: boolean;
   bindingWasCreated: boolean;
+  sessionIssuedAtomically: boolean;
 }> {
   const source = input.sourceUser;
   if (!isDemoDeviceIsolationEnabled() || !source.demoDeviceIsolation) {
@@ -302,16 +301,17 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       workspaceCompanyId: source.companyId,
       isPrimary: true,
       bindingWasCreated: false,
+      sessionIssuedAtomically: false,
     };
   }
   if (source.isDemoShadow || !source.companyId) {
     throw new DemoDeviceError("لا يمكن تسجيل الدخول المباشر إلى مستخدم مساحة ديمو", 403, "DEMO_SHADOW_LOGIN_DENIED");
   }
 
-  const deviceToken = validDeviceToken(input.deviceToken)
+  let deviceToken = validDeviceToken(input.deviceToken)
     ? input.deviceToken
     : generateDemoDeviceToken();
-  const deviceTokenHash = sha256(deviceToken);
+  let deviceTokenHash = sha256(deviceToken);
   const label = typeof input.deviceLabel === "string" && input.deviceLabel.trim()
     ? input.deviceLabel.trim().slice(0, 180)
     : requestLabel(input.userAgent);
@@ -320,7 +320,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
     eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
     eq(demoDeviceWorkspacesTable.deviceTokenHash, deviceTokenHash),
   ));
-  if (existing && existing.status !== "failed") {
+  if (existing?.status === "ready" && existing.revokedAt == null) {
     const effectiveUser = await loadReadyWorkspace(source, existing);
     await db.update(demoDeviceWorkspacesTable).set({
       deviceLabel: label,
@@ -334,15 +334,23 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       workspaceCompanyId: existing.workspaceCompanyId,
       isPrimary: existing.isPrimary,
       bindingWasCreated: false,
+      sessionIssuedAtomically: false,
     };
   }
-  if (existing?.status === "failed") {
-    await db.delete(demoDeviceWorkspacesTable).where(eq(demoDeviceWorkspacesTable.id, existing.id));
+  if (existing && existing.revokedAt == null && existing.status === "provisioning") {
+    throw new DemoDeviceError(
+      "مساحة الديمو قيد التجهيز. حاول تسجيل الدخول مرة أخرى بعد لحظات.",
+      409,
+      "DEMO_BROWSER_PREPARING",
+    );
   }
-
-  const pairCode = typeof input.pairCode === "string"
-    ? normalizedPairCode(input.pairCode)
-    : "";
+  // A revoked/failed row owns its old token hash forever as history. Rotate
+  // the requesting browser to a fresh cookie rather than asking it to clear
+  // site data or colliding with the unique (source, token_hash) index.
+  if (existing) {
+    deviceToken = generateDemoDeviceToken();
+    deviceTokenHash = sha256(deviceToken);
+  }
 
   const claim = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${90_000_000 + source.id})`);
@@ -351,169 +359,169 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
       eq(demoDeviceWorkspacesTable.deviceTokenHash, deviceTokenHash),
     ));
-    if (raced) return { link: raced, targetCompanyId: raced.workspaceCompanyId, pair: false, created: false };
-
-    let targetCompanyId: number | null = null;
-    let isPrimary = false;
-    let pair = false;
-    if (pairCode) {
-      const [codeJoin] = await tx.select({
-        code: demoDevicePairCodesTable,
-      }).from(demoDevicePairCodesTable)
-        .innerJoin(
-          demoDeviceWorkspacesTable,
-          eq(demoDevicePairCodesTable.createdByDeviceId, demoDeviceWorkspacesTable.id),
-        )
-        .where(and(
-          eq(demoDevicePairCodesTable.sourceUserId, source.id),
-          eq(demoDevicePairCodesTable.codeHash, sha256(pairCode)),
-          isNull(demoDevicePairCodesTable.usedAt),
-          gt(demoDevicePairCodesTable.expiresAt, new Date()),
-          eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
-          eq(demoDeviceWorkspacesTable.status, "ready"),
-          isNull(demoDeviceWorkspacesTable.revokedAt),
-        )).limit(1);
-      if (!codeJoin) throw new DemoDeviceError("رمز ربط الجهاز غير صحيح أو انتهت صلاحيته", 400);
-      const codeRow = codeJoin.code;
-      targetCompanyId = codeRow.workspaceCompanyId;
-      pair = true;
-      await tx.update(demoDevicePairCodesTable).set({ usedAt: new Date() })
-        .where(eq(demoDevicePairCodesTable.id, codeRow.id));
-    } else {
-      const active = await tx.select({ id: demoDeviceWorkspacesTable.id })
-        .from(demoDeviceWorkspacesTable)
-        .where(and(
-          eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
-          isNull(demoDeviceWorkspacesTable.revokedAt),
-          ne(demoDeviceWorkspacesTable.status, "failed"),
-        )).limit(1);
-      isPrimary = active.length === 0;
-      targetCompanyId = isPrimary ? source.companyId : null;
+    if (raced?.status === "ready" && raced.revokedAt == null) {
+      return { link: raced, created: false, sessionIssuedAtomically: false, effectiveUser: null };
+    }
+    if (raced && raced.revokedAt == null && raced.status === "provisioning") {
+      throw new DemoDeviceError(
+        "مساحة الديمو قيد التجهيز. حاول تسجيل الدخول مرة أخرى بعد لحظات.",
+        409,
+        "DEMO_BROWSER_PREPARING",
+      );
     }
 
+    const active = await tx.select({
+      id: demoDeviceWorkspacesTable.id,
+      workspaceUserId: demoDeviceWorkspacesTable.workspaceUserId,
+      workspaceCompanyId: demoDeviceWorkspacesTable.workspaceCompanyId,
+      isPrimary: demoDeviceWorkspacesTable.isPrimary,
+      status: demoDeviceWorkspacesTable.status,
+      lastSeenAt: demoDeviceWorkspacesTable.lastSeenAt,
+    }).from(demoDeviceWorkspacesTable).where(and(
+      eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
+      isNull(demoDeviceWorkspacesTable.revokedAt),
+      ne(demoDeviceWorkspacesTable.status, "failed"),
+    ));
+    if (active.length > 0 && input.confirmTransfer !== true) {
+      throw new DemoDeviceError(
+        "يوجد تسجيل ديمو نشط في متصفح آخر. أكد نقل الجلسة إلى هذا المتصفح للمتابعة.",
+        409,
+        "DEMO_SESSION_TRANSFER_REQUIRED",
+      );
+    }
+    if (active.length > 0 && !input.sessionIssue) {
+      throw new DemoDeviceError(
+        "تعذر إصدار جلسة النقل بصورة آمنة. حاول تسجيل الدخول مرة أخرى.",
+        500,
+        "DEMO_SESSION_ISSUE_REQUIRED",
+      );
+    }
+
+    const transferTarget = active
+      .filter((row) =>
+        row.status === "ready"
+        && row.workspaceUserId != null
+        && row.workspaceCompanyId != null)
+      .sort((a, b) => b.lastSeenAt.getTime() - a.lastSeenAt.getTime())[0];
+    if (active.length > 0 && !transferTarget) {
+      throw new DemoDeviceError(
+        "مساحة الديمو قيد التجهيز. حاول تسجيل الدخول مرة أخرى بعد لحظات.",
+        409,
+        "DEMO_BROWSER_PREPARING",
+      );
+    }
+
+    if (active.length > 0) {
+      const now = new Date();
+      await tx.update(demoDeviceWorkspacesTable).set({
+        status: "revoked",
+        revokedAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
+        isNull(demoDeviceWorkspacesTable.revokedAt),
+        ne(demoDeviceWorkspacesTable.status, "failed"),
+      ));
+      await tx.update(demoDevicePairCodesTable).set({ usedAt: now }).where(and(
+        eq(demoDevicePairCodesTable.sourceUserId, source.id),
+        isNull(demoDevicePairCodesTable.usedAt),
+      ));
+
+      const shadowUserIds = active
+        .map((row) => row.workspaceUserId)
+        .filter((id): id is number => id != null && id !== source.id);
+      const retainedShadowUserId = transferTarget?.workspaceUserId === source.id
+        ? null
+        : transferTarget?.workspaceUserId ?? null;
+      const shadowUserIdsToDisable = shadowUserIds.filter((id) => id !== retainedShadowUserId);
+      await tx.update(usersTable).set({
+        sessionToken: null,
+        sessionId: null,
+        updatedAt: now,
+      }).where(eq(usersTable.id, source.id));
+      if (shadowUserIdsToDisable.length > 0) {
+        await tx.update(usersTable).set({
+          isActive: false,
+          sessionToken: null,
+          sessionId: null,
+          updatedAt: now,
+        }).where(inArray(usersTable.id, shadowUserIdsToDisable));
+      }
+    }
+
+    const workspaceCompanyId = transferTarget?.workspaceCompanyId ?? source.companyId;
+    const workspaceUserId = transferTarget?.workspaceUserId ?? source.id;
     const [link] = await tx.insert(demoDeviceWorkspacesTable).values({
       sourceUserId: source.id,
       sourceCompanyId: source.companyId!,
-      workspaceCompanyId: targetCompanyId,
-      workspaceUserId: isPrimary ? source.id : null,
+      workspaceCompanyId,
+      workspaceUserId,
       deviceTokenHash,
       deviceLabel: label,
       userAgent: input.userAgent ?? null,
       firstIp: input.ip ?? null,
       lastIp: input.ip ?? null,
-      isPrimary,
-      status: isPrimary ? "ready" : "provisioning",
+      isPrimary: workspaceUserId === source.id,
+      status: "ready",
     }).returning();
-    return { link, targetCompanyId, pair, created: true };
+
+    let effectiveUser: SourceUser | null = null;
+    let sessionIssuedAtomically = false;
+    if (active.length > 0) {
+      const sessionIssue = input.sessionIssue!;
+      const [issuedUser] = await tx.update(usersTable).set({
+        ...(workspaceUserId === source.id
+          ? {}
+          : {
+              role: source.role === "superadmin" ? "admin" : source.role,
+              email: null,
+              code: source.code,
+              nameAr: source.nameAr,
+              nameEn: source.nameEn,
+              permissions: source.permissions,
+              postingPermissions: source.postingPermissions,
+              mobilePermissions: source.mobilePermissions,
+              viewAllBranches: source.viewAllBranches,
+              scopeOwnCustomersOnly: source.scopeOwnCustomersOnly,
+              canApprove: source.canApprove,
+              approvalLevel: source.approvalLevel,
+              maxApprovalAmount: source.maxApprovalAmount,
+              requireSecondApproval: source.requireSecondApproval,
+              isActive: true,
+              isDemoShadow: true,
+            }),
+        sessionToken: sessionIssue.sessionToken,
+        sessionId: sessionIssue.sessionId,
+        sessionChannel: sessionIssue.sessionChannel,
+        lastLoginAt: sessionIssue.issuedAt,
+        updatedAt: sessionIssue.issuedAt,
+      }).where(and(
+        eq(usersTable.id, workspaceUserId),
+        eq(usersTable.isActive, true),
+      )).returning();
+      if (!issuedUser) {
+        throw new DemoDeviceError(
+          "تعذر إصدار جلسة المتصفح الجديد؛ لم يتم إلغاء الجلسة السابقة.",
+          403,
+          "DEMO_SESSION_ISSUE_FAILED",
+        );
+      }
+      effectiveUser = issuedUser;
+      sessionIssuedAtomically = true;
+    }
+    return { link, created: true, sessionIssuedAtomically, effectiveUser };
   });
 
-  if (claim.link.status === "ready") {
-    const effectiveUser = await loadReadyWorkspace(source, claim.link);
-    return {
-      effectiveUser,
-      deviceToken,
-      deviceLinkId: claim.link.id,
-      workspaceCompanyId: claim.link.workspaceCompanyId,
-      isPrimary: claim.link.isPrimary,
-      bindingWasCreated: claim.created,
-    };
-  }
-  if (claim.link.status !== "provisioning") {
-    throw new DemoDeviceError("تعذر تجهيز مساحة الديمو لهذا الجهاز", 500);
-  }
-  // Single-owner provisioning: only the request that INSERTED the link may
-  // clone/provision it or transition it to failed. A raced request that found
-  // someone else's provisioning row must back off and let the owner finish.
-  if (!claim.created) {
-    throw new DemoDeviceError(
-      "مساحة الديمو قيد التجهيز. حاول تسجيل الدخول مرة أخرى بعد لحظات.",
-      409,
-    );
-  }
-
-  try {
-    let workspaceCompanyId = claim.targetCompanyId;
-    let workspaceUserId: number;
-    if (claim.pair && workspaceCompanyId) {
-      const shadow = await createShadowUser(source, workspaceCompanyId, claim.link.id);
-      workspaceUserId = shadow.id;
-    } else {
-      const [parentCompany] = await db.select().from(companiesTable)
-        .where(eq(companiesTable.id, source.companyId!));
-      if (!parentCompany) throw new DemoDeviceError("الشركة الأصلية غير موجودة", 404);
-      const cloned = await cloneCompany({
-        sourceCompanyId: source.companyId!,
-        identity: {
-          nameAr: `${parentCompany.nameAr} — ديمو جهاز ${claim.link.id}`,
-          nameEn: parentCompany.nameEn ? `${parentCompany.nameEn} — Device demo ${claim.link.id}` : null,
-          vatNumber: parentCompany.vatNumber,
-          crNumber: parentCompany.crNumber,
-          city: parentCompany.city,
-          district: parentCompany.district,
-          street: parentCompany.street,
-          buildingNumber: parentCompany.buildingNumber,
-          postalCode: parentCompany.postalCode,
-          additionalNumber: parentCompany.additionalNumber,
-          phone: null,
-          country: parentCompany.country,
-          industryName: parentCompany.industryName,
-        },
-        admin: {
-          username: `__demo_${source.id}_${claim.link.id}`,
-          password: crypto.randomBytes(48).toString("base64url"),
-          nameAr: source.nameAr,
-          nameEn: source.nameEn,
-          email: null,
-        },
-        copyUsers: false,
-        internalDemoWorkspace: true,
-      });
-      workspaceCompanyId = cloned.newCompanyId;
-      workspaceUserId = cloned.adminUserId;
-      await syncShadowUser(source, workspaceUserId, workspaceCompanyId);
-    }
-
-    const [ready] = await db.update(demoDeviceWorkspacesTable).set({
-      workspaceCompanyId,
-      workspaceUserId,
-      status: "ready",
-      updatedAt: new Date(),
-      lastSeenAt: new Date(),
-    }).where(and(
-      eq(demoDeviceWorkspacesTable.id, claim.link.id),
-      eq(demoDeviceWorkspacesTable.status, "provisioning"),
-      isNull(demoDeviceWorkspacesTable.revokedAt),
-    )).returning();
-    if (!ready) {
-      if (workspaceUserId !== source.id) {
-        await db.update(usersTable).set({
-          isActive: false,
-          sessionToken: null,
-          sessionId: null,
-          updatedAt: new Date(),
-        }).where(eq(usersTable.id, workspaceUserId));
-      }
-      throw new DemoDeviceError("تم إلغاء ربط هذا الجهاز أثناء تجهيز مساحة الديمو", 403);
-    }
-    const effectiveUser = await loadReadyWorkspace(source, ready);
-    return {
-      effectiveUser,
-      deviceToken,
-      deviceLinkId: ready.id,
-      workspaceCompanyId,
-      isPrimary: false,
-      bindingWasCreated: true,
-    };
-  } catch (error) {
-    await db.update(demoDeviceWorkspacesTable).set({
-      status: "failed",
-      updatedAt: new Date(),
-    }).where(and(
-      eq(demoDeviceWorkspacesTable.id, claim.link.id),
-      isNull(demoDeviceWorkspacesTable.revokedAt),
-    ));
-    throw error;
-  }
+  const effectiveUser = claim.effectiveUser ?? await loadReadyWorkspace(source, claim.link);
+  return {
+    effectiveUser,
+    deviceToken,
+    deviceLinkId: claim.link.id,
+    workspaceCompanyId: claim.link.workspaceCompanyId,
+    isPrimary: claim.link.isPrimary,
+    bindingWasCreated: claim.created,
+    sessionIssuedAtomically: claim.sessionIssuedAtomically,
+  };
 }
 
 /**
@@ -585,7 +593,7 @@ export async function createDemoPairCode(sourceUserId: number, deviceId: number)
   void sourceUserId;
   void deviceId;
   throw new DemoDeviceError(
-    "رموز الربط لم تعد مستخدمة. كل متصفح يحصل تلقائيًا على مساحة ديمو مستقلة عند تسجيل الدخول.",
+    "رموز الربط لم تعد مستخدمة. يمكن نقل جلسة الديمو من شاشة تسجيل الدخول.",
     410,
     "DEMO_PAIRING_DISABLED",
   );

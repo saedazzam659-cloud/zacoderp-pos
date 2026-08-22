@@ -1,19 +1,22 @@
 ---
-name: Demo device isolation — per-device policy + cookie binding
-description: Active demo policy is per-device isolated workspaces (strict single-browser was reverted); every session, including shadow, must present the HttpOnly browser cookie.
+name: Demo session browser handoff and cookie binding
+description: One-active-browser handoff rules for demo-isolated accounts, including legacy shadow workspaces.
 ---
 
-Active policy (reverted from strict single-browser after it locked out a legitimate production user):
+A demo-isolated account has one active browser binding:
 
-- **Per-device isolation**: every browser logging into a `demoDeviceIsolation` account gets its own workspace. First device = primary, works inside the source company. Each additional device gets a hidden cloned company ("… — ديمو جهاز N") + a shadow user. No pair codes — `createDemoPairCode` stays 410-disabled; a new cookie token simply means a new isolated workspace.
-- **Cookie binding kept from the strict era**: the per-browser token lives in an HttpOnly `zacode_demo_browser` cookie and is re-verified on EVERY authenticated request in the bearer resolver — for the source/primary user (`verifyStrictDemoBrowserBinding`) AND for shadow sessions (`resolveDemoShadowBinding` matches the cookie hash against the link that owns the shadow user). A copied bearer token alone is useless.
+- The first browser binds to the source workspace.
+- A returning active browser logs in normally.
+- A different browser must explicitly confirm transfer after valid credentials. Preflight and cancellation are read-only.
+- Transfer never creates another clone. For legacy multi-browser data, retain the most recently seen ready workspace/user, even when it is a shadow rather than the old primary.
+- The per-browser token remains an HttpOnly cookie re-verified with the bearer on every authenticated request; a copied bearer alone is useless.
 
-**Why:** strict mode punished normal users (new browser/cleared storage = locked out, 423) while the cookie check alone already blocks token theft; per-device isolation also keeps demo data from cross-contaminating.
+**Why:** Revoking the old browser before the new bearer is durably issued can strand the account with no usable session. Preferring an old primary over a newer legacy shadow makes current demo data appear lost.
 
 **How to apply:**
-- Login compensation on session-write failure must `releaseDemoDeviceLink` (DELETE the link row + deactivate shadow), never `revokeDemoDevice` — revoking permanently locks that browser out because its cookie survives.
-- `decorateDemoShadowUser` must resolve `demoSourceUserId` from the ready, non-revoked link; if it returns undefined the middleware rejects every shadow session.
-- Revoking a device must clear the workspace user's sessionToken/sessionId (and deactivate shadows) so old bearers die even with the old cookie.
-- All login/link mutations serialize on `pg_advisory_xact_lock(90_000_000 + sourceUserId)`.
+- Under the per-source-user advisory lock, choose the most recently seen ready workspace.
+- In one DB transaction, revoke prior links, retain that workspace/user, create the replacement link, and issue its bearer. Any issuance failure must roll the whole handoff back.
+- Disable only superseded legacy shadow users; keep the retained shadow active.
+- `decorateDemoShadowUser` must resolve `demoSourceUserId` from the ready, non-revoked link.
 - SameSite=None seen in the Replit preview is proxy rewriting, not a bug.
-- First-device preparation UX must use a credential-gated, read-only server probe against the HttpOnly cookie binding before the mutating login; never infer demo setup from request duration or a localStorage “seen” marker. **Why:** the authoritative new-binding signal otherwise arrives only after the slow clone has already finished.
+- First-browser preparation and transfer UX must use the credential-gated, read-only server probe against the HttpOnly cookie.
