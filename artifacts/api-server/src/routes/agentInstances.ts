@@ -77,6 +77,16 @@ import {
   validateAgentLocalSuperadmin,
   validateLocalSuperadminScreenSelection,
 } from "../lib/localAgentSuperadmin.js";
+import {
+  CfDnsError,
+  applyCloudflareARecord,
+  isCloudflareDnsConfigured,
+  planCloudflareARecord,
+  updateCloudflareProxy,
+  validatePublicIpv4,
+  type AppliedRecord,
+  type CloudflareARecordPlan,
+} from "../lib/cloudflareDns.js";
 
 /**
  * SSRF guard for agent-server probes: the SA may point tests at any PUBLIC
@@ -395,7 +405,13 @@ router.use((req, res, next) => {
 
 /** Public projection — secrets replaced with set/masked flags. */
 function publicRow(r: typeof agentInstancesTable.$inferSelect) {
-  const { dbUrlEnc, sshSecretEnc, proxySecretEnc, saPasswordEnc, sshHostKeyFp: _fp, externalPackageMeta, ...rest } = r as any;
+  const {
+    dbUrlEnc, sshSecretEnc, proxySecretEnc, saPasswordEnc, sshHostKeyFp: _fp,
+    externalPackageMeta, autoDomainZoneId: _autoZoneId,
+    autoDomainRecordId: _autoRecordId, autoDomainLeaseAt: _autoLeaseAt,
+    deployLeaseId: _deployLeaseId, deployOperationPhase: _deployOperationPhase,
+    deployProviderMutationUntil: _deployProviderMutationUntil, ...rest
+  } = r as any;
   // Secrets are STRICTLY write-only: only boolean presence flags leave the
   // server — never the ciphertext and never any plaintext fragment.
   return {
@@ -408,6 +424,7 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
     sshSecretSet: !!sshSecretEnc,
     proxyTokenSet: !!proxySecretEnc,
     saPasswordSet: !!saPasswordEnc,
+    cloudflareConnected: !!(process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN),
     externalPackage: publicPackageMap(readPackageMap(externalPackageMeta)),
   };
 }
@@ -487,6 +504,8 @@ const upsertSchema = z.object({
   contactEmail: z.string().max(200).nullish(),
   domain: z.string().min(3).max(255),
   extraDomains: z.array(z.string().min(3).max(255)).max(20).nullish(),
+  autoDomainSetup: z.boolean().optional(),
+  autoDomainProxyEnabled: z.boolean().optional(),
   mode: z.enum(["frontend_only", "full_shell", "full"]).optional(),
   packageSource: z.enum(["central", "external"]).optional(),
   localSuperadminEnabled: z.boolean().optional(),
@@ -555,6 +574,9 @@ router.post("/", async (req, res) => {
   const [row] = await db.insert(agentInstancesTable).values({
     name: d.name, contactPhone: d.contactPhone ?? null, contactEmail: d.contactEmail ?? null,
     domain, extraDomains: extras, mode, packageSource: "central", localSuperadminEnabled, localSuperadminScreens,
+    autoDomainSetup: d.autoDomainSetup ?? false,
+    autoDomainProxyEnabled: d.autoDomainProxyEnabled ?? false,
+    autoDomainStatus: d.autoDomainSetup ? "pending" : "disabled",
     installationId,
     licenseKey: mintLicenseKey(installationId, domain),
     licenseExpiresAt: d.licenseExpiresAt ? new Date(d.licenseExpiresAt) : null,
@@ -590,6 +612,10 @@ router.put("/:id", async (req, res) => {
   const d = p.data;
   const [existing] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (existing.deployStatus === "deploying") {
+    res.status(409).json({ error: "لا يمكن تعديل بيانات الوكيل أثناء نشر/تسطيب/حذف أو إعداد دومين جارٍ" });
+    return;
+  }
 
   const patch: Record<string, unknown> = { updatedAt: new Date() };
   if (d.name !== undefined) patch.name = d.name;
@@ -608,6 +634,8 @@ router.put("/:id", async (req, res) => {
     try { assertSafeDomain(domain); } catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 120) }); return; }
     patch.domain = domain;
   }
+  if (d.autoDomainSetup !== undefined) patch.autoDomainSetup = d.autoDomainSetup;
+  if (d.autoDomainProxyEnabled !== undefined) patch.autoDomainProxyEnabled = d.autoDomainProxyEnabled;
   if (d.extraDomains !== undefined) {
     const main = (patch.domain as string) ?? existing.domain;
     const extras = (d.extraDomains ?? []).map(x => normalizeHost(x)).filter((x): x is string => !!x && x !== main);
@@ -623,6 +651,28 @@ router.put("/:id", async (req, res) => {
     ];
     const conflict = await findDomainConflict(all, id);
     if (conflict) { res.status(409).json({ error: `الدومين ${conflict} مسجّل لوكيل آخر` }); return; }
+  }
+  const effectiveAutoDomainSetup = d.autoDomainSetup ?? existing.autoDomainSetup;
+  const nextDomain = (patch.domain as string | undefined) ?? existing.domain;
+  const nextSshHost = d.sshHost !== undefined ? (d.sshHost ?? null) : existing.sshHost;
+  const autoTargetChanged = nextDomain !== existing.domain || nextSshHost !== existing.sshHost;
+  const autoProxyChanged = d.autoDomainProxyEnabled !== undefined
+    && d.autoDomainProxyEnabled !== existing.autoDomainProxyEnabled;
+  if (!effectiveAutoDomainSetup) {
+    // Disabling automation is deliberately non-destructive: keep provider
+    // references so no DNS record is removed or changed behind the admin.
+    patch.autoDomainStatus = "disabled";
+    patch.autoDomainLastError = null;
+  } else if (!existing.autoDomainSetup || autoTargetChanged || autoProxyChanged) {
+    patch.autoDomainStatus = "pending";
+    patch.autoDomainLastError = null;
+    if (autoTargetChanged) {
+      // Never reuse a record/zone id after the domain or origin changes.
+      patch.autoDomainZoneName = null;
+      patch.autoDomainZoneId = null;
+      patch.autoDomainRecordId = null;
+      patch.autoDomainOriginIp = null;
+    }
   }
   const effectiveMode = d.mode ?? existing.mode;
   const effectivePackageSource = d.packageSource ?? existing.packageSource;
@@ -687,14 +737,70 @@ router.put("/:id", async (req, res) => {
   const screensChanged = d.localSuperadminScreens !== undefined
     && JSON.stringify(normalizeLocalSuperadminScreens(existing.localSuperadminScreens))
       !== JSON.stringify(localSuperadminScreens);
-  if (existing.deployStatus === "ok" && (entitlementChanged || credentialsChanged || screensChanged)) {
+  const requiresRemoteSync = existing.deployStatus === "ok" && (entitlementChanged || credentialsChanged || screensChanged);
+  if (requiresRemoteSync) {
+    const connectionChanged = d.domain !== undefined
+      || d.sshHost !== undefined
+      || d.sshPort !== undefined
+      || d.sshUser !== undefined
+      || !!d.sshSecret
+      || !!d.dbUrl;
+    if (connectionChanged) {
+      res.status(409).json({ error: "احفظ بيانات الدومين/SSH/قاعدة البيانات أولًا، ثم عدّل سياسة Super Admin في عملية منفصلة" });
+      return;
+    }
+    const operationId = randomBytes(16).toString("hex");
+    const [claimed] = await db.update(agentInstancesTable).set({
+      deployStatus: "deploying",
+      deployLeaseId: operationId,
+      deployOperationPhase: "preflight",
+      deployProviderMutationUntil: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployStatus, "ok"),
+    )).returning({ id: agentInstancesTable.id });
+    if (!claimed) {
+      res.status(409).json({ error: "بدأت عملية أخرى على الوكيل — لم تُحفظ التغييرات" });
+      return;
+    }
+    const stopHeartbeat = startAgentOperationHeartbeat(id, operationId);
     try {
+      await initializeRemoteOperationFence(existing, operationId);
       if (entitlementChanged || credentialsChanged) {
-        await syncInstalledAgentSuperadminPolicy(candidate);
+        await syncInstalledAgentSuperadminPolicy(candidate, operationId);
       } else {
-        await syncInstalledAgentConfigEntitlement(candidate);
+        await syncInstalledAgentConfigEntitlement(candidate, operationId);
       }
+      const [row] = await db.update(agentInstancesTable).set({
+        ...patch,
+        deployStatus: "ok",
+        deployLeaseId: null,
+        deployOperationPhase: null,
+        deployProviderMutationUntil: null,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(agentInstancesTable.id, id),
+        eq(agentInstancesTable.deployStatus, "deploying"),
+        eq(agentInstancesTable.deployLeaseId, operationId),
+      )).returning();
+      if (!row) throw new Error("فُقد قفل مزامنة إعداد Super Admin");
+      stopHeartbeat();
+      clearAgentHostCache();
+      res.json(publicRow(row));
+      return;
     } catch (e: any) {
+      await db.update(agentInstancesTable).set({
+        deployStatus: "ok",
+        deployLeaseId: null,
+        deployOperationPhase: null,
+        deployProviderMutationUntil: null,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(agentInstancesTable.id, id),
+        eq(agentInstancesTable.deployLeaseId, operationId),
+      )).catch(() => {});
+      stopHeartbeat();
       res.status(502).json({
         error: "تعذّر تطبيق إعداد لوحة Super Admin على السيرفر المثبّت — لم تُحفظ التغييرات المركزية",
         detail: String(e?.message ?? e).slice(0, 400),
@@ -703,7 +809,14 @@ router.put("/:id", async (req, res) => {
     }
   }
 
-  const [row] = await db.update(agentInstancesTable).set(patch).where(eq(agentInstancesTable.id, id)).returning();
+  const [row] = await db.update(agentInstancesTable).set(patch).where(and(
+    eq(agentInstancesTable.id, id),
+    ne(agentInstancesTable.deployStatus, "deploying"),
+  )).returning();
+  if (!row) {
+    res.status(409).json({ error: "بدأت عملية على الوكيل أثناء التعديل — لم تُحفظ التغييرات" });
+    return;
+  }
   clearAgentHostCache();
   if (patch.dbUrlEnc !== undefined) {
     const { evictAgentDb } = await import("../lib/agentDb.js");
@@ -716,16 +829,29 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!id) { res.status(400).json({ error: "بيانات غير صالحة" }); return; }
-  const [existing] = await db.select({ externalPackageMeta: agentInstancesTable.externalPackageMeta })
+  const [existing] = await db.select({
+    externalPackageMeta: agentInstancesTable.externalPackageMeta,
+    deployStatus: agentInstancesTable.deployStatus,
+  })
     .from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
-  await db.delete(agentInstancesTable).where(eq(agentInstancesTable.id, id));
-  if (existing) {
-    const meta = readPackageMap(existing.externalPackageMeta);
-    await Promise.all([
-      ...EXTERNAL_PACKAGE_KINDS.map(kind => removePackageObject(meta[kind]?.objectPath)),
-      removeAllAgentPackageObjects(id),
-    ]);
+  if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (existing.deployStatus === "deploying") {
+    res.status(409).json({ error: "لا يمكن حذف الوكيل أثناء وجود عملية جارية" });
+    return;
   }
+  const [deleted] = await db.delete(agentInstancesTable).where(and(
+    eq(agentInstancesTable.id, id),
+    ne(agentInstancesTable.deployStatus, "deploying"),
+  )).returning({ id: agentInstancesTable.id });
+  if (!deleted) {
+    res.status(409).json({ error: "بدأت عملية على الوكيل أثناء الحذف — لم يُحذف الوكيل" });
+    return;
+  }
+  const meta = readPackageMap(existing.externalPackageMeta);
+  await Promise.all([
+    ...EXTERNAL_PACKAGE_KINDS.map(kind => removePackageObject(meta[kind]?.objectPath)),
+    removeAllAgentPackageObjects(id),
+  ]);
   clearAgentHostCache();
   const { evictAgentDb } = await import("../lib/agentDb.js");
   evictAgentDb(id);
@@ -822,7 +948,10 @@ async function syncAgentSuperadminAccount(inst: typeof agentInstancesTable.$infe
   });
 }
 
-async function syncInstalledAgentConfigEntitlement(inst: typeof agentInstancesTable.$inferSelect): Promise<void> {
+async function syncInstalledAgentConfigEntitlement(
+  inst: typeof agentInstancesTable.$inferSelect,
+  operationId: string,
+): Promise<void> {
   if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
     throw new Error("بيانات SSH غير مكتملة لمزامنة إعداد لوحة Super Admin");
   }
@@ -830,7 +959,7 @@ async function syncInstalledAgentConfigEntitlement(inst: typeof agentInstancesTa
   const screensB64 = Buffer.from(JSON.stringify(
     flag === "1" ? normalizeLocalSuperadminScreens(inst.localSuperadminScreens) : [],
   ), "utf8").toString("base64");
-  const result = await sshRunScript(inst, `set -e
+  const result = await sshRunOperationScript(inst, operationId, `set -e
 test -f /opt/zacod/config.json
 ZACOD_LOCAL_SA=${flag} ZACOD_LOCAL_SA_SCREENS_B64=${screensB64} python3 -c "import base64,json,os; p='/opt/zacod/config.json'; c=json.load(open(p)); c['localSuperadminEnabled']=os.environ['ZACOD_LOCAL_SA']=='1'; c['localSuperadminScreens']=json.loads(base64.b64decode(os.environ['ZACOD_LOCAL_SA_SCREENS_B64'])); json.dump(c,open(p,'w'),indent=2,ensure_ascii=False)"
 echo ZACOD_LOCAL_SA_SYNCED`, { timeoutMs: 60_000 });
@@ -839,16 +968,19 @@ echo ZACOD_LOCAL_SA_SYNCED`, { timeoutMs: 60_000 });
   }
 }
 
-async function syncInstalledAgentSuperadminPolicy(inst: typeof agentInstancesTable.$inferSelect): Promise<void> {
+async function syncInstalledAgentSuperadminPolicy(
+  inst: typeof agentInstancesTable.$inferSelect,
+  operationId: string,
+): Promise<void> {
   const enabled = effectiveLocalSuperadminEnabled(inst.mode, inst.localSuperadminEnabled);
   if (enabled) {
     // Seed first while the old disabled gate still blocks all access, then open it.
     await syncAgentSuperadminAccount(inst);
-    await syncInstalledAgentConfigEntitlement(inst);
+    await syncInstalledAgentConfigEntitlement(inst, operationId);
     return;
   }
   // Close the trusted runtime gate first, then revoke every account/session.
-  await syncInstalledAgentConfigEntitlement(inst);
+  await syncInstalledAgentConfigEntitlement(inst, operationId);
   await syncAgentSuperadminAccount(inst);
 }
 
@@ -1111,6 +1243,22 @@ router.post("/:id/unban", async (req, res) => {
   if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) { res.status(400).json({ error: "أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا" }); return; }
   try { await assertProbeTargetAllowed(inst.sshHost); }
   catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+  const operationId = randomBytes(16).toString("hex");
+  const [claimed] = await db.update(agentInstancesTable).set({
+    deployStatus: "deploying",
+    deployLeaseId: operationId,
+    deployOperationPhase: "preflight",
+    deployProviderMutationUntil: null,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    ne(agentInstancesTable.deployStatus, "deploying"),
+  )).returning({ id: agentInstancesTable.id });
+  if (!claimed) {
+    res.status(409).json({ error: "يوجد نشر/تسطيب أو إعداد آخر جارٍ على السيرفر" });
+    return;
+  }
+  const stopHeartbeat = startAgentOperationHeartbeat(id, operationId);
 
   const unbanScript = `set -e
 if ! command -v fail2ban-client >/dev/null 2>&1; then echo "NO_FAIL2BAN"; exit 0; fi
@@ -1129,7 +1277,8 @@ echo "UNBAN_OK ip=$MY_IP"
 echo "BANNED_BEFORE:$BANNED_BEFORE"`;
 
   try {
-    const r = await sshRunScript(inst, unbanScript, { timeoutMs: 45_000 });
+    await initializeRemoteOperationFence(inst, operationId);
+    const r = await sshRunOperationScript(inst, operationId, unbanScript, { timeoutMs: 45_000 });
     await pinHostKey(inst, r.hostKeyFp);
     if (/NO_FAIL2BAN/.test(r.out)) {
       await logAgentEvent(id, "unban_run", { result: "no_fail2ban", by: (req as any).authUser?.username ?? null }, req);
@@ -1138,7 +1287,10 @@ echo "BANNED_BEFORE:$BANNED_BEFORE"`;
     }
     const bannedBefore = (r.out.match(/BANNED_BEFORE:(.*)/)?.[1] ?? "").trim();
     const hadBans = bannedBefore && bannedBefore !== "[]" && !/^\[\s*(\{\s*\}\s*,?\s*)*\]$/.test(bannedBefore.replace(/'[^']*':\s*\[\]/g, "{}"));
-    await db.update(agentInstancesTable).set({ sshStatus: "ok", sshLastCheckAt: new Date(), updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+    await db.update(agentInstancesTable).set({ sshStatus: "ok", sshLastCheckAt: new Date(), updatedAt: new Date() }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    ));
     await logAgentEvent(id, "unban_run", { result: "ok", bannedBefore: bannedBefore.slice(0, 500), by: (req as any).authUser?.username ?? null }, req);
     res.json({
       ok: true,
@@ -1157,6 +1309,18 @@ echo "BANNED_BEFORE:$BANNED_BEFORE"`;
       return;
     }
     res.status(502).json({ error: `فشل فك الحظر: ${msg.slice(0, 300)}` });
+  } finally {
+    await db.update(agentInstancesTable).set({
+      deployStatus: inst.deployStatus,
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
+    stopHeartbeat();
   }
 });
 
@@ -1249,10 +1413,13 @@ router.post("/:id/license", async (req, res) => {
   const id = Number(req.params.id);
   const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
   if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.deployStatus === "deploying") { res.status(409).json({ error: "انتظر انتهاء العملية الجارية قبل تغيير الترخيص" }); return; }
   const expiresAt = typeof req.body?.expiresAt === "string" && req.body.expiresAt ? new Date(req.body.expiresAt) : inst.licenseExpiresAt;
   const licenseKey = mintLicenseKey(inst.installationId, inst.domain);
-  await db.update(agentInstancesTable).set({ licenseKey, licenseExpiresAt: expiresAt, updatedAt: new Date() })
-    .where(eq(agentInstancesTable.id, id));
+  const [updated] = await db.update(agentInstancesTable).set({ licenseKey, licenseExpiresAt: expiresAt, updatedAt: new Date() })
+    .where(and(eq(agentInstancesTable.id, id), ne(agentInstancesTable.deployStatus, "deploying")))
+    .returning({ id: agentInstancesTable.id });
+  if (!updated) { res.status(409).json({ error: "بدأت عملية على الوكيل أثناء إصدار الترخيص — لم يتغير المفتاح" }); return; }
   res.json({ ok: true, licenseKey, licenseExpiresAt: expiresAt });
 });
 
@@ -1273,11 +1440,18 @@ router.post("/:id/suspend", async (req, res) => {
 // فتتوقف النسخة عن العمل.
 router.post("/:id/wipe", async (req, res) => {
   const id = Number(req.params.id);
+  const operationId = randomBytes(16).toString("hex");
   // Atomic lease: claim the shared deployStatus='deploying' slot so a
   // concurrent deploy/provision can't run while we are deleting (and vice
   // versa — provision/deploy claim the same slot conditionally).
   const [inst] = await db.update(agentInstancesTable)
-    .set({ deployStatus: "deploying", updatedAt: new Date() })
+    .set({
+      deployStatus: "deploying",
+      deployLeaseId: operationId,
+      deployOperationPhase: "preflight",
+      deployProviderMutationUntil: null,
+      updatedAt: new Date(),
+    })
     .where(and(eq(agentInstancesTable.id, id), ne(agentInstancesTable.deployStatus, "deploying")))
     .returning();
   if (!inst) {
@@ -1285,18 +1459,29 @@ router.post("/:id/wipe", async (req, res) => {
     res.status(row ? 409 : 404).json({ error: row ? "توجد عملية تسطيب/نشر جارية — انتظر انتهاءها أولًا" : "غير موجود" });
     return;
   }
+  const stopHeartbeat = startAgentOperationHeartbeat(id, operationId);
   // Persist a terminal wipe state on EVERY exit path (never leave the lease
   // held or stale deployed/initialized flags on a wiped/unreachable server).
   const finish = async (extra: Record<string, unknown>) => {
     await db.update(agentInstancesTable).set({
-      deployedVersion: null, dbStatus: "not_configured", updatedAt: new Date(), ...extra,
-    }).where(eq(agentInstancesTable.id, id)).catch(() => {});
+      deployedVersion: null,
+      dbStatus: "not_configured",
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      updatedAt: new Date(),
+      ...extra,
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
   };
 
   // 1) Kill-switch أولًا وبلا شروط: تعطيل + إلغاء مفتاح الترخيص.
   await db.update(agentInstancesTable)
     .set({ status: "suspended", licenseKey: null, updatedAt: new Date() })
-    .where(eq(agentInstancesTable.id, id));
+    .where(and(eq(agentInstancesTable.id, id), eq(agentInstancesTable.deployLeaseId, operationId)));
   await logAgentEvent(id, "suspended_by_admin", { by: (req as any).authUser?.username ?? null, note: "wipe" }, req);
   clearAgentHostCache();
   { const { evictAgentDb } = await import("../lib/agentDb.js"); evictAgentDb(id); }
@@ -1305,6 +1490,7 @@ router.post("/:id/wipe", async (req, res) => {
   if (!inst.sshHost || !inst.sshSecretEnc) {
     const msg = "لا توجد بيانات SSH محفوظة — تم تعطيل الترخيص وإلغاء المفتاح فقط؛ نبض النسخة القادم سيوقفها تلقائيًا.";
     await finish({ deployStatus: "never", deployLog: `— الحذف الكامل —\n${msg}` });
+    stopHeartbeat();
     res.json({ ok: true, wiped: false, log: msg });
     return;
   }
@@ -1314,6 +1500,7 @@ router.post("/:id/wipe", async (req, res) => {
   } catch (e: any) {
     const msg = `تعذّر المسح عبر SSH: ${e?.message ?? e} — تم تعطيل الترخيص وإلغاء المفتاح.`;
     await finish({ deployStatus: "error", deployLog: `— الحذف الكامل —\n${msg}` });
+    stopHeartbeat();
     res.json({ ok: true, wiped: false, log: msg });
     return;
   }
@@ -1350,7 +1537,8 @@ crontab -l 2>/dev/null | grep -q 'zacod-' && LEFT="$LEFT cron"
 if [ -n "$LEFT" ]; then echo "WARNING: بقايا لم تُحذف:$LEFT"; echo "ZACOD_WIPE_PARTIAL"; else echo "ZACOD_WIPE_DONE"; fi
 `;
   try {
-    const r = await sshRunScript(inst, wipeScript, { timeoutMs: 240_000 });
+    await initializeRemoteOperationFence(inst, operationId);
+    const r = await sshRunOperationScript(inst, operationId, wipeScript, { timeoutMs: 240_000 });
     // النجاح = وصل السكربت للنهاية *و* لم يجد أي بقايا (الفحص أعلاه).
     const done = r.code === 0 && r.out.includes("ZACOD_WIPE_DONE");
     await finish({
@@ -1362,6 +1550,8 @@ if [ -n "$LEFT" ]; then echo "WARNING: بقايا لم تُحذف:$LEFT"; echo "
     const msg = `تعذّر الاتصال بالسيرفر (${String(e?.message ?? e)}).\nتم تعطيل الترخيص وإلغاء المفتاح — النسخة ستتوقف مع أول نبض قادم.`;
     await finish({ deployStatus: "error", deployLog: `— الحذف الكامل: فشل الاتصال —\n${msg}` });
     res.json({ ok: true, wiped: false, log: msg });
+  } finally {
+    stopHeartbeat();
   }
 });
 
@@ -1410,7 +1600,7 @@ async function ensureProxySecret(inst: typeof agentInstancesTable.$inferSelect):
 
 async function buildSetupKit(
   inst: typeof agentInstancesTable.$inferSelect,
-  opts?: { hbMarker?: string },
+  opts?: { hbMarker?: string; safeWebServerMode?: boolean },
 ) {
   assertSafeDomain(inst.domain);
   // علامة النبض: تميّز أي سيرفر (رئيسي/احتياطي) أرسل النبضة عند تعدد السيرفرات.
@@ -1502,9 +1692,61 @@ fi
   }
 }
 `;
+  const safeSetupGuard = opts?.safeWebServerMode
+    ? `# الوضع الآلي الآمن لا يوقف خدمات قائمة ولا يترك ملفات جزئية.
+for svc in nginx apache2 httpd lighttpd; do
+  if systemctl is-active --quiet "$svc" 2>/dev/null; then
+    echo "ERROR: الخدمة $svc تستخدم بوابة الويب — أوقفها أو انقل إعدادها يدويًا ثم أعد المحاولة." >&2
+    exit 1
+  fi
+done`
+    + `
+if systemctl is-active --quiet caddy 2>/dev/null; then
+  if [ ! -f /opt/zacod/config.json ] || ! grep -Fq '"domain": "${inst.domain}"' /opt/zacod/config.json; then
+    echo "ERROR: توجد خدمة Caddy غير مُدارة بواسطة هذا الوكيل — لن يتم استبدال إعدادها تلقائيًا." >&2
+    exit 1
+  fi
+fi
+ZACOD_SAFE_BAK=$(mktemp -d)
+[ -f /opt/zacod/config.json ] && cp /opt/zacod/config.json "$ZACOD_SAFE_BAK/config.json" || touch "$ZACOD_SAFE_BAK/no-config"
+[ -f /opt/zacod/heartbeat.sh ] && cp /opt/zacod/heartbeat.sh "$ZACOD_SAFE_BAK/heartbeat.sh" || touch "$ZACOD_SAFE_BAK/no-heartbeat"
+[ -f /etc/caddy/Caddyfile ] && cp /etc/caddy/Caddyfile "$ZACOD_SAFE_BAK/Caddyfile" || touch "$ZACOD_SAFE_BAK/no-caddyfile"
+crontab -l > "$ZACOD_SAFE_BAK/crontab" 2>/dev/null || touch "$ZACOD_SAFE_BAK/no-crontab"
+zacod_safe_rollback() {
+  rc=$?
+  trap - EXIT
+  if [ "$rc" -ne 0 ]; then
+    mkdir -p /opt/zacod /etc/caddy
+    if [ -f "$ZACOD_SAFE_BAK/no-config" ]; then rm -f /opt/zacod/config.json; else cp "$ZACOD_SAFE_BAK/config.json" /opt/zacod/config.json; fi
+    if [ -f "$ZACOD_SAFE_BAK/no-heartbeat" ]; then rm -f /opt/zacod/heartbeat.sh; else cp "$ZACOD_SAFE_BAK/heartbeat.sh" /opt/zacod/heartbeat.sh; fi
+    if [ -f "$ZACOD_SAFE_BAK/no-caddyfile" ]; then rm -f /etc/caddy/Caddyfile; else cp "$ZACOD_SAFE_BAK/Caddyfile" /etc/caddy/Caddyfile; fi
+    if [ -f "$ZACOD_SAFE_BAK/no-crontab" ]; then crontab -r 2>/dev/null || true; else crontab "$ZACOD_SAFE_BAK/crontab" 2>/dev/null || true; fi
+    systemctl restart caddy 2>/dev/null || true
+  fi
+  rm -rf "$ZACOD_SAFE_BAK"
+  exit "$rc"
+}
+trap zacod_safe_rollback EXIT`
+    : "";
+  const webServerConflictPolicy = opts?.safeWebServerMode
+    ? `# تم فحص التعارضات قبل أي كتابة؛ لا نوقف أي خدمة في الوضع الآلي.`
+    : `# المسار اليدوي القديم يحافظ على سلوكه المتوافق كما كان قبل إضافة
+# إدارة الدومين التلقائية.
+for svc in nginx apache2 httpd lighttpd; do
+  if systemctl is-active --quiet "$svc" 2>/dev/null; then
+    echo "إيقاف الخدمة المتعارضة: $svc"
+    systemctl stop "$svc" || true
+    systemctl disable "$svc" 2>/dev/null || true
+  fi
+done`;
+  const safeSetupCommit = opts?.safeWebServerMode
+    ? `trap - EXIT
+rm -rf "$ZACOD_SAFE_BAK"`
+    : "";
   const installScript = `#!/usr/bin/env bash
 # zacod agent bootstrap — idempotent. Run as root on the agent server.
 set -e
+${safeSetupGuard}
 mkdir -p /opt/zacod
 cat > /opt/zacod/config.json <<'ZACOD_CFG'
 ${JSON.stringify(config, null, 2)}
@@ -1550,14 +1792,7 @@ cat > /etc/caddy/Caddyfile <<'ZACOD_CADDY'
 ${caddyfile}
 ZACOD_CADDY
 caddy validate --config /etc/caddy/Caddyfile
-# حرّر المنفذين 80/443 من أي خدمة ويب أخرى قد تمنع Caddy من الإقلاع.
-for svc in nginx apache2 httpd lighttpd; do
-  if systemctl is-active --quiet "$svc" 2>/dev/null; then
-    echo "إيقاف الخدمة المتعارضة: $svc"
-    systemctl stop "$svc" || true
-    systemctl disable "$svc" 2>/dev/null || true
-  fi
-done
+${webServerConflictPolicy}
 systemctl enable caddy
 systemctl restart caddy
 sleep 2
@@ -1568,6 +1803,7 @@ if ! systemctl is-active --quiet caddy; then
   exit 1
 fi
 /opt/zacod/heartbeat.sh || true
+${safeSetupCommit}
 echo "ZACOD_BOOTSTRAP_DONE"
 `;
   return { config, heartbeatScript, caddyfile, installScript };
@@ -1764,6 +2000,228 @@ async function sshRunScript(
   return { ...result, hostKeyFp: seenHostKeyFp };
 }
 
+const REMOTE_CONTROL_LOCK = "/var/lock/zacod-control.lock";
+const REMOTE_CONTROL_LEASE = "/var/tmp/zacod-control-lease";
+const AGENT_OPERATION_HEARTBEAT_MS = 30_000;
+const AGENT_OPERATION_STALE_MS = 3 * 60_000;
+
+function assertOperationId(operationId: string): void {
+  if (!/^[a-f0-9]{32}$/.test(operationId)) throw new Error("معرّف عملية التحكم غير صالح");
+}
+
+async function initializeRemoteOperationFence(
+  inst: typeof agentInstancesTable.$inferSelect,
+  operationId: string,
+): Promise<void> {
+  assertOperationId(operationId);
+  await assertAgentOperationOwned(inst.id, operationId);
+  const result = await sshRunScript(inst, `set -e
+command -v flock >/dev/null 2>&1 || { echo "ZACOD_CONTROL_NO_FLOCK"; exit 73; }
+exec 9>${REMOTE_CONTROL_LOCK}
+flock -w 30 9 || { echo "ZACOD_CONTROL_BUSY"; exit 74; }
+printf '%s' '${operationId}' > ${REMOTE_CONTROL_LEASE}
+chmod 600 ${REMOTE_CONTROL_LEASE}
+echo "ZACOD_CONTROL_READY"`, { timeoutMs: 45_000 });
+  if (result.code !== 0 || !result.out.includes("ZACOD_CONTROL_READY")) {
+    throw new Error(`تعذّر حجز قفل التحكم على السيرفر: ${result.out.slice(-400)}`);
+  }
+  await assertAgentOperationOwned(inst.id, operationId);
+  await pinHostKey(inst, result.hostKeyFp);
+}
+
+async function sshRunOperationScript(
+  inst: typeof agentInstancesTable.$inferSelect,
+  operationId: string,
+  script: string,
+  opts?: { timeoutMs?: number },
+): Promise<{ code: number; out: string; hostKeyFp: string }> {
+  assertOperationId(operationId);
+  return sshRunScript(inst, `set -e
+command -v flock >/dev/null 2>&1 || { echo "ZACOD_CONTROL_NO_FLOCK"; exit 73; }
+exec 9>${REMOTE_CONTROL_LOCK}
+flock -w 30 9 || { echo "ZACOD_CONTROL_BUSY"; exit 74; }
+CURRENT_CONTROL_LEASE="$(cat ${REMOTE_CONTROL_LEASE} 2>/dev/null || true)"
+[ "$CURRENT_CONTROL_LEASE" = '${operationId}' ] || { echo "ZACOD_CONTROL_FENCE_LOST"; exit 75; }
+${script}`, opts);
+}
+
+async function revokeRemoteOperationFence(
+  inst: typeof agentInstancesTable.$inferSelect,
+  recoveryId: string,
+): Promise<{ ok: boolean; log: string }> {
+  assertOperationId(recoveryId);
+  const result = await sshRunScript(inst, `set -e
+command -v flock >/dev/null 2>&1 || { echo "ZACOD_CONTROL_NO_FLOCK"; exit 73; }
+exec 9>${REMOTE_CONTROL_LOCK}
+flock -w 55 9 || { echo "ZACOD_CONTROL_BUSY"; exit 74; }
+printf '%s' 'recovered-${recoveryId}' > ${REMOTE_CONTROL_LEASE}
+chmod 600 ${REMOTE_CONTROL_LEASE}
+echo "ZACOD_CONTROL_REVOKED"`, { timeoutMs: 70_000 });
+  return {
+    ok: result.code === 0 && result.out.includes("ZACOD_CONTROL_REVOKED"),
+    log: result.out.slice(-700),
+  };
+}
+
+function startAgentOperationHeartbeat(id: number, operationId: string): () => void {
+  let stopped = false;
+  const beat = () => {
+    if (stopped) return;
+    void db.update(agentInstancesTable).set({ updatedAt: new Date() }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
+  };
+  const timer = setInterval(beat, AGENT_OPERATION_HEARTBEAT_MS);
+  timer.unref?.();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
+async function assertAgentOperationOwned(id: number, operationId: string): Promise<void> {
+  const [owned] = await db.select({ id: agentInstancesTable.id }).from(agentInstancesTable).where(and(
+    eq(agentInstancesTable.id, id),
+    eq(agentInstancesTable.deployStatus, "deploying"),
+    eq(agentInstancesTable.deployLeaseId, operationId),
+  )).limit(1);
+  if (!owned) throw new Error("فُقد قفل العملية؛ أُوقفت المهمة القديمة");
+}
+
+async function runFencedProviderMutation<T>(
+  id: number,
+  operationId: string,
+  mutation: () => Promise<T>,
+): Promise<T> {
+  const providerUntil = new Date(Date.now() + 60_000);
+  const claimed = await db.update(agentInstancesTable).set({
+    deployOperationPhase: "provider_mutation",
+    deployProviderMutationUntil: providerUntil,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    eq(agentInstancesTable.deployStatus, "deploying"),
+    eq(agentInstancesTable.deployLeaseId, operationId),
+  )).returning({ id: agentInstancesTable.id });
+  if (!claimed.length) throw new Error("فُقد قفل العملية قبل تحديث مزود DNS");
+  try {
+    const result = await mutation();
+    await assertAgentOperationOwned(id, operationId);
+    return result;
+  } finally {
+    await db.update(agentInstancesTable).set({
+      deployOperationPhase: "running",
+      deployProviderMutationUntil: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
+  }
+}
+
+// Deliberate recovery for a worker lost to an API process restart/crash.
+// It never "steals" a live lease by age alone: first fence the old worker in
+// the database, then take the remote flock and replace the remote generation.
+// Only after both fences are established is the shared lease released.
+router.post("/:id/operation/recover", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.deployStatus !== "deploying" || !inst.deployLeaseId) {
+    res.status(409).json({ error: "لا توجد عملية معلّقة قابلة للاستعادة" });
+    return;
+  }
+  const staleBefore = new Date(Date.now() - AGENT_OPERATION_STALE_MS);
+  if (inst.updatedAt.getTime() >= staleBefore.getTime()) {
+    res.status(409).json({ error: "العملية ما زالت ترسل نبضات؛ انتظر قبل محاولة الاستعادة" });
+    return;
+  }
+  if (
+    inst.deployOperationPhase === "provider_mutation"
+    && (!inst.deployProviderMutationUntil || inst.deployProviderMutationUntil.getTime() > Date.now())
+  ) {
+    res.status(409).json({ error: "يوجد طلب DNS لم تنتهِ مهلة أمانه بعد؛ أعد المحاولة لاحقًا" });
+    return;
+  }
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
+    res.status(409).json({ error: "لا يمكن إثبات توقف العملية البعيدة دون بيانات SSH محفوظة" });
+    return;
+  }
+
+  const oldOperationId = inst.deployLeaseId;
+  const recoveryId = randomBytes(16).toString("hex");
+  const [claimed] = await db.update(agentInstancesTable).set({
+    deployLeaseId: recoveryId,
+    deployOperationPhase: "recovering",
+    deployProviderMutationUntil: null,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    eq(agentInstancesTable.deployStatus, "deploying"),
+    eq(agentInstancesTable.deployLeaseId, oldOperationId),
+    lt(agentInstancesTable.updatedAt, staleBefore),
+  )).returning({ id: agentInstancesTable.id });
+  if (!claimed) {
+    res.status(409).json({ error: "تجددت العملية أو بدأت استعادة أخرى؛ حدّث الصفحة" });
+    return;
+  }
+
+  let remote: { ok: boolean; log: string };
+  try {
+    remote = await revokeRemoteOperationFence(inst, recoveryId);
+  } catch (e: any) {
+    remote = { ok: false, log: String(e?.message ?? e).slice(0, 500) };
+  }
+  if (!remote.ok) {
+    const log = `${inst.deployLog ?? ""}\n[recovery] لم يثبت توقف العملية البعيدة: ${remote.log}`.slice(-8000);
+    await db.update(agentInstancesTable).set({
+      deployLog: log,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployLeaseId, recoveryId),
+    )).catch(() => {});
+    res.status(409).json({
+      error: "لم يثبت توقف السكربت البعيد؛ بقي القفل مغلقًا بأمان. أعد المحاولة لاحقًا.",
+      detail: remote.log,
+    });
+    return;
+  }
+
+  const recoveryMessage = "أُوقفت المهمة المفقودة بأمان بعد انقطاع نبضها؛ يمكنك إعادة المحاولة.";
+  const [released] = await db.update(agentInstancesTable).set({
+    deployStatus: "error",
+    deployLeaseId: null,
+    deployOperationPhase: null,
+    deployProviderMutationUntil: null,
+    autoDomainLeaseAt: null,
+    deployLog: `${inst.deployLog ?? ""}\n[recovery] ${recoveryMessage}`.slice(-8000),
+    ...(inst.autoDomainSetup ? {
+      autoDomainStatus: "error",
+      autoDomainLastCheckAt: new Date(),
+      autoDomainLastError: recoveryMessage,
+    } : {}),
+    updatedAt: new Date(),
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    eq(agentInstancesTable.deployStatus, "deploying"),
+    eq(agentInstancesTable.deployLeaseId, recoveryId),
+  )).returning({ id: agentInstancesTable.id });
+  if (!released) {
+    res.status(409).json({ error: "فُقد قفل الاستعادة قبل إنهائها؛ حدّث الصفحة" });
+    return;
+  }
+  await logAgentEvent(id, "agent_operation_recovered", {
+    by: (req as any).authUser?.username ?? null,
+    priorOperation: oldOperationId.slice(0, 8),
+  }, req);
+  res.json({ ok: true, recovered: true, message: recoveryMessage });
+});
+
 /** Persist the TOFU host-key pin after a successful script run. */
 async function pinHostKey(inst: typeof agentInstancesTable.$inferSelect, fp: string): Promise<void> {
   if (!inst.sshHostKeyFp && fp) {
@@ -1771,6 +2229,628 @@ async function pinHostKey(inst: typeof agentInstancesTable.$inferSelect, fp: str
     (inst as any).sshHostKeyFp = fp; // later steps in the same pipeline verify strictly
   }
 }
+
+// ── Optional automatic main-domain setup (Cloudflare + firewall + Caddy) ───
+
+type AutoDomainPortProbe = {
+  port: 80 | 443;
+  state: "open" | "refused" | "timeout";
+  ms: number;
+};
+
+type AutoDomainServerPreview = {
+  host: string;
+  originIp: string;
+  sshAuthenticated: boolean;
+  firewall: "ufw" | "firewalld" | "none";
+  activeServices: string[];
+  caddyManaged: boolean;
+  conflicts: string[];
+  ports: AutoDomainPortProbe[];
+};
+
+type AutoDomainConfirmationPayload = {
+  v: 1;
+  agentId: number;
+  domain: string;
+  originIp: string;
+  zoneId: string;
+  zoneName: string;
+  action: CloudflareARecordPlan["action"];
+  existingRecordId: string | null;
+  existingContent: string | null;
+  desiredProxied: boolean;
+  exp: number;
+};
+
+function mintAutoDomainConfirmation(payload: Omit<AutoDomainConfirmationPayload, "v" | "exp">): string {
+  const body = Buffer.from(JSON.stringify({
+    v: 1,
+    ...payload,
+    exp: Date.now() + 15 * 60_000,
+  } satisfies AutoDomainConfirmationPayload)).toString("base64url");
+  return `${body}.${hmacSign(`auto-domain:${body}`)}`;
+}
+
+function verifyAutoDomainConfirmation(raw: unknown): AutoDomainConfirmationPayload {
+  if (typeof raw !== "string" || raw.length < 40 || raw.length > 3000) {
+    throw Object.assign(new Error("أعد معاينة خطة الدومين ثم أكدها"), { httpStatus: 400 });
+  }
+  const [body, signature, extra] = raw.split(".");
+  if (!body || !signature || extra) {
+    throw Object.assign(new Error("تأكيد خطة الدومين غير صالح"), { httpStatus: 400 });
+  }
+  const expected = hmacSign(`auto-domain:${body}`);
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    throw Object.assign(new Error("تأكيد خطة الدومين غير صالح"), { httpStatus: 400 });
+  }
+  let payload: AutoDomainConfirmationPayload;
+  try { payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")); }
+  catch { throw Object.assign(new Error("تأكيد خطة الدومين غير صالح"), { httpStatus: 400 }); }
+  if (payload.v !== 1 || payload.exp < Date.now()) {
+    throw Object.assign(new Error("انتهت صلاحية المعاينة — أعد الفحص قبل التنفيذ"), { httpStatus: 409 });
+  }
+  return payload;
+}
+
+function assertAutoDomainPlanConfirmed(
+  inst: typeof agentInstancesTable.$inferSelect,
+  payload: AutoDomainConfirmationPayload,
+  plan: CloudflareARecordPlan,
+): void {
+  const same = payload.agentId === inst.id
+    && payload.domain === inst.domain
+    && payload.originIp === plan.originIp
+    && payload.zoneId === plan.zoneId
+    && payload.zoneName === plan.zoneName
+    && payload.action === plan.action
+    && payload.existingRecordId === plan.existingRecordId
+    && payload.existingContent === plan.existingContent
+    && payload.desiredProxied === plan.desiredProxied;
+  if (!same) {
+    throw Object.assign(new Error("تغيرت حالة الدومين أو السيرفر بعد المعاينة — أعد الفحص والتأكيد"), { httpStatus: 409 });
+  }
+}
+
+async function resolveAutoDomainOriginIp(host: string | null): Promise<string> {
+  if (!host) throw new Error("أدخل Host / IP لسيرفر الوكيل أولًا");
+  await assertProbeTargetAllowed(host);
+  const candidates = net.isIP(host)
+    ? [{ address: host, family: net.isIP(host) }]
+    : await dnsLookup(host, { all: true });
+  for (const row of candidates) {
+    if (row.family !== 4) continue;
+    try { validatePublicIpv4(row.address); return row.address; }
+    catch { /* try the next public IPv4 */ }
+  }
+  throw new Error("مضيف SSH لا يملك عنوان IPv4 عامًا صالحًا لسجل Cloudflare A");
+}
+
+function probeAutoDomainPort(host: string, port: 80 | 443, timeoutMs = 6000): Promise<AutoDomainPortProbe> {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const socket = net.connect({ host, port, timeout: timeoutMs });
+    let done = false;
+    const finish = (state: AutoDomainPortProbe["state"]) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve({ port, state, ms: Date.now() - started });
+    };
+    socket.on("connect", () => finish("open"));
+    socket.on("timeout", () => finish("timeout"));
+    socket.on("error", (e: any) => finish(e?.code === "ECONNREFUSED" ? "refused" : "timeout"));
+  });
+}
+
+async function inspectAutoDomainServer(
+  inst: typeof agentInstancesTable.$inferSelect,
+  originIp: string,
+): Promise<AutoDomainServerPreview> {
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
+    throw new Error("أكمل بيانات SSH وكلمة المرور/المفتاح قبل الإعداد التلقائي");
+  }
+  assertSafeDomain(inst.domain);
+  const script = `set -e
+ACTIVE=""
+for svc in caddy nginx apache2 httpd lighttpd; do
+  if systemctl is-active --quiet "$svc" 2>/dev/null; then ACTIVE="\${ACTIVE}\${ACTIVE:+,}$svc"; fi
+done
+CADDY_MANAGED=0
+if echo ",$ACTIVE," | grep -q ',caddy,' && [ -f /opt/zacod/config.json ] && grep -Fq '"domain": "${inst.domain}"' /opt/zacod/config.json; then CADDY_MANAGED=1; fi
+FIREWALL=none
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then FIREWALL=ufw
+elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state 2>/dev/null | grep -q running; then FIREWALL=firewalld; fi
+echo "ZACOD_PREFLIGHT_OK"
+echo "ACTIVE=$ACTIVE"
+echo "CADDY_MANAGED=$CADDY_MANAGED"
+echo "FIREWALL=$FIREWALL"`;
+  const [ssh, port80, port443] = await Promise.all([
+    sshRunScript(inst, script, { timeoutMs: 35_000 }),
+    probeAutoDomainPort(originIp, 80),
+    probeAutoDomainPort(originIp, 443),
+  ]);
+  if (ssh.code !== 0 || !ssh.out.includes("ZACOD_PREFLIGHT_OK")) {
+    throw new Error(`تعذّر فحص خدمات السيرفر: ${ssh.out.slice(-500)}`);
+  }
+  await pinHostKey(inst, ssh.hostKeyFp);
+  const activeServices = (ssh.out.match(/^ACTIVE=(.*)$/m)?.[1] ?? "").split(",").map(s => s.trim()).filter(Boolean);
+  const caddyManaged = (ssh.out.match(/^CADDY_MANAGED=(.*)$/m)?.[1] ?? "") === "1";
+  const firewallRaw = ssh.out.match(/^FIREWALL=(.*)$/m)?.[1];
+  const firewall: AutoDomainServerPreview["firewall"] =
+    firewallRaw === "ufw" ? "ufw" : firewallRaw === "firewalld" ? "firewalld" : "none";
+  const conflicts: string[] = [];
+  for (const service of activeServices) {
+    if (service !== "caddy") conflicts.push(`الخدمة ${service} تعمل على بوابة الويب ولن يتم إيقافها تلقائيًا`);
+  }
+  if (activeServices.includes("caddy") && !caddyManaged) {
+    conflicts.push("خدمة Caddy الحالية غير مُدارة بواسطة هذا الوكيل ولن يتم استبدال إعدادها");
+  }
+  return {
+    host: inst.sshHost,
+    originIp,
+    sshAuthenticated: true,
+    firewall,
+    activeServices,
+    caddyManaged,
+    conflicts,
+    ports: [port80, port443],
+  };
+}
+
+async function buildAutoDomainPreview(inst: typeof agentInstancesTable.$inferSelect) {
+  if (!inst.autoDomainSetup) throw Object.assign(new Error("فعّل خيار الإعداد التلقائي للدومين واحفظ الوكيل أولًا"), { httpStatus: 400 });
+  if (!isCloudflareDnsConfigured()) {
+    throw Object.assign(new Error("Cloudflare غير متصل بالمنصة — اربط الحساب أو أضف CLOUDFLARE_API_TOKEN في Secrets ثم أعد الفحص"), {
+      httpStatus: 409,
+      code: "CLOUDFLARE_NOT_CONFIGURED",
+    });
+  }
+  const originIp = await resolveAutoDomainOriginIp(inst.sshHost);
+  const [plan, server] = await Promise.all([
+    planCloudflareARecord({
+      domain: inst.domain,
+      originIp,
+      desiredProxied: inst.autoDomainProxyEnabled,
+    }),
+    inspectAutoDomainServer(inst, originIp),
+  ]);
+  const warnings: string[] = [];
+  if (server.ports.some(p => p.state !== "open")) warnings.push("سيتم فتح 80 و443 في UFW/firewalld المحلي عند الحاجة ثم إعادة فحصهما من الخارج");
+  if (server.firewall === "none" && server.ports.some(p => p.state === "timeout")) {
+    warnings.push("قد يكون الحجب من جدار مزود الاستضافة أو Security Group؛ لا يمكن فتحه عبر SSH");
+  }
+  if (inst.autoDomainProxyEnabled) warnings.push("سيبقى Cloudflare Proxy متوقفًا حتى نجاح SSL على السيرفر، ثم يُفعّل تلقائيًا");
+  const canUsePlan = plan.action !== "conflict" && server.conflicts.length === 0;
+  const confirmationToken = canUsePlan
+    ? mintAutoDomainConfirmation({
+        agentId: inst.id,
+        domain: inst.domain,
+        originIp,
+        zoneId: plan.zoneId,
+        zoneName: plan.zoneName,
+        action: plan.action,
+        existingRecordId: plan.existingRecordId,
+        existingContent: plan.existingContent,
+        desiredProxied: plan.desiredProxied,
+      })
+    : null;
+  return {
+    ok: true,
+    confirmationToken,
+    canApplyNow: canUsePlan && inst.deployStatus === "ok",
+    canUseWithProvision: canUsePlan,
+    checkedAt: new Date().toISOString(),
+    cloudflare: {
+      connected: true,
+      zoneName: plan.zoneName,
+      action: plan.action,
+      existingType: plan.existingType,
+      existingContent: plan.existingContent,
+      existingProxied: plan.existingProxied,
+      desiredContent: plan.originIp,
+      desiredProxied: plan.desiredProxied,
+      conflict: plan.action === "conflict" ? plan.explanation : null,
+    },
+    server,
+    warnings,
+  };
+}
+
+async function replanConfirmedAutoDomain(
+  inst: typeof agentInstancesTable.$inferSelect,
+  rawToken: unknown,
+): Promise<CloudflareARecordPlan> {
+  const payload = verifyAutoDomainConfirmation(rawToken);
+  const originIp = await resolveAutoDomainOriginIp(inst.sshHost);
+  const plan = await planCloudflareARecord({
+    domain: inst.domain,
+    originIp,
+    desiredProxied: inst.autoDomainProxyEnabled,
+  });
+  assertAutoDomainPlanConfirmed(inst, payload, plan);
+  if (plan.action === "conflict") throw Object.assign(new Error("يوجد تعارض في سجل DNS — أعد المعاينة"), { httpStatus: 409 });
+  return plan;
+}
+
+async function updateAutoDomainLease(
+  id: number,
+  operationId: string,
+  patch: Partial<typeof agentInstancesTable.$inferInsert>,
+): Promise<void> {
+  const rows = await db.update(agentInstancesTable).set({ ...patch, updatedAt: new Date() })
+    .where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    ))
+    .returning({ id: agentInstancesTable.id });
+  if (!rows.length) throw new Error("تم إلغاء مهمة الدومين أو استبدالها بمهمة أحدث");
+}
+
+async function openAutoDomainWebPorts(
+  inst: typeof agentInstancesTable.$inferSelect,
+  operationId: string,
+): Promise<string> {
+  const script = `set -e
+FW=none
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
+  ufw allow 80/tcp comment 'Zacod HTTP/ACME' >/dev/null
+  ufw allow 443/tcp comment 'Zacod HTTPS' >/dev/null
+  FW=ufw
+elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state 2>/dev/null | grep -q running; then
+  firewall-cmd --permanent --add-service=http >/dev/null
+  firewall-cmd --permanent --add-service=https >/dev/null
+  firewall-cmd --reload >/dev/null
+  FW=firewalld
+fi
+echo "ZACOD_PORTS_READY firewall=$FW"`;
+  const result = await sshRunOperationScript(inst, operationId, script, { timeoutMs: 60_000 });
+  if (result.code !== 0 || !result.out.includes("ZACOD_PORTS_READY")) {
+    throw new Error(`فشل إعداد منافذ الويب محليًا: ${result.out.slice(-500)}`);
+  }
+  await pinHostKey(inst, result.hostKeyFp);
+  return result.out.trim().slice(-500);
+}
+
+function autoDomainWaitConfig(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= 1000 ? Math.floor(n) : fallback;
+}
+
+async function waitForAutoDomainDns(domain: string, originIp: string): Promise<void> {
+  const timeoutMs = autoDomainWaitConfig("AUTO_DOMAIN_DNS_WAIT_MS", 180_000);
+  const intervalMs = autoDomainWaitConfig("AUTO_DOMAIN_RETRY_MS", 5_000);
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    try {
+      const ips = (await dnsLookup(domain, { all: true })).map(x => x.address);
+      last = ips.join(", ");
+      if (ips.includes(originIp)) return;
+    } catch { last = "DNS غير متاح"; }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`لم ينتشر سجل DNS إلى ${originIp} خلال المهلة (الحالي: ${last || "لا يوجد"})`);
+}
+
+function probeAutoDomainHttps(domain: string, originIp: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest({
+      host: domain,
+      servername: domain,
+      port: 443,
+      path: "/",
+      method: "GET",
+      timeout: 10_000,
+      lookup: ((_host: string, opts: any, cb: any) => {
+        if (typeof opts === "function") { opts(null, originIp, 4); return; }
+        if (opts?.all) cb(null, [{ address: originIp, family: 4 }]);
+        else cb(null, originIp, 4);
+      }) as any,
+    }, response => {
+      const status = response.statusCode ?? 0;
+      response.resume();
+      resolve(status);
+    });
+    request.on("timeout", () => request.destroy(new Error("HTTPS timeout")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+async function waitForAutoDomainHttps(domain: string, originIp: string): Promise<number> {
+  const timeoutMs = autoDomainWaitConfig("AUTO_DOMAIN_HTTPS_WAIT_MS", 180_000);
+  const intervalMs = autoDomainWaitConfig("AUTO_DOMAIN_RETRY_MS", 5_000);
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try { return await probeAutoDomainHttps(domain, originIp); }
+    catch (e: any) { lastError = String(e?.message ?? e).slice(0, 180); }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`تعذّر التحقق من HTTPS والشهادة عبر 443 (${lastError || "انتهت المهلة"})`);
+}
+
+async function prepareAutoDomainInfrastructure(
+  inst: typeof agentInstancesTable.$inferSelect,
+  plan: CloudflareARecordPlan,
+  operationId: string,
+  log: string[],
+): Promise<AppliedRecord> {
+  await updateAutoDomainLease(inst.id, operationId, {
+    autoDomainStatus: "configuring",
+    autoDomainLastError: null,
+    autoDomainOriginIp: plan.originIp,
+    autoDomainZoneName: plan.zoneName,
+    autoDomainZoneId: plan.zoneId,
+  });
+  const server = await inspectAutoDomainServer(inst, plan.originIp);
+  if (server.conflicts.length) throw new Error(server.conflicts.join(" — "));
+  log.push(`Cloudflare: ${plan.action} ${inst.domain} → ${plan.originIp} (proxy مؤقتًا متوقف)`);
+  const applied = await runFencedProviderMutation(
+    inst.id,
+    operationId,
+    () => applyCloudflareARecord(plan, { forceProxied: false }),
+  );
+  await updateAutoDomainLease(inst.id, operationId, {
+    autoDomainRecordId: applied.id,
+    autoDomainStatus: "configuring",
+  });
+  log.push(`DNS محفوظ بأمان داخل النطاق ${plan.zoneName}.`);
+  log.push(await openAutoDomainWebPorts(inst, operationId));
+  return applied;
+}
+
+async function verifyPreparedAutoDomain(
+  inst: typeof agentInstancesTable.$inferSelect,
+  plan: CloudflareARecordPlan,
+  applied: AppliedRecord,
+  operationId: string,
+  log: string[],
+): Promise<void> {
+  await updateAutoDomainLease(inst.id, operationId, { autoDomainStatus: "waiting_dns" });
+  await waitForAutoDomainDns(inst.domain, plan.originIp);
+  log.push(`DNS يشير إلى ${plan.originIp}.`);
+  await updateAutoDomainLease(inst.id, operationId, { autoDomainStatus: "verifying" });
+  const httpStatus = await waitForAutoDomainHttps(inst.domain, plan.originIp);
+  log.push(`HTTPS صالح ويستجيب بالحالة ${httpStatus}.`);
+  if (plan.desiredProxied) {
+    await runFencedProviderMutation(inst.id, operationId, () => updateCloudflareProxy({
+        zoneId: plan.zoneId,
+        recordId: applied.id,
+        domain: inst.domain,
+        originIp: plan.originIp,
+        proxied: true,
+      }));
+    log.push("تم تفعيل Cloudflare Proxy بعد نجاح SSL.");
+  }
+  await updateAutoDomainLease(inst.id, operationId, {
+    autoDomainStatus: "ready",
+    autoDomainLastSuccessAt: new Date(),
+    autoDomainLastCheckAt: new Date(),
+    autoDomainLastError: null,
+    autoDomainLog: log.join("\n").slice(-8000),
+  });
+}
+
+async function failPreparedAutoDomain(id: number, operationId: string, error: unknown, log: string[]): Promise<void> {
+  const message = String((error as any)?.message ?? error).slice(0, 500);
+  log.push(`✖ ${message}`);
+  await updateAutoDomainLease(id, operationId, {
+    autoDomainStatus: "error",
+    autoDomainLastCheckAt: new Date(),
+    autoDomainLastError: message,
+    autoDomainLog: log.join("\n").slice(-8000),
+  }).catch(() => {});
+}
+
+async function runStandaloneAutoDomain(
+  inst: typeof agentInstancesTable.$inferSelect,
+  plan: CloudflareARecordPlan,
+  operationId: string,
+  previousDeployStatus: string,
+  stopHeartbeat: () => void,
+): Promise<void> {
+  const log = ["■ بدء إعداد الدومين التلقائي"];
+  try {
+    const applied = await prepareAutoDomainInfrastructure(inst, plan, operationId, log);
+    const { installScript } = await buildSetupKit(inst, { safeWebServerMode: true });
+    const installed = await sshRunOperationScript(inst, operationId, installScript, { timeoutMs: 300_000 });
+    log.push(installed.out.slice(-2500));
+    if (installed.code !== 0 || !installed.out.includes("ZACOD_BOOTSTRAP_DONE")) {
+      throw new Error("فشل إعداد Caddy — راجع سجل الدومين");
+    }
+    await pinHostKey(inst, installed.hostKeyFp);
+    await verifyPreparedAutoDomain(inst, plan, applied, operationId, log);
+    await db.update(agentInstancesTable).set({
+      deployStatus: previousDeployStatus,
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      autoDomainLeaseAt: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, inst.id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+    ));
+    await logAgentEvent(inst.id, "auto_domain_ready", {
+      domain: inst.domain,
+      zone: plan.zoneName,
+      originIp: plan.originIp,
+      proxied: plan.desiredProxied,
+    });
+  } catch (error) {
+    await failPreparedAutoDomain(inst.id, operationId, error, log);
+    await db.update(agentInstancesTable).set({
+      deployStatus: previousDeployStatus,
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      autoDomainLeaseAt: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, inst.id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+    )).catch(() => {});
+    await logAgentEvent(inst.id, "auto_domain_failed", {
+      domain: inst.domain,
+      error: String((error as any)?.message ?? error).slice(0, 300),
+    });
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+// Read-only preview. It may persist safe diagnostics, but never mutates
+// Cloudflare, firewall rules, Caddy, or any unrelated DNS record.
+router.post("/:id/auto-domain/preview", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.deployStatus === "deploying") {
+    res.status(409).json({ error: "انتظر انتهاء العملية الجارية قبل معاينة الدومين" });
+    return;
+  }
+  try {
+    const checking = await db.update(agentInstancesTable).set({
+      autoDomainStatus: "checking",
+      autoDomainLastError: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      ne(agentInstancesTable.deployStatus, "deploying"),
+    )).returning({ id: agentInstancesTable.id });
+    if (!checking.length) {
+      res.status(409).json({ error: "بدأت عملية أخرى قبل معاينة الدومين" });
+      return;
+    }
+    const preview = await buildAutoDomainPreview(inst);
+    const saved = await db.update(agentInstancesTable).set({
+      autoDomainStatus: preview.confirmationToken ? "pending" : "error",
+      autoDomainLastCheckAt: new Date(),
+      autoDomainLastError: preview.confirmationToken
+        ? null
+        : (preview.cloudflare.conflict || preview.server.conflicts.join(" — ") || "لا يمكن تنفيذ الخطة"),
+      autoDomainZoneName: preview.cloudflare.zoneName,
+      autoDomainOriginIp: preview.server.originIp,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      ne(agentInstancesTable.deployStatus, "deploying"),
+    )).returning({ id: agentInstancesTable.id });
+    if (!saved.length) {
+      res.status(409).json({ error: "بدأت عملية أخرى أثناء المعاينة؛ أعد الفحص بعد انتهائها" });
+      return;
+    }
+    await logAgentEvent(id, "auto_domain_previewed", {
+      by: (req as any).authUser?.username ?? null,
+      zone: preview.cloudflare.zoneName,
+      action: preview.cloudflare.action,
+      originIp: preview.server.originIp,
+      canApply: !!preview.confirmationToken,
+    }, req);
+    res.json(preview);
+  } catch (e: any) {
+    const message = e instanceof CfDnsError && e.code === "CF_TOKEN_MISSING"
+      ? "Cloudflare غير متصل بالمنصة — أضف الاتصال الآمن ثم أعد الفحص"
+      : String(e?.message ?? e).slice(0, 500);
+    await db.update(agentInstancesTable).set({
+      autoDomainStatus: "error",
+      autoDomainLastCheckAt: new Date(),
+      autoDomainLastError: message,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      ne(agentInstancesTable.deployStatus, "deploying"),
+    )).catch(() => {});
+    res.status(Number(e?.httpStatus) || (e instanceof CfDnsError ? 409 : 502)).json({
+      error: message,
+      code: e?.code ?? null,
+    });
+  }
+});
+
+// Explicit action for an already-installed agent. New agents pass the same
+// signed preview token to /provision so both jobs share one deploy lease.
+router.post("/:id/auto-domain/apply", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!inst.autoDomainSetup) { res.status(400).json({ error: "الإعداد التلقائي غير مفعّل لهذا الوكيل" }); return; }
+  if (inst.deployStatus !== "ok") {
+    res.status(409).json({ error: "الوكيل غير مُسطّب بعد — استخدم «تسطيب كامل» وأكد خطة الدومين داخل نافذة التسطيب" });
+    return;
+  }
+  // Reject malformed/expired confirmation before taking the shared lease.
+  try { verifyAutoDomainConfirmation(req.body?.confirmationToken); }
+  catch (e: any) {
+    res.status(Number(e?.httpStatus) || 409).json({ error: String(e?.message ?? e).slice(0, 500), code: e?.code ?? null });
+    return;
+  }
+  const leaseAt = new Date();
+  const operationId = randomBytes(16).toString("hex");
+  const claimed = await db.update(agentInstancesTable).set({
+    deployStatus: "deploying",
+    deployLeaseId: operationId,
+    deployOperationPhase: "preflight",
+    deployProviderMutationUntil: null,
+    autoDomainStatus: "configuring",
+    autoDomainLeaseAt: leaseAt,
+    autoDomainLastError: null,
+    updatedAt: leaseAt,
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    eq(agentInstancesTable.deployStatus, "ok"),
+  )).returning({ id: agentInstancesTable.id });
+  if (!claimed.length) { res.status(409).json({ error: "يوجد نشر/تسطيب أو إعداد دومين جارٍ بالفعل" }); return; }
+  const stopHeartbeat = startAgentOperationHeartbeat(id, operationId);
+  let plan: CloudflareARecordPlan;
+  let fresh: typeof agentInstancesTable.$inferSelect;
+  try {
+    const [claimedRow] = await db.select().from(agentInstancesTable).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).limit(1);
+    if (!claimedRow) throw new Error("فُقد قفل عملية إعداد الدومين");
+    fresh = claimedRow;
+    // Final DNS/server re-plan happens only after the target is fenced.
+    plan = await replanConfirmedAutoDomain(fresh, req.body?.confirmationToken);
+    const server = await inspectAutoDomainServer(fresh, plan.originIp);
+    if (server.conflicts.length) throw Object.assign(new Error(server.conflicts.join(" — ")), { httpStatus: 409 });
+    await initializeRemoteOperationFence(fresh, operationId);
+  } catch (e: any) {
+    await db.update(agentInstancesTable).set({
+      deployStatus: "ok",
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      autoDomainLeaseAt: null,
+      autoDomainStatus: "error",
+      autoDomainLastCheckAt: new Date(),
+      autoDomainLastError: String(e?.message ?? e).slice(0, 500),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
+    stopHeartbeat();
+    res.status(Number(e?.httpStatus) || 409).json({ error: String(e?.message ?? e).slice(0, 500), code: e?.code ?? null });
+    return;
+  }
+  await logAgentEvent(id, "auto_domain_started", {
+    by: (req as any).authUser?.username ?? null,
+    zone: plan.zoneName,
+    action: plan.action,
+    originIp: plan.originIp,
+  }, req).catch(() => {});
+  res.json({ ok: true, started: true });
+  void runStandaloneAutoDomain(fresh, plan, operationId, inst.deployStatus, stopHeartbeat);
+});
 
 // POST /:id/deploy — run the bootstrap script on the agent server over SSH.
 router.post("/:id/deploy", async (req, res) => {
@@ -1785,35 +2865,64 @@ router.post("/:id/deploy", async (req, res) => {
 
   const secret = decryptSecret(inst.sshSecretEnc);
   if (!secret) { res.status(400).json({ error: "تعذّر فك تشفير بيانات الدخول" }); return; }
-  let installScript: string;
-  try { ({ installScript } = await buildSetupKit(inst)); }
-  catch (e: any) { res.status(400).json({ error: String(e?.message ?? e).slice(0, 200) }); return; }
-
-  // Atomic claim: only ONE request may flip status → deploying. A stale
-  // "deploying" older than 10 minutes is treated as abandoned and reclaimable.
-  const staleBefore = new Date(Date.now() - 10 * 60_000);
+  // Atomic claim with a unique fencing token. Running jobs are never stolen
+  // merely because their wall-clock age crossed an arbitrary threshold.
+  const operationId = randomBytes(16).toString("hex");
   const claimed = await db.update(agentInstancesTable)
-    .set({ deployStatus: "deploying", updatedAt: new Date() })
+    .set({
+      deployStatus: "deploying",
+      deployLeaseId: operationId,
+      deployOperationPhase: "preflight",
+      deployProviderMutationUntil: null,
+      updatedAt: new Date(),
+    })
     .where(and(
       eq(agentInstancesTable.id, id),
-      or(ne(agentInstancesTable.deployStatus, "deploying"), lt(agentInstancesTable.updatedAt, staleBefore)),
+      ne(agentInstancesTable.deployStatus, "deploying"),
     )).returning({ id: agentInstancesTable.id });
   if (!claimed.length) { res.status(409).json({ error: "يوجد نشر جارٍ بالفعل" }); return; }
+  const stopHeartbeat = startAgentOperationHeartbeat(id, operationId);
+
+  let installScript: string;
+  try { ({ installScript } = await buildSetupKit(inst)); }
+  catch (e: any) {
+    await db.update(agentInstancesTable).set({
+      deployStatus: inst.deployStatus,
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
+    stopHeartbeat();
+    res.status(400).json({ error: String(e?.message ?? e).slice(0, 200) });
+    return;
+  }
 
   const log: string[] = [];
   const finish = async (ok: boolean, tail: string) => {
     log.push(tail);
     await db.update(agentInstancesTable).set({
       deployStatus: ok ? "ok" : "error",
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
       deployLog: log.join("\n").slice(-8000),
       lastDeployAt: new Date(),
       sshStatus: ok ? "ok" : inst.sshStatus,
       updatedAt: new Date(),
-    }).where(eq(agentInstancesTable.id, id)).catch(() => {});
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
   };
 
   try {
-    const result = await sshRunScript(inst, installScript);
+    await initializeRemoteOperationFence(inst, operationId);
+    const result = await sshRunOperationScript(inst, operationId, installScript);
     log.push(`[ssh] connected to ${inst.sshHost}:${inst.sshPort ?? 22} as ${inst.sshUser} (hostkey ${result.hostKeyFp.slice(0, 16)}…)`);
     const ok = result.code === 0 && result.out.includes("ZACOD_BOOTSTRAP_DONE");
     if (ok) await pinHostKey(inst, result.hostKeyFp);
@@ -1823,6 +2932,8 @@ router.post("/:id/deploy", async (req, res) => {
   } catch (e: any) {
     await finish(false, `[error] ${String(e?.message ?? e).slice(0, 400)}`);
     res.status(502).json({ error: "فشل النشر", detail: String(e?.message ?? e).slice(0, 400) });
+  } finally {
+    stopHeartbeat();
   }
 });
 
@@ -2170,32 +3281,79 @@ type ProvisionOpts = {
   encryptBundle: boolean;
 };
 
-async function runProvision(instIn: typeof agentInstancesTable.$inferSelect, opts: ProvisionOpts = { variant: "full", encryptBundle: false }): Promise<void> {
+type ProvisionAutoDomainContext = {
+  plan: CloudflareARecordPlan;
+  operationId: string;
+};
+
+async function runProvision(
+  instIn: typeof agentInstancesTable.$inferSelect,
+  opts: ProvisionOpts = { variant: "full", encryptBundle: false },
+  operationId: string,
+  stopHeartbeat: () => void,
+  autoDomain?: ProvisionAutoDomainContext,
+): Promise<void> {
   let inst = instIn;
   const log: string[] = [];
+  const autoDomainLog: string[] = [];
+  let autoDomainApplied: AppliedRecord | null = null;
   const save = async (status?: "ok" | "error") => {
-    await db.update(agentInstancesTable).set({
+    const rows = await db.update(agentInstancesTable).set({
       deployLog: log.join("\n").slice(-8000),
-      ...(status ? { deployStatus: status, lastDeployAt: new Date(), sshStatus: status === "ok" ? "ok" : inst.sshStatus } : {}),
+      ...(status ? {
+        deployStatus: status,
+        deployLeaseId: null,
+        deployOperationPhase: null,
+        deployProviderMutationUntil: null,
+        autoDomainLeaseAt: null,
+        lastDeployAt: new Date(),
+        sshStatus: status === "ok" ? "ok" : inst.sshStatus,
+      } : {}),
       updatedAt: new Date(),
-    }).where(eq(agentInstancesTable.id, inst.id)).catch(() => {});
+    }).where(and(
+      eq(agentInstancesTable.id, inst.id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).returning({ id: agentInstancesTable.id }).catch(() => []);
+    return rows.length > 0;
   };
-  const step = async (title: string) => { log.push(`\n■ ${title}`); await save(); };
+  const step = async (title: string) => {
+    log.push(`\n■ ${title}`);
+    if (!await save()) throw new Error("فُقد قفل التسطيب؛ أُوقفت المهمة القديمة");
+  };
   const runSsh = async (script: string, marker: string, timeoutMs: number) => {
-    const r = await sshRunScript(inst, script, { timeoutMs });
+    const r = await sshRunOperationScript(inst, operationId, script, { timeoutMs });
     log.push(r.out.slice(-3000));
     if (r.code !== 0 || !r.out.includes(marker)) throw new Error("فشلت الخطوة — راجع السجل أعلاه");
     await pinHostKey(inst, r.hostKeyFp);
   };
   const reload = async () => {
-    const [row] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, inst.id)).limit(1);
-    if (row) inst = row;
+    const [row] = await db.select().from(agentInstancesTable).where(and(
+      eq(agentInstancesTable.id, inst.id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).limit(1);
+    if (!row) throw new Error("فُقد قفل التسطيب؛ أُوقفت المهمة القديمة");
+    inst = row;
   };
 
   try {
     // Shell-safety gate: everything interpolated into root scripts.
     assertShellSafeHostLike(inst.sshHost ?? "", "مضيف SSH");
     assertShellSafeHostLike(inst.domain ?? "", "الدومين");
+    if (autoDomain) {
+      log.push("\n■ إعداد بنية الدومين التلقائية");
+      autoDomainLog.push("■ بدء إعداد الدومين مع التسطيب الكامل");
+      if (!await save()) throw new Error("فُقد قفل التسطيب؛ أُوقفت المهمة القديمة");
+      autoDomainApplied = await prepareAutoDomainInfrastructure(
+        inst,
+        autoDomain.plan,
+        autoDomain.operationId,
+        autoDomainLog,
+      );
+      log.push(...autoDomainLog.slice(-4));
+      if (!await save()) throw new Error("فُقد قفل التسطيب؛ أُوقفت المهمة القديمة");
+    }
     // 1) server check
     await step("1/6 فحص السيرفر");
     await runSsh(`set -e
@@ -2271,7 +3429,7 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
     // 3) gateway bootstrap (Caddy + heartbeat) — mode-aware Caddyfile
     await step("3/6 بوابة الدخول والنبض (Caddy)");
     await reload();
-    const { installScript } = await buildSetupKit(inst);
+    const { installScript } = await buildSetupKit(inst, { safeWebServerMode: !!autoDomain });
     await runSsh(installScript, "ZACOD_BOOTSTRAP_DONE", 300_000);
 
     // 3.5) استعادة نسخة قاعدة البيانات المرفوعة — يجب أن تسبق زرع السكيما
@@ -2346,6 +3504,16 @@ echo ZACOD_DB_RESTORED`, "ZACOD_DB_RESTORED", 600_000);
         60_000,
       );
       log.push("تمت مزامنة البصمة إلى config.json على السيرفر.");
+      if (autoDomain) {
+        // The first pre-fingerprint heartbeat can deliberately stop Caddy.
+        // Re-run it after syncing the trusted DB fingerprint, then restore the
+        // service before the final TLS verification.
+        await runSsh(
+          `/opt/zacod/heartbeat.sh || true; systemctl start caddy; systemctl is-active --quiet caddy && echo ZACOD_CADDY_READY`,
+          "ZACOD_CADDY_READY",
+          60_000,
+        );
+      }
     } catch (e: any) {
       await markInitDbFailed(inst.id, String(e?.message ?? e).slice(0, 500));
       throw e;
@@ -2487,13 +3655,42 @@ echo ZACOD_APP_DONE`, "ZACOD_APP_DONE", 600_000);
     await step("6/6 الفحص النهائي");
     await reload();
     await withAgentPool(inst.dbUrlEnc!, (pool) => pool.query("SELECT 1"));
+    if (autoDomain && autoDomainApplied) {
+      await verifyPreparedAutoDomain(
+        inst,
+        autoDomain.plan,
+        autoDomainApplied,
+        autoDomain.operationId,
+        autoDomainLog,
+      );
+      log.push("الدومين وSSL جاهزان تلقائيًا ✔");
+      await logAgentEvent(inst.id, "auto_domain_ready", {
+        domain: inst.domain,
+        zone: autoDomain.plan.zoneName,
+        originIp: autoDomain.plan.originIp,
+        proxied: autoDomain.plan.desiredProxied,
+        duringProvision: true,
+      });
+    }
     log.push("قاعدة البيانات تستجيب. اكتمل التسطيب بنجاح ✔");
-    log.push(`تذكير: وجّه دومين ${inst.domain} (سجل A) إلى IP السيرفر ليصدر Caddy شهادة SSL تلقائيًا.`);
+    if (!autoDomain) {
+      log.push(`تذكير: وجّه دومين ${inst.domain} (سجل A) إلى IP السيرفر ليصدر Caddy شهادة SSL تلقائيًا.`);
+    }
     await save("ok");
     await logAgentEvent(inst.id, "provisioned", { mode: inst.mode }, undefined as any);
   } catch (e: any) {
     log.push(`\n✖ فشل التسطيب: ${String(e?.message ?? e).slice(0, 400)}`);
+    if (autoDomain) {
+      await failPreparedAutoDomain(inst.id, autoDomain.operationId, e, autoDomainLog);
+      await logAgentEvent(inst.id, "auto_domain_failed", {
+        domain: inst.domain,
+        error: String(e?.message ?? e).slice(0, 300),
+        duringProvision: true,
+      });
+    }
     await save("error");
+  } finally {
+    stopHeartbeat();
   }
 }
 
@@ -2528,33 +3725,129 @@ router.post("/:id/provision", async (req, res) => {
   }
   try { await assertProbeTargetAllowed(inst.sshHost); }
   catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+  const useAutoDomain = inst.autoDomainSetup;
+  if (useAutoDomain) {
+    // Validate signature/expiry before claiming. The authoritative DNS/server
+    // re-plan is intentionally delayed until after the target is fenced.
+    try { verifyAutoDomainConfirmation(req.body?.autoDomainConfirmationToken); }
+    catch (e: any) {
+      res.status(Number(e?.httpStatus) || 409).json({
+        error: String(e?.message ?? e).slice(0, 500),
+        code: e?.code ?? null,
+      });
+      return;
+    }
+  }
   // Claim FIRST (atomic — only one provision/deploy runs), then mint the
   // license inside the lease so a concurrent request can't overwrite the key
   // the pipeline is using.
-  const staleBefore = new Date(Date.now() - 30 * 60_000);
+  const provisionStartedAt = new Date();
+  const operationId = randomBytes(16).toString("hex");
   const claimed = await db.update(agentInstancesTable)
-    .set({ deployStatus: "deploying", deployLog: "بدء التسطيب الكامل…", updatedAt: new Date() })
+    .set({
+      deployStatus: "deploying",
+      deployLeaseId: operationId,
+      deployOperationPhase: "preflight",
+      deployProviderMutationUntil: null,
+      deployLog: "بدء التسطيب الكامل…",
+      ...(useAutoDomain ? {
+        autoDomainStatus: "configuring",
+        autoDomainLeaseAt: provisionStartedAt,
+        autoDomainLastError: null,
+      } : {}),
+      updatedAt: provisionStartedAt,
+    })
     .where(and(
       eq(agentInstancesTable.id, id),
-      or(ne(agentInstancesTable.deployStatus, "deploying"), lt(agentInstancesTable.updatedAt, staleBefore)),
+      ne(agentInstancesTable.deployStatus, "deploying"),
     )).returning({ id: agentInstancesTable.id });
   if (!claimed.length) { res.status(409).json({ error: "يوجد نشر/تسطيب جارٍ بالفعل" }); return; }
+  const stopHeartbeat = startAgentOperationHeartbeat(id, operationId);
+  const releaseClaim = async (error: unknown) => {
+    const message = String((error as any)?.message ?? error).slice(0, 500);
+    await db.update(agentInstancesTable).set({
+      deployStatus: inst.deployStatus,
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      autoDomainLeaseAt: null,
+      ...(useAutoDomain ? {
+        autoDomainStatus: "error",
+        autoDomainLastCheckAt: new Date(),
+        autoDomainLastError: message,
+      } : {}),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
+    stopHeartbeat();
+  };
   // Auto-mint a license if missing — zero-step policy (post-claim).
   if (!inst.licenseKey) {
     inst.licenseKey = mintLicenseKey(inst.installationId, inst.domain);
-    await db.update(agentInstancesTable).set({ licenseKey: inst.licenseKey, updatedAt: new Date() }).where(eq(agentInstancesTable.id, id));
+    const licensed = await db.update(agentInstancesTable)
+      .set({ licenseKey: inst.licenseKey, updatedAt: new Date() })
+      .where(and(
+        eq(agentInstancesTable.id, id),
+        eq(agentInstancesTable.deployLeaseId, operationId),
+      )).returning({ id: agentInstancesTable.id });
+    if (!licensed.length) {
+      await releaseClaim("فُقد قفل التسطيب قبل إصدار الترخيص");
+      res.status(409).json({ error: "فُقد قفل التسطيب قبل إصدار الترخيص" });
+      return;
+    }
   }
   // Re-read the claimed row so the pipeline works off fresh state.
-  const [fresh] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  const [fresh] = await db.select().from(agentInstancesTable).where(and(
+    eq(agentInstancesTable.id, id),
+    eq(agentInstancesTable.deployLeaseId, operationId),
+  )).limit(1);
+  if (!fresh) {
+    await releaseClaim("فُقد قفل التسطيب قبل بدء المهمة");
+    res.status(409).json({ error: "فُقد قفل التسطيب قبل بدء المهمة" });
+    return;
+  }
+  let autoDomainPlan: CloudflareARecordPlan | undefined;
+  if (useAutoDomain) {
+    try {
+      autoDomainPlan = await replanConfirmedAutoDomain(fresh, req.body?.autoDomainConfirmationToken);
+      const recheckedServer = await inspectAutoDomainServer(fresh, autoDomainPlan.originIp);
+      if (recheckedServer.conflicts.length) {
+        throw Object.assign(new Error(recheckedServer.conflicts.join(" — ")), { httpStatus: 409 });
+      }
+    } catch (e: any) {
+      await releaseClaim(e);
+      res.status(Number(e?.httpStatus) || 409).json({
+        error: String(e?.message ?? e).slice(0, 500),
+        code: e?.code ?? null,
+      });
+      return;
+    }
+  }
+  try {
+    await initializeRemoteOperationFence(fresh, operationId);
+  } catch (e: any) {
+    await releaseClaim(e);
+    res.status(409).json({ error: String(e?.message ?? e).slice(0, 500) });
+    return;
+  }
   await logAgentEvent(id, "provision_started", {
     by: (req as any).authUser?.username ?? null,
     mode: inst.mode,
     packageSource: inst.packageSource,
     variant,
     encryptBundle,
-  }, req);
+    automaticDomain: !!autoDomainPlan,
+  }, req).catch(() => {});
   res.json({ ok: true, started: true });
-  void runProvision(fresh ?? inst, { variant, encryptBundle });
+  void runProvision(
+    fresh,
+    { variant, encryptBundle },
+    operationId,
+    stopHeartbeat,
+    autoDomainPlan ? { plan: autoDomainPlan, operationId } : undefined,
+  );
 });
 
 // ── حزم التسطيب الخارجية (Backend / Frontend / Database Backup) ────────────

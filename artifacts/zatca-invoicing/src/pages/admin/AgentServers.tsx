@@ -73,7 +73,45 @@ type Agent = {
   deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
   saUsername: string | null; saEmail: string | null; saPasswordSet: boolean;
   externalPackage: PackageStatus;
-  notes: string | null; createdAt: string;
+  notes: string | null; createdAt: string; updatedAt: string;
+  autoDomainSetup: boolean; autoDomainProxyEnabled: boolean;
+  autoDomainStatus: "disabled" | "pending" | "checking" | "configuring" | "waiting_dns" | "verifying" | "ready" | "error";
+  autoDomainZoneName?: string; autoDomainOriginIp?: string;
+  autoDomainLastCheckAt?: string | null; autoDomainLastSuccessAt?: string | null;
+  autoDomainLastError?: string | null; autoDomainLog?: string | null;
+  cloudflareConnected: boolean;
+};
+
+type AutoDomainPreviewResp = {
+  ok: boolean;
+  confirmationToken: string | null;
+  canApplyNow: boolean;
+  canUseWithProvision: boolean;
+  checkedAt: string;
+  cloudflare: {
+    connected: boolean;
+    zoneName?: string;
+    action: "create" | "update" | "noop" | "conflict";
+    existingType?: string;
+    existingContent?: string;
+    existingProxied?: boolean;
+    desiredContent: string;
+    desiredProxied: boolean;
+    conflict?: string;
+  };
+  server: {
+    host: string;
+    originIp: string;
+    sshAuthenticated: boolean;
+    firewall: "ufw" | "firewalld" | "none";
+    activeServices: string[];
+    caddyManaged: boolean;
+    conflicts: string[];
+    ports: Array<{ port: 80 | 443; state: "open" | "refused" | "timeout"; ms: number }>;
+  };
+  warnings: string[];
+  error?: string;
+  code?: string;
 };
 
 type PackageKind = "backend" | "frontend" | "db";
@@ -123,6 +161,7 @@ const emptyForm = {
   dbUrl: "", sshHost: "", sshPort: "22", sshUser: "", sshSecret: "",
   brandName: "", brandLogoUrl: "", brandColor: "", notes: "",
   saUsername: "", saEmail: "", saPassword: "",
+  autoDomainSetup: false, autoDomainProxyEnabled: false,
 };
 
 function fmtDate(s: string | null | undefined) {
@@ -168,6 +207,15 @@ export default function AgentServers() {
   const [domainCheck, setDomainCheck] = useState<{ agent: Agent; loading: boolean; data?: DomainCheckResp } | null>(null);
   // فحص الحظر — هل سيرفر الوكيل حاظر عنوان المنصة (fail2ban)؟
   const [banCheck, setBanCheck] = useState<{ agent: Agent; loading: boolean; data?: any } | null>(null);
+
+  // إعداد النطاق التلقائي (Cloudflare)
+  const [previewAgent, setPreviewAgent] = useState<Agent | null>(null);
+  const [previewData, setPreviewData] = useState<AutoDomainPreviewResp | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewConfirmed, setPreviewConfirmed] = useState(false);
+  const [pendingProvisionAgent, setPendingProvisionAgent] = useState<Agent | null>(null);
+
   const isEdit = form.id > 0;
   const editingAgent = (listQ.data ?? []).find(x => x.id === form.id) ?? null;
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
@@ -194,6 +242,8 @@ export default function AgentServers() {
         brandName: form.brandName || null, brandColor: form.brandColor || null,
         sshHost: form.sshHost || null, sshPort: form.sshPort ? Number(form.sshPort) : null, sshUser: form.sshUser || null,
         notes: form.notes || null,
+        autoDomainSetup: form.autoDomainSetup,
+        autoDomainProxyEnabled: form.autoDomainProxyEnabled,
       };
       if (form.mode === "full" && form.localSuperadminEnabled) {
         payload.saUsername = form.saUsername.trim() || null;
@@ -402,7 +452,7 @@ export default function AgentServers() {
   // ── التسطيب الكامل بضغطة واحدة ──
   const [provisionAgentId, setProvisionAgentId] = useState<number | null>(null);
   // نافذة اختيار طريقة التسطيب: كامل / بدون قاعدة بيانات / برفع ملفات (+ تشفير)
-  const [installDlg, setInstallDlg] = useState<{ agentId: number; variant: "full" | "no_db" | "upload"; encrypt: boolean } | null>(null);
+  const [installDlg, setInstallDlg] = useState<{ agentId: number; variant: "full" | "no_db" | "upload"; encrypt: boolean; autoDomainToken?: string } | null>(null);
   const installAgent = (listQ.data ?? []).find(x => x.id === installDlg?.agentId) ?? null;
   const [pkgStatus, setPkgStatus] = useState<PackageStatus | null>(null);
   const [pkgBusy, setPkgBusy] = useState<string | null>(null);
@@ -501,7 +551,10 @@ export default function AgentServers() {
     } finally { setPkgBusy(null); }
   }
   const provisionAgent = (listQ.data ?? []).find(x => x.id === provisionAgentId) ?? null;
-  const anyDeploying = (listQ.data ?? []).some(x => x.deployStatus === "deploying");
+  const anyDeploying = (listQ.data ?? []).some(x =>
+    x.deployStatus === "deploying" ||
+    ["checking", "configuring", "waiting_dns", "verifying"].includes(x.autoDomainStatus)
+  );
   // سجل حي: أثناء أي تسطيب جارٍ حدّث القائمة كل 3 ثوانٍ.
   useEffect(() => {
     if (!anyDeploying) return;
@@ -509,7 +562,95 @@ export default function AgentServers() {
     return () => clearInterval(t);
   }, [anyDeploying, qc]);
 
-  async function provisionNow(a: Agent, opts: { variant: "full" | "no_db" | "upload"; encryptBundle: boolean }) {
+  function isAutoDomainBusy(a: Agent) {
+    return ["checking", "configuring", "waiting_dns", "verifying"].includes(a.autoDomainStatus);
+  }
+
+  function isOperationStale(a: Agent) {
+    return a.deployStatus === "deploying"
+      && Date.now() - new Date(a.updatedAt).getTime() >= 3 * 60_000;
+  }
+
+  async function recoverOperation(a: Agent) {
+    if (!confirm(`محاولة استعادة العملية المعلّقة على «${a.name}»؟\nلن يُفتح القفل إلا بعد إثبات توقف السكربت البعيد عبر SSH.`)) return;
+    setBusy(`recover-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/operation/recover`, {
+        method: "POST", headers, body: JSON.stringify({}),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail ?? j.error ?? "تعذّرت الاستعادة");
+      invalidate();
+      toast({ title: "تم تحرير العملية المعلّقة بأمان", description: j.message });
+    } catch (e: any) {
+      toast({ title: "لم يتم تحرير القفل", description: String(e.message ?? e), variant: "destructive" });
+      invalidate();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function loadPreview(a: Agent) {
+    setPreviewAgent(a);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewData(null);
+    setPreviewConfirmed(false);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/auto-domain/preview`, {
+        method: "POST", headers, body: JSON.stringify({})
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل التحضير");
+      setPreviewData(j);
+    } catch (e: any) {
+      setPreviewError(String(e.message ?? e));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function applyAutoDomain(id: number, token: string) {
+    setBusy(`apply-domain-${id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${id}/auto-domain/apply`, {
+        method: "POST", headers, body: JSON.stringify({ confirmationToken: token })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل التطبيق");
+      toast({ title: "تم بدء إعداد النطاق التلقائي" });
+      setPreviewAgent(null);
+      invalidate();
+    } catch (e: any) {
+      toast({ title: "فشل التطبيق", description: String(e.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function handlePreviewConfirm() {
+    if (!previewData?.confirmationToken || !previewConfirmed) return;
+
+    if (pendingProvisionAgent) {
+      setInstallDlg({ agentId: pendingProvisionAgent.id, variant: "full", encrypt: true, autoDomainToken: previewData.confirmationToken });
+      setPreviewAgent(null);
+      setPendingProvisionAgent(null);
+    } else if (previewAgent) {
+      applyAutoDomain(previewAgent.id, previewData.confirmationToken);
+    }
+  }
+
+  function handleProvisionClick(a: Agent, isExternalReady: boolean) {
+    if (a.packageSource === "external" && !isExternalReady) return;
+    if (a.autoDomainSetup) {
+      setPendingProvisionAgent(a);
+      loadPreview(a);
+    } else {
+      setInstallDlg({ agentId: a.id, variant: "full", encrypt: true });
+    }
+  }
+
+  async function provisionNow(a: Agent, opts: { variant: "full" | "no_db" | "upload"; encryptBundle: boolean; autoDomainConfirmationToken?: string }) {
     setBusy(`provision-${a.id}`);
     try {
       const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/provision`, {
@@ -546,6 +687,8 @@ export default function AgentServers() {
       brandName: a.brandName ?? "", brandLogoUrl: a.brandLogoUrl ?? "", brandColor: a.brandColor ?? "",
       notes: a.notes ?? "",
       saUsername: a.saUsername ?? "", saEmail: a.saEmail ?? "", saPassword: "",
+      autoDomainSetup: a.autoDomainSetup ?? false,
+      autoDomainProxyEnabled: a.autoDomainProxyEnabled ?? false,
     });
     setFormPackageFiles({ backend: null, frontend: null, db: null });
     setShowForm(true);
@@ -654,8 +797,8 @@ export default function AgentServers() {
                   </div>
                 </div>
                 <div className="flex gap-1">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(a)} data-testid={`button-edit-agent-${a.id}`}><Pencil className="h-4 w-4" /></Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-600" onClick={async () => {
+                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={a.deployStatus === "deploying"} onClick={() => openEdit(a)} data-testid={`button-edit-agent-${a.id}`}><Pencil className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-600" disabled={a.deployStatus === "deploying"} onClick={async () => {
                     if (!confirm(`حذف الوكيل «${a.name}» نهائيًا؟ ستُحذف كل تنبيهاته أيضًا.`)) return;
                     const r = await fetch(`${API}/api/admin/agent-instances/${a.id}`, { method: "DELETE", headers });
                     if (r.ok) { invalidate(); toast({ title: "تم الحذف" }); } else toast({ title: "فشل الحذف", variant: "destructive" });
@@ -694,24 +837,77 @@ export default function AgentServers() {
                   <div className="text-[11px]">
                     النشر: {a.deployStatus === "ok" ? <Badge className="text-[10px] h-4 px-1 bg-emerald-600">ناجح</Badge>
                       : a.deployStatus === "error" ? <Badge variant="destructive" className="text-[10px] h-4 px-1">فشل</Badge>
-                      : a.deployStatus === "deploying" ? <Badge variant="secondary" className="text-[10px] h-4 px-1">جارٍ…</Badge>
+                      : a.deployStatus === "deploying" ? <Badge variant={isOperationStale(a) ? "destructive" : "secondary"} className="text-[10px] h-4 px-1">{isOperationStale(a) ? "معلّقة" : "جارٍ…"}</Badge>
                       : <span className="text-muted-foreground">لم يُنشر</span>}
                     {a.lastDeployAt && <span className="text-muted-foreground ms-1">{fmtDate(a.lastDeployAt)}</span>}
                   </div>
+                  {a.autoDomainSetup && (
+                    <div className="text-[11px] space-y-1 pt-1 border-t border-border mt-1">
+                      <div className="flex items-center flex-wrap gap-2">
+                        <span className="font-semibold text-muted-foreground flex items-center gap-1"><Globe className="h-3 w-3" /> النطاق التلقائي:</span>
+                        <div className="flex items-center gap-1" data-testid={`status-auto-domain-${a.id}`}>
+                          {a.autoDomainStatus === 'disabled' && <Badge variant="outline" className="text-[10px] h-4 px-1">معطل</Badge>}
+                          {a.autoDomainStatus === 'pending' && <Badge variant="outline" className="text-[10px] h-4 px-1 bg-blue-50 text-blue-700 border-blue-200">قيد الانتظار</Badge>}
+                          {a.autoDomainStatus === 'checking' && <Badge variant="outline" className="text-[10px] h-4 px-1 bg-yellow-50 text-yellow-700 border-yellow-200"><Loader2 className="h-2.5 w-2.5 animate-spin ms-1 inline" /> فحص</Badge>}
+                          {a.autoDomainStatus === 'configuring' && <Badge variant="outline" className="text-[10px] h-4 px-1 bg-blue-50 text-blue-700 border-blue-200"><Loader2 className="h-2.5 w-2.5 animate-spin ms-1 inline" /> إعداد</Badge>}
+                          {a.autoDomainStatus === 'waiting_dns' && <Badge variant="outline" className="text-[10px] h-4 px-1 bg-orange-50 text-orange-700 border-orange-200"><Loader2 className="h-2.5 w-2.5 animate-spin ms-1 inline" /> انتظار DNS</Badge>}
+                          {a.autoDomainStatus === 'verifying' && <Badge variant="outline" className="text-[10px] h-4 px-1 bg-purple-50 text-purple-700 border-purple-200"><Loader2 className="h-2.5 w-2.5 animate-spin ms-1 inline" /> تحقق</Badge>}
+                          {a.autoDomainStatus === 'ready' && <Badge variant="outline" className="text-[10px] h-4 px-1 bg-green-50 text-green-700 border-green-200"><CheckCircle2 className="h-2.5 w-2.5 ms-1 inline" /> جاهز</Badge>}
+                          {a.autoDomainStatus === 'error' && (
+                            <Badge variant="outline" className="text-[10px] h-4 px-1 bg-red-50 hover:bg-red-100 text-red-700 border-red-200 cursor-pointer transition-colors" onClick={() => loadPreview(a)} data-testid={`button-retry-domain-${a.id}`}>
+                              <XCircle className="h-2.5 w-2.5 ms-1 inline" /> خطأ (إعادة المحاولة)
+                            </Badge>
+                          )}
+                        </div>
+                        <span className={a.cloudflareConnected ? "text-emerald-700" : "text-rose-600"}>
+                          Cloudflare: {a.cloudflareConnected ? "متصل" : "غير مهيأ"}
+                        </span>
+                      </div>
+                      {(a.autoDomainZoneName || a.autoDomainOriginIp) && (
+                        <div className="text-muted-foreground truncate" dir="ltr">
+                          {a.autoDomainZoneName ?? "—"} · {a.autoDomainOriginIp ?? "—"}
+                        </div>
+                      )}
+                      {a.autoDomainLastError && (
+                        <div className="text-rose-600 line-clamp-2" title={a.autoDomainLastError} data-testid={`error-auto-domain-${a.id}`}>
+                          {a.autoDomainLastError}
+                        </div>
+                      )}
+                      {a.autoDomainLog && (
+                        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => setLogView({ title: `سجل الدومين — ${a.name}`, text: a.autoDomainLog! })}>
+                          عرض سجل الدومين
+                        </Button>
+                      )}
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-1 pt-1">
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || busy === `test-ssh-${a.id}`} onClick={() => action(a.id, "test-ssh", "فحص السيرفر")}>
                       {busy === `test-ssh-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3 ms-1" />}اختبار الوصول
                     </Button>
-                    <Button size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || busy === `provision-${a.id}` || a.deployStatus === "deploying"} onClick={() => setInstallDlg({
-                      agentId: a.id,
-                      variant: a.packageSource === "external" ? "upload" : "full",
-                      encrypt: a.packageSource === "external",
-                    })} data-testid={`button-provision-${a.id}`}>
+                    <Button size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || busy === `provision-${a.id}` || a.deployStatus === "deploying" || isAutoDomainBusy(a)} onClick={() => handleProvisionClick(a, true)} data-testid={`button-provision-${a.id}`}>
                       {busy === `provision-${a.id}` || a.deployStatus === "deploying" ? <Loader2 className="h-3 w-3 animate-spin ms-1" /> : <UploadCloud className="h-3 w-3 ms-1" />}تسطيب كامل
                     </Button>
-                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}` || a.deployStatus === "deploying"} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}` || a.deployStatus === "deploying" || isAutoDomainBusy(a)} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
                       {busy === `deploy-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <UploadCloud className="h-3 w-3 ms-1" />}نشر
                     </Button>
+                    {a.autoDomainSetup && a.deployStatus === "ok" && (
+                      <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy != null || isAutoDomainBusy(a)} onClick={() => loadPreview(a)} data-testid={`button-preview-domain-${a.id}`}>
+                        <Globe className="h-3 w-3 ms-1" />إعداد النطاق
+                      </Button>
+                    )}
+                    {isOperationStale(a) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs border-amber-400 text-amber-800"
+                        disabled={busy === `recover-${a.id}`}
+                        onClick={() => recoverOperation(a)}
+                        data-testid={`button-recover-operation-${a.id}`}
+                      >
+                        {busy === `recover-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin ms-1" /> : <RefreshCw className="h-3 w-3 ms-1" />}
+                        استعادة العملية
+                      </Button>
+                    )}
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.licenseKey || busy === `kit-${a.id}`} onClick={() => openSetupKit(a)} data-testid={`button-kit-${a.id}`}>
                       {busy === `kit-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3 ms-1" />}حزمة التهيئة
                     </Button>
@@ -737,7 +933,7 @@ export default function AgentServers() {
                     {a.licenseExpiresAt && new Date(a.licenseExpiresAt) < new Date() && <Badge variant="destructive" className="ms-1 text-[10px] h-4 px-1">منتهي</Badge>}
                   </div>
                   <div className="flex gap-1 pt-1">
-                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy === `license-${a.id}`} onClick={() => {
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy === `license-${a.id}` || a.deployStatus === "deploying"} onClick={() => {
                       if (confirm("إصدار مفتاح ترخيص جديد؟ المفتاح القديم سيتوقف عن العمل.")) action(a.id, "license", "إصدار الترخيص");
                     }}><KeyRound className="h-3 w-3 ms-1" />إصدار مفتاح</Button>
                     {a.status === "active"
@@ -1078,6 +1274,208 @@ export default function AgentServers() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!previewAgent} onOpenChange={(o) => { if (!o) { setPreviewAgent(null); setPendingProvisionAgent(null); setPreviewConfirmed(false); } }}>
+        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>تأكيد إعداد النطاق التلقائي</DialogTitle>
+          </DialogHeader>
+          {previewLoading ? (
+            <div className="p-8 flex flex-col items-center justify-center space-y-4">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <span className="text-muted-foreground font-semibold">جاري فحص حالة النطاق والخادم...</span>
+            </div>
+          ) : previewError ? (
+            <div className="space-y-4">
+              <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-md space-y-2">
+                <div className="flex items-center gap-2 font-bold">
+                  <AlertTriangle className="h-5 w-5" />
+                  <span>تعذّرت المعاينة الآمنة</span>
+                </div>
+                <p className="text-sm">{previewError}</p>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setPreviewAgent(null); setPendingProvisionAgent(null); }}>إغلاق</Button>
+                <Button onClick={() => previewAgent && loadPreview(previewAgent)} data-testid="button-retry-domain-preview">
+                  <RefreshCw className="h-4 w-4 ms-1" />إعادة الفحص
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : previewData ? (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border border-border rounded-md p-4 space-y-3 bg-card shadow-sm">
+                  <div className="flex items-center gap-2 text-primary font-bold border-b border-border pb-2">
+                    <Globe className="h-4 w-4" />
+                    <span>إجراء Cloudflare</span>
+                  </div>
+
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">نوع الإجراء:</span>
+                      <span className="font-mono">
+                        {previewData.cloudflare.action === 'create' && <Badge className="bg-green-600 border-green-600 text-white">إنشاء سجل جديد</Badge>}
+                        {previewData.cloudflare.action === 'update' && <Badge className="bg-blue-600 border-blue-600 text-white">تحديث سجل موجود</Badge>}
+                        {previewData.cloudflare.action === 'noop' && <Badge variant="outline">لا تغيير مطلوب</Badge>}
+                        {previewData.cloudflare.action === 'conflict' && <Badge variant="destructive">يوجد تعارض</Badge>}
+                      </span>
+                    </div>
+
+                    {previewData.cloudflare.zoneName && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">المنطقة (Zone):</span>
+                        <span className="font-semibold" dir="ltr">{previewData.cloudflare.zoneName}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center gap-3">
+                      <span className="text-muted-foreground">السجل الرئيسي:</span>
+                      <span className="font-semibold truncate" dir="ltr">{previewAgent?.domain}</span>
+                    </div>
+
+                    {previewData.cloudflare.existingContent && (
+                      <div className="flex justify-between items-center gap-3">
+                        <span className="text-muted-foreground">القيمة الحالية:</span>
+                        <span className="font-mono text-xs truncate" dir="ltr">
+                          {previewData.cloudflare.existingType ?? "A"} · {previewData.cloudflare.existingContent}
+                          {previewData.cloudflare.existingProxied ? " · Proxy" : ""}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">الوجهة (Content):</span>
+                      <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border" dir="ltr">{previewData.cloudflare.desiredContent}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">حالة البروكسي:</span>
+                      <span>{previewData.cloudflare.desiredProxied ? <Badge variant="outline" className="border-orange-500 text-orange-600 bg-orange-50">مفعل (برتقالي)</Badge> : <Badge variant="outline" className="text-muted-foreground">معطل (رمادي)</Badge>}</span>
+                    </div>
+
+                    {previewData.cloudflare.conflict && (
+                      <div className="mt-2 p-2 bg-destructive/10 text-destructive text-xs rounded border border-destructive/20">
+                        <span className="font-bold">تعارض: </span> {previewData.cloudflare.conflict}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border border-border rounded-md p-4 space-y-3 bg-card shadow-sm">
+                   <div className="flex items-center gap-2 text-primary font-bold border-b border-border pb-2">
+                     <Server className="h-4 w-4" />
+                     <span>حالة الخادم الوجهة</span>
+                   </div>
+                   <div className="space-y-2 text-sm">
+                     <div className="flex justify-between items-center">
+                       <span className="text-muted-foreground">عنوان IP:</span>
+                       <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border border-border" dir="ltr">{previewData.server.originIp}</span>
+                     </div>
+
+                     <div className="flex justify-between items-center gap-3">
+                       <span className="text-muted-foreground">الخدمات النشطة:</span>
+                       <span className="text-xs text-end">
+                         {previewData.server.activeServices.length
+                           ? previewData.server.activeServices.join("، ")
+                           : "لا توجد خدمة ويب متعارضة"}
+                       </span>
+                     </div>
+
+                     <div className="flex justify-between items-center">
+                       <span className="text-muted-foreground">اتصال SSH:</span>
+                       {previewData.server.sshAuthenticated ? (
+                         <span className="text-green-600 flex items-center gap-1 font-semibold"><CheckCircle2 className="h-3 w-3"/> ناجح</span>
+                       ) : (
+                         <span className="text-destructive flex items-center gap-1 font-semibold"><XCircle className="h-3 w-3"/> فشل</span>
+                       )}
+                     </div>
+
+                     <div className="flex justify-between items-center">
+                       <span className="text-muted-foreground">جدار الحماية:</span>
+                       <span className="font-mono font-semibold">{previewData.server.firewall.toUpperCase()}</span>
+                     </div>
+
+                     <div className="pt-1">
+                       <span className="text-muted-foreground text-xs block mb-1">منافذ الويب:</span>
+                       <div className="flex flex-wrap gap-1" dir="ltr">
+                         {previewData.server.ports.map(p => (
+                           <Badge key={p.port} variant={p.state === 'open' ? 'outline' : 'destructive'} className={p.state === 'open' ? 'border-green-600 text-green-600 bg-green-50' : ''}>
+                             {p.port} ({p.state})
+                           </Badge>
+                         ))}
+                       </div>
+                     </div>
+                   </div>
+                </div>
+              </div>
+
+              {previewData.warnings && previewData.warnings.length > 0 && (
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-md p-3 space-y-1">
+                  <div className="text-sm font-bold text-yellow-800 dark:text-yellow-400 flex items-center gap-1">
+                    <AlertTriangle className="h-4 w-4" /> تحذيرات
+                  </div>
+                  <ul className="list-disc list-inside text-xs text-yellow-700 dark:text-yellow-500 pr-4">
+                    {previewData.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {previewData.server.conflicts.length > 0 && (
+                <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800 rounded-md p-3">
+                  <div className="text-sm font-bold text-rose-800 dark:text-rose-300 flex items-center gap-1">
+                    <XCircle className="h-4 w-4" />تعارض يمنع التنفيذ
+                  </div>
+                  <ul className="list-disc list-inside text-xs text-rose-700 dark:text-rose-400 mt-1">
+                    {previewData.server.conflicts.map((conflict, i) => <li key={i}>{conflict}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {!!previewData.confirmationToken && (
+                <label className="flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 mt-0.5 accent-primary"
+                    checked={previewConfirmed}
+                    onChange={e => setPreviewConfirmed(e.target.checked)}
+                    data-testid="checkbox-confirm-auto-domain-plan"
+                  />
+                  <span className="text-xs leading-relaxed">
+                    أؤكد تنفيذ الخطة المعروضة على <b>الدومين الرئيسي فقط</b>. لن تُحذف سجلات DNS أخرى،
+                    ولن تُوقف خدمات Nginx أو Apache القائمة تلقائيًا.
+                  </span>
+                </label>
+              )}
+
+              <DialogFooter className="gap-2 sm:gap-0 mt-4 border-t border-border pt-4">
+                <Button variant="outline" onClick={() => { setPreviewAgent(null); setPendingProvisionAgent(null); }} data-testid="button-cancel-preview">
+                  إلغاء
+                </Button>
+                <Button
+                  className="bg-primary hover:bg-primary/90 text-white"
+                  disabled={
+                    !previewConfirmed
+                    || !previewData.confirmationToken
+                    || previewData.cloudflare.action === "conflict"
+                    || previewData.server.conflicts.length > 0
+                    || (pendingProvisionAgent ? !previewData.canUseWithProvision : !previewData.canApplyNow)
+                    || busy != null
+                  }
+                  onClick={handlePreviewConfirm}
+                  data-testid="button-confirm-preview"
+                >
+                   {busy != null ? <Loader2 className="h-4 w-4 animate-spin" /> :
+                     (!previewData.confirmationToken || previewData.cloudflare.action === 'conflict'
+                       ? "لا يمكن التطبيق لوجود تعارض"
+                       : pendingProvisionAgent
+                         ? "تأكيد ومتابعة التسطيب"
+                         : "تأكيد وتطبيق الآن")}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       {/* ── فحص الحظر ── */}
       <Dialog open={!!banCheck} onOpenChange={(o) => !o && setBanCheck(null)}>
         <DialogContent className="max-w-lg">
@@ -1276,6 +1674,21 @@ export default function AgentServers() {
                 </div>
               )}
 
+              {installAgent.autoDomainSetup && (
+                <div className={`rounded-xl border p-3 text-xs ${
+                  installDlg.autoDomainToken
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+                    : "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200"
+                }`} data-testid="provision-auto-domain-confirmation">
+                  <div className="font-semibold flex items-center gap-1">
+                    {installDlg.autoDomainToken
+                      ? <><CheckCircle2 className="h-4 w-4" />تم تأكيد خطة الدومين وSSL لهذه العملية</>
+                      : <><AlertTriangle className="h-4 w-4" />يلزم معاينة الدومين وتأكيد خطته قبل التسطيب</>}
+                  </div>
+                  <div className="mt-1 opacity-80" dir="ltr">{installAgent.domain}</div>
+                </div>
+              )}
+
               <label className={`flex items-center gap-2 border rounded-xl p-3 text-sm ${installDlg.variant === "upload" ? "cursor-not-allowed bg-muted/40" : "cursor-pointer"}`}>
                 <input type="checkbox" className="h-4 w-4 accent-primary" checked={installDlg.encrypt}
                   disabled={installDlg.variant === "upload"}
@@ -1292,9 +1705,14 @@ export default function AgentServers() {
             <Button
               disabled={!installAgent
                 || busy === `provision-${installDlg?.agentId}`
+                || (!!installAgent?.autoDomainSetup && !installDlg?.autoDomainToken)
                 || (installDlg?.variant === "upload" && !pkgStatus?.backend)
                 || (installAgent?.packageSource === "external" && (!pkgStatus?.backend || !pkgStatus?.frontend || !pkgStatus?.db))}
-              onClick={() => installAgent && installDlg && provisionNow(installAgent, { variant: installDlg.variant, encryptBundle: installDlg.encrypt })}
+              onClick={() => installAgent && installDlg && provisionNow(installAgent, {
+                variant: installDlg.variant,
+                encryptBundle: installDlg.encrypt,
+                ...(installDlg.autoDomainToken ? { autoDomainConfirmationToken: installDlg.autoDomainToken } : {}),
+              })}
               data-testid="button-start-provision">
               {busy === `provision-${installDlg?.agentId}` ? <Loader2 className="h-4 w-4 ms-1 animate-spin" /> : <UploadCloud className="h-4 w-4 ms-1" />}
               بدء التسطيب
@@ -1434,6 +1852,59 @@ export default function AgentServers() {
                   </div>
                 </div>
               )}
+
+              {/* إعداد النطاق التلقائي */}
+              <div className="col-span-2 border border-border rounded-md p-4 space-y-4 bg-muted/30">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <label className="flex items-center gap-2 cursor-pointer w-fit">
+                      <input
+                        type="checkbox"
+                        className="accent-primary w-4 h-4"
+                        checked={form.autoDomainSetup}
+                        onChange={e => set("autoDomainSetup", e.target.checked)}
+                        data-testid="toggle-auto-domain"
+                      />
+                      <span className="text-sm font-semibold">إعداد النطاق التلقائي (Cloudflare)</span>
+                    </label>
+                    <div className="text-xs text-muted-foreground mr-6">
+                      اختياري ومتوقف افتراضيًا. بعد الحفظ تُعرض خطة دقيقة لسجل A الرئيسي و80/443 وCaddy قبل أي تغيير.
+                      الدومينات الإضافية والسجلات الأخرى والمسار اليدوي لا تتغير.
+                    </div>
+                  </div>
+                </div>
+                {form.autoDomainSetup && (
+                  <div className="pt-3 border-t border-border flex flex-col gap-4 mr-6">
+                    <label className="flex items-start gap-2 cursor-pointer w-fit">
+                      <input
+                        type="checkbox"
+                        className="accent-primary w-4 h-4 mt-1"
+                        checked={form.autoDomainProxyEnabled}
+                        onChange={e => set("autoDomainProxyEnabled", e.target.checked)}
+                        data-testid="toggle-auto-domain-proxy"
+                      />
+                      <div className="space-y-0.5">
+                        <span className="text-sm font-semibold block">تفعيل البروكسي (Proxy)</span>
+                        <span className="text-xs text-muted-foreground block max-w-lg">
+                          إخفاء عنوان الخادم واستخدام حماية Cloudflare (علامة السحابة البرتقالية).
+                          يتطلب أن يكون الدومين مضافاً في حسابك على Cloudflare.
+                        </span>
+                      </div>
+                    </label>
+                    {isEdit && (
+                      <div className="flex items-center gap-2 text-sm mt-2 border border-border w-max px-3 py-1.5 rounded-md bg-card">
+                        <span className="text-muted-foreground">حالة اتصال Cloudflare:</span>
+                        {agents.find(x => x.id === form.id)?.cloudflareConnected ? (
+                           <span className="text-green-600 flex items-center gap-1 font-semibold"><CheckCircle2 className="h-4 w-4" /> متصل</span>
+                        ) : (
+                           <span className="text-destructive flex items-center gap-1 font-semibold"><XCircle className="h-4 w-4" /> غير متصل</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div><label className="text-xs text-muted-foreground block mb-1">انتهاء الترخيص</label><DateField value={form.licenseExpiresAt} onChange={e => set("licenseExpiresAt", e.target.value)} /></div>
               <div className="col-span-2"><label className="text-xs text-muted-foreground block mb-1">ملاحظات</label><Textarea rows={2} value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
             </TabsContent>

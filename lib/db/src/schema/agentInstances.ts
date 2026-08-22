@@ -26,6 +26,25 @@ export const agentInstancesTable = pgTable("agent_instances", {
   // Optional extra domains/subdomains (normalised strings).
   extraDomains: jsonb("extra_domains"),
 
+  // Optional, fail-safe automatic setup for the MAIN domain only. Disabled by
+  // default so every existing/new agent keeps the current manual DNS path
+  // unless a central SuperAdmin explicitly opts in and confirms a preview.
+  autoDomainSetup: boolean("auto_domain_setup").notNull().default(false),
+  autoDomainProxyEnabled: boolean("auto_domain_proxy_enabled").notNull().default(false),
+  // disabled | pending | checking | configuring | waiting_dns | verifying | ready | error
+  autoDomainStatus: text("auto_domain_status").notNull().default("disabled"),
+  autoDomainZoneName: text("auto_domain_zone_name"),
+  // Provider identifiers are control-plane metadata, not credentials. They are
+  // kept private by publicRow() and re-verified before every mutation.
+  autoDomainZoneId: text("auto_domain_zone_id"),
+  autoDomainRecordId: text("auto_domain_record_id"),
+  autoDomainOriginIp: text("auto_domain_origin_ip"),
+  autoDomainLastCheckAt: timestamp("auto_domain_last_check_at"),
+  autoDomainLastSuccessAt: timestamp("auto_domain_last_success_at"),
+  autoDomainLastError: text("auto_domain_last_error"),
+  autoDomainLog: text("auto_domain_log"),
+  autoDomainLeaseAt: timestamp("auto_domain_lease_at"),
+
   // active | suspended
   status:    text("status").notNull().default("active"),
   // frontend_only (React build + central API)  |  full_shell (thin backend shell)
@@ -80,6 +99,12 @@ export const agentInstancesTable = pgTable("agent_instances", {
 
   // SSH deploy engine (phase 3)
   deployStatus: text("deploy_status").notNull().default("never"), // never | deploying | ok | error
+  // Fencing token for the one active deploy/provision/wipe/domain operation.
+  deployLeaseId: text("deploy_lease_id"),
+  // Internal operation phase. Provider mutation deadline is used only by the
+  // deliberate crash-recovery path and is never returned to the browser.
+  deployOperationPhase: text("deploy_operation_phase"),
+  deployProviderMutationUntil: timestamp("deploy_provider_mutation_until"),
   deployLog:    text("deploy_log"),
   lastDeployAt: timestamp("last_deploy_at"),
   // Pinned SSH host-key fingerprint (TOFU on first deploy, verified after).
