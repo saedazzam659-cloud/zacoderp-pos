@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { serveAgentRequestAfterSchemaReady } from "../src/routes/agentInstances.ts";
 import { assertStrictSchemaReady } from "../src/lib/ensureSchema.ts";
+
+const ensureSchemaSrc = readFileSync(
+  new URL("../src/lib/ensureSchema.ts", import.meta.url),
+  "utf8",
+);
 
 function responseStub() {
   const headers = new Map<string, string>();
@@ -142,4 +148,27 @@ test("strict schema verification permits only explicitly optional lazy tables", 
     missingTables: ["integration_invoice_queue"],
     optionalMissingTables: ["integration_invoice_queue"],
   }));
+});
+
+test("agent strict heal creates payroll allocation tables before missing-table validation", () => {
+  const schemaStmtsStart = ensureSchemaSrc.indexOf("const PAYROLL_ALLOCATION_SCHEMA_STMTS");
+  const helperStart = ensureSchemaSrc.indexOf("async function ensurePayrollAllocationSchema(");
+  const identityStart = ensureSchemaSrc.indexOf("async function ensureTenantIdentityIndexes(", helperStart);
+  const schemaStmtsBody = ensureSchemaSrc.slice(schemaStmtsStart, helperStart);
+  const helperBody = ensureSchemaSrc.slice(helperStart, identityStart);
+  assert.ok(helperStart !== -1, "the narrow payroll-allocation schema helper must exist");
+  assert.ok(schemaStmtsBody.includes("CREATE TABLE IF NOT EXISTS employee_project_assignments"));
+  assert.ok(schemaStmtsBody.includes("CREATE TABLE IF NOT EXISTS payroll_allocation_snapshots"));
+  assert.ok(
+    helperBody.includes("if (options.strict) assertStrictSchemaReady({ failures })"),
+    "failed payroll DDL must fail closed during agent request healing",
+  );
+
+  const runHealStart = ensureSchemaSrc.indexOf("async function runHeal(");
+  const runHealEnd = ensureSchemaSrc.indexOf("export function ensureSchemaUpToDate", runHealStart);
+  const runHealBody = ensureSchemaSrc.slice(runHealStart, runHealEnd);
+  const payrollPreflight = runHealBody.indexOf("await ensurePayrollAllocationSchema({ strict: strictSchema })");
+  const genericValidation = runHealBody.indexOf("const r = await ensureColumns(");
+  assert.ok(payrollPreflight !== -1 && payrollPreflight < genericValidation,
+    "required payroll tables must be created before strict missing-table validation");
 });

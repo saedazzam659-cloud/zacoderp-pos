@@ -133,3 +133,4 @@
 - [RTL top-navigation overflow](rtl-topnav-overflow.md) — enabled groups must wrap; invisible horizontal clipping made valid permissions look broken at laptop widths.
 - [Bank cost-center lock](bank-cost-center-lock.md) — identify bank ledger lines through both tenant bank links and mapped/legacy GL bank roots; do not classify by name or include cash boxes.
 - [Central security source attribution](central-security-source-attribution.md) — derive agent identity from the selected registry DB; keep login-client geo separate from heartbeat server geo.
+- [Agent request schema heal order](agent-request-schema-heal-order.md) — complete additive table DDL must run before strict missing-table validation or agent login loops on 503.
