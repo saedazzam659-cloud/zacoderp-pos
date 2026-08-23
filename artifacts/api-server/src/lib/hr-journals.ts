@@ -8,6 +8,7 @@ import {
   journalEntryLinesTable,
   payrollRunsTable,
   payrollLinesTable,
+  payrollAllocationSnapshotsTable,
   employeesTable,
   employeeLoansTable,
   employeeCustodiesTable,
@@ -17,6 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { assertWritableForDate } from "./periodGuard.js";
 import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
+import { allocateComponentBySnapshots } from "./payrollAllocation.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -149,6 +151,8 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   const lines = await dx.select().from(payrollLinesTable)
     .where(eq(payrollLinesTable.payrollRunId, runId));
   if (!lines.length) throw new Error("لا توجد سطور في المسير");
+  const snapshots = await dx.select().from(payrollAllocationSnapshotsTable)
+    .where(and(eq(payrollAllocationSnapshotsTable.companyId, cid), eq(payrollAllocationSnapshotsTable.payrollRunId, runId)));
 
   // Aggregate
   let salariesEarned = 0; // basic + overtime + bonus - absence
@@ -210,26 +214,56 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   }).returning();
 
   const drLines: any[] = [];
-  if (salariesEarned > 0)
-    drLines.push({ entryId: entry.id, accountId: accounts.salariesExpense, debit: fix(salariesEarned), credit: "0.00",
-      description: `رواتب وأجور الفترة ${period}`, sortOrder: 0 });
-  if (allowances > 0)
-    drLines.push({ entryId: entry.id, accountId: accounts.allowancesExpense, debit: fix(allowances), credit: "0.00",
-      description: `بدلات وحوافز الفترة ${period}`, sortOrder: 1 });
+  // New runs have immutable daily snapshots. Split EACH expense class by the
+  // same frozen cost-center weights, independently rounding in cents, so the
+  // old salary/allowance aggregate totals remain mathematically identical.
+  const snapshotsByLine = new Map<number, typeof snapshots>();
+  for (const snapshot of snapshots) {
+    const list = snapshotsByLine.get(snapshot.payrollLineId) ?? [];
+    list.push(snapshot); snapshotsByLine.set(snapshot.payrollLineId, list);
+  }
+  const debitBuckets = new Map<string, { accountId: number; costCenter: string | null; amount: number; label: string }>();
+  const addDebit = (accountId: number, costCenterId: number | null, amount: number, label: string) => {
+    if (!amount) return;
+    const costCenter = costCenterId == null ? null : String(costCenterId);
+    const key = `${accountId}:${costCenter ?? ""}`;
+    const old = debitBuckets.get(key);
+    if (old) old.amount = +(old.amount + amount).toFixed(2);
+    else debitBuckets.set(key, { accountId, costCenter, amount, label });
+  };
+  for (const line of lines) {
+    const lineSnapshots = snapshotsByLine.get(line.id) ?? [];
+    const salaryAmount = +(num(line.basicSalary) + num(line.overtimeAmount) + num(line.bonusAmount) - num(line.absenceDeduction)).toFixed(2);
+    const allowanceAmount = +(num(line.housingAllow) + num(line.transportAllow) + num(line.otherAllow)).toFixed(2);
+    if (!lineSnapshots.length) { // legacy run created before allocation feature
+      addDebit(accounts.salariesExpense!, null, salaryAmount, `رواتب وأجور الفترة ${period}`);
+      addDebit(accounts.allowancesExpense!, null, allowanceAmount, `بدلات وحوافز الفترة ${period}`);
+      continue;
+    }
+    for (const part of allocateComponentBySnapshots(salaryAmount, lineSnapshots))
+      addDebit(accounts.salariesExpense!, part.costCenterId, part.amount, `رواتب وأجور الفترة ${period}`);
+    for (const part of allocateComponentBySnapshots(allowanceAmount, lineSnapshots))
+      addDebit(accounts.allowancesExpense!, part.costCenterId, part.amount, `بدلات وحوافز الفترة ${period}`);
+  }
+  let debitOrder = 0;
+  for (const bucket of debitBuckets.values()) {
+    if (bucket.amount > 0) drLines.push({ entryId: entry.id, accountId: bucket.accountId, costCenter: bucket.costCenter,
+      debit: fix(bucket.amount), credit: "0.00", description: bucket.label, sortOrder: debitOrder++ });
+  }
 
   const crLines: any[] = [];
   if (netPayable > 0)
     crLines.push({ entryId: entry.id, accountId: accounts.salariesPayable, debit: "0.00", credit: fix(netPayable),
-      description: `صافي الرواتب المستحقة ${period}`, sortOrder: 2 });
+       description: `صافي الرواتب المستحقة ${period}`, sortOrder: debitOrder++ });
   if (gosiEmployee > 0)
     crLines.push({ entryId: entry.id, accountId: accounts.gosiPayable, debit: "0.00", credit: fix(gosiEmployee),
-      description: `حصة الموظف من التأمينات ${period}`, sortOrder: 3 });
+       description: `حصة الموظف من التأمينات ${period}`, sortOrder: debitOrder++ });
   if (loanDeduction > 0)
     crLines.push({ entryId: entry.id, accountId: accounts.employeeLoans, debit: "0.00", credit: fix(loanDeduction),
-      description: `استرداد أقساط سلف الموظفين ${period}`, sortOrder: 4 });
+       description: `استرداد أقساط سلف الموظفين ${period}`, sortOrder: debitOrder++ });
   if (otherDeduction > 0)
     crLines.push({ entryId: entry.id, accountId: accounts.otherDeductions, debit: "0.00", credit: fix(otherDeduction),
-      description: `استقطاعات أخرى ${period}`, sortOrder: 5 });
+       description: `استقطاعات أخرى ${period}`, sortOrder: debitOrder++ });
 
   await dx.insert(journalEntryLinesTable).values([...drLines, ...crLines]);
   return entry.id;

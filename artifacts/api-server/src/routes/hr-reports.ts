@@ -8,9 +8,13 @@ import {
   employeeLeavesTable,
   payrollRunsTable,
   payrollLinesTable,
+  payrollAllocationSnapshotsTable,
+  costCentersTable,
+  contractingProjectsTable,
 } from "@workspace/db";
 import { and, eq, gte, lte, desc, asc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -175,6 +179,52 @@ router.get("/payroll", async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "خطأ في تقرير الرواتب" });
   }
+});
+
+// Frozen payroll allocation report.  This deliberately reads snapshots only;
+// changing an employee's current assignment can never alter this result.
+router.get("/payroll-allocations", requirePermission("hr_payroll", "view"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const year = req.query.year ? Number(req.query.year) : new Date().getFullYear();
+    const monthFrom = req.query.monthFrom ? Number(req.query.monthFrom) : 1;
+    const monthTo = req.query.monthTo ? Number(req.query.monthTo) : 12;
+    const employeeId = req.query.employeeId ? Number(req.query.employeeId) : null;
+    const projectId = req.query.projectId ? Number(req.query.projectId) : null;
+    const costCenterId = req.query.costCenterId ? Number(req.query.costCenterId) : null;
+    const where = [eq(payrollAllocationSnapshotsTable.companyId, cid), eq(payrollRunsTable.year, year),
+      gte(payrollRunsTable.month, monthFrom), lte(payrollRunsTable.month, monthTo)];
+    if (employeeId) where.push(eq(payrollAllocationSnapshotsTable.employeeId, employeeId));
+    if (projectId) where.push(eq(payrollAllocationSnapshotsTable.projectId, projectId));
+    if (costCenterId) where.push(eq(payrollAllocationSnapshotsTable.costCenterId, costCenterId));
+    const rows = await db.select({
+      id: payrollAllocationSnapshotsTable.id, runId: payrollAllocationSnapshotsTable.payrollRunId,
+      employeeId: payrollAllocationSnapshotsTable.employeeId, periodStart: payrollAllocationSnapshotsTable.periodStart,
+      periodEnd: payrollAllocationSnapshotsTable.periodEnd, days: payrollAllocationSnapshotsTable.days,
+      costBasis: payrollAllocationSnapshotsTable.costBasis, basisAmount: payrollAllocationSnapshotsTable.basisAmount,
+      allocatedAmount: payrollAllocationSnapshotsTable.allocatedAmount, runCode: payrollRunsTable.code,
+      runStatus: payrollRunsTable.status, year: payrollRunsTable.year, month: payrollRunsTable.month,
+      employeeCode: employeesTable.code, employeeName: employeesTable.nameAr,
+      projectId: payrollAllocationSnapshotsTable.projectId, projectCode: contractingProjectsTable.code,
+      projectName: contractingProjectsTable.nameAr, costCenterId: payrollAllocationSnapshotsTable.costCenterId,
+      costCenterCode: costCentersTable.code, costCenterName: costCentersTable.nameAr,
+    }).from(payrollAllocationSnapshotsTable)
+      .innerJoin(payrollRunsTable, eq(payrollAllocationSnapshotsTable.payrollRunId, payrollRunsTable.id))
+      .leftJoin(employeesTable, and(
+        eq(payrollAllocationSnapshotsTable.employeeId, employeesTable.id),
+        eq(employeesTable.companyId, cid),
+      ))
+      .leftJoin(contractingProjectsTable, and(
+        eq(payrollAllocationSnapshotsTable.projectId, contractingProjectsTable.id),
+        eq(contractingProjectsTable.companyId, cid),
+      ))
+      .leftJoin(costCentersTable, and(
+        eq(payrollAllocationSnapshotsTable.costCenterId, costCentersTable.id),
+        eq(costCentersTable.companyId, cid),
+      ))
+      .where(and(...where)).orderBy(asc(payrollRunsTable.year), asc(payrollRunsTable.month), asc(employeesTable.code));
+    res.json({ rows, total: rows.reduce((sum, row) => sum + num(row.allocatedAmount), 0) });
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ في تقرير توزيع الرواتب" }); }
 });
 
 // ────────────────────────────────────────────────────────────────────

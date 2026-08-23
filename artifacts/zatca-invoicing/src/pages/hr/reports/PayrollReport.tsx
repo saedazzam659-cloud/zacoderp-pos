@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Banknote, Search, Download } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import AIInsightsPanel from "./_AIInsightsPanel";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 const MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 
@@ -35,6 +36,7 @@ export default function PayrollReport() {
   const [monthFrom, setMonthFrom] = useState<number>(1);
   const [monthTo, setMonthTo] = useState<number>(12);
   const [filters, setFilters] = useState({ year: now.getFullYear(), monthFrom: 1, monthTo: 12 });
+  const [reportTab, setReportTab] = useState("payroll");
 
   const { data, isLoading } = useQuery({
     queryKey: ["hr-report-payroll", filters],
@@ -77,6 +79,12 @@ export default function PayrollReport() {
         </Button>
       </div>
 
+      <Tabs value={reportTab} onValueChange={setReportTab}>
+        <TabsList>
+          <TabsTrigger value="payroll">ملخص الرواتب</TabsTrigger>
+          <TabsTrigger value="allocations">تخصيص الرواتب</TabsTrigger>
+        </TabsList>
+        <TabsContent value="payroll" className="mt-4 space-y-5">
       <div className="rounded-xl border bg-white p-4">
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <div>
@@ -177,8 +185,49 @@ export default function PayrollReport() {
           period={{ year: filters.year, monthFrom: filters.monthFrom, monthTo: filters.monthTo }}
         />
       )}
+        </TabsContent>
+        <TabsContent value="allocations" className="mt-4">
+          <PayrollAllocations year={year} monthFrom={monthFrom} monthTo={monthTo} years={years} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
+}
+
+function PayrollAllocations({ year: initialYear, monthFrom: initialFrom, monthTo: initialTo, years }: { year: number; monthFrom: number; monthTo: number; years: number[] }) {
+  const fmt = useFmt();
+  const [year, setYear] = useState(initialYear);
+  const [monthFrom, setMonthFrom] = useState(initialFrom);
+  const [monthTo, setMonthTo] = useState(initialTo);
+  const [employeeId, setEmployeeId] = useState("all");
+  const [projectId, setProjectId] = useState("all");
+  const [costCenterId, setCostCenterId] = useState("all");
+  const [filters, setFilters] = useState({ year: initialYear, monthFrom: initialFrom, monthTo: initialTo, employeeId: undefined as number | undefined, projectId: undefined as number | undefined, costCenterId: undefined as number | undefined });
+  const allocationQ = useQuery({ queryKey: ["hr-report-payroll-allocations", filters], queryFn: () => employeesApi.reportPayrollAllocations(filters) });
+  const employeesQ = useQuery({ queryKey: ["employees"], queryFn: employeesApi.list });
+  const projectsQ = useQuery({ queryKey: ["contracting-projects"], queryFn: employeesApi.projects });
+  const centersQ = useQuery({ queryKey: ["cost-centers"], queryFn: employeesApi.costCenters });
+  const rows = allocationQ.data?.rows ?? [];
+  const label = (v: any) => v?.nameAr ?? v?.name ?? v?.code ?? `#${v?.id}`;
+  const apply = () => setFilters({ year, monthFrom, monthTo, employeeId: employeeId === "all" ? undefined : Number(employeeId), projectId: projectId === "all" ? undefined : Number(projectId), costCenterId: costCenterId === "all" ? undefined : Number(costCenterId) });
+  const exportAllocations = () => exportCsv(`payroll_allocations_${filters.year}_${filters.monthFrom}-${filters.monthTo}.csv`, ["الموظف", "المشروع", "مركز التكلفة", "الشهر", "أساس التكلفة", "المبلغ"], rows.map((r: any) => [r.employeeName ?? r.empName ?? "", r.projectName ?? "", r.costCenterName ?? "", r.month ?? r.period ?? "", r.costBasis ?? "", Number(r.allocatedAmount ?? r.amount ?? r.allocationAmount ?? 0).toFixed(2)]));
+  return <div className="space-y-4">
+    <div className="flex items-center justify-between gap-3 flex-wrap"><div><h2 className="font-semibold">تخصيص الرواتب</h2><p className="text-xs text-muted-foreground">توزيع تكاليف الرواتب حسب المشروع ومركز التكلفة والفترة.</p></div><Button variant="outline" size="sm" onClick={exportAllocations} disabled={!rows.length}><Download className="h-4 w-4 ms-1" />تصدير CSV</Button></div>
+    <div className="rounded-xl border bg-white p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+      <FilterSelect label="السنة" value={String(year)} onChange={v => setYear(Number(v))} options={years.map(v => [String(v), String(v)])} />
+      <FilterSelect label="من شهر" value={String(monthFrom)} onChange={v => setMonthFrom(Number(v))} options={MONTHS_AR.map((v, i) => [String(i + 1), v])} />
+      <FilterSelect label="إلى شهر" value={String(monthTo)} onChange={v => setMonthTo(Number(v))} options={MONTHS_AR.map((v, i) => [String(i + 1), v])} />
+      <FilterSelect label="الموظف" value={employeeId} onChange={setEmployeeId} options={[["all", "كل الموظفين"], ...(employeesQ.data ?? []).map((e: any) => [String(e.id), `${e.code ?? ""} — ${e.nameAr ?? e.name ?? ""}`])]} />
+      <FilterSelect label="المشروع" value={projectId} onChange={setProjectId} options={[["all", "كل المشاريع"], ...(projectsQ.data ?? []).map((p: any) => [String(p.id), label(p)])]} />
+      <FilterSelect label="مركز التكلفة" value={costCenterId} onChange={setCostCenterId} options={[["all", "كل المراكز"], ...(centersQ.data ?? []).map((c: any) => [String(c.id), label(c)])]} />
+      <div className="lg:col-span-6"><Button onClick={apply}><Search className="h-4 w-4 ms-1" />تحديث التقرير</Button></div>
+    </div>
+    <div className="rounded-xl border bg-white overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 border-b"><tr><th className="p-3 text-start">الموظف</th><th className="p-3 text-start">المشروع</th><th className="p-3 text-start">مركز التكلفة</th><th className="p-3 text-start">الفترة</th><th className="p-3 text-start">أساس التكلفة</th><th className="p-3 text-end">المبلغ</th></tr></thead><tbody>{allocationQ.isLoading ? <tr><td colSpan={6} className="p-3"><Skeleton className="h-6 w-full" /></td></tr> : allocationQ.isError ? <tr><td colSpan={6} className="p-8 text-center text-rose-600">تعذر تحميل تقرير التخصيص. حاول مرة أخرى.</td></tr> : !rows.length ? <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">لا توجد تخصيصات لهذه الفلاتر</td></tr> : rows.map((r: any, i: number) => <tr key={r.id ?? `${r.employeeId}-${i}`} className="border-b hover:bg-slate-50"><td className="p-3 font-medium">{r.employeeName ?? r.empName ?? "—"}</td><td className="p-3">{r.projectName ?? "—"}</td><td className="p-3">{r.costCenterName ?? "—"}</td><td className="p-3" dir="ltr">{r.month ?? r.period ?? "—"}</td><td className="p-3">{r.costBasis ?? "—"}</td><td className="p-3 text-end font-mono" dir="ltr">{fmt.fmt(r.allocatedAmount ?? r.amount ?? r.allocationAmount ?? 0)}</td></tr>)}</tbody></table></div></div>
+  </div>;
+}
+
+function FilterSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[][] }) {
+  return <div><Label className="text-xs">{label}</Label><Select value={value} onValueChange={onChange}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{options.map(([value, text]) => <SelectItem key={value} value={value}>{text}</SelectItem>)}</SelectContent></Select></div>;
 }
 
 function StatCard({ label, value, color }: { label: string; value: any; color: string }) {

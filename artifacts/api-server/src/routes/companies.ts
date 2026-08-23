@@ -300,7 +300,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     // entry. Validated as plain booleans below.
     autoPostJournalEntry,
     autoPostSales, allowDraftWithoutWarehouse, autoPostPurchase, autoPostReceipt, autoPostPayment,
-    autoPostFinancial, autoPostCashTransfer, autoPostPayroll,
+    autoPostFinancial, autoPostCashTransfer, autoPostPayroll, payrollCostBasis,
     // Phase-1 additions: every other module that produces a JE.
     autoPostProduction, autoPostStockMovement, autoPostGoodsReceipt,
     autoPostGoodsDelivery, autoPostAdjustment,
@@ -353,6 +353,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     autoPostReceipt?: boolean; autoPostPayment?: boolean;
     autoPostFinancial?: boolean; autoPostCashTransfer?: boolean;
     autoPostPayroll?: boolean;
+    payrollCostBasis?: string;
     autoPostProduction?: boolean; autoPostStockMovement?: boolean;
     autoPostGoodsReceipt?: boolean; autoPostGoodsDelivery?: boolean;
     autoPostAdjustment?: boolean;
@@ -458,6 +459,12 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (autoPostFinancial    !== undefined) updates.autoPostFinancial    = !!autoPostFinancial;
   if (autoPostCashTransfer !== undefined) updates.autoPostCashTransfer = !!autoPostCashTransfer;
   if (autoPostPayroll      !== undefined) updates.autoPostPayroll      = !!autoPostPayroll;
+  if (payrollCostBasis !== undefined) {
+    if (!["gross", "net", "basic"].includes(payrollCostBasis)) {
+      res.status(400).json({ error: "أساس تكلفة الرواتب يجب أن يكون gross أو net أو basic" }); return;
+    }
+    updates.payrollCostBasis = payrollCostBasis;
+  }
   if (autoPostProduction    !== undefined) updates.autoPostProduction    = !!autoPostProduction;
   if (autoPostStockMovement !== undefined) updates.autoPostStockMovement = !!autoPostStockMovement;
   if (autoPostGoodsReceipt  !== undefined) updates.autoPostGoodsReceipt  = !!autoPostGoodsReceipt;

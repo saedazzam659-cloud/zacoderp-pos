@@ -27,6 +27,15 @@ export const employeesApi = {
   update:  (id: number, data: any) => req<any>("PUT", `/employees/${id}`, data),
   remove:  (id: number) => req<any>("DELETE", `/employees/${id}`),
 
+  // Project / cost-center payroll allocations
+  assignments: (empId: number) => req<any[]>("GET", `/employees/${empId}/assignments`),
+  addAssignment: (empId: number, data: { projectId?: number | null; costCenterId?: number | null; effectiveFrom: string; effectiveTo?: string | null; notes?: string }) =>
+    req<any>("POST", `/employees/${empId}/assignments`, data),
+  deleteAssignment: (empId: number, assignmentId: number) =>
+    req<any>("DELETE", `/employees/${empId}/assignments/${assignmentId}`),
+  projects: () => req<any[]>("GET", "/contracting/projects"),
+  costCenters: () => req<any[]>("GET", "/cost-centers"),
+
   contracts: (empId: number) => req<any[]>("GET", `/employees/${empId}/contracts`),
   addContract: (empId: number, data: any) => req<any>("POST", `/employees/${empId}/contracts`, data),
   renewContract: (empId: number, contractId: number, data: any) =>
@@ -203,6 +212,16 @@ export const employeesApi = {
     if (filters.monthTo) qs.set("monthTo", String(filters.monthTo));
     if (filters.employeeId) qs.set("employeeId", String(filters.employeeId));
     return req<{ summary: any; employees: any[] }>("GET", `/hr/reports/payroll?${qs.toString()}`);
+  },
+  reportPayrollAllocations: (filters: { year: number; monthFrom?: number; monthTo?: number; employeeId?: number; projectId?: number; costCenterId?: number }) => {
+    const qs = new URLSearchParams();
+    qs.set("year", String(filters.year));
+    if (filters.monthFrom) qs.set("monthFrom", String(filters.monthFrom));
+    if (filters.monthTo) qs.set("monthTo", String(filters.monthTo));
+    if (filters.employeeId) qs.set("employeeId", String(filters.employeeId));
+    if (filters.projectId) qs.set("projectId", String(filters.projectId));
+    if (filters.costCenterId) qs.set("costCenterId", String(filters.costCenterId));
+    return req<{ summary: any; rows: any[] }>("GET", `/hr/reports/payroll-allocations?${qs.toString()}`);
   },
   reportAttendance: (filters: { from: string; to: string; employeeId?: number }) => {
     const qs = new URLSearchParams();

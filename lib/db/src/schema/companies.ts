@@ -129,6 +129,9 @@ export const companiesTable = pgTable("companies", {
   autoPostFinancial:     boolean("auto_post_financial").notNull().default(true),
   autoPostCashTransfer:  boolean("auto_post_cash_transfer").notNull().default(true),
   autoPostPayroll:       boolean("auto_post_payroll").notNull().default(true),
+  // Amount captured in payroll cost-allocation snapshots.  Keep the safe,
+  // historical-compatible default: the complete gross entitlement.
+  payrollCostBasis:      text("payroll_cost_basis").$type<"gross" | "net" | "basic">().notNull().default("gross"),
   // ─── Phase-1 additions: every other module that produces a JE ─────────
   // Production orders (issue + completion JEs), stock movements (transfers
   // and adjustments share one toggle so the user doesn't have to reason

@@ -2,6 +2,8 @@ import { pgTable, serial, text, integer, date, timestamp, decimal, boolean, uniq
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
 import { accountsTable } from "./accounts";
+import { costCentersTable } from "./costCenters";
+import { contractingProjectsTable } from "./contracting";
 
 export const employeesTable = pgTable("employees", {
   id:             serial("id").primaryKey(),
@@ -415,6 +417,42 @@ export const payrollLinesTable = pgTable("payroll_lines", {
   workedDays:     integer("worked_days").notNull().default(30),
   absentDays:     integer("absent_days").notNull().default(0),
   notes:          text("notes"),
+});
+
+// Effective-dated operational assignment.  Overlap prevention is deliberately
+// enforced by the write API while holding an employee advisory lock, because
+// PostgreSQL range/exclusion constraints are not available on all supported
+// tenant databases.
+export const employeeProjectAssignmentsTable = pgTable("employee_project_assignments", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").references(() => companiesTable.id, { onDelete: "cascade" }).notNull(),
+  employeeId: integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  projectId: integer("project_id").references(() => contractingProjectsTable.id, { onDelete: "restrict" }),
+  costCenterId: integer("cost_center_id").references(() => costCentersTable.id, { onDelete: "restrict" }),
+  effectiveFrom: date("effective_from").notNull(),
+  effectiveTo: date("effective_to"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// A payroll draft writes these once.  They are intentionally independent from
+// assignments, so assignment edits can never rewrite a posted/paid run.
+export const payrollAllocationSnapshotsTable = pgTable("payroll_allocation_snapshots", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").references(() => companiesTable.id, { onDelete: "cascade" }).notNull(),
+  payrollRunId: integer("payroll_run_id").references(() => payrollRunsTable.id, { onDelete: "cascade" }).notNull(),
+  payrollLineId: integer("payroll_line_id").references(() => payrollLinesTable.id, { onDelete: "cascade" }).notNull(),
+  employeeId: integer("employee_id").references(() => employeesTable.id, { onDelete: "restrict" }).notNull(),
+  projectId: integer("project_id").references(() => contractingProjectsTable.id, { onDelete: "restrict" }),
+  costCenterId: integer("cost_center_id").references(() => costCentersTable.id, { onDelete: "restrict" }),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  days: integer("days").notNull(),
+  costBasis: text("cost_basis").notNull().default("gross"),
+  basisAmount: decimal("basis_amount", { precision: 12, scale: 2 }).notNull(),
+  allocatedAmount: decimal("allocated_amount", { precision: 12, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // ─── Saudi Mudad salary batches (WPS-compatible export) ──────────────────────

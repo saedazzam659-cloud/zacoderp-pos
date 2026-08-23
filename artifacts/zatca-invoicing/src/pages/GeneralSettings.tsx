@@ -24,6 +24,7 @@ import { getIdleLogoutMinutes, setIdleLogoutMinutes } from "@/hooks/useIdleLogou
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet, detectUsbPrinter, isWebUsbSupported } from "@/lib/preferredPrinter";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
@@ -1474,6 +1475,25 @@ export default function GeneralSettings() {
               </div>
             );
           })}
+        </div>
+
+        <div className="rounded-lg border border-sky-200 bg-sky-50/50 px-3 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">أساس تكلفة توزيع الرواتب</p>
+            <p className="text-[11px] text-muted-foreground">القيمة التي تُوزَّع على المشاريع ومراكز التكلفة عند احتساب مسير الرواتب.</p>
+          </div>
+          <Select
+            value={["gross", "net", "basic"].includes(user?.company?.payrollCostBasis) ? user.company.payrollCostBasis : "gross"}
+            onValueChange={(payrollCostBasis) => togglePostingMode({ payrollCostBasis })}
+            disabled={postingSaving}
+          >
+            <SelectTrigger className="w-full sm:w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="gross">إجمالي الراتب</SelectItem>
+              <SelectItem value="net">صافي الراتب</SelectItem>
+              <SelectItem value="basic">الراتب الأساسي</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {postingSaving && (

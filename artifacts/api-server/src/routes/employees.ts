@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
-import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable, accountsTable, companiesTable, employeeViolationsTable, employeeTravelsTable } from "@workspace/db";
+import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, payrollAllocationSnapshotsTable, employeeProjectAssignmentsTable, branchesTable, accountsTable, companiesTable, costCentersTable, contractingProjectsTable, employeeViolationsTable, employeeTravelsTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
-import { requireAdminRole } from "../middleware/permissions.js";
+import { requireAdminRole, requirePermission } from "../middleware/permissions.js";
 import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, resolveHrAccounts } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import {
@@ -14,6 +14,7 @@ import {
 } from "../lib/hrValidate.js";
 import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
+import { allocationBuckets, addPayrollDays, isoPayrollDate, assignmentRepresentedBySnapshot } from "../lib/payrollAllocation.js";
 import { subscriptionsTable, usersTable } from "@workspace/db";
 import bcrypt from "bcryptjs";
 
@@ -27,6 +28,9 @@ function guard(req: any, res: any): number | null {
 }
 
 const N = (v: any) => (v == null || v === "" ? null : v);
+
+const isoDate = isoPayrollDate;
+const addDays = addPayrollDays;
 
 // Validate + normalize an employee payload (dates → ISO, money → clean numeric
 // strings, email/mobile/id formats, cross-field date order). Throws
@@ -1452,6 +1456,100 @@ router.get("/:id/end-of-service", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── Effective-dated project / cost-center assignments ─────────────────────
+router.get("/:id/assignments", requirePermission("hr_employees", "view"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const employeeId = Number(req.params.id);
+    const rows = await db.select({
+      id: employeeProjectAssignmentsTable.id, companyId: employeeProjectAssignmentsTable.companyId,
+      employeeId: employeeProjectAssignmentsTable.employeeId, projectId: employeeProjectAssignmentsTable.projectId,
+      costCenterId: employeeProjectAssignmentsTable.costCenterId, effectiveFrom: employeeProjectAssignmentsTable.effectiveFrom,
+      effectiveTo: employeeProjectAssignmentsTable.effectiveTo, notes: employeeProjectAssignmentsTable.notes,
+      createdAt: employeeProjectAssignmentsTable.createdAt, updatedAt: employeeProjectAssignmentsTable.updatedAt,
+      projectCode: contractingProjectsTable.code, projectNameAr: contractingProjectsTable.nameAr,
+      projectNameEn: contractingProjectsTable.nameEn, costCenterCode: costCentersTable.code,
+      costCenterNameAr: costCentersTable.nameAr, costCenterNameEn: costCentersTable.nameEn,
+    }).from(employeeProjectAssignmentsTable)
+      .leftJoin(contractingProjectsTable, eq(employeeProjectAssignmentsTable.projectId, contractingProjectsTable.id))
+      .leftJoin(costCentersTable, eq(employeeProjectAssignmentsTable.costCenterId, costCentersTable.id))
+      .where(and(eq(employeeProjectAssignmentsTable.companyId, cid), eq(employeeProjectAssignmentsTable.employeeId, employeeId)))
+      .orderBy(desc(employeeProjectAssignmentsTable.effectiveFrom));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/:id/assignments", requirePermission("hr_employees", "edit"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const employeeId = Number(req.params.id), b = req.body || {};
+    const from = isoDate(b.effectiveFrom), to = b.effectiveTo ? isoDate(b.effectiveTo) : null;
+    const projectId = b.projectId == null || b.projectId === "" ? null : Number(b.projectId);
+    const costCenterId = b.costCenterId == null || b.costCenterId === "" ? null : Number(b.costCenterId);
+    if (!employeeId || !/^\d{4}-\d\d-\d\d$/.test(from) || (to && (!/^\d{4}-\d\d-\d\d$/.test(to) || to < from)) || (!projectId && !costCenterId)) {
+      res.status(400).json({ error: "بيانات التكليف أو التواريخ غير صالحة" }); return;
+    }
+    const row = await db.transaction(async (tx) => {
+      // Serializes two admins moving the same employee at once.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, ${employeeId})`);
+      const [employee] = await tx.select({ id: employeesTable.id }).from(employeesTable)
+        .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid)));
+      if (!employee) throw Object.assign(new Error("الموظف غير موجود في هذه الشركة"), { status: 404 });
+      if (projectId) {
+        const [p] = await tx.select({ id: contractingProjectsTable.id }).from(contractingProjectsTable)
+          .where(and(eq(contractingProjectsTable.id, projectId), eq(contractingProjectsTable.companyId, cid)));
+        if (!p) throw new Error("المشروع لا يتبع الشركة");
+      }
+      if (costCenterId) {
+        const [c] = await tx.select({ id: costCentersTable.id }).from(costCentersTable)
+          .where(and(eq(costCentersTable.id, costCenterId), eq(costCentersTable.companyId, cid)));
+        if (!c) throw new Error("مركز التكلفة لا يتبع الشركة");
+      }
+      const existing = await tx.select().from(employeeProjectAssignmentsTable).where(and(
+        eq(employeeProjectAssignmentsTable.companyId, cid), eq(employeeProjectAssignmentsTable.employeeId, employeeId),
+      )).for("update");
+      // A new transfer closes a prior assignment; future/contained periods are
+      // still rejected rather than silently corrupting their effective dates.
+      const previous = existing.find(a => isoDate(a.effectiveFrom) < from && (!a.effectiveTo || isoDate(a.effectiveTo) >= from));
+      if (previous) {
+        if (to && previous.effectiveTo && isoDate(previous.effectiveTo) <= to) throw new Error("فترة التكليف تتداخل مع تكليف قائم");
+        await tx.update(employeeProjectAssignmentsTable).set({ effectiveTo: addDays(from, -1), updatedAt: new Date() })
+          .where(eq(employeeProjectAssignmentsTable.id, previous.id));
+      }
+      const overlap = existing.find(a => a.id !== previous?.id && isoDate(a.effectiveFrom) <= (to || "9999-12-31") && (!a.effectiveTo || isoDate(a.effectiveTo) >= from));
+      if (overlap) throw new Error("فترة التكليف تتداخل مع تكليف قائم");
+      const [created] = await tx.insert(employeeProjectAssignmentsTable).values({
+        companyId: cid, employeeId, projectId, costCenterId, effectiveFrom: from, effectiveTo: to, notes: N(b.notes),
+      }).returning();
+      return created;
+    });
+    res.status(201).json(row);
+  } catch (e: any) { res.status(e?.status || 400).json({ error: e.message }); }
+});
+
+router.delete("/:id/assignments/:assignmentId", requirePermission("hr_employees", "edit"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const employeeId = Number(req.params.id), assignmentId = Number(req.params.assignmentId);
+    const row = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, ${employeeId})`);
+      const [assignment] = await tx.select().from(employeeProjectAssignmentsTable).where(and(
+        eq(employeeProjectAssignmentsTable.id, assignmentId), eq(employeeProjectAssignmentsTable.employeeId, employeeId),
+        eq(employeeProjectAssignmentsTable.companyId, cid),
+      )).for("update");
+      if (!assignment) throw Object.assign(new Error("التكليف غير موجود"), { status: 404 });
+      const snapshots = await tx.select().from(payrollAllocationSnapshotsTable).where(and(
+        eq(payrollAllocationSnapshotsTable.companyId, cid), eq(payrollAllocationSnapshotsTable.employeeId, employeeId),
+      ));
+      const used = snapshots.some(s => assignmentRepresentedBySnapshot(assignment, s));
+      if (used) throw new Error("لا يمكن حذف تكليف ممثل في لقطة مسير رواتب؛ استخدم مسار تصحيح/فك ترحيل المسير");
+      const [deleted] = await tx.delete(employeeProjectAssignmentsTable).where(eq(employeeProjectAssignmentsTable.id, assignmentId)).returning();
+      return deleted;
+    });
+    res.json(row);
+  } catch (e: any) { res.status(e?.status || 400).json({ error: e.message }); }
+});
+
 // ─── PAYROLL ──────────────────────────────────────────────────
 router.get("/payroll/runs", async (req, res) => {
   try {
@@ -1655,7 +1753,19 @@ router.post("/payroll/runs", async (req, res) => {
       // trust the client's previewed figure (a violation may have been
       // edited/waived between preview and save). Line totals/net are adjusted
       // by the delta so the run always reconciles with what gets consumed.
-      const empIds = lines.map((l: any) => Number(l.employeeId)).filter(Boolean);
+      const empIds = lines.map((l: any) => Number(l.employeeId)).filter(Number.isInteger);
+      const uniqueEmpIds = [...new Set(empIds)];
+      if (!lines.length || empIds.length !== lines.length || uniqueEmpIds.length !== lines.length) {
+        throw Object.assign(new Error("يجب أن يحتوي المسير على سطر واحد صالح لكل موظف"), { status: 400 });
+      }
+      const ownedEmployees = await tx.select({ id: employeesTable.id }).from(employeesTable)
+        .where(and(
+          eq(employeesTable.companyId, cid),
+          inArray(employeesTable.id, uniqueEmpIds),
+        ));
+      if (ownedEmployees.length !== uniqueEmpIds.length) {
+        throw Object.assign(new Error("أحد الموظفين لا يتبع هذه الشركة"), { status: 400 });
+      }
       const lockedViolations = empIds.length
         ? await tx.select({ id: employeeViolationsTable.id, employeeId: employeeViolationsTable.employeeId, amount: employeeViolationsTable.amount })
             .from(employeeViolationsTable)
@@ -1700,9 +1810,13 @@ router.post("/payroll/runs", async (req, res) => {
         status: "draft",
         notes: N(notes),
       }).returning();
+      const [company] = await tx.select({ payrollCostBasis: companiesTable.payrollCostBasis })
+        .from(companiesTable).where(eq(companiesTable.id, cid));
+      const costBasis = ["gross", "net", "basic"].includes(company?.payrollCostBasis || "")
+        ? company!.payrollCostBasis! : "gross";
 
       for (const l of lines) {
-        await tx.insert(payrollLinesTable).values({
+        const [payrollLine] = await tx.insert(payrollLinesTable).values({
           payrollRunId: run.id,
           employeeId: Number(l.employeeId),
           basicSalary: String(l.basicSalary || 0),
@@ -1722,7 +1836,26 @@ router.post("/payroll/runs", async (req, res) => {
           workedDays: Number(l.workedDays || 30),
           absentDays: Number(l.absentDays || 0),
           notes: N(l.notes),
-        });
+        }).returning();
+        const assignments = await tx.select().from(employeeProjectAssignmentsTable).where(and(
+          eq(employeeProjectAssignmentsTable.companyId, cid),
+          eq(employeeProjectAssignmentsTable.employeeId, Number(l.employeeId)),
+          lte(employeeProjectAssignmentsTable.effectiveFrom, periodEnd),
+        ));
+        // The final date condition is expressed in JS too so NULL (open ended)
+        // is handled uniformly by all supported Drizzle/Postgres versions.
+        const activeAssignments = assignments.filter(a => !a.effectiveTo || isoDate(a.effectiveTo) >= periodStart);
+        const basisAmount = costBasis === "basic" ? Number(l.basicSalary || 0)
+          : costBasis === "net" ? Number(l.netSalary || 0)
+          : Number(l.grossSalary || 0);
+        const snapshots = allocationBuckets(activeAssignments, periodStart, periodEnd, basisAmount);
+        for (const s of snapshots) {
+          await tx.insert(payrollAllocationSnapshotsTable).values({
+            companyId: cid, payrollRunId: run.id, payrollLineId: payrollLine.id, employeeId: Number(l.employeeId),
+            projectId: s.projectId, costCenterId: s.costCenterId, periodStart: s.periodStart, periodEnd: s.periodEnd,
+            days: s.days, costBasis, basisAmount: String(basisAmount.toFixed(2)), allocatedAmount: s.allocatedAmount,
+          });
+        }
       }
       // Consume EXACTLY the locked violations (reverted if the draft run is
       // deleted). Marking by id keeps the run-line ↔ violation reconciliation

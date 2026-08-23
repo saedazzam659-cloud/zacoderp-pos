@@ -2882,6 +2882,52 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS agent_servers_agent_idx ON agent_servers (agent_id)` },
     { label: "agent_servers_marker_idx",
       sql:   `CREATE INDEX IF NOT EXISTS agent_servers_marker_idx ON agent_servers (agent_id, hb_marker)` },
+    // ── Payroll cost allocation (effective-dated assignments + frozen drafts)
+    { label: "companies.payroll_cost_basis",
+      sql: `ALTER TABLE companies ADD COLUMN IF NOT EXISTS payroll_cost_basis TEXT NOT NULL DEFAULT 'gross'` },
+    { label: "companies.payroll_cost_basis_check",
+      sql: `ALTER TABLE companies DROP CONSTRAINT IF EXISTS companies_payroll_cost_basis_check;
+            ALTER TABLE companies ADD CONSTRAINT companies_payroll_cost_basis_check CHECK (payroll_cost_basis IN ('gross', 'net', 'basic')) NOT VALID` },
+    { label: "create employee_project_assignments table",
+      sql: `CREATE TABLE IF NOT EXISTS employee_project_assignments (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        project_id INTEGER REFERENCES contracting_projects(id) ON DELETE RESTRICT,
+        cost_center_id INTEGER REFERENCES cost_centers(id) ON DELETE RESTRICT,
+        effective_from DATE NOT NULL,
+        effective_to DATE,
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (effective_to IS NULL OR effective_to >= effective_from),
+        CHECK (project_id IS NOT NULL OR cost_center_id IS NOT NULL)
+      )` },
+    { label: "employee_project_assignments_employee_period_idx",
+      sql: `CREATE INDEX IF NOT EXISTS employee_project_assignments_employee_period_idx ON employee_project_assignments (company_id, employee_id, effective_from, effective_to)` },
+    { label: "create payroll_allocation_snapshots table",
+      sql: `CREATE TABLE IF NOT EXISTS payroll_allocation_snapshots (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        payroll_run_id INTEGER NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+        payroll_line_id INTEGER NOT NULL REFERENCES payroll_lines(id) ON DELETE CASCADE,
+        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+        project_id INTEGER REFERENCES contracting_projects(id) ON DELETE RESTRICT,
+        cost_center_id INTEGER REFERENCES cost_centers(id) ON DELETE RESTRICT,
+        period_start DATE NOT NULL,
+        period_end DATE NOT NULL,
+        days INTEGER NOT NULL CHECK (days > 0),
+        cost_basis TEXT NOT NULL DEFAULT 'gross',
+        basis_amount NUMERIC(12,2) NOT NULL,
+        allocated_amount NUMERIC(12,2) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "payroll_allocation_snapshots_run_idx",
+      sql: `CREATE INDEX IF NOT EXISTS payroll_allocation_snapshots_run_idx ON payroll_allocation_snapshots (company_id, payroll_run_id, employee_id)` },
+    { label: "payroll_allocation_snapshots_immutable",
+      sql: `CREATE OR REPLACE FUNCTION reject_payroll_allocation_snapshot_update() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'payroll allocation snapshots are immutable'; END; $$ LANGUAGE plpgsql;
+             DROP TRIGGER IF EXISTS payroll_allocation_snapshots_no_update ON payroll_allocation_snapshots;
+             CREATE TRIGGER payroll_allocation_snapshots_no_update BEFORE UPDATE ON payroll_allocation_snapshots FOR EACH ROW EXECUTE FUNCTION reject_payroll_allocation_snapshot_update()` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {
