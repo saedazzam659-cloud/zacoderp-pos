@@ -3047,9 +3047,6 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // ── Payroll cost allocation (effective-dated assignments + frozen drafts)
     { label: "companies.payroll_cost_basis",
       sql: `ALTER TABLE companies ADD COLUMN IF NOT EXISTS payroll_cost_basis TEXT NOT NULL DEFAULT 'gross'` },
-    { label: "companies.payroll_cost_basis_check",
-      sql: `ALTER TABLE companies DROP CONSTRAINT IF EXISTS companies_payroll_cost_basis_check;
-            ALTER TABLE companies ADD CONSTRAINT companies_payroll_cost_basis_check CHECK (payroll_cost_basis IN ('gross', 'net', 'basic')) NOT VALID` },
     { label: "create employee_project_assignments table",
       sql: `CREATE TABLE IF NOT EXISTS employee_project_assignments (
         id SERIAL PRIMARY KEY,
