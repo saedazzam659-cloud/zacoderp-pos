@@ -21,6 +21,7 @@ const TYPE_BADGE_CLASS: Record<string, string> = {
 };
 
 interface AccountComboboxProps {
+  companyId?:      number;
   value?:         string;
   onValueChange:  (value: string) => void;
   placeholder?:   string;
@@ -38,6 +39,7 @@ interface AccountComboboxProps {
 }
 
 export function AccountCombobox({
+  companyId,
   value,
   onValueChange,
   placeholder    = "— اختر حساباً —",
@@ -51,7 +53,7 @@ export function AccountCombobox({
   excludeIds,
 }: AccountComboboxProps) {
   const { user, token } = useAuth() as any;
-  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const cid = companyId ?? (user?.role === "superadmin" ? undefined : user?.company?.id);
 
   const { data: accounts = [] } = useQuery<any[]>({
     queryKey: ["accounts", cid],

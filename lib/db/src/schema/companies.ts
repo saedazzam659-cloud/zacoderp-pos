@@ -72,6 +72,16 @@ export const companiesTable = pgTable("companies", {
   // below. When a per-doc-type flag is NULL (legacy rows) the form falls back to
   // this global value so existing tenants keep their current behavior.
   autoPostingEnabled: boolean("auto_posting_enabled").notNull().default(true),
+  // Opening-balance work may span several days. When enabled, the dedicated
+  // opening-balances screen may persist an unbalanced draft; it still cannot
+  // be posted or included in reports until it balances.
+  allowUnbalancedOpeningBalances: boolean("allow_unbalanced_opening_balances").notNull().default(false),
+  openingBalanceReminderMessage: text("opening_balance_reminder_message").notNull()
+    .default("يوجد قيد أرصدة افتتاحية غير متوازن. يرجى استكماله قبل إقفال الفترة المالية."),
+  // KSA-local HH:mm. Stored as text because it is a wall-clock preference, not
+  // an instant in time.
+  openingBalanceReminderStartTime: text("opening_balance_reminder_start_time").notNull().default("09:00"),
+  openingBalanceReminderRepeatCount: integer("opening_balance_reminder_repeat_count").notNull().default(3),
   // Journal-entry form behavior after a successful save:
   //   "auto"   → keep the form open and reset to a fresh draft so the user can
   //              keep typing the next entry (current default behavior).

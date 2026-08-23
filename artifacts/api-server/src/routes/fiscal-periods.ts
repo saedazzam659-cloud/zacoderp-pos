@@ -8,6 +8,7 @@ import {
 import { eq, and, asc, ne, gte, lte, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { findUnbalancedOpeningDrafts } from "../lib/openingBalances.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -319,6 +320,15 @@ router.patch("/years/:id/status", async (req, res) => {
       return;
     }
 
+    const openingDrafts = await findUnbalancedOpeningDrafts(cid);
+    if (openingDrafts.length > 0) {
+      res.status(409).json({
+        error: "لا يمكن إقفال السنة المالية مع وجود مسودة أرصدة افتتاحية غير متوازنة. أكمل القيد ووازن المدين والدائن ثم رحّله أولاً.",
+        openingDrafts,
+      });
+      return;
+    }
+
     if (status === "closed") {
       // Every period must be at least closed (closed or permanently_closed).
       const stillOpen = periods.filter(p => p.status === "open");
@@ -438,6 +448,7 @@ router.get("/periods/:id/validate", async (req, res) => {
     ))
     .groupBy(journalEntryLinesTable.entryId);
     const unbalanced = balRows.filter(r => Math.abs(parseFloat(r.debit || "0") - parseFloat(r.credit || "0")) > 0.01);
+    const openingDrafts = await findUnbalancedOpeningDrafts(cid);
 
     // 3) Active adjustments missing a run for any month inside this period?
     const ymOf = (d: string) => d.slice(0, 7);
@@ -468,6 +479,7 @@ router.get("/periods/:id/validate", async (req, res) => {
     const issues: string[] = [];
     if (drafts.length > 0)             issues.push(`يوجد ${drafts.length} قيد غير مرحّل`);
     if (unbalanced.length > 0)         issues.push(`يوجد ${unbalanced.length} قيد غير متوازن`);
+    if (openingDrafts.length > 0)      issues.push("توجد مسودة أرصدة افتتاحية غير متوازنة تمنع الإقفال");
     if (missingAdjustments.length > 0) issues.push(`يوجد ${missingAdjustments.length} تسوية لم يتم توليد قيودها`);
 
     res.json({
@@ -476,6 +488,7 @@ router.get("/periods/:id/validate", async (req, res) => {
       issues,
       drafts: drafts.slice(0, 50),
       unbalanced: unbalanced.slice(0, 50),
+      openingDrafts,
       missingAdjustments,
     });
   } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
@@ -497,6 +510,9 @@ router.post("/periods/:id/close-pl", async (req, res) => {
     const period = await fetchPeriod(cid, id);
     if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
     if (period.status !== "open") { res.status(400).json({ error: "الفترة ليست مفتوحة" }); return; }
+    if ((await findUnbalancedOpeningDrafts(cid)).length > 0) {
+      res.status(409).json({ error: "لا يمكن تنفيذ الإقفال مع وجود قيد أرصدة افتتاحية غير متوازن" }); return;
+    }
 
     const [pl] = await db.select().from(accountsTable).where(and(
       eq(accountsTable.id, Number(plSummaryAccountId)), eq(accountsTable.companyId, cid),
@@ -586,6 +602,9 @@ router.post("/periods/:id/transfer-profit", async (req, res) => {
     const period = await fetchPeriod(cid, id);
     if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
     if (period.status !== "open") { res.status(400).json({ error: "الفترة ليست مفتوحة" }); return; }
+    if ((await findUnbalancedOpeningDrafts(cid)).length > 0) {
+      res.status(409).json({ error: "لا يمكن ترحيل الأرباح مع وجود قيد أرصدة افتتاحية غير متوازن" }); return;
+    }
 
     const accs = await db.select().from(accountsTable).where(and(
       eq(accountsTable.companyId, cid),
@@ -687,6 +706,15 @@ router.post("/periods/:id/soft-close", async (req, res) => {
     ))
     .groupBy(journalEntryLinesTable.entryId);
     const unbalanced = balRows.filter(r => Math.abs(parseFloat(r.debit || "0") - parseFloat(r.credit || "0")) > 0.01);
+    const openingDrafts = await findUnbalancedOpeningDrafts(cid);
+    // Unlike ordinary draft warnings, this invariant has NO force bypass.
+    if (openingDrafts.length > 0) {
+      res.status(409).json({
+        error: "لا يمكن إقفال الفترة مع وجود مسودة أرصدة افتتاحية غير متوازنة. أكملها ووازنها ثم رحّلها أولاً.",
+        openingDrafts,
+      });
+      return;
+    }
 
     // IFRS-aligned guard: revenue/expense accounts must be zeroed out via
     // close-pl before soft-closing the period. Otherwise the user ends up
@@ -747,6 +775,14 @@ router.post("/periods/:id/hard-close", async (req, res) => {
     if (period.status === "permanently_closed") { res.json({ ok: true, alreadyClosed: true }); return; }
     if (period.status !== "closed") {
       res.status(400).json({ error: "يجب إجراء الإقفال الناعم أولاً قبل الإقفال النهائي" });
+      return;
+    }
+    const openingDrafts = await findUnbalancedOpeningDrafts(cid);
+    if (openingDrafts.length > 0) {
+      res.status(409).json({
+        error: "لا يمكن الإقفال النهائي مع وجود مسودة أرصدة افتتاحية غير متوازنة.",
+        openingDrafts,
+      });
       return;
     }
 

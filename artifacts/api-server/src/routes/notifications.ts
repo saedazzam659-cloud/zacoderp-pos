@@ -1,8 +1,12 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { notificationsTable, notificationReadsTable, notificationDismissalsTable } from "@workspace/db";
+import {
+  notificationsTable, notificationReadsTable, notificationDismissalsTable,
+  companiesTable,
+} from "@workspace/db";
 import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { extractAuth } from "../middleware/auth.js";
+import { findUnbalancedOpeningDrafts } from "../lib/openingBalances.js";
 
 const router = Router();
 
@@ -33,11 +37,69 @@ function recipientWhere(req: any) {
   );
 }
 
+function cairoNowParts(): { date: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Cairo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    minutes: Number(get("hour")) * 60 + Number(get("minute")),
+  };
+}
+
+// Materialize due reminders lazily when users poll the bell. This keeps the
+// schedule durable and idempotent without depending on a process-local timer.
+async function ensureOpeningBalanceReminders(companyId: number | null | undefined): Promise<void> {
+  if (!companyId) return;
+  const [company] = await db.select({
+    enabled: companiesTable.allowUnbalancedOpeningBalances,
+    message: companiesTable.openingBalanceReminderMessage,
+    startTime: companiesTable.openingBalanceReminderStartTime,
+    repeatCount: companiesTable.openingBalanceReminderRepeatCount,
+  }).from(companiesTable).where(eq(companiesTable.id, companyId));
+  if (!company?.enabled) return;
+
+  const drafts = await findUnbalancedOpeningDrafts(companyId);
+  if (drafts.length === 0) return;
+
+  const { date, minutes } = cairoNowParts();
+  const [hour, minute] = String(company.startTime || "09:00").split(":").map(Number);
+  const startMinutes = hour * 60 + minute;
+  // Repetitions are spaced two hours apart. Slots after midnight are ignored;
+  // the next day's schedule starts fresh at the configured time.
+  const dueSlots = Array.from(
+    { length: Math.max(1, Math.min(12, Number(company.repeatCount) || 1)) },
+    (_, index) => index,
+  ).filter((index) => {
+    const due = startMinutes + index * 120;
+    return due < 24 * 60 && minutes >= due;
+  });
+  if (dueSlots.length === 0) return;
+
+  await db.insert(notificationsTable).values(dueSlots.map((slot) => ({
+    companyId,
+    userId: null,
+    title: "تنبيه مهم: الأرصدة الافتتاحية غير متوازنة",
+    body: company.message,
+    severity: "high",
+    category: "opening_balance_reminder",
+    sourceKey: `opening_balance_reminder:${date}:${slot}`,
+  }))).onConflictDoNothing();
+}
+
 // GET /api/notifications  ?unread=1
 //   Returns notifications visible to the current user with a per-user is_read
 //   flag computed from the notification_reads table (broadcast-safe).
 router.get("/", async (req, res) => {
   try {
+    await ensureOpeningBalanceReminders(req.authUser!.companyId);
     const userId = req.authUser!.id;
     const onlyUnread = req.query.unread === "1";
 
@@ -83,6 +145,7 @@ router.get("/", async (req, res) => {
 // GET /api/notifications/unread-count
 router.get("/unread-count", async (req, res) => {
   try {
+    await ensureOpeningBalanceReminders(req.authUser!.companyId);
     const userId = req.authUser!.id;
     const result = await db.execute(sql`
       SELECT COUNT(*)::int AS c

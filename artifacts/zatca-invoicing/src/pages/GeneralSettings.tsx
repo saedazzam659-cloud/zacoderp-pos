@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import SenderSettingsTab from "./settings/SenderSettingsTab";
+import { AccountCombobox } from "@/components/AccountCombobox";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -409,8 +410,37 @@ export default function GeneralSettings() {
   const balancesFileRef = useRef<HTMLInputElement>(null);
   const [itemsImporting,    setItemsImporting]    = useState(false);
   const [balancesImporting, setBalancesImporting] = useState(false);
+  const [inventoryOpeningAccountId, setInventoryOpeningAccountId] = useState("");
+  const [openingReminderMessage, setOpeningReminderMessage] = useState(
+    user?.company?.openingBalanceReminderMessage
+      ?? "يوجد قيد أرصدة افتتاحية غير متوازن. يرجى استكماله قبل إقفال الفترة المالية.",
+  );
+  const [openingReminderStartTime, setOpeningReminderStartTime] = useState(
+    user?.company?.openingBalanceReminderStartTime ?? "09:00",
+  );
+  const [openingReminderRepeatCount, setOpeningReminderRepeatCount] = useState(
+    Number(user?.company?.openingBalanceReminderRepeatCount ?? 3),
+  );
   const [itemsReport,    setItemsReport]    = useState<{ created: number; updated: number; total: number; errors: { row: number; error: string }[] } | null>(null);
   const [balancesReport, setBalancesReport] = useState<{ applied: number; total: number; errors: { row: number; error: string }[] } | null>(null);
+
+  const companyId = user?.company?.id ?? user?.companyId;
+  const { data: accountingMappings = [] } = useQuery<any[]>({
+    queryKey: ["accounting-mappings", companyId],
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/accounting-mappings?companyId=${companyId}`, { headers });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!companyId,
+  });
+  useEffect(() => {
+    if (inventoryOpeningAccountId) return;
+    const mapping = accountingMappings.find(
+      (item: any) => item.documentType === "warehouse" && item.roleKey === "inventory",
+    );
+    if (mapping?.accountId) setInventoryOpeningAccountId(String(mapping.accountId));
+  }, [accountingMappings, inventoryOpeningAccountId]);
 
   function downloadItemsTemplate() {
     const headers = ["code","nameAr","nameEn","barcode","groupCode","unitCode","itemType","costPrice","salePrice","vatRate","reorderLevel","maxLevel","description"];
@@ -479,9 +509,13 @@ export default function GeneralSettings() {
     try {
       const balances = await parseExcelToObjects(file);
       if (!balances.length) throw new Error(t("pages.generalSettings.emptyFileError"));
+      if (!inventoryOpeningAccountId) throw new Error("اختر حساب قيمة مخزون أول المدة قبل رفع الملف");
       const cid = user?.company?.id ?? user?.companyId;
       const res = await fetch(`${API}/api/inventory/import/opening-balances?companyId=${cid}`, {
-        method: "POST", headers, body: JSON.stringify({ balances }),
+        method: "POST", headers, body: JSON.stringify({
+          balances,
+          accountId: Number(inventoryOpeningAccountId),
+        }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || t("pages.generalSettings.importFailed"));
@@ -492,6 +526,9 @@ export default function GeneralSettings() {
         toast({ title: t(key, { applied: j.applied, errors: errCount }) });
       }
       qc.invalidateQueries({ queryKey: ["stock-balance"] });
+      qc.invalidateQueries({ queryKey: ["opening-entry"] });
+      qc.invalidateQueries({ queryKey: ["journal-entries"] });
+      qc.invalidateQueries({ queryKey: ["accounting-mappings"] });
     } catch (e: any) {
       toast({ title: e.message || t("pages.generalSettings.importFailed"), variant: "destructive" });
     } finally {
@@ -1610,6 +1647,80 @@ export default function GeneralSettings() {
 
         {/* ═══ TAB 3: Opening Balances Import ════════════════════════════════ */}
         <TabsContent value="balances" className="mt-5">
+        <div className="space-y-4">
+        <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/70 dark:from-amber-950/25 dark:to-orange-950/10 p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <ShieldAlert className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-semibold">إدخال الأرصدة الافتتاحية على عدة أيام</h3>
+                <p className="text-xs text-muted-foreground mt-1 max-w-2xl">
+                  عند التفعيل يمكن حفظ القيد الافتتاحي غير المتوازن كمسودة فقط. لن يظهر في التقارير المالية، ولن يمكن إقفال الفترة أو السنة حتى يكتمل ويتوازن ويُرحّل.
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={user?.company?.allowUnbalancedOpeningBalances === true}
+              disabled={postingSaving}
+              onCheckedChange={(checked) => togglePostingMode({ allowUnbalancedOpeningBalances: checked })}
+            />
+          </div>
+          {user?.company?.allowUnbalancedOpeningBalances === true && (
+            <div className="grid gap-3 md:grid-cols-6 rounded-xl border border-amber-200/80 bg-white/80 dark:bg-background/70 p-4">
+              <div className="md:col-span-4">
+                <Label>رسالة التنبيه</Label>
+                <Textarea
+                  value={openingReminderMessage}
+                  maxLength={300}
+                  onChange={(event) => setOpeningReminderMessage(event.target.value)}
+                  className="mt-1.5 min-h-20"
+                />
+              </div>
+              <div>
+                <Label>بدء التذكير</Label>
+                <Input
+                  type="time"
+                  value={openingReminderStartTime}
+                  onChange={(event) => setOpeningReminderStartTime(event.target.value)}
+                  className="mt-1.5"
+                />
+              </div>
+              <div>
+                <Label>عدد المرات يومياً</Label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  dir="ltr"
+                  value={openingReminderRepeatCount}
+                  onChange={(event) => setOpeningReminderRepeatCount(
+                    Math.max(1, Math.min(12, Number(event.target.value.replace(/\D/g, "")) || 1)),
+                  )}
+                  className="mt-1.5"
+                />
+              </div>
+              <div className="md:col-span-6 flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                  تتكرر الرسالة كل ساعتين بدءاً من الوقت المحدد، وبحد أقصى 12 مرة في اليوم.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={postingSaving || !openingReminderMessage.trim()}
+                  onClick={() => togglePostingMode({
+                    openingBalanceReminderMessage: openingReminderMessage.trim(),
+                    openingBalanceReminderStartTime: openingReminderStartTime,
+                    openingBalanceReminderRepeatCount: openingReminderRepeatCount,
+                  })}
+                >
+                  <Save className="h-4 w-4 me-1.5" />
+                  حفظ إعدادات التذكير
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
         <div className="rounded-xl border bg-card p-5 space-y-4">
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
@@ -1625,11 +1736,25 @@ export default function GeneralSettings() {
               </p>
             </div>
           </div>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 dark:bg-emerald-950/15 p-4 space-y-2">
+            <Label className="text-emerald-900 dark:text-emerald-200">حساب قيمة مخزون أول المدة</Label>
+            <AccountCombobox
+              companyId={companyId}
+              value={inventoryOpeningAccountId}
+              onValueChange={setInventoryOpeningAccountId}
+              placeholder="ابحث في دليل الحسابات بالكود أو الاسم..."
+              allowEmpty={false}
+              filterTypes={["asset"]}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              سيُحتسب الإجمالي تلقائياً (الكمية × تكلفة الوحدة) ويُضاف كسطر مُدار داخل نفس قيد الأرصدة الافتتاحية، دون إنشاء قيد مستقل أو تكرار القيمة عند إعادة الاستيراد.
+            </p>
+          </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={downloadBalancesTemplate} className="gap-1.5">
               <Download className="h-3.5 w-3.5" />{t("pages.generalSettings.downloadTemplate")}
             </Button>
-            <Button type="button" size="sm" onClick={() => balancesFileRef.current?.click()} disabled={balancesImporting} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+            <Button type="button" size="sm" onClick={() => balancesFileRef.current?.click()} disabled={balancesImporting || !inventoryOpeningAccountId} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
               {balancesImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
               {balancesImporting ? t("common.loading") : t("pages.generalSettings.uploadBalancesFile")}
             </Button>
@@ -1656,6 +1781,7 @@ export default function GeneralSettings() {
               )}
             </div>
           )}
+        </div>
         </div>
         </TabsContent>
 

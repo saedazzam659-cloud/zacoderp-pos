@@ -295,6 +295,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
     decimalPlaces, showZeros, hideQuickAddBar, autoPostingEnabled,
+    allowUnbalancedOpeningBalances, openingBalanceReminderMessage,
+    openingBalanceReminderStartTime, openingBalanceReminderRepeatCount,
     // Per-doc-type auto-posting toggles. Each one independently decides
     // whether saving that document immediately posts the resulting journal
     // entry. Validated as plain booleans below.
@@ -347,6 +349,10 @@ router.patch("/:id/general-settings", async (req, res) => {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
     decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; autoPostingEnabled?: boolean;
+    allowUnbalancedOpeningBalances?: boolean;
+    openingBalanceReminderMessage?: string;
+    openingBalanceReminderStartTime?: string;
+    openingBalanceReminderRepeatCount?: number;
     autoPostJournalEntry?: boolean;
     autoPostSales?: boolean; autoPostPurchase?: boolean;
     allowDraftWithoutWarehouse?: boolean;
@@ -446,6 +452,33 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (hideQuickAddBar !== undefined) updates.hideQuickAddBar = !!hideQuickAddBar;
   if (autoPostingEnabled !== undefined) {
     updates.autoPostingEnabled = !!autoPostingEnabled;
+  }
+  if (allowUnbalancedOpeningBalances !== undefined) {
+    updates.allowUnbalancedOpeningBalances = !!allowUnbalancedOpeningBalances;
+  }
+  if (openingBalanceReminderMessage !== undefined) {
+    const message = String(openingBalanceReminderMessage).trim();
+    if (!message || message.length > 300) {
+      res.status(400).json({ error: "رسالة تذكير الأرصدة الافتتاحية مطلوبة ويجب ألا تتجاوز 300 حرف" });
+      return;
+    }
+    updates.openingBalanceReminderMessage = message;
+  }
+  if (openingBalanceReminderStartTime !== undefined) {
+    const startTime = String(openingBalanceReminderStartTime);
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)) {
+      res.status(400).json({ error: "وقت بدء التذكير يجب أن يكون بصيغة HH:mm" });
+      return;
+    }
+    updates.openingBalanceReminderStartTime = startTime;
+  }
+  if (openingBalanceReminderRepeatCount !== undefined) {
+    const repeatCount = Math.floor(Number(openingBalanceReminderRepeatCount));
+    if (!Number.isFinite(repeatCount) || repeatCount < 1 || repeatCount > 12) {
+      res.status(400).json({ error: "عدد مرات التذكير يجب أن يكون بين 1 و12" });
+      return;
+    }
+    updates.openingBalanceReminderRepeatCount = repeatCount;
   }
   // Per-doc-type auto-posting toggles — coerce to boolean so we never persist
   // a string "false" (which would be truthy in the form layer) by accident.

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
-import { db } from "@workspace/db";
+import { db, pool } from "@workspace/db";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   warehouseGroupsTable, warehousesTable, itemGroupsTable, unitsTable,
@@ -27,6 +27,7 @@ import {
   currenciesTable,
   notificationsTable,
   subscriptionsTable,
+  accountingMappingsTable,
 } from "@workspace/db";
 import { eq, ne, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or, count } from "drizzle-orm";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -46,6 +47,10 @@ import {
 import { nextJeSubSequence, nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { pickBatches, type BatchPick } from "../lib/stockHelpers.js";
+import {
+  INVENTORY_OPENING_CREDIT_MARKER,
+  INVENTORY_OPENING_DEBIT_MARKER,
+} from "../lib/openingBalances.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -3026,9 +3031,73 @@ router.post("/import/items", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 router.post("/import/opening-balances", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
+  const importLockClient = await pool.connect();
+  let importLocked = false;
+  try {
+  await importLockClient.query("SELECT pg_advisory_lock($1, $2)", [cid, 1187]);
+  importLocked = true;
   const rows: any[] = Array.isArray(req.body?.balances) ? req.body.balances : [];
   const txDate = String(req.body?.date || new Date().toISOString().slice(0, 10));
+  const inventoryAccountId = Number(req.body?.accountId);
   if (!rows.length) { res.status(400).json({ error: "لا توجد بيانات" }); return; }
+  if (!Number.isInteger(inventoryAccountId) || inventoryAccountId <= 0) {
+    res.status(400).json({ error: "اختر حساب المخزون الذي ستُرحّل إليه القيمة الافتتاحية" });
+    return;
+  }
+
+  const [inventoryAccount] = await db.select({
+    id: accountsTable.id,
+    isPosting: accountsTable.isPosting,
+    isActive: accountsTable.isActive,
+  }).from(accountsTable).where(and(
+    eq(accountsTable.id, inventoryAccountId),
+    eq(accountsTable.companyId, cid),
+  ));
+  if (!inventoryAccount || !inventoryAccount.isPosting || !inventoryAccount.isActive) {
+    res.status(400).json({ error: "حساب المخزون يجب أن يكون حساباً فرعياً نشطاً من دليل الشركة" });
+    return;
+  }
+
+  const [openingCounterMapping] = await db.select({
+    accountId: accountingMappingsTable.accountId,
+  }).from(accountingMappingsTable).where(and(
+    eq(accountingMappingsTable.companyId, cid),
+    eq(accountingMappingsTable.documentType, "warehouse"),
+    eq(accountingMappingsTable.roleKey, "opening_balance"),
+  ));
+  let openingCounterAccountId = openingCounterMapping?.accountId ?? null;
+  if (openingCounterAccountId == null) {
+    const [fallback] = await db.select({ id: accountsTable.id }).from(accountsTable).where(and(
+      eq(accountsTable.companyId, cid),
+      eq(accountsTable.code, "3301"),
+      eq(accountsTable.isActive, true),
+      eq(accountsTable.isPosting, true),
+    ));
+    openingCounterAccountId = fallback?.id ?? null;
+  }
+  if (openingCounterAccountId == null) {
+    res.status(400).json({
+      error: "لم يتم ربط حساب مقابل الأرصدة الافتتاحية (warehouse.opening_balance). حدده من إعدادات الربط المحاسبي أولاً.",
+    });
+    return;
+  }
+
+  const [existingOpening] = await db.select({
+    id: journalEntriesTable.id,
+    status: journalEntriesTable.status,
+  }).from(journalEntriesTable).where(and(
+    eq(journalEntriesTable.companyId, cid),
+    eq(journalEntriesTable.entryType, "opening"),
+    sql`COALESCE(${journalEntriesTable.description}, '') NOT LIKE '%[ob:%'`,
+  )).orderBy(desc(journalEntriesTable.createdAt), desc(journalEntriesTable.id)).limit(1);
+  if (existingOpening?.status === "posted") {
+    res.status(423).json({
+      error: "قيد الأرصدة الافتتاحية مُرحّل. فك ترحيله من شاشة الأرصدة الافتتاحية قبل إعادة استيراد المخزون.",
+    });
+    return;
+  }
+  const dateGuard = await assertWritableForDate(cid, txDate);
+  if (!dateGuard.ok) { res.status(423).json({ error: dateGuard.reason }); return; }
 
   const items = await db.select({ id: itemsTable.id, code: itemsTable.code }).from(itemsTable).where(eq(itemsTable.companyId, cid));
   const wh    = await db.select({ id: warehousesTable.id, code: warehousesTable.code }).from(warehousesTable).where(eq(warehousesTable.companyId, cid));
@@ -3094,7 +3163,121 @@ router.post("/import/opening-balances", async (req, res) => {
     }
   }
 
-  res.json({ applied, errors, total: rows.length });
+  const [valueRow] = await db.select({
+    total: sql<string>`COALESCE(SUM(${stockLedgerTable.balanceQty} * ${stockLedgerTable.costPrice}), 0)`,
+  }).from(stockLedgerTable).where(and(
+    eq(stockLedgerTable.companyId, cid),
+    eq(stockLedgerTable.refType, "opening_balance"),
+  ));
+  const inventoryOpeningValue = Number(valueRow?.total ?? 0);
+
+  let generatedDocNumber: string | null = null;
+  if (!existingOpening) {
+    try {
+      generatedDocNumber = await nextSequenceNumber(cid, "journal_entry", {
+        userId: req.authUser?.id ?? null,
+        refTable: "journal_entries",
+        docDate: txDate,
+      });
+    } catch {
+      // The inventory and ledger snapshots are already persisted at this
+      // point. Do not leave them detached from opening balances just because
+      // a company has a broken optional numbering setup; doc_number is
+      // nullable and can safely show the entry id as its fallback label.
+      generatedDocNumber = null;
+    }
+  }
+
+  const openingEntryId = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(journalEntriesTable).where(and(
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.entryType, "opening"),
+      sql`COALESCE(${journalEntriesTable.description}, '') NOT LIKE '%[ob:%'`,
+    )).orderBy(desc(journalEntriesTable.createdAt), desc(journalEntriesTable.id)).limit(1);
+    if (current?.status === "posted") {
+      throw new Error("قيد الأرصدة الافتتاحية مُرحّل. فك ترحيله قبل إعادة الاستيراد.");
+    }
+
+    await tx.insert(accountingMappingsTable).values({
+      companyId: cid,
+      documentType: "warehouse",
+      roleKey: "inventory",
+      accountId: inventoryAccountId,
+    }).onConflictDoUpdate({
+      target: [
+        accountingMappingsTable.companyId,
+        accountingMappingsTable.documentType,
+        accountingMappingsTable.roleKey,
+      ],
+      set: { accountId: inventoryAccountId, updatedAt: new Date() },
+    });
+
+    let entryId = current?.id;
+    if (!entryId) {
+      const [created] = await tx.insert(journalEntriesTable).values({
+        companyId: cid,
+        docNumber: generatedDocNumber,
+        entryDate: txDate,
+        currency: "SAR",
+        exchangeRate: "1",
+        description: `الأرصدة الافتتاحية ${txDate.slice(0, 4)}`,
+        entryType: "opening",
+        periodId: dateGuard.period?.id ?? null,
+        status: "draft",
+        ...fullAuditFor(req),
+        postedBy: null,
+        postedAt: null,
+        postedIp: null,
+        postedUserAgent: null,
+      }).returning();
+      entryId = created.id;
+    }
+
+    await tx.delete(journalEntryLinesTable).where(and(
+      eq(journalEntryLinesTable.entryId, entryId),
+      sql`${journalEntryLinesTable.description} LIKE '%[opening-inventory:%'`,
+    ));
+    if (Math.abs(inventoryOpeningValue) >= 0.005) {
+      const amount = Math.abs(inventoryOpeningValue).toFixed(2);
+      await tx.insert(journalEntryLinesTable).values([
+        {
+          entryId,
+          accountId: inventoryAccountId,
+          debit: inventoryOpeningValue >= 0 ? amount : "0",
+          credit: inventoryOpeningValue < 0 ? amount : "0",
+          description: `${INVENTORY_OPENING_DEBIT_MARKER} قيمة مخزون أول المدة`,
+          sortOrder: 900000,
+        },
+        {
+          entryId,
+          accountId: openingCounterAccountId,
+          debit: inventoryOpeningValue < 0 ? amount : "0",
+          credit: inventoryOpeningValue >= 0 ? amount : "0",
+          description: `${INVENTORY_OPENING_CREDIT_MARKER} مقابل قيمة مخزون أول المدة`,
+          sortOrder: 900001,
+        },
+      ]);
+    }
+    return entryId;
+  });
+
+  res.json({
+    applied,
+    errors,
+    total: rows.length,
+    inventoryOpeningValue,
+    openingEntryId,
+    inventoryAccountId,
+    openingCounterAccountId,
+  });
+  } catch (e: any) {
+    if (!res.headersSent) res.status(500).json({ error: e?.message ?? "فشل استيراد الأرصدة الافتتاحية" });
+  } finally {
+    if (importLocked) {
+      await importLockClient.query("SELECT pg_advisory_unlock($1, $2)", [cid, 1187]).catch(() => {});
+    }
+    importLockClient.release();
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════

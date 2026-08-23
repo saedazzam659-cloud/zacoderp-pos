@@ -122,6 +122,7 @@ export default function OpeningBalances() {
     const next: Record<number, Amount> = {};
     for (const l of (openingEntry.lines ?? [])) {
       if (!l.accountId) continue;
+      if (String(l.description ?? "").includes("[opening-inventory:")) continue;
       const d = num(l.debit), c = num(l.credit);
       const prev = next[l.accountId] ?? { debit: "", credit: "" };
       const pd = num(prev.debit) + d, pc = num(prev.credit) + c;
@@ -181,9 +182,25 @@ export default function OpeningBalances() {
       debit  += d;
       credit += c;
     }
+    const managedLines = (openingEntry?.lines ?? []).filter(
+      (line: any) => String(line.description ?? "").includes("[opening-inventory:"),
+    );
+    for (const line of managedLines) {
+      const d = num(line.debit), c = num(line.credit);
+      if (d > 0 || c > 0) filledRows++;
+      debit += d;
+      credit += c;
+    }
     const diff = debit - credit;
-    return { debit, credit, diff, filledRows, balanced: Math.abs(diff) < 0.005 && (debit + credit) > 0 };
-  }, [amounts, postableAccounts]);
+    const manualFilledRows = Object.values(amounts).filter(
+      (row) => num(row.debit) > 0 || num(row.credit) > 0,
+    ).length;
+    return {
+      debit, credit, diff, filledRows, manualFilledRows,
+      managedLines,
+      balanced: Math.abs(diff) < 0.005 && (debit + credit) > 0,
+    };
+  }, [amounts, postableAccounts, openingEntry]);
 
   function setAmount(id: number, side: "debit" | "credit", value: string) {
     // Allow only digits, dot, comma, minus
@@ -469,12 +486,18 @@ export default function OpeningBalances() {
           });
         }
       }
-      if (lines.length < 2) throw new Error(t("openingBalances.errAtLeastTwo"));
+      const managedLineCount = (openingEntry?.lines ?? []).filter(
+        (line: any) => String(line.description ?? "").includes("[opening-inventory:"),
+      ).length;
+      if (lines.length + managedLineCount < 2) throw new Error(t("openingBalances.errAtLeastTwo"));
       // Allow saving even if not balanced — warn the user once.
       const totalD = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
       const totalC = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
       const diff   = totalD - totalC;
       if (Math.abs(diff) > 0.005) {
+        if (user?.company?.allowUnbalancedOpeningBalances !== true) {
+          throw new Error("القيد غير متوازن. فعّل «إدخال الأرصدة الافتتاحية على عدة أيام» من الإعدادات العامة لحفظه كمسودة، أو وازن المدين والدائن.");
+        }
         const proceed = window.confirm(
           t("openingBalances.confirmUnbalanced", { diff: fmt2(diff) }),
         );
@@ -681,6 +704,36 @@ export default function OpeningBalances() {
             )}
           </div>
         )}
+        {totals.managedLines.length >= 2 && (
+          <div className="mt-3 rounded-xl border border-cyan-200 bg-gradient-to-l from-cyan-50 to-sky-50 dark:from-cyan-950/30 dark:to-sky-950/20 p-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-cyan-100 dark:bg-cyan-900/50 p-2 text-cyan-700 dark:text-cyan-300">
+                <FileSpreadsheet className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <p className="font-semibold text-sm text-cyan-950 dark:text-cyan-100">قيمة مخزون أول المدة مرتبطة تلقائياً</p>
+                <p className="text-xs text-cyan-800/80 dark:text-cyan-200/80 mt-1">
+                  هذه القيمة محسوبة من ملف كميات وتكاليف المخزون، وهي محمية من التعديل هنا لمنع تكرارها. أعد الاستيراد من الإعدادات العامة لتحديثها.
+                </p>
+                <div className="flex gap-4 mt-2 text-xs">
+                  <span>مدين مُدار: <b dir="ltr">{fmt(totals.managedLines.reduce((sum: number, line: any) => sum + num(line.debit), 0))}</b></span>
+                  <span>دائن مُدار: <b dir="ltr">{fmt(totals.managedLines.reduce((sum: number, line: any) => sum + num(line.credit), 0))}</b></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {openingEntry?.status === "draft" && Math.abs(totals.diff) > 0.005 && (
+          <div className="mt-3 rounded-xl border border-red-300 bg-red-50 dark:bg-red-950/30 p-4 flex items-start gap-3 text-red-900 dark:text-red-100">
+            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">مسودة افتتاحية غير متوازنة</p>
+              <p className="text-xs mt-1">
+                لن تدخل هذه المسودة في التقارير المالية، وسيبقى إقفال الفترة والسنة محظوراً حتى يصبح الفرق صفراً ويتم ترحيل القيد.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Filters */}
@@ -824,7 +877,7 @@ export default function OpeningBalances() {
           <div className="flex-1" />
 
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={clearAll} disabled={totals.filledRows === 0}>
+            <Button variant="ghost" size="sm" onClick={clearAll} disabled={totals.manualFilledRows === 0}>
               {t("openingBalances.clearAll")}
             </Button>
             <Button

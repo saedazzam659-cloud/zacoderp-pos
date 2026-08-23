@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Bell, Sparkles, X } from "lucide-react";
@@ -84,6 +85,22 @@ export function NotificationBell() {
     enabled: !!token,
   });
   const items: Notification[] = (listData?.notifications ?? []).slice(0, 8);
+
+  useEffect(() => {
+    const reminder = items.find(
+      (item) => item.category === "opening_balance_reminder" && !item.isRead,
+    );
+    if (!reminder) return;
+    const shownKey = `opening-balance-reminder-shown:${reminder.id}`;
+    if (sessionStorage.getItem(shownKey)) return;
+    sessionStorage.setItem(shownKey, "1");
+    toast({
+      title: reminder.title,
+      description: reminder.body,
+      variant: "destructive",
+      duration: 15_000,
+    });
+  }, [items, toast]);
 
   return (
     <DropdownMenu>

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
-import { db } from "@workspace/db";
+import { db, pool } from "@workspace/db";
 import {
   journalEntriesTable, journalEntryLinesTable, branchesTable, usersTable,
   salesInvoicesTable, salesReturnsTable, customerSettlementsTable,
@@ -12,6 +12,7 @@ import {
   employeeCustodiesTable, employeeCustodySettlementsTable,
   fixedAssetsTable, faDepreciationRunsTable,
   accountingAdjustmentRunsTable,
+  companiesTable,
 } from "@workspace/db";
 import { unpostDepreciationRun } from "../lib/depreciationPosting.js";
 import { unpostAdjustmentRunJe, syncAdjustmentRunAmountForJe } from "../lib/adjustmentPosting.js";
@@ -32,6 +33,22 @@ import {
 } from "../lib/invoiceSettlement.js";
 import { settlementLinksTable } from "@workspace/db";
 import { customersTable, suppliersTable } from "@workspace/db";
+import {
+  isManagedInventoryOpeningLine,
+} from "../lib/openingBalances.js";
+
+async function unbalancedOpeningAllowed(companyId: number): Promise<boolean> {
+  const [company] = await db.select({
+    allowed: companiesTable.allowUnbalancedOpeningBalances,
+  }).from(companiesTable).where(eq(companiesTable.id, companyId));
+  return company?.allowed === true;
+}
+
+function lineTotals(lines: any[]): { debit: number; credit: number; balanced: boolean } {
+  const debit = lines.reduce((sum, line) => sum + (Number(line?.debit) || 0), 0);
+  const credit = lines.reduce((sum, line) => sum + (Number(line?.credit) || 0), 0);
+  return { debit, credit, balanced: Math.abs(debit - credit) <= 0.005 };
+}
 
 // ── سداد فاتورة عن طريق القيد ─────────────────────────────────────────────
 // Parse + normalize the optional invoice-settlement link on a manual JE.
@@ -1059,7 +1076,10 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
+    const { docNumber, entryDate, currency, exchangeRate, description, entryType, branchId } = req.body;
+    const lines = Array.isArray(req.body?.lines)
+      ? req.body.lines.filter((line: any) => !isManagedInventoryOpeningLine(line))
+      : req.body?.lines;
 
     if (!entryDate) { res.status(400).json({ error: "التاريخ مطلوب" }); return; }
 
@@ -1080,6 +1100,16 @@ router.post("/", async (req, res) => {
         await ensureLeafAccounts(cid, lines.map((l: any) => l?.accountId));
       } catch (err: any) {
         res.status(400).json({ error: err?.message ?? "حساب رئيسي غير مسموح" });
+        return;
+      }
+    }
+
+    if (entryType === "opening" && Array.isArray(lines)) {
+      const totals = lineTotals(lines);
+      if (!totals.balanced && !(await unbalancedOpeningAllowed(cid))) {
+        res.status(400).json({
+          error: "حفظ قيد افتتاحي غير متوازن غير مفعّل. فعّل الخيار من الإعدادات العامة أو وازن المدين والدائن.",
+        });
         return;
       }
     }
@@ -1359,6 +1389,8 @@ async function ensureNotLocked(id: number, cid: number): Promise<{ ok: boolean; 
 }
 
 router.put("/:id", async (req, res) => {
+  let openingEditLockClient: any = null;
+  let openingEditLockCompanyId: number | null = null;
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
@@ -1378,12 +1410,24 @@ router.put("/:id", async (req, res) => {
 
     // Posted-status guard — refuse to edit a posted JE. The user must
     // unpost it first (POST /:id/unpost) before any field/line change.
-    const [statusRow] = await db.select({
+    let [statusRow] = await db.select({
       status:    journalEntriesTable.status,
       entryType: journalEntriesTable.entryType,
     })
       .from(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (statusRow?.entryType === "opening") {
+      const client = await pool.connect();
+      openingEditLockClient = client;
+      openingEditLockCompanyId = cid;
+      await client.query("SELECT pg_advisory_lock($1, $2)", [cid, 1187]);
+      [statusRow] = await db.select({
+        status:    journalEntriesTable.status,
+        entryType: journalEntriesTable.entryType,
+      })
+        .from(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    }
     if (statusRow?.status === "posted") {
       res.status(423).json({ error: "هذا القيد مُرحَّل ولا يمكن تعديله. قم بفك الترحيل أولاً ثم أعد المحاولة." });
       return;
@@ -1393,9 +1437,33 @@ router.put("/:id", async (req, res) => {
     // "general" (that would orphan the run linkage semantics).
     const isAdjustmentJe = statusRow?.entryType === "adjustment_prepaid"
       || statusRow?.entryType === "adjustment_accrued";
+    const isOpeningJe = statusRow?.entryType === "opening";
 
     // docNumber is intentionally not destructured — immutable on edit.
-    const { entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
+    const { entryDate, currency, exchangeRate, description, entryType, branchId } = req.body;
+    const submittedLines = Array.isArray(req.body?.lines)
+      ? req.body.lines.filter((line: any) => !isManagedInventoryOpeningLine(line))
+      : req.body?.lines;
+    const persistedManagedLines = statusRow?.entryType === "opening"
+      ? await db.select().from(journalEntryLinesTable)
+          .where(and(
+            eq(journalEntryLinesTable.entryId, id),
+            sql`${journalEntryLinesTable.description} LIKE '%[opening-inventory:%'`,
+          ))
+      : [];
+    const lines = Array.isArray(submittedLines)
+      ? [...submittedLines, ...persistedManagedLines]
+      : submittedLines;
+
+    if (statusRow?.entryType === "opening" && Array.isArray(lines)) {
+      const totals = lineTotals(lines);
+      if (!totals.balanced && !(await unbalancedOpeningAllowed(cid))) {
+        res.status(400).json({
+          error: "حفظ قيد افتتاحي غير متوازن غير مفعّل. فعّل الخيار من الإعدادات العامة أو وازن المدين والدائن.",
+        });
+        return;
+      }
+    }
 
     // Optional invoice-settlement link — re-validated on every edit with
     // the entry itself excluded so its own old amount doesn't block it.
@@ -1465,7 +1533,10 @@ router.put("/:id", async (req, res) => {
         currency:     currency || "SAR",
         exchangeRate: exchangeRate ?? "1",
         description:  description || null,
-        entryType:    isAdjustmentJe ? statusRow!.entryType : (entryType || "general"),
+        // Opening identity is immutable: its server-managed inventory lines
+        // must never become ordinary editable lines through a crafted type
+        // change. Adjustment entries already follow the same rule.
+        entryType:    (isAdjustmentJe || isOpeningJe) ? statusRow!.entryType : (entryType || "general"),
         branchId:     resolvedBranchId,
         salesInvoiceId:    settlement.salesInvoiceId,
         purchaseInvoiceId: settlement.purchaseInvoiceId,
@@ -1513,6 +1584,15 @@ router.put("/:id", async (req, res) => {
 
     res.json({ ...entry, lines: linesOut });
   } catch (e: any) { res.status(e?.settlementReject ? 400 : 500).json({ error: e.message }); }
+  finally {
+    if (openingEditLockClient && openingEditLockCompanyId != null) {
+      await openingEditLockClient.query(
+        "SELECT pg_advisory_unlock($1, $2)",
+        [openingEditLockCompanyId, 1187],
+      ).catch(() => {});
+      openingEditLockClient.release();
+    }
+  }
 });
 
 // ─── POST /:id/post — flip status from draft → posted ───────────────────────
@@ -1521,6 +1601,8 @@ router.put("/:id", async (req, res) => {
 // lines and an open period. Source-document JEs left as drafts (auto-posting
 // OFF) ARE postable here — see the NOTE in the handler.
 router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
+  let openingLockClient: any = null;
+  let openingLockCompanyId: number | null = null;
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
@@ -1539,9 +1621,20 @@ router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
     // auto-posting off produced draft source-document JEs that no screen could
     // ever post — they never reached the financial reports.
 
-    const [existing] = await db.select().from(journalEntriesTable)
+    let [existing] = await db.select().from(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+    if (existing.entryType === "opening") {
+      const client = await pool.connect();
+      openingLockClient = client;
+      openingLockCompanyId = cid;
+      await client.query("SELECT pg_advisory_lock($1, $2)", [cid, 1187]);
+      // Re-read after waiting: an import may have replaced the managed lines
+      // or observed the prior draft while we were queued on the lock.
+      [existing] = await db.select().from(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+      if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+    }
     if (existing.status === "posted") { res.json({ ok: true, alreadyPosted: true }); return; }
 
     // fa_depreciation draft: distinguish two shapes.
@@ -1601,6 +1694,12 @@ router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+  finally {
+    if (openingLockClient && openingLockCompanyId != null) {
+      await openingLockClient.query("SELECT pg_advisory_unlock($1, $2)", [openingLockCompanyId, 1187]).catch(() => {});
+      openingLockClient.release();
+    }
+  }
 });
 
 // ─── POST /:id/unpost — flip status from posted → draft ─────────────────────
