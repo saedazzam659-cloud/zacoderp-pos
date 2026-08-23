@@ -45,17 +45,34 @@ export async function runWithAgentScope<T>(
 }
 
 /** List active agents with an initialized external DB (central registry). */
-export async function listInitializedAgents(): Promise<Array<{ id: number; name: string; dbUrlEnc: string }>> {
+export async function listInitializedAgents(): Promise<Array<{
+  id: number;
+  name: string;
+  domain: string;
+  dbUrlEnc: string;
+  lastSeenIp: string | null;
+  lastHeartbeatAt: Date | null;
+}>> {
   const { centralDb, agentInstancesTable } = await import("@workspace/db");
   const { and, eq, isNotNull } = await import("drizzle-orm");
   const rows = await centralDb.select({
     id: agentInstancesTable.id,
     name: agentInstancesTable.name,
+    domain: agentInstancesTable.domain,
     dbUrlEnc: agentInstancesTable.dbUrlEnc,
     dbStatus: agentInstancesTable.dbStatus,
+    lastSeenIp: agentInstancesTable.lastSeenIp,
+    lastHeartbeatAt: agentInstancesTable.lastHeartbeatAt,
   }).from(agentInstancesTable)
     .where(and(eq(agentInstancesTable.status, "active"), isNotNull(agentInstancesTable.dbUrlEnc)));
   return rows
     .filter(r => r.dbStatus === "initialized" && r.dbUrlEnc)
-    .map(r => ({ id: r.id, name: r.name as string, dbUrlEnc: r.dbUrlEnc as string }));
+    .map(r => ({
+      id: r.id,
+      name: r.name as string,
+      domain: r.domain,
+      dbUrlEnc: r.dbUrlEnc as string,
+      lastSeenIp: r.lastSeenIp,
+      lastHeartbeatAt: r.lastHeartbeatAt,
+    }));
 }

@@ -30,9 +30,10 @@ import { randomBytes } from "node:crypto";
 
 import bcrypt from "bcryptjs";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
-import { db, pool, usersTable, auditLogTable } from "@workspace/db";
+import { db, pool, usersTable, auditLogTable, agentInstancesTable } from "@workspace/db";
 
 import app from "../src/app.ts";
+import { encryptSecret } from "../src/lib/encryption.ts";
 
 const TAG = `tt_secsess_${randomBytes(4).toString("hex")}`;
 
@@ -48,6 +49,7 @@ let adminUserId: number;
 // force-logout this one so the SA's own session stays intact for later tests.
 let victimToken: string;
 let victimUserId: number;
+let agentInstanceId: number;
 
 const userIds: number[] = [];
 let maxAuditIdBefore = 0;
@@ -57,9 +59,13 @@ interface Json { [k: string]: unknown }
 async function api<T = Json>(
   method: string,
   path: string,
-  opts: { token?: string; body?: unknown } = {},
+  opts: { token?: string; body?: unknown; headers?: Record<string, string> } = {},
 ): Promise<{ status: number; body: T }> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", "User-Agent": TAG };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "User-Agent": TAG,
+    ...(opts.headers ?? {}),
+  };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   const res = await fetch(baseUrl + path, {
     method,
@@ -109,6 +115,31 @@ before(async () => {
     role: "admin", isActive: true, sessionToken: victimToken, sessionId: "test-victim", companyId: null,
   }).returning({ id: usersTable.id });
   victimUserId = victim.id; userIds.push(victimUserId);
+
+  await db.insert(auditLogTable).values({
+    userId: saUserId,
+    username: `${TAG}_sa`,
+    role: "superadmin",
+    companyId: null,
+    module: "auth",
+    action: "login",
+    ip: "127.0.0.1",
+    userAgent: TAG,
+  });
+
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("DATABASE_URL is required for source-attribution tests");
+  const [agent] = await db.insert(agentInstancesTable).values({
+    name: `${TAG} وكيل`,
+    domain: `${TAG.replaceAll("_", "-")}.example.test`,
+    installationId: `${TAG}-installation`,
+    status: "active",
+    dbStatus: "initialized",
+    dbUrlEnc: encryptSecret(databaseUrl),
+    lastSeenIp: "127.0.0.1",
+    lastHeartbeatAt: new Date(),
+  }).returning({ id: agentInstancesTable.id });
+  agentInstanceId = agent.id;
 });
 
 after(async () => {
@@ -119,6 +150,7 @@ after(async () => {
         eq(auditLogTable.userAgent, TAG),
       ));
     }
+    if (agentInstanceId) await db.delete(agentInstancesTable).where(eq(agentInstancesTable.id, agentInstanceId));
     if (userIds.length) await db.delete(usersTable).where(inArray(usersTable.id, userIds));
   } finally {
     if (server) await new Promise<void>((r) => server.close(() => r()));
@@ -151,6 +183,8 @@ test("sessions: central listing stamps source-qualified row ids and warnings[]",
   assert.equal(mine.source, "central");
   assert.equal(mine.rowId, `central:${saUserId}`);
   assert.equal(mine.agentInstanceId, null);
+  assert.equal(mine.agentDomain, null);
+  assert.equal(mine.agentServerCountry, null);
   // SECURITY: never leak the token / hash / db credentials.
   assert.equal("sessionToken" in mine, false);
   assert.equal("passwordHash" in mine, false);
@@ -158,6 +192,75 @@ test("sessions: central listing stamps source-qualified row ids and warnings[]",
   assert.equal("dbUrlEnc" in mine, false);
   // The opaque sessionId is allowed.
   assert.ok("sessionId" in mine);
+});
+
+// ─── Login-history source attribution ───────────────────────────────────────
+test("login history: central rows have a source-qualified audit row id", async () => {
+  const r = await api<{ rows: any[]; total: number; warnings: unknown[] }>(
+    "GET",
+    `/api/admin/security/login-history?source=central&username=${encodeURIComponent(TAG)}&limit=50&offset=0`,
+    { token: saToken },
+  );
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.body.warnings));
+  const login = r.body.rows.find(row => row.action === "login" && row.username === `${TAG}_sa`);
+  assert.ok(login);
+  assert.equal(login.source, "central");
+  assert.equal(login.rowId, `central:audit:${login.id}`);
+  assert.equal(login.agentInstanceId, null);
+  assert.equal(login.agentDomain, null);
+  assert.equal("sessionToken" in login, false);
+  assert.equal("dbUrlEnc" in login, false);
+});
+
+test("login history: arbitrary agent-host header cannot spoof source attribution", async () => {
+  const r = await api<{ rows: any[] }>(
+    "GET",
+    `/api/admin/security/login-history?source=central&username=${encodeURIComponent(TAG)}&limit=50&offset=0`,
+    {
+      token: saToken,
+      headers: { "X-Zacod-Agent-Host": "forged-agent.example" },
+    },
+  );
+  assert.equal(r.status, 200);
+  assert.ok(r.body.rows.length > 0);
+  assert.ok(r.body.rows.every(row => row.source === "central" && row.agentInstanceId == null));
+});
+
+test("login history: selected agent is stamped from registry and all-source ids never collide", async () => {
+  const selected = await api<{ rows: any[] }>(
+    "GET",
+    `/api/admin/security/login-history?source=${agentInstanceId}&username=${encodeURIComponent(TAG)}&limit=50&offset=0`,
+    { token: saToken },
+  );
+  assert.equal(selected.status, 200);
+  const agentLogin = selected.body.rows.find(row => row.action === "login" && row.username === `${TAG}_sa`);
+  assert.ok(agentLogin);
+  assert.equal(agentLogin.source, `agent:${agentInstanceId}`);
+  assert.equal(agentLogin.agentInstanceId, agentInstanceId);
+  assert.equal(agentLogin.agentDomain, `${TAG.replaceAll("_", "-")}.example.test`);
+  assert.equal(agentLogin.rowId, `agent:${agentInstanceId}:audit:${agentLogin.id}`);
+  assert.equal("dbUrlEnc" in agentLogin, false);
+
+  const all = await api<{ rows: any[]; warnings: unknown[] }>(
+    "GET",
+    `/api/admin/security/login-history?source=all&username=${encodeURIComponent(`${TAG}_sa`)}&limit=50&offset=0`,
+    { token: saToken },
+  );
+  assert.equal(all.status, 200);
+  const sameAuditRows = all.body.rows.filter(row => row.action === "login" && row.username === `${TAG}_sa`);
+  assert.ok(sameAuditRows.some(row => row.rowId === `central:audit:${agentLogin.id}`));
+  assert.ok(sameAuditRows.some(row => row.rowId === `agent:${agentInstanceId}:audit:${agentLogin.id}`));
+  assert.equal(new Set(sameAuditRows.map(row => row.rowId)).size, sameAuditRows.length);
+});
+
+test("login history: invalid source is rejected and unknown agent is explicit", async () => {
+  const invalid = await api("GET", "/api/admin/security/login-history?source=forged", { token: saToken });
+  assert.equal(invalid.status, 400);
+  const missing = await api("GET", "/api/admin/security/login-history?source=999999", { token: saToken });
+  assert.equal(missing.status, 404);
+  const tooDeep = await api("GET", "/api/admin/security/login-history?source=central&offset=20001", { token: saToken });
+  assert.equal(tooDeep.status, 400);
 });
 
 // ─── Single termination routing ──────────────────────────────────────────────

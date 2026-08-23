@@ -1818,16 +1818,19 @@ async function getOrphanLedgerRows(companyId: number) {
 
 // GET /api/admin/companies — minimal list for dropdowns. Soft-deleted
 // companies are hidden — pickers must never offer them as a target.
-router.get("/companies", requireSuperAdmin, async (_req, res) => {
-  const rows = await db.select({
-    id: companiesTable.id, nameAr: companiesTable.nameAr, nameEn: companiesTable.nameEn, status: companiesTable.status,
-  }).from(companiesTable)
-    .where(and(
-      isNull(companiesTable.deletedAt),
-      eq(companiesTable.isInternalDemoWorkspace, false),
-    ))
-    .orderBy(asc(companiesTable.nameAr));
-  res.json(rows);
+router.get("/companies", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const rows = await db.select({
+      id: companiesTable.id, nameAr: companiesTable.nameAr, nameEn: companiesTable.nameEn, status: companiesTable.status,
+    }).from(companiesTable)
+      .where(and(
+        isNull(companiesTable.deletedAt),
+        eq(companiesTable.isInternalDemoWorkspace, false),
+      ))
+      .orderBy(asc(companiesTable.nameAr));
+    res.json(rows);
+  });
 });
 
 // GET /api/admin/orphan-stock?companyId=X — preview orphan stock ledger rows
@@ -2817,6 +2820,58 @@ interface LatestLoginRow {
   created_at: string;
 }
 
+interface SecuritySourceProjection {
+  source: string;
+  agentInstanceId: number | null;
+  agentName: string | null;
+  agentDomain: string | null;
+  agentServerLabel: string | null;
+  agentServerLastSeenAt: string | null;
+  agentServerCountry: string | null;
+  agentServerCity: string | null;
+  agentServerRegion: string | null;
+  agentServerCountryName: string | null;
+}
+
+const CENTRAL_SECURITY_SOURCE: SecuritySourceProjection = {
+  source: "central",
+  agentInstanceId: null,
+  agentName: null,
+  agentDomain: null,
+  agentServerLabel: null,
+  agentServerLastSeenAt: null,
+  agentServerCountry: null,
+  agentServerCity: null,
+  agentServerRegion: null,
+  agentServerCountryName: null,
+};
+
+async function buildAgentSecuritySource(agent: {
+  id: number;
+  name: string;
+  domain: string;
+  lastSeenIp: string | null;
+  lastHeartbeatAt: Date | null;
+}): Promise<SecuritySourceProjection> {
+  let serverLoc: IpLocation | null = null;
+  if (agent.lastSeenIp) {
+    try { serverLoc = await resolveLocationForIp(agent.lastSeenIp); }
+    catch { serverLoc = null; }
+  }
+  return {
+    source: `agent:${agent.id}`,
+    agentInstanceId: agent.id,
+    agentName: agent.name,
+    agentDomain: agent.domain,
+    agentServerLabel: "السيرفر الرئيسي",
+    agentServerLastSeenAt: agent.lastHeartbeatAt?.toISOString() ?? null,
+    agentServerCountry: serverLoc?.country ?? null,
+    agentServerCity: serverLoc?.city ?? null,
+    agentServerRegion: serverLoc?.region ?? null,
+    agentServerCountryName: serverLoc?.countryName ?? null,
+  };
+}
+
 // A single active-session row (source-agnostic). The `source`/`rowId` fields
 // are stamped by the caller AFTER collectSessions returns, because the same
 // numeric user id can exist in BOTH the central DB and an agent DB — the
@@ -3123,13 +3178,13 @@ router.get("/security/sessions", requireSuperAdmin, async (req, res) => {
     const source = String(Array.isArray(rawSource) ? rawSource[0] : rawSource ?? "central").trim() || "central";
 
     const warnings: { source: string; name: string; error: string }[] = [];
-    const allRows: (SessionRowBase & { source: string; rowId: string; agentInstanceId: number | null; agentName: string | null })[] = [];
+    const allRows: (SessionRowBase & SecuritySourceProjection & { rowId: string })[] = [];
 
     if (source === "central" || source === "all") {
       try {
         const centralRows = await collectSessions();
         for (const r of centralRows) {
-          allRows.push({ ...r, source: "central", rowId: `central:${r.userId}`, agentInstanceId: null, agentName: null });
+          allRows.push({ ...r, ...CENTRAL_SECURITY_SOURCE, rowId: `central:${r.userId}` });
         }
       } catch (e: unknown) {
         console.error("[admin/security/sessions] central DB session query failed:", e);
@@ -3148,12 +3203,14 @@ router.get("/security/sessions", requireSuperAdmin, async (req, res) => {
         : initialized.filter(a => a.id === Number(source));
       for (const agent of wanted) {
         try {
+          const sourceMeta = await buildAgentSecuritySource(agent);
           const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
           const agentRows = await runWithExternalDb(ctx, async () => collectSessions());
           for (const r of agentRows) {
             allRows.push({
-              ...r, source: `agent:${agent.id}`, rowId: `agent:${agent.id}:${r.userId}`,
-              agentInstanceId: agent.id, agentName: agent.name,
+              ...r,
+              ...sourceMeta,
+              rowId: `agent:${agent.id}:${r.userId}`,
             });
           }
         } catch (e: unknown) {
@@ -3175,6 +3232,8 @@ router.get("/security/sessions", requireSuperAdmin, async (req, res) => {
           row.email,
           row.companyName,
           row.agentName,
+          row.agentDomain,
+          row.agentServerCountryName,
           row.ip,
         ].some((value) => String(value ?? "").toLocaleLowerCase().includes(search)))
       : allRows;
@@ -3345,11 +3404,17 @@ router.post("/security/sessions/bulk-end", requireSuperAdmin, async (req, res) =
   }
 });
 
-// GET /api/admin/security/login-history — paginated audit_log filter for
-// login/logout/denied. Query: from, to, username, companyId, success
-// ("true"|"false"), limit (default 100, max 500), offset.
-router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
-  try {
+// Read login/logout/denied rows from whichever database the ambient `db`
+// proxy is currently bound to. The route below invokes this once per selected
+// source, then stamps every row with trusted central-registry source metadata.
+const MAX_SECURITY_HISTORY_OFFSET = 20_000;
+const MAX_SECURITY_HISTORY_PAGE_SIZE = 500;
+
+async function collectLoginHistory(
+  req: Request,
+  limitOverride?: number,
+  offsetOverride?: number,
+) {
     // Per task spec: include all login/logout/denied audit events. Auth-module
     // rows cover wrong-password and account-locked attempts; non-auth module
     // rows cover RBAC permission denials from `requirePermission`. The UI
@@ -3364,8 +3429,15 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
     const from = typeof req.query.from === "string" ? new Date(req.query.from) : null;
     const to   = typeof req.query.to   === "string" ? new Date(req.query.to)   : null;
     const succ = typeof req.query.success === "string" ? req.query.success : "";
-    const limit = Math.min(Math.max(Number(req.query.limit ?? 100), 1), 500);
-    const offset = Math.max(Number(req.query.offset ?? 0), 0);
+    const limit = limitOverride == null
+      ? Math.min(Math.max(Number(req.query.limit ?? 100), 1), 500)
+      : Math.min(
+          Math.max(limitOverride, 1),
+          MAX_SECURITY_HISTORY_OFFSET + MAX_SECURITY_HISTORY_PAGE_SIZE,
+        );
+    const offset = offsetOverride == null
+      ? Math.max(Number(req.query.offset ?? 0), 0)
+      : Math.max(offsetOverride, 0);
 
     if (username)                      conds.push(sql`${auditLogTable.username} ILIKE ${"%" + username + "%"}`);
     if (Number.isFinite(companyId))    conds.push(eq(auditLogTable.companyId, companyId));
@@ -3612,7 +3684,131 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
     `);
     const series = sqlRows<{ day: string; n: number }>(seriesResult as SqlExecuteResult<{ day: string; n: number }>);
 
-    res.json({ rows: enriched, total: Number(total ?? 0), limit, offset, deniedSeries30d: series });
+    return { rows: enriched, total: Number(total ?? 0), limit, offset, deniedSeries30d: series };
+}
+
+// GET /api/admin/security/login-history — paginated, source-aware audit_log
+// view. `source` has the same contract as active sessions: central | all |
+// numeric agent id. Agent attribution comes ONLY from this server-side
+// selection and the central registry; client headers are never consulted.
+router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
+  try {
+    const rawSource = req.query.source;
+    const source = String(Array.isArray(rawSource) ? rawSource[0] : rawSource ?? "central").trim() || "central";
+    if (source !== "central" && source !== "all" && !/^\d+$/.test(source)) {
+      res.status(400).json({ error: "مصدر غير صالح" });
+      return;
+    }
+
+    const requestedLimit = Math.min(
+      Math.max(Number(req.query.limit ?? 100), 1),
+      MAX_SECURITY_HISTORY_PAGE_SIZE,
+    );
+    const requestedOffset = Math.max(Number(req.query.offset ?? 0), 0);
+    if (!Number.isFinite(requestedOffset) || requestedOffset > MAX_SECURITY_HISTORY_OFFSET) {
+      res.status(400).json({
+        error: `الإزاحة القصوى المسموحة هي ${MAX_SECURITY_HISTORY_OFFSET}`,
+        maxOffset: MAX_SECURITY_HISTORY_OFFSET,
+      });
+      return;
+    }
+    // Each selected source contributes enough rows to build the globally
+    // sorted requested page. This prevents later sources disappearing from
+    // page 1 while still bounding each source query.
+    const sourceWindow = requestedOffset + requestedLimit;
+    const warnings: { source: string; name: string; error: string }[] = [];
+    const mergedRows: Array<Record<string, any>> = [];
+    const deniedByDay = new Map<string, number>();
+    let total = 0;
+
+    const mergePayload = (
+      payload: Awaited<ReturnType<typeof collectLoginHistory>>,
+      sourceMeta: SecuritySourceProjection,
+    ) => {
+      total += payload.total;
+      for (const row of payload.rows) {
+        mergedRows.push({
+          ...row,
+          ...sourceMeta,
+          rowId: `${sourceMeta.source}:audit:${row.id}`,
+        });
+      }
+      for (const point of payload.deniedSeries30d) {
+        deniedByDay.set(point.day, (deniedByDay.get(point.day) ?? 0) + Number(point.n));
+      }
+    };
+
+    if (source === "central" || source === "all") {
+      try {
+        mergePayload(
+          await collectLoginHistory(req, sourceWindow, 0),
+          CENTRAL_SECURITY_SOURCE,
+        );
+      } catch (e: unknown) {
+        console.error("[admin/security/login-history] central DB query failed:", e);
+        if (source === "central") throw e;
+        warnings.push({ source: "central", name: "المركز الرئيسي", error: "تعذّر قراءة محاولات الدخول من المصدر المركزي" });
+      }
+    }
+
+    if (source === "all" || /^\d+$/.test(source)) {
+      try {
+        const { listInitializedAgents } = await import("../lib/agentScope.js");
+        const { runWithExternalDb } = await import("@workspace/db");
+        const { getAgentDbContext } = await import("../lib/agentDb.js");
+        const initialized = await listInitializedAgents();
+        const wanted = source === "all"
+          ? initialized
+          : initialized.filter(agent => agent.id === Number(source));
+        if (source !== "all" && wanted.length === 0) {
+          res.status(404).json({ error: "الوكيل غير موجود أو قاعدته غير مهيأة" });
+          return;
+        }
+        for (const agent of wanted) {
+          try {
+            const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
+            const payload = await runWithExternalDb(
+              ctx,
+              () => collectLoginHistory(req, sourceWindow, 0),
+            );
+            mergePayload(payload, await buildAgentSecuritySource(agent));
+          } catch (e: unknown) {
+            console.error("[admin/security/login-history] agent DB unreachable:", agent.id, e);
+            if (source !== "all") throw e;
+            warnings.push({
+              source: `agent:${agent.id}`,
+              name: agent.name,
+              error: "تعذّر الاتصال بقاعدة بيانات سيرفر الوكيل",
+            });
+          }
+        }
+      } catch (e: unknown) {
+        if (source !== "all") throw e;
+        console.error("[admin/security/login-history] agent registry unavailable:", e);
+        warnings.push({
+          source: "agent-registry",
+          name: "سجل الوكلاء",
+          error: "تعذّر قراءة قائمة الوكلاء — عُرضت نتائج المركز الرئيسي فقط",
+        });
+      }
+    }
+
+    mergedRows.sort((a, b) => {
+      const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      return bt - at || String(a.rowId).localeCompare(String(b.rowId));
+    });
+    const deniedSeries30d = Array.from(deniedByDay, ([day, n]) => ({ day, n }))
+      .sort((a, b) => a.day.localeCompare(b.day));
+
+    res.json({
+      rows: mergedRows.slice(requestedOffset, requestedOffset + requestedLimit),
+      total,
+      limit: requestedLimit,
+      offset: requestedOffset,
+      deniedSeries30d,
+      warnings,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب تاريخ الدخول";
     res.status(500).json({ error: msg });

@@ -25,15 +25,26 @@ import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combob
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // ─── Types ──────────────────────────────────────────────────────────────
-interface SessionRow {
+interface SecuritySourceFields {
+  source: string;
+  agentInstanceId: number | null;
+  agentName: string | null;
+  agentDomain: string | null;
+  agentServerLabel: string | null;
+  agentServerLastSeenAt: string | null;
+  agentServerCountry: string | null;
+  agentServerCity: string | null;
+  agentServerRegion: string | null;
+  agentServerCountryName: string | null;
+}
+interface SessionRow extends SecuritySourceFields {
   userId: number; username: string; email: string | null;
   role: string; companyId: number | null; companyName: string | null;
   companyLoginCount: number | null;
   // Source-qualified identity. `rowId` uniquely keys the row across the
   // central DB and every agent DB ("central:12" / "agent:5:12"), so the same
   // numeric user id in two databases never collides in selection/termination.
-  source: string; rowId: string;
-  agentInstanceId: number | null; agentName: string | null;
+  rowId: string;
   zatcaStatus: "production" | "sandbox" | "not_linked" | null;
   sessionId: string | null; lastLoginAt: string | null;
   ip: string | null; country: string | null; userAgent: string | null;
@@ -201,7 +212,8 @@ function countryName(code: string | null | undefined): string {
   if (!code) return "غير معروف";
   return COUNTRY_AR[code.toUpperCase()] ?? code.toUpperCase();
 }
-interface LoginHistoryRow {
+interface LoginHistoryRow extends SecuritySourceFields {
+  rowId: string;
   id: number; userId: number | null; username: string | null;
   role: string | null; companyId: number | null; companyName: string | null; action: string;
   sessionDurationSec?: number | null;
@@ -284,6 +296,54 @@ function fmtDateTime(s: string | null): string {
   const d = new Date(s);
   if (isNaN(d.getTime())) return "—";
   return d.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { hour12: false });
+}
+function AgentSourceCell({
+  row,
+  testId,
+}: {
+  row: SecuritySourceFields;
+  testId?: string;
+}) {
+  if (row.source === "central" || row.agentInstanceId == null) {
+    return (
+      <div className="inline-flex flex-col gap-0.5" data-testid={testId}>
+        <Badge variant="outline" className="w-fit bg-slate-50 text-slate-700 border-slate-200 inline-flex items-center gap-1">
+          <Building2 className="h-3 w-3" />
+          المركز الرئيسي
+        </Badge>
+        <span className="text-[10px] text-muted-foreground">قاعدة البيانات المركزية</span>
+      </div>
+    );
+  }
+  const serverPlace = [
+    row.agentServerCity,
+    row.agentServerRegion,
+    row.agentServerCountryName,
+  ].filter(Boolean).join("، ");
+  return (
+    <div className="inline-flex flex-col gap-1 max-w-[230px]" data-testid={testId}>
+      <Badge
+        variant="outline"
+        className="w-fit bg-indigo-50 text-indigo-700 border-indigo-200 inline-flex items-center gap-1"
+        title={`الوكيل الموثق: ${row.agentName ?? ""}`}
+      >
+        <Server className="h-3 w-3" />
+        {row.agentName ?? `وكيل #${row.agentInstanceId}`}
+      </Badge>
+      {row.agentDomain && (
+        <span className="text-[10px] font-mono text-muted-foreground truncate" dir="ltr" title={row.agentDomain}>
+          {row.agentDomain}
+        </span>
+      )}
+      <span
+        className="text-[10px] text-emerald-700"
+        title={row.agentServerLastSeenAt ? `موقع تقريبي من IP آخر نبضة — ${fmtDateTime(row.agentServerLastSeenAt)}` : "لم تصل نبضة حديثة"}
+      >
+        {row.agentServerCountry ? `${countryFlag(row.agentServerCountry)} ` : ""}
+        موقع السيرفر (تقريبي): {serverPlace || "غير متاح"}
+      </span>
+    </div>
+  );
 }
 // Format a session duration in seconds → human-readable Arabic string.
 // Examples: 45 → "٤٥ ث", 130 → "٢ د ١٠ ث", 3700 → "١ س ١ د", 90061 → "١ ي ١ س ١ د".
@@ -579,15 +639,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                           className="mt-0.5"
                         />
                         <div className="min-w-0">
-                          <div className="font-medium truncate flex items-center gap-1.5">
-                            {r.username}
-                            {r.agentName && (
-                              <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1" title={`سيرفر الوكيل: ${r.agentName}`}>
-                                <Server className="h-2.5 w-2.5" />
-                                {r.agentName}
-                              </Badge>
-                            )}
-                          </div>
+                          <div className="font-medium truncate">{r.username}</div>
                           {r.email && <div className="text-[11px] text-muted-foreground truncate">{r.email}</div>}
                         </div>
                       </div>
@@ -596,6 +648,11 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                         r.role === "admin"      ? "bg-blue-50 text-blue-700 border-blue-200" :
                                                   "bg-gray-50 text-gray-700 border-gray-200"
                       }>{r.role}</Badge>
+                    </div>
+
+                    <div className="flex items-start justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">الوكيل / السيرفر</span>
+                      <AgentSourceCell row={r} testId={`session-source-${r.rowId}-m`} />
                     </div>
 
                     <div className="flex items-start justify-between gap-2 text-xs">
@@ -635,7 +692,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                     </div>
 
                     <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="text-muted-foreground">موقع الدخول</span>
+                      <span className="text-muted-foreground">مصدر الدخول</span>
                       <LoginLocationCell
                         place={r.loginPlace}
                         address={r.loginAddress}
@@ -653,7 +710,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                     </div>
 
                     <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="text-muted-foreground">الدولة</span>
+                      <span className="text-muted-foreground">دولة مصدر الدخول</span>
                       <span data-testid={`session-country-${r.rowId}-m`}>
                         {r.country ? (
                           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l from-sky-50 to-indigo-50 border border-sky-200">
@@ -694,13 +751,14 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                       <Checkbox checked={allChecked} onCheckedChange={toggleAll} data-testid="select-all-sessions" />
                     </th>
                     <th className="px-3 py-2 font-medium">المستخدم</th>
+                    <th className="px-3 py-2 font-medium min-w-[210px]">الوكيل / السيرفر</th>
                     <th className="px-3 py-2 font-medium">الدور</th>
                     <th className="px-3 py-2 font-medium">الشركة</th>
                     <th className="px-3 py-2 font-medium">آخر تسجيل دخول</th>
-                    <th className="px-3 py-2 font-medium" title="المكان الفعلي الذي سجّل المستخدم الدخول منه (يُحدَّد تلقائيًا من GPS وقت تسجيل الدخول)">
-                      موقع الدخول
+                    <th className="px-3 py-2 font-medium" title="المكان الذي صدر منه تسجيل الدخول، وليس موقع سيرفر الوكيل">
+                      مصدر الدخول
                     </th>
-                    <th className="px-3 py-2 font-medium">الدولة</th>
+                    <th className="px-3 py-2 font-medium">دولة مصدر الدخول</th>
                     <th className="px-3 py-2 font-medium">IP</th>
                     <th className="px-3 py-2 font-medium">المتصفح</th>
                     <th className="px-3 py-2 font-medium w-32">إجراء</th>
@@ -717,16 +775,11 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <div className="font-medium flex items-center gap-1.5">
-                          {r.username}
-                          {r.agentName && (
-                            <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1" title={`سيرفر الوكيل: ${r.agentName}`} data-testid={`session-agent-${r.rowId}`}>
-                              <Server className="h-2.5 w-2.5" />
-                              {r.agentName}
-                            </Badge>
-                          )}
-                        </div>
+                        <div className="font-medium">{r.username}</div>
                         {r.email && <div className="text-[11px] text-muted-foreground">{r.email}</div>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <AgentSourceCell row={r} testId={`session-source-${r.rowId}`} />
                       </td>
                       <td className="px-3 py-2">
                         <Badge variant="outline" className={
@@ -882,6 +935,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
 // ─────────────────────────────────────────────────────────────────────────
 function LoginAttemptsTab({ token }: { token: string | null }) {
   const headers = { Authorization: `Bearer ${token}` };
+  const [source, setSource] = useState<string>("central");
   const [username, setUsername] = useState("");
   const [companyId, setCompanyId] = useState<string>("all");
   const [from, setFrom] = useState("");
@@ -892,17 +946,48 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
 
   // Reset to page 1 whenever any filter changes so the user doesn't end up on
   // an empty page after narrowing the result set.
-  useEffect(() => { setPage(1); }, [username, companyId, from, to, success, pageSize]);
+  useEffect(() => { setPage(1); }, [source, username, companyId, from, to, success, pageSize]);
+
+  const agentsQ = useQuery<AgentOption[]>({
+    queryKey: ["agent-instances", "session-sources"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/agent-instances`, { headers });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+  const sourceItems: ComboboxItem[] = useMemo(() => [
+    { value: "central", label: "المركز الرئيسي", description: "قاعدة البيانات المركزية" },
+    { value: "all", label: "كل السيرفرات", description: "المركز الرئيسي + كل سيرفرات الوكلاء المهيأة" },
+    ...(agentsQ.data ?? []).map(a => {
+      const ready = a.status === "active" && a.dbStatus === "initialized";
+      const statusLabel = ready ? "جاهز" : "غير مهيأ";
+      return {
+        value: String(a.id),
+        label: a.name,
+        description: `${a.domain} — ${statusLabel}`,
+        badge: ready ? "وكيل جاهز" : statusLabel,
+        badgeClass: ready
+          ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+          : "bg-amber-50 text-amber-700 border-amber-200",
+        disabled: !ready,
+        disabledReason: ready ? undefined : "لا يمكن قراءة محاولات الدخول من قاعدة غير مهيأة",
+      };
+    }),
+  ], [agentsQ.data]);
 
   // Companies dropdown for the filter — minimal payload from existing endpoint.
   const { data: companies } = useQuery<{ id: number; nameAr: string }[]>({
-    queryKey: ["security-history-companies"],
+    queryKey: ["security-history-companies", source],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/companies`, { headers });
+      const suffix = /^\d+$/.test(source) ? `?agent=${encodeURIComponent(source)}` : "";
+      const r = await fetch(`${API}/api/admin/companies${suffix}`, { headers });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
     staleTime: 5 * 60_000,
+    enabled: source !== "all",
   });
   const companyItems: ComboboxItem[] = useMemo(() => [
     { value: "all", label: "جميع الشركات", description: "عرض محاولات الدخول لكل الشركات" },
@@ -915,6 +1000,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
+    p.set("source", source);
     if (username.trim())   p.set("username", username.trim());
     if (companyId !== "all") p.set("companyId", companyId);
     if (from)              p.set("from", new Date(from).toISOString());
@@ -923,10 +1009,11 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
     p.set("limit", String(pageSize));
     p.set("offset", String((page - 1) * pageSize));
     return p.toString();
-  }, [username, companyId, from, to, success, pageSize, page]);
+  }, [source, username, companyId, from, to, success, pageSize, page]);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<{
     rows: LoginHistoryRow[]; total: number; deniedSeries30d: { day: string; n: number }[];
+    warnings?: SessionSourceWarning[];
   }>({
     queryKey: ["security-login-history", params],
     queryFn: async () => {
@@ -938,6 +1025,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
 
   const rows = data?.rows ?? [];
   const series = data?.deniedSeries30d ?? [];
+  const warnings = data?.warnings ?? [];
   const maxN = Math.max(1, ...series.map(s => s.n));
 
   return (
@@ -971,10 +1059,25 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
 
       <Card>
         <CardContent className="p-3 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
             <div className="md:col-span-2">
               <label className="text-xs text-muted-foreground mb-1 block">اسم المستخدم</label>
               <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="بحث جزئي…" data-testid="filter-username" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">الوكيل / السيرفر</label>
+              <SearchCombobox
+                items={sourceItems}
+                value={source}
+                onValueChange={(value) => {
+                  setSource(value);
+                  setCompanyId("all");
+                }}
+                placeholder="اختر السيرفر"
+                searchPlaceholder="ابحث بالاسم أو الدومين…"
+                emptyText="لا يوجد سيرفر مطابق"
+                testId="history-source-combobox"
+              />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">الشركة</label>
@@ -982,10 +1085,11 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                 items={companyItems}
                 value={companyId}
                 onValueChange={setCompanyId}
-                placeholder="جميع الشركات"
+                placeholder={source === "all" ? "اختر سيرفرًا أولًا" : "جميع الشركات"}
                 searchPlaceholder="ابحث باسم الشركة أو رقمها…"
                 emptyText="لا توجد شركة مطابقة"
                 testId="filter-company"
+                disabled={source === "all"}
               />
             </div>
             <div>
@@ -1017,6 +1121,21 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
         </CardContent>
       </Card>
 
+      {warnings.length > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 space-y-1" data-testid="history-source-warnings">
+          <div className="flex items-center gap-1.5 font-medium">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            تعذّر جلب محاولات الدخول من بعض المصادر — النتائج أدناه جزئية
+          </div>
+          {warnings.map(w => (
+            <div key={w.source} className="ps-5">
+              <span className="font-medium">{w.name}</span>
+              <span className="text-amber-600"> — {w.error}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -1026,19 +1145,80 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
           ) : rows.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground">لا توجد محاولات مطابقة.</div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            <div className="md:hidden p-3 space-y-3">
+              {rows.map(r => (
+                <Card key={r.rowId} className={r.action === "denied" ? "border-rose-200 bg-rose-50/30" : "border"} data-testid={`history-card-${r.rowId}`}>
+                  <CardContent className="p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-medium">{r.username ?? "—"}</div>
+                        <div className="text-[10px] text-muted-foreground">{r.role ?? "—"}</div>
+                      </div>
+                      <div className="text-[11px] font-mono text-muted-foreground whitespace-nowrap">{fmtDateTime(r.createdAt)}</div>
+                    </div>
+                    <div className="flex items-start justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">الوكيل / السيرفر</span>
+                      <AgentSourceCell row={r} testId={`history-source-${r.rowId}-m`} />
+                    </div>
+                    <div className="flex items-start justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">الشركة</span>
+                      <span className="text-end">{r.companyName ?? (r.companyId != null ? `#${r.companyId}` : "—")}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">الإجراء</span>
+                      <Badge variant="outline" className={
+                        r.action === "login"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : r.action === "logout"
+                            ? "bg-slate-50 text-slate-700 border-slate-200"
+                            : "bg-rose-50 text-rose-700 border-rose-200"
+                      }>
+                        {r.action === "login" ? "دخول" : r.action === "logout" ? "خروج" : "مرفوض"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-start justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">مصدر الدخول</span>
+                      <LoginLocationCell
+                        place={r.loginPlace}
+                        address={r.loginAddress}
+                        lat={r.loginLat}
+                        lng={r.loginLng}
+                        accuracy={r.loginAccuracy}
+                        zoneName={r.loginZoneName}
+                        ipCity={r.ipCity}
+                        ipRegion={r.ipRegion}
+                        ipCountryName={r.ipCountryName}
+                        ipLat={r.ipLat}
+                        ipLng={r.ipLng}
+                        testId={`history-location-${r.rowId}-m`}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">دولة مصدر الدخول</span>
+                      <span data-testid={`history-country-${r.rowId}-m`}>
+                        {r.country ? `${countryFlag(r.country)} ${countryName(r.country)}` : "—"}
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-muted-foreground break-all" dir="ltr">{r.ip ?? "—"}</div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/40 border-b">
                   <tr className="text-right text-xs text-muted-foreground">
                     <th className="px-3 py-2 font-medium">الوقت</th>
                     <th className="px-3 py-2 font-medium">المستخدم</th>
+                    <th className="px-3 py-2 font-medium min-w-[210px]">الوكيل / السيرفر</th>
                     <th className="px-3 py-2 font-medium min-w-[180px]">الشركة</th>
                     <th className="px-3 py-2 font-medium">الإجراء</th>
                     <th className="px-3 py-2 font-medium" title="مدة الجلسة من الدخول حتى الخروج">مدة الجلسة</th>
                     <th className="px-3 py-2 font-medium">الوحدة</th>
                     <th className="px-3 py-2 font-medium">السبب</th>
-                    <th className="px-3 py-2 font-medium">الدولة</th>
-                    <th className="px-3 py-2 font-medium" title="موقع الدخول المُلتقط تلقائياً عند تسجيل الدخول (يظهر فقط لمحاولات الدخول الناجحة)">موقع الدخول</th>
+                    <th className="px-3 py-2 font-medium">دولة مصدر الدخول</th>
+                    <th className="px-3 py-2 font-medium" title="المكان الذي صدر منه تسجيل الدخول، وليس موقع سيرفر الوكيل">مصدر الدخول</th>
                     <th className="px-3 py-2 font-medium" title="إجمالي محاولات الدخول لهذا المستخدم في الفترة المحددة (أو 30 يوماً افتراضياً)">عدد المحاولات</th>
                     <th className="px-3 py-2 font-medium">IP</th>
                     <th className="px-3 py-2 font-medium">المتصفح</th>
@@ -1049,11 +1229,14 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                     const denied = r.action === "denied";
                     const isAuth = r.module === "auth";
                     return (
-                      <tr key={r.id} className={`border-b last:border-0 ${denied ? "bg-rose-50/40" : ""} hover:bg-muted/20`}>
+                      <tr key={r.rowId} className={`border-b last:border-0 ${denied ? "bg-rose-50/40" : ""} hover:bg-muted/20`}>
                         <td className="px-3 py-2 text-xs font-mono whitespace-nowrap">{fmtDateTime(r.createdAt)}</td>
                         <td className="px-3 py-2">
                           <div className="font-medium">{r.username ?? "—"}</div>
                           {r.role && <div className="text-[10px] text-muted-foreground">{r.role}</div>}
+                        </td>
+                        <td className="px-3 py-2">
+                          <AgentSourceCell row={r} testId={`history-source-${r.rowId}`} />
                         </td>
                         <td className="px-3 py-2 text-xs min-w-[180px] whitespace-normal break-words">
                           {r.companyName ? (
@@ -1087,7 +1270,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-xs whitespace-nowrap" data-testid={`session-duration-${r.id}`}>
+                        <td className="px-3 py-2 text-xs whitespace-nowrap" data-testid={`session-duration-${r.rowId}`}>
                           {typeof r.sessionDurationSec === "number" ? (
                             <span
                               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border shadow-sm font-mono text-[11px] font-semibold ${
@@ -1130,7 +1313,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                         <td className="px-3 py-2 text-xs text-muted-foreground">
                           {(r.metadata as { reason?: string; attemptedAction?: string } | null | undefined)?.reason ?? (r.metadata as { reason?: string; attemptedAction?: string } | null | undefined)?.attemptedAction ?? (r.action === "denied" ? "—" : "")}
                         </td>
-                        <td className="px-3 py-2" data-testid={`history-country-${r.id}`}>
+                        <td className="px-3 py-2" data-testid={`history-country-${r.rowId}`}>
                           {r.country ? (
                             <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l from-sky-50 to-indigo-50 border border-sky-200 text-xs">
                               <span className="text-base leading-none" aria-hidden>{countryFlag(r.country)}</span>
@@ -1153,10 +1336,10 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                             ipCountryName={r.ipCountryName}
                             ipLat={r.ipLat}
                             ipLng={r.ipLng}
-                            testId={`history-location-${r.id}`}
+                            testId={`history-location-${r.rowId}`}
                           />
                         </td>
-                        <td className="px-3 py-2" data-testid={`history-attempts-${r.id}`}>
+                        <td className="px-3 py-2" data-testid={`history-attempts-${r.rowId}`}>
                           {r.attemptCount != null && r.attemptCount > 0 ? (
                             <Badge
                               variant="outline"
@@ -1183,6 +1366,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </CardContent>
         {!isLoading && !error && rows.length > 0 && (
