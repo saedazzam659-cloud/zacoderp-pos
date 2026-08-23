@@ -440,6 +440,45 @@ export default function JournalEntryForm() {
       .map((c: any) => ({ value: c.code, label: `${c.code} — ${c.nameAr}` })),
   ];
   const acctMap = new Map<number, any>(accountsList.map((a: any) => [a.id, a]));
+  const bankAccountIds = new Set<number>();
+  for (const account of accountsList) {
+    if (account.accountType !== "asset") continue;
+    let current: any = account;
+    const visited = new Set<number>();
+    while (current && !visited.has(Number(current.id))) {
+      visited.add(Number(current.id));
+      if (["1102", "11021"].includes(String(current.code))) {
+        bankAccountIds.add(Number(account.id));
+        break;
+      }
+      current = current.parentId == null ? null : acctMap.get(Number(current.parentId));
+    }
+    // Legacy/imported charts sometimes lose parent links. The established bank
+    // ledger branch is 1102; keep the fallback limited to asset posting leaves.
+    if (
+      !bankAccountIds.has(Number(account.id))
+      && account.isPosting !== false
+      && (String(account.code || "").startsWith("1102") || String(account.code || "").startsWith("11021"))
+      && String(account.code || "").length > 5
+      && (account.parentId == null || !acctMap.has(Number(account.parentId)))
+    ) {
+      bankAccountIds.add(Number(account.id));
+    }
+  }
+  const isBankAccountId = (accountId: string | number | null | undefined) =>
+    accountId != null && accountId !== "" && bankAccountIds.has(Number(accountId));
+
+  // Bank metadata may arrive after an existing/manual JE has loaded. Clear any
+  // stale dimension as soon as the account is recognised; the database trigger
+  // remains the authoritative guard for every non-UI producer.
+  useEffect(() => {
+    if (bankAccountIds.size === 0) return;
+    setLines(prev => prev.map(line =>
+      isBankAccountId(line.accountId) && line.costCenter
+        ? { ...line, costCenter: "" }
+        : line
+    ));
+  }, [accountsList]);
   const acctLabel = (id: any) => {
     const a = acctMap.get(Number(id));
     return a ? `${a.code} — ${a.nameAr || a.nameEn || ""}` : "—";
@@ -582,7 +621,16 @@ export default function JournalEntryForm() {
   const isLockedSourceEntry = !isNew && !!lockInfo;
 
   function updateLine(id: string, field: keyof JournalLine, value: string) {
-    setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
+    setLines(prev => prev.map(l => {
+      if (l.id !== id) return l;
+      if (field === "accountId") {
+        return { ...l, accountId: value, costCenter: isBankAccountId(value) ? "" : l.costCenter };
+      }
+      if (field === "costCenter" && isBankAccountId(l.accountId)) {
+        return { ...l, costCenter: "" };
+      }
+      return { ...l, [field]: value };
+    }));
   }
   // Multi-field patch (used by the supplier-tax ⋮ dialog which sets 4 fields
   // at once). Kept separate from the single-field updateLine signature.
@@ -658,7 +706,9 @@ export default function JournalEntryForm() {
     if (focused && !focused.accountId) targetId = focused.id;
     else if (empty)                     targetId = empty.id;
     else                                targetId = addLine().id;
-    setLines(prev => prev.map(l => l.id === targetId ? { ...l, accountId: String(a.id) } : l));
+    setLines(prev => prev.map(l => l.id === targetId
+      ? { ...l, accountId: String(a.id), costCenter: isBankAccountId(a.id) ? "" : l.costCenter }
+      : l));
     setFocusLineId(targetId);
     toast({ title: "✓ تم إدراج الحساب", description: "يمكنك الآن إدخال المبلغ في العمود المناسب." });
   }
@@ -2633,6 +2683,17 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                             data-testid={`cc-hidden-vat-${line.id}`}
                           >
                             —
+                          </div>
+                        );
+                      }
+                      if (isBankAccountId(line.accountId)) {
+                        return (
+                          <div
+                            className="flex h-8 items-center px-2 text-xs text-muted-foreground select-none"
+                            title="الحسابات البنكية لا تقبل مركز تكلفة"
+                            data-testid={`cc-disabled-bank-${line.id}`}
+                          >
+                            — حساب بنكي —
                           </div>
                         );
                       }

@@ -8,6 +8,168 @@ import { logger } from "./logger";
 
 let healPromise: Promise<void> | null = null;
 
+/**
+ * Database-level invariant for every JE producer (invoices, returns, vouchers,
+ * manual entries, and generated/conversion entries).  The journal header is
+ * the tenant authority: an account registered as a bank account by some other
+ * tenant must not affect this tenant's lines.
+ *
+ * Keep this as a BEFORE trigger rather than normalising in route callers so
+ * future posting engines cannot accidentally bypass the rule.  Assigning NULL
+ * is intentionally idempotent, preserving the existing explicit VAT-line NULL
+ * behaviour.
+ */
+export const BANK_JE_COST_CENTER_LOCK_DDL = `
+CREATE OR REPLACE FUNCTION null_bank_je_line_cost_center()
+RETURNS trigger AS $$
+DECLARE
+  is_bank_ledger boolean := false;
+BEGIN
+  IF NEW.cost_center IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  WITH RECURSIVE account_ancestors AS (
+    SELECT a.id, a.parent_id, a.code, a.company_id, a.account_type
+      FROM accounts a
+      JOIN journal_entries je
+        ON je.id = NEW.entry_id
+       AND je.company_id = a.company_id
+     WHERE a.id = NEW.account_id
+    UNION ALL
+    SELECT parent.id, parent.parent_id, parent.code, parent.company_id, parent.account_type
+      FROM accounts parent
+      JOIN account_ancestors child
+        ON child.parent_id = parent.id
+       AND child.company_id = parent.company_id
+  )
+  SELECT
+    EXISTS (
+       SELECT 1
+         FROM journal_entries je
+         JOIN bank_accounts ba
+           ON ba.company_id = je.company_id
+          AND ba.account_id = NEW.account_id
+        WHERE je.id = NEW.entry_id
+     )
+    OR EXISTS (
+      SELECT 1
+        FROM account_ancestors leaf
+       WHERE leaf.id = NEW.account_id
+         AND leaf.account_type = 'asset'
+         AND (
+           EXISTS (
+             SELECT 1
+               FROM account_ancestors ancestor
+              WHERE ancestor.code IN ('1102', '11021')
+           )
+           OR EXISTS (
+             SELECT 1
+               FROM account_ancestors ancestor
+               JOIN accounting_mappings mapping
+                 ON mapping.company_id = ancestor.company_id
+                AND (
+                  (mapping.document_type = 'entity_account_parents' AND mapping.role_key = 'bank_account_parent')
+                  OR (mapping.document_type = 'bank' AND mapping.role_key = 'bank_main')
+                )
+                AND mapping.account_id = ancestor.id
+           )
+           OR (
+             (leaf.code LIKE '1102%' OR leaf.code LIKE '11021%')
+             AND length(leaf.code) > 5
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM account_ancestors ancestor
+                WHERE ancestor.id <> leaf.id
+             )
+           )
+         )
+    )
+    INTO is_bank_ledger;
+
+  IF is_bank_ledger THEN
+    NEW.cost_center := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS journal_entry_lines_bank_cost_center_null
+  ON journal_entry_lines;
+CREATE TRIGGER journal_entry_lines_bank_cost_center_null
+BEFORE INSERT OR UPDATE OF entry_id, account_id, cost_center
+ON journal_entry_lines
+FOR EACH ROW
+EXECUTE FUNCTION null_bank_je_line_cost_center();
+
+CREATE OR REPLACE FUNCTION clear_existing_bank_je_line_cost_centers()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.account_id IS NOT NULL THEN
+    UPDATE journal_entry_lines jel
+       SET cost_center = NULL
+      FROM journal_entries je
+     WHERE je.id = jel.entry_id
+       AND je.company_id = NEW.company_id
+       AND jel.account_id = NEW.account_id
+       AND jel.cost_center IS NOT NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS bank_accounts_clear_je_cost_centers
+  ON bank_accounts;
+CREATE TRIGGER bank_accounts_clear_je_cost_centers
+AFTER INSERT OR UPDATE OF company_id, account_id
+ON bank_accounts
+FOR EACH ROW
+EXECUTE FUNCTION clear_existing_bank_je_line_cost_centers();
+
+WITH RECURSIVE bank_tree AS (
+  SELECT a.id, a.company_id
+    FROM accounts a
+   WHERE a.account_type = 'asset'
+     AND (
+       a.code IN ('1102', '11021')
+       OR EXISTS (
+         SELECT 1
+           FROM accounting_mappings mapping
+          WHERE mapping.company_id = a.company_id
+            AND mapping.account_id = a.id
+            AND (
+              (mapping.document_type = 'entity_account_parents' AND mapping.role_key = 'bank_account_parent')
+              OR (mapping.document_type = 'bank' AND mapping.role_key = 'bank_main')
+            )
+       )
+     )
+  UNION
+  SELECT child.id, child.company_id
+    FROM accounts child
+    JOIN bank_tree parent
+      ON child.parent_id = parent.id
+     AND child.company_id = parent.company_id
+),
+bank_ledger_ids AS (
+  SELECT company_id, account_id
+    FROM bank_accounts
+   WHERE account_id IS NOT NULL
+  UNION
+  SELECT company_id, id
+    FROM bank_tree
+)
+UPDATE journal_entry_lines jel
+   SET cost_center = NULL
+  FROM journal_entries je
+ WHERE je.id = jel.entry_id
+   AND jel.cost_center IS NOT NULL
+   AND EXISTS (
+     SELECT 1
+       FROM bank_ledger_ids bank_ledger
+      WHERE bank_ledger.company_id = je.company_id
+        AND bank_ledger.account_id = jel.account_id
+   )`;
+
 // These columns are platform control state. The shared Drizzle schema must
 // expose them to central routes, but external-agent schema healing must never
 // materialize them in an agent business database.
@@ -2928,6 +3090,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql: `CREATE OR REPLACE FUNCTION reject_payroll_allocation_snapshot_update() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'payroll allocation snapshots are immutable'; END; $$ LANGUAGE plpgsql;
              DROP TRIGGER IF EXISTS payroll_allocation_snapshots_no_update ON payroll_allocation_snapshots;
              CREATE TRIGGER payroll_allocation_snapshots_no_update BEFORE UPDATE ON payroll_allocation_snapshots FOR EACH ROW EXECUTE FUNCTION reject_payroll_allocation_snapshot_update()` },
+    { label: "journal_entry_lines bank-only cost-center lock",
+      sql: BANK_JE_COST_CENTER_LOCK_DDL },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

@@ -156,3 +156,4 @@
 - [Agent control-plane recovery](agent-control-plane-recovery.md) — recovery fences DB, remote generation/flock, and bounded provider calls; heartbeat starts at claim.
 - [Agent invoice acceleration boundary](agent-invoice-acceleration-boundary.md) — control/telemetry stay central; active requests fence mode changes at middleware entry, while cached Off has no central dependency.
 - [RTL top-navigation overflow](rtl-topnav-overflow.md) — enabled groups must wrap; invisible horizontal clipping made valid permissions look broken at laptop widths.
+- [Bank cost-center lock](bank-cost-center-lock.md) — identify bank ledger lines through both tenant bank links and mapped/legacy GL bank roots; do not classify by name or include cash boxes.
