@@ -26,7 +26,7 @@ import {
   employeeHistoryTable,
   employeeTerminationsTable,
 } from "@workspace/db";
-import { and, eq, desc, asc } from "drizzle-orm";
+import { and, eq, desc, asc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission, type PermAction } from "../middleware/permissions.js";
 
@@ -56,6 +56,14 @@ function guard(req: any, res: any): number | null {
 const N = (v: any) => (v == null || v === "" ? null : v);
 const num = (v: any): number => Number(v ?? 0) || 0;
 const uid = (req: any): number | null => req.authUser?.id ?? null;
+const isoDate = (v: unknown) => typeof v === "string" && /^\d{4}-\d\d-\d\d$/.test(v) ? v : "";
+const todayIso = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit",
+}).format(new Date());
+const dayBefore = (date: string) => {
+  const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
 
 async function assertDept(cid: number, deptId: number) {
   const [d] = await db.select({ id: hrDepartmentsTable.id }).from(hrDepartmentsTable)
@@ -439,28 +447,38 @@ router.post("/employees/:employeeId/transfers", async (req, res) => {
     const employeeId = Number(req.params.employeeId);
     const b = req.body;
     if (!b.moveType) return res.status(400).json({ error: "نوع الحركة مطلوب" });
-    if (!b.effectiveFrom) return res.status(400).json({ error: "تاريخ السريان مطلوب" });
+    const from = isoDate(b.effectiveFrom), to = b.effectiveTo ? isoDate(b.effectiveTo) : null;
+    if (!from || from < todayIso() || (to && (!isoDate(to) || to < from))) {
+      return res.status(400).json({ error: "اختر تاريخ سريان من اليوم أو تاريخ لاحق، وتاريخ نهاية صحيحاً إن وجد" });
+    }
     const isTemporary = !!b.isTemporary;
-    if (isTemporary && !b.effectiveTo) return res.status(400).json({ error: "التكليف المؤقت يتطلب تاريخ انتهاء" });
     const newValue = b.newValue && typeof b.newValue === "object" ? b.newValue : {};
     const result = await db.transaction(async (dx) => {
       const [emp] = await dx.select().from(employeesTable)
         .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid))).for("update");
       if (!emp) throw Object.assign(new Error("الموظف غير موجود"), { status: 404 });
+      await dx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, ${employeeId})`);
+      const existing = await dx.select().from(employeeTransfersTable).where(and(
+        eq(employeeTransfersTable.companyId, cid), eq(employeeTransfersTable.employeeId, employeeId),
+      )).for("update");
+      const prior = existing.find(t => String(t.effectiveFrom) < from && t.status !== "cancelled" && (!t.effectiveTo || String(t.effectiveTo) >= from));
+      const overlap = existing.find(t => t.id !== prior?.id && t.status !== "cancelled" && String(t.effectiveFrom) <= (to ?? "9999-12-31") && (!t.effectiveTo || String(t.effectiveTo) >= from));
+      if (overlap) throw Object.assign(new Error("فترة النقل أو التكليف تتداخل مع حركة قائمة"), { status: 400 });
+      if (prior) await dx.update(employeeTransfersTable).set({ effectiveTo: dayBefore(from) })
+        .where(eq(employeeTransfersTable.id, prior.id));
       // Snapshot السابق يُبنى من ملف الموظف الحقيقي وقت الحركة.
       const prevValue: Record<string, any> = {
         department: emp.department, jobTitle: emp.jobTitle, branchId: emp.branchId, status: emp.status,
       };
-      const today = new Date().toISOString().slice(0, 10);
-      const applyNow = !isTemporary && String(b.effectiveFrom) <= today;
+       const applyNow = !isTemporary && from <= todayIso();
       const [row] = await dx.insert(employeeTransfersTable).values({
         companyId: cid, employeeId,
         moveType: String(b.moveType),
         prevValue: JSON.stringify(prevValue),
         newValue: JSON.stringify(newValue),
         decisionDate: N(b.decisionDate),
-        effectiveFrom: b.effectiveFrom,
-        effectiveTo: N(b.effectiveTo),
+         effectiveFrom: from,
+         effectiveTo: to,
         isTemporary,
         reason: N(b.reason), approvedBy: N(b.approvedBy), notes: N(b.notes),
         status: applyNow ? "applied" : "scheduled",
@@ -481,7 +499,7 @@ router.post("/employees/:employeeId/transfers", async (req, res) => {
       await logHistory(dx, {
         companyId: cid, employeeId,
         eventType: isTemporary ? "assignment" : (b.moveType === "promotion" ? "promotion" : "transfer"),
-        eventDate: b.effectiveFrom,
+         eventDate: from,
         prevValue, newValue, reason: N(b.reason),
         refTable: "employee_transfers", refId: row.id, userId: uid(req),
       });
@@ -489,6 +507,36 @@ router.post("/employees/:employeeId/transfers", async (req, res) => {
     });
     res.json(result);
   } catch (e: any) { res.status(e.status || 500).json({ error: e.message }); }
+});
+router.put("/employees/:employeeId/transfers/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const employeeId = Number(req.params.employeeId), id = Number(req.params.id), b = req.body ?? {};
+    const from = isoDate(b.effectiveFrom), to = b.effectiveTo ? isoDate(b.effectiveTo) : null;
+    if (!from || from < todayIso() || (to && to < from)) return res.status(400).json({ error: "لا يمكن تعديل حركة بدأت في الماضي، وتحقق من التواريخ" });
+    const row = await db.transaction(async dx => {
+      await dx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, ${employeeId})`);
+      const [current] = await dx.select().from(employeeTransfersTable).where(and(eq(employeeTransfersTable.id, id), eq(employeeTransfersTable.companyId, cid), eq(employeeTransfersTable.employeeId, employeeId))).for("update");
+      if (!current) throw Object.assign(new Error("الحركة غير موجودة"), { status: 404 });
+      if (current.status !== "scheduled") throw Object.assign(new Error("لا يمكن تعديل حركة تم تطبيقها؛ سجّل حركة مستقبلية جديدة"), { status: 400 });
+      if (String(current.effectiveFrom) < todayIso()) throw Object.assign(new Error("لا يمكن تعديل حركة بدأت في الماضي"), { status: 400 });
+      const peers = await dx.select().from(employeeTransfersTable).where(and(eq(employeeTransfersTable.companyId, cid), eq(employeeTransfersTable.employeeId, employeeId))).for("update");
+      if (peers.some(t => t.id !== id && t.status !== "cancelled" && String(t.effectiveFrom) <= (to ?? "9999-12-31") && (!t.effectiveTo || String(t.effectiveTo) >= from))) throw Object.assign(new Error("فترة النقل أو التكليف تتداخل مع حركة قائمة"), { status: 400 });
+      const [updated] = await dx.update(employeeTransfersTable).set({ effectiveFrom: from, effectiveTo: to, reason: N(b.reason), approvedBy: N(b.approvedBy), notes: N(b.notes), newValue: b.newValue && typeof b.newValue === "object" ? JSON.stringify(b.newValue) : current.newValue }).where(eq(employeeTransfersTable.id, id)).returning();
+      await dx.update(employeeHistoryTable).set({
+        eventDate: from,
+        newValue: updated.newValue,
+        reason: updated.reason,
+      }).where(and(
+        eq(employeeHistoryTable.companyId, cid),
+        eq(employeeHistoryTable.employeeId, employeeId),
+        eq(employeeHistoryTable.refTable, "employee_transfers"),
+        eq(employeeHistoryTable.refId, id),
+      ));
+      return updated;
+    });
+    res.json(row);
+  } catch (e: any) { res.status(e.status || 400).json({ error: e.message }); }
 });
 // تطبيق حركة مجدولة / إنهاء تكليف مؤقت
 router.post("/employees/:employeeId/transfers/:id/apply", async (req, res) => {
@@ -508,7 +556,7 @@ router.post("/employees/:employeeId/transfers/:id/apply", async (req, res) => {
         )).for("update");
       if (!t) throw Object.assign(new Error("غير موجود"), { status: 404 });
       if (t.status !== "scheduled") throw Object.assign(new Error("الحركة مطبَّقة أو منتهية بالفعل"), { status: 400 });
-      if (String(t.effectiveFrom) > new Date().toISOString().slice(0, 10)) {
+       if (String(t.effectiveFrom) > todayIso()) {
         throw Object.assign(new Error("لم يحن تاريخ سريان الحركة بعد"), { status: 400 });
       }
       if (!t.isTemporary) {
@@ -554,8 +602,9 @@ router.post("/employees/:employeeId/transfers/:id/end", async (req, res) => {
       if (!t) throw Object.assign(new Error("غير موجود"), { status: 404 });
       if (!t.isTemporary) throw Object.assign(new Error("لا يمكن إنهاء حركة دائمة — سجّل حركة نقل جديدة بدلاً من ذلك"), { status: 400 });
       if (t.status === "ended" || t.status === "cancelled") throw Object.assign(new Error("التكليف منتهٍ بالفعل"), { status: 400 });
-      const endDate = req.body?.effectiveTo || new Date().toISOString().slice(0, 10);
-      const [row] = await dx.update(employeeTransfersTable).set({ status: "ended", effectiveTo: endDate })
+       const endDate = req.body?.effectiveTo || todayIso();
+       if (!isoDate(endDate) || endDate < todayIso() || endDate < String(t.effectiveFrom)) throw Object.assign(new Error("اختر تاريخ إنهاء من اليوم ولا يسبق بداية التكليف"), { status: 400 });
+       const [row] = await dx.update(employeeTransfersTable).set({ status: endDate <= todayIso() ? "ended" : t.status, effectiveTo: endDate })
         .where(eq(employeeTransfersTable.id, t.id)).returning();
       await logHistory(dx, {
         companyId: cid, employeeId, eventType: "assignment",

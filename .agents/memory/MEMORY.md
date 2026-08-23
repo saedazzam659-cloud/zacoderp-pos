@@ -135,3 +135,4 @@
 - [Central security source attribution](central-security-source-attribution.md) — derive agent identity from the selected registry DB; keep login-client geo separate from heartbeat server geo.
 - [Agent request schema heal order](agent-request-schema-heal-order.md) — complete additive table DDL must run before strict missing-table validation or agent login loops on 503.
 - [Opening-balance mutation serialization](opening-balance-mutation-serialization.md) — inventory import, opening-JE edit, and posting must share one tenant lock; fiscal closing blocks on any unbalanced opening draft.
+- [HR effective-dated mutations](hr-effective-dated-mutations.md) — future transfer/assignment changes close prior periods; payroll snapshotting shares the employee lock and uses Saudi business dates.

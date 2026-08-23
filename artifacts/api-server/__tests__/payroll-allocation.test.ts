@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allocationBuckets, allocateComponentBySnapshots, assignmentsOverlap, assignmentRepresentedBySnapshot } from "../src/lib/payrollAllocation.ts";
+import { allocationBuckets, allocateComponentBySnapshots, assignmentsOverlap, assignmentRepresentedBySnapshot, assignmentCloseConflictsWithSnapshot } from "../src/lib/payrollAllocation.ts";
 
 test("allocates calendar days across a mid-month transfer with exact cents", () => {
   const rows = allocationBuckets([
@@ -59,4 +59,11 @@ test("splits salary and allowance components independently without cent drift", 
   assert.equal(salary.reduce((n, row) => n + row.amount, 0).toFixed(2), "100.01");
   assert.equal(allowances.reduce((n, row) => n + row.amount, 0).toFixed(2), "10.03");
   assert.equal(salary[1].costCenterId, null, "unassigned allocation stays without a cost center");
+});
+
+test("allows a future assignment after frozen payroll, but not inside a frozen period", () => {
+  const assignment = { projectId: 1, costCenterId: 9, effectiveFrom: "2026-01-01", effectiveTo: null };
+  const snapshots = [{ projectId: 1, costCenterId: 9, periodStart: "2026-08-01", periodEnd: "2026-08-31" }];
+  assert.equal(assignmentCloseConflictsWithSnapshot(assignment, "2026-09-01", snapshots), false);
+  assert.equal(assignmentCloseConflictsWithSnapshot(assignment, "2026-08-20", snapshots), true);
 });

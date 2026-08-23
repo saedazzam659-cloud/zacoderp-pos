@@ -29,7 +29,9 @@ import {
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit",
+}).format(new Date());
 const num = (v: any) => Number(v ?? 0) || 0;
 
 // صور الموظفين تُخزَّن كمسار /objects/... في التخزين السحابي — تُعرض عبر
@@ -433,6 +435,7 @@ function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: numb
   const q = useQuery({ queryKey: ["hr-core", empId, "transfers"], queryFn: () => hrCoreApi.transfers(empId) });
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>({});
+  const [editingId, setEditingId] = useState<number | null>(null);
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["hr-core", empId, "transfers"] });
     qc.invalidateQueries({ queryKey: ["employee", empId] });
@@ -442,6 +445,11 @@ function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: numb
     mutationFn: (d: any) => hrCoreApi.addTransfer(empId, d),
     onSuccess: () => { invalidate(); setOpen(false); toast({ title: "تم تسجيل الحركة" }); },
     onError: (e: any) => toast({ title: "فشل الحفظ", description: String(e.message ?? e), variant: "destructive" }),
+  });
+  const updateMut = useMutation({
+    mutationFn: ({ id, d }: any) => hrCoreApi.updateTransfer(empId, id, d),
+    onSuccess: () => { invalidate(); setOpen(false); setEditingId(null); toast({ title: "تم تعديل الحركة المستقبلية" }); },
+    onError: (e: any) => toast({ title: "فشل التعديل", description: String(e.message ?? e), variant: "destructive" }),
   });
   const applyMut = useMutation({
     mutationFn: (id: number) => hrCoreApi.applyTransfer(empId, id),
@@ -489,6 +497,7 @@ function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: numb
       <div className="flex gap-1 justify-center">
         {r.status === "scheduled" && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => applyMut.mutate(r.id)}>تطبيق</Button>}
         {r.isTemporary && r.status !== "ended" && r.status !== "cancelled" && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => endMut.mutate(r.id)}>إنهاء</Button>}
+        {r.status === "scheduled" && r.effectiveFrom >= today() && <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="تعديل الحركة" onClick={() => { setEditingId(r.id); setForm({ ...r, newValue: parse(r.newValue), effectiveTo: r.effectiveTo ?? "" }); setOpen(true); }}><Pencil className="h-3.5 w-3.5" /></Button>}
       </div>
     )),
   ], []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -496,8 +505,8 @@ function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: numb
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center">
-        <p className="text-xs text-muted-foreground">التكليف المؤقت لا يغيّر التبعية الأساسية — النقل الدائم يُطبَّق على ملف الموظف بتاريخ السريان</p>
-        <Button size="sm" onClick={() => { setForm({ moveType: "transfer", effectiveFrom: today(), decisionDate: today(), newValue: { department: emp?.department ?? "", jobTitle: emp?.jobTitle ?? "" } }); setOpen(true); }} data-testid="button-add-transfer">
+        <p className="text-xs text-muted-foreground">اختر «من» من اليوم فصاعدًا، واترك «إلى» فارغًا للاستمرار حتى حركة لاحقة. لا تُعدّل الحركات السابقة.</p>
+        <Button size="sm" onClick={() => { setEditingId(null); setForm({ moveType: "transfer", effectiveFrom: today(), decisionDate: today(), newValue: { department: emp?.department ?? "", jobTitle: emp?.jobTitle ?? "" } }); setOpen(true); }} data-testid="button-add-transfer">
           <Plus className="h-4 w-4 ms-1" />حركة جديدة
         </Button>
       </div>
@@ -510,7 +519,7 @@ function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: numb
       )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>حركة نقل / تكليف</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editingId ? "تعديل حركة مستقبلية" : "حركة نقل / تكليف"}</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground block mb-1">نوع الحركة *</label>
@@ -529,9 +538,7 @@ function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: numb
             </div>
             <div><label className="text-xs text-muted-foreground block mb-1">تاريخ القرار</label><DateField value={form.decisionDate ?? ""} onChange={v => setForm((p: any) => ({ ...p, decisionDate: v }))} /></div>
             <div><label className="text-xs text-muted-foreground block mb-1">سريان من *</label><DateField value={form.effectiveFrom ?? ""} onChange={v => setForm((p: any) => ({ ...p, effectiveFrom: v }))} /></div>
-            {form.isTemporary && (
-              <div><label className="text-xs text-muted-foreground block mb-1">ينتهي في *</label><DateField value={form.effectiveTo ?? ""} onChange={v => setForm((p: any) => ({ ...p, effectiveTo: v }))} /></div>
-            )}
+            <div><label className="text-xs text-muted-foreground block mb-1">إلى (اختياري — مستمر حتى تغيير لاحق)</label><DateField value={form.effectiveTo ?? ""} onChange={v => setForm((p: any) => ({ ...p, effectiveTo: v }))} /></div>
             <div><label className="text-xs text-muted-foreground block mb-1">الإدارة الجديدة</label><Input value={form.newValue?.department ?? ""} onChange={e => setForm((p: any) => ({ ...p, newValue: { ...p.newValue, department: e.target.value } }))} /></div>
             <div><label className="text-xs text-muted-foreground block mb-1">الوظيفة الجديدة</label><Input value={form.newValue?.jobTitle ?? ""} onChange={e => setForm((p: any) => ({ ...p, newValue: { ...p.newValue, jobTitle: e.target.value } }))} /></div>
             <div><label className="text-xs text-muted-foreground block mb-1">جهة الاعتماد</label><Input value={form.approvedBy ?? ""} onChange={e => setForm((p: any) => ({ ...p, approvedBy: e.target.value }))} /></div>
@@ -542,9 +549,10 @@ function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: numb
             <Button variant="outline" onClick={() => setOpen(false)}>إلغاء</Button>
             <Button onClick={() => {
               if (!form.effectiveFrom) { toast({ title: "تاريخ السريان مطلوب", variant: "destructive" }); return; }
-              if (form.isTemporary && !form.effectiveTo) { toast({ title: "التكليف المؤقت يتطلب تاريخ انتهاء", variant: "destructive" }); return; }
-              addMut.mutate(form);
-            }} disabled={addMut.isPending}>حفظ</Button>
+               if (form.effectiveFrom < today()) { toast({ title: "لا يمكن حفظ أو تعديل تاريخ سابق", variant: "destructive" }); return; }
+               if (form.effectiveTo && form.effectiveTo < form.effectiveFrom) { toast({ title: "تاريخ النهاية لا يسبق تاريخ البداية", variant: "destructive" }); return; }
+               if (editingId) updateMut.mutate({ id: editingId, d: form }); else addMut.mutate(form);
+             }} disabled={addMut.isPending || updateMut.isPending}>حفظ</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -558,6 +566,7 @@ function AssignmentManager({ empId, cid }: { empId: number; cid?: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [form, setForm] = useState({ projectId: "", costCenterId: "", effectiveFrom: today(), effectiveTo: "", notes: "" });
+  const [editingId, setEditingId] = useState<number | null>(null);
   const assignmentsQ = useQuery({ queryKey: ["employee-assignments", empId], queryFn: () => employeesApi.assignments(empId) });
   const projectsQ = useQuery({ queryKey: ["contracting-projects"], queryFn: employeesApi.projects });
   const centersQ = useQuery({ queryKey: ["cost-centers"], queryFn: employeesApi.costCenters });
@@ -581,6 +590,11 @@ function AssignmentManager({ empId, cid }: { empId: number; cid?: number }) {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["employee-assignments", empId] }); toast({ title: "تم حذف التوزيعة" }); },
     onError: (e: any) => toast({ title: "فشل الحذف", description: String(e.message ?? e), variant: "destructive" }),
   });
+  const updateMut = useMutation({
+    mutationFn: () => employeesApi.updateAssignment(empId, editingId!, { projectId: form.projectId && form.projectId !== "none" ? Number(form.projectId) : null, costCenterId: form.costCenterId && form.costCenterId !== "none" ? Number(form.costCenterId) : null, effectiveFrom: form.effectiveFrom, effectiveTo: form.effectiveTo || null, notes: form.notes || undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["employee-assignments", empId] }); setEditingId(null); setForm({ projectId: "", costCenterId: "", effectiveFrom: today(), effectiveTo: "", notes: "" }); toast({ title: "تم تعديل التوزيعة المستقبلية" }); },
+    onError: (e: any) => toast({ title: "فشل تعديل التوزيعة", description: String(e.message ?? e), variant: "destructive" }),
+  });
   const rows = assignmentsQ.data ?? [];
   const projectName = (p: any) => p.nameAr ?? p.name ?? p.code ?? `#${p.id}`;
   const centerName = (c: any) => c.nameAr ?? c.name ?? c.code ?? `#${c.id}`;
@@ -588,20 +602,20 @@ function AssignmentManager({ empId, cid }: { empId: number; cid?: number }) {
     { key: "project", label: "المشروع", type: "text", value: r => r.projectNameAr ?? r.projectName ?? r.project?.nameAr ?? r.project?.name ?? "—" },
     { key: "costCenter", label: "مركز التكلفة", type: "text", value: r => r.costCenterNameAr ?? r.costCenterName ?? r.costCenter?.nameAr ?? r.costCenter?.name ?? "—" },
     { key: "effectiveFrom", label: "من", type: "text", value: r => r.effectiveFrom ?? r.startDate ?? "" },
-    { key: "effectiveTo", label: "إلى", type: "text", value: r => r.effectiveTo ?? r.endDate ?? "مستمر" },
+    { key: "effectiveTo", label: "إلى", type: "text", value: r => r.effectiveTo ?? r.endDate ?? "مستمر حتى تغيير لاحق" },
     { key: "notes", label: "ملاحظات", type: "text", value: r => r.notes ?? "" },
-    actionsCol(r => <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" onClick={() => { if (confirm("حذف هذه التوزيعة؟")) deleteMut.mutate(r.id); }} aria-label="حذف التوزيعة"><Trash2 className="h-3.5 w-3.5" /></Button>),
+    actionsCol(r => <div className="flex justify-center gap-1">{r.effectiveFrom >= today() && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingId(r.id); setForm({ projectId: r.projectId ? String(r.projectId) : "none", costCenterId: r.costCenterId ? String(r.costCenterId) : "none", effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo ?? "", notes: r.notes ?? "" }); }} aria-label="تعديل التوزيعة"><Pencil className="h-3.5 w-3.5" /></Button>}<Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" onClick={() => { if (confirm("حذف هذه التوزيعة؟")) deleteMut.mutate(r.id); }} aria-label="حذف التوزيعة"><Trash2 className="h-3.5 w-3.5" /></Button></div>),
   ], []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="border-t pt-4 mt-5 space-y-3">
-      <div><h3 className="font-semibold text-sm">توزيع الراتب على المشاريع ومراكز التكلفة</h3><p className="text-xs text-muted-foreground mt-1">تُستخدم التوزيعات السارية في تقرير تخصيص الرواتب.</p></div>
+       <div><h3 className="font-semibold text-sm">توزيع الراتب على المشاريع ومراكز التكلفة</h3><p className="text-xs text-muted-foreground mt-1">اترك «إلى» فارغًا ليستمر التوزيع حتى تغيير لاحق. السجلات السابقة للعرض فقط.</p></div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end rounded-lg bg-muted/30 p-3">
         <div><label className="text-xs text-muted-foreground block mb-1">المشروع</label><Select value={form.projectId} onValueChange={v => setForm(p => ({ ...p, projectId: v }))}><SelectTrigger className="h-9"><SelectValue placeholder={projectsQ.isLoading ? "جارٍ التحميل…" : "بدون مشروع"} /></SelectTrigger><SelectContent><SelectItem value="none">بدون مشروع</SelectItem>{(projectsQ.data ?? []).map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{projectName(p)}</SelectItem>)}</SelectContent></Select></div>
         <div><label className="text-xs text-muted-foreground block mb-1">مركز التكلفة</label><Select value={form.costCenterId} onValueChange={v => setForm(p => ({ ...p, costCenterId: v }))}><SelectTrigger className="h-9"><SelectValue placeholder={centersQ.isLoading ? "جارٍ التحميل…" : "بدون مركز"} /></SelectTrigger><SelectContent><SelectItem value="none">بدون مركز</SelectItem>{(centersQ.data ?? []).map((c: any) => <SelectItem key={c.id} value={String(c.id)}>{centerName(c)}</SelectItem>)}</SelectContent></Select></div>
         <div><label className="text-xs text-muted-foreground block mb-1">سريان من *</label><DateField value={form.effectiveFrom} onChange={e => setForm(p => ({ ...p, effectiveFrom: e.target.value }))} /></div>
-        <div><label className="text-xs text-muted-foreground block mb-1">حتى</label><DateField value={form.effectiveTo} onChange={e => setForm(p => ({ ...p, effectiveTo: e.target.value }))} /></div>
-        <Button size="sm" onClick={() => { if (!form.effectiveFrom) { toast({ title: "تاريخ السريان مطلوب", variant: "destructive" }); return; } if ((!form.projectId || form.projectId === "none") && (!form.costCenterId || form.costCenterId === "none")) { toast({ title: "اختر مشروعاً أو مركز تكلفة", variant: "destructive" }); return; } addMut.mutate(); }} disabled={addMut.isPending || projectsQ.isLoading || centersQ.isLoading}><Plus className="h-4 w-4 ms-1" />إضافة</Button>
+         <div><label className="text-xs text-muted-foreground block mb-1">إلى (اختياري — مستمر)</label><DateField value={form.effectiveTo} onChange={e => setForm(p => ({ ...p, effectiveTo: e.target.value }))} /></div>
+         <Button size="sm" onClick={() => { if (!form.effectiveFrom || form.effectiveFrom < today()) { toast({ title: "اختر تاريخ سريان من اليوم أو تاريخ لاحق", variant: "destructive" }); return; } if (form.effectiveTo && form.effectiveTo < form.effectiveFrom) { toast({ title: "تاريخ النهاية لا يسبق البداية", variant: "destructive" }); return; } if ((!form.projectId || form.projectId === "none") && (!form.costCenterId || form.costCenterId === "none")) { toast({ title: "اختر مشروعاً أو مركز تكلفة", variant: "destructive" }); return; } if (editingId) updateMut.mutate(); else addMut.mutate(); }} disabled={addMut.isPending || updateMut.isPending || projectsQ.isLoading || centersQ.isLoading}>{editingId ? <Pencil className="h-4 w-4 ms-1" /> : <Plus className="h-4 w-4 ms-1" />}{editingId ? "حفظ التعديل" : "إضافة"}</Button>
         <div className="sm:col-span-2 lg:col-span-5"><label className="text-xs text-muted-foreground block mb-1">ملاحظات</label><Input value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} /></div>
       </div>
       {assignmentsQ.isLoading ? <Skeleton className="h-24 w-full" /> : assignmentsQ.isError ? <p className="text-sm text-rose-600 border border-rose-200 rounded-lg p-3">تعذر تحميل التوزيعات. حاول تحديث الصفحة.</p> : <AdvancedReportGrid slug="hrEmp_assignments" cid={cid} rows={rows} rowKey={(r: any) => r.id} columns={columns} unitLabel="توزيعة" emptyMessage="لا توجد توزيعات للمشاريع أو مراكز التكلفة" />}

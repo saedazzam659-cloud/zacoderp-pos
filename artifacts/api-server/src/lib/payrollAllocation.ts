@@ -53,3 +53,10 @@ export function assignmentRepresentedBySnapshot(assignment: any, snapshot: any) 
     && isoPayrollDate(snapshot.periodStart) <= (assignment.effectiveTo ? isoPayrollDate(assignment.effectiveTo) : "9999-12-31")
     && isoPayrollDate(snapshot.periodEnd) >= isoPayrollDate(assignment.effectiveFrom);
 }
+
+/** Closing an open assignment is safe only after every frozen payroll period. */
+export function assignmentCloseConflictsWithSnapshot(assignment: any, newFrom: string, snapshots: any[]) {
+  return snapshots.some(snapshot =>
+    isoPayrollDate(snapshot.periodEnd) >= isoPayrollDate(newFrom)
+    && assignmentRepresentedBySnapshot(assignment, snapshot));
+}

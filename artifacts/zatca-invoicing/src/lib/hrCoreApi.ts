@@ -48,6 +48,7 @@ export const hrCoreApi = {
   transfers:    (empId: number) => req<any[]>("GET", `/employees/${empId}/transfers`),
   allTransfers: () => req<any[]>("GET", "/transfers"),
   addTransfer:  (empId: number, d: any) => req<any>("POST", `/employees/${empId}/transfers`, d),
+  updateTransfer:(empId: number, id: number, d: any) => req<any>("PUT", `/employees/${empId}/transfers/${id}`, d),
   applyTransfer:(empId: number, id: number) => req<any>("POST", `/employees/${empId}/transfers/${id}/apply`),
   endTransfer:  (empId: number, id: number, effectiveTo?: string) => req<any>("POST", `/employees/${empId}/transfers/${id}/end`, { effectiveTo }),
 

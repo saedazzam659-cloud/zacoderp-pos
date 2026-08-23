@@ -14,7 +14,7 @@ import {
 } from "../lib/hrValidate.js";
 import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
-import { allocationBuckets, addPayrollDays, isoPayrollDate, assignmentRepresentedBySnapshot } from "../lib/payrollAllocation.js";
+import { allocationBuckets, addPayrollDays, isoPayrollDate, assignmentRepresentedBySnapshot, assignmentCloseConflictsWithSnapshot } from "../lib/payrollAllocation.js";
 import { subscriptionsTable, usersTable } from "@workspace/db";
 import bcrypt from "bcryptjs";
 
@@ -31,6 +31,9 @@ const N = (v: any) => (v == null || v === "" ? null : v);
 
 const isoDate = isoPayrollDate;
 const addDays = addPayrollDays;
+const businessToday = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit",
+}).format(new Date());
 
 // Validate + normalize an employee payload (dates → ISO, money → clean numeric
 // strings, email/mobile/id formats, cross-field date order). Throws
@@ -1486,7 +1489,8 @@ router.post("/:id/assignments", requirePermission("hr_employees", "edit"), async
     const from = isoDate(b.effectiveFrom), to = b.effectiveTo ? isoDate(b.effectiveTo) : null;
     const projectId = b.projectId == null || b.projectId === "" ? null : Number(b.projectId);
     const costCenterId = b.costCenterId == null || b.costCenterId === "" ? null : Number(b.costCenterId);
-    if (!employeeId || !/^\d{4}-\d\d-\d\d$/.test(from) || (to && (!/^\d{4}-\d\d-\d\d$/.test(to) || to < from)) || (!projectId && !costCenterId)) {
+    const today = businessToday();
+    if (!employeeId || !/^\d{4}-\d\d-\d\d$/.test(from) || from < today || (to && (!/^\d{4}-\d\d-\d\d$/.test(to) || to < from)) || (!projectId && !costCenterId)) {
       res.status(400).json({ error: "بيانات التكليف أو التواريخ غير صالحة" }); return;
     }
     const row = await db.transaction(async (tx) => {
@@ -1513,6 +1517,12 @@ router.post("/:id/assignments", requirePermission("hr_employees", "edit"), async
       const previous = existing.find(a => isoDate(a.effectiveFrom) < from && (!a.effectiveTo || isoDate(a.effectiveTo) >= from));
       if (previous) {
         if (to && previous.effectiveTo && isoDate(previous.effectiveTo) <= to) throw new Error("فترة التكليف تتداخل مع تكليف قائم");
+        const snapshots = await tx.select().from(payrollAllocationSnapshotsTable).where(and(
+          eq(payrollAllocationSnapshotsTable.companyId, cid), eq(payrollAllocationSnapshotsTable.employeeId, employeeId),
+        ));
+        if (assignmentCloseConflictsWithSnapshot(previous, from, snapshots)) {
+          throw new Error("لا يمكن بدء التكليف داخل فترة محفوظة في مسير رواتب؛ اختر تاريخاً بعد نهاية المسير");
+        }
         await tx.update(employeeProjectAssignmentsTable).set({ effectiveTo: addDays(from, -1), updatedAt: new Date() })
           .where(eq(employeeProjectAssignmentsTable.id, previous.id));
       }
@@ -1524,6 +1534,33 @@ router.post("/:id/assignments", requirePermission("hr_employees", "edit"), async
       return created;
     });
     res.status(201).json(row);
+  } catch (e: any) { res.status(e?.status || 400).json({ error: e.message }); }
+});
+
+router.put("/:id/assignments/:assignmentId", requirePermission("hr_employees", "edit"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const employeeId = Number(req.params.id), assignmentId = Number(req.params.assignmentId), b = req.body || {};
+    const from = isoDate(b.effectiveFrom), to = b.effectiveTo ? isoDate(b.effectiveTo) : null;
+    const projectId = b.projectId == null || b.projectId === "" ? null : Number(b.projectId);
+    const costCenterId = b.costCenterId == null || b.costCenterId === "" ? null : Number(b.costCenterId);
+    const today = businessToday();
+    if (!/^\d{4}-\d\d-\d\d$/.test(from) || from < today || (to && (!/^\d{4}-\d\d-\d\d$/.test(to) || to < from)) || (!projectId && !costCenterId)) {
+      return res.status(400).json({ error: "لا يمكن تعديل مدة بدأت في الماضي؛ تحقق من التواريخ والجهة" });
+    }
+    const row = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, ${employeeId})`);
+      const [current] = await tx.select().from(employeeProjectAssignmentsTable).where(and(eq(employeeProjectAssignmentsTable.id, assignmentId), eq(employeeProjectAssignmentsTable.companyId, cid), eq(employeeProjectAssignmentsTable.employeeId, employeeId))).for("update");
+      if (!current) throw Object.assign(new Error("التكليف غير موجود"), { status: 404 });
+      if (isoDate(current.effectiveFrom) < today) throw Object.assign(new Error("لا يمكن تعديل تكليف بدأ في الماضي"), { status: 400 });
+      const snapshots = await tx.select().from(payrollAllocationSnapshotsTable).where(and(eq(payrollAllocationSnapshotsTable.companyId, cid), eq(payrollAllocationSnapshotsTable.employeeId, employeeId)));
+      if (snapshots.some(s => assignmentRepresentedBySnapshot(current, s))) throw Object.assign(new Error("لا يمكن تعديل تكليف ممثل في لقطة مسير رواتب"), { status: 400 });
+      const peers = await tx.select().from(employeeProjectAssignmentsTable).where(and(eq(employeeProjectAssignmentsTable.companyId, cid), eq(employeeProjectAssignmentsTable.employeeId, employeeId))).for("update");
+      if (peers.some(a => a.id !== assignmentId && isoDate(a.effectiveFrom) <= (to || "9999-12-31") && (!a.effectiveTo || isoDate(a.effectiveTo) >= from))) throw Object.assign(new Error("فترة التكليف تتداخل مع تكليف قائم"), { status: 400 });
+      const [updated] = await tx.update(employeeProjectAssignmentsTable).set({ projectId, costCenterId, effectiveFrom: from, effectiveTo: to, notes: N(b.notes), updatedAt: new Date() }).where(eq(employeeProjectAssignmentsTable.id, assignmentId)).returning();
+      return updated;
+    });
+    res.json(row);
   } catch (e: any) { res.status(e?.status || 400).json({ error: e.message }); }
 });
 
@@ -1816,6 +1853,9 @@ router.post("/payroll/runs", async (req, res) => {
         ? company!.payrollCostBasis! : "gross";
 
       for (const l of lines) {
+        // Uses the same employee-scoped lock as assignment create/update/delete,
+        // so snapshotting and period changes cannot pass each other in-flight.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, ${Number(l.employeeId)})`);
         const [payrollLine] = await tx.insert(payrollLinesTable).values({
           payrollRunId: run.id,
           employeeId: Number(l.employeeId),
