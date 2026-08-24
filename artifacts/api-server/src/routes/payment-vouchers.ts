@@ -26,6 +26,10 @@ import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { sumSettlementJEs, acquireSettlementLock, acquireSourceLock, sumVouchersForInvoice, sumConsumedFromSource, sumPartialLinksForInvoice, invoiceNetDueBase } from "../lib/invoiceSettlement.js";
+import {
+  paymentVoucherAccountingTotal,
+  paymentVoucherLineAccounting,
+} from "../lib/paymentVoucherLineAccounting.js";
 import { settlementLinksTable } from "@workspace/db";
 
 const router = Router();
@@ -105,13 +109,24 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
       if (!lineAcct) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
       const net = parseFloat(l.amount || "0");
       const tax = parseFloat(l.taxAmount || "0");
-      if (net <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
-      if (tax < 0) throw new Error("مبلغ الضريبة غير صالح");
+      const sides = paymentVoucherLineAccounting({
+        amount: net,
+        taxAmount: tax,
+        opType: l.opType,
+        purchaseInvoiceId: l.purchaseInvoiceId,
+      });
       const lineCc = (l.costCenter ? String(l.costCenter).trim() || null : null) ?? cc;
       acctIds.add(lineAcct);
-      jeLines.push({ accountId: lineAcct, debit: net.toFixed(2), credit: "0.00", description: l.description || desc, sortOrder: so++, costCenter: lineCc });
-      total += net;
-      if (tax > 0) {
+      jeLines.push({
+        accountId: lineAcct,
+        debit: sides.debit.toFixed(2),
+        credit: sides.credit.toFixed(2),
+        description: l.description || desc,
+        sortOrder: so++,
+        costCenter: lineCc,
+      });
+      total += sides.total;
+      if (sides.taxDebit > 0) {
         let taxAcc = l.taxAccountId ?? null;
         if (!taxAcc) {
           if (vatInputId === undefined) vatInputId = await resolveVatInputAccountId(cid);
@@ -122,7 +137,7 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
         }
         acctIds.add(taxAcc);
         jeLines.push({
-          accountId: taxAcc, debit: tax.toFixed(2), credit: "0.00",
+          accountId: taxAcc, debit: sides.taxDebit.toFixed(2), credit: "0.00",
           description: `ضريبة مدخلات - ${l.description || v.code}`,
           // VAT lines are booked WITHOUT a cost center by design — the tax is
           // not an operating cost of any cost center (user request 2026-07).
@@ -134,7 +149,6 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
           supplierInvoiceNumber: l.supplierInvoiceNumber ?? null,
           supplierInvoiceDate:   l.supplierInvoiceDate ?? null,
         });
-        total += tax;
       }
     }
     if (total <= 0) throw new Error("إجمالي السند يجب أن يكون أكبر من صفر");
@@ -731,6 +745,8 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
 // invoice link must resolve to the same tenant/supplier.
 async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId: number | null): Promise<void> {
   if (lines.length === 0) throw new Error("يجب إضافة بند واحد على الأقل");
+  const voucherTotal = paymentVoucherAccountingTotal(lines);
+  if (voucherTotal <= 0) throw new Error("يجب أن يكون صافي إجمالي سند الصرف أكبر من صفر");
   const acctIds = new Set<number>();
   const ccIdsNeeded = new Set<number>();
   // ── Phase-2 op types: resolve the DEBIT account SERVER-SIDE for supplier
@@ -786,8 +802,7 @@ async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId:
   }
   for (const l of lines) {
     if (!l.accountId) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
-    if (l.amount <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
-    if (l.taxAmount < 0) throw new Error("مبلغ الضريبة غير صالح");
+    paymentVoucherLineAccounting(l);
     acctIds.add(l.accountId);
     if (l.taxAccountId) acctIds.add(l.taxAccountId);
     if (l.opType === "prepaid") {

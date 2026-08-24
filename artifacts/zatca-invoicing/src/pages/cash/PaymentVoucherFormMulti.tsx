@@ -35,6 +35,17 @@ import { printCashVoucher } from "@/lib/cashVoucherPrint";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
+// Keep a leading minus while the user edits a signed accounting amount.
+// `Number("-")` remains 0 during editing; the save guard handles incomplete
+// values, while valid negative lines reach the journal as credits.
+function sanitizeSignedDecimal(raw: string): string {
+  const negative = raw.trimStart().startsWith("-");
+  const cleaned = raw.replace(/[^\d.-]/g, "").replace(/-/g, "");
+  const [whole = "", ...fractionParts] = cleaned.split(".");
+  const fraction = fractionParts.join("");
+  return `${negative ? "-" : ""}${whole}${fractionParts.length ? `.${fraction}` : ""}`;
+}
+
 // A single allocation line (multi-line model). Numeric fields are kept as
 // strings for controlled inputs; the backend parses both strings & numbers.
 interface PvLine {
@@ -592,7 +603,7 @@ export default function PaymentVoucherForm() {
 
   // ── Live Journal-Entry preview (mirrors backend posting logic) ──
   function jePreview() {
-    const valid = form.lines.filter(l => l.accountId && (Number(l.amount) || 0) > 0);
+    const valid = form.lines.filter(l => l.accountId && (Number(l.amount) || 0) !== 0);
     if (valid.length === 0) return null;
     const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === form.cashBoxId);
     const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === form.bankAccountId);
@@ -601,24 +612,28 @@ export default function PaymentVoucherForm() {
     const crLabel = form.paymentType === "bank"
       ? (ba ? t(`${NS}.bankPrefix`, { name: baName }) : t(`${NS}.noBankSelected`))
       : (cb ? t(`${NS}.cashPrefix`, { name: cbName }) : t(`${NS}.noCashSelected`));
-    const drRows: { label: string; amount: number }[] = [];
+    const rows: { label: string; debit: number; credit: number }[] = [];
     let total = 0;
     for (const l of valid) {
       const net = Number(l.amount) || 0;
       const tax = Number(l.taxAmount) || 0;
       total += net + tax;
-      drRows.push({
-        label: accountName(l.accountId) || t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —"),
-        amount: net,
-      });
+      const label = accountName(l.accountId) || t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —");
+      rows.push({ label, debit: net > 0 ? net : 0, credit: net < 0 ? Math.abs(net) : 0 });
       if (tax > 0) {
         const taxName = l.taxAccountId
           ? accountName(l.taxAccountId)
           : t(`${NS}.vatInputDefault`, "ضريبة القيمة المضافة (مدخلات)");
-        drRows.push({ label: `${t(`${NS}.vatLabel`, "ضريبة مدخلات")} — ${taxName}`, amount: tax });
+        rows.push({ label: `${t(`${NS}.vatLabel`, "ضريبة مدخلات")} — ${taxName}`, debit: tax, credit: 0 });
       }
     }
-    return { drRows, crLabel, total };
+    return {
+      rows,
+      crLabel,
+      total,
+      treasuryDebit: total < 0 ? Math.abs(total) : 0,
+      treasuryCredit: total > 0 ? total : 0,
+    };
   }
 
   // ── Save / Save-and-post mutation ──────────────────────────────
@@ -635,15 +650,21 @@ export default function PaymentVoucherForm() {
         throw new Error(t(`${NS}.bankRequired`, "الحساب البنكي مطلوب عند الدفع بنكاً"));
 
       // Build allocation lines: drop fully-empty rows (no account AND zero
-      // amount), then validate each remaining row needs an account + amount>0.
-      const kept = form.lines.filter(l => l.accountId || (Number(l.amount) || 0) > 0);
+      // amount), then validate each remaining row needs an account + amount
+      // != 0. A negative direct line is an accounting credit (for example,
+      // deducting an employee advance from the cash actually paid).
+      const kept = form.lines.filter(l => l.accountId || (Number(l.amount) || 0) !== 0);
       if (kept.length === 0)
         throw new Error(t(`${NS}.linesRequired`, "يجب إضافة بند واحد على الأقل"));
       for (const l of kept) {
         if (!l.accountId && !SERVER_ACCOUNT_OPS.includes(l.opType))
           throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب محاسبي"));
-        if (!((Number(l.amount) || 0) > 0))
-          throw new Error(t(`${NS}.lineAmountRequired`, "مبلغ البند يجب أن يكون أكبر من صفر"));
+        if ((Number(l.amount) || 0) === 0)
+          throw new Error(t(`${NS}.lineAmountRequired`, "مبلغ البند يجب ألا يساوي صفراً"));
+        if (Number(l.amount) < 0 && l.opType !== "direct")
+          throw new Error(t(`${NS}.negativeSpecialLine`, "لا يمكن أن يكون بند العملية الخاصة بالسالب"));
+        if (Number(l.amount) < 0 && (Number(l.taxAmount) || 0) !== 0)
+          throw new Error(t(`${NS}.negativeTaxLine`, "البند السالب لا يقبل ضريبة؛ اجعل الضريبة صفراً"));
         if (l.opType === "prepaid") {
           if (!l.deferredExpenseAccountId)
             throw new Error(t(`${NS}.prepaidExpenseAccountRequired`, "بند مصروف مقدم: حساب المصروف مطلوب"));
@@ -705,6 +726,8 @@ export default function PaymentVoucherForm() {
       }));
       const grandTotal = kept.reduce(
         (s, l) => s + (Number(l.amount) || 0) + (Number(l.taxAmount) || 0), 0);
+      if (!(grandTotal > 0))
+        throw new Error(t(`${NS}.positiveGrandRequired`, "يجب أن يكون صافي إجمالي سند الصرف أكبر من صفر"));
 
       const { lines: _drop, ...header } = form;
       const body = {
@@ -1281,7 +1304,7 @@ export default function PaymentVoucherForm() {
                             <Input
                               type="text" inputMode="decimal" placeholder="0.00" dir="ltr"
                               value={l.amount}
-                              onChange={e => updateLine(l.key, { amount: e.target.value.replace(/[^0-9.]/g, "") })}
+                              onChange={e => updateLine(l.key, { amount: sanitizeSignedDecimal(e.target.value) })}
                               onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
                               className="h-8 text-sm text-left font-mono"
                               data-testid={`pv-line-amount-${idx}`}
@@ -1746,17 +1769,17 @@ export default function PaymentVoucherForm() {
                       </tr>
                     </thead>
                     <tbody className="font-mono">
-                      {preview.drRows.map((r, i) => (
+                      {preview.rows.map((r, i) => (
                         <tr key={`dr-${i}`} className="border-b border-blue-200/40">
                           <td className="py-1.5 text-start text-[11px]">{r.label}</td>
-                          <td className={cn("text-red-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(r.amount)}</td>
-                          <td className={cn("text-muted-foreground", isRtl ? "text-left" : "text-right")}>—</td>
+                          <td className={cn(r.debit ? "text-red-700 font-semibold" : "text-muted-foreground", isRtl ? "text-left" : "text-right")}>{r.debit ? fmt(r.debit) : "—"}</td>
+                          <td className={cn(r.credit ? "text-green-700 font-semibold" : "text-muted-foreground", isRtl ? "text-left" : "text-right")}>{r.credit ? fmt(r.credit) : "—"}</td>
                         </tr>
                       ))}
                       <tr>
                         <td className="py-1.5 text-start text-[11px]">{preview.crLabel}</td>
-                        <td className={cn("text-muted-foreground", isRtl ? "text-left" : "text-right")}>—</td>
-                        <td className={cn("text-green-700 font-semibold", isRtl ? "text-left" : "text-right")}>{fmt(preview.total)}</td>
+                        <td className={cn(preview.treasuryDebit ? "text-red-700 font-semibold" : "text-muted-foreground", isRtl ? "text-left" : "text-right")}>{preview.treasuryDebit ? fmt(preview.treasuryDebit) : "—"}</td>
+                        <td className={cn(preview.treasuryCredit ? "text-green-700 font-semibold" : "text-muted-foreground", isRtl ? "text-left" : "text-right")}>{preview.treasuryCredit ? fmt(preview.treasuryCredit) : "—"}</td>
                       </tr>
                     </tbody>
                   </table>

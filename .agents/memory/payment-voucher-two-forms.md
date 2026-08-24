@@ -30,3 +30,18 @@ App.tsx must keep the `/multi/*` routes registered BEFORE `/:id` (wouter Switch 
 first-match) or the redirect bounces. Both sidebar entries reuse permKey
 `payment_vouchers` (no new module gate). Backend accounting is identical for both
 payloads — never fork the JE logic per form.
+
+## Signed allocations in the multi form
+
+Direct allocation lines may be negative. A negative line credits its selected
+account and reduces the cash/bank credit; the voucher's final net total must
+remain positive. Negative lines cannot carry VAT, settle a purchase invoice, or
+use a special operation type that creates a linked business record.
+
+**Why:** A payment can include a deduction such as recovering an employee
+advance from an amount otherwise due. Dropping the negative line or treating it
+as another debit overstates both the expense and the cash actually paid.
+
+**How to apply:** Keep signed allocation math consistent in form totals, journal
+preview, persistence validation, and posting. Example: expense debit 1,000 plus
+advance credit 200 produces cash/bank credit 800.
