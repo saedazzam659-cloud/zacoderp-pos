@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import {
   DEFAULT_FOOTER_COLOR, DEFAULT_HEADER_COLOR,
   FOOTER_COLOR_KEYS, FOOTER_THEMES, HEADER_COLOR_KEYS, HEADER_THEMES,
-  type AuditGridLayout,
+  PAGE_SIZE_OPTIONS, type AuditGridLayout, type PageSize,
 } from "@/lib/auditGridLayout";
 
 /** Minimal column descriptor shape used by the reorder popover. */
@@ -319,24 +319,30 @@ interface PaginationToolbarProps {
   totalPages: number;
   /** Customizes the unit word, e.g. "فاتورة"/"قيد"/"عملية". */
   unitLabel?: string;
+  /** Screens with large registers can omit the legacy `0 = show all` choice. */
+  pageSizeOptions?: readonly PageSize[];
 }
 
 /** Bottom pagination strip (page-size select + nav buttons). */
 export function AuditGridPagination({
   layout, totalRows, pageStart, pageEnd, totalPages, unitLabel = "سجل",
+  pageSizeOptions = PAGE_SIZE_OPTIONS,
 }: PaginationToolbarProps) {
   const { pageSize, setPageSize, page, setPage, sanitizePageSize } = layout;
+  const displayedPageSize = pageSizeOptions.includes(pageSize)
+    ? pageSize
+    : (pageSizeOptions[0] ?? pageSize);
   return (
     <div className="bg-slate-50 border-t border-slate-200 px-3 py-1.5 flex items-center gap-2 flex-wrap text-xs print:hidden">
       <div className="flex items-center gap-1.5">
         <label className="text-slate-600 font-medium">عدد الأسطر:</label>
         <select
-          value={pageSize}
+          value={displayedPageSize}
           onChange={(e) => setPageSize(sanitizePageSize(Number(e.target.value)))}
           className="h-7 text-xs px-2 rounded border border-slate-300 bg-white text-slate-700 font-mono cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
           aria-label="عدد الأسطر المعروضة في كل صفحة"
         >
-          {[10, 25, 50, 100, 250, 0].map((n) => (
+          {pageSizeOptions.map((n) => (
             <option key={n} value={n}>{n === 0 ? "الكل" : n}</option>
           ))}
         </select>
@@ -354,7 +360,7 @@ export function AuditGridPagination({
         )}
       </div>
       <div className="flex-1" />
-      {pageSize !== 0 && totalPages > 1 && (
+      {displayedPageSize !== 0 && totalPages > 1 && (
         <div className="flex items-center gap-1">
           <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
             onClick={() => setPage(1)} disabled={page === 1} aria-label="أول صفحة" title="أول صفحة">«</Button>

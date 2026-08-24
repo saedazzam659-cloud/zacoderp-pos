@@ -12,6 +12,11 @@ import {
 } from "@/lib/journalPrint";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
+import {
+  JOURNAL_REGISTER_DEFAULT_PAGE_SIZE,
+  JOURNAL_REGISTER_PAGE_SIZES,
+  safeJournalRegisterPageSize,
+} from "@/lib/journalRegisterPaging";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -285,12 +290,15 @@ export default function JournalEntries() {
   });
   const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
 
-  const { pageSize, page, setPage } = layout;
+  const { pageSize, page, setPage, setPageSize } = layout;
   const deferredSearch = useDeferredValue(search);
-  // The server owns basic filtering, ordering and pagination. `0` is the
-  // legacy "all" layout choice; request a bounded large page rather than
-  // downloading the whole register into the browser.
-  const serverLimit = pageSize || 5_000;
+  // A legacy shared-grid preference can still contain `0 = show all`. Keep
+  // the very first render bounded, then migrate that preference so it cannot
+  // freeze the browser again on the next visit.
+  const serverLimit = safeJournalRegisterPageSize(pageSize);
+  useEffect(() => {
+    if (pageSize === 0) setPageSize(JOURNAL_REGISTER_DEFAULT_PAGE_SIZE);
+  }, [pageSize, setPageSize]);
   const pageQuery = useQuery({
     queryKey: ["journal-entries", cid, page, serverLimit, deferredSearch, statusFilter, dateFrom, dateTo, sort],
     queryFn: () => journalEntriesApi.listPage({
@@ -313,8 +321,8 @@ export default function JournalEntries() {
   const serverTotals = pageQuery.data?.totals ?? { debit: 0, credit: 0 };
   const allTotals = pageQuery.data?.allTotals ?? { debit: 0, credit: 0, count: 0 };
 
-  // Used by bulk-print to label account ids on each journal-entry line.
-  // Cached across renders so opening Print repeatedly is cheap.
+  // Used only by detailed bulk-print to label account ids. Fetch through the
+  // query cache on demand instead of downloading the whole COA on page open.
   const API_URL = (import.meta as any).env?.VITE_API_URL ?? "";
   const buildAuthHeaders = (): Record<string, string> => {
     const token = localStorage.getItem("zatca_token");
@@ -322,7 +330,7 @@ export default function JournalEntries() {
       ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
       : { "Content-Type": "application/json" };
   };
-  const { data: accountsList = [] } = useQuery<any[]>({
+  const fetchAccountsList = () => qc.fetchQuery<any[]>({
     queryKey: ["accounts-flat", cid],
     queryFn: async () => {
       const url = cid ? `${API_URL}/api/accounts?companyId=${cid}` : `${API_URL}/api/accounts`;
@@ -330,7 +338,7 @@ export default function JournalEntries() {
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
   });
 
   const deleteMutation = useMutation({
@@ -745,11 +753,6 @@ ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEnt
     try { localStorage.setItem("zatca_je_one_per_page", oneEntryPerPage ? "1" : "0"); }
     catch { /* ignore quota / private mode */ }
   }, [oneEntryPerPage]);
-  const acctMap = useMemo(
-    () => new Map<number, any>((accountsList as any[]).map((a: any) => [a.id, a])),
-    [accountsList],
-  );
-
   // Thin wrapper around the SHARED detailed template (lib/journalPrint.ts).
   // The journal-entry FORM's "طباعة" button uses the exact same builder, so
   // both paths always print identical sheets. This wrapper only resolves
@@ -775,7 +778,12 @@ ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEnt
     printBtn:    t("journalEntries.printPdf"),
   });
 
-  const buildBulkPrintHtml = (entriesWithLines: any[], opts?: { oneEntryPerPage?: boolean }) => {
+  const buildBulkPrintHtml = (
+    entriesWithLines: any[],
+    opts?: { oneEntryPerPage?: boolean },
+    accountsList: any[] = [],
+  ) => {
+    const acctMap = new Map<number, any>(accountsList.map((a: any) => [a.id, a]));
     const printEntries: JournalPrintEntry[] = entriesWithLines.map((e: any) => ({
       docNo:       e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`,
       entryDate:   e.entryDate ?? "",
@@ -862,7 +870,8 @@ ${wrapWithLetterhead(letterhead, `<table><thead><tr>${cols.map(c => `<th>${escap
   // Thermal 80mm: narrow receipt-style printout, one "ticket" per entry. Uses
   // a tight monospace-friendly layout so it renders cleanly on POS thermal
   // printers (and still looks fine on a regular printer).
-  const buildThermalPrintHtml = (entriesWithLines: any[]) => {
+  const buildThermalPrintHtml = (entriesWithLines: any[], accountsList: any[] = []) => {
+    const acctMap = new Map<number, any>(accountsList.map((a: any) => [a.id, a]));
     const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const company = user?.company as any;
@@ -934,7 +943,12 @@ ${sections}
 
   // Professional: formal letterhead-style A4 with shaded entry banner, line
   // table, and a signature block per entry (preparer / reviewer / approver).
-  const buildProfessionalPrintHtml = (entriesWithLines: any[], opts?: { oneEntryPerPage?: boolean }) => {
+  const buildProfessionalPrintHtml = (
+    entriesWithLines: any[],
+    opts?: { oneEntryPerPage?: boolean },
+    accountsList: any[] = [],
+  ) => {
+    const acctMap = new Map<number, any>(accountsList.map((a: any) => [a.id, a]));
     const oneEntryPerPage = !!opts?.oneEntryPerPage;
     const today = new Date().toLocaleDateString(isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
@@ -1078,14 +1092,15 @@ ${wrapWithLetterhead(letterhead, sections)}
             } catch { return { ...row, lines: [] }; }
           }))
         : selectedRows;
+      const accountsList = tpl.needsLines ? await fetchAccountsList() : [];
 
       let html = "";
       switch (templateId) {
         case "summary":      html = buildPrintHtml(source); break;
-        case "detailed":     html = buildBulkPrintHtml(source, { oneEntryPerPage }); break;
+        case "detailed":     html = buildBulkPrintHtml(source, { oneEntryPerPage }, accountsList); break;
         case "compact":      html = buildCompactPrintHtml(source); break;
-        case "thermal":      html = buildThermalPrintHtml(source); break;
-        case "professional": html = buildProfessionalPrintHtml(source, { oneEntryPerPage }); break;
+        case "thermal":      html = buildThermalPrintHtml(source, accountsList); break;
+        case "professional": html = buildProfessionalPrintHtml(source, { oneEntryPerPage }, accountsList); break;
       }
       openPrintWindow(html);
     } finally {
@@ -1870,6 +1885,7 @@ ${wrapWithLetterhead(letterhead, sections)}
           pageEnd={pageEnd}
           totalPages={totalPages}
           unitLabel={t("journalEntries.itemLabel", { defaultValue: "قيد" })}
+          pageSizeOptions={JOURNAL_REGISTER_PAGE_SIZES}
         />
       </div>
 

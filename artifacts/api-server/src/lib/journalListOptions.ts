@@ -1,6 +1,7 @@
 const JOURNAL_SORT_KEYS = new Set([
   "doc", "date", "type", "desc", "status", "createdBy", "postedBy", "debit", "credit",
 ]);
+export const JOURNAL_LIST_MAX_LIMIT = 250;
 
 /** Parse journal-register controls without passing user identifiers to SQL. */
 export function journalListOptions(query: Record<string, unknown>) {
@@ -21,9 +22,10 @@ export function journalListOptions(query: Record<string, unknown>) {
   const status = text("status");
   return {
     page: integer("page", 1, 1, Number.MAX_SAFE_INTEGER),
-    // Normal screens request 10-250 rows. The higher cap is reserved for the
-    // explicit "عرض الكل" choice and on-demand exports, never the initial load.
-    limit: integer("limit", 50, 1, 5_000),
+    // The register and export loop both operate in bounded pages. Never permit
+    // one request to return thousands of enriched rows: a legacy "عرض الكل"
+    // browser preference used to freeze data-heavy companies.
+    limit: integer("limit", 50, 1, JOURNAL_LIST_MAX_LIMIT),
     q: text("q"),
     status: ["draft", "posted", "voided"].includes(status) ? status : "",
     dateFrom: date("dateFrom"),

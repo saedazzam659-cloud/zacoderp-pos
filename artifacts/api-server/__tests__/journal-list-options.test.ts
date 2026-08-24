@@ -11,10 +11,15 @@ test("journal list options clamp paging and allowlist sort/status", () => {
     status: "not-a-status",
   });
   assert.equal(parsed.page, 1);
-  assert.equal(parsed.limit, 5_000);
+  assert.equal(parsed.limit, 250);
   assert.equal(parsed.sortKey, "createdAt");
   assert.equal(parsed.sortDir, "asc");
   assert.equal(parsed.status, "");
+});
+
+test("journal list options default and legacy show-all requests stay bounded", () => {
+  assert.equal(journalListOptions({ page: "1" }).limit, 50);
+  assert.equal(journalListOptions({ page: "1", limit: "5000" }).limit, 250);
 });
 
 test("journal list options accept valid filters and detect paged mode", () => {
