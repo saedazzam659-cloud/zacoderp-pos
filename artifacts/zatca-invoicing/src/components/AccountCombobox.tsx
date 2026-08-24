@@ -36,6 +36,10 @@ interface AccountComboboxProps {
    *  linked to OTHER suppliers — the server rejects them with 409 anyway).
    *  The current `value` is never hidden. */
   excludeIds?:    Array<number | string | null | undefined>;
+  /** Allow selecting roll-up/non-posting accounts. Keep false for transaction
+   *  forms; true only when the selected account will act as a parent. */
+  allowParentAccounts?: boolean;
+  onAccountChange?: (account: any | null) => void;
 }
 
 export function AccountCombobox({
@@ -51,6 +55,8 @@ export function AccountCombobox({
   emptyLabel     = "بدون حساب",
   autoFocus,
   excludeIds,
+  allowParentAccounts = false,
+  onAccountChange,
 }: AccountComboboxProps) {
   const { user, token } = useAuth() as any;
   const cid = companyId ?? (user?.role === "superadmin" ? undefined : user?.company?.id);
@@ -95,7 +101,7 @@ export function AccountCombobox({
       .map((a: any) => {
         const isParent  = parentIds.has(Number(a.id));
         const nonPost   = a.isPosting === false;
-        const disabled  = isParent || nonPost;
+        const disabled  = !allowParentAccounts && (isParent || nonPost);
         return {
           value:          String(a.id),
           code:           a.code,
@@ -118,7 +124,12 @@ export function AccountCombobox({
     <SearchCombobox
       items={items}
       value={value}
-      onValueChange={onValueChange}
+      onValueChange={(nextValue) => {
+        onValueChange(nextValue);
+        onAccountChange?.(
+          accounts.find((account: any) => String(account.id) === String(nextValue)) ?? null,
+        );
+      }}
       placeholder={placeholder}
       searchPlaceholder="ابحث بالكود أو الاسم..."
       emptyText="لا توجد حسابات مطابقة"

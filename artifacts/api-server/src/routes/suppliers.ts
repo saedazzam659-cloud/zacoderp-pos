@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { branchesTable } from "@workspace/db";
 import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
   journalEntriesTable, journalEntryLinesTable, accountsTable } from "@workspace/db";
-import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
+import { eq, and, sql, inArray, notInArray, isNotNull, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import {
@@ -13,6 +13,11 @@ import {
 } from "../lib/entityAccounts.js";
 import { importPartyOpeningBalances } from "../lib/openingBalanceImport.js";
 import { importPartyMasterData } from "../lib/partyMasterImport.js";
+import {
+  buildSupplierBulkAccountCodes,
+  SupplierBulkAccountPlanError,
+} from "../lib/supplierBulkAccounts.js";
+import { z } from "zod";
 
 // Auto-create a sub-account under the "Accounts Payable — Suppliers" parent.
 // Delegates to the shared entity-account helper which reads the parent
@@ -222,6 +227,234 @@ router.get("/next-account-code", async (req, res) => {
     return;
   }
   res.json({ found: true, ...peek });
+});
+
+const bulkAssignAccountsBody = z.object({
+  companyId: z.coerce.number().int().positive().optional(),
+  supplierIds: z.array(z.coerce.number().int().positive()).min(1).max(5000),
+  parentAccountId: z.coerce.number().int().positive(),
+  leadingZeros: z.coerce.number().int().min(0).max(5),
+});
+
+// Explicit bulk repair tool for imported suppliers that have no AP account.
+// This route is deliberately independent from POST / and PUT /:id so the
+// existing single-supplier account creation and linking behavior stays intact.
+router.post("/bulk-assign-accounts", async (req, res): Promise<void> => {
+  const parsed = bulkAssignAccountsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات إنشاء حسابات الموردين غير صحيحة" });
+    return;
+  }
+
+  const { parentAccountId, leadingZeros } = parsed.data;
+  const supplierIds = [...new Set(parsed.data.supplierIds)];
+  if (supplierIds.length !== parsed.data.supplierIds.length) {
+    res.status(400).json({ error: "قائمة الموردين تحتوي على تكرار" });
+    return;
+  }
+
+  const companyId = resolveCompanyId(req, parsed.data.companyId);
+  if (!companyId) {
+    res.status(400).json({ error: "معرّف الشركة مطلوب" });
+    return;
+  }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      // All account-code INSERTs/changes take this same lock through the
+      // database trigger installed by ensureSchema. Unlike a table lock, it
+      // serializes only account writers for this company and never blocks
+      // reads or another company's chart.
+      await tx.execute(sql`
+        SELECT pg_advisory_xact_lock(
+          hashtext('supplier-bulk-account-company'),
+          ${companyId}::int
+        )
+      `);
+
+      const [parent] = await tx.select().from(accountsTable).where(and(
+        eq(accountsTable.id, parentAccountId),
+        eq(accountsTable.companyId, companyId),
+      ));
+      if (!parent) {
+        throw new SupplierBulkAccountPlanError("الحساب الرئيسي غير موجود في هذه الشركة");
+      }
+      if (parent.accountType !== "liability") {
+        throw new SupplierBulkAccountPlanError("يجب اختيار حساب رئيسي من نوع الالتزامات");
+      }
+      if (!parent.isActive) {
+        throw new SupplierBulkAccountPlanError("الحساب الرئيسي المختار غير نشط");
+      }
+
+      const rows = await tx.select({
+        id: suppliersTable.id,
+        nameAr: suppliersTable.nameAr,
+        nameEn: suppliersTable.nameEn,
+        accountId: suppliersTable.accountId,
+      }).from(suppliersTable).where(and(
+        eq(suppliersTable.companyId, companyId),
+        inArray(suppliersTable.id, supplierIds),
+        ...branchScopeSpread(req, suppliersTable.branchId, undefined),
+      )).for("update");
+      const rowById = new Map(rows.map(row => [row.id, row]));
+      const orderedSuppliers = supplierIds.map(id => rowById.get(id)).filter(Boolean) as typeof rows;
+      if (orderedSuppliers.length !== supplierIds.length) {
+        throw new SupplierBulkAccountPlanError(
+          "بعض الموردين المحددين غير موجودين أو خارج نطاق الفرع المسموح",
+          403,
+        );
+      }
+
+      const alreadyLinked = orderedSuppliers.filter(supplier => supplier.accountId != null);
+      if (alreadyLinked.length > 0) {
+        throw new SupplierBulkAccountPlanError(
+          `يوجد ${alreadyLinked.length} مورد مرتبط بحساب بالفعل — ألغِ تحديده حتى لا يتغير الربط الحالي`,
+          409,
+        );
+      }
+
+      const selectedNames = new Set<string>();
+      for (const supplier of orderedSuppliers) {
+        const normalized = String(supplier.nameAr ?? "").trim().toLowerCase();
+        if (!normalized) {
+          throw new SupplierBulkAccountPlanError(`المورد رقم ${supplier.id} ليس له اسم عربي صالح`);
+        }
+        if (selectedNames.has(normalized)) {
+          throw new SupplierBulkAccountPlanError(
+            `اسم المورد "${supplier.nameAr}" مكرر داخل التحديد`,
+            409,
+          );
+        }
+        selectedNames.add(normalized);
+      }
+
+      const codes = buildSupplierBulkAccountCodes(parent.code, leadingZeros, orderedSuppliers.length);
+      const [codeConflicts, siblingAccounts] = await Promise.all([
+        tx.select({ code: accountsTable.code, nameAr: accountsTable.nameAr })
+          .from(accountsTable)
+          .where(and(
+            eq(accountsTable.companyId, companyId),
+            inArray(accountsTable.code, codes),
+          )),
+        tx.select({ nameAr: accountsTable.nameAr })
+          .from(accountsTable)
+          .where(and(
+            eq(accountsTable.companyId, companyId),
+            eq(accountsTable.parentId, parentAccountId),
+          )),
+      ]);
+      if (codeConflicts.length > 0) {
+        throw new SupplierBulkAccountPlanError(
+          `رقم الحساب ${codeConflicts[0]!.code} مستخدم بالفعل — لم يتم إنشاء أي حساب`,
+          409,
+        );
+      }
+
+      const siblingNames = new Set(
+        siblingAccounts.map(account => String(account.nameAr ?? "").trim().toLowerCase()),
+      );
+      const nameConflict = orderedSuppliers.find(
+        supplier => siblingNames.has(String(supplier.nameAr ?? "").trim().toLowerCase()),
+      );
+      if (nameConflict) {
+        throw new SupplierBulkAccountPlanError(
+          `يوجد حساب فرعي باسم "${nameConflict.nameAr}" تحت الحساب الرئيسي بالفعل`,
+          409,
+        );
+      }
+
+      // Reserve these exact keys before insertion. The account trigger rejects
+      // a later stale-code insert from any other producer, while all unrelated
+      // historical or future account codes keep their existing behavior.
+      await tx.execute(sql`
+        INSERT INTO supplier_bulk_account_code_guards (company_id, code)
+        SELECT ${companyId}::int, value
+          FROM jsonb_array_elements_text(${JSON.stringify(codes)}::jsonb)
+        ON CONFLICT (company_id, code) DO NOTHING
+      `);
+
+      const created = await tx.insert(accountsTable).values(
+        orderedSuppliers.map((supplier, index) => ({
+          companyId,
+          parentId: parentAccountId,
+          code: codes[index]!,
+          nameAr: String(supplier.nameAr).trim(),
+          nameEn: supplier.nameEn ?? null,
+          accountType: "liability" as const,
+          reportDirection: parent.reportDirection ?? null,
+          level: (parent.level ?? 1) + 1,
+          isPosting: true,
+          isActive: true,
+        })),
+      ).returning({ id: accountsTable.id, code: accountsTable.code });
+
+      const createdByCode = new Map(created.map(account => [account.code, account.id]));
+      const assignments = orderedSuppliers.map((supplier, index) => ({
+        supplierId: supplier.id,
+        accountId: createdByCode.get(codes[index]!)!,
+        accountCode: codes[index]!,
+        supplierName: supplier.nameAr,
+      }));
+      if (assignments.some(assignment => !assignment.accountId)) {
+        throw new Error("تعذّر مطابقة الحسابات الجديدة بالموردين");
+      }
+
+      const accountIdCase = sql.join(
+        assignments.map(assignment =>
+          sql`WHEN ${suppliersTable.id} = ${assignment.supplierId} THEN ${assignment.accountId}`),
+        sql` `,
+      );
+      const updatedSuppliers = await tx.update(suppliersTable).set({
+        accountId: sql<number>`CASE ${accountIdCase} ELSE ${suppliersTable.accountId} END`,
+      }).where(and(
+        eq(suppliersTable.companyId, companyId),
+        inArray(suppliersTable.id, supplierIds),
+        isNull(suppliersTable.accountId),
+        ...branchScopeSpread(req, suppliersTable.branchId, undefined),
+      )).returning({ id: suppliersTable.id });
+      if (updatedSuppliers.length !== assignments.length) {
+        throw new SupplierBulkAccountPlanError(
+          "تغيّر ربط أحد الموردين أثناء التنفيذ — لم يتم إنشاء أو ربط أي حساب",
+          409,
+        );
+      }
+
+      if (parent.isPosting) {
+        await tx.update(accountsTable).set({
+          isPosting: false,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(accountsTable.id, parentAccountId),
+          eq(accountsTable.companyId, companyId),
+        ));
+      }
+
+      return {
+        created: assignments.length,
+        parentAccount: {
+          id: parent.id,
+          code: parent.code,
+          nameAr: parent.nameAr,
+        },
+        assignments,
+      };
+    });
+
+    res.status(201).json(result);
+  } catch (error: unknown) {
+    if (error instanceof SupplierBulkAccountPlanError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
+      res.status(409).json({
+        error: "تعارض رقم حساب مع عملية أخرى — لم يتم إنشاء أو ربط أي حساب",
+      });
+      return;
+    }
+    req.log?.error({ error }, "Bulk supplier account assignment failed");
+    res.status(500).json({ error: "تعذّر إنشاء وربط حسابات الموردين" });
+  }
 });
 
 router.post("/", async (req, res) => {

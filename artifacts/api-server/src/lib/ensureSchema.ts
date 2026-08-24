@@ -197,6 +197,66 @@ const DDL_LOCK_TIMEOUT_MS = (() => {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 4000;
 })();
 
+/**
+ * Reserve only account codes created by the supplier bulk-linking tool.
+ * Historical duplicate codes stay untouched, while every future account-code
+ * writer participates in the same lightweight per-company serialization.
+ */
+export const SUPPLIER_BULK_ACCOUNT_CODE_GUARD_DDL = `
+CREATE TABLE IF NOT EXISTS supplier_bulk_account_code_guards (
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (company_id, code)
+);
+
+CREATE OR REPLACE FUNCTION enforce_supplier_bulk_account_code_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.code IS NULL OR btrim(NEW.code) = '' THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'UPDATE'
+     AND NEW.company_id IS NOT DISTINCT FROM OLD.company_id
+     AND NEW.code IS NOT DISTINCT FROM OLD.code THEN
+    RETURN NEW;
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(
+    hashtext('supplier-bulk-account-company'),
+    NEW.company_id
+  );
+
+  IF EXISTS (
+    SELECT 1
+      FROM supplier_bulk_account_code_guards guard
+     WHERE guard.company_id = NEW.company_id
+       AND guard.code = NEW.code
+  ) AND EXISTS (
+    SELECT 1
+      FROM accounts existing
+     WHERE existing.company_id = NEW.company_id
+       AND existing.code = NEW.code
+       AND (TG_OP = 'INSERT' OR existing.id <> NEW.id)
+  ) THEN
+    RAISE EXCEPTION 'account code % is reserved by supplier bulk assignment', NEW.code
+      USING ERRCODE = '23505',
+            CONSTRAINT = 'supplier_bulk_account_code_guard';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS supplier_bulk_account_code_guard ON accounts;
+CREATE TRIGGER supplier_bulk_account_code_guard
+BEFORE INSERT OR UPDATE OF company_id, code
+ON accounts
+FOR EACH ROW
+EXECUTE FUNCTION enforce_supplier_bulk_account_code_guard();
+`;
+
 async function execDDL(stmt: string): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.execute(sql.raw(`SET LOCAL lock_timeout = '${DDL_LOCK_TIMEOUT_MS}ms'`));
@@ -627,6 +687,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // companies.code is unique whenever populated.
     { label: "companies_code_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS companies_code_uniq ON companies (code) WHERE code IS NOT NULL` },
+    { label: "supplier bulk account code reservation guard",
+      sql: SUPPLIER_BULK_ACCOUNT_CODE_GUARD_DDL },
     // ─── Sales-rep ↔ user 1:1 link (per company). Partial unique so reps without
     // a login (external/freelancer) are allowed (user_id NULL). Same user can
     // never be linked to two reps in the same company.

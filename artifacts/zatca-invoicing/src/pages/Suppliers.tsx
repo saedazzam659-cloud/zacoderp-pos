@@ -8,7 +8,7 @@ import { JournalScanArchive } from "@/components/JournalScanArchive";
 import {
   Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package,
   Pencil, Trash2, TrendingUp, TrendingDown, Minus,
-  FileSpreadsheet, X, CreditCard, Wrench,
+  FileSpreadsheet, X, CreditCard, Wrench, FolderTree, Loader2, Link2,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
@@ -20,6 +20,10 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { fmt2 } from "@/lib/format";
@@ -98,6 +102,10 @@ export default function Suppliers() {
   // CREATE-only: OPTIONAL explicit parent account (الحساب الرئيسي) — when set,
   // it overrides the category heuristic for both the hint and the creation.
   const [accountParentId, setAccountParentId] = useState<string>("");
+  const [bulkAccountOpen, setBulkAccountOpen] = useState(false);
+  const [bulkParentId, setBulkParentId] = useState("");
+  const [bulkParentAccount, setBulkParentAccount] = useState<any>(null);
+  const [bulkLeadingZeros, setBulkLeadingZeros] = useState("2");
 
   function openCreate() {
     setCreating(true);
@@ -252,6 +260,34 @@ export default function Suppliers() {
     .map(k => COLUMNS.find(c => c.key === k)!)
     .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
   const allFilteredIds = useMemo(() => filtered.map((s: any) => s.id as number), [filtered]);
+  const orderedSelectedSuppliers = useMemo(
+    () => filtered.filter((supplier: any) => layout.selected.has(supplier.id)),
+    [filtered, layout.selected],
+  );
+  const leadingZeros = bulkLeadingZeros === "" ? Number.NaN : Number(bulkLeadingZeros);
+  const sequenceWidth = Number.isInteger(leadingZeros) ? leadingZeros + 1 : 0;
+  const maxSequence = sequenceWidth > 0 ? (10 ** sequenceWidth) - 1 : 0;
+  const bulkPreview = useMemo(() => {
+    const parentCode = String(bulkParentAccount?.code ?? "").trim();
+    if (!/^\d+$/.test(parentCode) || !Number.isInteger(leadingZeros) || leadingZeros < 0 || leadingZeros > 5) {
+      return [];
+    }
+    return orderedSelectedSuppliers.map((supplier: any, index: number) => ({
+      supplier,
+      accountCode: `${parentCode}${String(index + 1).padStart(leadingZeros + 1, "0")}`,
+    }));
+  }, [bulkParentAccount, leadingZeros, orderedSelectedSuppliers]);
+  const linkedSelected = useMemo(
+    () => orderedSelectedSuppliers.filter((supplier: any) => supplier.accountId != null),
+    [orderedSelectedSuppliers],
+  );
+
+  function openBulkAccountDialog() {
+    setBulkParentId("");
+    setBulkParentAccount(null);
+    setBulkLeadingZeros("2");
+    setBulkAccountOpen(true);
+  }
 
   function exportCsv() {
     if (filtered.length === 0) {
@@ -376,6 +412,48 @@ export default function Suppliers() {
       qc.invalidateQueries({ queryKey: ["accounts"] });
     },
     onError: (e: any) => toast({ title: "تعذّر إصلاح الربط المحاسبي", description: e?.message, variant: "destructive" }),
+  });
+
+  const bulkAssignAccountsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API}/api/suppliers/bulk-assign-accounts`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId: user?.companyId,
+          supplierIds: orderedSelectedSuppliers.map((supplier: any) => supplier.id),
+          parentAccountId: Number(bulkParentId),
+          leadingZeros,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let message = text;
+        try { message = JSON.parse(text).error ?? text; } catch {}
+        throw new Error(message || "تعذّر إنشاء وربط حسابات الموردين");
+      }
+      return res.json();
+    },
+    onSuccess: (result: any) => {
+      toast({
+        title: `تم إنشاء وربط ${result.created} حساب مورد`,
+        description: result.parentAccount?.code
+          ? `تحت الحساب الرئيسي ${result.parentAccount.code}`
+          : undefined,
+      });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["supplier-balances"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      clearSelection();
+      setBulkAccountOpen(false);
+      setBulkParentId("");
+      setBulkParentAccount(null);
+    },
+    onError: (error: any) => toast({
+      title: "تعذّر إنشاء وربط حسابات الموردين",
+      description: error?.message,
+      variant: "destructive",
+    }),
   });
 
   const deleteMutation = useMutation({
@@ -724,6 +802,16 @@ export default function Suppliers() {
           </div>
           <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
             <span className="text-emerald-800">تم تحديد {layout.selected.size} مورد</span>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 gap-1.5 bg-emerald-700 hover:bg-emerald-800"
+              onClick={openBulkAccountDialog}
+              data-testid="button-bulk-assign-supplier-accounts"
+            >
+              <FolderTree className="h-3.5 w-3.5" />
+              إنشاء وربط حسابات
+            </Button>
           </AuditGridBulkBar>
         </div>
 
@@ -956,6 +1044,203 @@ export default function Suppliers() {
           unitLabel={t("pages.suppliers.itemLabel", { defaultValue: "مورد" })}
         />
       </div>
+
+      {/* ────────── Bulk supplier account assignment ────────── */}
+      <Dialog
+        open={bulkAccountOpen}
+        onOpenChange={(open) => {
+          if (bulkAssignAccountsMutation.isPending) return;
+          setBulkAccountOpen(open);
+        }}
+      >
+        <DialogContent
+          dir="rtl"
+          className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+          data-testid="dialog-bulk-supplier-accounts"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FolderTree className="h-5 w-5 text-emerald-700" />
+              إنشاء وربط حسابات الموردين المحددين
+            </DialogTitle>
+            <DialogDescription>
+              سيُنشأ حساب فرعي مستقل باسم كل مورد تحت الحساب الرئيسي المختار، حسب ترتيب الموردين في الجدول.
+              لن يتغير منطق إضافة أو تعديل المورد الفردي.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">الحساب الرئيسي من شجرة الحسابات</label>
+              <AccountCombobox
+                companyId={user?.companyId ?? undefined}
+                value={bulkParentId}
+                onValueChange={setBulkParentId}
+                onAccountChange={setBulkParentAccount}
+                placeholder="— اختر الحساب الرئيسي للموردين —"
+                filterTypes={["liability"]}
+                grouped={false}
+                allowEmpty={false}
+                allowParentAccounts
+              />
+              <p className="text-xs text-muted-foreground">
+                يسمح هذا الإجراء فقط باختيار حساب من نوع الالتزامات ليكون أبًا للحسابات الجديدة.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="supplier-bulk-leading-zeros" className="text-sm font-medium">
+                عدد الأصفار قبل أول رقم تسلسلي
+              </label>
+              <Input
+                id="supplier-bulk-leading-zeros"
+                data-testid="input-supplier-bulk-leading-zeros"
+                type="text"
+                inputMode="numeric"
+                dir="ltr"
+                className="font-mono text-left"
+                value={bulkLeadingZeros}
+                onChange={(event) => {
+                  const next = event.target.value.replace(/\D/g, "").slice(0, 1);
+                  if (next === "" || Number(next) <= 5) setBulkLeadingZeros(next);
+                }}
+                placeholder="2"
+              />
+              <p className="text-xs text-muted-foreground">
+                مثال: صفران = تسلسل بعرض 3 خانات: <span dir="ltr" className="font-mono">001، 002 ... 100</span>
+              </p>
+            </div>
+          </div>
+
+          {bulkParentAccount && (
+            <div
+              className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm"
+              data-testid="summary-supplier-bulk-numbering"
+            >
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="font-medium">{bulkParentAccount.nameAr}</span>
+                <span dir="ltr" className="font-mono font-bold text-emerald-900">{bulkParentAccount.code}</span>
+                {bulkPreview.length > 0 && (
+                  <>
+                    <span className="text-emerald-700">←</span>
+                    <span dir="ltr" className="font-mono font-bold">{bulkPreview[0]?.accountCode}</span>
+                    {bulkPreview.length > 1 && (
+                      <>
+                        <span>حتى</span>
+                        <span dir="ltr" className="font-mono font-bold">{bulkPreview.at(-1)?.accountCode}</span>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+              {maxSequence > 0 && (
+                <p className="mt-1 text-xs text-emerald-800">
+                  سعة هذا التنسيق: {maxSequence.toLocaleString("en-US")} حسابًا.
+                </p>
+              )}
+            </div>
+          )}
+
+          {bulkParentAccount && !/^\d+$/.test(String(bulkParentAccount.code ?? "").trim()) && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              رقم الحساب الرئيسي غير رقمي، لذلك لا يمكن تطبيق التسلسل المطلوب تحته.
+            </div>
+          )}
+
+          {linkedSelected.length > 0 && (
+            <div
+              className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+              data-testid="warning-suppliers-already-linked"
+            >
+              <strong>{linkedSelected.length} موردًا من المحددين مرتبط بحساب بالفعل.</strong>
+              {" "}ألغِ تحديدهم أولًا؛ الأداة لن تستبدل أي ربط محاسبي حالي.
+              <div className="mt-1 text-xs text-amber-800">
+                {linkedSelected.slice(0, 5).map((supplier: any) => supplier.nameAr).join("، ")}
+                {linkedSelected.length > 5 ? "…" : ""}
+              </div>
+            </div>
+          )}
+
+          {maxSequence > 0 && orderedSelectedSuppliers.length > maxSequence && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              التحديد الحالي أكبر من سعة الترقيم. زِد عدد الأصفار قبل التنفيذ.
+            </div>
+          )}
+
+          <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
+            <table className="w-full text-sm border-collapse">
+              <thead className="sticky top-0 bg-slate-100 text-slate-700">
+                <tr>
+                  <th className="px-3 py-2 text-center w-14 border-e">#</th>
+                  <th className="px-3 py-2 text-start border-e">اسم المورد</th>
+                  <th className="px-3 py-2 text-start">رقم الحساب الجديد</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orderedSelectedSuppliers.map((supplier: any, index: number) => (
+                  <tr
+                    key={supplier.id}
+                    className="border-t"
+                    data-testid={`row-supplier-account-preview-${supplier.id}`}
+                  >
+                    <td className="px-3 py-2 text-center font-mono text-muted-foreground border-e">
+                      {index + 1}
+                    </td>
+                    <td className="px-3 py-2 border-e">
+                      <div className="font-medium">{supplier.nameAr}</div>
+                      {supplier.nameEn && <div className="text-xs text-muted-foreground">{supplier.nameEn}</div>}
+                    </td>
+                    <td
+                      dir="ltr"
+                      className="px-3 py-2 text-left font-mono font-semibold"
+                      data-testid={`text-supplier-account-code-${supplier.id}`}
+                    >
+                      {bulkPreview[index]?.accountCode ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBulkAccountOpen(false)}
+              disabled={bulkAssignAccountsMutation.isPending}
+              data-testid="button-cancel-bulk-supplier-accounts"
+            >
+              إلغاء
+            </Button>
+            <Button
+              type="button"
+              className="gap-2 bg-emerald-700 hover:bg-emerald-800"
+              onClick={() => bulkAssignAccountsMutation.mutate()}
+              disabled={
+                bulkAssignAccountsMutation.isPending
+                || orderedSelectedSuppliers.length === 0
+                || linkedSelected.length > 0
+                || !bulkParentId
+                || !bulkParentAccount
+                || !/^\d+$/.test(String(bulkParentAccount?.code ?? "").trim())
+                || !Number.isInteger(leadingZeros)
+                || leadingZeros < 0
+                || leadingZeros > 5
+                || orderedSelectedSuppliers.length > maxSequence
+              }
+              data-testid="button-confirm-bulk-supplier-accounts"
+            >
+              {bulkAssignAccountsMutation.isPending
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : <Link2 className="h-4 w-4" />}
+              {bulkAssignAccountsMutation.isPending
+                ? "جارٍ إنشاء وربط الحسابات..."
+                : `إنشاء وربط ${orderedSelectedSuppliers.length} حساب`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
 
       {/* ────────── Delete Confirm ────────── */}
