@@ -9,6 +9,7 @@ import {
   contractingProgressBillsTable,
   fixedAssetsTable, faDepreciationRunsTable, faDisposalsTable,
   payrollRunsTable,
+  employeeCustodiesTable, employeeCustodySettlementsTable, employeesTable,
   costCentersTable,
   trialBalancesTable, trialBalanceDetailsTable,
   salesOrdersTable, salesQuotationsTable,
@@ -18,11 +19,12 @@ import {
   fiscalYearsTable,
   suppliersTable, customersTable,
 } from "@workspace/db";
-import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
+import { eq, and, or, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import { employeeCustodyStatementDescription } from "../lib/accountStatementDescriptions.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const router = Router();
@@ -637,6 +639,14 @@ router.get("/account-statement", async (req, res) => {
         faDepreciationRunId:      faDepreciationRunsTable.id,
         faDisposalId:             faDisposalsTable.id,
         payrollRunId:             payrollRunsTable.id,
+         // HR monetary custody source data. Disbursement JEs point directly
+         // to employee_custodies.disbursement_journal_id; settlement/return
+         // JEs point through employee_custody_settlements.journal_id.
+         employeeCustodyId:       employeeCustodiesTable.id,
+         employeeCustodyPurpose:  employeeCustodiesTable.purpose,
+         employeeCustodyEmployeeNameAr: employeesTable.nameAr,
+         employeeCustodyEmployeeNameEn: employeesTable.nameEn,
+         employeeCustodySettlementDescription: employeeCustodySettlementsTable.description,
         // Effective cost-centre per row. Many legacy/manual entries
         // never stamped `journal_entry_lines.cost_center`, but the
         // owning source document (sales/purchase invoice, receipt /
@@ -712,6 +722,21 @@ router.get("/account-statement", async (req, res) => {
         eq(payrollRunsTable.postedJournalId, journalEntriesTable.id),
         eq(payrollRunsTable.companyId, cid),
       ))
+       .leftJoin(employeeCustodySettlementsTable, and(
+         eq(employeeCustodySettlementsTable.journalId, journalEntriesTable.id),
+         eq(employeeCustodySettlementsTable.companyId, cid),
+       ))
+       .leftJoin(employeeCustodiesTable, and(
+         eq(employeeCustodiesTable.companyId, cid),
+         or(
+           eq(employeeCustodiesTable.disbursementJournalId, journalEntriesTable.id),
+           eq(employeeCustodiesTable.id, employeeCustodySettlementsTable.custodyId),
+         ),
+       ))
+       .leftJoin(employeesTable, and(
+         eq(employeesTable.id, employeeCustodiesTable.employeeId),
+         eq(employeesTable.companyId, cid),
+       ))
       // Resolve the effective cost-centre (line OR source document) into
       // its human-readable code/name. Has to come AFTER every source-doc
       // join above so the COALESCE expression sees their columns.
@@ -902,7 +927,16 @@ router.get("/account-statement", async (req, res) => {
         }
         voucherDesc = mergeDesc(vHeader, vPerLine, vNotes) || `${vLabel}${vEntity ? ` — ${vEntity}` : ""}`;
       }
-      const srcDesc = r.purchaseReturnId
+       const custodyDesc = employeeCustodyStatementDescription({
+         entryType: r.entryType,
+         employeeNameAr: r.employeeCustodyEmployeeNameAr,
+         employeeNameEn: r.employeeCustodyEmployeeNameEn,
+         purpose: r.employeeCustodyPurpose,
+         settlementDescription: r.employeeCustodySettlementDescription,
+       });
+       const srcDesc = custodyDesc
+         ? custodyDesc
+         : r.purchaseReturnId
         ? (pRetInfo.get(r.purchaseReturnId) ?? null)
         : r.purchaseInvoiceId
         ? invoiceDescription(pInvInfo.get(r.purchaseInvoiceId))

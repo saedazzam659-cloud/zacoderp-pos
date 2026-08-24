@@ -45,6 +45,11 @@ manual JEs and "—" for invoices with no header note — useless for reconcilia
     Same unconditional-per-account-line caveat as invoices (fires on every account
     the voucher JE touches — treasury side AND counter-party/expense side).
     Precedence: invoice override wins, then this voucher merge, then raw GL text.
+  - **HR employee-custody rows:** resolve the custody source by the direct
+    disbursement JE link or through its settlement row. Override the generic GL
+    line with movement type + employee name + custody purpose; settlement rows
+    may append their own settlement description. Keep this source-driven so
+    legacy JEs also improve without reposting.
 
 **Voucher merge (the durable rule):** voucher statement rows show the FULL typed
 text, not header-only. `mergeDesc` = join non-empty deduped pieces with `" — "`:
