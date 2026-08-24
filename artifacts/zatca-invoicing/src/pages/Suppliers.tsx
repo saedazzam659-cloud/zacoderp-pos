@@ -39,6 +39,11 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import {
+  buildSupplierBulkPreview,
+  selectedSuppliersInGridOrder,
+  suppliersInStableGridOrder,
+} from "@/lib/supplierBulkSelection";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -106,6 +111,7 @@ export default function Suppliers() {
   const [bulkParentId, setBulkParentId] = useState("");
   const [bulkParentAccount, setBulkParentAccount] = useState<any>(null);
   const [bulkLeadingZeros, setBulkLeadingZeros] = useState("2");
+  const [bulkSelectedSuppliers, setBulkSelectedSuppliers] = useState<any[]>([]);
 
   function openCreate() {
     setCreating(true);
@@ -183,7 +189,11 @@ export default function Suppliers() {
     (balances as any[]).map((b: any) => [b.supplierId, b.balance])
   );
 
-  const filteredBySearch = suppliers.filter((s: any) => {
+  const orderedSuppliers = useMemo(
+    () => suppliersInStableGridOrder(suppliers),
+    [suppliers],
+  );
+  const filteredBySearch = orderedSuppliers.filter((s: any) => {
     const matchSearch =
       !search ||
       s.nameAr?.includes(search) ||
@@ -260,29 +270,33 @@ export default function Suppliers() {
     .map(k => COLUMNS.find(c => c.key === k)!)
     .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
   const allFilteredIds = useMemo(() => filtered.map((s: any) => s.id as number), [filtered]);
-  const orderedSelectedSuppliers = useMemo(
-    () => filtered.filter((supplier: any) => layout.selected.has(supplier.id)),
-    [filtered, layout.selected],
+  const selectedSuppliersForBulkOpen = useMemo(
+    () => selectedSuppliersInGridOrder(orderedSuppliers, layout.selected),
+    [orderedSuppliers, layout.selected],
   );
   const leadingZeros = bulkLeadingZeros === "" ? Number.NaN : Number(bulkLeadingZeros);
   const sequenceWidth = Number.isInteger(leadingZeros) ? leadingZeros + 1 : 0;
   const maxSequence = sequenceWidth > 0 ? (10 ** sequenceWidth) - 1 : 0;
   const bulkPreview = useMemo(() => {
     const parentCode = String(bulkParentAccount?.code ?? "").trim();
-    if (!/^\d+$/.test(parentCode) || !Number.isInteger(leadingZeros) || leadingZeros < 0 || leadingZeros > 5) {
-      return [];
-    }
-    return orderedSelectedSuppliers.map((supplier: any, index: number) => ({
-      supplier,
-      accountCode: `${parentCode}${String(index + 1).padStart(leadingZeros + 1, "0")}`,
-    }));
-  }, [bulkParentAccount, leadingZeros, orderedSelectedSuppliers]);
+    return buildSupplierBulkPreview(bulkSelectedSuppliers, parentCode, leadingZeros);
+  }, [bulkParentAccount, bulkSelectedSuppliers, leadingZeros]);
   const linkedSelected = useMemo(
-    () => orderedSelectedSuppliers.filter((supplier: any) => supplier.accountId != null),
-    [orderedSelectedSuppliers],
+    () => bulkSelectedSuppliers.filter((supplier: any) => supplier.accountId != null),
+    [bulkSelectedSuppliers],
   );
 
   function openBulkAccountDialog() {
+    if (selectedSuppliersForBulkOpen.length !== layout.selected.size) {
+      toast({
+        title: "تعذر تحميل جميع الموردين المحددين",
+        description: "تم تحديث قائمة الموردين. أعد تحديد الموردين ثم حاول مرة أخرى.",
+        variant: "destructive",
+      });
+      clearSelection();
+      return;
+    }
+    setBulkSelectedSuppliers(selectedSuppliersForBulkOpen);
     setBulkParentId("");
     setBulkParentAccount(null);
     setBulkLeadingZeros("2");
@@ -421,7 +435,7 @@ export default function Suppliers() {
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId: user?.companyId,
-          supplierIds: orderedSelectedSuppliers.map((supplier: any) => supplier.id),
+          supplierIds: bulkSelectedSuppliers.map((supplier: any) => supplier.id),
           parentAccountId: Number(bulkParentId),
           leadingZeros,
         }),
@@ -446,6 +460,7 @@ export default function Suppliers() {
       qc.invalidateQueries({ queryKey: ["accounts"] });
       clearSelection();
       setBulkAccountOpen(false);
+      setBulkSelectedSuppliers([]);
       setBulkParentId("");
       setBulkParentAccount(null);
     },
@@ -1051,6 +1066,7 @@ export default function Suppliers() {
         onOpenChange={(open) => {
           if (bulkAssignAccountsMutation.isPending) return;
           setBulkAccountOpen(open);
+          if (!open) setBulkSelectedSuppliers([]);
         }}
       >
         <DialogContent
@@ -1161,7 +1177,7 @@ export default function Suppliers() {
             </div>
           )}
 
-          {maxSequence > 0 && orderedSelectedSuppliers.length > maxSequence && (
+          {maxSequence > 0 && bulkSelectedSuppliers.length > maxSequence && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
               التحديد الحالي أكبر من سعة الترقيم. زِد عدد الأصفار قبل التنفيذ.
             </div>
@@ -1177,7 +1193,7 @@ export default function Suppliers() {
                 </tr>
               </thead>
               <tbody>
-                {orderedSelectedSuppliers.map((supplier: any, index: number) => (
+                {bulkSelectedSuppliers.map((supplier: any, index: number) => (
                   <tr
                     key={supplier.id}
                     className="border-t"
@@ -1219,7 +1235,7 @@ export default function Suppliers() {
               onClick={() => bulkAssignAccountsMutation.mutate()}
               disabled={
                 bulkAssignAccountsMutation.isPending
-                || orderedSelectedSuppliers.length === 0
+                || bulkSelectedSuppliers.length === 0
                 || linkedSelected.length > 0
                 || !bulkParentId
                 || !bulkParentAccount
@@ -1227,7 +1243,7 @@ export default function Suppliers() {
                 || !Number.isInteger(leadingZeros)
                 || leadingZeros < 0
                 || leadingZeros > 5
-                || orderedSelectedSuppliers.length > maxSequence
+                || bulkSelectedSuppliers.length > maxSequence
               }
               data-testid="button-confirm-bulk-supplier-accounts"
             >
@@ -1236,7 +1252,7 @@ export default function Suppliers() {
                 : <Link2 className="h-4 w-4" />}
               {bulkAssignAccountsMutation.isPending
                 ? "جارٍ إنشاء وربط الحسابات..."
-                : `إنشاء وربط ${orderedSelectedSuppliers.length} حساب`}
+                : `إنشاء وربط ${bulkSelectedSuppliers.length} حساب`}
             </Button>
           </DialogFooter>
         </DialogContent>

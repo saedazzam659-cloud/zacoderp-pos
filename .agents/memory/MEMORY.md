@@ -138,3 +138,4 @@
 - [HR effective-dated mutations](hr-effective-dated-mutations.md) — future transfer/assignment changes close prior periods; payroll snapshotting shares the employee lock and uses Saudi business dates.
 - [Payment voucher form split](payment-voucher-two-forms.md) — multi form is line-backed; direct negative lines credit the selected account and reduce treasury, with final net still positive.
 - [Item-card balance source](item-card-balance-source.md) — use posted per-warehouse balances; never rebuild a date-filtered, cross-warehouse running total from zero.
+- [Safe tenant test fixtures](safe-tenant-test-fixtures.md) — browser/database tests must use owned disposable tenants and prove ownership before any cleanup.
