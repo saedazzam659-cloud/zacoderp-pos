@@ -4,7 +4,12 @@ import { branchesTable } from "@workspace/db";
 import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
   journalEntriesTable, journalEntryLinesTable, accountsTable } from "@workspace/db";
 import { eq, and, sql, inArray, notInArray, isNotNull, isNull } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
+import {
+  extractAuth,
+  resolveCompanyId,
+  branchScopeSpread,
+  getAllowedBranchIds,
+} from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import {
   ensureSupplierLedger, ensureSupplierLedgerUnderParent,
@@ -17,14 +22,26 @@ import {
   buildSupplierBulkAccountCodes,
   SupplierBulkAccountPlanError,
 } from "../lib/supplierBulkAccounts.js";
+import {
+  planSupplierBulkImportRows,
+  summarizeSupplierBulkImportRows,
+  chooseSupplierBulkCreateBranchId,
+  type SupplierBulkImportPlan,
+  type SupplierBulkImportPlanRow,
+} from "../lib/supplierBulkImport.js";
 import { z } from "zod";
 
 // Auto-create a sub-account under the "Accounts Payable — Suppliers" parent.
 // Delegates to the shared entity-account helper which reads the parent
 // from the Account Mapping screen (entity_account_parents.supplier_account_parent)
 // and falls back to code-prefix / name-like lookup when the mapping isn't set.
-async function ensureSupplierAccount(companyId: number, supplierName: string, category?: SupplierCategory): Promise<number | null> {
-  return ensureSupplierLedger(companyId, supplierName, category);
+async function ensureSupplierAccount(
+  companyId: number,
+  supplierName: string,
+  category?: SupplierCategory,
+  executor: any = db,
+): Promise<number | null> {
+  return ensureSupplierLedger(companyId, supplierName, category, executor);
 }
 
 const router = Router();
@@ -234,6 +251,447 @@ const bulkAssignAccountsBody = z.object({
   supplierIds: z.array(z.coerce.number().int().positive()).min(1).max(5000),
   parentAccountId: z.coerce.number().int().positive(),
   leadingZeros: z.coerce.number().int().min(0).max(5),
+  allowReassign: z.boolean().optional().default(false),
+});
+
+const bulkImportAssignAccountsBody = z.object({
+  companyId: z.coerce.number().int().positive().optional(),
+  branchId: z.coerce.number().int().positive().optional(),
+  rows: z.array(z.record(z.string(), z.unknown())).min(1).max(5000),
+  parentAccountId: z.coerce.number().int().positive(),
+  leadingZeros: z.coerce.number().int().min(0).max(5),
+  allowReassign: z.boolean().optional().default(false),
+});
+
+function publicSupplierBulkImportPlan(plan: SupplierBulkImportPlan) {
+  return {
+    canCommit: plan.canCommit,
+    summary: plan.summary,
+    rows: plan.rows.map((row) => ({
+      rowNumber: row.rowNumber,
+      status: row.status,
+      matchedBy: row.scopeBlocked ? null : row.matchedBy,
+      supplierId: row.scopeBlocked ? null : row.supplierId,
+      nameAr: row.nameAr,
+      nameEn: row.nameEn,
+      currentAccount: row.scopeBlocked ? null : row.currentAccount,
+      accountCode: row.accountCode,
+      error: row.scopeBlocked ? "غير مصرح بإجراء العملية على أحد الصفوف" : row.error,
+    })),
+  };
+}
+
+function accountDepthFromParentChain(
+  account: typeof accountsTable.$inferSelect,
+  accountById: Map<number, typeof accountsTable.$inferSelect>,
+): number {
+  let depth = 1;
+  let current: typeof accountsTable.$inferSelect | undefined = account;
+  const seen = new Set<number>();
+  while (current?.parentId != null && !seen.has(current.id)) {
+    seen.add(current.id);
+    current = accountById.get(current.parentId);
+    if (!current) break;
+    depth++;
+  }
+  return depth;
+}
+
+function normalizedSupplierIdentity(value: unknown): string | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized || null;
+}
+
+async function lockSupplierIdentity(connection: any, companyId: number): Promise<void> {
+  await connection.execute(sql`
+    SELECT pg_advisory_xact_lock(
+      hashtext('supplier-identity-company'),
+      ${companyId}::int
+    )
+  `);
+}
+
+async function assertSupplierIdentityAvailable(
+  connection: any,
+  companyId: number,
+  data: Record<string, unknown>,
+  excludeId?: number,
+): Promise<void> {
+  const existing = await connection.select({
+    id: suppliersTable.id,
+    code: suppliersTable.code,
+    nameAr: suppliersTable.nameAr,
+    vatNumber: suppliersTable.vatNumber,
+    crNumber: suppliersTable.crNumber,
+  }).from(suppliersTable).where(eq(suppliersTable.companyId, companyId));
+  const others = excludeId == null ? existing : existing.filter((row: any) => row.id !== excludeId);
+  const checks = [
+    ["code", "كود المورد", data.code],
+    ["nameAr", "الاسم", data.nameAr],
+    ["vatNumber", "الرقم الضريبي", data.vatNumber],
+    ["crNumber", "رقم السجل التجاري", data.crNumber],
+  ] as const;
+  for (const [field, label, raw] of checks) {
+    const key = normalizedSupplierIdentity(raw);
+    if (!key) continue;
+    if (others.some((row: any) => normalizedSupplierIdentity(row[field]) === key)) {
+      throw new SupplierBulkAccountPlanError(`${label} "${String(raw).trim()}" مستخدم لمورد آخر`, 409);
+    }
+  }
+}
+
+async function resolveSupplierImportCreateBranchId(
+  connection: any,
+  req: any,
+  companyId: number,
+  requestedBranchId: number | undefined,
+): Promise<number | null> {
+  const allowed = getAllowedBranchIds(req);
+  const branchId = chooseSupplierBulkCreateBranchId(allowed, requestedBranchId);
+
+  if (branchId != null) {
+    const [branch] = await connection.select({ id: branchesTable.id }).from(branchesTable).where(and(
+      eq(branchesTable.id, branchId),
+      eq(branchesTable.companyId, companyId),
+    ));
+    if (!branch) {
+      throw new SupplierBulkAccountPlanError(
+        "الفرع المحدد غير موجود في هذه الشركة",
+        400,
+      );
+    }
+  }
+  return branchId;
+}
+
+async function loadSupplierBulkImportPlan(
+  connection: any,
+  req: any,
+  companyId: number,
+  data: z.infer<typeof bulkImportAssignAccountsBody>,
+  lockSuppliers: boolean,
+): Promise<{
+  parent: typeof accountsTable.$inferSelect;
+  plan: SupplierBulkImportPlan;
+  createBranchId: number | null;
+  childAccountLevel: number;
+}> {
+  const [parent] = await connection.select().from(accountsTable).where(and(
+    eq(accountsTable.id, data.parentAccountId),
+    eq(accountsTable.companyId, companyId),
+  ));
+  if (!parent) {
+    throw new SupplierBulkAccountPlanError("الحساب الرئيسي غير موجود في هذه الشركة");
+  }
+  if (parent.accountType !== "liability") {
+    throw new SupplierBulkAccountPlanError("يجب اختيار حساب رئيسي من نوع الالتزامات");
+  }
+  if (!parent.isActive) {
+    throw new SupplierBulkAccountPlanError("الحساب الرئيسي المختار غير نشط");
+  }
+
+  const companySupplierQuery = connection
+    .select()
+    .from(suppliersTable)
+    .where(eq(suppliersTable.companyId, companyId));
+  const allSuppliers = lockSuppliers
+    ? await companySupplierQuery.for("update")
+    : await companySupplierQuery;
+  const [scopedSuppliers, allAccounts] = await Promise.all([
+    connection.select({ id: suppliersTable.id }).from(suppliersTable).where(and(
+      eq(suppliersTable.companyId, companyId),
+      ...branchScopeSpread(req, suppliersTable.branchId, undefined),
+    )),
+    connection.select().from(accountsTable).where(eq(accountsTable.companyId, companyId)),
+  ]);
+  const scopedIds = new Set<number>(scopedSuppliers.map((supplier: { id: number }) => supplier.id));
+  const accountById = new Map<number, typeof accountsTable.$inferSelect>(
+    allAccounts.map((account: typeof accountsTable.$inferSelect) => [account.id, account]),
+  );
+
+  const initialPlan = planSupplierBulkImportRows({
+    rawRows: data.rows,
+    existingSuppliers: allSuppliers.map((supplier: typeof suppliersTable.$inferSelect) => {
+      const current = supplier.accountId == null ? null : accountById.get(supplier.accountId) ?? null;
+      return {
+        ...supplier,
+        accessible: scopedIds.has(supplier.id),
+        currentAccount: current ? {
+          id: current.id,
+          code: current.code,
+          nameAr: current.nameAr,
+          parentId: current.parentId,
+        } : null,
+      };
+    }),
+    parentAccountId: data.parentAccountId,
+    parentAccountCode: parent.code,
+    leadingZeros: data.leadingZeros,
+    allowReassign: data.allowReassign,
+  });
+  if (initialPlan.rows.some(row => row.scopeBlocked)) {
+    throw new SupplierBulkAccountPlanError(
+      "غير مصرح بإجراء العملية على أحد الموردين أو معرّفاته",
+      403,
+    );
+  }
+  const createBranchId = initialPlan.rows.some(row => row.status === "create")
+    ? await resolveSupplierImportCreateBranchId(
+        connection,
+        req,
+        companyId,
+        data.branchId,
+      )
+    : null;
+
+  const codeOwners = new Map(
+    allAccounts
+      .filter((account: typeof accountsTable.$inferSelect) => account.code)
+      .map((account: typeof accountsTable.$inferSelect) => [String(account.code), account]),
+  );
+  const siblingNames = new Map(
+    allAccounts
+      .filter((account: typeof accountsTable.$inferSelect) => account.parentId === data.parentAccountId)
+      .map((account: typeof accountsTable.$inferSelect) => [
+        String(account.nameAr ?? "").trim().toLowerCase(),
+        account,
+      ]),
+  );
+  const rows = initialPlan.rows.map((row): SupplierBulkImportPlanRow => {
+    if (row.error) return row;
+    const codeOwner = row.accountCode ? codeOwners.get(row.accountCode) : null;
+    if (codeOwner) {
+      return {
+        ...row,
+        status: "error",
+        error: `رقم الحساب ${row.accountCode} مستخدم بالفعل — غيّر عدد الأصفار أو الحساب الأب`,
+      };
+    }
+    const sibling = siblingNames.get(row.nameAr.trim().toLowerCase());
+    if (sibling) {
+      return {
+        ...row,
+        status: "error",
+        error: `يوجد حساب فرعي باسم "${row.nameAr}" تحت الحساب الرئيسي بالفعل`,
+      };
+    }
+    return row;
+  });
+  const summary = summarizeSupplierBulkImportRows(rows);
+  return {
+    parent,
+    createBranchId,
+    childAccountLevel: accountDepthFromParentChain(parent, accountById) + 1,
+    plan: {
+      rows,
+      summary,
+      canCommit: summary.errors === 0 && summary.blocked === 0,
+    },
+  };
+}
+
+router.post("/bulk-import-assign-accounts/preview", async (req, res): Promise<void> => {
+  const parsed = bulkImportAssignAccountsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات ملف الموردين أو إعدادات الحسابات غير صحيحة" });
+    return;
+  }
+  const companyId = resolveCompanyId(req, parsed.data.companyId);
+  if (!companyId) {
+    res.status(400).json({ error: "معرّف الشركة مطلوب" });
+    return;
+  }
+  try {
+    const { parent, plan } = await loadSupplierBulkImportPlan(
+      db,
+      req,
+      companyId,
+      parsed.data,
+      false,
+    );
+    res.json({
+      ...publicSupplierBulkImportPlan(plan),
+      parentAccount: { id: parent.id, code: parent.code, nameAr: parent.nameAr },
+    });
+  } catch (error: unknown) {
+    if (error instanceof SupplierBulkAccountPlanError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
+    req.log?.error({ error }, "Supplier Excel account preview failed");
+    res.status(500).json({ error: "تعذّرت معاينة ملف الموردين" });
+  }
+});
+
+router.post("/bulk-import-assign-accounts", async (req, res): Promise<void> => {
+  const parsed = bulkImportAssignAccountsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات ملف الموردين أو إعدادات الحسابات غير صحيحة" });
+    return;
+  }
+  const companyId = resolveCompanyId(req, parsed.data.companyId);
+  if (!companyId) {
+    res.status(400).json({ error: "معرّف الشركة مطلوب" });
+    return;
+  }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        SELECT pg_advisory_xact_lock(
+          hashtext('supplier-bulk-account-company'),
+          ${companyId}::int
+        )
+      `);
+      await lockSupplierIdentity(tx, companyId);
+      const { parent, plan, createBranchId, childAccountLevel } = await loadSupplierBulkImportPlan(
+        tx,
+        req,
+        companyId,
+        parsed.data,
+        true,
+      );
+      if (!plan.canCommit) {
+        const firstError = plan.rows.find(row => row.error)?.error
+          ?? "يحتوي الملف على صفوف غير صالحة";
+        throw new SupplierBulkAccountPlanError(firstError, 409);
+      }
+
+      const persistedSuppliers: Array<{
+        id: number;
+        nameAr: string;
+        nameEn: string | null;
+        planRow: SupplierBulkImportPlanRow;
+      }> = [];
+      let suppliersCreated = 0;
+      let suppliersUpdated = 0;
+      for (const row of plan.rows) {
+        if (row.supplierId != null) {
+          const [saved] = await tx.update(suppliersTable)
+            .set(row.patch as Partial<typeof suppliersTable.$inferInsert>)
+            .where(and(
+              eq(suppliersTable.id, row.supplierId),
+              eq(suppliersTable.companyId, companyId),
+              ...branchScopeSpread(req, suppliersTable.branchId, undefined),
+            ))
+            .returning({
+              id: suppliersTable.id,
+              nameAr: suppliersTable.nameAr,
+              nameEn: suppliersTable.nameEn,
+            });
+          if (!saved) {
+            throw new SupplierBulkAccountPlanError(
+              `تغيّر نطاق المورد "${row.nameAr}" أثناء التنفيذ — لم يتم حفظ أي شيء`,
+              409,
+            );
+          }
+          persistedSuppliers.push({ ...saved, planRow: row });
+          suppliersUpdated++;
+        } else {
+          const [saved] = await tx.insert(suppliersTable).values({
+            companyId,
+            branchId: createBranchId,
+            accountId: null,
+            country: row.patch.country ?? "SA",
+            currencyCode: row.patch.currencyCode ?? "SAR",
+            ...row.patch,
+          } as typeof suppliersTable.$inferInsert).returning({
+            id: suppliersTable.id,
+            nameAr: suppliersTable.nameAr,
+            nameEn: suppliersTable.nameEn,
+          });
+          if (!saved) throw new Error("تعذّر إنشاء المورد");
+          persistedSuppliers.push({ ...saved, planRow: row });
+          suppliersCreated++;
+        }
+      }
+
+      const codes = persistedSuppliers.map(supplier => supplier.planRow.accountCode!);
+      await tx.execute(sql`
+        INSERT INTO supplier_bulk_account_code_guards (company_id, code)
+        SELECT ${companyId}::int, value
+          FROM jsonb_array_elements_text(${JSON.stringify(codes)}::jsonb)
+        ON CONFLICT (company_id, code) DO NOTHING
+      `);
+      const createdAccounts = await tx.insert(accountsTable).values(
+        persistedSuppliers.map((supplier) => ({
+          companyId,
+          parentId: parsed.data.parentAccountId,
+          code: supplier.planRow.accountCode!,
+          nameAr: supplier.nameAr,
+          nameEn: supplier.nameEn,
+          accountType: "liability" as const,
+          reportDirection: parent.reportDirection ?? null,
+          level: childAccountLevel,
+          isPosting: true,
+          isActive: true,
+        })),
+      ).returning({ id: accountsTable.id, code: accountsTable.code });
+      const createdAccountByCode = new Map(createdAccounts.map(account => [account.code, account.id]));
+
+      const assignments = [];
+      for (const supplier of persistedSuppliers) {
+        const accountCode = supplier.planRow.accountCode!;
+        const accountId = createdAccountByCode.get(accountCode);
+        if (!accountId) throw new Error("تعذّر مطابقة الحساب الجديد بالمورد");
+        const oldAccountCondition = supplier.planRow.previousAccountId == null
+          ? isNull(suppliersTable.accountId)
+          : eq(suppliersTable.accountId, supplier.planRow.previousAccountId);
+        const [updated] = await tx.update(suppliersTable).set({ accountId }).where(and(
+          eq(suppliersTable.id, supplier.id),
+          eq(suppliersTable.companyId, companyId),
+          oldAccountCondition,
+          ...branchScopeSpread(req, suppliersTable.branchId, undefined),
+        )).returning({ id: suppliersTable.id });
+        if (!updated) {
+          throw new SupplierBulkAccountPlanError(
+            `تغيّر ربط المورد "${supplier.nameAr}" أثناء التنفيذ — لم يتم حفظ أي شيء`,
+            409,
+          );
+        }
+        assignments.push({
+          supplierId: supplier.id,
+          supplierName: supplier.nameAr,
+          accountId,
+          accountCode,
+          previousAccountId: supplier.planRow.previousAccountId,
+        });
+      }
+
+      if (parent.isPosting) {
+        await tx.update(accountsTable).set({
+          isPosting: false,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(accountsTable.id, parsed.data.parentAccountId),
+          eq(accountsTable.companyId, companyId),
+        ));
+      }
+
+      return {
+        created: assignments.length,
+        suppliersCreated,
+        suppliersUpdated,
+        reassigned: assignments.filter(assignment => assignment.previousAccountId != null).length,
+        parentAccount: { id: parent.id, code: parent.code, nameAr: parent.nameAr },
+        assignments,
+      };
+    });
+    res.status(201).json(result);
+  } catch (error: unknown) {
+    if (error instanceof SupplierBulkAccountPlanError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
+      res.status(409).json({
+        error: "تعارض رقم حساب أو بيانات مورد مع عملية أخرى — لم يتم حفظ أي شيء",
+      });
+      return;
+    }
+    req.log?.error({ error }, "Supplier Excel import and account assignment failed");
+    res.status(500).json({ error: "تعذّر استيراد الموردين وإنشاء الحسابات" });
+  }
 });
 
 // Explicit bulk repair tool for imported suppliers that have no AP account.
@@ -246,7 +704,7 @@ router.post("/bulk-assign-accounts", async (req, res): Promise<void> => {
     return;
   }
 
-  const { parentAccountId, leadingZeros } = parsed.data;
+  const { parentAccountId, leadingZeros, allowReassign } = parsed.data;
   const supplierIds = [...new Set(parsed.data.supplierIds)];
   if (supplierIds.length !== parsed.data.supplierIds.length) {
     res.status(400).json({ error: "قائمة الموردين تحتوي على تكرار" });
@@ -285,6 +743,12 @@ router.post("/bulk-assign-accounts", async (req, res): Promise<void> => {
       if (!parent.isActive) {
         throw new SupplierBulkAccountPlanError("الحساب الرئيسي المختار غير نشط");
       }
+      const allAccounts = await tx.select().from(accountsTable)
+        .where(eq(accountsTable.companyId, companyId));
+      const accountById = new Map<number, typeof accountsTable.$inferSelect>(
+        allAccounts.map(account => [account.id, account]),
+      );
+      const childAccountLevel = accountDepthFromParentChain(parent, accountById) + 1;
 
       const rows = await tx.select({
         id: suppliersTable.id,
@@ -306,9 +770,9 @@ router.post("/bulk-assign-accounts", async (req, res): Promise<void> => {
       }
 
       const alreadyLinked = orderedSuppliers.filter(supplier => supplier.accountId != null);
-      if (alreadyLinked.length > 0) {
+      if (alreadyLinked.length > 0 && !allowReassign) {
         throw new SupplierBulkAccountPlanError(
-          `يوجد ${alreadyLinked.length} مورد مرتبط بحساب بالفعل — ألغِ تحديده حتى لا يتغير الربط الحالي`,
+          `يوجد ${alreadyLinked.length} مورد مرتبط بحساب بالفعل — فعّل استبدال الربط أو ألغِ تحديده`,
           409,
         );
       }
@@ -382,7 +846,7 @@ router.post("/bulk-assign-accounts", async (req, res): Promise<void> => {
           nameEn: supplier.nameEn ?? null,
           accountType: "liability" as const,
           reportDirection: parent.reportDirection ?? null,
-          level: (parent.level ?? 1) + 1,
+          level: childAccountLevel,
           isPosting: true,
           isActive: true,
         })),
@@ -409,7 +873,7 @@ router.post("/bulk-assign-accounts", async (req, res): Promise<void> => {
       }).where(and(
         eq(suppliersTable.companyId, companyId),
         inArray(suppliersTable.id, supplierIds),
-        isNull(suppliersTable.accountId),
+        ...(!allowReassign ? [isNull(suppliersTable.accountId)] : []),
         ...branchScopeSpread(req, suppliersTable.branchId, undefined),
       )).returning({ id: suppliersTable.id });
       if (updatedSuppliers.length !== assignments.length) {
@@ -431,6 +895,7 @@ router.post("/bulk-assign-accounts", async (req, res): Promise<void> => {
 
       return {
         created: assignments.length,
+        reassigned: alreadyLinked.length,
         parentAccount: {
           id: parent.id,
           code: parent.code,
@@ -500,51 +965,70 @@ router.post("/", async (req, res) => {
   const accountParentId: number | null =
     data.accountParentId && Number.isInteger(Number(data.accountParentId)) && Number(data.accountParentId) > 0
       ? Number(data.accountParentId) : null;
-  let accountId: number | null = data.accountId ? Number(data.accountId) : null;
-  if (accountId) {
+  const requestedAccountId: number | null = data.accountId ? Number(data.accountId) : null;
+  if (requestedAccountId) {
     // Tenant guard: the linked account must belong to THIS company.
     const [acc] = await db.select({ id: accountsTable.id }).from(accountsTable)
-      .where(and(eq(accountsTable.id, accountId), eq(accountsTable.companyId, companyId)));
+      .where(and(eq(accountsTable.id, requestedAccountId), eq(accountsTable.companyId, companyId)));
     if (!acc) { res.status(400).json({ error: "الحساب المحدّد غير موجود في هذه الشركة" }); return; }
   }
-  if (!accountId) {
-    try {
-      if (accountParentId) {
-        accountId = await ensureSupplierLedgerUnderParent(companyId, String(data.nameAr).trim(), accountParentId);
-      }
-      if (!accountId) {
-        accountId = await ensureSupplierAccount(companyId, String(data.nameAr).trim(), supplierCategory);
-      }
-    } catch (err) {
-      console.error("ensureSupplierAccount failed:", err);
-      accountId = null;
-    }
-  }
 
-  const [supplier] = await db.insert(suppliersTable).values({
-    companyId,
-    code: data.code ?? null,
-    nameAr: data.nameAr,
-    nameEn: data.nameEn ?? null,
-    vatNumber: data.vatNumber ?? null,
-    crNumber: data.crNumber ?? null,
-    email: data.email ?? null,
-    phone: data.phone ?? null,
-    city: data.city ?? null,
-    district: data.district ?? null,
-    street: data.street ?? null,
-    buildingNumber: data.buildingNumber ?? null,
-    postalCode: data.postalCode ?? null,
-    country: data.country ?? "SA",
-    nationalAddressShort: data.nationalAddressShort ?? null,
-    locationLat: data.locationLat ?? null,
-    locationLng: data.locationLng ?? null,
-    locationLink: data.locationLink ?? null,
-    accountId,
-    branchId: data.branchId ? Number(data.branchId) : null,
-    includeInStatements: data.includeInStatements === false ? false : true,
-  }).returning();
-  res.status(201).json(supplier);
+  try {
+    const supplier = await db.transaction(async (tx) => {
+      await lockSupplierIdentity(tx, companyId);
+      await assertSupplierIdentityAvailable(tx, companyId, data);
+      let accountId = requestedAccountId;
+      if (!accountId) {
+        if (accountParentId) {
+          accountId = await ensureSupplierLedgerUnderParent(
+            companyId,
+            String(data.nameAr).trim(),
+            accountParentId,
+            tx,
+          );
+        }
+        if (!accountId) {
+          accountId = await ensureSupplierAccount(
+            companyId,
+            String(data.nameAr).trim(),
+            supplierCategory,
+            tx,
+          );
+        }
+      }
+      const [created] = await tx.insert(suppliersTable).values({
+        companyId,
+        code: data.code ?? null,
+        nameAr: data.nameAr,
+        nameEn: data.nameEn ?? null,
+        vatNumber: data.vatNumber ?? null,
+        crNumber: data.crNumber ?? null,
+        email: data.email ?? null,
+        phone: data.phone ?? null,
+        city: data.city ?? null,
+        district: data.district ?? null,
+        street: data.street ?? null,
+        buildingNumber: data.buildingNumber ?? null,
+        postalCode: data.postalCode ?? null,
+        country: data.country ?? "SA",
+        nationalAddressShort: data.nationalAddressShort ?? null,
+        locationLat: data.locationLat ?? null,
+        locationLng: data.locationLng ?? null,
+        locationLink: data.locationLink ?? null,
+        accountId,
+        branchId: data.branchId ? Number(data.branchId) : null,
+        includeInStatements: data.includeInStatements === false ? false : true,
+      }).returning();
+      return created;
+    });
+    res.status(201).json(supplier);
+  } catch (error: any) {
+    if (error instanceof SupplierBulkAccountPlanError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
 });
 
 // Bulk-import opening balances for suppliers → one draft "opening" JE.
@@ -665,53 +1149,63 @@ router.put("/:id", async (req, res) => {
   //  - otherwise keep the existing link IF its account still exists;
   //  - otherwise (never linked, or the linked account was deleted) re-mint
   //    an AP sub-account — same behaviour as create.
-  let accountId: number | null = data.accountId ? Number(data.accountId) : null;
-  if (accountId) {
+  const requestedAccountId: number | null = data.accountId ? Number(data.accountId) : null;
+  if (requestedAccountId) {
     // Tenant guard: the linked account must belong to THIS company.
     const [acc] = await db.select({ id: accountsTable.id }).from(accountsTable)
-      .where(and(eq(accountsTable.id, accountId), eq(accountsTable.companyId, existing.companyId)));
+      .where(and(eq(accountsTable.id, requestedAccountId), eq(accountsTable.companyId, existing.companyId)));
     if (!acc) { res.status(400).json({ error: "الحساب المحدّد غير موجود في هذه الشركة" }); return; }
   }
-  if (!accountId && existing.accountId != null) {
-    const [still] = await db.select({ id: accountsTable.id }).from(accountsTable)
-      .where(and(eq(accountsTable.id, existing.accountId), eq(accountsTable.companyId, existing.companyId)));
-    if (still) accountId = existing.accountId;
-  }
-  if (!accountId) {
-    const supplierCategory: SupplierCategory | undefined =
-      data.accountCategory === "foreign" ? "foreign"
-      : data.accountCategory === "local" ? "local"
-      : undefined;
-    try {
-      accountId = await ensureSupplierAccount(existing.companyId, String(data.nameAr ?? existing.nameAr ?? "").trim(), supplierCategory);
-    } catch (err) {
-      console.error("ensureSupplierAccount (PUT) failed:", err);
-      accountId = null;
-    }
-  }
+  const supplierCategory: SupplierCategory | undefined =
+    data.accountCategory === "foreign" ? "foreign"
+    : data.accountCategory === "local" ? "local"
+    : undefined;
 
-  const [supplier] = await db.update(suppliersTable).set({
-    code: data.code ?? null,
-    nameAr: data.nameAr,
-    nameEn: data.nameEn ?? null,
-    vatNumber: data.vatNumber ?? null,
-    crNumber: data.crNumber ?? null,
-    email: data.email ?? null,
-    phone: data.phone ?? null,
-    city: data.city ?? null,
-    district: data.district ?? null,
-    street: data.street ?? null,
-    buildingNumber: data.buildingNumber ?? null,
-    postalCode: data.postalCode ?? null,
-    country: data.country ?? "SA",
-    accountId,
-    ...(data.branchId !== undefined
-      ? { branchId: data.branchId === null || data.branchId === "" ? null : Number(data.branchId) }
-      : {}),
-    ...(typeof data.includeInStatements === "boolean"
-      ? { includeInStatements: data.includeInStatements }
-      : {}),
-  }).where(eq(suppliersTable.id, id)).returning();
+  const [supplier] = await db.transaction(async (tx) => {
+    await lockSupplierIdentity(tx, existing.companyId);
+    await assertSupplierIdentityAvailable(tx, existing.companyId, {
+      code: data.code ?? existing.code,
+      nameAr: data.nameAr ?? existing.nameAr,
+      vatNumber: data.vatNumber ?? existing.vatNumber,
+      crNumber: data.crNumber ?? existing.crNumber,
+    }, id);
+    let accountId = requestedAccountId;
+    if (!accountId && existing.accountId != null) {
+      const [still] = await tx.select({ id: accountsTable.id }).from(accountsTable)
+        .where(and(eq(accountsTable.id, existing.accountId), eq(accountsTable.companyId, existing.companyId)));
+      if (still) accountId = existing.accountId;
+    }
+    if (!accountId) {
+      accountId = await ensureSupplierAccount(
+        existing.companyId,
+        String(data.nameAr ?? existing.nameAr ?? "").trim(),
+        supplierCategory,
+        tx,
+      );
+    }
+    return tx.update(suppliersTable).set({
+      code: data.code ?? null,
+      nameAr: data.nameAr,
+      nameEn: data.nameEn ?? null,
+      vatNumber: data.vatNumber ?? null,
+      crNumber: data.crNumber ?? null,
+      email: data.email ?? null,
+      phone: data.phone ?? null,
+      city: data.city ?? null,
+      district: data.district ?? null,
+      street: data.street ?? null,
+      buildingNumber: data.buildingNumber ?? null,
+      postalCode: data.postalCode ?? null,
+      country: data.country ?? "SA",
+      accountId,
+      ...(data.branchId !== undefined
+        ? { branchId: data.branchId === null || data.branchId === "" ? null : Number(data.branchId) }
+        : {}),
+      ...(typeof data.includeInStatements === "boolean"
+        ? { includeInStatements: data.includeInStatements }
+        : {}),
+    }).where(eq(suppliersTable.id, id)).returning();
+  });
   if (!supplier) { res.status(404).json({ error: "المورد غير موجود" }); return; }
   res.json(supplier);
 });

@@ -21,6 +21,7 @@ async function resolveEntityParent(
   fallbackCodePrefixes: string[],
   nameLikes: string[],
   accountType: AccountType,
+  executor: any = db,
 ) {
   // 1) explicit mapping — must match the expected accountType so an admin
   // who mis-mapped a parent to (say) an expense account doesn't end up with
@@ -33,13 +34,13 @@ async function resolveEntityParent(
   // parent (supplier_account_parent) as a back-compat fallback. The first
   // role whose mapping resolves to a valid same-type account wins.
   for (const roleKey of roleKeys) {
-    const [m] = await db.select().from(accountingMappingsTable).where(and(
+    const [m] = await executor.select().from(accountingMappingsTable).where(and(
       eq(accountingMappingsTable.companyId, companyId),
       eq(accountingMappingsTable.documentType, "entity_account_parents"),
       eq(accountingMappingsTable.roleKey, roleKey),
     ));
     if (m?.accountId) {
-      const [acc] = await db.select().from(accountsTable).where(and(
+      const [acc] = await executor.select().from(accountsTable).where(and(
         eq(accountsTable.id, m.accountId),
         eq(accountsTable.companyId, companyId), // tenant guard
         eq(accountsTable.accountType, accountType), // type guard
@@ -57,7 +58,7 @@ async function resolveEntityParent(
   }
   if (conds.length === 0) return null;
 
-  const candidates = await db.select().from(accountsTable).where(and(
+  const candidates = await executor.select().from(accountsTable).where(and(
     eq(accountsTable.companyId, companyId),
     eq(accountsTable.accountType, accountType),
     or(...conds),
@@ -159,8 +160,8 @@ export function computeNextChildCode(parentCodeRaw: string, taken: Set<string>):
   return `${prefix}${String(maxSeq + 1).padStart(3, "0")}`;
 }
 
-async function siblingCodes(companyId: number, parentId: number): Promise<Set<string>> {
-  const siblings = await db.select({ code: accountsTable.code })
+async function siblingCodes(companyId: number, parentId: number, executor: any = db): Promise<Set<string>> {
+  const siblings = await executor.select({ code: accountsTable.code })
     .from(accountsTable)
     .where(and(
       eq(accountsTable.companyId, companyId),
@@ -169,8 +170,8 @@ async function siblingCodes(companyId: number, parentId: number): Promise<Set<st
   return new Set(siblings.map(s => (s.code ?? "").trim()).filter(Boolean));
 }
 
-async function nextChildCode(companyId: number, parent: { id: number; code: string }): Promise<string> {
-  const taken = await siblingCodes(companyId, parent.id);
+async function nextChildCode(companyId: number, parent: { id: number; code: string }, executor: any = db): Promise<string> {
+  const taken = await siblingCodes(companyId, parent.id, executor);
   return computeNextChildCode(parent.code, taken);
 }
 
@@ -204,11 +205,12 @@ export async function ensureEntitySubAccount(args: {
    * each get their OWN AR/AP ledger (their statements must not commingle).
    */
   forceNew?: boolean;
+  executor?: any;
 }): Promise<number | null> {
-  const { companyId, roleKeys, name, fallbackCodePrefixes, nameLikes, accountType, forceNew = false } = args;
-  const parent = await resolveEntityParent(companyId, roleKeys, fallbackCodePrefixes, nameLikes, accountType);
+  const { companyId, roleKeys, name, fallbackCodePrefixes, nameLikes, accountType, forceNew = false, executor = db } = args;
+  const parent = await resolveEntityParent(companyId, roleKeys, fallbackCodePrefixes, nameLikes, accountType, executor);
   if (!parent) return null;
-  return mintChildUnderParent(companyId, parent, name, accountType, forceNew);
+  return mintChildUnderParent(companyId, parent, name, accountType, forceNew, executor);
 }
 
 /**
@@ -223,10 +225,11 @@ async function mintChildUnderParent(
   name: string,
   accountType: AccountType,
   forceNew = false,
+  executor: any = db,
 ): Promise<number | null> {
   // Idempotency: same-name sibling under this parent (bypassed when forceNew)
   if (!forceNew) {
-    const siblings = await db.select().from(accountsTable).where(and(
+    const siblings = await executor.select().from(accountsTable).where(and(
       eq(accountsTable.companyId, companyId),
       eq(accountsTable.parentId, parent.id),
     ));
@@ -241,9 +244,9 @@ async function mintChildUnderParent(
   // reject the loser; we re-read the siblings and try again.  We cap at
   // 5 attempts so a real bug can't hot-loop forever.
   for (let attempt = 0; attempt < 5; attempt++) {
-    const code = await nextChildCode(companyId, parent);
+    const code = await nextChildCode(companyId, parent, executor);
     try {
-      const [created] = await db.insert(accountsTable).values({
+      const [created] = await executor.insert(accountsTable).values({
         companyId,
         parentId: parent.id,
         code,
@@ -258,7 +261,7 @@ async function mintChildUnderParent(
       // Promote the parent to non-posting if it currently is — sub-accounts
       // make the parent a roll-up node.
       if (parent.isPosting) {
-        await db.update(accountsTable).set({ isPosting: false }).where(eq(accountsTable.id, parent.id));
+        await executor.update(accountsTable).set({ isPosting: false }).where(eq(accountsTable.id, parent.id));
       }
       return created?.id ?? null;
     } catch (err: any) {
@@ -343,6 +346,7 @@ export const ensureSupplierLedger = (
   companyId: number,
   name: string,
   category?: SupplierCategory,
+  executor: any = db,
 ) =>
   ensureEntitySubAccount({
     companyId,
@@ -352,12 +356,13 @@ export const ensureSupplierLedger = (
     fallbackCodePrefixes: SUPPLIER_CODE_PREFIXES(category),
     nameLikes: SUPPLIER_NAME_LIKES(category),
     accountType: "liability",
+    executor,
   });
 
 /** Fetch + validate an EXPLICITLY user-picked parent for the supplier AP
  *  sub-account: must belong to the company and be a liability account. */
-async function resolveExplicitSupplierParent(companyId: number, parentId: number) {
-  const [parent] = await db.select().from(accountsTable).where(and(
+async function resolveExplicitSupplierParent(companyId: number, parentId: number, executor: any = db) {
+  const [parent] = await executor.select().from(accountsTable).where(and(
     eq(accountsTable.id, parentId),
     eq(accountsTable.companyId, companyId), // tenant guard
     eq(accountsTable.accountType, "liability"), // never nest AP under a non-liability
@@ -371,10 +376,11 @@ export async function ensureSupplierLedgerUnderParent(
   companyId: number,
   name: string,
   parentId: number,
+  executor: any = db,
 ): Promise<number | null> {
-  const parent = await resolveExplicitSupplierParent(companyId, parentId);
+  const parent = await resolveExplicitSupplierParent(companyId, parentId, executor);
   if (!parent) return null;
-  return mintChildUnderParent(companyId, parent, name, "liability");
+  return mintChildUnderParent(companyId, parent, name, "liability", false, executor);
 }
 
 /**

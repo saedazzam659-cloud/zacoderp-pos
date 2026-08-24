@@ -1,6 +1,6 @@
 ---
 name: Bulk upsert importer invariants
-description: Two correctness rules for spreadsheet → DB bulk upsert helpers (party/items master data)
+description: Correctness rules for spreadsheet → DB bulk upserts and linked party-account creation
 ---
 
 When writing a bulk importer that upserts many rows against in-memory match maps
@@ -22,12 +22,19 @@ When writing a bulk importer that upserts many rows against in-memory match maps
    parent account mapped yet) is fine to pass through — that matches the
    single-create route.
 
-**Why:** both were caught in architect review of the customers/suppliers master-
-data import; both are silent-corruption bugs that typecheck and tests-by-happy-
-path miss.
+3. **Serialize identity checks before ledger side effects.** Bulk upsert and
+   ordinary create/update paths for the same party type must share one
+   per-company identity lock. Acquire it before matching/revalidation and before
+   minting an AR/AP account, and run the ledger helper on the same database
+   transaction as the party write. Otherwise the losing duplicate request can
+   be rejected correctly but still leave an orphan account behind.
 
-**How to apply:** any importer in `artifacts/api-server/src/lib/*Import.ts` that
-keeps in-memory dedupe maps and/or creates linked sub-accounts.
+**Why:** these were caught in architect review of customers/suppliers imports.
+They are silent-corruption or orphan-data bugs that typecheck and happy-path
+tests miss.
+
+**How to apply:** any importer or ordinary master-data route that keeps dedupe
+maps, matches mutable identity keys, or auto-creates linked sub-accounts.
 
 Drizzle aside: `db.insert(table).values({ ...dynamicRecordAny })` fails TS2769
 (the `Record<string, any>` index signature defeats the `.values()` overload) —

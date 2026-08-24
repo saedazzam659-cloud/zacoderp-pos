@@ -928,6 +928,7 @@ router.get("/account-statement", async (req, res) => {
         voucherDesc = mergeDesc(vHeader, vPerLine, vNotes) || `${vLabel}${vEntity ? ` — ${vEntity}` : ""}`;
       }
        const custodyDesc = employeeCustodyStatementDescription({
+         custodyId: r.employeeCustodyId,
          entryType: r.entryType,
          employeeNameAr: r.employeeCustodyEmployeeNameAr,
          employeeNameEn: r.employeeCustodyEmployeeNameEn,

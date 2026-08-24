@@ -1,4 +1,5 @@
 type EmployeeCustodyStatementSource = {
+  custodyId?: number | null;
   entryType?: string | null;
   employeeNameAr?: string | null;
   employeeNameEn?: string | null;
@@ -14,11 +15,15 @@ type EmployeeCustodyStatementSource = {
 export function employeeCustodyStatementDescription(
   source: EmployeeCustodyStatementSource,
 ): string | null {
-  if (
-    source.entryType !== "employee_custody" &&
-    source.entryType !== "employee_custody_settlement" &&
-    source.entryType !== "employee_custody_return"
-  ) {
+  const isCustodyEntryType =
+    source.entryType === "employee_custody" ||
+    source.entryType === "employee_custody_settlement" ||
+    source.entryType === "employee_custody_return";
+  // A custody created from a Payment Voucher deliberately reuses that
+  // voucher's JE, whose entry_type remains "payment". The source-row link is
+  // therefore the authoritative signal that this statement row belongs to a
+  // custody disbursement.
+  if (!isCustodyEntryType && source.custodyId == null) {
     return null;
   }
 
@@ -28,11 +33,11 @@ export function employeeCustodyStatementDescription(
   const purpose = (source.purpose ?? "").trim();
   const settlementDescription = (source.settlementDescription ?? "").trim();
   const title =
-    source.entryType === "employee_custody"
-      ? "صرف عهدة"
-      : source.entryType === "employee_custody_return"
+    source.entryType === "employee_custody_return"
       ? "إرجاع عهدة"
-      : "تسوية عهدة";
+      : source.entryType === "employee_custody_settlement"
+      ? "تسوية عهدة"
+      : "صرف عهدة";
 
   const parts = [
     title,

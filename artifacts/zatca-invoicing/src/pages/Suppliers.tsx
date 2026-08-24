@@ -9,11 +9,14 @@ import {
   Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package,
   Pencil, Trash2, TrendingUp, TrendingDown, Minus,
   FileSpreadsheet, X, CreditCard, Wrench, FolderTree, Loader2, Link2,
+  Upload, Download, RefreshCw, CheckCircle2, ShieldAlert,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
 import { FormPanel } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useBranches } from "@/hooks/useBranches";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -44,6 +47,14 @@ import {
   selectedSuppliersInGridOrder,
   suppliersInStableGridOrder,
 } from "@/lib/supplierBulkSelection";
+import { Switch } from "@/components/ui/switch";
+import * as XLSX from "xlsx";
+import { saveWorkbook } from "@/lib/saveFile";
+import {
+  normalizeSupplierBulkExcelRows,
+  SUPPLIER_BULK_EXCEL_HEADERS,
+  SUPPLIER_BULK_EXCEL_SAMPLE,
+} from "@/lib/supplierBulkExcel";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -72,6 +83,44 @@ const EMPTY_FORM = {
   accountId: "" as string,
 };
 
+type BulkAccountSource = "selection" | "file";
+const SUPPLIER_MATCH_LABELS = {
+  id: "المعرّف",
+  code: "كود المورد",
+  vatNumber: "الرقم الضريبي",
+  crNumber: "السجل التجاري",
+  nameAr: "الاسم العربي",
+} as const;
+
+type SupplierImportPreview = {
+  canCommit: boolean;
+  summary: {
+    total: number;
+    create: number;
+    update: number;
+    reassign: number;
+    blocked: number;
+    errors: number;
+  };
+  rows: Array<{
+    rowNumber: number;
+    status: "create" | "update" | "reassign" | "blocked" | "error";
+    matchedBy: "id" | "code" | "vatNumber" | "crNumber" | "nameAr" | null;
+    supplierId: number | null;
+    nameAr: string;
+    nameEn: string | null;
+    currentAccount: {
+      id: number;
+      code: string | null;
+      nameAr: string | null;
+      parentId: number | null;
+    } | null;
+    accountCode: string | null;
+    error: string | null;
+  }>;
+  parentAccount: { id: number; code: string; nameAr: string };
+};
+
 function Field({ label, value, onChange, placeholder, dir }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; dir?: string }) {
   return (
     <div className="space-y-1.5">
@@ -89,6 +138,7 @@ function Field({ label, value, onChange, placeholder, dir }: { label: string; va
 
 export default function Suppliers() {
   const { user, token } = useAuth();
+  const { data: allowedBranches = [] } = useBranches();
   const { t } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -112,6 +162,29 @@ export default function Suppliers() {
   const [bulkParentAccount, setBulkParentAccount] = useState<any>(null);
   const [bulkLeadingZeros, setBulkLeadingZeros] = useState("2");
   const [bulkSelectedSuppliers, setBulkSelectedSuppliers] = useState<any[]>([]);
+  const [bulkSource, setBulkSource] = useState<BulkAccountSource>("selection");
+  const [bulkAllowReassign, setBulkAllowReassign] = useState(false);
+  const [bulkBranchId, setBulkBranchId] = useState("");
+  const [bulkImportRows, setBulkImportRows] = useState<Record<string, unknown>[]>([]);
+  const [bulkImportFileName, setBulkImportFileName] = useState("");
+  const [bulkImportPreview, setBulkImportPreview] = useState<SupplierImportPreview | null>(null);
+  const bulkImportFileRef = useRef<HTMLInputElement>(null);
+  const isBulkBranchRestricted =
+    user?.role !== "admin"
+    && user?.role !== "superadmin"
+    && user?.viewAllBranches === false;
+  const restrictedBranchIds = isBulkBranchRestricted ? (user?.branchIds ?? []) : [];
+  const effectiveBulkBranchId = bulkBranchId
+    || (restrictedBranchIds.length === 1 ? String(restrictedBranchIds[0]) : "");
+  const bulkBranchOptions = useMemo(
+    () => allowedBranches.map(branch => ({
+      value: String(branch.id),
+      code: branch.code,
+      label: branch.nameAr,
+      labelEn: branch.nameEn ?? undefined,
+    })),
+    [allowedBranches],
+  );
 
   function openCreate() {
     setCreating(true);
@@ -277,17 +350,30 @@ export default function Suppliers() {
   const leadingZeros = bulkLeadingZeros === "" ? Number.NaN : Number(bulkLeadingZeros);
   const sequenceWidth = Number.isInteger(leadingZeros) ? leadingZeros + 1 : 0;
   const maxSequence = sequenceWidth > 0 ? (10 ** sequenceWidth) - 1 : 0;
-  const bulkPreview = useMemo(() => {
+  const bulkOperationRows = useMemo(
+    () => bulkSource === "file"
+      ? bulkImportRows.map((_, index) => ({ id: index + 1 }))
+      : bulkSelectedSuppliers,
+    [bulkImportRows, bulkSelectedSuppliers, bulkSource],
+  );
+  const bulkOperationCount = bulkOperationRows.length;
+  const bulkNumberingPreview = useMemo(() => {
     const parentCode = String(bulkParentAccount?.code ?? "").trim();
-    return buildSupplierBulkPreview(bulkSelectedSuppliers, parentCode, leadingZeros);
-  }, [bulkParentAccount, bulkSelectedSuppliers, leadingZeros]);
+    return buildSupplierBulkPreview(bulkOperationRows, parentCode, leadingZeros);
+  }, [bulkParentAccount, bulkOperationRows, leadingZeros]);
   const linkedSelected = useMemo(
     () => bulkSelectedSuppliers.filter((supplier: any) => supplier.accountId != null),
     [bulkSelectedSuppliers],
   );
+  useEffect(() => {
+    setBulkImportPreview(null);
+  }, [bulkParentId, bulkLeadingZeros, bulkAllowReassign, bulkBranchId, bulkImportRows]);
 
   function openBulkAccountDialog() {
-    if (selectedSuppliersForBulkOpen.length !== layout.selected.size) {
+    if (
+      layout.selected.size > 0
+      && selectedSuppliersForBulkOpen.length !== layout.selected.size
+    ) {
       toast({
         title: "تعذر تحميل جميع الموردين المحددين",
         description: "تم تحديث قائمة الموردين. أعد تحديد الموردين ثم حاول مرة أخرى.",
@@ -300,7 +386,61 @@ export default function Suppliers() {
     setBulkParentId("");
     setBulkParentAccount(null);
     setBulkLeadingZeros("2");
+    setBulkAllowReassign(false);
+    setBulkBranchId(restrictedBranchIds.length === 1 ? String(restrictedBranchIds[0]) : "");
+    setBulkSource(selectedSuppliersForBulkOpen.length > 0 ? "selection" : "file");
+    setBulkImportRows([]);
+    setBulkImportFileName("");
+    setBulkImportPreview(null);
     setBulkAccountOpen(true);
+  }
+
+  async function handleBulkImportFile(file: File) {
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error("الملف لا يحتوي على ورقة بيانات");
+      const sheet = workbook.Sheets[firstSheetName];
+      if (!sheet) throw new Error("تعذّرت قراءة ورقة البيانات");
+      const rows = normalizeSupplierBulkExcelRows(
+        XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" }),
+      );
+      if (rows.length === 0) throw new Error("لا توجد صفوف موردين داخل الملف");
+      if (rows.length > 5000) throw new Error("الحد الأقصى للعملية الواحدة هو 5000 مورد");
+      setBulkImportRows(rows);
+      setBulkImportFileName(file.name);
+      setBulkSource("file");
+      toast({ title: `تمت قراءة ${rows.length} صف من الملف` });
+    } catch (error: any) {
+      setBulkImportRows([]);
+      setBulkImportFileName("");
+      toast({
+        title: "تعذّرت قراءة ملف الموردين",
+        description: error?.message,
+        variant: "destructive",
+      });
+    } finally {
+      if (bulkImportFileRef.current) bulkImportFileRef.current.value = "";
+    }
+  }
+
+  function downloadSupplierBulkTemplate() {
+    const sheet = XLSX.utils.json_to_sheet(
+      [],
+      { header: [...SUPPLIER_BULK_EXCEL_HEADERS] },
+    );
+    sheet["!cols"] = SUPPLIER_BULK_EXCEL_HEADERS.map((header) => ({
+      wch: ["nameAr", "nameEn", "email", "street"].includes(header) ? 24 : 18,
+    }));
+    const exampleSheet = XLSX.utils.json_to_sheet(
+      [SUPPLIER_BULK_EXCEL_SAMPLE],
+      { header: [...SUPPLIER_BULK_EXCEL_HEADERS] },
+    );
+    exampleSheet["!cols"] = sheet["!cols"];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, "Suppliers");
+    XLSX.utils.book_append_sheet(workbook, exampleSheet, "Example - لا ترفعها");
+    void saveWorkbook(workbook, "suppliers_bulk_accounts_template.xlsx");
   }
 
   function exportCsv() {
@@ -428,16 +568,56 @@ export default function Suppliers() {
     onError: (e: any) => toast({ title: "تعذّر إصلاح الربط المحاسبي", description: e?.message, variant: "destructive" }),
   });
 
-  const bulkAssignAccountsMutation = useMutation({
+  const bulkImportPreviewMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API}/api/suppliers/bulk-assign-accounts`, {
+      const res = await fetch(`${API}/api/suppliers/bulk-import-assign-accounts/preview`, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId: user?.companyId,
-          supplierIds: bulkSelectedSuppliers.map((supplier: any) => supplier.id),
+          rows: bulkImportRows,
+          branchId: effectiveBulkBranchId ? Number(effectiveBulkBranchId) : undefined,
           parentAccountId: Number(bulkParentId),
           leadingZeros,
+          allowReassign: bulkAllowReassign,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let message = text;
+        try { message = JSON.parse(text).error ?? text; } catch {}
+        throw new Error(message || "تعذّرت معاينة ملف الموردين");
+      }
+      return res.json() as Promise<SupplierImportPreview>;
+    },
+    onSuccess: (preview) => setBulkImportPreview(preview),
+    onError: (error: any) => {
+      setBulkImportPreview(null);
+      toast({
+        title: "تعذّرت معاينة ملف الموردين",
+        description: error?.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const bulkAssignAccountsMutation = useMutation({
+    mutationFn: async () => {
+      const isFile = bulkSource === "file";
+      const res = await fetch(`${API}/api/suppliers/${isFile ? "bulk-import-assign-accounts" : "bulk-assign-accounts"}`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId: user?.companyId,
+          ...(isFile
+            ? {
+                rows: bulkImportRows,
+                branchId: effectiveBulkBranchId ? Number(effectiveBulkBranchId) : undefined,
+              }
+            : { supplierIds: bulkSelectedSuppliers.map((supplier: any) => supplier.id) }),
+          parentAccountId: Number(bulkParentId),
+          leadingZeros,
+          allowReassign: bulkAllowReassign,
         }),
       });
       if (!res.ok) {
@@ -451,9 +631,12 @@ export default function Suppliers() {
     onSuccess: (result: any) => {
       toast({
         title: `تم إنشاء وربط ${result.created} حساب مورد`,
-        description: result.parentAccount?.code
-          ? `تحت الحساب الرئيسي ${result.parentAccount.code}`
-          : undefined,
+        description: [
+          result.suppliersCreated ? `إنشاء ${result.suppliersCreated} مورد` : null,
+          result.suppliersUpdated ? `تحديث ${result.suppliersUpdated} مورد` : null,
+          result.reassigned ? `إعادة ربط ${result.reassigned} مورد` : null,
+          result.parentAccount?.code ? `تحت الحساب ${result.parentAccount.code}` : null,
+        ].filter(Boolean).join(" — ") || undefined,
       });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       qc.invalidateQueries({ queryKey: ["supplier-balances"] });
@@ -463,6 +646,11 @@ export default function Suppliers() {
       setBulkSelectedSuppliers([]);
       setBulkParentId("");
       setBulkParentAccount(null);
+      setBulkImportRows([]);
+      setBulkImportFileName("");
+      setBulkImportPreview(null);
+      setBulkAllowReassign(false);
+      setBulkBranchId("");
     },
     onError: (error: any) => toast({
       title: "تعذّر إنشاء وربط حسابات الموردين",
@@ -779,6 +967,17 @@ export default function Suppliers() {
                 size="sm"
                 variant="ghost"
                 className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+                onClick={openBulkAccountDialog}
+                data-testid="button-bulk-assign-supplier-accounts"
+              >
+                <FolderTree className="h-3.5 w-3.5" />
+                إنشاء وربط حسابات
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
                 onClick={exportCsv}
                 data-testid="btn-export-csv-suppliers"
               >
@@ -817,16 +1016,6 @@ export default function Suppliers() {
           </div>
           <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
             <span className="text-emerald-800">تم تحديد {layout.selected.size} مورد</span>
-            <Button
-              type="button"
-              size="sm"
-              className="h-7 gap-1.5 bg-emerald-700 hover:bg-emerald-800"
-              onClick={openBulkAccountDialog}
-              data-testid="button-bulk-assign-supplier-accounts"
-            >
-              <FolderTree className="h-3.5 w-3.5" />
-              إنشاء وربط حسابات
-            </Button>
           </AuditGridBulkBar>
         </div>
 
@@ -1064,9 +1253,15 @@ export default function Suppliers() {
       <Dialog
         open={bulkAccountOpen}
         onOpenChange={(open) => {
-          if (bulkAssignAccountsMutation.isPending) return;
+          if (bulkAssignAccountsMutation.isPending || bulkImportPreviewMutation.isPending) return;
           setBulkAccountOpen(open);
-          if (!open) setBulkSelectedSuppliers([]);
+          if (!open) {
+            setBulkSelectedSuppliers([]);
+            setBulkImportRows([]);
+            setBulkImportFileName("");
+            setBulkImportPreview(null);
+            setBulkBranchId("");
+          }
         }}
       >
         <DialogContent
@@ -1077,13 +1272,106 @@ export default function Suppliers() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FolderTree className="h-5 w-5 text-emerald-700" />
-              إنشاء وربط حسابات الموردين المحددين
+              إنشاء وربط حسابات الموردين
             </DialogTitle>
             <DialogDescription>
-              سيُنشأ حساب فرعي مستقل باسم كل مورد تحت الحساب الرئيسي المختار، حسب ترتيب الموردين في الجدول.
-              لن يتغير منطق إضافة أو تعديل المورد الفردي.
+              اختر الموردين المحددين في الجدول أو ارفع ملف بيانات كاملًا. ستظهر معاينة قبل إنشاء الحسابات أو تحديث الموردين.
             </DialogDescription>
           </DialogHeader>
+
+          <Tabs
+            value={bulkSource}
+            onValueChange={(value) => setBulkSource(value as BulkAccountSource)}
+            className="space-y-3"
+          >
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger
+                value="selection"
+                disabled={bulkSelectedSuppliers.length === 0}
+                data-testid="tab-bulk-suppliers-selection"
+              >
+                المحددون في الجدول ({bulkSelectedSuppliers.length})
+              </TabsTrigger>
+              <TabsTrigger value="file" data-testid="tab-bulk-suppliers-file">
+                رفع ملف Excel / CSV
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="selection" className="mt-0">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                سيُحافظ على ترتيب الموردين الذي كان ظاهرًا في الجدول لحظة فتح النافذة.
+              </div>
+            </TabsContent>
+            <TabsContent value="file" className="mt-0">
+              <div className="rounded-lg border border-dashed border-emerald-300 bg-emerald-50/50 p-4">
+                <input
+                  ref={bulkImportFileRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  data-testid="input-supplier-bulk-excel"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void handleBulkImportFile(file);
+                  }}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2 border-emerald-300 bg-white"
+                    onClick={() => bulkImportFileRef.current?.click()}
+                    data-testid="button-upload-supplier-bulk-excel"
+                  >
+                    <Upload className="h-4 w-4" />
+                    {bulkImportFileName ? "استبدال الملف" : "اختيار ملف الموردين"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="gap-2 text-emerald-800"
+                    onClick={downloadSupplierBulkTemplate}
+                    data-testid="button-download-supplier-bulk-template"
+                  >
+                    <Download className="h-4 w-4" />
+                    تنزيل القالب
+                  </Button>
+                  {bulkImportFileName && (
+                    <span className="text-sm font-medium text-emerald-900">
+                      {bulkImportFileName} — {bulkImportRows.length} صف
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-slate-600">
+                  المطابقة الآمنة: المعرّف ثم كود المورد ثم الرقم الضريبي ثم السجل التجاري ثم الاسم العربي الفريد.
+                  الخلايا الفارغة لا تمسح البيانات الحالية.
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {bulkSource === "file" && isBulkBranchRestricted && (
+            <div className="space-y-1.5 rounded-lg border border-sky-200 bg-sky-50/60 px-4 py-3">
+              <label className="text-sm font-medium">فرع الموردين الجدد</label>
+              <SearchCombobox
+                items={bulkBranchOptions}
+                value={effectiveBulkBranchId}
+                onValueChange={setBulkBranchId}
+                placeholder="— اختر الفرع —"
+                searchPlaceholder="ابحث عن فرع..."
+                emptyText="لا توجد فروع مسموحة"
+                disabled={restrictedBranchIds.length <= 1}
+                testId="select-supplier-bulk-branch"
+              />
+              <p className="text-xs text-muted-foreground">
+                الموردون الجدد سيُنشؤون داخل هذا الفرع فقط. الموردون الموجودون يحتفظون بفرعهم الحالي.
+              </p>
+              {restrictedBranchIds.length === 0 && (
+                <p className="text-xs font-medium text-red-700">
+                  لا يوجد فرع مسموح لحسابك؛ لا يمكن إنشاء موردين جدد من الملف.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -1136,14 +1424,14 @@ export default function Suppliers() {
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="font-medium">{bulkParentAccount.nameAr}</span>
                 <span dir="ltr" className="font-mono font-bold text-emerald-900">{bulkParentAccount.code}</span>
-                {bulkPreview.length > 0 && (
+                {bulkNumberingPreview.length > 0 && (
                   <>
                     <span className="text-emerald-700">←</span>
-                    <span dir="ltr" className="font-mono font-bold">{bulkPreview[0]?.accountCode}</span>
-                    {bulkPreview.length > 1 && (
+                    <span dir="ltr" className="font-mono font-bold">{bulkNumberingPreview[0]?.accountCode}</span>
+                    {bulkNumberingPreview.length > 1 && (
                       <>
                         <span>حتى</span>
-                        <span dir="ltr" className="font-mono font-bold">{bulkPreview.at(-1)?.accountCode}</span>
+                        <span dir="ltr" className="font-mono font-bold">{bulkNumberingPreview.at(-1)?.accountCode}</span>
                       </>
                     )}
                   </>
@@ -1163,13 +1451,44 @@ export default function Suppliers() {
             </div>
           )}
 
-          {linkedSelected.length > 0 && (
+          <div
+            className={cn(
+              "rounded-lg border px-4 py-3",
+              bulkAllowReassign
+                ? "border-amber-300 bg-amber-50"
+                : "border-slate-200 bg-slate-50",
+            )}
+            data-testid="card-supplier-account-reassignment"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  {bulkAllowReassign
+                    ? <ShieldAlert className="h-4 w-4 text-amber-700" />
+                    : <CheckCircle2 className="h-4 w-4 text-slate-500" />}
+                  السماح باستبدال الربط المحاسبي الحالي
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  عند التفعيل سيُنشأ حساب جديد تحت الأب المختار ويُعاد ربط المورد به.
+                  الحساب القديم سيبقى محفوظًا ولن يُحذف.
+                </p>
+              </div>
+              <Switch
+                checked={bulkAllowReassign}
+                onCheckedChange={setBulkAllowReassign}
+                aria-label="السماح باستبدال الربط المحاسبي الحالي"
+                data-testid="switch-allow-supplier-account-reassignment"
+              />
+            </div>
+          </div>
+
+          {bulkSource === "selection" && linkedSelected.length > 0 && !bulkAllowReassign && (
             <div
               className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
               data-testid="warning-suppliers-already-linked"
             >
               <strong>{linkedSelected.length} موردًا من المحددين مرتبط بحساب بالفعل.</strong>
-              {" "}ألغِ تحديدهم أولًا؛ الأداة لن تستبدل أي ربط محاسبي حالي.
+              {" "}فعّل خيار استبدال الربط أو ألغِ تحديدهم قبل التنفيذ.
               <div className="mt-1 text-xs text-amber-800">
                 {linkedSelected.slice(0, 5).map((supplier: any) => supplier.nameAr).join("، ")}
                 {linkedSelected.length > 5 ? "…" : ""}
@@ -1177,46 +1496,171 @@ export default function Suppliers() {
             </div>
           )}
 
-          {maxSequence > 0 && bulkSelectedSuppliers.length > maxSequence && (
+          {maxSequence > 0 && bulkOperationCount > maxSequence && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
               التحديد الحالي أكبر من سعة الترقيم. زِد عدد الأصفار قبل التنفيذ.
             </div>
           )}
 
+          {bulkSource === "file" && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  يجب تحديث المعاينة بعد تغيير الملف أو الحساب الأب أو عدد الأصفار أو خيار الاستبدال.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => bulkImportPreviewMutation.mutate()}
+                  disabled={
+                    bulkImportPreviewMutation.isPending
+                    || bulkImportRows.length === 0
+                    || !bulkParentId
+                    || !bulkParentAccount
+                    || (isBulkBranchRestricted && !effectiveBulkBranchId)
+                    || !/^\d+$/.test(String(bulkParentAccount?.code ?? "").trim())
+                    || !Number.isInteger(leadingZeros)
+                    || leadingZeros < 0
+                    || leadingZeros > 5
+                    || bulkImportRows.length > maxSequence
+                  }
+                  data-testid="button-preview-supplier-bulk-excel"
+                >
+                  {bulkImportPreviewMutation.isPending
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : <RefreshCw className="h-4 w-4" />}
+                  {bulkImportPreviewMutation.isPending ? "جارٍ تحليل الملف..." : "تحليل الملف ومعاينته"}
+                </Button>
+              </div>
+
+              {bulkImportPreview && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center text-xs">
+                  {[
+                    ["إجمالي الصفوف", bulkImportPreview.summary.total, "bg-slate-50 border-slate-200"],
+                    ["مورد جديد", bulkImportPreview.summary.create, "bg-emerald-50 border-emerald-200"],
+                    ["تحديث", bulkImportPreview.summary.update, "bg-blue-50 border-blue-200"],
+                    ["إعادة ربط", bulkImportPreview.summary.reassign, "bg-amber-50 border-amber-200"],
+                    ["أخطاء", bulkImportPreview.summary.errors, "bg-red-50 border-red-200"],
+                  ].map(([label, value, color]) => (
+                    <div key={String(label)} className={cn("rounded-lg border px-2 py-2", color)}>
+                      <div className="text-lg font-bold">{String(value)}</div>
+                      <div>{String(label)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
-            <table className="w-full text-sm border-collapse">
-              <thead className="sticky top-0 bg-slate-100 text-slate-700">
-                <tr>
-                  <th className="px-3 py-2 text-center w-14 border-e">#</th>
-                  <th className="px-3 py-2 text-start border-e">اسم المورد</th>
-                  <th className="px-3 py-2 text-start">رقم الحساب الجديد</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bulkSelectedSuppliers.map((supplier: any, index: number) => (
-                  <tr
-                    key={supplier.id}
-                    className="border-t"
-                    data-testid={`row-supplier-account-preview-${supplier.id}`}
-                  >
-                    <td className="px-3 py-2 text-center font-mono text-muted-foreground border-e">
-                      {index + 1}
-                    </td>
-                    <td className="px-3 py-2 border-e">
-                      <div className="font-medium">{supplier.nameAr}</div>
-                      {supplier.nameEn && <div className="text-xs text-muted-foreground">{supplier.nameEn}</div>}
-                    </td>
-                    <td
-                      dir="ltr"
-                      className="px-3 py-2 text-left font-mono font-semibold"
-                      data-testid={`text-supplier-account-code-${supplier.id}`}
-                    >
-                      {bulkPreview[index]?.accountCode ?? "—"}
-                    </td>
+            {bulkSource === "selection" ? (
+              <table className="w-full text-sm border-collapse">
+                <thead className="sticky top-0 bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2 text-center w-14 border-e">#</th>
+                    <th className="px-3 py-2 text-start border-e">اسم المورد</th>
+                    <th className="px-3 py-2 text-start border-e">الحالة</th>
+                    <th className="px-3 py-2 text-start">رقم الحساب الجديد</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {bulkSelectedSuppliers.map((supplier: any, index: number) => (
+                    <tr
+                      key={supplier.id}
+                      className="border-t"
+                      data-testid={`row-supplier-account-preview-${supplier.id}`}
+                    >
+                      <td className="px-3 py-2 text-center font-mono text-muted-foreground border-e">
+                        {index + 1}
+                      </td>
+                      <td className="px-3 py-2 border-e">
+                        <div className="font-medium">{supplier.nameAr}</div>
+                        {supplier.nameEn && <div className="text-xs text-muted-foreground">{supplier.nameEn}</div>}
+                      </td>
+                      <td className="px-3 py-2 border-e">
+                        {supplier.accountId != null
+                          ? (
+                            <span className={cn(
+                              "rounded-full border px-2 py-0.5 text-xs",
+                              bulkAllowReassign
+                                ? "border-amber-200 bg-amber-50 text-amber-800"
+                                : "border-red-200 bg-red-50 text-red-700",
+                            )}>
+                              {bulkAllowReassign ? "إعادة ربط" : "مرتبط مسبقًا"}
+                            </span>
+                          )
+                          : <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800">ربط جديد</span>}
+                      </td>
+                      <td
+                        dir="ltr"
+                        className="px-3 py-2 text-left font-mono font-semibold"
+                        data-testid={`text-supplier-account-code-${supplier.id}`}
+                      >
+                        {bulkNumberingPreview[index]?.accountCode ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : bulkImportPreview ? (
+              <table className="w-full text-sm border-collapse" data-testid="table-supplier-bulk-excel-preview">
+                <thead className="sticky top-0 bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2 text-center w-14 border-e">صف</th>
+                    <th className="px-3 py-2 text-start border-e">المورد</th>
+                    <th className="px-3 py-2 text-start border-e">النتيجة</th>
+                    <th className="px-3 py-2 text-start border-e">الحساب الحالي</th>
+                    <th className="px-3 py-2 text-start">الحساب الجديد / الملاحظة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bulkImportPreview.rows.map((row) => {
+                    const statusMeta = {
+                      create: ["إنشاء مورد", "border-emerald-200 bg-emerald-50 text-emerald-800"],
+                      update: ["تحديث وربط", "border-blue-200 bg-blue-50 text-blue-800"],
+                      reassign: ["تحديث وإعادة ربط", "border-amber-200 bg-amber-50 text-amber-800"],
+                      blocked: ["موقوف", "border-red-200 bg-red-50 text-red-800"],
+                      error: ["خطأ", "border-red-200 bg-red-50 text-red-800"],
+                    }[row.status];
+                    return (
+                      <tr key={row.rowNumber} className={cn("border-t", row.error && "bg-red-50/40")}>
+                        <td className="px-3 py-2 text-center font-mono text-muted-foreground border-e">
+                          {row.rowNumber}
+                        </td>
+                        <td className="px-3 py-2 border-e">
+                          <div className="font-medium">{row.nameAr || "—"}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {row.matchedBy
+                              ? `مطابقة عبر ${SUPPLIER_MATCH_LABELS[row.matchedBy]}`
+                              : "سجل جديد"}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 border-e">
+                          <span className={cn("rounded-full border px-2 py-0.5 text-xs", statusMeta[1])}>
+                            {statusMeta[0]}
+                          </span>
+                        </td>
+                        <td dir="ltr" className="px-3 py-2 text-left font-mono border-e">
+                          {row.currentAccount?.code ?? "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.error
+                            ? <span className="text-xs text-red-700">{row.error}</span>
+                            : <span dir="ltr" className="font-mono font-semibold">{row.accountCode ?? "—"}</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <div className="flex min-h-32 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+                {bulkImportRows.length === 0
+                  ? "اختر ملف الموردين لبدء المعاينة."
+                  : "اختر الحساب الأب ثم اضغط «تحليل الملف ومعاينته»."}
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2">
@@ -1235,15 +1679,17 @@ export default function Suppliers() {
               onClick={() => bulkAssignAccountsMutation.mutate()}
               disabled={
                 bulkAssignAccountsMutation.isPending
-                || bulkSelectedSuppliers.length === 0
-                || linkedSelected.length > 0
+                || bulkOperationCount === 0
+                || (bulkSource === "selection" && linkedSelected.length > 0 && !bulkAllowReassign)
                 || !bulkParentId
                 || !bulkParentAccount
+                || (bulkSource === "file" && isBulkBranchRestricted && !effectiveBulkBranchId)
                 || !/^\d+$/.test(String(bulkParentAccount?.code ?? "").trim())
                 || !Number.isInteger(leadingZeros)
                 || leadingZeros < 0
                 || leadingZeros > 5
-                || bulkSelectedSuppliers.length > maxSequence
+                || bulkOperationCount > maxSequence
+                || (bulkSource === "file" && !bulkImportPreview?.canCommit)
               }
               data-testid="button-confirm-bulk-supplier-accounts"
             >
@@ -1252,7 +1698,7 @@ export default function Suppliers() {
                 : <Link2 className="h-4 w-4" />}
               {bulkAssignAccountsMutation.isPending
                 ? "جارٍ إنشاء وربط الحسابات..."
-                : `إنشاء وربط ${bulkSelectedSuppliers.length} حساب`}
+                : `${bulkSource === "file" ? "استيراد و" : ""}إنشاء وربط ${bulkOperationCount} حساب`}
             </Button>
           </DialogFooter>
         </DialogContent>

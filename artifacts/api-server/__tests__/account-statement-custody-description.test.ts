@@ -13,6 +13,18 @@ test("general account statement identifies custody disbursement employee and pur
   );
 });
 
+test("payment-voucher JE linked to a custody still shows employee and purpose", () => {
+  assert.equal(
+    employeeCustodyStatementDescription({
+      custodyId: 42,
+      entryType: "payment",
+      employeeNameAr: "محمد يوسف",
+      purpose: "تحويلة عهدة لمواد خام",
+    }),
+    "صرف عهدة — الموظف: محمد يوسف — الغرض: تحويلة عهدة لمواد خام",
+  );
+});
+
 test("custody statement description falls back to English employee name", () => {
   assert.equal(
     employeeCustodyStatementDescription({
