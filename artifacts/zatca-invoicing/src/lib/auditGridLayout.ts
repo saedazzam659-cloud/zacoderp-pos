@@ -69,9 +69,22 @@ export const FOOTER_COLOR_KEYS: FooterColor[] =
 export const DEFAULT_FOOTER_COLOR: FooterColor = "white";
 
 /* ─────────────────────────── Pagination options ────────────────────────── */
-export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 0] as const;
-export type PageSize = typeof PAGE_SIZE_OPTIONS[number];
+// `0 = show all` used to be convenient for small lists, but it is unsafe for
+// persisted layouts: a list that grows later can freeze the browser on mount.
+// Keep every audit-style grid bounded; exports remain explicit, on-demand
+// operations outside this interactive pagination control.
+export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250] as const;
+/** `0` remains in the type only for legacy branches; it is never emitted by
+ * the shared picker or sanitizer anymore. */
+export type PageSize = typeof PAGE_SIZE_OPTIONS[number] | 0;
 export const DEFAULT_PAGE_SIZE: PageSize = 25;
+
+export function sanitizeAuditGridPageSize(value: unknown): PageSize {
+  const size = Number(value);
+  return (PAGE_SIZE_OPTIONS as readonly number[]).includes(size)
+    ? size as PageSize
+    : DEFAULT_PAGE_SIZE;
+}
 
 /* ─────────────────────────── Per-column filter ─────────────────────────── */
 export type ColType = "text" | "num" | "none";
@@ -232,8 +245,7 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
     HEADER_COLOR_KEYS.includes(c as HeaderColor) ? (c as HeaderColor) : DEFAULT_HEADER_COLOR;
   const sanitizeFooterColor = (c: unknown): FooterColor =>
     FOOTER_COLOR_KEYS.includes(c as FooterColor) ? (c as FooterColor) : DEFAULT_FOOTER_COLOR;
-  const sanitizePageSize = (n: unknown): PageSize =>
-    (PAGE_SIZE_OPTIONS as readonly number[]).includes(n as number) ? (n as PageSize) : DEFAULT_PAGE_SIZE;
+  const sanitizePageSize = sanitizeAuditGridPageSize;
   const sanitizeColWidths = (w: unknown): Record<string, number> => {
     if (!w || typeof w !== "object") return {};
     const out: Record<string, number> = {};

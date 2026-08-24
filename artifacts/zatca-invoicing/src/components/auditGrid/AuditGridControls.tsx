@@ -329,9 +329,15 @@ export function AuditGridPagination({
   pageSizeOptions = PAGE_SIZE_OPTIONS,
 }: PaginationToolbarProps) {
   const { pageSize, setPageSize, page, setPage, sanitizePageSize } = layout;
-  const displayedPageSize = pageSizeOptions.includes(pageSize)
+  // Defense in depth: even a future caller that accidentally passes legacy
+  // `0 = show all` cannot put it back into a high-volume grid.
+  const boundedPageSizeOptions = pageSizeOptions.filter((size) => size !== 0);
+  const effectivePageSizeOptions = boundedPageSizeOptions.length > 0
+    ? boundedPageSizeOptions
+    : PAGE_SIZE_OPTIONS;
+  const displayedPageSize = (effectivePageSizeOptions as readonly PageSize[]).includes(pageSize)
     ? pageSize
-    : (pageSizeOptions[0] ?? pageSize);
+    : (effectivePageSizeOptions[0] ?? pageSize);
   return (
     <div className="bg-slate-50 border-t border-slate-200 px-3 py-1.5 flex items-center gap-2 flex-wrap text-xs print:hidden">
       <div className="flex items-center gap-1.5">
@@ -342,8 +348,8 @@ export function AuditGridPagination({
           className="h-7 text-xs px-2 rounded border border-slate-300 bg-white text-slate-700 font-mono cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
           aria-label="عدد الأسطر المعروضة في كل صفحة"
         >
-          {pageSizeOptions.map((n) => (
-            <option key={n} value={n}>{n === 0 ? "الكل" : n}</option>
+          {effectivePageSizeOptions.map((n) => (
+            <option key={n} value={n}>{n}</option>
           ))}
         </select>
       </div>
@@ -360,7 +366,7 @@ export function AuditGridPagination({
         )}
       </div>
       <div className="flex-1" />
-      {displayedPageSize !== 0 && totalPages > 1 && (
+      {totalPages > 1 && (
         <div className="flex items-center gap-1">
           <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
             onClick={() => setPage(1)} disabled={page === 1} aria-label="أول صفحة" title="أول صفحة">«</Button>
