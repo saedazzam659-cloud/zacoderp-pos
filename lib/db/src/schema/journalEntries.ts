@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, timestamp, integer, numeric, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, timestamp, integer, numeric, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { accountsTable } from "./accounts";
 import { branchesTable } from "./branches";
@@ -42,7 +42,15 @@ export const journalEntriesTable = pgTable("journal_entries", {
   settlementAmount:  numeric("settlement_amount", { precision: 18, scale: 2 }),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  companyCreatedIdx: index("journal_entries_company_created_idx").on(t.companyId, t.createdAt.desc()),
+  // Match the tenant/branch/date list predicate without imposing uniqueness on
+  // existing accounting data. PostgreSQL can also scan this backwards for the
+  // legacy created-at ordering.
+  companyBranchCreatedIdx: index("journal_entries_company_branch_created_idx").on(t.companyId, t.branchId, t.createdAt.desc()),
+  companyStatusDateIdx: index("journal_entries_company_status_date_idx").on(t.companyId, t.status, t.entryDate),
+  companyDateIdx: index("journal_entries_company_date_idx").on(t.companyId, t.entryDate),
+}));
 
 // ─── Partial settlement links (سداد جزئي متعدد الفواتير) ─────────────────────
 // A manual JE / receipt voucher / payment voucher can settle SEVERAL invoices,
@@ -102,4 +110,7 @@ export const journalEntryLinesTable = pgTable("journal_entry_lines", {
   supplierInvoiceNumber: text("supplier_invoice_number"),
   supplierInvoiceDate:   text("supplier_invoice_date"),
   sortOrder:    integer("sort_order").notNull().default(0),
-});
+}, (t) => ({
+  // Keeps page-only line aggregation and debit/credit ordering index-backed.
+  entryIdIdx: index("journal_entry_lines_entry_idx").on(t.entryId),
+}));

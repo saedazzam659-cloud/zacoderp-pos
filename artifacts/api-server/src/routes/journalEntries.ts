@@ -16,7 +16,7 @@ import {
 } from "@workspace/db";
 import { unpostDepreciationRun } from "../lib/depreciationPosting.js";
 import { unpostAdjustmentRunJe, syncAdjustmentRunAmountForJe } from "../lib/adjustmentPosting.js";
-import { eq, and, desc, sql, inArray, notInArray, gte, lte } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, inArray, notInArray, gte, lte, ilike } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
@@ -25,6 +25,7 @@ import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodG
 import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAudit.js";
 import { describeDevice } from "../lib/deviceFingerprint.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { journalListOptions } from "../lib/journalListOptions.js";
 import {
   assertJeSettlementAllowed, acquireSettlementLock, acquireSourceLock,
   invoiceNetDueBase, sumVouchersForInvoice, sumSettlementJEs,
@@ -130,6 +131,18 @@ function chunk<T>(arr: T[], size: number): T[][] {
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
+
+const JE_SORT_COLUMNS = {
+  doc: journalEntriesTable.docNumber,
+  date: journalEntriesTable.entryDate,
+  type: journalEntriesTable.entryType,
+  desc: journalEntriesTable.description,
+  status: journalEntriesTable.status,
+  createdBy: journalEntriesTable.createdBy,
+  postedBy: journalEntriesTable.postedBy,
+  debit: sql`COALESCE((SELECT SUM(${journalEntryLinesTable.debit}) FROM ${journalEntryLinesTable} WHERE ${journalEntryLinesTable.entryId} = ${journalEntriesTable.id}), 0)`,
+  credit: sql`COALESCE((SELECT SUM(${journalEntryLinesTable.credit}) FROM ${journalEntryLinesTable} WHERE ${journalEntryLinesTable.entryId} = ${journalEntriesTable.id}), 0)`,
+} as const;
 
 // Trim a free-text per-line supplier-tax metadata field to null when blank.
 function jeTxtOrNull(v: any): string | null {
@@ -264,44 +277,132 @@ async function sourceDocExists(
 router.get("/", async (req, res) => {
   try {
     const cid = getCompanyId(req);
+    const options = journalListOptions(req.query as Record<string, unknown>);
     // Build the entries filter ONCE so the row fetch and the line-sum
     // aggregation below share the exact same predicate (via a subquery)
     // instead of exploding thousands of entry ids into a giant IN list.
-    const whereExpr = cid
-      ? and(
-          eq(journalEntriesTable.companyId, cid),
-          // Branch scope: a specific ?branchId yields `branch_id = X OR NULL`
-          // (NULL = shared/opening/system entries visible from every branch);
-          // restricted users are auto-capped to their assigned branches; an
-          // admin with no branchId sees all. Without this the JE list (and the
-          // Posting Center built on it) leaked every branch regardless of filter.
-          ...branchScopeSpread(req, journalEntriesTable.branchId, req.query.branchId),
-        )
-      : undefined;
-    const rows = whereExpr
-      ? await db.select().from(journalEntriesTable)
-          .where(whereExpr)
-          .orderBy(desc(journalEntriesTable.createdAt))
-      : await db.select().from(journalEntriesTable)
-          .orderBy(desc(journalEntriesTable.createdAt));
+    const scopePredicates: any[] = [];
+    if (cid) {
+      scopePredicates.push(eq(journalEntriesTable.companyId, cid));
+    }
+    // A restricted superadmin/all-company request still needs its branch cap.
+    // `branchScopeSpread` returns no predicates for an unrestricted user.
+    scopePredicates.push(
+      // A specific ?branchId yields `branch_id = X OR NULL` (NULL is shared).
+      ...branchScopeSpread(req, journalEntriesTable.branchId, req.query.branchId),
+    );
+    const predicates = [...scopePredicates];
+    if (options.q) {
+      const pattern = `%${options.q.replace(/[%_\\]/g, "\\$&")}%`;
+      predicates.push(or(
+        ilike(journalEntriesTable.docNumber, pattern),
+        ilike(journalEntriesTable.description, pattern),
+        ilike(journalEntriesTable.entryType, pattern),
+        ilike(journalEntriesTable.entryDate, pattern),
+      ));
+    }
+    if (options.status) predicates.push(eq(journalEntriesTable.status, options.status));
+    if (options.dateFrom) predicates.push(gte(journalEntriesTable.entryDate, options.dateFrom));
+    if (options.dateTo) predicates.push(lte(journalEntriesTable.entryDate, options.dateTo));
+    const scopeWhereExpr = scopePredicates.length ? and(...scopePredicates) : undefined;
+    const whereExpr = predicates.length ? and(...predicates) : undefined;
+    const baseQuery = db.select().from(journalEntriesTable);
+    const sortedColumn = options.sortKey === "createdAt"
+      ? journalEntriesTable.createdAt
+      : JE_SORT_COLUMNS[options.sortKey as keyof typeof JE_SORT_COLUMNS];
+    const order = options.sortDir === "asc" ? asc(sortedColumn) : desc(sortedColumn);
 
-    if (rows.length === 0) { res.json([]); return; }
+    // `view=nav` is deliberately unbounded, but only returns header fields.
+    // It is used by selectors that must not pay for line aggregation/enrichment.
+    if (options.view === "nav") {
+      const navQuery = db.select({
+        id: journalEntriesTable.id,
+        companyId: journalEntriesTable.companyId,
+        branchId: journalEntriesTable.branchId,
+        docNumber: journalEntriesTable.docNumber,
+        entryDate: journalEntriesTable.entryDate,
+        description: journalEntriesTable.description,
+        entryType: journalEntriesTable.entryType,
+        status: journalEntriesTable.status,
+        createdAt: journalEntriesTable.createdAt,
+      }).from(journalEntriesTable);
+      const navRows = whereExpr
+        ? await navQuery.where(whereExpr).orderBy(order, desc(journalEntriesTable.id))
+        : await navQuery.orderBy(order, desc(journalEntriesTable.id));
+      res.json(navRows);
+      return;
+    }
+
+    let total = 0;
+    let totals = { debit: 0, credit: 0 };
+    let allTotals = { debit: 0, credit: 0, count: 0 };
+    let rows: any[];
+    if (options.paged) {
+      const [countRow] = whereExpr
+        ? await db.select({ count: sql<string>`COUNT(*)` }).from(journalEntriesTable).where(whereExpr)
+        : await db.select({ count: sql<string>`COUNT(*)` }).from(journalEntriesTable);
+      total = Number(countRow?.count ?? 0);
+      const filteredTotalsQuery = db.select({
+        debit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
+        credit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`,
+      }).from(journalEntryLinesTable)
+        .where(inArray(journalEntryLinesTable.entryId,
+          whereExpr ? db.select({ id: journalEntriesTable.id }).from(journalEntriesTable).where(whereExpr)
+            : db.select({ id: journalEntriesTable.id }).from(journalEntriesTable)));
+      const [filteredSum] = await filteredTotalsQuery;
+      totals = { debit: Number(filteredSum?.debit ?? 0), credit: Number(filteredSum?.credit ?? 0) };
+
+      const hasUserFilters = predicates.length !== scopePredicates.length;
+      if (hasUserFilters) {
+        const [allCountRow] = scopeWhereExpr
+          ? await db.select({ count: sql<string>`COUNT(*)` }).from(journalEntriesTable).where(scopeWhereExpr)
+          : await db.select({ count: sql<string>`COUNT(*)` }).from(journalEntriesTable);
+        const [allSum] = await db.select({
+          debit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
+          credit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`,
+        }).from(journalEntryLinesTable)
+          .where(inArray(journalEntryLinesTable.entryId,
+            scopeWhereExpr
+              ? db.select({ id: journalEntriesTable.id }).from(journalEntriesTable).where(scopeWhereExpr)
+              : db.select({ id: journalEntriesTable.id }).from(journalEntriesTable)));
+        allTotals = {
+          debit: Number(allSum?.debit ?? 0),
+          credit: Number(allSum?.credit ?? 0),
+          count: Number(allCountRow?.count ?? 0),
+        };
+      } else {
+        allTotals = { ...totals, count: total };
+      }
+      rows = whereExpr
+        ? await baseQuery.where(whereExpr).orderBy(order, desc(journalEntriesTable.id))
+          .limit(options.limit).offset((options.page - 1) * options.limit)
+        : await baseQuery.orderBy(order, desc(journalEntriesTable.id))
+          .limit(options.limit).offset((options.page - 1) * options.limit);
+    } else {
+      rows = whereExpr
+        ? await baseQuery.where(whereExpr).orderBy(desc(journalEntriesTable.createdAt))
+        : await baseQuery.orderBy(desc(journalEntriesTable.createdAt));
+    }
+
+    if (rows.length === 0) {
+      if (options.paged) res.json({ items: [], total, page: options.page, limit: options.limit, totals: { debit: 0, credit: 0 }, allTotals });
+      else res.json([]);
+      return;
+    }
 
     // 1) Aggregate debit/credit per entry in a single SQL pass instead of N+1.
     //    The scope is expressed as a SUBQUERY over the same whereExpr — on
     //    data-heavy companies the old inArray(ids) shape shipped tens of
     //    thousands of bind params per request, which both bloated the query
     //    and risked the 65 535-param protocol cap.
-    const idsSubquery = whereExpr
-      ? db.select({ id: journalEntriesTable.id }).from(journalEntriesTable).where(whereExpr)
-      : db.select({ id: journalEntriesTable.id }).from(journalEntriesTable);
+    const pageIds = rows.map(r => r.id);
     const sums = await db.select({
       entryId:     journalEntryLinesTable.entryId,
       totalDebit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}),  0)`.as("total_debit"),
       totalCredit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`.as("total_credit"),
     })
       .from(journalEntryLinesTable)
-      .where(inArray(journalEntryLinesTable.entryId, idsSubquery))
+      .where(inArray(journalEntryLinesTable.entryId, pageIds))
       .groupBy(journalEntryLinesTable.entryId);
     const sumByEntry = new Map(sums.map(s => [s.entryId, s]));
 
@@ -395,7 +496,7 @@ router.get("/", async (req, res) => {
       for (const u of us) userMap.set(u.id, u.username);
     }
 
-    res.json(rows.map(r => {
+    const items = rows.map(r => {
       const s = sumByEntry.get(r.id);
       // Strip the audit IP/user-agent columns from the LIST payload — no
       // frontend consumer reads them here (they stay on GET /:id and the
@@ -414,7 +515,12 @@ router.get("/", async (req, res) => {
         createdByName: r.createdBy != null ? (userMap.get(r.createdBy) ?? null) : null,
         postedByName:  r.postedBy  != null ? (userMap.get(r.postedBy)  ?? null) : null,
       };
-    }));
+    });
+    if (options.paged) {
+      res.json({ items, total, page: options.page, limit: options.limit, totals, allTotals });
+    } else {
+      res.json(items);
+    }
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

@@ -990,6 +990,12 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // /accounting/journals. Idempotent, safe on every boot.
     { label: "journal_entries_company_created_idx",
       sql:   `CREATE INDEX IF NOT EXISTS journal_entries_company_created_idx ON journal_entries (company_id, created_at DESC)` },
+    { label: "journal_entries_company_branch_created_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS journal_entries_company_branch_created_idx ON journal_entries (company_id, branch_id, created_at DESC)` },
+    { label: "journal_entries_company_status_date_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS journal_entries_company_status_date_idx ON journal_entries (company_id, status, entry_date)` },
+    { label: "journal_entries_company_date_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS journal_entries_company_date_idx ON journal_entries (company_id, entry_date)` },
     { label: "journal_entry_lines_entry_idx",
       sql:   `CREATE INDEX IF NOT EXISTS journal_entry_lines_entry_idx ON journal_entry_lines (entry_id)` },
     // ─── Partial settlement links (سداد جزئي — قيود وسندات ↔ فواتير) ─────────

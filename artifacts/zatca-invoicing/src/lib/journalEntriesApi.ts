@@ -117,6 +117,43 @@ export interface GapScanResponse {
   scanned: number;
 }
 
+export interface JournalEntriesPage {
+  items: any[];
+  total: number;
+  page: number;
+  limit: number;
+  totals: { debit: number; credit: number };
+  allTotals: { debit: number; credit: number; count: number };
+}
+
+export interface JournalEntriesListParams {
+  page?: number;
+  limit?: number;
+  q?: string;
+  status?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  sortKey?: string;
+  sortDir?: "asc" | "desc";
+  cid?: number;
+}
+
+function journalEntriesQuery(params: JournalEntriesListParams = {}, view?: "nav"): string {
+  const query = new URLSearchParams();
+  if (params.page != null) query.set("page", String(params.page));
+  if (params.limit != null) query.set("limit", String(params.limit));
+  if (params.q) query.set("q", params.q);
+  if (params.status && params.status !== "all") query.set("status", params.status);
+  if (params.dateFrom) query.set("dateFrom", params.dateFrom);
+  if (params.dateTo) query.set("dateTo", params.dateTo);
+  if (params.sortKey) query.set("sortKey", params.sortKey);
+  if (params.sortDir) query.set("sortDir", params.sortDir);
+  if (view) query.set("view", view);
+  if (params.cid) query.set("companyId", String(params.cid));
+  const suffix = query.toString();
+  return `/journal-entries${suffix ? `?${suffix}` : ""}`;
+}
+
 export const journalEntriesApi = {
   // Scan a date range for MISSING serial numbers (deleted / never created)
   // so the user can re-create them as empty drafts via gap-fill.
@@ -124,7 +161,12 @@ export const journalEntriesApi = {
     get<GapScanResponse>(
       `/journal-entries/gap-scan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${cid ? `&companyId=${cid}` : ""}`,
     ),
-  list:   (cid?: number) => get<any[]>(`/journal-entries${cid ? `?companyId=${cid}` : ""}`),
+  // The register endpoint is paged by default. Keep `list` for callers that
+  // explicitly need the lightweight navigation projection.
+  list:   (cid?: number) => get<any[]>(journalEntriesQuery({ cid }, "nav")),
+  listPage: (params: JournalEntriesListParams = {}) =>
+    get<JournalEntriesPage>(journalEntriesQuery(params)),
+  listNav: (cid?: number) => get<any[]>(journalEntriesQuery({ cid }, "nav")),
   get:    (id: number, cid?: number) => get<any>(`/journal-entries/${id}${cid ? `?companyId=${cid}` : ""}`),
   create: (data: any) => post<any>("/journal-entries", data),
   update: (id: number, data: any) => put<any>(`/journal-entries/${id}`, data),

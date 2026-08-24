@@ -18,6 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { assertWritableForDate } from "./periodGuard.js";
 import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
+import { resolveHrPostingBranch } from "./hrPostingBranch.js";
 import { allocateComponentBySnapshots } from "./payrollAllocation.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -125,19 +126,31 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
 function num(v: any): number { return Number(v ?? 0) || 0; }
 function fix(v: number): string { return v.toFixed(2); }
 
-/** Resolves the DR cash/bank account id from a payment source (cashBoxId or bankAccountId). */
-export async function resolveCashAccount(cid: number, opts: { cashBoxId?: number | null; bankAccountId?: number | null; }, dx: DbOrTx = db): Promise<{ accountId: number; label: string }> {
+/** Resolves the cash/bank ledger and its owning branch from a payment source. */
+export async function resolveCashAccount(
+  cid: number,
+  opts: { cashBoxId?: number | null; bankAccountId?: number | null; },
+  dx: DbOrTx = db,
+): Promise<{ accountId: number; label: string; branchId: number | null }> {
   if (opts.bankAccountId) {
     const [b] = await dx.select().from(bankAccountsTable)
       .where(and(eq(bankAccountsTable.id, opts.bankAccountId), eq(bankAccountsTable.companyId, cid)));
     if (!b?.accountId) throw new Error("البنك المختار غير مرتبط بحساب محاسبي");
-    return { accountId: b.accountId, label: `بنك ${b.nameAr ?? b.nameEn ?? ""}`.trim() };
+    return {
+      accountId: b.accountId,
+      label: `بنك ${b.nameAr ?? b.nameEn ?? ""}`.trim(),
+      branchId: b.branchId ?? b.branchIds?.[0] ?? null,
+    };
   }
   if (opts.cashBoxId) {
     const [c] = await dx.select().from(cashBoxesTable)
       .where(and(eq(cashBoxesTable.id, opts.cashBoxId), eq(cashBoxesTable.companyId, cid)));
     if (!c?.accountId) throw new Error("الصندوق المختار غير مرتبط بحساب محاسبي");
-    return { accountId: c.accountId, label: `صندوق ${c.nameAr ?? c.nameEn ?? ""}`.trim() };
+    return {
+      accountId: c.accountId,
+      label: `صندوق ${c.nameAr ?? c.nameEn ?? ""}`.trim(),
+      branchId: c.branchId ?? null,
+    };
   }
   throw new Error("يجب اختيار صندوق أو حساب بنكي للسداد");
 }
@@ -289,6 +302,7 @@ export async function buildPayrollPaymentJournal(
   const accounts = await resolveHrAccounts(cid, true, dx);
   if (!accounts.salariesPayable) throw new Error("حساب الرواتب المستحقة (21051) غير مربوط في إعدادات الموارد البشرية");
   const cash = await resolveCashAccount(cid, source, dx);
+  const postingBranchId = resolveHrPostingBranch(run.branchId, cash.branchId);
 
   const period = `${String(run.month).padStart(2, "0")}/${run.year}`;
   const desc = `صرف رواتب المسير ${run.code} عن الفترة ${period}`;
@@ -299,11 +313,11 @@ export async function buildPayrollPaymentJournal(
   // payment JE keeps its original number (no gaps).
   const jeDocNumber = (await resolveJeNumber({
     companyId: cid, sourceType: "payroll_pay", sourceId: runId, subType: "hr_payroll",
-    branchId: run.branchId ?? null, docDate: payDate, userId: null, dx: dx as any,
+    branchId: postingBranchId, docDate: payDate, userId: null, dx: dx as any,
   })) ?? `PAY-${run.code}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
-    branchId: run.branchId ?? null,
+    branchId: postingBranchId,
     docNumber: jeDocNumber,
     entryDate: payDate,
     currency: "SAR",
@@ -358,6 +372,7 @@ export async function buildLoanDisbursementJournal(
   const loanAccountId = await resolveLoanAccount(cid, loan.loanAccountId, dx);
 
   const cash = await resolveCashAccount(cid, source, dx);
+  const postingBranchId = resolveHrPostingBranch(emp?.branchId, cash.branchId);
   const desc = `صرف ${loan.loanType === "advance" ? "عُهدة" : "سلفة"} للموظف ${emp?.nameAr ?? ""}`.trim();
 
   const loanW = await assertWritableForDate(cid, loan.loanDate);
@@ -366,11 +381,11 @@ export async function buildLoanDisbursementJournal(
   // Reuses a stashed number on unpost→re-disburse (keyed employee_loan:loanId).
   const jeDocNumber = (await resolveJeNumber({
     companyId: cid, sourceType: "employee_loan", sourceId: loan.id, subType: "hr_loan",
-    branchId: emp?.branchId ?? null, docDate: loan.loanDate, userId: null, dx: dx as any,
+    branchId: postingBranchId, docDate: loan.loanDate, userId: null, dx: dx as any,
   })) ?? `LOAN-${loan.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
-    branchId: emp?.branchId ?? null,
+    branchId: postingBranchId,
     docNumber: jeDocNumber,
     entryDate: loan.loanDate,
     currency: "SAR",
@@ -411,17 +426,18 @@ export async function buildEosPaymentJournal(
     : "حساب مصروف نهاية الخدمة (5215) غير مربوط");
 
   const cash = await resolveCashAccount(cid, source, dx);
+  const postingBranchId = resolveHrPostingBranch(emp.branchId, cash.branchId);
   const desc = opts.description || `صرف مكافأة نهاية الخدمة للموظف ${emp.nameAr}`;
 
   const eosW = await assertWritableForDate(cid, payDate);
   if (!eosW.ok) throw new Error(eosW.reason);
   // JE draws its own continuous "journal_entry" number; falls back to EOS-*.
   const jeDocNumber = (await nextJeSubSequence(cid, "hr_eos", {
-    userId: null, refTable: "journal_entries", branchId: emp.branchId ?? null, docDate: payDate,
+    userId: null, refTable: "journal_entries", branchId: postingBranchId, docDate: payDate,
   })) ?? `EOS-${employeeId}-${payDate.replace(/-/g, "")}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
-    branchId: emp.branchId ?? null,
+    branchId: postingBranchId,
     docNumber: jeDocNumber,
     entryDate: payDate,
     currency: "SAR",
@@ -468,6 +484,7 @@ export async function buildCustodyDisbursementJournal(
   const [emp] = await dx.select().from(employeesTable).where(eq(employeesTable.id, cust.employeeId));
   const custodyAccountId = await resolveCustodyAccount(cid, cust.custodyAccountId, dx);
   const cash = await resolveCashAccount(cid, source, dx);
+  const postingBranchId = resolveHrPostingBranch(cust.branchId, cash.branchId, emp?.branchId);
   const desc = `صرف عهدة للموظف ${emp?.nameAr ?? ""}`.trim();
 
   const w = await assertWritableForDate(cid, cust.custodyDate);
@@ -475,11 +492,11 @@ export async function buildCustodyDisbursementJournal(
   // Reuses a stashed number on unpost→re-disburse (keyed employee_custody_disb:custodyId).
   const jeDocNumber = (await resolveJeNumber({
     companyId: cid, sourceType: "employee_custody_disb", sourceId: cust.id, subType: "hr_custody",
-    branchId: cust.branchId ?? emp?.branchId ?? null, docDate: cust.custodyDate, userId: null, dx: dx as any,
+    branchId: postingBranchId, docDate: cust.custodyDate, userId: null, dx: dx as any,
   })) ?? `CUST-${cust.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
-    branchId: cust.branchId ?? emp?.branchId ?? null,
+    branchId: postingBranchId,
     docNumber: jeDocNumber,
     entryDate: cust.custodyDate,
     currency: "SAR",
@@ -562,16 +579,17 @@ export async function buildCustodyReturnJournal(
   const [emp] = await dx.select().from(employeesTable).where(eq(employeesTable.id, cust.employeeId));
   const custodyAccountId = await resolveCustodyAccount(cid, cust.custodyAccountId, dx);
   const cash = await resolveCashAccount(cid, source, dx);
+  const postingBranchId = resolveHrPostingBranch(cust.branchId, cash.branchId, emp?.branchId);
   const desc = `إرجاع باقي عهدة الموظف ${emp?.nameAr ?? ""}`.trim();
 
   const w = await assertWritableForDate(cid, returnDate);
   if (!w.ok) throw new Error(w.reason);
   const jeDocNumber = (await nextJeSubSequence(cid, "hr_custody", {
-    userId: null, refTable: "journal_entries", branchId: cust.branchId ?? emp?.branchId ?? null, docDate: returnDate,
+    userId: null, refTable: "journal_entries", branchId: postingBranchId, docDate: returnDate,
   })) ?? `CUST-RET-${cust.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
-    branchId: cust.branchId ?? emp?.branchId ?? null,
+    branchId: postingBranchId,
     docNumber: jeDocNumber,
     entryDate: returnDate,
     currency: "SAR",

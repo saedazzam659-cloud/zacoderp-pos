@@ -1,6 +1,6 @@
 ---
 name: Employee Custody (العُهد) module
-description: How the SAP-style custody/imprest module relates to loans, its GL model, and shared gates.
+description: How the SAP-style custody/imprest module relates to loans, its GL model, branch numbering, and shared gates.
 ---
 
 # Employee Custody (العُهد / imprest)
@@ -20,6 +20,11 @@ A SEPARATE module from loans, SAP-style. Custody is **NOT** salary-deducted (loa
   falls back to 11081 if 11082 unlinked.
 - Loans type dropdown filters out `advance`/`عُهدة` from *selectable* options but keeps the
   `TYPES["advance"]` label for legacy-row display.
+- Custody disbursement/return posting branch precedence is document branch → selected
+  cash/bank branch → employee branch. **Why:** a branchless custody paid from a
+  branch-owned bank must consume that branch's unified journal counter, not the unrelated
+  company-wide/null-branch stream. Apply the same resolved branch to both the JE header
+  and sequence allocation.
 
 **Concurrency + tenant safety (required, found in review):**
 - All mutating endpoints (disburse/settle/return/delete-settlement) lock the custody row with

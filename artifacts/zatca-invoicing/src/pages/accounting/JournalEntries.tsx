@@ -285,11 +285,33 @@ export default function JournalEntries() {
   });
   const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
 
-  const { data: entries = [], isLoading } = useQuery<any[]>({
-    queryKey: ["journal-entries", cid],
-    queryFn: () => journalEntriesApi.list(cid),
+  const { pageSize, page, setPage } = layout;
+  const deferredSearch = useDeferredValue(search);
+  // The server owns basic filtering, ordering and pagination. `0` is the
+  // legacy "all" layout choice; request a bounded large page rather than
+  // downloading the whole register into the browser.
+  const serverLimit = pageSize || 5_000;
+  const pageQuery = useQuery({
+    queryKey: ["journal-entries", cid, page, serverLimit, deferredSearch, statusFilter, dateFrom, dateTo, sort],
+    queryFn: () => journalEntriesApi.listPage({
+      cid,
+      page,
+      limit: serverLimit,
+      q: deferredSearch.trim(),
+      status: statusFilter,
+      dateFrom,
+      dateTo,
+      sortKey: sort?.key,
+      sortDir: sort?.dir,
+    }),
     enabled: !!user,
+    placeholderData: (previous) => previous,
   });
+  const entries = pageQuery.data?.items ?? [];
+  const isLoading = pageQuery.isLoading;
+  const serverTotal = pageQuery.data?.total ?? 0;
+  const serverTotals = pageQuery.data?.totals ?? { debit: 0, credit: 0 };
+  const allTotals = pageQuery.data?.allTotals ?? { debit: 0, credit: 0, count: 0 };
 
   // Used by bulk-print to label account ids on each journal-entry line.
   // Cached across renders so opening Print repeatedly is cheap.
@@ -536,25 +558,11 @@ export default function JournalEntries() {
   const clearAllColFilters = () => { clearColFilters(); setColAdv({}); };
 
   /* ── Filtering ── */
-  // Deferring the search text keeps typing responsive on data-heavy
-  // companies: React paints the keystroke first, then re-filters the
-  // (potentially huge) list at lower priority.
-  const deferredSearch = useDeferredValue(search);
+  // Basic filters and sort are applied by the paged endpoint. Advanced
+  // per-column filters deliberately remain client-side because they are rich
+  // display filters and apply to the currently loaded server page.
   const filtered = useMemo(() => {
-    const q = deferredSearch.trim().toLowerCase();
     const rows = (entries as any[]).filter((e) => {
-      if (statusFilter !== "all" && e.status !== statusFilter) return false;
-      // Date-range filter — entryDate stored as YYYY-MM-DD, lexicographic
-      // compare matches chronological order so we don't need Date parsing.
-      if (dateFrom && String(e.entryDate ?? "") < dateFrom) return false;
-      if (dateTo   && String(e.entryDate ?? "") > dateTo)   return false;
-      if (q) {
-        const hay = [
-          e.docNumber, `QYD-${String(e.id).padStart(4, "0")}`,
-          e.description, e.entryDate, ENTRY_TYPES[e.entryType] ?? e.entryType,
-        ].filter(Boolean).join(" ").toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
       for (const col of COLUMNS) {
         const adv = colAdv[col.key];
         if (!isAdvActive(adv)) continue;
@@ -563,56 +571,34 @@ export default function JournalEntries() {
       return true;
     });
 
-    // Sort by the chosen column. Numeric columns use numeric compare; text
-    // columns use Arabic-aware locale compare so "QYD-0408" < "QYD-0420" and
-    // Arabic descriptions sort alphabetically by Arabic letter order.
-    if (sort) {
-      const col = COLUMNS.find((c) => c.key === sort.key);
-      if (col && col.type !== "none") {
-        const cmp = col.type === "num"
-          ? (a: any, b: any) => (Number(col.valueOf(a, ctx)) || 0) - (Number(col.valueOf(b, ctx)) || 0)
-          : (a: any, b: any) => String(col.valueOf(a, ctx) ?? "").localeCompare(
-              String(col.valueOf(b, ctx) ?? ""),
-              isRtl ? "ar" : "en",
-              { numeric: true, sensitivity: "base" },
-            );
-        rows.sort((a, b) => sort.dir === "asc" ? cmp(a, b) : cmp(b, a));
-      }
-    }
     return rows;
-  }, [entries, deferredSearch, statusFilter, dateFrom, dateTo, colAdv, ctx, COLUMNS, sort, isRtl]);
+  }, [entries, colAdv, ctx, COLUMNS]);
 
   /* ── Pagination ── */
-  const { pageSize, page, setPage } = layout;
-
-  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(serverTotal / serverLimit));
   const safePage = Math.min(page, totalPages);
-  if (safePage !== page) setPage(safePage);
-  const paged = useMemo(
-    () => pageSize === 0 ? filtered : filtered.slice((safePage - 1) * pageSize, safePage * pageSize),
-    [filtered, pageSize, safePage],
-  );
-  const pageStart = filtered.length === 0 ? 0 : pageSize === 0 ? 1 : (safePage - 1) * pageSize + 1;
-  const pageEnd   = pageSize === 0 ? filtered.length : Math.min(safePage * pageSize, filtered.length);
+  useEffect(() => {
+    if (safePage !== page) setPage(safePage);
+  }, [safePage, page, setPage]);
+  useEffect(() => {
+    setPage(1);
+  }, [deferredSearch, statusFilter, dateFrom, dateTo, sort?.key, sort?.dir, pageSize, setPage]);
+  const paged = filtered;
+  const pageStart = serverTotal === 0 ? 0 : (safePage - 1) * serverLimit + 1;
+  const pageEnd = Math.min((safePage - 1) * serverLimit + entries.length, serverTotal);
 
-  /* ── Totals (over the filtered set) ── */
-  const totals = useMemo(() => {
-    return filtered.reduce(
-      (a, e: any) => {
-        a.debit  += Number(e.totalDebit  ?? 0);
-        a.credit += Number(e.totalCredit ?? 0);
-        return a;
-      },
-      { debit: 0, credit: 0 },
-    );
-  }, [filtered]);
-  // Print/Excel exports historically used the unfiltered totals — keep that
-  // legacy value available but compute it from the same source. Memoized so
-  // the full-list reduce doesn't rerun on every unrelated render.
-  const { totalDebitAll, totalCreditAll } = useMemo(() => ({
-    totalDebitAll:  (entries as any[]).reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0),
-    totalCreditAll: (entries as any[]).reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0),
-  }), [entries]);
+  // Endpoint totals reflect the active basic filters; advanced column filters
+  // are intentionally page-local, so use visible-row totals only when one is
+  // active.
+  const hasAdvancedFilters = Object.values(colAdv).some(isAdvActive);
+  const totals = hasAdvancedFilters
+    ? filtered.reduce((a, e: any) => ({
+        debit: a.debit + Number(e.totalDebit ?? 0),
+        credit: a.credit + Number(e.totalCredit ?? 0),
+      }), { debit: 0, credit: 0 })
+    : serverTotals;
+  const totalDebitAll = allTotals.debit;
+  const totalCreditAll = allTotals.credit;
 
   /* ── Visible columns in user's saved order ── */
   const visibleColumns = useMemo(() => {
@@ -631,6 +617,31 @@ export default function JournalEntries() {
   );
 
   /* ── Existing exports (kept verbatim so PDF / print look identical) ── */
+  // Exports are requested on demand instead of retaining every register row
+  // in the list query. The endpoint may cap a request, so continue until its
+  // reported total has been collected.
+  const fetchExportRows = async (): Promise<any[]> => {
+    const limit = 250;
+    const first = await journalEntriesApi.listPage({
+      cid, page: 1, limit, q: deferredSearch.trim(), status: statusFilter,
+      dateFrom, dateTo, sortKey: sort?.key, sortDir: sort?.dir,
+    });
+    const all = [...first.items];
+    for (let nextPage = 2; all.length < first.total; nextPage++) {
+      const next = await journalEntriesApi.listPage({
+        cid, page: nextPage, limit, q: deferredSearch.trim(), status: statusFilter,
+        dateFrom, dateTo, sortKey: sort?.key, sortDir: sort?.dir,
+      });
+      if (next.items.length === 0) break;
+      all.push(...next.items);
+    }
+    return hasAdvancedFilters
+      ? all.filter((e) => COLUMNS.every((col) => {
+          const adv = colAdv[col.key];
+          return !isAdvActive(adv) || matchAdv(col.valueOf(e, ctx), adv, col.type);
+        }))
+      : all;
+  };
   const buildRows = (source: any[] = filtered) => source.map((e: any) => ({
     [COL_DOC_L]:    e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`,
     [COL_DATE_L]:   e.entryDate ?? "",
@@ -641,8 +652,8 @@ export default function JournalEntries() {
     [COL_STATUS_L]: (STATUS_MAP[e.status] ?? STATUS_MAP.posted).label,
   }));
 
-  const handleExportExcel = () => {
-    const rows = buildRows();
+  const handleExportExcel = async () => {
+    const rows = buildRows(await fetchExportRows());
     const ws = XLSX.utils.json_to_sheet(rows);
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 32 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
@@ -697,14 +708,27 @@ ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEnt
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
 
+  const writePrintWindow = (w: Window, html: string) => {
+    w.document.open(); w.document.write(html); w.document.close();
+  };
   const openPrintWindow = (html: string) => {
     const w = window.open("", "_blank", "width=1100,height=800");
     if (!w) return;
-    w.document.open(); w.document.write(html); w.document.close();
+    writePrintWindow(w, html);
   };
 
-  const handleExportPDF = () => openPrintWindow(buildPrintHtml());
-  const handlePrint    = () => openPrintWindow(buildPrintHtml());
+  const openAsyncRegisterPrint = () => {
+    // Open synchronously from the click gesture or Chrome treats the later
+    // window.open (after fetching all filtered pages) as a blocked popup.
+    const w = window.open("", "_blank", "width=1100,height=800");
+    if (!w) return;
+    writePrintWindow(w, `<!doctype html><html dir="${isRtl ? "rtl" : "ltr"}"><body style="font-family:Tahoma;padding:24px">جاري تجهيز التقرير...</body></html>`);
+    void fetchExportRows()
+      .then((rows) => writePrintWindow(w, buildPrintHtml(rows)))
+      .catch((error) => writePrintWindow(w, `<!doctype html><html dir="rtl"><body style="font-family:Tahoma;padding:24px;color:#991b1b">${escapeHtml(error?.message ?? "تعذر تجهيز التقرير")}</body></html>`));
+  };
+  const handleExportPDF = openAsyncRegisterPrint;
+  const handlePrint = openAsyncRegisterPrint;
 
   /* ── Bulk print: render each selected entry as a full journal-entry sheet
         (header + every debit/credit line), not just a one-row summary. ─── */
@@ -1094,10 +1118,11 @@ ${wrapWithLetterhead(letterhead, sections)}
   };
 
   /* ── Quick CSV export (uses visible columns + filtered set) ── */
-  function exportCsv() {
-    if (filtered.length === 0) return;
+  async function exportCsv() {
+    const source = await fetchExportRows();
+    if (source.length === 0) return;
     const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
-    const rows = filtered.map((e: any, i: number) => [
+    const rows = source.map((e: any, i: number) => [
       i + 1,
       ...visibleColumns
         .filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act")
@@ -1167,7 +1192,7 @@ ${wrapWithLetterhead(letterhead, sections)}
               <FileText className="h-8 w-8 text-blue-500 bg-blue-50 rounded-lg p-1.5" />
               <div>
                 <p className="text-xs text-muted-foreground">{t("journalEntries.totalEntries")}</p>
-                <p className="text-2xl font-bold text-foreground">{entries.length}</p>
+                <p className="text-2xl font-bold text-foreground">{allTotals.count}</p>
               </div>
             </div>
           </CardContent>
@@ -1323,8 +1348,8 @@ ${wrapWithLetterhead(letterhead, sections)}
           </div>
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filtered.length} {t("journalEntries.itemLabel", { defaultValue: "قيد" })}
-            {filtered.length !== entries.length && <span className="text-slate-400"> / {entries.length}</span>}
+            {serverTotal} {t("journalEntries.itemLabel", { defaultValue: "قيد" })}
+            {hasAdvancedFilters && filtered.length !== entries.length && <span className="text-slate-400"> / {entries.length}</span>}
           </span>
         </div>
         {/* ── Bulk-action bar (visible only when one or more rows selected) ── */}
@@ -1622,7 +1647,7 @@ ${wrapWithLetterhead(letterhead, sections)}
               </thead>
               <tbody>
                 {paged.map((entry: any, idx: number) => {
-                  const absIdx = pageSize === 0 ? idx : (safePage - 1) * pageSize + idx;
+                  const absIdx = (safePage - 1) * serverLimit + idx;
                   const st = STATUS_MAP[entry.status] ?? STATUS_MAP.posted;
                   const docLabel = entry.docNumber ?? `QYD-${String(entry.id).padStart(4, "0")}`;
                   const sourceUrl = sourceUrlFor(entry.entryType, entry.sourceId);
@@ -1840,7 +1865,7 @@ ${wrapWithLetterhead(letterhead, sections)}
 
         <AuditGridPagination
           layout={layout}
-          totalRows={filtered.length}
+          totalRows={serverTotal}
           pageStart={pageStart}
           pageEnd={pageEnd}
           totalPages={totalPages}

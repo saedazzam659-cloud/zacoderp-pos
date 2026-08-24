@@ -323,8 +323,8 @@ export default function JournalEntryForm() {
   // remounted. Short staleTime keeps the next prediction fresh after each
   // save (qc.invalidateQueries fires in onSuccess).
   const { data: navList = [] } = useQuery<any[]>({
-    queryKey: ["journal-entries", cid],
-    queryFn:  () => journalEntriesApi.list(cid),
+    queryKey: ["journal-entries", cid, "nav"],
+    queryFn:  () => journalEntriesApi.listNav(cid),
     enabled:  !!user,
     staleTime: 5_000,
   });
