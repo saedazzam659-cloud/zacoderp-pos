@@ -13,11 +13,16 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
+import { Link } from "wouter";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("zatca_token");
-  return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  const actingCompanyId = localStorage.getItem("zatca_acting_company_id");
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (actingCompanyId) headers["x-acting-company-id"] = actingCompanyId;
+  return headers;
 }
 
 export default function ItemCard() {
@@ -31,12 +36,23 @@ export default function ItemCard() {
   const EXPORT_COLS = [
     { key: "txDate",       header: t("inventoryReports.itemCard.cols.date"),             width: 14 },
     { key: "txType",       header: t("inventoryReports.itemCard.cols.txType"),           width: 18 },
+    { key: "documentNumber", header: t("inventoryReports.itemCard.cols.documentNumber"),   width: 20 },
     { key: "warehouseName", header: t("inventoryReports.common.warehouse"),              width: 22 },
+    { key: "sourceWarehouse", header: t("inventoryReports.itemCard.cols.sourceWarehouse"), width: 22 },
+    { key: "targetWarehouse", header: t("inventoryReports.itemCard.cols.targetWarehouse"), width: 22 },
+    { key: "unitName",      header: t("inventoryReports.itemCard.cols.unit"),             width: 14 },
+    { key: "costCenter",    header: t("inventoryReports.itemCard.cols.costCenter"),       width: 16 },
+    { key: "project",       header: t("inventoryReports.itemCard.cols.project"),          width: 18 },
+    { key: "balanceBefore", header: t("inventoryReports.itemCard.cols.balanceBefore"),    width: 16 },
     { key: "qtyIn",        header: t("inventoryReports.itemCard.cols.qtyIn"),            width: 12 },
     { key: "qtyOut",       header: t("inventoryReports.itemCard.cols.qtyOut"),           width: 12 },
-    { key: "balance",      header: t("inventoryReports.itemCard.cols.cumulativeBalance"), width: 16 },
+    { key: "balanceAfter", header: t("inventoryReports.itemCard.cols.balanceAfter"),     width: 16 },
     { key: "costPrice",    header: t("inventoryReports.itemCard.cols.costPrice"),        width: 14 },
     { key: "totalCost",    header: t("inventoryReports.itemCard.cols.totalCost"),        width: 16 },
+    { key: "batchNumber",  header: t("inventoryReports.itemCard.cols.batchNumber"),       width: 16 },
+    { key: "expiryDate",   header: t("inventoryReports.itemCard.cols.expiryDate"),        width: 15 },
+    { key: "createdAt",    header: t("inventoryReports.itemCard.cols.createdAt"),         width: 20 },
+    { key: "notes",        header: t("inventoryReports.itemCard.cols.notes"),             width: 28 },
   ];
 
   const { user } = useAuth();
@@ -45,8 +61,17 @@ export default function ItemCard() {
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "", customerId: "" });
-  const [applied, setApplied] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "", customerId: "" });
+  const emptyFilters = {
+    from: firstDay,
+    to: today,
+    itemId: "",
+    warehouseId: "",
+    customerId: "",
+    txType: "",
+    costCenter: "",
+  };
+  const [filters, setFilters] = useState(emptyFilters);
+  const [applied, setApplied] = useState(emptyFilters);
 
   const { data: items = [] }      = useQuery({ queryKey: ["items", cid],      queryFn: () => inventoryApi.getItems(cid) });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
@@ -66,6 +91,17 @@ export default function ItemCard() {
       })),
     ],
     [customers, isRtl],
+  );
+  const movementTypeOptions = useMemo(
+    () => [
+      { value: "", label: t("inventoryReports.itemCard.allMovementTypes") },
+      ...[
+        "opening", "purchase", "sale", "purchase_return", "sales_return",
+        "transfer_in", "transfer_out", "adjustment", "count_adj",
+        "goods_receipt", "goods_delivery", "production_issue", "production_receipt",
+      ].map(value => ({ value, label: txLabel(value) })),
+    ],
+    [t, i18n.language],
   );
 
   const { data: rows = [], isLoading } = useQuery({
@@ -89,36 +125,72 @@ export default function ItemCard() {
     ? (isRtl ? (selectedCustomer.nameAr ?? selectedCustomer.nameEn) : (selectedCustomer.nameEn ?? selectedCustomer.nameAr))
     : null;
 
-  // Sort ascending (oldest first) and compute running balance
+  // Sort ascending and use the stock ledger's persisted per-warehouse balance.
+  // This preserves the same inventory logic used when the movement was posted;
+  // no separate report-only stock calculation is introduced.
   const augmented = useMemo(() => {
     const sorted = [...(rows as any[])].sort((a, b) => {
       const d = String(a.txDate).localeCompare(String(b.txDate));
       return d !== 0 ? d : Number(a.id) - Number(b.id);
     });
-    let bal = 0;
+    const fallbackByWarehouse = new Map<string, number>();
     return sorted.map(r => {
       const q = Number(r.qty);
-      bal += q;
+      const warehouseKey = String(r.warehouseId ?? "");
+      const fallbackBefore = fallbackByWarehouse.get(warehouseKey) ?? 0;
+      const balanceBefore = r.balanceBefore != null ? Number(r.balanceBefore) : fallbackBefore;
+      const balanceAfter = r.balanceAfter != null ? Number(r.balanceAfter) : balanceBefore + q;
+      fallbackByWarehouse.set(warehouseKey, balanceAfter);
       return {
         ...r,
         qtyIn:  q > 0 ? q : 0,
         qtyOut: q < 0 ? -q : 0,
-        running: bal,
+        balanceBefore,
+        balanceAfter,
+        running: balanceAfter,
       };
+    }).filter(r => {
+      if (applied.txType && r.txType !== applied.txType) return false;
+      if (applied.costCenter && !String(r.costCenter ?? "").toLowerCase().includes(applied.costCenter.toLowerCase())) return false;
+      return true;
     });
-  }, [rows]);
+  }, [rows, applied.txType, applied.costCenter]);
 
   const totals = augmented.reduce((s, r) => ({ in: s.in + r.qtyIn, out: s.out + r.qtyOut }), { in: 0, out: 0 });
+  const balanceSummary = useMemo(() => {
+    const firstByWarehouse = new Map<string, number>();
+    const lastByWarehouse = new Map<string, number>();
+    for (const r of augmented) {
+      const key = String(r.warehouseId ?? "");
+      if (!firstByWarehouse.has(key)) firstByWarehouse.set(key, Number(r.balanceBefore) || 0);
+      lastByWarehouse.set(key, Number(r.balanceAfter) || 0);
+    }
+    return {
+      opening: [...firstByWarehouse.values()].reduce((s, n) => s + n, 0),
+      final: [...lastByWarehouse.values()].reduce((s, n) => s + n, 0),
+    };
+  }, [augmented]);
 
   const exportRows = augmented.map((r: any) => ({
     txDate:        r.txDate,
     txType:        txLabel(r.txType),
+    documentNumber: r.documentNumber ?? "",
     warehouseName: pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—",
+    sourceWarehouse: pickName(r.sourceWarehouse?.nameAr, r.sourceWarehouse?.nameEn) || "",
+    targetWarehouse: pickName(r.targetWarehouse?.nameAr, r.targetWarehouse?.nameEn) || "",
+    unitName:       pickName(r.unit?.nameAr, r.unit?.nameEn) || r.unit?.code || "",
+    costCenter:     r.costCenter ?? "",
+    project:        r.project?.nameAr ?? r.project?.nameEn ?? r.project ?? "",
+    balanceBefore:  fmtQty(r.balanceBefore),
     qtyIn:         r.qtyIn ? fmtQty(r.qtyIn) : "",
     qtyOut:        r.qtyOut ? fmtQty(r.qtyOut) : "",
-    balance:       fmtQty(r.running),
+    balanceAfter:  fmtQty(r.balanceAfter),
     costPrice:     fmt(r.costPrice),
     totalCost:     fmt(r.totalCost),
+    batchNumber:   r.batchNumber ?? "",
+    expiryDate:    r.expiryDate ?? "",
+    createdAt:     r.createdAt ? new Date(r.createdAt).toLocaleString(isRtl ? "ar-SA" : "en-US") : "",
+    notes:         r.movementNotes ?? "",
   }));
 
   // Grand-totals row appended to Excel and printed/PDF view (renders on the
@@ -127,12 +199,23 @@ export default function ItemCard() {
     ? {
         txDate:        t("inventoryReports.itemCard.grandTotal"),
         txType:        "",
+        documentNumber: "",
         warehouseName: "",
+        sourceWarehouse: "",
+        targetWarehouse: "",
+        unitName: "",
+        costCenter: "",
+        project: "",
+        balanceBefore: fmtQty(balanceSummary.opening),
         qtyIn:         fmtQty(totals.in),
         qtyOut:        fmtQty(totals.out),
-        balance:       fmtQty(augmented[augmented.length - 1].running),
+        balanceAfter:  fmtQty(balanceSummary.final),
         costPrice:     "",
         totalCost:     "",
+        batchNumber:   "",
+        expiryDate:    "",
+        createdAt:     "",
+        notes:         "",
       }
     : null;
 
@@ -161,7 +244,7 @@ export default function ItemCard() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">{t("inventoryReports.itemCard.cardParams")}</h2>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
           <div className="space-y-1.5 sm:col-span-2">
             <Label>{t("inventoryReports.common.item")} <span className="text-red-500">*</span></Label>
             <SearchCombobox
@@ -169,6 +252,23 @@ export default function ItemCard() {
               value={filters.itemId}
               onValueChange={v => setFilters(p => ({ ...p, itemId: v }))}
               placeholder={t("inventoryReports.common.selectItem")}
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>{t("inventoryReports.itemCard.movementType")}</Label>
+            <SearchCombobox
+              items={movementTypeOptions}
+              value={filters.txType}
+              onValueChange={v => setFilters(p => ({ ...p, txType: v }))}
+              placeholder={t("inventoryReports.itemCard.allMovementTypes")}
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>{t("inventoryReports.itemCard.cols.costCenter")}</Label>
+            <Input
+              value={filters.costCenter}
+              onChange={e => setFilters(p => ({ ...p, costCenter: e.target.value }))}
+              placeholder={t("inventoryReports.itemCard.costCenterPlaceholder")}
             />
           </div>
           <div className="space-y-1.5">
@@ -212,7 +312,11 @@ export default function ItemCard() {
 
       {/* Summary */}
       {applied.itemId && item && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="rounded-xl border bg-slate-50 border-slate-200 p-4">
+            <p className="text-xs text-slate-700">{t("inventoryReports.itemCard.openingBalance")}</p>
+            <p className="text-2xl font-bold text-slate-700 tabular-nums mt-1">{fmtQty(balanceSummary.opening)}</p>
+          </div>
           <div className="rounded-xl border bg-green-50 border-green-200 p-4">
             <p className="text-xs text-green-700">{t("inventoryReports.itemCard.totalIn")}</p>
             <p className="text-2xl font-bold text-green-700 tabular-nums mt-1">{fmtQty(totals.in)}</p>
@@ -223,7 +327,7 @@ export default function ItemCard() {
           </div>
           <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
             <p className="text-xs text-muted-foreground">{t("inventoryReports.itemCard.finalBalance")}</p>
-            <p className="text-2xl font-bold tabular-nums mt-1">{fmtQty(augmented.length ? augmented[augmented.length - 1].running : 0)}</p>
+            <p className="text-2xl font-bold tabular-nums mt-1">{fmtQty(balanceSummary.final)}</p>
           </div>
         </div>
       )}
@@ -232,49 +336,81 @@ export default function ItemCard() {
       {applied.itemId ? (
         <div className="rounded-xl border bg-card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[700px]">
+            <table className="w-full text-sm min-w-[1900px]">
               <thead className="bg-muted/50 border-b">
                 <tr>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.date")}</th>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.txType")}</th>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.warehouse")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.date")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.txType")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.documentNumber")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.common.warehouse")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.sourceWarehouse")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.targetWarehouse")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.unit")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.costCenter")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.project")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.balanceBefore")}</th>
                   <th className="px-4 py-3 text-center font-semibold text-green-700">{t("inventoryReports.itemCard.cols.qtyIn")}</th>
                   <th className="px-4 py-3 text-center font-semibold text-red-700">{t("inventoryReports.itemCard.cols.qtyOut")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.balance")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{t("inventoryReports.itemCard.cols.costPrice")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{t("inventoryReports.itemCard.cols.totalCost")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.balanceAfter")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.costPrice")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.totalCost")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.batchNumber")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.expiryDate")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.createdAt")}</th>
+                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.notes")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {isLoading
-                  ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
+                  ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={19} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                   : augmented.length === 0
-                  ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><IdCard className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("inventoryReports.itemCard.noMoves")}</td></tr>
+                  ? <tr><td colSpan={19} className="py-12 text-center text-muted-foreground"><IdCard className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("inventoryReports.itemCard.noMoves")}</td></tr>
                   : augmented.map((r: any) => (
                       <tr key={r.id} className="hover:bg-muted/20">
                         <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{r.txDate}</td>
                         <td className="px-4 py-3 text-xs">{txLabel(r.txType)}</td>
+                        <td className="px-4 py-3 text-xs" dir="ltr">
+                          {r.documentNumber && r.documentPath ? (
+                            <Link
+                              href={r.documentPath}
+                              className="font-semibold text-primary underline underline-offset-4 hover:text-primary/80"
+                            >
+                              {r.documentNumber}
+                            </Link>
+                          ) : "—"}
+                        </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">{pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—"}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">{pickName(r.sourceWarehouse?.nameAr, r.sourceWarehouse?.nameEn) || "—"}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">{pickName(r.targetWarehouse?.nameAr, r.targetWarehouse?.nameEn) || "—"}</td>
+                        <td className="px-4 py-3 text-xs">{pickName(r.unit?.nameAr, r.unit?.nameEn) || r.unit?.code || "—"}</td>
+                        <td className="px-4 py-3 text-xs">{r.costCenter || "—"}</td>
+                        <td className="px-4 py-3 text-xs">{r.project?.nameAr ?? r.project?.nameEn ?? r.project ?? "—"}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-sm font-semibold">{fmtQty(r.balanceBefore)}</td>
                         <td className={cn("px-4 py-3 text-center tabular-nums text-sm font-bold", r.qtyIn ? "text-green-600" : "text-muted-foreground/30")}>
                           {r.qtyIn ? fmtQty(r.qtyIn) : "—"}
                         </td>
                         <td className={cn("px-4 py-3 text-center tabular-nums text-sm font-bold", r.qtyOut ? "text-red-600" : "text-muted-foreground/30")}>
                           {r.qtyOut ? fmtQty(r.qtyOut) : "—"}
                         </td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm font-bold">{fmtQty(r.running)}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-xs hidden md:table-cell">{fmt(r.costPrice)}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-xs hidden md:table-cell">{fmt(r.totalCost)}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-sm font-bold">{fmtQty(r.balanceAfter)}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-xs">{fmt(r.costPrice)}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-xs">{fmt(r.totalCost)}</td>
+                        <td className="px-4 py-3 text-xs">{r.batchNumber || "—"}</td>
+                        <td className="px-4 py-3 text-xs tabular-nums">{r.expiryDate || "—"}</td>
+                        <td className="px-4 py-3 text-xs tabular-nums">{r.createdAt ? new Date(r.createdAt).toLocaleString(isRtl ? "ar-SA" : "en-US") : "—"}</td>
+                        <td className="px-4 py-3 text-xs max-w-72 whitespace-normal">{r.movementNotes || "—"}</td>
                       </tr>
                     ))}
               </tbody>
               {!isLoading && augmented.length > 0 && (
                 <tfoot className="bg-muted/30 border-t">
                   <tr>
-                    <td colSpan={3} className="px-4 py-3 text-xs font-semibold text-muted-foreground">{t("inventoryReports.itemCard.grandTotal")}</td>
+                    <td colSpan={9} className="px-4 py-3 text-xs font-semibold text-muted-foreground">{t("inventoryReports.itemCard.grandTotal")}</td>
+                    <td className="px-4 py-3 text-center font-bold tabular-nums">{fmtQty(balanceSummary.opening)}</td>
                     <td className="px-4 py-3 text-center font-bold tabular-nums text-green-700">{fmtQty(totals.in)}</td>
                     <td className="px-4 py-3 text-center font-bold tabular-nums text-red-700">{fmtQty(totals.out)}</td>
-                    <td className="px-4 py-3 text-center font-bold tabular-nums">{fmtQty(augmented[augmented.length - 1].running)}</td>
-                    <td colSpan={2}></td>
+                    <td className="px-4 py-3 text-center font-bold tabular-nums">{fmtQty(balanceSummary.final)}</td>
+                    <td colSpan={6}></td>
                   </tr>
                 </tfoot>
               )}

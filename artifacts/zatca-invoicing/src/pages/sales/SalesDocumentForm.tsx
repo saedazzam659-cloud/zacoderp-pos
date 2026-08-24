@@ -3114,6 +3114,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </TabsTrigger>
                   )}
                   {isInvoice && (
+                    <TabsTrigger value="creditNote" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <FileText className="h-3.5 w-3.5" />إشعار دائن
+                    </TabsTrigger>
+                  )}
+                  {isInvoice && (
                     <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                       <Wallet className="h-3.5 w-3.5" />المدفوعات
                     </TabsTrigger>
@@ -3482,6 +3487,24 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <EmbeddedAccountNotesTab
                         partyType="customer"
                         noteType="debit"
+                        partyId={customerId ? Number(customerId) : null}
+                        partyName={cust ? (cust.nameAr ?? cust.nameEn ?? null) : null}
+                        partyVatNumber={cust?.vatNumber ?? null}
+                        partyAccountId={cust?.accountId ?? null}
+                        invoiceDocNumber={(existing as any)?.docNumber ?? docNumber ?? null}
+                        invoiceDate={docDate}
+                        disabled={viewMode}
+                      />
+                    );
+                  })()}
+                </TabsContent>
+                <TabsContent value="creditNote" className="mt-0">
+                  {(() => {
+                    const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
+                    return (
+                      <EmbeddedAccountNotesTab
+                        partyType="customer"
+                        noteType="credit"
                         partyId={customerId ? Number(customerId) : null}
                         partyName={cust ? (cust.nameAr ?? cust.nameEn ?? null) : null}
                         partyVatNumber={cust?.vatNumber ?? null}

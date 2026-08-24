@@ -14,6 +14,8 @@ import {
   accountsTable, auditLogTable,
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
+  purchaseInvoicesTable, purchaseReturnsTable,
+  goodsReceiptsTable, goodsDeliveriesTable,
   itemDocumentsTable,
   itemSuppliersTable,
   itemBundleComponentsTable,
@@ -1958,12 +1960,13 @@ router.delete("/stock-counts/:id", async (req, res) => {
 router.get("/stock-ledger", async (req, res) => {
   const cid = getCompanyId(req);
   if (!cid) { res.json([]); return; }
-  const { itemId, warehouseId, from, to, customerId } = req.query as Record<string, string>;
+  const { itemId, warehouseId, from, to, customerId, txType } = req.query as Record<string, string>;
   const conditions = [eq(stockLedgerTable.companyId, cid)];
   if (itemId)      conditions.push(eq(stockLedgerTable.itemId,      Number(itemId)));
   if (warehouseId) conditions.push(eq(stockLedgerTable.warehouseId, Number(warehouseId)));
   if (from)        conditions.push(gte(stockLedgerTable.txDate, from));
   if (to)          conditions.push(lte(stockLedgerTable.txDate, to));
+  if (txType)      conditions.push(eq(stockLedgerTable.txType, txType as any));
 
   // Customer filter: restrict ledger to movements that originated from a sales
   // invoice or sales return belonging to that customer. Non-sale rows
@@ -1986,14 +1989,287 @@ router.get("/stock-ledger", async (req, res) => {
     conditions.push(parts.length === 1 ? parts[0] : or(...parts)!);
   }
 
-  const rows = await db.select({ led: stockLedgerTable, item: itemsTable, wh: warehousesTable })
+  const rows = await db.select({
+    led: stockLedgerTable,
+    item: itemsTable,
+    wh: warehousesTable,
+    unit: unitsTable,
+  })
     .from(stockLedgerTable)
-    .leftJoin(itemsTable,      eq(stockLedgerTable.itemId,      itemsTable.id))
-    .leftJoin(warehousesTable, eq(stockLedgerTable.warehouseId, warehousesTable.id))
+    .leftJoin(itemsTable, and(
+      eq(stockLedgerTable.itemId, itemsTable.id),
+      eq(itemsTable.companyId, cid),
+    ))
+    .leftJoin(warehousesTable, and(
+      eq(stockLedgerTable.warehouseId, warehousesTable.id),
+      eq(warehousesTable.companyId, cid),
+    ))
+    .leftJoin(unitsTable, and(
+      eq(itemsTable.unitId, unitsTable.id),
+      eq(unitsTable.companyId, cid),
+    ))
     .where(and(...conditions))
     .orderBy(desc(stockLedgerTable.txDate), desc(stockLedgerTable.id))
     .limit(500);
-  res.json(rows.map(r => ({ ...r.led, item: r.item, warehouse: r.wh })));
+
+  // Resolve every source document in batched, tenant-scoped queries. The stock
+  // ledger remains the source of truth for quantities/costs; these lookups add
+  // report-only context and never mutate inventory or source documents.
+  const idsFor = (refType: string) => [...new Set(
+    rows
+      .filter(r => r.led.refType === refType && r.led.refId != null)
+      .map(r => Number(r.led.refId)),
+  )];
+  const salesInvoiceIds = idsFor("sales_invoice");
+  const purchaseInvoiceIds = idsFor("purchase_invoice");
+  const salesReturnIds = idsFor("sales_return");
+  const purchaseReturnIds = idsFor("purchase_return");
+  const transferIds = idsFor("transfer");
+  const adjustmentIds = idsFor("adjustment");
+  const countIds = idsFor("count");
+  const receiptIds = idsFor("goods_receipt");
+  const deliveryIds = idsFor("goods_delivery");
+
+  const [
+    salesDocs, purchaseDocs, salesReturnDocs, purchaseReturnDocs,
+    transferDocs, adjustmentDocs, countDocs, receiptDocs, deliveryDocs,
+  ] = await Promise.all([
+    salesInvoiceIds.length
+      ? db.select({
+          id: salesInvoicesTable.id,
+          docNumber: salesInvoicesTable.docNumber,
+          costCenter: salesInvoicesTable.costCenter,
+          notes: salesInvoicesTable.notes,
+        })
+          .from(salesInvoicesTable)
+          .where(and(
+            eq(salesInvoicesTable.companyId, cid),
+            inArray(salesInvoicesTable.id, salesInvoiceIds),
+          ))
+      : Promise.resolve([]),
+    purchaseInvoiceIds.length
+      ? db.select({
+          id: purchaseInvoicesTable.id,
+          docNumber: purchaseInvoicesTable.docNumber,
+          costCenter: purchaseInvoicesTable.costCenter,
+          notes: purchaseInvoicesTable.notes,
+        })
+          .from(purchaseInvoicesTable)
+          .where(and(
+            eq(purchaseInvoicesTable.companyId, cid),
+            inArray(purchaseInvoicesTable.id, purchaseInvoiceIds),
+          ))
+      : Promise.resolve([]),
+    salesReturnIds.length
+      ? db.select({
+          id: salesReturnsTable.id,
+          docNumber: salesReturnsTable.docNumber,
+          notes: salesReturnsTable.notes,
+        })
+          .from(salesReturnsTable)
+          .where(and(
+            eq(salesReturnsTable.companyId, cid),
+            inArray(salesReturnsTable.id, salesReturnIds),
+          ))
+      : Promise.resolve([]),
+    purchaseReturnIds.length
+      ? db.select({
+          id: purchaseReturnsTable.id,
+          docNumber: purchaseReturnsTable.docNumber,
+          notes: purchaseReturnsTable.notes,
+        })
+          .from(purchaseReturnsTable)
+          .where(and(
+            eq(purchaseReturnsTable.companyId, cid),
+            inArray(purchaseReturnsTable.id, purchaseReturnIds),
+          ))
+      : Promise.resolve([]),
+    transferIds.length
+      ? db.select({
+          id: stockTransfersTable.id,
+          docNumber: stockTransfersTable.transferNumber,
+          fromWarehouseId: stockTransfersTable.fromWarehouseId,
+          toWarehouseId: stockTransfersTable.toWarehouseId,
+          notes: stockTransfersTable.notes,
+        })
+          .from(stockTransfersTable)
+          .where(and(
+            eq(stockTransfersTable.companyId, cid),
+            inArray(stockTransfersTable.id, transferIds),
+          ))
+      : Promise.resolve([]),
+    adjustmentIds.length
+      ? db.select({
+          id: stockAdjustmentsTable.id,
+          docNumber: stockAdjustmentsTable.adjustmentNumber,
+          notes: stockAdjustmentsTable.notes,
+          reason: stockAdjustmentsTable.reason,
+        })
+          .from(stockAdjustmentsTable)
+          .where(and(
+            eq(stockAdjustmentsTable.companyId, cid),
+            inArray(stockAdjustmentsTable.id, adjustmentIds),
+          ))
+      : Promise.resolve([]),
+    countIds.length
+      ? db.select({
+          id: stockCountsTable.id,
+          docNumber: stockCountsTable.countNumber,
+          notes: stockCountsTable.notes,
+        })
+          .from(stockCountsTable)
+          .where(and(
+            eq(stockCountsTable.companyId, cid),
+            inArray(stockCountsTable.id, countIds),
+          ))
+      : Promise.resolve([]),
+    receiptIds.length
+      ? db.select({
+          id: goodsReceiptsTable.id,
+          docNumber: goodsReceiptsTable.docNumber,
+          notes: goodsReceiptsTable.notes,
+        })
+          .from(goodsReceiptsTable)
+          .where(and(
+            eq(goodsReceiptsTable.companyId, cid),
+            inArray(goodsReceiptsTable.id, receiptIds),
+          ))
+      : Promise.resolve([]),
+    deliveryIds.length
+      ? db.select({
+          id: goodsDeliveriesTable.id,
+          docNumber: goodsDeliveriesTable.docNumber,
+          notes: goodsDeliveriesTable.notes,
+        })
+          .from(goodsDeliveriesTable)
+          .where(and(
+            eq(goodsDeliveriesTable.companyId, cid),
+            inArray(goodsDeliveriesTable.id, deliveryIds),
+          ))
+      : Promise.resolve([]),
+  ]);
+
+  type SourceMeta = {
+    documentNumber: string | null;
+    documentPath: string | null;
+    costCenter?: string | null;
+    notes?: string | null;
+    fromWarehouseId?: number | null;
+    toWarehouseId?: number | null;
+  };
+  const sourceRefs = new Map<string, SourceMeta>();
+  for (const doc of salesDocs) {
+    sourceRefs.set(`sales_invoice:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: `/sales/invoices/${doc.id}`,
+      costCenter: doc.costCenter,
+      notes: doc.notes,
+    });
+  }
+  for (const doc of purchaseDocs) {
+    sourceRefs.set(`purchase_invoice:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: `/purchasing/invoices/${doc.id}`,
+      costCenter: doc.costCenter,
+      notes: doc.notes,
+    });
+  }
+  for (const doc of salesReturnDocs) {
+    sourceRefs.set(`sales_return:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: "/sales/returns",
+      notes: doc.notes,
+    });
+  }
+  for (const doc of purchaseReturnDocs) {
+    sourceRefs.set(`purchase_return:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: "/purchasing/returns",
+      notes: doc.notes,
+    });
+  }
+  for (const doc of transferDocs) {
+    sourceRefs.set(`transfer:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: "/inventory/transfers",
+      fromWarehouseId: doc.fromWarehouseId,
+      toWarehouseId: doc.toWarehouseId,
+      notes: doc.notes,
+    });
+  }
+  for (const doc of adjustmentDocs) {
+    sourceRefs.set(`adjustment:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: "/inventory/adjustments",
+      notes: doc.notes ?? doc.reason,
+    });
+  }
+  for (const doc of countDocs) {
+    sourceRefs.set(`count:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: "/inventory/counts",
+      notes: doc.notes,
+    });
+  }
+  for (const doc of receiptDocs) {
+    sourceRefs.set(`goods_receipt:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: "/goods-receipts",
+      notes: doc.notes,
+    });
+  }
+  for (const doc of deliveryDocs) {
+    sourceRefs.set(`goods_delivery:${doc.id}`, {
+      documentNumber: doc.docNumber,
+      documentPath: "/goods-deliveries",
+      notes: doc.notes,
+    });
+  }
+
+  const transferWarehouseIds = [...new Set(
+    transferDocs.flatMap(d => [d.fromWarehouseId, d.toWarehouseId]),
+  )];
+  const transferWarehouses = transferWarehouseIds.length
+    ? await db.select({
+        id: warehousesTable.id,
+        nameAr: warehousesTable.nameAr,
+        nameEn: warehousesTable.nameEn,
+      })
+        .from(warehousesTable)
+        .where(and(
+          eq(warehousesTable.companyId, cid),
+          inArray(warehousesTable.id, transferWarehouseIds),
+        ))
+    : [];
+  const warehouseNames = new Map(transferWarehouses.map(w => [w.id, w]));
+
+  res.json(rows.map(r => {
+    const sourceDocument = r.led.refId && r.led.refType
+      ? sourceRefs.get(`${r.led.refType}:${r.led.refId}`)
+      : undefined;
+    const qty = Number(r.led.qty) || 0;
+    const balanceAfter = Number(r.led.balanceQty) || 0;
+    return {
+      ...r.led,
+      item: r.item,
+      warehouse: r.wh,
+      unit: r.unit,
+      documentNumber: sourceDocument?.documentNumber ?? null,
+      documentPath: sourceDocument?.documentPath ?? null,
+      documentType: r.led.refType ?? r.led.txType,
+      sourceWarehouse: sourceDocument?.fromWarehouseId
+        ? warehouseNames.get(sourceDocument.fromWarehouseId) ?? null
+        : null,
+      targetWarehouse: sourceDocument?.toWarehouseId
+        ? warehouseNames.get(sourceDocument.toWarehouseId) ?? null
+        : null,
+      costCenter: sourceDocument?.costCenter ?? null,
+      project: null,
+      movementNotes: r.led.notes ?? sourceDocument?.notes ?? null,
+      balanceBefore: balanceAfter - qty,
+      balanceAfter,
+    };
+  }));
 });
 
 // ═══════════════════════════════════════════════════════════════════

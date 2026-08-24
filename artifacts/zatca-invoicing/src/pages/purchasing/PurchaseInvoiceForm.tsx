@@ -147,7 +147,7 @@ export default function PurchaseInvoiceForm() {
   // Company-wide UX flag (الإعدادات العامة): hide the quick add-item bar and
   // let the items grid grow ~2 rows taller in its place.
   const hideQuickAdd = !!_co?.hideQuickAddBar;
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "debitNote" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred">("basic");
   // مصروف يوزع على فترات — سطر الحوار المفتوح لتحرير خطة التوزيع
   const [deferredDialogLineId, setDeferredDialogLineId] = useState<string | null>(null);
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
@@ -1278,6 +1278,9 @@ export default function PurchaseInvoiceForm() {
                   </TabsTrigger>
                   {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled
                       until it is saved (they need a persisted invoice id). */}
+                  <TabsTrigger value="debitNote" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <FileText className="h-3.5 w-3.5" />إشعار مدين
+                  </TabsTrigger>
                   <TabsTrigger value="creditNote" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <FileText className="h-3.5 w-3.5" />إشعار دائن
                   </TabsTrigger>
@@ -2056,6 +2059,26 @@ export default function PurchaseInvoiceForm() {
                     invoiceTotal={totalAmount + totalExpLoaded}
                   />
                 </CardContent>
+              </TabsContent>
+            )}
+            {editId && (
+              <TabsContent value="debitNote" className="mt-0">
+                {(() => {
+                  const sup = (suppliers as any[]).find((s: any) => String(s.id) === String(supplierId));
+                  return (
+                    <EmbeddedAccountNotesTab
+                      partyType="supplier"
+                      noteType="debit"
+                      partyId={supplierId ? Number(supplierId) : null}
+                      partyName={sup ? (sup.nameAr ?? sup.nameEn ?? null) : null}
+                      partyVatNumber={sup?.vatNumber ?? null}
+                      partyAccountId={sup?.accountId ?? null}
+                      invoiceDocNumber={(existing as any)?.docNumber ?? docNumber ?? null}
+                      invoiceDate={invoiceDate}
+                      disabled={viewMode}
+                    />
+                  );
+                })()}
               </TabsContent>
             )}
             {editId && (

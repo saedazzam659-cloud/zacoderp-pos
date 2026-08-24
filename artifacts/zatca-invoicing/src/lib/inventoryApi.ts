@@ -2,7 +2,11 @@ const API = import.meta.env.VITE_API_URL ?? "";
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("zatca_token");
-  return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  const actingCompanyId = localStorage.getItem("zatca_acting_company_id");
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (actingCompanyId) headers["x-acting-company-id"] = actingCompanyId;
+  return headers;
 }
 
 async function get<T>(path: string): Promise<T> {
