@@ -18,7 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { assertWritableForDate } from "./periodGuard.js";
 import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
-import { resolveHrPostingBranch } from "./hrPostingBranch.js";
+import { isHrPostingBranchBackfill, resolveHrPostingBranch } from "./hrPostingBranch.js";
 import { allocateComponentBySnapshots } from "./payrollAllocation.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -485,14 +485,30 @@ export async function buildCustodyDisbursementJournal(
   const custodyAccountId = await resolveCustodyAccount(cid, cust.custodyAccountId, dx);
   const cash = await resolveCashAccount(cid, source, dx);
   const postingBranchId = resolveHrPostingBranch(cust.branchId, cash.branchId, emp?.branchId);
+  const branchBackfill = isHrPostingBranchBackfill(cust.branchId, postingBranchId);
   const desc = `صرف عهدة للموظف ${emp?.nameAr ?? ""}`.trim();
 
   const w = await assertWritableForDate(cid, cust.custodyDate);
   if (!w.ok) throw new Error(w.reason);
+  // Legacy custody rows could be branchless even when their selected payment
+  // source belongs to a branch. Persist the resolved branch so settlement,
+  // return and future reposts all use the same JE counter bucket.
+  if (branchBackfill) {
+    await dx.update(employeeCustodiesTable)
+      .set({ branchId: postingBranchId, updatedAt: new Date() })
+      .where(and(
+        eq(employeeCustodiesTable.id, cust.id),
+        eq(employeeCustodiesTable.companyId, cid),
+      ));
+  }
   // Reuses a stashed number on unpost→re-disburse (keyed employee_custody_disb:custodyId).
+  // When this call is also fixing a missing source branch, discard the old
+  // reservation: it may have been issued from branch 0 (e.g. .../0013) rather
+  // than the real branch's running counter (e.g. .../2387).
   const jeDocNumber = (await resolveJeNumber({
     companyId: cid, sourceType: "employee_custody_disb", sourceId: cust.id, subType: "hr_custody",
     branchId: postingBranchId, docDate: cust.custodyDate, userId: null, dx: dx as any,
+    reuseReserved: !branchBackfill,
   })) ?? `CUST-${cust.id}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,

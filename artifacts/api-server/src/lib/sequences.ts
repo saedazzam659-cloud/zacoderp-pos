@@ -828,6 +828,13 @@ export async function resolveJeNumber(opts: {
   sourceType?: string;
   sourceId?: number;
   /**
+   * Defaults to true. Set false only when a legacy source document is being
+   * normalized to a different numbering bucket (for example branch 0 → its
+   * real branch). The stale reservation is deleted in the caller transaction,
+   * then a fresh number is drawn from the corrected bucket.
+   */
+  reuseReserved?: boolean;
+  /**
    * Optional JE sub-series transaction type (e.g. "fa_depreciation"). When the
    * company has an active sequence bound to it, a fresh draw comes from that
    * series; otherwise falls back to the unified "journal_entry" series.
@@ -846,8 +853,17 @@ export async function resolveJeNumber(opts: {
   dx?: typeof db;
 }): Promise<string | null> {
   if (opts.sourceType && opts.sourceId) {
-    const reserved = await takeReservedJeNumber(opts.companyId, opts.sourceType, opts.sourceId, opts.dx ?? db);
-    if (reserved) return reserved;
+    if (opts.reuseReserved === false) {
+      await (opts.dx ?? db).delete(jeNumberReservationsTable)
+        .where(and(
+          eq(jeNumberReservationsTable.companyId, opts.companyId),
+          eq(jeNumberReservationsTable.sourceType, opts.sourceType),
+          eq(jeNumberReservationsTable.sourceId, opts.sourceId),
+        ));
+    } else {
+      const reserved = await takeReservedJeNumber(opts.companyId, opts.sourceType, opts.sourceId, opts.dx ?? db);
+      if (reserved) return reserved;
+    }
   }
   return await nextJeSubSequence(opts.companyId, opts.subType ?? null, {
     userId:   opts.userId ?? null,

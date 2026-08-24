@@ -56,6 +56,23 @@ counter back or mint a duplicate.
   tables are NOT auto-created); reaches prod only via Publish.
 - Additive + fail-safe: any mismatch degrades to the prior "draw a new number".
 
+## Branch normalization exception
+
+If a legacy source row had no branch and posting now resolves a real branch from
+its cash box, bank, or employee, persist that branch and intentionally discard
+the pre-normalization reservation before drawing a fresh JE number. Reusing the
+old reservation can carry a branch-0 number into the corrected branch forever.
+
+**Why:** Employee custody exposed this in production: the source and employee
+were branchless, while the selected main cash box belonged to the main branch.
+The first JE consumed the branch-0 counter; a later repost correctly acquired
+the main branch but kept reusing the old branch-0 document number.
+
+**How to apply:** Treat this as a one-time source-branch backfill. Once the
+resolved branch is stored on the source row, normal unpost→repost reuse resumes.
+Do not broadly compare old numbers with the current counter; legitimate reposts
+may reuse much older numbers.
+
 ## Payroll payment (صرف الرواتب)
 - payment JE keyed `payroll_pay:runId` (sub `hr_payroll`); run's own JE keyed `payroll_run:runId` — two independent reservation keys per run.
 - **Race lesson:** payroll `/pay` and `/unpost` must BOTH `SELECT … FOR UPDATE` the run inside ONE tx — a pre-tx status check lets a concurrent pay attach a payment JE to a run being reverted to draft.
