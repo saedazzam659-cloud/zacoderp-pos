@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { fmt2, fmtInt0 } from "@/lib/format";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // ──────────────────────────────────────────────────────────────────────
 // ZATCA standard column schema (matches the official template export).
@@ -279,7 +280,7 @@ function autofix(r: ZatcaRow): ZatcaRow {
 }
 
 // ── Excel export (ZATCA-format compliant template / validated data) ──
-export function exportZatcaExcel(rows: ZatcaRow[], filename: string) {
+export async function exportZatcaExcel(rows: ZatcaRow[], filename: string) {
   const headers = FIELDS.map(f => `${f.ar} | ${f.en}`);
   const data = [
     headers,
@@ -356,6 +357,7 @@ interface Props {
 }
 
 export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, loadingClients }: Props) {
+    const gate = useDemoActionGate();
   const { toast } = useToast();
   const [rows, setRows] = useState<ZatcaRow[]>([]);
   const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
@@ -473,6 +475,11 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
     setRows(prev => prev.map((r, idx) => idx === i ? autofix(r) : r));
   };
 
+  const handleDownloadZatcaTemplate = async () => {
+    if (!(await gate("export"))) return;
+    await downloadZatcaTemplate();
+  };
+
   const handleCellEdit = (i: number, key: keyof ZatcaRow, value: string) => {
     setRows(prev => prev.map((r, idx) => {
       if (idx !== i) return r;
@@ -536,8 +543,9 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
     }
   };
 
-  const handleExportValidated = () => {
-    exportZatcaExcel(rows, `zatca-validated-${file.name.replace(/\.[^.]+$/, "")}.xlsx`);
+  const handleExportValidated = async () => {
+    if (!(await gate("export"))) return;
+    await exportZatcaExcel(rows, `zatca-validated-${file.name.replace(/\.[^.]+$/, "")}.xlsx`);
     toast({ title: "تم التصدير", description: "ملف Excel بصيغة زاتكا جاهز للتحميل" });
   };
 
@@ -591,7 +599,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
                 <div>
                   <p className="font-bold text-rose-900">تعذّر تحليل الملف</p>
                   <p className="text-sm text-rose-800 mt-1">{parseErr}</p>
-                  <Button onClick={downloadZatcaTemplate} size="sm" className="mt-3 bg-rose-600 hover:bg-rose-700 text-white gap-1.5">
+                  <Button onClick={handleDownloadZatcaTemplate} size="sm" className="mt-3 bg-rose-600 hover:bg-rose-700 text-white gap-1.5">
                     <Download className="h-3.5 w-3.5" />
                     تحميل القالب الرسمي
                   </Button>
@@ -658,7 +666,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
                 {aiMapping && (
                   <span className="text-xs text-emerald-700 font-medium">✓ تم تطبيق الاقتراح</span>
                 )}
-                <Button onClick={downloadZatcaTemplate} variant="outline" size="sm" className="gap-1.5">
+                <Button onClick={handleDownloadZatcaTemplate} variant="outline" size="sm" className="gap-1.5">
                   <Download className="h-3.5 w-3.5" />
                   قالب زاتكا
                 </Button>

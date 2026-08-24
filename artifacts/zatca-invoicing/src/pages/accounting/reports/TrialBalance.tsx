@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // ─── Column visibility model ───────────────────────────────────────────
 type ColKey = "type" | "openDr" | "openCr" | "periodDr" | "periodCr" | "closeDr" | "closeCr";
@@ -65,6 +66,7 @@ const ENTRY_TYPE_LABELS: Record<string, { ar: string; color: string }> = {
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function TrialBalance() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt: fmtRaw, isRtl } = useFormatters();
@@ -394,7 +396,7 @@ export default function TrialBalance() {
                 totalsRow={exportTotalsRow}
                 filename={`${t("trialBalance.filename_prefix")}-${fromDate}-${toDate}`}
                 title={t("trialBalance.title_with", { from: fromDate, to: toDate })} />
-              <Button variant="outline" size="sm" className="gap-2" onClick={() => window.print()}>
+              <Button variant="outline" size="sm" className="gap-2" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }}>
                 <Printer className="h-4 w-4" />{t("accountingReports.print")}
               </Button>
             </>

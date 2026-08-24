@@ -24,6 +24,7 @@ import {
   type LetterheadCompany,
 } from "@/lib/printLetterhead";
 import { fmt2 } from "@/lib/format";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Shared bulk-print toolkit used by every list screen that supports
@@ -344,6 +345,7 @@ export interface BulkPrintMenuProps<T> {
 }
 
 export function BulkPrintMenu<T>(props: BulkPrintMenuProps<T>) {
+    const gate = useDemoActionGate();
   const {
     selectedIds, filteredDocs, getId = (d: any) => d.id,
     adapter, company,
@@ -371,6 +373,7 @@ export function BulkPrintMenu<T>(props: BulkPrintMenuProps<T>) {
   ];
 
   async function run(templateId: BulkPrintTemplateId) {
+      if (!(await gate('print'))) return;
     const idSet = new Set(selectedIds.map(Number));
     const ordered = (filteredDocs as any[]).filter((r) => idSet.has(Number(getId(r))));
     if (ordered.length === 0) return;

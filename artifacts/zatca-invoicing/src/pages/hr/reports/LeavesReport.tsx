@@ -11,8 +11,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CalendarDays, Search, Download } from "lucide-react";
 import AIInsightsPanel from "./_AIInsightsPanel";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
-function exportCsv(filename: string, headers: string[], rows: any[][]) {
+async function exportCsv(filename: string, headers: string[], rows: any[][]) {
   const esc = (v: any) => {
     const s = String(v ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -34,6 +35,7 @@ const TYPE_AR: Record<string, string> = {
 };
 
 export default function LeavesReport() {
+    const gate = useDemoActionGate();
   const { i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const [from, setFrom] = useState("");
@@ -48,8 +50,9 @@ export default function LeavesReport() {
   const summary = data?.summary;
   const rows = data?.rows ?? [];
 
-  function handleExport() {
+  async function handleExport() {
     if (!rows.length) return;
+    if (!(await gate("export"))) return;
     exportCsv(
       `leaves_report_${new Date().toISOString().slice(0, 10)}.csv`,
       ["كود الموظف", "الاسم", "القسم", "نوع الإجازة", "بداية", "نهاية", "أيام", "مدفوعة", "الحالة"],

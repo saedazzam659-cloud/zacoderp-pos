@@ -19,6 +19,7 @@ import { fmt2 } from "@/lib/format";
 import { printLoanVoucher, downloadLoanVoucherPdf, type LoanVoucherDoc } from "@/lib/loanVoucherPrint";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 import { HrFormCheck } from "@/lib/hrFormValidate";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY: any = { employeeId: "", loanDate: today(), loanType: "loan", amount: 0, installments: 1, installmentAmt: 0, installmentStartDate: "", loanAccountId: "", reason: "", notes: "" };
@@ -43,6 +44,7 @@ function fmtDmy(iso?: string | null): string {
 }
 
 export default function EmployeeLoans() {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -250,7 +252,8 @@ export default function EmployeeLoans() {
     }
   }
 
-  function exportExcel() {
+  async function exportExcel() {
+      if (!(await gate('export'))) return;
     const num = "#,##0.00";
     const cols: ExportColumn[] = [
       { key: "employee", header: tr("colEmployee") },

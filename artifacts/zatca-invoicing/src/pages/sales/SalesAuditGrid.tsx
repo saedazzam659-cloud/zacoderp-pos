@@ -123,6 +123,7 @@ import {
   type LegendItem,
 } from "@/lib/docRowTone";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // ── Column descriptor ─────────────────────────────────────────────────────
 // Drives header, per-column filter row, and footer alignment. Keys match the
@@ -705,6 +706,7 @@ function buildBulkPrintHtml(invoices: any[], maps: LookupMaps): string {
 }
 
 export default function SalesAuditGrid({ source = "manual", titleOverride }: { source?: "manual" | "pos" | "all"; titleOverride?: string } = {}) {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const { fmt, isRtl } = useFormatters();
@@ -1612,7 +1614,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   }
 
   // ── CSV Export ────────────────────────────────────────────────────────
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
@@ -1736,7 +1739,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     // Server paging intentionally keeps only the current page in memory.
     // With no selected invoices, print exactly what is visible rather than
     // pretending the browser can print unloaded historical pages.
-    if (printAuditPageIfNothingSelected(selected.size, () => window.print())) return;
+    if (printAuditPageIfNothingSelected(selected.size, async () => { if (!(await gate('print'))) return; return window.print(); })) return;
     if (selected.size === 1) {
       // Single selection → use the rich SalesPrintModal with the 12-template
       // picker so the user can pick a design (classic, gold, ocean, …).
@@ -1783,7 +1786,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       iframe.setAttribute("aria-hidden", "true");
       iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
       iframe.srcdoc = html;
-      iframe.onload = () => {
+      iframe.onload = async () => {
+          if (!(await gate('print'))) return;
         try {
           const win = iframe.contentWindow;
           if (!win) {
@@ -1893,7 +1897,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   function exportFilenameBase() {
     return `sales-audit-${new Date().toISOString().slice(0, 10)}`;
   }
-  function exportXlsx() {
+  async function exportXlsx() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
@@ -1907,7 +1912,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     );
     toast({ title: `تم تصدير ${filtered.length} فاتورة من الصفحة الحالية إلى Excel` });
   }
-  function exportPdf() {
+  async function exportPdf() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;

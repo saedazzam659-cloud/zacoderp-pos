@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { openFile, saveFile, printHtml, withExtension, extractPdfTable, flattenJournalEntries, type OpenedFile } from "./fileIo";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const XLSX_ACCEPT = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
@@ -66,6 +67,7 @@ function colLabel(i: number): string {
 }
 
 export default function ExcelEditor() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const ar = i18n.language?.startsWith("ar") ?? true;
   const { toast } = useToast();
@@ -397,7 +399,8 @@ export default function ExcelEditor() {
     }
   };
 
-  const handlePdf = () => {
+  const handlePdf = async () => {
+      if (!(await gate('print'))) return;
     const head = sheet.rows[0] ?? [];
     const body = sheet.rows.slice(1);
     const html = `<h2>${escapeHtml(sheet.name)}</h2><table><thead><tr>${

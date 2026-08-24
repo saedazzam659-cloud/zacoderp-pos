@@ -26,6 +26,7 @@ import {
 import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
 import { getSaveToastTitle } from "@/lib/saveToast";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -33,6 +34,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY = { docNumber: "", settlementDate: today(), supplierId: "", paymentMethod: "bank", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1", notes: "" };
 
 export default function SupplierSettlement() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -224,7 +226,8 @@ export default function SupplierSettlement() {
     .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
   const allFilteredIds = useMemo(() => filtered.map((s: any) => s.id as number), [filtered]);
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: t("purchasingPages.supplierSettlement.noSettlements"), variant: "destructive" });
       return;

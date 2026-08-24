@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { PeriodSelector, periodToQuery, usePeriodState, useStoredBoolean, useStoredSearch } from "./shared/PeriodSelector";
 import { downloadCsv } from "./shared/downloadCsv";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 interface UsageMetric { actual: number; max: number }
 interface UsageRow {
@@ -26,6 +27,7 @@ interface UsageResp {
 const fmtInt = new Intl.NumberFormat("ar-SA-u-nu-latn");
 
 export default function PlanUsageReport() {
+    const gate = useDemoActionGate();
   const { token } = useAuth();
   // Persist filters per report so the admin returns to the same view.
   const period = usePeriodState("this_month", "plan-usage");
@@ -70,7 +72,7 @@ export default function PlanUsageReport() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => downloadCsv(token, `/api/admin/reports/plan-usage?${queryString}&format=csv`, `plan-usage-${period.from}_${period.to}.csv`)}
+          onClick={async () => { if (!(await gate('export'))) return; return downloadCsv(token, `/api/admin/reports/plan-usage?${queryString}&format=csv`, `plan-usage-${period.from}_${period.to}.csv`); }}
           disabled={!data || filtered.length === 0}
         >
           <Download className="h-4 w-4 ml-1" /> تصدير CSV

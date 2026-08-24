@@ -13,10 +13,11 @@ import { Banknote, Search, Download } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import AIInsightsPanel from "./_AIInsightsPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 
-function exportCsv(filename: string, headers: string[], rows: any[][]) {
+async function exportCsv(filename: string, headers: string[], rows: any[][]) {
   const sep = ",";
   const esc = (v: any) => {
     const s = String(v ?? "");
@@ -28,6 +29,7 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function PayrollReport() {
+    const gate = useDemoActionGate();
   const { i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = useFmt();
@@ -48,8 +50,9 @@ export default function PayrollReport() {
   const summary = data?.summary;
   const employees = data?.employees ?? [];
 
-  function handleExport() {
+  async function handleExport() {
     if (!employees.length) return;
+    if (!(await gate("export"))) return;
     exportCsv(
       `payroll_report_${filters.year}_${filters.monthFrom}-${filters.monthTo}.csv`,
       ["الكود", "الاسم", "القسم", "أشهر", "الإجمالي", "أوفر تايم", "مكافآت", "GOSI", "السلف", "إجمالي الاستقطاعات", "الصافي"],
@@ -195,6 +198,7 @@ export default function PayrollReport() {
 }
 
 function PayrollAllocations({ year: initialYear, monthFrom: initialFrom, monthTo: initialTo, years }: { year: number; monthFrom: number; monthTo: number; years: number[] }) {
+  const gate = useDemoActionGate();
   const fmt = useFmt();
   const [year, setYear] = useState(initialYear);
   const [monthFrom, setMonthFrom] = useState(initialFrom);
@@ -210,7 +214,10 @@ function PayrollAllocations({ year: initialYear, monthFrom: initialFrom, monthTo
   const rows = allocationQ.data?.rows ?? [];
   const label = (v: any) => v?.nameAr ?? v?.name ?? v?.code ?? `#${v?.id}`;
   const apply = () => setFilters({ year, monthFrom, monthTo, employeeId: employeeId === "all" ? undefined : Number(employeeId), projectId: projectId === "all" ? undefined : Number(projectId), costCenterId: costCenterId === "all" ? undefined : Number(costCenterId) });
-  const exportAllocations = () => exportCsv(`payroll_allocations_${filters.year}_${filters.monthFrom}-${filters.monthTo}.csv`, ["الموظف", "المشروع", "مركز التكلفة", "الشهر", "أساس التكلفة", "المبلغ"], rows.map((r: any) => [r.employeeName ?? r.empName ?? "", r.projectName ?? "", r.costCenterName ?? "", r.month ?? r.period ?? "", r.costBasis ?? "", Number(r.allocatedAmount ?? r.amount ?? r.allocationAmount ?? 0).toFixed(2)]));
+  const exportAllocations = async () => {
+    if (!(await gate("export"))) return;
+    exportCsv(`payroll_allocations_${filters.year}_${filters.monthFrom}-${filters.monthTo}.csv`, ["الموظف", "المشروع", "مركز التكلفة", "الشهر", "أساس التكلفة", "المبلغ"], rows.map((r: any) => [r.employeeName ?? r.empName ?? "", r.projectName ?? "", r.costCenterName ?? "", r.month ?? r.period ?? "", r.costBasis ?? "", Number(r.allocatedAmount ?? r.amount ?? r.allocationAmount ?? 0).toFixed(2)]));
+  };
   return <div className="space-y-4">
     <div className="flex items-center justify-between gap-3 flex-wrap"><div><h2 className="font-semibold">تخصيص الرواتب</h2><p className="text-xs text-muted-foreground">توزيع تكاليف الرواتب حسب المشروع ومركز التكلفة والفترة.</p></div><Button variant="outline" size="sm" onClick={exportAllocations} disabled={!rows.length}><Download className="h-4 w-4 ms-1" />تصدير CSV</Button></div>
     <div className="rounded-xl border bg-white p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">

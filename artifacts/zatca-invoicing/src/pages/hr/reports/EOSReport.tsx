@@ -12,8 +12,9 @@ import { LogOut, Search, Download } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import AIInsightsPanel from "./_AIInsightsPanel";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
-function exportCsv(filename: string, headers: string[], rows: any[][]) {
+async function exportCsv(filename: string, headers: string[], rows: any[][]) {
   const esc = (v: any) => {
     const s = String(v ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -24,6 +25,7 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function EOSReport() {
+    const gate = useDemoActionGate();
   const { i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = useFmt();
@@ -39,8 +41,9 @@ export default function EOSReport() {
   const summary = data?.summary;
   const rows = data?.rows ?? [];
 
-  function handleExport() {
+  async function handleExport() {
     if (!rows.length) return;
+    if (!(await gate("export"))) return;
     exportCsv(
       `eos_report_${new Date().toISOString().slice(0, 10)}.csv`,
       ["كود الموظف", "الاسم", "القسم", "تاريخ التعيين", "تاريخ الإنهاء", "سنوات الخدمة", "الراتب الشهري", "تقدير المكافأة"],

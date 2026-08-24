@@ -34,10 +34,12 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.VITE_API_URL || "";
 
 export default function Customers() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const [search, setSearch]       = useState("");
   const [activeTab, setActiveTab] = useState("all");
@@ -187,7 +189,8 @@ export default function Customers() {
     .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
   const allFilteredIds = useMemo(() => filtered.map((c: any) => c.id as number), [filtered]);
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: t("pages.customers.noResultsMatch"), variant: "destructive" });
       return;

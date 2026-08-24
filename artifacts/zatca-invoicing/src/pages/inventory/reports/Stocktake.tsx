@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 type Row = {
   id: string;
@@ -26,6 +27,7 @@ type Row = {
 };
 
 export default function Stocktake() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const { fmt, fmtQty, fmtCost, fmtVal } = useFmt();
@@ -156,7 +158,7 @@ export default function Stocktake() {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => window.print()} className="gap-1.5">
+            <Button variant="secondary" size="sm" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }} className="gap-1.5">
               <Printer className="h-4 w-4" /> {t("inventoryReports.stocktake.print")}
             </Button>
             <Button variant="secondary" size="sm" onClick={resetCounts} className="gap-1.5">

@@ -24,6 +24,7 @@ import {
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -123,6 +124,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default function ContractingProjectDetail() {
+    const gate = useDemoActionGate();
   const { t } = useTranslation();
   const [, params] = useRoute("/contracting/projects/:id");
   const projectId = Number(params?.id);
@@ -988,6 +990,7 @@ function EventsTab({ projectId }: { projectId: number }) {
 
 // ─────────────────── AI TAB ───────────────────
 function AITab({ projectId }: { projectId: number }) {
+  const gate = useDemoActionGate();
   const { t } = useTranslation();
   const { token } = useAuth() as any;
   const { toast } = useToast();
@@ -1012,6 +1015,7 @@ function AITab({ projectId }: { projectId: number }) {
   }
 
   async function downloadCsv() {
+      if (!(await gate('export'))) return;
     setDownloading(true);
     try {
       const r = await fetch(`${API}/api/contracting-ai/training-csv`, {

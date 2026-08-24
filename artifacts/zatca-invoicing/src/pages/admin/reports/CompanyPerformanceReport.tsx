@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useAuth } from "@/contexts/AuthContext";
 import { PeriodSelector, periodToQuery, usePeriodState, useStoredSearch } from "./shared/PeriodSelector";
 import { downloadCsv } from "./shared/downloadCsv";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 interface PerfRow {
   companyId: number; companyName: string;
@@ -25,6 +26,7 @@ const fmtInt = new Intl.NumberFormat("ar-SA-u-nu-latn");
 type SortKey = "revenue" | "invoiceCount" | "avgInvoice" | "growthPct";
 
 export default function CompanyPerformanceReport() {
+    const gate = useDemoActionGate();
   const { token } = useAuth();
   // storageKey persists this report's period+search in localStorage so the
   // admin returns to the same window after navigating away (e.g. month-end close).
@@ -94,7 +96,7 @@ export default function CompanyPerformanceReport() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => downloadCsv(token, `/api/admin/reports/company-performance?${queryString}&format=csv`, `company-performance-${period.from}_${period.to}.csv`)}
+            onClick={async () => { if (!(await gate('export'))) return; return downloadCsv(token, `/api/admin/reports/company-performance?${queryString}&format=csv`, `company-performance-${period.from}_${period.to}.csv`); }}
             disabled={!data || filtered.length === 0}
           >
             <Download className="h-4 w-4 ml-1" /> تصدير CSV

@@ -21,6 +21,7 @@ import {
   fetchEntities, exportData, analyzeImport, processImport, commitImport, downloadBlob,
   type EntityCatalogItem, type AnalyzeResult, type ProcessResult, type CommitResult, type RowIssue,
 } from "@/lib/dataIoApi";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 type Step = "upload" | "analyze" | "review" | "result";
 
@@ -407,6 +408,7 @@ function adaptNestedBundle(json: any, entityKey: string): any[] | null {
 }
 
 export default function DataImportExport() {
+    const gate = useDemoActionGate();
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -568,6 +570,7 @@ function ExportPanel({ entities, loading, cid, token, toast }: {
 function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
   entities: EntityCatalogItem[]; loading: boolean; cid?: number; token: string | null; toast: any; isAr: boolean;
 }) {
+  const gate = useDemoActionGate();
   const { t } = useTranslation();
   const [step, setStep] = useState<Step>("upload");
   const [entityKey, setEntityKey] = useState<string>("");
@@ -719,7 +722,8 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
     } finally { setBusy(false); }
   }
 
-  function downloadReport() {
+  async function downloadReport() {
+      if (!(await gate('export'))) return;
     if (!commitResult || !processed) return;
     const wb = XLSX.utils.book_new();
     const sum = commitResult.summary;
@@ -966,6 +970,7 @@ function stmtDateValue(v: any): number {
 const STMT_ALL = "__all__";
 
 function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean }) {
+  const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const { user, token } = useAuth() as any;
   const dateLocale = i18n.language?.startsWith("ar") ? "ar-EG-u-ca-gregory-nu-latn" : "en-GB";
@@ -1087,7 +1092,8 @@ function JournalStatementPreview({ rows, isAr }: { rows: any[]; isAr: boolean })
   const fmtDate = (v: any) => { const ms = stmtDateValue(v); return ms ? new Date(ms).toLocaleDateString(dateLocale) : String(v ?? ""); };
   const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 
-  function exportStatement() {
+  async function exportStatement() {
+      if (!(await gate('export'))) return;
     const wb = XLSX.utils.book_new();
     const header = multiAcct
       ? [t("dataIO.stmtDate"), t("dataIO.stmtDoc"), t("dataIO.stmtAccount"), t("dataIO.stmtDesc"), t("dataIO.stmtDebit"), t("dataIO.stmtCredit"), t("dataIO.stmtBalance")]

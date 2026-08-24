@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { fmt2 } from "@/lib/format";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const STATUS: Record<string, { label: string; color: string }> = {
   draft:  { label: "مسودة",  color: "bg-amber-50 text-amber-700" },
@@ -15,6 +16,7 @@ const STATUS: Record<string, { label: string; color: string }> = {
 };
 
 export default function SisterReturns() {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -74,16 +76,16 @@ export default function SisterReturns() {
             } : null;
             return (
               <>
-                <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="btn-print">
+                <Button variant="outline" size="sm" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }} data-testid="btn-print">
                   <Printer className="h-4 w-4 ml-1" /> طباعة
                 </Button>
                 <Button variant="outline" size="sm" disabled={data.length === 0}
-                  onClick={() => exportToExcel(data, cols, "sister-returns", "مرتجعات الشركات الشقيقة", totals)}
+                  onClick={async () => { if (!(await gate('export'))) return; return exportToExcel(data, cols, "sister-returns", "مرتجعات الشركات الشقيقة", totals); }}
                   data-testid="btn-export-excel">
                   <FileSpreadsheet className="h-4 w-4 ml-1" /> Excel
                 </Button>
                 <Button variant="outline" size="sm" disabled={data.length === 0}
-                  onClick={() => exportToPDF(data, cols, "sister-returns", "مرتجعات الشركات الشقيقة", undefined, true, totals)}
+                  onClick={async () => { if (!(await gate('export'))) return; return exportToPDF(data, cols, "sister-returns", "مرتجعات الشركات الشقيقة", undefined, true, totals); }}
                   data-testid="btn-export-pdf">
                   <FileDown className="h-4 w-4 ml-1" /> PDF
                 </Button>

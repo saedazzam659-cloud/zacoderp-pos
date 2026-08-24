@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { downloadCsv } from "./shared/downloadCsv";
 import { PeriodSelector, periodToQuery, usePeriodState, useStoredBoolean, useStoredSearch } from "./shared/PeriodSelector";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 interface OpsRow {
   companyId: number; companyName: string; companyStatus: string;
@@ -29,6 +30,7 @@ interface OpsResp {
 const fmtInt = new Intl.NumberFormat("ar-SA-u-nu-latn");
 
 export default function OperationalSummaryReport() {
+    const gate = useDemoActionGate();
   const { token } = useAuth();
   // Persist period + search + the inactive-only toggle across visits, so the
   // admin returns to the same view they left (e.g. month-end audit pass).
@@ -75,7 +77,8 @@ export default function OperationalSummaryReport() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => {
+          onClick={async () => {
+              if (!(await gate('export'))) return;
             const fname = data?.period
               ? `operational-summary-${data.period.from}_${data.period.to}.csv`
               : `operational-summary.csv`;

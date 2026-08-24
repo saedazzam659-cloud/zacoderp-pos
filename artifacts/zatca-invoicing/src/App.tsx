@@ -37,6 +37,8 @@ import DataCopyJournalEntries from "@/pages/admin/DataCopyJournalEntries";
 import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
 import SupportCall from "@/pages/admin/SupportCall";
+import DemoAnalyticsDashboard from "@/pages/admin/demo-analytics/DemoAnalyticsDashboard";
+import DemoAnalyticsDetail from "@/pages/admin/demo-analytics/DemoAnalyticsDetail";
 import SeoDashboard from "@/pages/admin/SeoDashboard";
 import SeoAiStudio from "@/pages/admin/SeoAiStudio";
 import AiControls from "@/pages/admin/AiControls";
@@ -266,6 +268,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ScreenActionsProvider } from "@/contexts/ScreenActionsContext";
 import { CallProvider } from "@/contexts/CallContext";
 import { TrainingBroadcastProvider } from "@/contexts/TrainingBroadcastContext";
+import { DemoAnalyticsProvider } from "@/contexts/DemoAnalyticsContext";
 import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 // Inventory
@@ -741,11 +744,14 @@ function AppRoutes() {
 
       {/* Protected routes */}
       <Route>
-        <Layout>
-          {!localSuperadminRouteAllowed ? <NotFound /> : <Switch>
-            {/* Superadmin routes */}
-            {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
-            {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
+        <DemoAnalyticsProvider>
+          <Layout>
+            {!localSuperadminRouteAllowed ? <NotFound /> : <Switch>
+              {/* Superadmin routes */}
+              {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
+              {isSuperAdmin && <Route path="/admin/demo-analytics/:id" component={DemoAnalyticsDetail} />}
+              {isSuperAdmin && <Route path="/admin/demo-analytics" component={DemoAnalyticsDashboard} />}
+              {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
             {isSuperAdmin && <Route path="/admin/trainee-requests" component={TraineeRequests} />}
             {/* These four stay on rawIsSuperAdmin so the SA can switch
                 tenants or exit impersonation without logging out. */}
@@ -1245,9 +1251,10 @@ function AppRoutes() {
             <Route component={InAppNotFound} />
           </Switch>}
         </Layout>
-      </Route>
-    </Switch>
-  );
+      </DemoAnalyticsProvider>
+    </Route>
+  </Switch>
+);
 }
 
 function App() {

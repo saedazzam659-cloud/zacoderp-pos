@@ -10,6 +10,7 @@ import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import { trialBalancesApi, type ImportLine } from "@/lib/trialBalancesApi";
 import { fmt2 } from "@/lib/format";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // Header aliases — case-insensitive, whitespace/RTL-mark/NBSP-normalized
 // at lookup time. Any new variant we encounter from a real exported
@@ -239,7 +240,7 @@ function parseFile(file: File): Promise<ImportLine[]> {
   });
 }
 
-function downloadTemplate(t: (k: string) => string) {
+async function downloadTemplate(t: (k: string) => string) {
   const aoa = [
     ["كود الحساب", "اسم الحساب", "مدين", "دائن"],
     ["1110001",   "الصندوق",      10000, 0],
@@ -261,6 +262,7 @@ interface Props {
 }
 
 export default function TrialBalanceImportDialog({ trialBalanceId, open, onOpenChange, onImported }: Props) {
+    const gate = useDemoActionGate();
   const { t } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -316,7 +318,7 @@ export default function TrialBalanceImportDialog({ trialBalanceId, open, onOpenC
             <FileSpreadsheet className="h-4 w-4" />
             <AlertDescription className="flex items-center justify-between gap-2">
               <span>{t("trialBalanceMaintenance.importHint")}</span>
-              <Button size="sm" variant="outline" onClick={() => downloadTemplate(t)} data-testid="btn-download-template">
+              <Button size="sm" variant="outline" onClick={async () => { if (await gate("export")) await downloadTemplate(t); }} data-testid="btn-download-template">
                 <Download className="h-4 w-4 me-1" />
                 {t("trialBalanceMaintenance.downloadTemplate")}
               </Button>

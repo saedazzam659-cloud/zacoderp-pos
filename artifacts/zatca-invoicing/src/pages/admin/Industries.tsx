@@ -24,6 +24,7 @@ import {
 } from "@/lib/menuItems";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -73,6 +74,7 @@ const EMOJI_OPTIONS = [
 ];
 
 export default function Industries() {
+    const gate = useDemoActionGate();
   const { token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -897,7 +899,7 @@ async function parseMappingsFile(file: File): Promise<{ rows: ParsedMappingRow[]
   return { rows, errors };
 }
 
-function downloadCoaXlsx(rows: ParsedCoaRow[], industryCode: string) {
+async function downloadCoaXlsx(rows: ParsedCoaRow[], industryCode: string) {
   const headers = [
     "كود الحساب", "اسم الحساب (عربي)", "اسم الحساب (إنجليزي)",
     "نوع الحساب (asset/liability/equity/revenue/expense)",
@@ -923,7 +925,7 @@ function downloadCoaXlsx(rows: ParsedCoaRow[], industryCode: string) {
   void saveWorkbook(wb, `industry-${industryCode}-coa-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
-function downloadMappingsXlsx(rows: ParsedMappingRow[], industryCode: string) {
+async function downloadMappingsXlsx(rows: ParsedMappingRow[], industryCode: string) {
   const headers = ["كود نوع المستند", "كود الدور", "كود الحساب", "مقفل"];
   const aoa: any[][] = [headers];
   for (const r of rows) {
@@ -943,6 +945,7 @@ function IndustryTemplatesDialog({
   onClose: () => void;
   headers: Record<string, string>;
 }) {
+  const gate = useDemoActionGate();
   const { toast } = useToast();
   const qc = useQueryClient();
   const open = industry !== null;
@@ -1011,6 +1014,7 @@ function IndustryTemplatesDialog({
 
   async function downloadCoa() {
     if (!industry) return;
+    if (!(await gate("export"))) return;
     setBusyCoa("download");
     try {
       const r = await fetch(`${API}/api/admin/industries/${industry.id}/template/coa`, { headers });
@@ -1080,6 +1084,7 @@ function IndustryTemplatesDialog({
 
   async function downloadMappings() {
     if (!industry) return;
+    if (!(await gate("export"))) return;
     setBusyMap("download");
     try {
       const r = await fetch(`${API}/api/admin/industries/${industry.id}/template/mappings`, { headers });

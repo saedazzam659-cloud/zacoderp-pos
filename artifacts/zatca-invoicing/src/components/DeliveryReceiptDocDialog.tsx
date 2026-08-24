@@ -28,6 +28,7 @@ import {
   Plus, Trash2, Printer, Download, Mail, Share2, CheckCircle2,
   PenLine, ImageUp, Loader2, History,
 } from "lucide-react";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -75,6 +76,7 @@ function todayIso(): string {
 }
 
 export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, editId, seed, onSaved }: Props) {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth();
   const { toast } = useToast();
   // Approve (lock) maps to the backend `post` action on this module.
@@ -334,6 +336,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   }
 
   async function doDownload() {
+      if (!(await gate('export'))) return;
     try {
       const blob = await makePdfBlob();
       await saveBlob(blob, `${label}-${docNumber || "مسودة"}.pdf`);

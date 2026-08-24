@@ -55,6 +55,7 @@ import {
   SUPPLIER_BULK_EXCEL_HEADERS,
   SUPPLIER_BULK_EXCEL_SAMPLE,
 } from "@/lib/supplierBulkExcel";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -137,6 +138,7 @@ function Field({ label, value, onChange, placeholder, dir }: { label: string; va
 }
 
 export default function Suppliers() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth();
   const { data: allowedBranches = [] } = useBranches();
   const { t } = useTranslation();
@@ -424,7 +426,8 @@ export default function Suppliers() {
     }
   }
 
-  function downloadSupplierBulkTemplate() {
+  async function downloadSupplierBulkTemplate() {
+      if (!(await gate('export'))) return;
     const sheet = XLSX.utils.json_to_sheet(
       [],
       { header: [...SUPPLIER_BULK_EXCEL_HEADERS] },
@@ -443,7 +446,8 @@ export default function Suppliers() {
     void saveWorkbook(workbook, "suppliers_bulk_accounts_template.xlsx");
   }
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: t("common.noResults"), variant: "destructive" });
       return;

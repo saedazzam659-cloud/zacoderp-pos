@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Link } from "wouter";
 import { useFmt } from "@/hooks/use-fmt";
 import { exportToExcel, printSectionsAsPDF } from "@/lib/export";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -405,6 +406,7 @@ function InfoPill({ label, value, icon: Icon }: { label: string; value: string; 
 }
 
 export default function VATDeclaration() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth();
   const { t, i18n } = useTranslation();
   const [selectedKey, setSelectedKey] = useState<PeriodKey>("this_month");
@@ -482,7 +484,7 @@ export default function VATDeclaration() {
             </SelectContent>
           </Select>
           {data && <VATExportMenu data={data} period={period} />}
-          <Button size="sm" variant="outline" className="gap-2 h-9" onClick={() => window.print()}>
+          <Button size="sm" variant="outline" className="gap-2 h-9" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }}>
             <Printer className="h-3.5 w-3.5" />
             {t("vatDeclaration.print")}
           </Button>
@@ -934,6 +936,7 @@ function VATExportMenu({
   data: VATData;
   period: { label: string; from: string; to: string };
 }) {
+  const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isAr = i18n.language?.startsWith("ar");
   const companyName = (isAr ? data.company?.nameAr : (data.company?.nameEn ?? data.company?.nameAr)) ?? "";
@@ -986,7 +989,8 @@ function VATExportMenu({
     return rows;
   }
 
-  function handleExcel() {
+  async function handleExcel() {
+      if (!(await gate('export'))) return;
     exportToExcel(
       buildRows(),
       VAT_COLS,

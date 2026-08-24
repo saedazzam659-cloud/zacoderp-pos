@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { CalendarCheck, CalendarX, Clock, AlertTriangle, Download, Users, Activity } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 function fmtMin(min: number): string {
   if (!min || min <= 0) return "—";
@@ -34,6 +35,7 @@ function isFriday(iso: string): boolean {
 }
 
 export default function UserAttendanceReport() {
+    const gate = useDemoActionGate();
   const { user } = useAuth();
   const cid = user?.companyId ?? undefined;
 
@@ -60,7 +62,8 @@ export default function UserAttendanceReport() {
     return Math.round((data.overall.presentUserDays / data.overall.totalUserDays) * 100);
   }, [data]);
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
+      if (!(await gate('export'))) return;
     if (!data) return;
     const rows: string[][] = [];
     rows.push(["المستخدم", "اليوم", "الحالة", "أول دخول", "آخر خروج", "الإجمالي (دقيقة)", "عدد الجلسات", "تنبيه"]);

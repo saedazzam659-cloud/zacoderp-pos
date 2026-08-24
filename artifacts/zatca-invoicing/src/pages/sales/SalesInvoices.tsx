@@ -13,6 +13,7 @@ import SalesPrintModal from "./SalesPrintModal";
 import { TablePagination, type PageSize } from "@/components/TablePagination";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const SERVER_PAGE_SIZE_OPTIONS: readonly PageSize[] = [10, 50, 100];
@@ -32,6 +33,7 @@ type InvoicePage = {
 };
 
 export default function SalesInvoices() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -303,7 +305,8 @@ export default function SalesInvoices() {
     const today = new Date().toISOString().slice(0, 10);
     return `sales-invoices-${today}`;
   }
-  function handleExportExcel() {
+  async function handleExportExcel() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا توجد فواتير للتصدير" });
       return;
@@ -311,7 +314,8 @@ export default function SalesInvoices() {
     exportToExcel(buildExportRows(), exportColumns, exportFilenameBase(), "فواتير المبيعات", buildTotalsRow());
     toast({ title: `تم تصدير ${filtered.length} فاتورة إلى Excel` });
   }
-  function handleExportPDF() {
+  async function handleExportPDF() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا توجد فواتير للتصدير" });
       return;

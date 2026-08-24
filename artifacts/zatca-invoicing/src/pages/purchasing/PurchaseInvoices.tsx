@@ -32,6 +32,7 @@ import {
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import PurchasePrintModal from "./PurchasePrintModal";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -42,6 +43,7 @@ const STATUS_CLS: Record<string, string> = {
 };
 
 export default function PurchaseInvoices() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const { fmt } = useFormatters();
@@ -442,9 +444,10 @@ ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;
   };
 
-  const handleExportPDF = () => openPrintWindow(buildListHtml());
-  const handlePrint    = () => openPrintWindow(buildListHtml());
-  const handleExportExcel = () => {
+  const handleExportPDF = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
+  const handlePrint    = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
+  const handleExportExcel = async () => {
+      if (!(await gate('export'))) return;
     if (filteredInvoices.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
     const rows = filteredInvoices.map((r: any) => ({
       "رقم الفاتورة": r.docNumber ?? `PI-${r.id}`,
@@ -467,7 +470,8 @@ ${sections}
   };
 
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filteredInvoices.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
     const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
     const rows = filteredInvoices.map((r: any, i: number) => [

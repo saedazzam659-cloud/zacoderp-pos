@@ -23,6 +23,7 @@ import {
   Wand2, Download, Upload, ExternalLink, Hash, ArrowRight, Eye,
   Webhook, Send, RefreshCcw, Power, PowerOff, Activity,
 } from "lucide-react";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -90,6 +91,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export default function GatewayClients() {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -394,6 +396,7 @@ function Field({ label, required, children }: { label: string; required?: boolea
 
 // ─── Detail dialog (credentials + API keys + invoices) ─────────────
 function ClientDetailDialog({ clientId, onClose, onChanged }: { clientId: number; onClose: () => void; onChanged: () => void }) {
+  const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [tab, setTab] = useState<"info" | "credentials" | "keys" | "invoices" | "webhooks">("info");
@@ -463,7 +466,8 @@ function ClientDetailDialog({ clientId, onClose, onChanged }: { clientId: number
                     if (token) headers.Authorization = `Bearer ${token}`;
                     if (acting) headers["x-acting-company-id"] = acting;
                     fetch(`${API}/api/admin/gateway-clients/${clientId}/template.csv`, { headers })
-                      .then(r => r.blob()).then(blob => {
+                      .then(r => r.blob()).then(async blob => {
+                          if (!(await gate('export'))) return;
                         void saveBlob(blob, `gateway-template-${clientId}.csv`);
                       });
                   }}>

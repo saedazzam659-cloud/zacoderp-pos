@@ -15,6 +15,7 @@ import { descendantIds, matchesAccountFilters, type AccountLevelMode } from "@/l
 import { Building2, Search, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -48,6 +49,7 @@ function SectionCard({ title, rows, total, colorClass, isRtl, fmt, t }: {
 }
 
 export default function BalanceSheet() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -138,7 +140,7 @@ export default function BalanceSheet() {
               <ExportButtons rows={exportRows} columns={exportCols}
                 filename={`${t("balanceSheet.filename_prefix")}-${asOfDate}`}
                 title={t("balanceSheet.title_with", { date: asOfDate })} />
-              <Button variant="outline" size="sm" className="gap-2" onClick={() => window.print()}>
+              <Button variant="outline" size="sm" className="gap-2" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }}>
                 <Printer className="h-4 w-4" />{t("accountingReports.print")}
               </Button>
             </>

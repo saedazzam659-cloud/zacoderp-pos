@@ -18,10 +18,12 @@ import { descendantIds, matchesAccountFilters, type AccountLevelMode } from "@/l
 import { TrendingUp, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function IncomeStatement() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -125,7 +127,7 @@ export default function IncomeStatement() {
               <ExportButtons rows={exportRows} columns={exportCols}
                 filename={`${t("incomeStatement.filename_prefix")}-${fromDate}-${toDate}`}
                 title={t("incomeStatement.title_with", { from: fromDate, to: toDate })} />
-              <Button variant="outline" size="sm" className="gap-2" onClick={() => window.print()}>
+              <Button variant="outline" size="sm" className="gap-2" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }}>
                 <Printer className="h-4 w-4" />{t("accountingReports.print")}
               </Button>
             </>

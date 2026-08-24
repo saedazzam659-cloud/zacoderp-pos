@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 import { ensurePrinterReady } from "@/lib/printerGuard";
 import QRCode from "qrcode";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1528,6 +1529,7 @@ interface Props {
 }
 
 export default function PurchasePrintModal({ open, onClose, data }: Props) {
+    const gate = useDemoActionGate();
   const [selected, setSelected] = useState(1);
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -1553,7 +1555,8 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
     win.document.open();
     win.document.write(html);
     win.document.close();
-    win.onload = () => { win.print(); };
+    win.onload = async () => {
+        if (!(await gate('print'))) return; win.print(); };
   }
 
   if (!data) return null;

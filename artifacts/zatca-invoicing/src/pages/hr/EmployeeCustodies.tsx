@@ -21,6 +21,7 @@ import { exportToExcel, type ExportColumn } from "@/lib/export";
 import { HrFormCheck } from "@/lib/hrFormValidate";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AssetCustodyTab, CustodyReportTab } from "./AssetCustodyTabs";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY: any = { employeeId: "", custodyDate: today(), amount: 0, custodyAccountId: "", purpose: "", notes: "" };
@@ -37,6 +38,7 @@ const num = (v: any): number => Number(v ?? 0) || 0;
 const remainingOf = (c: any): number => +(num(c?.amount) - num(c?.settledAmount) - num(c?.returnedAmount)).toFixed(2);
 
 export default function EmployeeCustodies() {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -297,7 +299,8 @@ export default function EmployeeCustodies() {
     }
   }
 
-  function exportExcel() {
+  async function exportExcel() {
+      if (!(await gate('export'))) return;
     const fmt = "#,##0.00";
     const cols: ExportColumn[] = [
       { key: "employee", header: tr("colEmployee") },

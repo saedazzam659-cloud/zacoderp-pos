@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -51,6 +52,7 @@ function num(v: string | number | undefined | null): number {
 }
 
 export default function OpeningBalances() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -242,6 +244,7 @@ export default function OpeningBalances() {
   // The snapshot endpoint returns a signed `balance` per account
   // (debit − credit); positive → debit column, negative → credit column.
   async function exportXlsx(includeAmounts: boolean) {
+      if (!(await gate('export'))) return;
     if (isExporting) return;
     let serverBalances: Record<number, { debit: number; credit: number }> = {};
     if (includeAmounts) {

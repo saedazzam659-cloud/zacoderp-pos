@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from "jspdf";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const BASE = (import.meta as any).env?.BASE_URL ?? "/";
 
@@ -64,6 +65,7 @@ const fmt = (n: number | string | null | undefined) =>
   Number(n ?? 0).toLocaleString("ar-EG-u-ca-gregory-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function GatewayInvoiceView() {
+    const gate = useDemoActionGate();
   const params = useParams<{ id: string; invId: string }>();
   const clientId = Number(params.id);
   const invId = Number(params.invId);
@@ -95,6 +97,7 @@ export default function GatewayInvoiceView() {
   }, []);
 
   const downloadPdf = async () => {
+      if (!(await gate('print'))) return;
     if (!sheetRef.current || !data) return;
     setDownloading(true);
     try {

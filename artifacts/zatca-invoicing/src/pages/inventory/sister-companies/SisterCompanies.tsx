@@ -11,6 +11,7 @@ import { sisterCompaniesApi, type SisterCompany } from "@/lib/sisterCompaniesApi
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useBranches } from "@/hooks/useBranches";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const EMPTY: Partial<SisterCompany> = {
   branchId: null,
@@ -21,6 +22,7 @@ const EMPTY: Partial<SisterCompany> = {
 };
 
 export default function SisterCompanies() {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [showForm, setShowForm] = useState(false);
@@ -73,16 +75,16 @@ export default function SisterCompanies() {
             }));
             return (
               <>
-                <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="btn-print">
+                <Button variant="outline" size="sm" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }} data-testid="btn-print">
                   <Printer className="h-4 w-4 ml-1" /> طباعة
                 </Button>
                 <Button variant="outline" size="sm" disabled={data.length === 0}
-                  onClick={() => exportToExcel(data, cols, "sister-companies", "الشركات الشقيقة")}
+                  onClick={async () => { if (!(await gate('export'))) return; return exportToExcel(data, cols, "sister-companies", "الشركات الشقيقة"); }}
                   data-testid="btn-export-excel">
                   <FileSpreadsheet className="h-4 w-4 ml-1" /> Excel
                 </Button>
                 <Button variant="outline" size="sm" disabled={data.length === 0}
-                  onClick={() => exportToPDF(data, cols, "sister-companies", "الشركات الشقيقة")}
+                  onClick={async () => { if (!(await gate('export'))) return; return exportToPDF(data, cols, "sister-companies", "الشركات الشقيقة"); }}
                   data-testid="btn-export-pdf">
                   <FileDown className="h-4 w-4 ml-1" /> PDF
                 </Button>

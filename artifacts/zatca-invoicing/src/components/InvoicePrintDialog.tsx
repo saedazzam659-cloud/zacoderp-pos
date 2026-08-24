@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { ensurePrinterReady } from "@/lib/printerGuard";
 import { currencySymbol } from "@/lib/format";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface PrintInvoice {
@@ -695,6 +696,7 @@ interface Props {
 }
 
 export default function InvoicePrintDialog({ open, onClose, invoice }: Props) {
+  const gate = useDemoActionGate();
   const [selected, setSelected] = useState("professional");
   const [printing, setPrinting] = useState(false);
   const { toast } = useToast();
@@ -704,6 +706,7 @@ export default function InvoicePrintDialog({ open, onClose, invoice }: Props) {
     if (!ensurePrinterReady(toast, navigate)) return;
     setPrinting(true);
     try {
+      if (!(await gate("print"))) return;
       const html = await generateHtml(selected, invoice);
       const win = window.open("", "_blank", "width=900,height=700");
       if (!win) { alert("يرجى السماح بالنوافذ المنبثقة"); return; }

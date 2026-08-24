@@ -71,15 +71,15 @@ async function resolveEntityParent(
   // itself may be a LEAF account — nesting a new supplier under a leaf is
   // semantically wrong. Only an exact code match is trusted here.
   for (const p of fallbackCodePrefixes) {
-    const exact = candidates.find(a => (a.code ?? "").trim() === p);
+    const exact = candidates.find((a: typeof accountsTable.$inferSelect) => (a.code ?? "").trim() === p);
     if (exact) return exact;
   }
   // Pass 2 — name-like matches in the order given (category-specific names
   // come first in the list, generic ones last), shortest code wins ties.
   for (const n of nameLikes) {
     const hits = candidates
-      .filter(a => (a.nameAr ?? "").includes(n) || (a.nameEn ?? "").toLowerCase().includes(n.toLowerCase()))
-      .sort((a, b) => (a.code ?? "").length - (b.code ?? "").length);
+      .filter((a: typeof accountsTable.$inferSelect) => (a.nameAr ?? "").includes(n) || (a.nameEn ?? "").toLowerCase().includes(n.toLowerCase()))
+      .sort((a: typeof accountsTable.$inferSelect, b: typeof accountsTable.$inferSelect) => (a.code ?? "").length - (b.code ?? "").length);
     if (hits.length > 0) return hits[0]!;
   }
   // Pass 3 — last resort for non-standard COAs with neither the standard
@@ -87,8 +87,8 @@ async function resolveEntityParent(
   // (legacy behavior; better than failing outright).
   for (const p of fallbackCodePrefixes) {
     const hits = candidates
-      .filter(a => a.code?.startsWith(p))
-      .sort((a, b) => (a.code ?? "").length - (b.code ?? "").length);
+      .filter((a: typeof accountsTable.$inferSelect) => a.code?.startsWith(p))
+      .sort((a: typeof accountsTable.$inferSelect, b: typeof accountsTable.$inferSelect) => (a.code ?? "").length - (b.code ?? "").length);
     if (hits.length > 0) return hits[0]!;
   }
   return candidates[0];
@@ -167,7 +167,7 @@ async function siblingCodes(companyId: number, parentId: number, executor: any =
       eq(accountsTable.companyId, companyId),
       eq(accountsTable.parentId, parentId),
     ));
-  return new Set(siblings.map(s => (s.code ?? "").trim()).filter(Boolean));
+  return new Set(siblings.map((s: { code: string }) => (s.code ?? "").trim()).filter(Boolean));
 }
 
 async function nextChildCode(companyId: number, parent: { id: number; code: string }, executor: any = db): Promise<string> {
@@ -234,7 +234,7 @@ async function mintChildUnderParent(
       eq(accountsTable.parentId, parent.id),
     ));
     const trimmed = name.trim().toLowerCase();
-    const dup = siblings.find(s => (s.nameAr ?? "").trim().toLowerCase() === trimmed);
+    const dup = siblings.find((s: typeof accountsTable.$inferSelect) => (s.nameAr ?? "").trim().toLowerCase() === trimmed);
     if (dup) return dup.id;
   }
 
@@ -276,20 +276,22 @@ async function mintChildUnderParent(
 
 // ── Convenience wrappers used by the entity POST routes ─────────────────────
 
-export const ensureCashBoxAccount = (companyId: number, name: string) =>
+export const ensureCashBoxAccount = (companyId: number, name: string, executor: any = db) =>
   ensureEntitySubAccount({
     companyId, roleKeys: ["cash_account_parent"], name,
     fallbackCodePrefixes: ["1101", "1110", "111"],
     nameLikes: ["نقد", "خزين", "خزن", "صندوق", "cash"],
     accountType: "asset",
+    executor,
   });
 
-export const ensureBankAccountLedger = (companyId: number, name: string) =>
+export const ensureBankAccountLedger = (companyId: number, name: string, executor: any = db) =>
   ensureEntitySubAccount({
     companyId, roleKeys: ["bank_account_parent"], name,
     fallbackCodePrefixes: ["1102", "1130", "112"],
     nameLikes: ["بنك", "bank"],
     accountType: "asset",
+    executor,
   });
 
 /** Customer commercial category → which parent account the auto-created
@@ -303,6 +305,7 @@ export const ensureCustomerLedger = (
   name: string,
   forceNew = false,
   category?: CustomerCategory,
+  executor: any = db,
 ) =>
   ensureEntitySubAccount({
     companyId,
@@ -317,6 +320,7 @@ export const ensureCustomerLedger = (
     nameLikes: ["عملاء", "ذمم مدين", "مدين", "customer", "receiv"],
     accountType: "asset",
     forceNew,
+    executor,
   });
 
 // Shared between ensureSupplierLedger (creation) and peekSupplierNextAccount
@@ -538,10 +542,11 @@ export async function peekItemGroupNextAccountAuto(companyId: number, categoryTy
   return buildSupplierPeek(companyId, parent);
 }
 
-export const ensureWarehouseAccount = (companyId: number, name: string) =>
+export const ensureWarehouseAccount = (companyId: number, name: string, executor: any = db) =>
   ensureEntitySubAccount({
     companyId, roleKeys: ["warehouse_account_parent"], name,
     fallbackCodePrefixes: ["1105", "1220", "112"],
     nameLikes: ["مخزون", "مخزن", "بضاعة", "inventory", "stock", "warehouse"],
     accountType: "asset",
+    executor,
   });

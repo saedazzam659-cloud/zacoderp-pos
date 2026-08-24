@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileWarning, Search, Download } from "lucide-react";
 import AIInsightsPanel from "./_AIInsightsPanel";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
-function exportCsv(filename: string, headers: string[], rows: any[][]) {
+async function exportCsv(filename: string, headers: string[], rows: any[][]) {
   const esc = (v: any) => {
     const s = String(v ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -21,6 +22,7 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function DocumentsExpiryReport() {
+    const gate = useDemoActionGate();
   const { i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const [days, setDays] = useState(90);
@@ -34,8 +36,9 @@ export default function DocumentsExpiryReport() {
   const summary = data?.summary;
   const rows = data?.rows ?? [];
 
-  function handleExport() {
+  async function handleExport() {
     if (!rows.length) return;
+    if (!(await gate("export"))) return;
     exportCsv(
       `documents_expiry_${new Date().toISOString().slice(0, 10)}.csv`,
       ["كود الموظف", "اسم الموظف", "القسم", "الجنسية", "نوع الوثيقة", "رقم الوثيقة", "تاريخ الانتهاء", "الأيام المتبقية", "الحالة"],

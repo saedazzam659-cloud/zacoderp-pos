@@ -23,6 +23,7 @@ import BranchFilter from "@/components/BranchFilter";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import { fmt2 } from "@/lib/format";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -46,6 +47,7 @@ type Row = {
 const COLORS = { approved: "#10b981", rejected: "#ef4444", pending: "#f59e0b" };
 
 export default function ZatcaReport() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
@@ -166,7 +168,8 @@ export default function ZatcaReport() {
   const fmtMoney = (v: number) => fmt2(v);
 
   // ─── CSV Export ──────────────────────────────────────────────────────
-  const exportCsv = () => {
+  const exportCsv = async () => {
+      if (!(await gate('export'))) return;
     const headers = [
       tr("exportHeaderInvoice"),
       tr("exportHeaderDate"),

@@ -8,6 +8,7 @@ import {
 import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2, Printer } from "lucide-react";
 import { exportToExcelBranded, exportToPDF, type ExportColumn, type ExportExtraSection, type ExportCompanyInfo } from "@/lib/export";
 import { useAuth } from "@/contexts/AuthContext";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 interface ExportButtonsProps {
   rows: Record<string, unknown>[];
@@ -43,6 +44,7 @@ export default function ExportButtons({
   rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections, label, pdfFitOneLine,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
+  const gate = useDemoActionGate();
   // The company brand (logo + name + CR/VAT/phone/address) is stored on the
   // user's `company` object. We forward the whole record to every Excel and
   // PDF/print invocation so each report file carries the company brand
@@ -71,6 +73,7 @@ export default function ExportButtons({
   async function handleExport(type: "excel" | "pdf" | "print") {
     setBusy(true);
     try {
+      if (!(await gate(type === "print" ? "print" : "export"))) return;
       if (type === "excel") {
         // Excel can't render the summary cards — instead append the
         // same numbers as extra rows so they're not lost from the file.

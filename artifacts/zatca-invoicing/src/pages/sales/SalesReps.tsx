@@ -39,6 +39,7 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -92,6 +93,7 @@ const EMPTY_FORM = {
 };
 
 export default function SalesReps() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -235,7 +237,8 @@ export default function SalesReps() {
     .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
   const allFilteredIds = useMemo(() => filtered.map(r => r.id), [filtered]);
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;

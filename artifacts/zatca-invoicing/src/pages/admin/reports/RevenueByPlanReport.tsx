@@ -9,6 +9,7 @@ import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recha
 import { useAuth } from "@/contexts/AuthContext";
 import { downloadCsv } from "./shared/downloadCsv";
 import { PeriodSelector, periodToQuery, usePeriodState, useStoredSearch } from "./shared/PeriodSelector";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 interface PlanRow {
   plan: string; billingCycle: string;
@@ -28,6 +29,7 @@ const PLAN_LABEL: Record<string, string> = {
 const CYCLE_LABEL: Record<string, string> = { monthly: "شهري", yearly: "سنوي" };
 
 export default function RevenueByPlanReport() {
+    const gate = useDemoActionGate();
   const { token } = useAuth();
   // Persist filters per report so the admin returns to the same view.
   const period = usePeriodState("this_month", "revenue-by-plan");
@@ -72,7 +74,7 @@ export default function RevenueByPlanReport() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => downloadCsv(token, `/api/admin/reports/revenue-by-plan?${queryString}&format=csv`, `revenue-by-plan-${period.from}_${period.to}.csv`)}
+          onClick={async () => { if (!(await gate('export'))) return; return downloadCsv(token, `/api/admin/reports/revenue-by-plan?${queryString}&format=csv`, `revenue-by-plan-${period.from}_${period.to}.csv`); }}
           disabled={!data || data.rows.length === 0}
         >
           <Download className="h-4 w-4 ml-1" /> تصدير CSV

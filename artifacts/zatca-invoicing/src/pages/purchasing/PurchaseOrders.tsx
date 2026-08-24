@@ -30,6 +30,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -41,6 +42,7 @@ const STATUS: Record<string, { labelKey: string; cls: string }> = {
 };
 
 export default function PurchaseOrders() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const { fmt } = useFormatters();
@@ -401,9 +403,10 @@ ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;
   };
 
-  const handleExportPDF = () => openPrintWindow(buildListHtml());
-  const handlePrint    = () => openPrintWindow(buildListHtml());
-  const handleExportExcel = () => {
+  const handleExportPDF = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
+  const handlePrint    = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
+  const handleExportExcel = async () => {
+      if (!(await gate('export'))) return;
     if (filteredOrders.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
     const rows = filteredOrders.map((r: any) => ({
       "رقم الأمر": r.docNumber ?? `PO-${r.id}`,
@@ -426,7 +429,8 @@ ${sections}
   };
 
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filteredOrders.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
     const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
     const rows = filteredOrders.map((r: any, i: number) => [

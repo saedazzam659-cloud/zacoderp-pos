@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Upload, Download, FileSpreadsheet, CheckCircle2, AlertTriangle, X, Eye } from "lucide-react";
 import { COA_TEMPLATES, TEMPLATE_LABELS, type CoaRow } from "@/lib/coaTemplates";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -41,7 +42,7 @@ function normalizeDirection(v: any): string {
   return DIRECTION_MAP[s] || DIRECTION_MAP[String(v).trim()] || "";
 }
 
-function downloadTemplate(kind: keyof typeof COA_TEMPLATES) {
+async function downloadTemplate(kind: keyof typeof COA_TEMPLATES) {
   const rows = COA_TEMPLATES[kind];
   const aoa: any[][] = [COLUMN_HEADERS.map(c => c.ar)];
   for (const r of rows) {
@@ -159,6 +160,7 @@ function parseFile(file: File): Promise<CoaRow[]> {
 }
 
 export default function AccountsImportPanel() {
+    const gate = useDemoActionGate();
   const { token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -250,14 +252,14 @@ export default function AccountsImportPanel() {
         <div>
           <p className="text-xs font-medium text-muted-foreground mb-2">1) تنزيل قوالب جاهزة (Excel)</p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => downloadTemplate("empty")}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => { if (await gate("export")) await downloadTemplate("empty"); }}>
               <Download className="h-3.5 w-3.5" />قالب فارغ
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => downloadTemplate("commercial")}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => { if (await gate("export")) await downloadTemplate("commercial"); }}>
               <Download className="h-3.5 w-3.5" />قالب شركة تجارية
               <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded-full">{COA_TEMPLATES.commercial.length} حساب</span>
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => downloadTemplate("industrial")}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => { if (await gate("export")) await downloadTemplate("industrial"); }}>
               <Download className="h-3.5 w-3.5" />قالب شركة صناعية
               <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.5 rounded-full">{COA_TEMPLATES.industrial.length} حساب</span>
             </Button>

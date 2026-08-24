@@ -11,8 +11,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Clock, Search, Download } from "lucide-react";
 import AIInsightsPanel from "./_AIInsightsPanel";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
-function exportCsv(filename: string, headers: string[], rows: any[][]) {
+async function exportCsv(filename: string, headers: string[], rows: any[][]) {
   const esc = (v: any) => {
     const s = String(v ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -32,6 +33,7 @@ function defaultRange() {
 }
 
 export default function AttendanceReport() {
+    const gate = useDemoActionGate();
   const { i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const def = defaultRange();
@@ -50,8 +52,9 @@ export default function AttendanceReport() {
   const summary = data?.summary;
   const employees = data?.employees ?? [];
 
-  function handleExport() {
+  async function handleExport() {
     if (!employees.length) return;
+    if (!(await gate("export"))) return;
     exportCsv(
       `attendance_report_${filters.from}_to_${filters.to}.csv`,
       ["الكود", "الاسم", "القسم", "أيام", "حضور", "غياب", "إجازة", "عطلة", "تأخير", "ساعات عمل", "ساعات إضافية"],

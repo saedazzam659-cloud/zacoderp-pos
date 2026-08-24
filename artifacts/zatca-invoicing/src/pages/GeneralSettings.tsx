@@ -31,6 +31,7 @@ import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import SenderSettingsTab from "./settings/SenderSettingsTab";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -126,6 +127,7 @@ function splitDataUrl(dataUrl: string): { b64: string; mime: string } | null {
 }
 
 export default function GeneralSettings() {
+    const gate = useDemoActionGate();
   const { t } = useTranslation();
   const { user, token, setUser } = useAuth() as any;
   const { toast } = useToast();
@@ -442,7 +444,8 @@ export default function GeneralSettings() {
     if (mapping?.accountId) setInventoryOpeningAccountId(String(mapping.accountId));
   }, [accountingMappings, inventoryOpeningAccountId]);
 
-  function downloadItemsTemplate() {
+  async function downloadItemsTemplate() {
+      if (!(await gate('export'))) return;
     const headers = ["code","nameAr","nameEn","barcode","groupCode","unitCode","itemType","costPrice","salePrice","vatRate","reorderLevel","maxLevel","description"];
     const example = [
       ["ITM-001","حليب طازج 1 لتر","Fresh Milk 1L","6281234567890","DAIRY","PCS","stock",4.50,6.00,15,20,500,"حليب بقري طازج"],
@@ -456,7 +459,8 @@ export default function GeneralSettings() {
     void saveWorkbook(wb, "items_template.xlsx");
   }
 
-  function downloadBalancesTemplate() {
+  async function downloadBalancesTemplate() {
+      if (!(await gate('export'))) return;
     const headers = ["itemCode","warehouseCode","qty","costPrice"];
     const example = [
       ["ITM-001","WH-MAIN",100,4.50],
@@ -546,7 +550,8 @@ export default function GeneralSettings() {
   const [custDataReport, setCustDataReport] = useState<DataReport>(null);
   const [suppDataReport, setSuppDataReport] = useState<DataReport>(null);
 
-  function downloadCustomersDataTemplate() {
+  async function downloadCustomersDataTemplate() {
+      if (!(await gate('export'))) return;
     const headers = ["nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","creditLimit","paymentTermsDays","branch","accountNumber"];
     const example = [
       ["شركة الأفق التجارية","Horizon Trading Co","300000000000003","1010000000","info@horizon.sa","0501234567","الرياض","العليا","طريق الملك فهد","1234","12345","SA",50000,30,"الفرع الرئيسي","10005"],
@@ -559,7 +564,8 @@ export default function GeneralSettings() {
     void saveWorkbook(wb, "customers_data_template.xlsx");
   }
 
-  function downloadSuppliersDataTemplate() {
+  async function downloadSuppliersDataTemplate() {
+      if (!(await gate('export'))) return;
     const headers = ["code","nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","currencyCode","creditLimit","accountNumber"];
     const example = [
       ["SUP-001","شركة الإمداد","Supply Co","310000000000003","2050000000","po@supply.sa","0501112222","الدمام","","","","","SA","SAR",100000,"21010"],
@@ -614,6 +620,7 @@ export default function GeneralSettings() {
   }
 
   async function downloadPartyOBTemplate(party: "customer" | "supplier") {
+      if (!(await gate('export'))) return;
     try {
       const cid = user?.company?.id ?? user?.companyId;
       const url = party === "customer" ? `${API}/api/customers?companyId=${cid}` : `${API}/api/suppliers?companyId=${cid}`;

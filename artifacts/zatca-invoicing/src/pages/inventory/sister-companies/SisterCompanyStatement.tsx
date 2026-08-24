@@ -13,8 +13,10 @@ import { fmt2 } from "@/lib/format";
 import { DateField } from "@/components/ui/date-field";
 import AccountStatementView from "@/components/AccountStatementView";
 import { useAuth } from "@/contexts/AuthContext";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 export default function SisterCompanyStatement() {
+    const gate = useDemoActionGate();
   const { user } = useAuth() as any;
   const [, params] = useRoute<{ id: string }>("/inventory/sister-companies/:id/statement");
   const sid = Number(params?.id);
@@ -99,7 +101,8 @@ export default function SisterCompanyStatement() {
             return (
               <>
                 <Button variant="outline" size="sm" disabled={disabled}
-                  onClick={() => {
+                  onClick={async () => {
+                      if (!(await gate('export'))) return;
                     // When the company chose the "unified" statement print
                     // format, route the sister-company statement through the
                     // shared exportStatementToPDF renderer (mode "general") so
@@ -145,12 +148,12 @@ export default function SisterCompanyStatement() {
                   <Printer className="h-4 w-4 ml-1" /> طباعة
                 </Button>
                 <Button variant="outline" size="sm" disabled={disabled}
-                  onClick={() => exportToExcel(data, cols, `sister-statement-${sid}`, title, totals)}
+                  onClick={async () => { if (!(await gate('export'))) return; return exportToExcel(data, cols, `sister-statement-${sid}`, title, totals); }}
                   data-testid="btn-export-excel">
                   <FileSpreadsheet className="h-4 w-4 ml-1" /> Excel
                 </Button>
                 <Button variant="outline" size="sm" disabled={disabled}
-                  onClick={() => exportToPDF(data, cols, `sister-statement-${sid}`, title, subtitle, false, totals)}
+                  onClick={async () => { if (!(await gate('export'))) return; return exportToPDF(data, cols, `sister-statement-${sid}`, title, subtitle, false, totals); }}
                   data-testid="btn-export-pdf">
                   <FileDown className="h-4 w-4 ml-1" /> PDF
                 </Button>

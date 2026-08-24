@@ -12,8 +12,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Users, Search, Download, FileText } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import AIInsightsPanel from "./_AIInsightsPanel";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
-function exportCsv(filename: string, headers: string[], rows: any[][]) {
+async function exportCsv(filename: string, headers: string[], rows: any[][]) {
   const sep = ",";
   const esc = (v: any) => {
     const s = String(v ?? "");
@@ -25,6 +26,7 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function EmployeesReport() {
+    const gate = useDemoActionGate();
   const { i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = useFmt();
@@ -44,8 +46,9 @@ export default function EmployeesReport() {
     setFilters({ status, department });
   }
 
-  function handleExport() {
+  async function handleExport() {
     if (!data?.rows) return;
+    if (!(await gate("export"))) return;
     exportCsv(
       `employees_report_${new Date().toISOString().slice(0, 10)}.csv`,
       ["الكود", "الاسم", "القسم", "المسمى الوظيفي", "الجنسية", "تاريخ التعيين", "الحالة", "الراتب الأساسي", "بدل سكن", "بدل نقل", "الإجمالي"],

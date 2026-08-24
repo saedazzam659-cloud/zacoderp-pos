@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -70,6 +71,7 @@ const OUTFLOW_CATS: { key: string; ar: string; en: string; tone: string; color: 
 ];
 
 export default function BankCashFlow() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { fmt, isRtl } = useFormatters();
   const { dp } = useFmt();
@@ -264,7 +266,7 @@ export default function BankCashFlow() {
               filename={`bank-cash-flow-${selectedCode}-${fromDate}`}
               title={`${isRtl ? "تحليل حركة البنك" : "Bank Cash-Flow"} — ${bankLabel} (${fromDate} → ${toDate})`}
             />
-            <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={() => window.print()}>
+            <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }}>
               <Printer className="h-4 w-4" />{isRtl ? "طباعة" : "Print"}
             </Button>
           </div>

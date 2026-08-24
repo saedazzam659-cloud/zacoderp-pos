@@ -17,8 +17,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 export default function EndOfService() {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -100,7 +102,8 @@ export default function EndOfService() {
     onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
-  function printReport() { window.print(); }
+  async function printReport() {
+      if (!(await gate('print'))) return; window.print(); }
 
   return (
     <div className="space-y-4 p-2 md:p-4" data-testid="page-eos" dir={isRtl ? "rtl" : "ltr"}>

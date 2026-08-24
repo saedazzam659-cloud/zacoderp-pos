@@ -40,6 +40,7 @@ import {
   ArrowUpDown, Filter, X, Palette, HandCoins,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -120,6 +121,7 @@ async function jsend<T>(method: string, path: string, body?: any): Promise<T> {
 //                              Page
 // ────────────────────────────────────────────────────────────────────────
 export default function InvoiceFieldPoliciesPage() {
+    const gate = useDemoActionGate();
   const { user } = useAuth() as any;
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -332,7 +334,8 @@ export default function InvoiceFieldPoliciesPage() {
     document.body.appendChild(iframe);
     const doc = iframe.contentDocument!;
     doc.open(); doc.write(html); doc.close();
-    iframe.onload = () => {
+    iframe.onload = async () => {
+        if (!(await gate('print'))) return;
       try {
         iframe.contentWindow!.focus();
         iframe.contentWindow!.print();

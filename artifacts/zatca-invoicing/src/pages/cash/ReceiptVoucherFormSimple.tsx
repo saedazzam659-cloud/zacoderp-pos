@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -89,6 +90,7 @@ function bankMatchesBranch(b: any, bid: string): boolean {
 }
 
 export default function ReceiptVoucherFormSimple() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth();
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -1272,7 +1274,8 @@ export default function ReceiptVoucherFormSimple() {
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
-                onClick={() => {
+                onClick={async () => {
+                    if (!(await gate('print'))) return;
                   // Print-only path: opens the same print window the
                   // top toolbar uses, but disables itself for unsaved
                   // drafts since openPrintWindow() relies on `existing`.

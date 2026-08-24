@@ -160,6 +160,7 @@ const ACCOUNTING_REPORTS_PERMS  = ["accounting_reports"];
 
 const superAdminNav: NavDef[] = [
   { nameKey: "nav.infoBoard",            href: "/",                         icon: LayoutDashboard, exact: true },
+  { nameKey: "nav.demoAnalytics",        href: "/admin/demo-analytics",     icon: Gauge },
   { nameKey: "nav.enterCompany",         href: "/admin/enter-company",      icon: LogIn },
   { nameKey: "nav.registrationRequests", href: "/admin/requests",           icon: Clock },
   { nameKey: "nav.traineeRequests",      href: "/admin/trainee-requests",   icon: GraduationCap },

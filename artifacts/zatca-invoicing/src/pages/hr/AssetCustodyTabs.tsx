@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Plus, Trash2, Pencil, Loader2, Package, Undo2, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { fmt2 } from "@/lib/format";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -46,6 +47,7 @@ function useAssets() {
 
 // ─── تبويب العهد العينية ─────────────────────────────────────────────────────
 export function AssetCustodyTab({ employees, pickName, isRtl }: Common) {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [filter, setFilter] = useState("all");
@@ -279,6 +281,7 @@ export function AssetCustodyTab({ employees, pickName, isRtl }: Common) {
 // ─── تقرير العهد ─────────────────────────────────────────────────────────────
 // يجمع العهد المالية والعينية مع فلاتر + طباعة نموذج إخلاء/كشف عهدة لكل موظف + تصدير.
 export function CustodyReportTab({ employees, pickName, isRtl }: Common) {
+  const gate = useDemoActionGate();
   const { toast } = useToast();
   const { user } = useAuth() as any;
   const company = user?.company ?? null;
@@ -327,7 +330,8 @@ export function CustodyReportTab({ employees, pickName, isRtl }: Common) {
     remaining: rows.reduce((s, r) => s + r.remaining, 0),
   }), [rows]);
 
-  function exportExcel() {
+  async function exportExcel() {
+      if (!(await gate('export'))) return;
     const fmt = "#,##0.00";
     const cols: ExportColumn[] = [
       { key: "employee", header: "الموظف" },

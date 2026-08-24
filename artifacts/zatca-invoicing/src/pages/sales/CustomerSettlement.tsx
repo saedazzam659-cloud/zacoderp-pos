@@ -35,6 +35,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -71,6 +72,7 @@ const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.
 const ALL_KEYS  = COLUMNS.map(c => c.key);
 
 export default function CustomerSettlement() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -485,9 +487,10 @@ ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;
   };
 
-  const handlePrint     = () => openPrintWindow(buildSettlementsListHtml());
-  const handleExportPDF = () => openPrintWindow(buildSettlementsListHtml());
-  const handleExportExcel = () => {
+  const handlePrint     = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildSettlementsListHtml()); };
+  const handleExportPDF = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildSettlementsListHtml()); };
+  const handleExportExcel = async () => {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
@@ -513,6 +516,7 @@ ${sections}
   // Bulk-print: settlements have no child lines, but we still re-fetch each
   // doc so the popup uses the freshest server snapshot (status, etc.).
   async function handleBulkPrint() {
+      if (!(await gate('print'))) return;
     const ids = Array.from(layout.selected);
     if (ids.length === 0) return;
     setBulkPrintBusy(true);
@@ -546,7 +550,8 @@ ${sections}
   }
 
   /* ── CSV export ── */
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;

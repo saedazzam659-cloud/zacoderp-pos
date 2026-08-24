@@ -23,6 +23,7 @@ import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import TrialBalanceImportDialog from "./TrialBalanceImportDialog";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const STATUS_CLS: Record<string, string> = {
   draft:     "bg-yellow-50 text-yellow-700 border-yellow-200",
@@ -38,6 +39,7 @@ function num(v: any): number {
 }
 
 export default function TrialBalanceDetailPage() {
+    const gate = useDemoActionGate();
   const params = useParams();
   const id = Number(params.id);
   const { t } = useTranslation();
@@ -154,7 +156,8 @@ export default function TrialBalanceDetailPage() {
   const diff = +(td - tc).toFixed(2);
   const balanced = Math.abs(diff) < 0.01;
 
-  const exportLinesXlsx = () => {
+  const exportLinesXlsx = async () => {
+      if (!(await gate('export'))) return;
     if (!tb) return;
     const aoa: any[][] = [
       ["كود الحساب", "اسم الحساب", "مدين أصلي", "دائن أصلي", "مدين معدّل", "دائن معدّل", "سبب التعديل"],
@@ -440,7 +443,7 @@ export default function TrialBalanceDetailPage() {
                     <SelectItem value="adjustments">{t("trialBalanceMaintenance.reportAdjustments")}</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button variant="outline" onClick={() => window.print()}><FileText className="h-4 w-4 me-1" />{t("trialBalanceMaintenance.print")}</Button>
+                <Button variant="outline" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }}><FileText className="h-4 w-4 me-1" />{t("trialBalanceMaintenance.print")}</Button>
               </div>
               {reportQ.data && reportType === "detailed" && (
                 <div className="overflow-x-auto border rounded">

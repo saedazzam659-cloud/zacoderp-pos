@@ -10,6 +10,7 @@ import {
   DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CalendarRange, Printer, Loader2, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown, Layers, ListTree } from "lucide-react";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -48,6 +49,7 @@ function defaultRange() {
 }
 
 export default function AdjustmentsSchedule() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const cid = user?.companyId;
   const headers = { Authorization: `Bearer ${token}` };
@@ -190,6 +192,7 @@ export default function AdjustmentsSchedule() {
 
   const [printing, setPrinting] = useState(false);
   async function handlePrint(mode: "summary" | "detailed") {
+      if (!(await gate('export'))) return;
     const rows = mode === "summary" ? summaryRows : exportRows;
     const cols = mode === "summary" ? summaryColumns : exportColumns;
     const totRow = mode === "summary" ? summaryTotalsRow : exportTotalsRow;

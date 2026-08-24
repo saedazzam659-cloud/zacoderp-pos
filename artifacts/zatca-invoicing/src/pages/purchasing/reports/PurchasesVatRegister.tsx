@@ -17,6 +17,7 @@ import { htmlToPdfBlob } from "@/lib/deliveryReceiptPrint";
 import { openWhatsApp } from "@/lib/whatsapp";
 import { FileSpreadsheet, FileText, Printer, Send, Search, MessageCircle, ClipboardList } from "lucide-react";
 import * as XLSX from "xlsx";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -45,6 +46,7 @@ interface RegisterData {
 }
 
 export default function PurchasesVatRegister() {
+    const gate = useDemoActionGate();
   const { fmt } = useFmt();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
@@ -156,7 +158,8 @@ export default function PurchasesVatRegister() {
     setTimeout(() => w.print(), 300);
   }
 
-  function handleExcel() {
+  async function handleExcel() {
+      if (!(await gate('export'))) return;
     const aoa: any[][] = [];
     if (companyName) aoa.push([companyName]);
     aoa.push([reportTitle]);
@@ -177,6 +180,7 @@ export default function PurchasesVatRegister() {
   }
 
   async function handlePdfDownload() {
+      if (!(await gate('export'))) return;
     const blob = await handlePdf();
     await saveBlob(blob, `${fileBase()}.pdf`);
   }

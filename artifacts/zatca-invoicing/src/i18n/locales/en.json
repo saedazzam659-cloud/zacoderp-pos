@@ -692,6 +692,7 @@
     "serverUpdating": "The server is being updated right now — your credentials are fine, wait a minute and try again."
   },
   "nav": {
+    "demoAnalytics": "Demo Analytics",
     "infoBoard": "Information Board",
     "dashboard": "Control Panel",
     "registrationRequests": "Registration Requests",

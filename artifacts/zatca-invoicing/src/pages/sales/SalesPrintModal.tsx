@@ -16,6 +16,7 @@ import {
   resolveQuotationCurrencyName,
 } from "@/lib/quotationPrintOptions";
 import QRCode from "qrcode";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -2741,6 +2742,7 @@ interface Props {
 }
 
 export default function SalesPrintModal({ open, onClose, data, defaultTemplate, autoPrintOnOpen }: Props) {
+    const gate = useDemoActionGate();
   // ── Visibility filter ────────────────────────────────────────────────
   // Honour the per-company `printEnabledTemplates` (jsonb int[]) and
   // `printDefaultTemplate` (int) settings from the General Settings →
@@ -2973,7 +2975,8 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     iframe.style.cssText =
       "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
     iframe.srcdoc = html;
-    iframe.onload = () => {
+    iframe.onload = async () => {
+        if (!(await gate('print'))) return;
       try {
         const win = iframe.contentWindow;
         if (!win) {

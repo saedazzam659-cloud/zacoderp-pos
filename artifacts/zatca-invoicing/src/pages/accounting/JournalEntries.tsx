@@ -54,6 +54,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // Maps a journal-entry's `entryType` + resolved `sourceId` to the route of the
 // source document that produced it. For sourced entry types we ALWAYS return a
@@ -94,6 +95,7 @@ interface ColDef {
 interface Ctx { entryTypes: Record<string, string>; statusLabels: Record<string, string>; }
 
 export default function JournalEntries() {
+    const gate = useDemoActionGate();
   const { user } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -661,6 +663,7 @@ export default function JournalEntries() {
   }));
 
   const handleExportExcel = async () => {
+      if (!(await gate('export'))) return;
     const rows = buildRows(await fetchExportRows());
     const ws = XLSX.utils.json_to_sheet(rows);
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 32 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
@@ -1070,6 +1073,7 @@ ${wrapWithLetterhead(letterhead, sections)}
   // Unified entry point used by the dropdown — fetches full lines for templates
   // that need them, then dispatches to the right HTML builder.
   const handleBulkPrintWith = async (templateId: PrintTemplateId) => {
+      if (!(await gate('print'))) return;
     const ids = Array.from(layout.selected).map((x) => Number(x)).filter(Number.isFinite);
     if (ids.length === 0) return;
     const idSet = new Set(ids);
@@ -1111,7 +1115,8 @@ ${wrapWithLetterhead(letterhead, sections)}
   /* ─── Selected-rows export to PDF (just opens the summary template — the
         in-window print dialog lets the user "Save as PDF") and to Excel
         (XLSX file restricted to the selected entries). ────────────────── */
-  const handleBulkExportPDF = () => {
+  const handleBulkExportPDF = async () => {
+      if (!(await gate('print'))) return;
     if (selectedIds.length === 0) return;
     const idSet = new Set(selectedIds);
     const sel = (entries as any[]).filter((e: any) => idSet.has(e.id));
@@ -1119,7 +1124,8 @@ ${wrapWithLetterhead(letterhead, sections)}
     openPrintWindow(buildPrintHtml(sel));
   };
 
-  const handleBulkExportExcel = () => {
+  const handleBulkExportExcel = async () => {
+      if (!(await gate('export'))) return;
     if (selectedIds.length === 0) return;
     const idSet = new Set(selectedIds);
     const sel = (entries as any[]).filter((e: any) => idSet.has(e.id));
@@ -1134,6 +1140,7 @@ ${wrapWithLetterhead(letterhead, sections)}
 
   /* ── Quick CSV export (uses visible columns + filtered set) ── */
   async function exportCsv() {
+      if (!(await gate('export'))) return;
     const source = await fetchExportRows();
     if (source.length === 0) return;
     const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];

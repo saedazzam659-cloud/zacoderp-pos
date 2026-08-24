@@ -18,6 +18,7 @@ import {
   Activity, ChevronDown, ChevronUp, Route as RouteIcon, Calendar,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 function fmtTime(s: string | null): string {
   if (!s) return "—";
@@ -40,6 +41,7 @@ function liveMinutes(fromIso: string): number {
 }
 
 export default function UserMovementReport() {
+    const gate = useDemoActionGate();
   const { user } = useAuth();
   const cid = user?.companyId ?? undefined;
 
@@ -78,7 +80,8 @@ export default function UserMovementReport() {
     setExpanded(next);
   };
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
+      if (!(await gate('export'))) return;
     if (!data) return;
     const rows: string[][] = [];
     rows.push(["المستخدم", "المنطقة", "الزيارة", "وقت الدخول", "وقت الخروج", "المدة (دقيقة)", "حالة", "خارج النطاق", "مكان الدخول", "مكان الخروج"]);

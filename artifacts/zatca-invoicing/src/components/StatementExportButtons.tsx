@@ -16,6 +16,7 @@ import {
   type StatementColKey,
   type StatementVisibleCols,
 } from "@/components/StatementColumnChooser";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 /**
  * Export menu specialized for account statements (customer / supplier).
@@ -57,6 +58,7 @@ export default function StatementExportButtons({
 }: Props) {
   const [busy, setBusy] = useState(false);
   const { fmt, dp } = useFmt();
+  const gate = useDemoActionGate();
 
   // Excel number format honouring the company's decimal-places setting, so the
   // money columns are written as REAL numbers (summable) yet still display with
@@ -122,6 +124,7 @@ export default function StatementExportButtons({
   async function handleExport(type: "excel" | "pdf" | "print") {
     setBusy(true);
     try {
+      if (!(await gate(type === "print" ? "print" : "export"))) return;
       if (type === "excel") {
         exportToExcel(excelRows, excelColumns, filename, "كشف حساب", totalsRow);
       } else {

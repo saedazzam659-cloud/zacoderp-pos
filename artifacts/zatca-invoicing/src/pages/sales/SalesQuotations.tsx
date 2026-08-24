@@ -32,6 +32,7 @@ import {
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import SalesPrintModal, { renderSalesDocsBundleHtml, type PrintData } from "./SalesPrintModal";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -44,6 +45,7 @@ const STATUS_CLS: Record<string, string> = {
 };
 
 export default function SalesQuotations() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -344,9 +346,10 @@ ${source.map((r: any, i: number) => `<tr>
   };
 
 
-  const handleExportPDF = () => openPrintWindow(buildListHtml());
-  const handlePrint    = () => openPrintWindow(buildListHtml());
-  const handleExportExcel = () => {
+  const handleExportPDF = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
+  const handlePrint    = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
+  const handleExportExcel = async () => {
+      if (!(await gate('export'))) return;
     if (filteredQuotations.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
     const rows = filteredQuotations.map((r: any) => ({
       "رقم العرض": r.docNumber ?? `SQ-${r.id}`,
@@ -369,7 +372,8 @@ ${source.map((r: any, i: number) => `<tr>
   };
 
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filteredQuotations.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
     const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
     const rows = filteredQuotations.map((r: any, i: number) => [

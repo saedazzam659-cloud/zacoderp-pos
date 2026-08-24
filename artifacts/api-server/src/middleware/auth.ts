@@ -184,6 +184,9 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
  * Recognises both regular session tokens and SuperAdmin session tokens.
  */
 export async function extractAuth(req: Request, _res: Response, next: NextFunction) {
+  // Routers historically invoke this independently. A global extraction pass
+  // (quota/analytics) must not repeat token, branch, and company DB lookups.
+  if (req.authUser) { next(); return; }
   // ── X-Kiosk-Token path ──────────────────────────────────────────────
   // A paired kiosk device authenticates with this header instead of a
   // Bearer token. We translate it into a synthetic AuthUser so all

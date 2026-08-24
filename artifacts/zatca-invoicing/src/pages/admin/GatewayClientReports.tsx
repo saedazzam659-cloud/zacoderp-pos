@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Download, ArrowRight, TrendingUp, FileSpreadsheet, AlertTriangle, ShieldCheck } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -57,6 +58,7 @@ async function api<T>(path: string): Promise<T> {
 }
 
 export default function GatewayClientReports() {
+    const gate = useDemoActionGate();
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
   const [months, setMonths] = useState(12);
@@ -85,7 +87,8 @@ export default function GatewayClientReports() {
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
     if (acting) headers["x-acting-company-id"] = acting;
-    fetch(url, { headers }).then(r => r.blob()).then(blob => {
+    fetch(url, { headers }).then(r => r.blob()).then(async blob => {
+        if (!(await gate('export'))) return;
       void saveBlob(blob, `gateway-${id}-${new Date().toISOString().slice(0,10)}.csv`);
     });
   };

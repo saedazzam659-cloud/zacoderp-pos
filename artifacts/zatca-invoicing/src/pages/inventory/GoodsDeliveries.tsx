@@ -47,6 +47,7 @@ import {
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -86,6 +87,7 @@ const EMPTY = {
 };
 
 export default function GoodsDeliveries() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
@@ -883,9 +885,10 @@ ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;
   };
 
-  const handleExportPDF = () => openPrintWindow(buildListHtml());
-  const handlePrint    = () => openPrintWindow(buildListHtml());
-  const handleExportExcel = () => {
+  const handleExportPDF = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
+  const handlePrint    = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
+  const handleExportExcel = async () => {
+      if (!(await gate('export'))) return;
     if (filteredDeliveries.length === 0) { toast({ title: tr("toasts.noDataExport"), variant: "destructive" }); return; }
     const rows = filteredDeliveries.map((r: any) => ({
       [tr("excelCols.docNo")]: r.docNumber ?? `GDN-${r.id}`,
@@ -920,6 +923,7 @@ ${sections}
   }
 
   async function handleBulkPrint() {
+      if (!(await gate('print'))) return;
     const ids = Array.from(layout.selected);
     if (ids.length === 0) return;
     setBulkPrintBusy(true);
@@ -943,7 +947,8 @@ ${sections}
     } finally { setBulkPrintBusy(false); }
   }
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filteredDeliveries.length === 0) { toast({ title: tr("toasts.noDataExport"), variant: "destructive" }); return; }
     const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
     const rows = filteredDeliveries.map((r: any, i: number) => [

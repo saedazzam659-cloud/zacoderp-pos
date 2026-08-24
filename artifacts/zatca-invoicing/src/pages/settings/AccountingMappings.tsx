@@ -12,6 +12,7 @@ import { Lock, Unlock, Sparkles, Save, Info, Loader2, BookMarked, Wand2, FileSta
 import { DOCUMENT_TYPES, type DocumentTypeDef } from "@/config/accountingMappings";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 import * as XLSX from "xlsx";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -24,6 +25,7 @@ type MappingRow = {
 };
 
 export default function AccountingMappings() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -330,7 +332,8 @@ export default function AccountingMappings() {
     return rows;
   }
 
-  function exportAll() {
+  async function exportAll() {
+      if (!(await gate('export'))) return;
     if (loadFailed) {
       toast({ title: t("accountingMappings.cantExportBeforeLoad"), variant: "destructive" });
       return;

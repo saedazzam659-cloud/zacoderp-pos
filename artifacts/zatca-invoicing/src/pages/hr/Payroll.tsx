@@ -16,8 +16,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { DateField } from "@/components/ui/date-field";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { fmt2 } from "@/lib/format";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 export default function Payroll() {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -184,7 +186,8 @@ export default function Payroll() {
     onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
-  function downloadCSV() {
+  async function downloadCSV() {
+      if (!(await gate('export'))) return;
     const r = viewRun;
     if (!r) return;
     const head = [tr("csvCode"), tr("csvName"), tr("csvBasic"), tr("csvHousing"), tr("csvTransport"), tr("csvOther"), tr("csvOvertime"), tr("csvGross"), tr("csvGosi"), tr("csvLoans"), "خصم مخالفات", tr("csvAbsence"), tr("csvDeductions"), tr("csvNet"), tr("csvIban")];

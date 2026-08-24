@@ -143,6 +143,10 @@ import { marketplaceRouter, marketplaceAdminRouter } from "./marketplace.js";
 import { resolveDomainCompany } from "../middleware/domainResolver";
 import { dataVersionMiddleware } from "../lib/dataVersion.js";
 import { blockDisabledLocalSuperadmin } from "../lib/localAgentSuperadmin.js";
+import { extractAuth } from "../middleware/auth";
+import demoAnalyticsRouter from "./demo-analytics";
+import adminDemoAnalyticsRouter from "./admin-demo-analytics";
+import { demoQuotaMiddleware } from "../middleware/demoQuota";
 
 const router: IRouter = Router();
 
@@ -157,6 +161,10 @@ router.use(dataVersionMiddleware);
 // served from the AGENT's external PostgreSQL (or 403 when suspended).
 // Must run before any data-touching route; public branding/heartbeat exempt.
 router.use(agentDataSourceRouter);
+// Auth extraction is idempotent and provides a single post-routing auth point
+// for central demo controls without changing legacy routers.
+router.use(extractAuth);
+router.use(demoQuotaMiddleware);
 // Full local agents carry an explicit, trusted edition entitlement in
 // /opt/zacod/config.json. When disabled, hide and deny the entire local
 // Super Admin control plane before auth/session handlers can run.
@@ -184,6 +192,7 @@ router.use("/admin/company-cloning", companyCloningRouter);
 router.use("/admin/seo", adminSeoRouter);
 router.use("/admin/ai-controls", adminAiControlsRouter);
 router.use("/admin/db-stats", adminDbStatsRouter);
+router.use("/admin/demo-analytics", adminDemoAnalyticsRouter);
 router.use("/admin/gateway-clients", gatewayClientsRouter);
 router.use("/admin/domains", domainsRouter);
 router.use("/admin/external-databases", externalDatabasesRouter);
@@ -229,6 +238,7 @@ router.use("/integrations", integrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);
 router.use("/seo", seoRouter);
+router.use("/demo-analytics", demoAnalyticsRouter);
 router.use("/companies", companiesRouter);
 router.use("/customers", customersRouter);
 router.use("/suppliers", suppliersRouter);

@@ -19,6 +19,7 @@ import AccountStatementView from "@/components/AccountStatementView";
 import { FileText, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // Map a journal-entry row coming back from /account-statement to the URL of
 // the document that produced it. Documents with a dedicated detail page
@@ -180,6 +181,7 @@ function sourceLinkFor(row: any): string | null {
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function AccountStatement() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -390,7 +392,8 @@ export default function AccountStatement() {
   // (mode "general") so it matches the customer/supplier printout exactly.
   // Otherwise keep the legacy per-page window.print() (the in-page block
   // <AccountStatementView /> handles the classic printable layout).
-  const handlePrint = () => {
+  const handlePrint = async () => {
+      if (!(await gate('export'))) return;
     if (user?.company?.statementPrintFormat === "unified" && selectedAccount) {
       exportStatementToPDF({
         mode: "general",

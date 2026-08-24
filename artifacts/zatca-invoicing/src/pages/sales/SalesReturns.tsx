@@ -53,6 +53,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc, exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -135,6 +136,7 @@ const STATUS_CLS: Record<string, string> = {
 };
 
 export default function SalesReturns() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -1639,7 +1641,8 @@ ${source.map((r: any, i: number) => {
     sourceLabel: "",
   });
   const exportFilenameBase = () => `sales-returns-${today()}`;
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+      if (!(await gate('export'))) return;
     if (filteredReturns.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
@@ -1647,7 +1650,8 @@ ${source.map((r: any, i: number) => {
     exportToExcel(buildExportRows(), buildExportColumns(), exportFilenameBase(), "جرد مرتجعات المبيعات", buildExportTotals());
     toast({ title: `تم تصدير ${filteredReturns.length} مرتجع إلى Excel` });
   };
-  const exportPdf = () => {
+  const exportPdf = async () => {
+      if (!(await gate('export'))) return;
     if (filteredReturns.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
@@ -1665,7 +1669,8 @@ ${source.map((r: any, i: number) => {
     );
     toast({ title: `جارٍ فتح ${filteredReturns.length} مرتجع بصيغة PDF` });
   };
-  const printFilteredGrid = () => {
+  const printFilteredGrid = async () => {
+      if (!(await gate('print'))) return;
     if (filteredReturns.length === 0) {
       toast({ title: "لا يوجد بيانات للطباعة", variant: "destructive" });
       return;
@@ -1837,9 +1842,10 @@ ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;
   };
 
-  const handlePrint      = () => openPrintWindow(buildReturnsListHtml());
-  const handleExportPDF  = () => openPrintWindow(buildReturnsListHtml());
-  const handleExportExcel = () => {
+  const handlePrint      = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildReturnsListHtml()); };
+  const handleExportPDF  = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildReturnsListHtml()); };
+  const handleExportExcel = async () => {
+      if (!(await gate('export'))) return;
     if (filteredReturns.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
@@ -1866,6 +1872,7 @@ ${sections}
   // Bulk-print: fetch every selected return's full lines, then open the
   // multi-doc print sheet. Falls back to the cached row if a fetch fails.
   async function handleBulkPrint() {
+      if (!(await gate('print'))) return;
     const ids = Array.from(layout.selected);
     if (ids.length === 0) return;
     setBulkPrintBusy(true);
@@ -1898,7 +1905,8 @@ ${sections}
     }
   }
 
-  function exportCsv() {
+  async function exportCsv() {
+      if (!(await gate('export'))) return;
     if (filteredReturns.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;

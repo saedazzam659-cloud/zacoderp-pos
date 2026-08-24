@@ -47,6 +47,7 @@ import {
 } from "@/components/SupplierTaxDetailsDialog";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const ENTRY_TYPES = [
   { value: "general",      label: "قيد عام" },
@@ -138,6 +139,7 @@ function today() {
 }
 
 export default function JournalEntryForm() {
+    const gate = useDemoActionGate();
   const { user } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   // Company-wide "smart model" journal form. When ON, adding a line
@@ -1587,7 +1589,8 @@ export default function JournalEntryForm() {
   const typeLabel = ENTRY_TYPES.find(t => t.value === entryType)?.label ?? entryType;
   const branchLabel = branches.find((b: any) => String(b.id) === String(branchId))?.nameAr ?? "—";
 
-  const handleExportEntryExcel = () => {
+  const handleExportEntryExcel = async () => {
+      if (!(await gate('export'))) return;
     const headerRows = [
       ["رقم القيد", docLabel],
       ["التاريخ",   entryDate],

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -134,6 +135,7 @@ type CashFlowResponse = {
 };
 
 export default function CashFlowReport() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -423,7 +425,8 @@ export default function CashFlowReport() {
     count: "", inflow: summaryInTotal, outflow: summaryOutTotal,
   };
 
-  const handlePrintSummary = () => {
+  const handlePrintSummary = async () => {
+      if (!(await gate('export'))) return;
     let bal = opening;
     const printLines = summaryNotes.map(n => {
       const inAmt  = n.side === "in"  ? n.amount : 0;
@@ -506,7 +509,8 @@ export default function CashFlowReport() {
   // PDF print via the shared unified statement renderer: inflow→debit,
   // outflow→credit so the standard مدين/دائن statement layout carries the
   // cash-flow figures with the company header, logo, and totals.
-  const handlePrint = () => {
+  const handlePrint = async () => {
+      if (!(await gate('export'))) return;
     exportStatementToPDF({
       mode: "general",
       company: (user?.company as any) ?? null,

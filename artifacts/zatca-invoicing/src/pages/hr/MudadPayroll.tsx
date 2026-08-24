@@ -17,6 +17,7 @@ import {
   BarChart3, FileSpreadsheet, Users, AlertTriangle,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const REASON_CODES = [
   "not_sponsored", "irregular", "resigned", "suspended", "inactive",
@@ -35,6 +36,7 @@ function Section({ title, children }: { title: React.ReactNode; children: React.
 }
 
 export default function MudadPayroll() {
+    const gate = useDemoActionGate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -100,7 +102,8 @@ export default function MudadPayroll() {
     return "\uFEFF" + [header.join(","), ...rows].join("\r\n");
   };
 
-  const downloadWps = (code: string, lines: any[]) => {
+  const downloadWps = async (code: string, lines: any[]) => {
+      if (!(await gate('export'))) return;
     if (!lines.length) { toast({ title: tr("noIncluded"), variant: "destructive" }); return; }
     const blob = new Blob([buildCsv(lines)], { type: "text/csv;charset=utf-8;" });
     void saveBlob(blob, `${code}.csv`);

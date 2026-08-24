@@ -273,7 +273,10 @@ export async function resolveAgentRequestHost(req: Request): Promise<string | nu
       if (expected) {
         try {
           const a = Buffer.from(token); const b = Buffer.from(expected);
-          if (a.length === b.length && timingSafeEqual(a, b)) return h;
+          if (a.length === b.length && timingSafeEqual(a, b)) {
+            (req as any).verifiedAgentProxyIdentity = { agentId: hit!.id, host: h };
+            return h;
+          }
         } catch { /* fall through */ }
       }
       // Claimed-but-unverified → fall through to the standard headers and

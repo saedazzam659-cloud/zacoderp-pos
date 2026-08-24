@@ -10,8 +10,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Coins, Search, Download } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import AIInsightsPanel from "./_AIInsightsPanel";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
-function exportCsv(filename: string, headers: string[], rows: any[][]) {
+async function exportCsv(filename: string, headers: string[], rows: any[][]) {
   const esc = (v: any) => {
     const s = String(v ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -22,6 +23,7 @@ function exportCsv(filename: string, headers: string[], rows: any[][]) {
 }
 
 export default function EmployeeCostReport() {
+    const gate = useDemoActionGate();
   const { i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = useFmt();
@@ -36,8 +38,9 @@ export default function EmployeeCostReport() {
   const summary = data?.summary;
   const rows = data?.rows ?? [];
 
-  function handleExport() {
+  async function handleExport() {
     if (!rows.length) return;
+    if (!(await gate("export"))) return;
     exportCsv(
       `employee_cost_${new Date().toISOString().slice(0, 10)}.csv`,
       ["الكود", "الاسم", "القسم", "المسمى", "أساسي", "بدل سكن", "بدل نقل", "بدلات أخرى", "إجمالي شهري", "GOSI صاحب العمل", "تكلفة شهرية", "تكلفة سنوية"],

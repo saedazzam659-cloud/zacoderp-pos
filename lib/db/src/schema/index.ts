@@ -90,3 +90,4 @@ export * from "./trainingRoom";
 export * from "./agentInstances";
 export * from "./externalDatabases";
 export * from "./demoDeviceWorkspaces";
+export * from "./demoAnalytics";

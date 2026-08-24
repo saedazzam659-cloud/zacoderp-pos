@@ -15,6 +15,7 @@ import {
   GitCompareArrows, Upload, Search, Filter, CheckCircle2, Link2, Link2Off, Trash2, AlertTriangle, Sparkles, Brain, FileSpreadsheet,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -47,6 +48,7 @@ const dayDiff = (a: string, b: string) => {
 const moneyEq = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
 export default function BankReconciliation() {
+    const gate = useDemoActionGate();
   const { fmt } = useFmt();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -132,11 +134,12 @@ export default function BankReconciliation() {
    *    1. "الحركات"  — the transactions (Date / Description / Debit / Credit / Balance / Ref)
    *    2. "تنبيهات"  — parser warnings (so the user knows what to spot-check)
    */
-  function downloadAsXlsx(
+  async function downloadAsXlsx(
     txns: Omit<BankTx, "id">[],
     warns: string[],
     baseName: string,
   ) {
+      if (!(await gate('export'))) return;
     const header = ["التاريخ", "البيان", "وارد (إيداع)", "صادر (سحب)", "الرصيد", "المرجع"];
     const rows = txns.map(t => [
       t.date,

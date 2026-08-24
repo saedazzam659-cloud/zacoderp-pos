@@ -42,6 +42,7 @@ import {
 } from "@/lib/docRowTone";
 import { DateField } from "@/components/ui/date-field";
 import { fmt2 } from "@/lib/format";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 /** CollapsibleSection — labeled, togglable section for the item form (SAP-style). */
 function CollapsibleSection({
@@ -1162,6 +1163,7 @@ function AIAssistDialog({
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function Items() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";

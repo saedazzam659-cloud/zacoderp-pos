@@ -26,6 +26,7 @@ import { saveWorkbook, saveBlob } from "@/lib/saveFile";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
 import { htmlToPdfBlob } from "@/lib/deliveryReceiptPrint";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // Minimal HTML-escape for the print/PDF document builder below.
 function escapeHtml(s: string): string {
@@ -284,6 +285,7 @@ function VatDrilldownDialog({
   to: string;
   token: string | null;
 }) {
+  const gate = useDemoActionGate();
   const [search, setSearch] = useState("");
   const { data, isLoading, error } = useQuery<DetailResp>({
     queryKey: ["tax-declaration-details", from, to, bucket],
@@ -331,7 +333,8 @@ function VatDrilldownDialog({
     });
   }
 
-  function handleExcel() {
+  async function handleExcel() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) return;
     const ws = XLSX.utils.json_to_sheet(exportRows());
     const wb = XLSX.utils.book_new();
@@ -401,6 +404,7 @@ function VatDrilldownDialog({
   }
 
   async function handlePdf() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) return;
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(label)}</title></head><body>${buildInnerHtml()}</body></html>`;
     const blob = await htmlToPdfBlob(html);
@@ -561,6 +565,7 @@ function VatDrilldownDialog({
 }
 
 export default function TaxDeclaration() {
+    const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { t, i18n } = useTranslation();
   const isAr = i18n.language?.startsWith("ar");
@@ -647,7 +652,8 @@ export default function TaxDeclaration() {
   // Unlike the browser Print button these produce downloadable files AND —
   // per user request — always include the "تسويات يدوية على ضريبة القيمة
   // المضافة (قيود)" (manual VAT adjustment JEs) section.
-  function handleReportExcel() {
+  async function handleReportExcel() {
+      if (!(await gate('export'))) return;
     if (!data) return;
     const r2 = (n: number) => Number((n ?? 0).toFixed(2));
     const supSummary = (blocks?: Array<{ supplierName: string | null; supplierVatNumber: string | null; supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null }>) =>
@@ -794,6 +800,7 @@ export default function TaxDeclaration() {
   }
 
   async function handleReportPdf() {
+      if (!(await gate('export'))) return;
     if (!data) return;
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(t("taxDeclaration.title"))}</title></head><body>${buildReportHtml()}</body></html>`;
     const blob = await htmlToPdfBlob(html);
@@ -820,7 +827,7 @@ export default function TaxDeclaration() {
         </div>
         {data && searched && (
           <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => window.print()}>
+            <Button variant="outline" size="sm" className="gap-2" onClick={async () => { if (!(await gate('print'))) return; return window.print(); }}>
               <Printer className="h-4 w-4" />
               {t("taxDeclaration.print")}
             </Button>

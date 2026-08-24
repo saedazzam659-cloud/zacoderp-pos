@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useBranches } from "@/hooks/useBranches";
 import { DateField } from "@/components/ui/date-field";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 // Auth header helper — mirrors the pattern used by every other API client
 // in this app (journalEntriesApi.ts, salesAnalyticsApi.ts, etc.). The
@@ -257,6 +258,7 @@ const DEFAULT_PAGE_SIZE: PageSize = 50;
 const BULK_CONCURRENCY = 8;
 
 export default function PostingCenter() {
+    const gate = useDemoActionGate();
   const { user } = useAuth();
   const cid = (user as any)?.companyId ?? null;
   const { toast } = useToast();
@@ -712,7 +714,8 @@ export default function PostingCenter() {
       je: "",
     };
   }
-  function doExportExcel() {
+  async function doExportExcel() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
@@ -727,7 +730,8 @@ export default function PostingCenter() {
     );
     toast({ title: `تم تصدير ${filtered.length} عملية إلى Excel` });
   }
-  function doExportPdf() {
+  async function doExportPdf() {
+      if (!(await gate('export'))) return;
     if (filtered.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;

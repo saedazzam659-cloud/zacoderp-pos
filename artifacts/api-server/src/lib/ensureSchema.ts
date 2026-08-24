@@ -3238,6 +3238,76 @@ async function ensureCentralAgentInvoiceAccelerationSchema(): Promise<void> {
   }
 }
 
+/** Demo telemetry is central control-plane data, never part of an agent tenant DB. */
+async function ensureCentralDemoAnalyticsSchema(): Promise<void> {
+  const stmts = [
+    `CREATE TABLE IF NOT EXISTS demo_analytics_profiles (
+      id SERIAL PRIMARY KEY, source_kind VARCHAR(12) NOT NULL, source_instance_id INTEGER,
+      local_company_id INTEGER, local_user_id INTEGER, phone VARCHAR(32), device VARCHAR(32),
+      lead_status VARCHAR(32) NOT NULL DEFAULT 'new', lead_notes TEXT, follow_up_at TIMESTAMPTZ,
+      login_count INTEGER NOT NULL DEFAULT 0, total_duration_ms INTEGER NOT NULL DEFAULT 0,
+      interest_score INTEGER NOT NULL DEFAULT 0, interest_category VARCHAR(24) NOT NULL DEFAULT 'new_visitor',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+    // NULL source_instance_id is the central source. NULLS are normally
+    // distinct in PostgreSQL unique indexes, so coalesce it explicitly.
+    `CREATE UNIQUE INDEX IF NOT EXISTS demo_analytics_profiles_identity_uq ON demo_analytics_profiles(source_kind, COALESCE(source_instance_id, -1), local_company_id, local_user_id)`,
+    `CREATE INDEX IF NOT EXISTS demo_analytics_profiles_phone_idx ON demo_analytics_profiles(phone)`,
+    `CREATE TABLE IF NOT EXISTS demo_analytics_policies (
+      id SERIAL PRIMARY KEY, profile_id INTEGER REFERENCES demo_analytics_profiles(id) ON DELETE CASCADE,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE, action_limit INTEGER NOT NULL DEFAULT 25,
+      warning_remaining INTEGER NOT NULL DEFAULT 5, subscription_message TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+    `ALTER TABLE demo_analytics_policies ADD COLUMN IF NOT EXISTS profile_id INTEGER REFERENCES demo_analytics_profiles(id) ON DELETE CASCADE`,
+    `DO $$ BEGIN
+       IF EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'demo_analytics_policies'
+           AND column_name = 'source_kind'
+       ) THEN
+         ALTER TABLE demo_analytics_policies ALTER COLUMN source_kind DROP NOT NULL;
+       END IF;
+     END $$`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS demo_analytics_policies_profile_uq ON demo_analytics_policies(profile_id)`,
+    `CREATE TABLE IF NOT EXISTS demo_analytics_sessions (
+      id SERIAL PRIMARY KEY, profile_id INTEGER NOT NULL REFERENCES demo_analytics_profiles(id) ON DELETE CASCADE,
+      session_key VARCHAR(128) NOT NULL, started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      device_type VARCHAR(16), os VARCHAR(80), browser VARCHAR(80), user_agent VARCHAR(300),
+      last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ended_at TIMESTAMPTZ, duration_ms INTEGER NOT NULL DEFAULT 0)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS demo_analytics_sessions_key_uq ON demo_analytics_sessions(profile_id, session_key)`,
+    `ALTER TABLE demo_analytics_sessions ADD COLUMN IF NOT EXISTS device_type VARCHAR(16)`,
+    `ALTER TABLE demo_analytics_sessions ADD COLUMN IF NOT EXISTS os VARCHAR(80)`,
+    `ALTER TABLE demo_analytics_sessions ADD COLUMN IF NOT EXISTS browser VARCHAR(80)`,
+    `ALTER TABLE demo_analytics_sessions ADD COLUMN IF NOT EXISTS user_agent VARCHAR(300)`,
+    `CREATE TABLE IF NOT EXISTS demo_analytics_events (
+      id SERIAL PRIMARY KEY, profile_id INTEGER NOT NULL REFERENCES demo_analytics_profiles(id) ON DELETE CASCADE,
+      event_id VARCHAR(128) NOT NULL, type VARCHAR(48) NOT NULL, module_key VARCHAR(80), screen_key VARCHAR(120),
+      action_key VARCHAR(120), route VARCHAR(240), duration_ms INTEGER, occurred_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS demo_analytics_events_profile_event_uq ON demo_analytics_events(profile_id, event_id)`,
+    `CREATE TABLE IF NOT EXISTS demo_action_reservations (
+      id SERIAL PRIMARY KEY, profile_id INTEGER NOT NULL REFERENCES demo_analytics_profiles(id) ON DELETE CASCADE,
+      idempotency_key VARCHAR(160) NOT NULL, route VARCHAR(240) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'reserved',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), finalized_at TIMESTAMPTZ)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS demo_action_reservations_key_uq ON demo_action_reservations(profile_id, idempotency_key)`,
+    `CREATE TABLE IF NOT EXISTS demo_action_ledger (
+      id SERIAL PRIMARY KEY, reservation_id INTEGER NOT NULL REFERENCES demo_action_reservations(id) ON DELETE CASCADE,
+      profile_id INTEGER NOT NULL REFERENCES demo_analytics_profiles(id) ON DELETE CASCADE, action_key VARCHAR(120) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS demo_action_ledger_reservation_uq ON demo_action_ledger(reservation_id)`,
+    `CREATE TABLE IF NOT EXISTS demo_agent_batch_receipts (
+      id SERIAL PRIMARY KEY, source_instance_id INTEGER NOT NULL, receipt_key VARCHAR(160) NOT NULL,
+      event_count INTEGER NOT NULL DEFAULT 0, status VARCHAR(16) NOT NULL DEFAULT 'processing', error VARCHAR(300), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+    `ALTER TABLE demo_agent_batch_receipts ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'processing'`,
+    `ALTER TABLE demo_agent_batch_receipts ADD COLUMN IF NOT EXISTS error VARCHAR(300)`,
+    `ALTER TABLE demo_agent_batch_receipts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS demo_agent_batch_receipts_uq ON demo_agent_batch_receipts(source_instance_id, receipt_key)`,
+  ];
+  for (const stmt of stmts) {
+    try { await execCentralDDL(stmt); }
+    catch (err) { logger.warn({ err }, "ensureSchema: central demo analytics step failed (continuing)"); }
+  }
+}
+
 async function runHeal(options: {
   includeIdentitySteps?: boolean;
   strictSchema?: boolean;
@@ -3334,6 +3404,9 @@ async function runHeal(options: {
 export function ensureSchemaUpToDate(): Promise<void> {
   if (!healPromise) {
     healPromise = (async () => {
+      // Create central-only control-plane tables before generic schema
+      // inspection, so they are never reported as missing on startup.
+      await ensureCentralDemoAnalyticsSchema();
       await runHeal();
       await ensureCentralAgentInvoiceAccelerationSchema();
     })();
@@ -3349,7 +3422,7 @@ export function ensureSchemaUpToDate(): Promise<void> {
  */
 export function runSchemaHealOnActiveDb(): Promise<void> {
   return runHeal({
-    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples"],
+    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts"],
     excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
   });
 }
@@ -3373,7 +3446,7 @@ export function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
     // Both are intentionally lazy/control-plane-only and must not block an
     // external agent request. agent_invoice_samples is created only on the
     // central DB by ensureCentralAgentInvoiceAccelerationSchema().
-    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples"],
+    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts"],
     excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
   });
 }

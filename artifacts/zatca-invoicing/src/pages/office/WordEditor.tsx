@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { openFile, saveFile, printHtml, withExtension, extractPdf, type OpenedFile } from "./fileIo";
+import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const DOCX_ACCEPT = {
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
@@ -128,6 +129,7 @@ async function buildDocxBlob(root: HTMLElement, rtl: boolean): Promise<Blob> {
 }
 
 export default function WordEditor() {
+    const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const ar = i18n.language?.startsWith("ar") ?? true;
   const { toast } = useToast();
@@ -273,7 +275,8 @@ export default function WordEditor() {
     }
   };
 
-  const handlePdf = () => {
+  const handlePdf = async () => {
+      if (!(await gate('print'))) return;
     if (!editorRef.current) return;
     printHtml(editorRef.current.innerHTML, { title: fileName, rtl });
   };
