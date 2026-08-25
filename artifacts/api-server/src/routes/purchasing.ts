@@ -1957,12 +1957,12 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
         creditLines.push(
           { accountId: supplierApAccId, credit: totalAmount, description: "مستحقات المورد" },
           { accountId: supplierApAccId, debit:  totalAmount, description: inv.paymentType === "cash" ? "سداد نقدي للمورد" : "سداد بنكي للمورد" } as JLine,
-          { accountId: counterpartyAccountId, credit: totalAmount, description: inv.paymentType === "cash" ? "صرف نقدي" : "صرف بنكي" },
+          { accountId: counterpartyAccountId, credit: totalAmount, description: inv.paymentType === "cash" ? "صرف نقدي" : desc },
           { accountId: discountAccId, credit: discountAmount, description: "خصم مكتسب" },
         );
       } else {
         creditLines.push(
-          { accountId: counterpartyAccountId, credit: totalAmount, description: inv.paymentType === "cash" ? "صرف نقدي" : "صرف بنكي" },
+          { accountId: counterpartyAccountId, credit: totalAmount, description: inv.paymentType === "cash" ? "صرف نقدي" : desc },
           { accountId: discountAccId, credit: discountAmount, description: "خصم مكتسب" },
         );
       }
