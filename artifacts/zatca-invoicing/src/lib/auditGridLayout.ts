@@ -76,7 +76,9 @@ export const DEFAULT_FOOTER_COLOR: FooterColor = "white";
 export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 1000] as const;
 /** `0` remains in the type only for legacy branches; it is never emitted by
  * the shared picker or sanitizer anymore. */
-export type PageSize = typeof PAGE_SIZE_OPTIONS[number] | 0;
+// 250 remains a supported legacy override for screens that explicitly request
+// it, while the shared picker presents the inventory-standard 1000 option.
+export type PageSize = typeof PAGE_SIZE_OPTIONS[number] | 250 | 0;
 export const DEFAULT_PAGE_SIZE: PageSize = 25;
 
 export function sanitizeAuditGridPageSize(value: unknown): PageSize {

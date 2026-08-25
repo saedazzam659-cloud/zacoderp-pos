@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -8,10 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
-import { Gift, Filter, X, PackageOpen } from "lucide-react";
+import { Gift, Filter, X } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -112,6 +113,64 @@ export default function FreeQuantitiesReport() {
     returnedFreeQty: fmtQty(totals.returned),
     netFreeQty:      fmtQty(totals.net),
   };
+
+  const gridColumns = useMemo<GridColumn<any>[]>(() => [
+    {
+      key: "item",
+      label: t("inventoryReports.common.item"),
+      type: "text",
+      width: 250,
+      value: r => `${pickName(r.itemNameAr, r.itemNameEn)} ${r.itemCode ?? ""}`,
+      render: r => (
+        <div>
+          <p className="font-medium text-sm">{pickName(r.itemNameAr, r.itemNameEn) || "—"}</p>
+          <p className="text-[10px] text-muted-foreground font-mono">{r.itemCode}</p>
+        </div>
+      ),
+    },
+    {
+      key: "unit",
+      label: t("inventoryReports.freeQuantities.unit"),
+      type: "text",
+      width: 140,
+      className: "text-xs text-muted-foreground",
+      value: r => pickName(r.unitName, r.unitNameEn),
+      render: r => pickName(r.unitName, r.unitNameEn) || "—",
+    },
+    {
+      key: "soldFreeQty",
+      label: t("inventoryReports.freeQuantities.soldFree"),
+      type: "num",
+      align: "center",
+      width: 160,
+      className: "tabular-nums text-blue-700 font-medium",
+      value: r => Number(r.soldFreeQty),
+      render: r => fmtQty(r.soldFreeQty),
+      totalable: true,
+    },
+    {
+      key: "returnedFreeQty",
+      label: t("inventoryReports.freeQuantities.returnedFree"),
+      type: "num",
+      align: "center",
+      width: 175,
+      className: "tabular-nums text-amber-700 font-medium",
+      value: r => Number(r.returnedFreeQty),
+      render: r => fmtQty(r.returnedFreeQty),
+      totalable: true,
+    },
+    {
+      key: "netFreeQty",
+      label: t("inventoryReports.freeQuantities.net"),
+      type: "num",
+      align: "center",
+      width: 150,
+      className: "tabular-nums text-emerald-700 font-bold",
+      value: r => Number(r.netFreeQty),
+      render: r => fmtQty(r.netFreeQty),
+      totalable: true,
+    },
+  ], [t, isRtl, fmtQty]);
 
   const apply  = () => setApplied(filters);
   const reset  = () => { setFilters(empty); setApplied(empty); };
@@ -243,53 +302,28 @@ export default function FreeQuantitiesReport() {
       </div>
 
       {/* Results table */}
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[820px]">
-            <thead className="bg-muted/50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.item")}</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("inventoryReports.freeQuantities.unit")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-blue-700">{t("inventoryReports.freeQuantities.soldFree")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-amber-700">{t("inventoryReports.freeQuantities.returnedFree")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-emerald-700">{t("inventoryReports.freeQuantities.net")}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {(isLoading || isFetching)
-                ? [...Array(5)].map((_, i) => (
-                    <tr key={i}><td colSpan={5} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>
-                  ))
-                : (rows as any[]).length === 0
-                ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground">
-                    <PackageOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    {t("inventoryReports.freeQuantities.noData")}
-                  </td></tr>
-                : (rows as any[]).map((r) => (
-                    <tr key={r.itemId} className="hover:bg-muted/20">
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-sm">{pickName(r.itemNameAr, r.itemNameEn) || "—"}</p>
-                        <p className="text-[10px] text-muted-foreground font-mono">{r.itemCode}</p>
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{pickName(r.unitName, r.unitNameEn) || "—"}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-blue-700 font-medium">{fmtQty(r.soldFreeQty)}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-amber-700 font-medium">{fmtQty(r.returnedFreeQty)}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-emerald-700 font-bold">{fmtQty(r.netFreeQty)}</td>
-                    </tr>
-                  ))}
-            </tbody>
-            {(rows as any[]).length > 0 && (
-              <tfoot className="bg-muted/40 border-t-2">
-                <tr>
-                  <td className="px-4 py-3 font-bold text-sm" colSpan={2}>{t("inventoryReports.freeQuantities.total")}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold text-blue-700">{fmtQty(totals.sold)}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold text-amber-700">{fmtQty(totals.returned)}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold text-emerald-700">{fmtQty(totals.net)}</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
+      <div className="w-full min-w-0 overflow-hidden rounded-xl">
+        {(isLoading || isFetching) ? (
+          <div className="space-y-2 rounded-xl border bg-card p-4">
+            {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+          </div>
+        ) : (
+          <AdvancedReportGrid
+            slug="freeQuantitiesReportGrid"
+            cid={cid}
+            columns={gridColumns}
+            rowKey={(row: any) => row.itemId}
+            rows={rows as any[]}
+            unitLabel={isRtl ? "صنف" : "item"}
+            emptyMessage={t("inventoryReports.freeQuantities.noData")}
+            totalsRow={(rows as any[]).length > 0 ? {
+              __label: t("inventoryReports.freeQuantities.total"),
+              soldFreeQty: fmtQty(totals.sold),
+              returnedFreeQty: fmtQty(totals.returned),
+              netFreeQty: fmtQty(totals.net),
+            } : null}
+          />
+        )}
       </div>
     </div>
   );

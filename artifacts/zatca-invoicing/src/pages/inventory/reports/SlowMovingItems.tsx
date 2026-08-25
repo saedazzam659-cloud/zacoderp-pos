@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -9,6 +9,7 @@ import ExportButtons from "@/components/ExportButtons";
 import { Hourglass, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 export default function SlowMovingItems() {
   const { t, i18n } = useTranslation();
@@ -97,6 +98,74 @@ export default function SlowMovingItems() {
     daysIdle:     r.daysIdle === 9999 ? "—" : t("inventoryReports.slowMoving.dayUnit", { days: r.daysIdle }),
   }));
 
+  const gridColumns = useMemo<GridColumn<any>[]>(() => [
+    {
+      key: "item",
+      label: t("inventoryReports.common.item"),
+      type: "text",
+      width: 220,
+      value: r => `${pickName(r.nameAr, r.nameEn)} ${r.code ?? ""}`,
+      render: r => (
+        <div>
+          <p className="font-medium text-sm">{pickName(r.nameAr, r.nameEn) || "—"}</p>
+          <p className="text-[10px] text-muted-foreground font-mono">{r.code}</p>
+        </div>
+      ),
+    },
+    {
+      key: "group",
+      label: t("inventoryReports.slowMoving.colGroup"),
+      type: "text",
+      width: 170,
+      className: "text-xs text-muted-foreground",
+      value: r => pickName(r.group?.nameAr, r.group?.nameEn),
+      render: r => pickName(r.group?.nameAr, r.group?.nameEn) || "—",
+    },
+    {
+      key: "qty",
+      label: t("inventoryReports.slowMoving.colBalance"),
+      type: "num",
+      align: "center",
+      width: 130,
+      className: "tabular-nums",
+      value: r => Number(r.qty),
+      render: r => fmtQty(r.qty),
+    },
+    {
+      key: "value",
+      label: t("inventoryReports.slowMoving.colValue"),
+      type: "num",
+      align: "center",
+      width: 140,
+      className: "tabular-nums font-semibold",
+      value: r => Number(r.value),
+      render: r => fmt(r.value),
+    },
+    {
+      key: "lastMoveDate",
+      label: t("inventoryReports.slowMoving.colLastMove"),
+      type: "text",
+      align: "center",
+      width: 150,
+      className: "text-xs text-muted-foreground",
+      value: r => r.lastMoveDate,
+      render: r => r.lastMoveDate ?? t("inventoryReports.slowMoving.notMoved"),
+    },
+    {
+      key: "daysIdle",
+      label: t("inventoryReports.slowMoving.colDaysIdle"),
+      type: "num",
+      align: "center",
+      width: 150,
+      value: r => Number(r.daysIdle),
+      render: r => (
+        <span className={`text-xs tabular-nums font-bold rounded-full px-2 py-0.5 ${r.daysIdle >= 365 ? "bg-rose-100 text-rose-700" : r.daysIdle >= 180 ? "bg-amber-100 text-amber-700" : "bg-yellow-50 text-yellow-700"}`}>
+          {r.daysIdle === 9999 ? t("inventoryReports.slowMoving.notMoved") : t("inventoryReports.slowMoving.dayUnit", { days: r.daysIdle })}
+        </span>
+      ),
+    },
+  ], [t, isRtl, fmt, fmtQty]);
+
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -143,47 +212,22 @@ export default function SlowMovingItems() {
         </div>
       </div>
 
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[700px]">
-            <thead className="bg-muted/50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.item")}</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("inventoryReports.slowMoving.colGroup")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.slowMoving.colBalance")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.slowMoving.colValue")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{t("inventoryReports.slowMoving.colLastMove")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-rose-700">{t("inventoryReports.slowMoving.colDaysIdle")}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {isLoading
-                ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
-                : enriched.length === 0
-                ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">
-                    <Hourglass className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    {t("inventoryReports.slowMoving.noItems")}
-                  </td></tr>
-                : enriched.map((r: any) => (
-                    <tr key={r.id} className="hover:bg-muted/20">
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-sm">{pickName(r.nameAr, r.nameEn) || "—"}</p>
-                        <p className="text-[10px] text-muted-foreground font-mono">{r.code}</p>
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{pickName(r.group?.nameAr, r.group?.nameEn) || "—"}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-sm">{fmtQty(r.qty)}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-sm font-semibold">{fmt(r.value)}</td>
-                      <td className="px-4 py-3 text-center hidden md:table-cell text-xs text-muted-foreground">{r.lastMoveDate ?? t("inventoryReports.slowMoving.notMoved")}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`text-xs tabular-nums font-bold rounded-full px-2 py-0.5 ${r.daysIdle >= 365 ? "bg-rose-100 text-rose-700" : r.daysIdle >= 180 ? "bg-amber-100 text-amber-700" : "bg-yellow-50 text-yellow-700"}`}>
-                          {r.daysIdle === 9999 ? t("inventoryReports.slowMoving.notMoved") : t("inventoryReports.slowMoving.dayUnit", { days: r.daysIdle })}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="w-full min-w-0 overflow-hidden rounded-xl">
+        {isLoading ? (
+          <div className="space-y-2 rounded-xl border bg-card p-4">
+            {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+          </div>
+        ) : (
+          <AdvancedReportGrid
+            slug="slowMovingItemsGrid"
+            cid={cid}
+            columns={gridColumns}
+            rowKey={(row: any) => row.id}
+            rows={enriched}
+            unitLabel={isRtl ? "صنف" : "item"}
+            emptyMessage={t("inventoryReports.slowMoving.noItems")}
+          />
+        )}
       </div>
     </div>
   );

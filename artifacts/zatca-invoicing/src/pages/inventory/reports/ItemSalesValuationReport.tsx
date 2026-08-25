@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -9,10 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
-import { ReceiptText, Filter, X, PackageOpen, Coins, BadgePercent, Tags } from "lucide-react";
+import { ReceiptText, Filter, X, Coins, BadgePercent, Tags } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
 import { DateField } from "@/components/ui/date-field";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -133,6 +134,97 @@ export default function ItemSalesValuationReport() {
     netQty:        fmtQty(totals.netQty),
     netValue:      fmt(totals.netValue),
   };
+
+  const gridColumns = useMemo<GridColumn<any>[]>(() => [
+    {
+      key: "item",
+      label: t("inventoryReports.common.item"),
+      type: "text",
+      width: 240,
+      value: r => `${pickName(r.itemNameAr, r.itemNameEn)} ${r.itemCode ?? ""}`,
+      render: r => (
+        <div>
+          <p className="font-medium text-sm">{pickName(r.itemNameAr, r.itemNameEn) || "—"}</p>
+          <p className="text-[10px] text-muted-foreground font-mono">{r.itemCode}</p>
+        </div>
+      ),
+    },
+    {
+      key: "unit",
+      label: t("inventoryReports.itemSalesValuation.cols.unit"),
+      type: "text",
+      width: 125,
+      className: "text-xs text-muted-foreground",
+      value: r => pickName(r.unitName, r.unitNameEn),
+      render: r => pickName(r.unitName, r.unitNameEn) || "—",
+    },
+    {
+      key: "soldQty",
+      label: t("inventoryReports.itemSalesValuation.cols.soldQty"),
+      type: "num",
+      align: "center",
+      width: 130,
+      className: "tabular-nums",
+      value: r => Number(r.soldQty),
+      render: r => fmtQty(r.soldQty),
+      totalable: true,
+    },
+    {
+      key: "soldValue",
+      label: t("inventoryReports.itemSalesValuation.cols.soldValue"),
+      type: "num",
+      align: "center",
+      width: 155,
+      className: "tabular-nums text-blue-700 font-medium",
+      value: r => Number(r.soldValue),
+      render: r => fmt(r.soldValue),
+      totalable: true,
+    },
+    {
+      key: "returnedQty",
+      label: t("inventoryReports.itemSalesValuation.cols.returnedQty"),
+      type: "num",
+      align: "center",
+      width: 145,
+      className: "tabular-nums",
+      value: r => Number(r.returnedQty),
+      render: r => fmtQty(r.returnedQty),
+      totalable: true,
+    },
+    {
+      key: "returnedValue",
+      label: t("inventoryReports.itemSalesValuation.cols.returnedValue"),
+      type: "num",
+      align: "center",
+      width: 170,
+      className: "tabular-nums text-amber-700 font-medium",
+      value: r => Number(r.returnedValue),
+      render: r => fmt(r.returnedValue),
+      totalable: true,
+    },
+    {
+      key: "netQty",
+      label: t("inventoryReports.itemSalesValuation.cols.netQty"),
+      type: "num",
+      align: "center",
+      width: 130,
+      className: "tabular-nums text-emerald-700 font-bold",
+      value: r => Number(r.netQty),
+      render: r => fmtQty(r.netQty),
+      totalable: true,
+    },
+    {
+      key: "netValue",
+      label: t("inventoryReports.itemSalesValuation.cols.netValue"),
+      type: "num",
+      align: "center",
+      width: 155,
+      className: "tabular-nums text-emerald-700 font-bold",
+      value: r => Number(r.netValue),
+      render: r => fmt(r.netValue),
+      totalable: true,
+    },
+  ], [t, isRtl, fmt, fmtQty]);
 
   const apply = () => setApplied(filters);
   const reset = () => { setFilters(empty); setApplied(empty); };
@@ -307,62 +399,31 @@ export default function ItemSalesValuationReport() {
       </div>
 
       {/* Results table */}
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[980px]">
-            <thead className="bg-muted/50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.item")}</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("inventoryReports.itemSalesValuation.cols.unit")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemSalesValuation.cols.soldQty")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-blue-700">{t("inventoryReports.itemSalesValuation.cols.soldValue")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemSalesValuation.cols.returnedQty")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-amber-700">{t("inventoryReports.itemSalesValuation.cols.returnedValue")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-emerald-700">{t("inventoryReports.itemSalesValuation.cols.netQty")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-emerald-700">{t("inventoryReports.itemSalesValuation.cols.netValue")}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {(isLoading || isFetching)
-                ? [...Array(5)].map((_, i) => (
-                    <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>
-                  ))
-                : (rows as any[]).length === 0
-                ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground">
-                    <PackageOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    {t("inventoryReports.itemSalesValuation.noData")}
-                  </td></tr>
-                : (rows as any[]).map((r) => (
-                    <tr key={r.itemId} className="hover:bg-muted/20">
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-sm">{pickName(r.itemNameAr, r.itemNameEn) || "—"}</p>
-                        <p className="text-[10px] text-muted-foreground font-mono">{r.itemCode}</p>
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{pickName(r.unitName, r.unitNameEn) || "—"}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-sm">{fmtQty(r.soldQty)}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-blue-700 font-medium">{fmt(r.soldValue)}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-sm">{fmtQty(r.returnedQty)}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-amber-700 font-medium">{fmt(r.returnedValue)}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-emerald-700 font-bold">{fmtQty(r.netQty)}</td>
-                      <td className="px-4 py-3 text-center tabular-nums text-emerald-700 font-bold">{fmt(r.netValue)}</td>
-                    </tr>
-                  ))}
-            </tbody>
-            {(rows as any[]).length > 0 && (
-              <tfoot className="bg-muted/40 border-t-2">
-                <tr>
-                  <td className="px-4 py-3 font-bold text-sm" colSpan={2}>{t("inventoryReports.itemSalesValuation.total")}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold">{fmtQty(totals.soldQty)}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold text-blue-700">{fmt(totals.soldValue)}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold">{fmtQty(totals.returnedQty)}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold text-amber-700">{fmt(totals.returnedValue)}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold text-emerald-700">{fmtQty(totals.netQty)}</td>
-                  <td className="px-4 py-3 text-center tabular-nums font-bold text-emerald-700">{fmt(totals.netValue)}</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
+      <div className="w-full min-w-0 overflow-hidden rounded-xl">
+        {(isLoading || isFetching) ? (
+          <div className="space-y-2 rounded-xl border bg-card p-4">
+            {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+          </div>
+        ) : (
+          <AdvancedReportGrid
+            slug="itemSalesValuationReportGrid"
+            cid={cid}
+            columns={gridColumns}
+            rowKey={(row: any) => row.itemId}
+            rows={rows as any[]}
+            unitLabel={isRtl ? "صنف" : "item"}
+            emptyMessage={t("inventoryReports.itemSalesValuation.noData")}
+            totalsRow={(rows as any[]).length > 0 ? {
+              __label: t("inventoryReports.itemSalesValuation.total"),
+              soldQty: fmtQty(totals.soldQty),
+              soldValue: fmt(totals.soldValue),
+              returnedQty: fmtQty(totals.returnedQty),
+              returnedValue: fmt(totals.returnedValue),
+              netQty: fmtQty(totals.netQty),
+              netValue: fmt(totals.netValue),
+            } : null}
+          />
+        )}
       </div>
     </div>
   );

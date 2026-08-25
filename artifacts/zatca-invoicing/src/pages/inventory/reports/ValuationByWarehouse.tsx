@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -6,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
 import { Wallet } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 export default function ValuationByWarehouse() {
   const { t, i18n } = useTranslation();
@@ -66,8 +68,73 @@ export default function ValuationByWarehouse() {
     share:         grandValue > 0 ? `${((r.totalValue / grandValue) * 100).toFixed(2)}%` : "0%",
   }));
 
+  const gridColumns = useMemo<GridColumn<any>[]>(() => [
+    {
+      key: "warehouse",
+      label: t("inventoryReports.common.warehouse"),
+      type: "text",
+      width: 280,
+      value: r => `${pickName(r.nameAr, r.nameEn)} ${r.code ?? ""}`,
+      render: r => (
+        <>
+          <p className="font-medium text-sm">{pickName(r.nameAr, r.nameEn) || "—"}</p>
+          <p className="text-[10px] text-muted-foreground font-mono">{r.code}</p>
+        </>
+      ),
+    },
+    {
+      key: "itemCount",
+      label: t("inventoryReports.valuation.cols.itemCount"),
+      type: "num",
+      align: "center",
+      width: 140,
+      className: "tabular-nums",
+      value: r => Number(r.itemCount),
+      render: r => r.itemCount,
+    },
+    {
+      key: "totalQty",
+      label: t("inventoryReports.valuation.cols.totalQty"),
+      type: "num",
+      align: "center",
+      width: 150,
+      className: "tabular-nums",
+      value: r => Number(r.totalQty),
+      render: r => fmtQty(r.totalQty),
+    },
+    {
+      key: "totalValue",
+      label: t("inventoryReports.valuation.cols.totalValue"),
+      type: "num",
+      align: "center",
+      width: 170,
+      className: "tabular-nums font-semibold",
+      value: r => Number(r.totalValue),
+      render: r => fmt(r.totalValue),
+    },
+    {
+      key: "share",
+      label: t("inventoryReports.valuation.cols.share"),
+      type: "num",
+      align: "center",
+      width: 210,
+      value: r => grandValue > 0 ? (r.totalValue / grandValue) * 100 : 0,
+      render: r => {
+        const share = grandValue > 0 ? (r.totalValue / grandValue) * 100 : 0;
+        return (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary" style={{ width: `${Math.min(100, share)}%` }} />
+            </div>
+            <span className="text-xs tabular-nums w-12 text-left">{share.toFixed(1)}%</span>
+          </div>
+        );
+      },
+    },
+  ], [grandValue, isRtl, t, fmt, fmtQty]);
+
   return (
-    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
+    <div className="w-full min-w-0 max-w-none space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><Wallet className="h-6 w-6 text-primary" />{t("inventoryReports.valuation.title")}</h1>
@@ -98,59 +165,29 @@ export default function ValuationByWarehouse() {
         </div>
       </div>
 
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[700px]">
-            <thead className="bg-muted/50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.warehouse")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.valuation.cols.itemCount")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.valuation.cols.totalQty")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.valuation.cols.totalValue")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.valuation.cols.share")}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {isLoading
-                ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={5} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
-                : rows.length === 0
-                ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground"><Wallet className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("inventoryReports.valuation.empty")}</td></tr>
-                : rows.map((r: any) => {
-                    const share = grandValue > 0 ? (r.totalValue / grandValue) * 100 : 0;
-                    return (
-                      <tr key={r.id} className="hover:bg-muted/20">
-                        <td className="px-4 py-3">
-                          <p className="font-medium text-sm">{pickName(r.nameAr, r.nameEn) || "—"}</p>
-                          <p className="text-[10px] text-muted-foreground font-mono">{r.code}</p>
-                        </td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm">{r.itemCount}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm">{fmtQty(r.totalQty)}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm font-semibold">{fmt(r.totalValue)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                              <div className="h-full bg-primary" style={{ width: `${Math.min(100, share)}%` }} />
-                            </div>
-                            <span className="text-xs tabular-nums w-12 text-left">{share.toFixed(1)}%</span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-            </tbody>
-            {!isLoading && rows.length > 0 && (
-              <tfoot className="bg-muted/30 border-t">
-                <tr>
-                  <td className="px-4 py-3 text-xs font-bold">{t("inventoryReports.valuation.grandTotal")}</td>
-                  <td className="px-4 py-3 text-center font-bold tabular-nums">{grandItems}</td>
-                  <td className="px-4 py-3 text-center font-bold tabular-nums">{fmtQty(grandQty)}</td>
-                  <td className="px-4 py-3 text-center font-bold tabular-nums">{fmt(grandValue)}</td>
-                  <td className="px-4 py-3 text-center font-bold">100%</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
+      <div className="w-full min-w-0 overflow-hidden rounded-xl shadow-sm">
+        {isLoading ? (
+          <div className="space-y-2 rounded-xl border bg-card p-4">
+            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+          </div>
+        ) : (
+          <AdvancedReportGrid
+            slug="inventoryValuationByWarehouseGrid"
+            cid={cid}
+            columns={gridColumns}
+            rowKey={(row: any) => row.id}
+            rows={rows}
+            unitLabel={isRtl ? "مستودع" : "warehouse"}
+            emptyMessage={t("inventoryReports.valuation.empty")}
+            totalsRow={rows.length > 0 ? {
+              __label: t("inventoryReports.valuation.grandTotal"),
+              itemCount: grandItems,
+              totalQty: fmtQty(grandQty),
+              totalValue: fmt(grandValue),
+              share: "100%",
+            } : null}
+          />
+        )}
       </div>
     </div>
   );
