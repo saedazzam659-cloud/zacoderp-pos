@@ -8,13 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
 import { IdCard, Search, Filter } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import { Link } from "wouter";
 import { TablePagination, type PageSize } from "@/components/TablePagination";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -224,6 +224,34 @@ export default function ItemCard() {
       });
   };
 
+  const gridColumns = useMemo<GridColumn<any>[]>(() => [
+    { key: "txDate", label: t("inventoryReports.itemCard.cols.date"), type: "text", width: 96, value: r => r.txDate },
+    { key: "txType", label: t("inventoryReports.itemCard.cols.txType"), type: "text", width: 118, value: r => txLabel(r.txType) },
+    {
+      key: "documentNumber", label: t("inventoryReports.itemCard.cols.documentNumber"), type: "text", width: 130,
+      value: r => r.documentNumber ?? "",
+      render: r => r.documentNumber && r.documentPath
+        ? <Link href={r.documentPath} className="font-semibold text-primary underline underline-offset-4 hover:text-primary/80">{r.documentNumber}</Link>
+        : "—",
+    },
+    { key: "warehouse", label: t("inventoryReports.common.warehouse"), type: "text", width: 130, value: r => pickName(r.warehouse?.nameAr, r.warehouse?.nameEn), render: r => pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—" },
+    { key: "sourceWarehouse", label: t("inventoryReports.itemCard.cols.sourceWarehouse"), type: "text", width: 130, value: r => pickName(r.sourceWarehouse?.nameAr, r.sourceWarehouse?.nameEn), render: r => pickName(r.sourceWarehouse?.nameAr, r.sourceWarehouse?.nameEn) || "—" },
+    { key: "targetWarehouse", label: t("inventoryReports.itemCard.cols.targetWarehouse"), type: "text", width: 130, value: r => pickName(r.targetWarehouse?.nameAr, r.targetWarehouse?.nameEn), render: r => pickName(r.targetWarehouse?.nameAr, r.targetWarehouse?.nameEn) || "—" },
+    { key: "unit", label: t("inventoryReports.itemCard.cols.unit"), type: "text", width: 90, value: r => pickName(r.unit?.nameAr, r.unit?.nameEn) || r.unit?.code, render: r => pickName(r.unit?.nameAr, r.unit?.nameEn) || r.unit?.code || "—" },
+    { key: "costCenter", label: t("inventoryReports.itemCard.cols.costCenter"), type: "text", width: 120, value: r => r.costCenter, render: r => r.costCenter || "—" },
+    { key: "project", label: t("inventoryReports.itemCard.cols.project"), type: "text", width: 120, value: r => r.project?.nameAr ?? r.project?.nameEn ?? r.project, render: r => r.project?.nameAr ?? r.project?.nameEn ?? r.project ?? "—" },
+    { key: "balanceBefore", label: t("inventoryReports.itemCard.cols.balanceBefore"), type: "num", align: "center", width: 110, className: "tabular-nums font-semibold", value: r => r.balanceBefore, render: r => fmtQty(r.balanceBefore) },
+    { key: "qtyIn", label: t("inventoryReports.itemCard.cols.qtyIn"), type: "num", align: "center", width: 90, className: "tabular-nums font-bold text-green-700", value: r => r.qtyIn, render: r => r.qtyIn ? fmtQty(r.qtyIn) : "—" },
+    { key: "qtyOut", label: t("inventoryReports.itemCard.cols.qtyOut"), type: "num", align: "center", width: 90, className: "tabular-nums font-bold text-red-700", value: r => r.qtyOut, render: r => r.qtyOut ? fmtQty(r.qtyOut) : "—" },
+    { key: "balanceAfter", label: t("inventoryReports.itemCard.cols.balanceAfter"), type: "num", align: "center", width: 110, className: "tabular-nums font-bold", value: r => r.balanceAfter, render: r => fmtQty(r.balanceAfter) },
+    { key: "costPrice", label: t("inventoryReports.itemCard.cols.costPrice"), type: "num", align: "center", width: 100, className: "tabular-nums", value: r => r.costPrice, render: r => fmt(r.costPrice) },
+    { key: "totalCost", label: t("inventoryReports.itemCard.cols.totalCost"), type: "num", align: "center", width: 110, className: "tabular-nums", value: r => r.totalCost, render: r => fmt(r.totalCost) },
+    { key: "batchNumber", label: t("inventoryReports.itemCard.cols.batchNumber"), type: "text", width: 110, value: r => r.batchNumber, render: r => r.batchNumber || "—" },
+    { key: "expiryDate", label: t("inventoryReports.itemCard.cols.expiryDate"), type: "text", width: 110, value: r => r.expiryDate, render: r => r.expiryDate || "—" },
+    { key: "createdAt", label: t("inventoryReports.itemCard.cols.createdAt"), type: "text", width: 170, value: r => r.createdAt, render: r => r.createdAt ? new Date(r.createdAt).toLocaleString(isRtl ? "ar-SA" : "en-US") : "—" },
+    { key: "notes", label: t("inventoryReports.itemCard.cols.notes"), type: "text", width: 220, className: "whitespace-normal", value: r => r.movementNotes, render: r => r.movementNotes || "—" },
+  ], [t, isRtl, fmt, fmtQty]);
+
   // Grand-totals row appended to Excel and printed/PDF view (renders on the
   // last page only via the centralized exporter).
   const exportTotalsRow = (applied.itemId && !isLoading && augmented.length > 0)
@@ -366,114 +394,30 @@ export default function ItemCard() {
 
       {/* Table */}
       {applied.itemId ? (
-        <div className="w-full min-w-0 rounded-xl border border-border/80 bg-card overflow-hidden shadow-sm">
-          <div className="w-full overflow-x-auto overscroll-x-contain">
-            <table className="w-full min-w-[1540px] table-fixed border-separate border-spacing-0 text-xs
-              [&_tr>*]:border-e [&_tr>*]:border-border/60 [&_tr>*:last-child]:border-e-0
-              [&_tbody_td]:border-t [&_tbody_td]:border-border/50
-              [&_tr>*:nth-child(3)]:border-e-2 [&_tr>*:nth-child(3)]:border-e-primary/25
-              [&_tr>*:nth-child(9)]:border-e-2 [&_tr>*:nth-child(9)]:border-e-primary/25
-              [&_tr>*:nth-child(15)]:border-e-2 [&_tr>*:nth-child(15)]:border-e-primary/25">
-              <colgroup>
-                <col className="w-[82px]" />
-                <col className="w-[86px]" />
-                <col className="w-[100px]" />
-                <col className="w-[94px]" />
-                <col className="w-[94px]" />
-                <col className="w-[94px]" />
-                <col className="w-[68px]" />
-                <col className="w-[86px]" />
-                <col className="w-[86px]" />
-                <col className="w-[82px]" />
-                <col className="w-[66px]" />
-                <col className="w-[66px]" />
-                <col className="w-[82px]" />
-                <col className="w-[76px]" />
-                <col className="w-[82px]" />
-                <col className="w-[82px]" />
-                <col className="w-[84px]" />
-                <col className="w-[126px]" />
-                <col className="w-[170px]" />
-              </colgroup>
-              <thead className="bg-muted/70">
-                <tr>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.date")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.txType")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.documentNumber")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.common.warehouse")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.sourceWarehouse")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.targetWarehouse")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.unit")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.costCenter")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.project")}</th>
-                  <th className="px-2 py-3 text-center font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.balanceBefore")}</th>
-                  <th className="px-2 py-3 text-center font-semibold leading-4 text-green-700">{t("inventoryReports.itemCard.cols.qtyIn")}</th>
-                  <th className="px-2 py-3 text-center font-semibold leading-4 text-red-700">{t("inventoryReports.itemCard.cols.qtyOut")}</th>
-                  <th className="px-2 py-3 text-center font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.balanceAfter")}</th>
-                  <th className="px-2 py-3 text-center font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.costPrice")}</th>
-                  <th className="px-2 py-3 text-center font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.totalCost")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.batchNumber")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.expiryDate")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.createdAt")}</th>
-                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.notes")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading
-                  ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={19} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
-                  : augmented.length === 0
-                  ? <tr><td colSpan={19} className="py-12 text-center text-muted-foreground"><IdCard className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("inventoryReports.itemCard.noMoves")}</td></tr>
-                  : augmented.map((r: any) => (
-                      <tr key={r.id} className="border-t border-border/60 even:bg-muted/10 hover:bg-primary/[0.045] transition-colors">
-                        <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{r.txDate}</td>
-                        <td className="px-4 py-3 text-xs">{txLabel(r.txType)}</td>
-                        <td className="px-4 py-3 text-xs" dir="ltr">
-                          {r.documentNumber && r.documentPath ? (
-                            <Link
-                              href={r.documentPath}
-                              className="font-semibold text-primary underline underline-offset-4 hover:text-primary/80"
-                            >
-                              {r.documentNumber}
-                            </Link>
-                          ) : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—"}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{pickName(r.sourceWarehouse?.nameAr, r.sourceWarehouse?.nameEn) || "—"}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{pickName(r.targetWarehouse?.nameAr, r.targetWarehouse?.nameEn) || "—"}</td>
-                        <td className="px-4 py-3 text-xs">{pickName(r.unit?.nameAr, r.unit?.nameEn) || r.unit?.code || "—"}</td>
-                        <td className="px-4 py-3 text-xs">{r.costCenter || "—"}</td>
-                        <td className="px-4 py-3 text-xs">{r.project?.nameAr ?? r.project?.nameEn ?? r.project ?? "—"}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm font-semibold">{fmtQty(r.balanceBefore)}</td>
-                        <td className={cn("px-4 py-3 text-center tabular-nums text-sm font-bold", r.qtyIn ? "text-green-600" : "text-muted-foreground/30")}>
-                          {r.qtyIn ? fmtQty(r.qtyIn) : "—"}
-                        </td>
-                        <td className={cn("px-4 py-3 text-center tabular-nums text-sm font-bold", r.qtyOut ? "text-red-600" : "text-muted-foreground/30")}>
-                          {r.qtyOut ? fmtQty(r.qtyOut) : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm font-bold">{fmtQty(r.balanceAfter)}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-xs">{fmt(r.costPrice)}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-xs">{fmt(r.totalCost)}</td>
-                        <td className="px-4 py-3 text-xs">{r.batchNumber || "—"}</td>
-                        <td className="px-4 py-3 text-xs tabular-nums">{r.expiryDate || "—"}</td>
-                        <td className="px-4 py-3 text-xs tabular-nums">{r.createdAt ? new Date(r.createdAt).toLocaleString(isRtl ? "ar-SA" : "en-US") : "—"}</td>
-                        <td className="px-4 py-3 text-xs max-w-72 whitespace-normal">{r.movementNotes || "—"}</td>
-                      </tr>
-                    ))}
-              </tbody>
-              {!isLoading && augmented.length > 0 && (
-                <tfoot className="bg-muted/30 border-t">
-                  <tr>
-                    <td colSpan={9} className="px-4 py-3 text-xs font-semibold text-muted-foreground">{t("inventoryReports.itemCard.grandTotal")}</td>
-                    <td className="px-4 py-3 text-center font-bold tabular-nums">{fmtQty(balanceSummary.opening)}</td>
-                    <td className="px-4 py-3 text-center font-bold tabular-nums text-green-700">{fmtQty(totals.in)}</td>
-                    <td className="px-4 py-3 text-center font-bold tabular-nums text-red-700">{fmtQty(totals.out)}</td>
-                    <td className="px-4 py-3 text-center font-bold tabular-nums">{fmtQty(balanceSummary.final)}</td>
-                    <td colSpan={6}></td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
+        <div className="w-full min-w-0 overflow-hidden rounded-xl shadow-sm">
+          {isLoading ? (
+            <div className="space-y-2 rounded-xl border bg-card p-4">
+              {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+            </div>
+          ) : (
+            <AdvancedReportGrid
+              slug="itemCardGrid"
+              cid={cid}
+              columns={gridColumns}
+              rowKey={(row: any) => row.id}
+              rows={augmented}
+              paginate={false}
+              unitLabel={t("inventoryReports.itemCard.movement", { defaultValue: "حركة" })}
+              emptyMessage={t("inventoryReports.itemCard.noMoves")}
+              totalsRow={augmented.length > 0 ? {
+                __label: t("inventoryReports.itemCard.grandTotal"),
+                balanceBefore: fmtQty(balanceSummary.opening),
+                qtyIn: fmtQty(totals.in),
+                qtyOut: fmtQty(totals.out),
+                balanceAfter: fmtQty(balanceSummary.final),
+              } : null}
+            />
+          )}
           {!isLoading && augmented.length > 0 && (
             <TablePagination
               page={page}

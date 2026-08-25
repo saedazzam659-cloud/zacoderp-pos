@@ -34,6 +34,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import {
   useAuditGridLayout,
+  useColumnResize,
   type ColType,
 } from "@/lib/auditGridLayout";
 import {
@@ -397,6 +398,8 @@ export interface AdvancedReportGridProps<R> {
   rowClassName?: (row: R) => string;
   /** Optional double-click handler on a data row (e.g. drill into source doc). */
   onRowDoubleClick?: (row: R) => void;
+  /** Disable client pagination when rows are already paged by the server. */
+  paginate?: boolean;
 }
 
 export default function AdvancedReportGrid<R>({
@@ -408,6 +411,7 @@ export default function AdvancedReportGrid<R>({
   toolbarExtras,
   rowClassName,
   onRowDoubleClick,
+  paginate = true,
 }: AdvancedReportGridProps<R>) {
   /* ── Layout (order / colors / page-size) ─────────────────────────────── */
   const allKeys = useMemo(() => columns.map(c => c.key), [columns]);
@@ -428,10 +432,12 @@ export default function AdvancedReportGrid<R>({
   /* ── Resolved columns (in user order, only known keys) ───────────────── */
   const orderedColumns = useMemo(() => {
     const byKey = new Map(columns.map(c => [c.key, c]));
-    return layout.dataOrder
+    const visible = layout.dataOrder
       .map(k => byKey.get(k))
-      .filter((c): c is GridColumn<R> => Boolean(c));
-  }, [columns, layout.dataOrder]);
+      .filter((c): c is GridColumn<R> => Boolean(c) && !layout.hiddenSet.has(c!.key));
+    return visible.length > 0 ? visible : columns.slice(0, 1);
+  }, [columns, layout.dataOrder, layout.hiddenSet]);
+  const resize = useColumnResize(layout.setColWidths);
 
   const columnDescriptors: ColumnDescriptor[] = useMemo(
     () => columns.map(c => ({ key: c.key, label: c.label })),
@@ -496,7 +502,7 @@ export default function AdvancedReportGrid<R>({
   /* ── Pagination ──────────────────────────────────────────────────────── */
   // When grouping is active we paginate over GROUPS, not rows, so groups
   // don't get split across pages.
-  const pageSize = layout.pageSize;
+  const pageSize = paginate ? layout.pageSize : 0;
   const totalRows = groups ? groups.length : sorted.length;
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalRows / pageSize));
   const safePage = Math.min(layout.page, totalPages);
@@ -617,7 +623,11 @@ export default function AdvancedReportGrid<R>({
 
       {/* ─── Table ───────────────────────────────────────────────────── */}
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px] border-collapse min-w-[480px]">
+        <table
+          ref={resize.tableRef}
+          className="w-full table-fixed text-[12.5px] border-collapse min-w-[480px]"
+          style={{ width: Math.max(480, orderedColumns.reduce((sum, c) => sum + (layout.colWidths[c.key] ?? c.width ?? 110), 0)) }}
+        >
           {/* Column widths via colgroup so resize/auto-fit can apply later. */}
           <colgroup>
             {orderedColumns.map(c => (
@@ -629,7 +639,7 @@ export default function AdvancedReportGrid<R>({
 
           <thead className={cn(layout.theme.bar, layout.theme.text)}>
             <tr>
-              {orderedColumns.map(c => {
+              {orderedColumns.map((c, colIndex) => {
                 const advActive = isAdvActive(colAdv[c.key]);
                 const align = c.align === "end" ? "text-end" : c.align === "center" ? "text-center" : "text-start";
                 // Header content must sit on the SAME side as the cell values below
@@ -643,7 +653,7 @@ export default function AdvancedReportGrid<R>({
                 return (
                   <th
                     key={c.key}
-                    className={cn("px-3 py-2 font-semibold border-b border-white/20 select-none", align)}
+                    className={cn("relative px-3 py-2 font-semibold border-b border-e border-white/20 select-none", align)}
                   >
                     <div className={cn("flex items-center gap-1", headerJustify)}>
                       <button
@@ -666,6 +676,10 @@ export default function AdvancedReportGrid<R>({
                         />
                       )}
                     </div>
+                    <span
+                      {...resize.gripProps(c.key, colIndex)}
+                      className="absolute inset-y-0 end-0 z-10 w-2 translate-x-1/2 cursor-col-resize touch-none hover:bg-white/30"
+                    />
                   </th>
                 );
               })}
@@ -778,14 +792,16 @@ export default function AdvancedReportGrid<R>({
       </div>
 
       {/* ─── Pagination strip ────────────────────────────────────────── */}
-      <AuditGridPagination
-        layout={layout}
-        totalRows={totalRows}
-        pageStart={pageStart}
-        pageEnd={pageEnd}
-        totalPages={totalPages}
-        unitLabel={unitLabel}
-      />
+      {paginate && (
+        <AuditGridPagination
+          layout={layout}
+          totalRows={totalRows}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          totalPages={totalPages}
+          unitLabel={unitLabel}
+        />
+      )}
     </div>
   );
 }
