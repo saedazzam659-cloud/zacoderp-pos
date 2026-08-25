@@ -390,3 +390,10 @@ uri = "file://exports/personal-development-backup-2026-08-20/Zacode-Run-Guide-AR
 type = "text"
 title = "دليل تشغيل Zacode — عربي"
 description = "خطوات فك السورس، تثبيت الحزم، استعادة PostgreSQL، تشغيل Backend وFrontend، البناء، وتسطيب وكيل خارجي وتحديثه."
+
+[[outputs]]
+id = "hxZ3XuoVEVB73w2nfXb3f"
+uri = "file://artifacts/mobile/releases/zacoderp-google-play-v3.aab"
+type = "unspecified"
+title = "Zacode ERP — Google Play AAB v3"
+description = "ملف Android App Bundle جاهز للرفع في مسار Internal testing داخل Google Play Console. هذه نسخة إنتاج أقدم لبدء الاختبار الداخلي."
