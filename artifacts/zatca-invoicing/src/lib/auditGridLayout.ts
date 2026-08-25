@@ -73,7 +73,7 @@ export const DEFAULT_FOOTER_COLOR: FooterColor = "white";
 // persisted layouts: a list that grows later can freeze the browser on mount.
 // Keep every audit-style grid bounded; exports remain explicit, on-demand
 // operations outside this interactive pagination control.
-export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250] as const;
+export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 1000] as const;
 /** `0` remains in the type only for legacy branches; it is never emitted by
  * the shared picker or sanitizer anymore. */
 export type PageSize = typeof PAGE_SIZE_OPTIONS[number] | 0;

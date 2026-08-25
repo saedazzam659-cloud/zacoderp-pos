@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -10,6 +10,7 @@ import { BarChart2, AlertTriangle, Search, Coins, Tag, Receipt } from "lucide-re
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 export default function StockBalance() {
   const { t, i18n } = useTranslation();
@@ -93,6 +94,7 @@ export default function StockBalance() {
   });
 
   const totalValue = filtered.reduce((s: number, r: any) => s + Number(r.qty) * unitPriceFor(r), 0);
+  const totalQty = filtered.reduce((s: number, r: any) => s + Number(r.qty ?? 0), 0);
   const belowReorderCount = rows.filter((r: any) => Number(r.item?.reorderLevel) > 0 && Number(r.qty) < Number(r.item?.reorderLevel)).length;
 
   // عنوان عمود/كرت "القيمة" يتغيّر حسب أساس الحساب — كي يفهم القارئ
@@ -123,6 +125,33 @@ export default function StockBalance() {
     { key: "sale",        icon: Tag,     label: isRtl ? "بسعر البيع (بدون ضريبة)" : "At sale (excl. VAT)", hint: isRtl ? "صافي الإيرادات بعد استبعاد ضريبة القيمة المضافة" : "Net revenue (excluding VAT)",        color: "sky" },
     { key: "saleWithVat", icon: Receipt, label: isRtl ? "بسعر البيع (شامل الضريبة)": "At sale (incl. VAT)", hint: isRtl ? "إجمالي البيع شاملاً ضريبة القيمة المضافة"      : "Gross sale (including VAT)",          color: "violet" },
   ];
+
+  const gridColumns = useMemo<GridColumn<any>[]>(() => [
+    {
+      key: "item", label: tr("colItem"), type: "text", width: 260,
+      value: r => `${pickName(r.item?.nameAr, r.item?.nameEn)} ${r.item?.code ?? ""}`,
+      render: r => <><p className="font-medium">{pickName(r.item?.nameAr, r.item?.nameEn) || "—"}</p><p className="text-[10px] text-muted-foreground font-mono">{r.item?.code}</p></>,
+    },
+    { key: "group", label: t("inventoryMaster.itemGroups.colName") as string, type: "text", width: 160, value: r => pickName(r.group?.nameAr, r.group?.nameEn), render: r => pickName(r.group?.nameAr, r.group?.nameEn) || "—" },
+    { key: "warehouse", label: tr("colWarehouse"), type: "text", width: 170, value: r => pickName(r.warehouse?.nameAr, r.warehouse?.nameEn), render: r => pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—" },
+    { key: "qty", label: tr("colQty"), type: "num", align: "center", width: 120, className: "font-bold tabular-nums", value: r => Number(r.qty), render: r => fmtQty(r.qty) },
+    { key: "unit", label: tr("colUnit"), type: "text", align: "center", width: 120, value: r => pickName(r.unit?.nameAr, r.unit?.nameEn), render: r => pickName(r.unit?.nameAr, r.unit?.nameEn) || "—" },
+    { key: "unitPrice", label: basis === "cost" ? tr("colAvgCost") : (isRtl ? "السعر" : "Price"), type: "num", align: "center", width: 150, className: "tabular-nums", value: r => unitPriceFor(r), render: r => fmtCost(unitPriceFor(r)) },
+    { key: "totalValue", label: `${tr("colValue")} — ${basisLabel}`, type: "num", align: "center", width: 190, className: "font-semibold tabular-nums", value: r => Number(r.qty) * unitPriceFor(r), render: r => fmt(Number(r.qty) * unitPriceFor(r)) },
+    {
+      key: "status", label: isRtl ? "الحالة" : "Status", type: "text", align: "center", width: 110,
+      value: r => Number(r.qty) === 0 ? "out" : Number(r.item?.reorderLevel ?? 0) > 0 && Number(r.qty) < Number(r.item?.reorderLevel) ? "low" : "ok",
+      render: r => {
+        const qty = Number(r.qty);
+        const low = Number(r.item?.reorderLevel ?? 0) > 0 && qty < Number(r.item?.reorderLevel);
+        return qty === 0
+          ? <span className="text-[10px] bg-red-50 text-red-600 rounded-full px-2 py-0.5 font-medium">{isRtl ? "نفاد" : "Out"}</span>
+          : low
+            ? <span className="text-[10px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5 font-medium inline-flex items-center gap-1"><AlertTriangle className="h-2.5 w-2.5" />{isRtl ? "تحت الحد" : "Low"}</span>
+            : <span className="text-[10px] bg-green-50 text-green-700 rounded-full px-2 py-0.5 font-medium">{isRtl ? "عادي" : "OK"}</span>;
+      },
+    },
+  ], [basis, basisLabel, isRtl, t, fmt, fmtCost, fmtQty]);
 
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
@@ -255,92 +284,31 @@ export default function StockBalance() {
       </div>
 
       {/* Table */}
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[700px]">
-            <thead className="bg-muted/50 border-b">
-              <tr>
-                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colItem")}</th>
-                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden sm:table-cell`}>{t("inventoryMaster.itemGroups.colName") as string}</th>
-                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden md:table-cell`}>{tr("colWarehouse")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colQty")}</th>
-                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden lg:table-cell`}>{tr("colUnit")}</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">
-                  {basis === "cost" ? tr("colAvgCost") : (isRtl ? "السعر" : "Price")}
-                </th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">
-                  <div className="flex flex-col items-center leading-tight">
-                    <span>{tr("colValue")}</span>
-                    {/* وسم صغير يخبر القارئ بأي أساس تُحسب القيمة */}
-                    <span className={cn(
-                      "text-[9px] font-normal mt-0.5 px-1.5 rounded-full",
-                      basis === "cost"        && "bg-emerald-50 text-emerald-700",
-                      basis === "sale"        && "bg-sky-50 text-sky-700",
-                      basis === "saleWithVat" && "bg-violet-50 text-violet-700",
-                    )}>{basisLabel}</span>
-                  </div>
-                </th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{isRtl ? "الحالة" : "Status"}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {isLoading
-                ? [...Array(8)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
-                : filtered.length === 0
-                ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><BarChart2 className="h-8 w-8 mx-auto mb-2 opacity-30" />{tr("noBalance")}</td></tr>
-                : filtered.map((r: any) => {
-                    const qty = Number(r.qty);
-                    const reorder = Number(r.item?.reorderLevel ?? 0);
-                    const isZero  = qty === 0;
-                    const isLow   = reorder > 0 && qty < reorder;
-                    const unitPrice = unitPriceFor(r);
-                    const totalVal = qty * unitPrice;
-                    return (
-                      <tr key={r.id} className={cn("hover:bg-muted/20", isZero ? "bg-red-50/30" : isLow ? "bg-amber-50/30" : "")}>
-                        <td className="px-4 py-3">
-                          <p className="font-medium text-sm">{pickName(r.item?.nameAr, r.item?.nameEn) || "—"}</p>
-                          <p className="text-[10px] text-muted-foreground font-mono">{r.item?.code}</p>
-                        </td>
-                        <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{pickName(r.group?.nameAr, r.group?.nameEn) || "—"}</td>
-                        <td className="px-4 py-3 hidden md:table-cell text-xs">{pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—"}</td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={cn("font-bold tabular-nums", isZero ? "text-red-600" : isLow ? "text-amber-600" : "")}>
-                            {fmtQty(qty)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 hidden lg:table-cell text-xs text-muted-foreground text-center">{pickName(r.unit?.nameAr, r.unit?.nameEn) || "—"}</td>
-                        <td className="px-4 py-3 hidden md:table-cell text-xs tabular-nums text-center">{fmtCost(unitPrice)}</td>
-                        <td className={cn(
-                          "px-4 py-3 text-center tabular-nums text-sm font-semibold",
-                          basis === "sale"        && "text-sky-700",
-                          basis === "saleWithVat" && "text-violet-700",
-                        )}>{fmt(totalVal)}</td>
-                        <td className="px-4 py-3 text-center">
-                          {isZero
-                            ? <span className="text-[10px] bg-red-50 text-red-600 rounded-full px-2 py-0.5 font-medium">{isRtl ? "نفاد" : "Out"}</span>
-                            : isLow
-                            ? <span className="text-[10px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5 font-medium flex items-center gap-1 w-fit mx-auto"><AlertTriangle className="h-2.5 w-2.5" />{isRtl ? "تحت الحد" : "Low"}</span>
-                            : <span className="text-[10px] bg-green-50 text-green-700 rounded-full px-2 py-0.5 font-medium">{isRtl ? "عادي" : "OK"}</span>
-                          }
-                        </td>
-                      </tr>
-                    );
-                  })}
-            </tbody>
-            {!isLoading && filtered.length > 0 && (
-              <tfoot className="bg-muted/30 border-t">
-                <tr>
-                  <td colSpan={6} className={`px-4 py-3 text-xs font-semibold text-muted-foreground ${isRtl ? "text-right" : "text-left"}`}>{tr("totalValue")}</td>
-                  <td className="px-4 py-3 text-center font-bold tabular-nums">
-                    {fmtVal(totalValue)} {isRtl ? "ر.س" : "SAR"}
-                  </td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
+      {isLoading ? (
+        <div className="space-y-2 rounded-xl border bg-card p-4">
+          {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
         </div>
-      </div>
+      ) : (
+        <AdvancedReportGrid
+          slug="stockBalanceGrid"
+          cid={cid}
+          columns={gridColumns}
+          rowKey={(row: any) => row.id}
+          rows={filtered}
+          unitLabel={isRtl ? "رصيد" : "balance"}
+          emptyMessage={tr("noBalance")}
+          rowClassName={(r: any) => {
+            const qty = Number(r.qty);
+            const low = Number(r.item?.reorderLevel ?? 0) > 0 && qty < Number(r.item?.reorderLevel);
+            return qty === 0 ? "bg-red-50/30" : low ? "bg-amber-50/30" : "";
+          }}
+          totalsRow={filtered.length > 0 ? {
+            __label: isRtl ? "الإجمالي" : "Total",
+            qty: fmtQty(totalQty),
+            totalValue: `${fmtVal(totalValue)} ${isRtl ? "ر.س" : "SAR"}`,
+          } : null}
+        />
+      )}
     </div>
   );
 }
