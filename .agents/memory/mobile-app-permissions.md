@@ -7,6 +7,7 @@ description: Per-user mobile-channel permission map — key lockstep, session-bo
 - Permission keys live in THREE lockstep places: api-server `lib/mobilePerms.ts` (doc comment), web `Users.tsx` `MOBILE_PERM_KEYS`, and the mobile app's `mp('<key>')` call sites. Adding a key means touching all three.
 - **Channel binding:** never trust `x-app-channel` per-request only. Login stores `users.session_channel` ('mobile'|'web') and enforcement fires when session_channel==='mobile' OR header says mobile — dropping/forging the header can't unbind a mobile session.
 - **Why:** the header is client-controlled; a denied user could replay the authenticated call without it.
+- **Reference pickers:** mobile branch/cash-box/bank/warehouse lists use strict explicit user-branch links, including for admins. Zero links means an empty picker; do not fall back to role-wide access or shared NULL-branch rows.
 - **Price lock:** when `invoice_edit_price` is denied, server checks each line unitPrice vs items.salePrice (±0.01) AND recomputes subtotal/VAT/total from lines (rejects forged header totals/discounts), and rejects PUT edits that omit lines.
 - Mobile UI gates are cosmetic for view keys (by design); only sales create/edit is server-enforced.
 - Live perms: mobile polls /api/auth/me every 30s (`useMobilePerms`); fresh prices via react-query staleTime 0 + refetchOnMount 'always' + useFocusEffect refetch on item screens.

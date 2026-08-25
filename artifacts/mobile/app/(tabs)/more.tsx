@@ -165,13 +165,13 @@ export default function More() {
               <View style={{ height: 1, backgroundColor: c.border }} />
             </>
           ) : null}
-          <RowItem
+          {mp('offline_controls') ? <RowItem
             icon={offlineOn ? 'wifi-off' : 'download-cloud'}
             title={offlineBusy ? 'جارٍ التنزيل/المزامنة…' : offlineOn ? 'وضع الأوف لاين: مفعّل (اضغط للإيقاف)' : 'تفعيل وضع الأوف لاين'}
             onPress={toggleOffline}
             testID="row-offline-toggle"
-          />
-          {offlineOn ? (
+          /> : null}
+          {offlineOn && mp('offline_controls') ? (
             <>
               <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 12, paddingHorizontal: 4, paddingBottom: 6 }}>
                 {lastDl ? `آخر تنزيل: ${String(lastDl).slice(0, 16).replace('T', ' ')}` : ''}
@@ -191,7 +191,7 @@ export default function More() {
               ) : null}
             </>
           ) : null}
-          <View style={{ height: 1, backgroundColor: c.border }} />
+          {mp('offline_controls') ? <View style={{ height: 1, backgroundColor: c.border }} /> : null}
           {/* ─── ألوان التطبيق ─── */}
           <View style={{ paddingVertical: 10, gap: 10 }}>
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
@@ -217,8 +217,10 @@ export default function More() {
             </View>
           </View>
           <View style={{ height: 1, backgroundColor: c.border }} />
-          <RowItem icon="server" title="إعدادات الخادم" onPress={() => setShowServer(true)} testID="row-server-settings" />
-          <View style={{ height: 1, backgroundColor: c.border }} />
+          {mp('server_settings') ? <>
+            <RowItem icon="server" title="إعدادات الخادم" onPress={() => setShowServer(true)} testID="row-server-settings" />
+            <View style={{ height: 1, backgroundColor: c.border }} />
+          </> : null}
           <RowItem icon="log-out" title="تسجيل الخروج" onPress={doLogout} danger testID="row-logout" />
         </Card>
         <Text style={{ textAlign: 'center', color: c.mutedForeground, fontSize: 12 }}>

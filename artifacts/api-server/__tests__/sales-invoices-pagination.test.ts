@@ -4,7 +4,7 @@ import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { boundedOffsetPage } from "../src/lib/boundedPagination.ts";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   branchesTable,
   companiesTable,
@@ -13,12 +13,13 @@ import {
   pool,
   receiptVouchersTable,
   salesInvoicesTable,
+  salesQuotationsTable,
   userBranchesTable,
   usersTable,
 } from "@workspace/db";
 
 import app from "../src/app.ts";
-import { findOldestOutstandingCredit } from "../src/routes/sales.ts";
+import { effectiveLineDiscount, findOldestOutstandingCredit } from "../src/routes/sales.ts";
 
 const tag = `tt_sales_page_${randomBytes(4).toString("hex")}`;
 const token = `${tag}_${randomBytes(12).toString("hex")}`;
@@ -35,6 +36,7 @@ let restrictedUserId = 0;
 let restrictedToken = "";
 let receiptId = 0;
 const invoiceIds: number[] = [];
+const quotationIds: number[] = [];
 
 type PagedResponse = {
   items: Array<{ id: number; docNumber: string | null; status: string; branchId: number | null; customerName?: string | null }>;
@@ -136,6 +138,9 @@ after(async () => {
     if (receiptId) await db.delete(receiptVouchersTable).where(eq(receiptVouchersTable.id, receiptId));
     if (invoiceIds.length) {
       await db.delete(salesInvoicesTable).where(inArray(salesInvoicesTable.id, invoiceIds));
+    }
+    if (quotationIds.length) {
+      await db.delete(salesQuotationsTable).where(inArray(salesQuotationsTable.id, quotationIds));
     }
     if (customer1Id || customer2Id) {
       await db.delete(customersTable).where(inArray(customersTable.id, [customer1Id, customer2Id].filter(Boolean)));
@@ -262,6 +267,131 @@ test("sales invoice create still succeeds through the combined quota query", asy
   invoiceIds.push(body.id!);
 });
 
+test("issue-only mobile save cannot leave an unauthorized draft behind", async () => {
+  await db.update(usersTable).set({
+    sessionChannel: "mobile",
+    mobilePermissions: {
+      invoice_create: true,
+      invoice_save_draft: false,
+      invoice_save_issue: true,
+    },
+  }).where(eq(usersTable.id, restrictedUserId));
+
+  const docNumber = `${tag}-ISSUE-ONLY`;
+  const response = await fetch(`${baseUrl}/api/sales/sales-invoices`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${restrictedToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      mobileSaveMode: "issue",
+      branchId: branch1Id,
+      customerId: customer2Id,
+      docNumber,
+      invoiceDate: "2026-08-20",
+      paymentType: "credit",
+      subtotal: "0",
+      vatAmount: "0",
+      discountAmount: "0",
+      totalAmount: "0",
+      lines: [],
+    }),
+  });
+  assert.equal(response.status, 400);
+  let retained: Array<{ id: number }> = [];
+  for (let attempt = 0; attempt < 20; attempt++) {
+    retained = await db.select({ id: salesInvoicesTable.id })
+      .from(salesInvoicesTable)
+      .where(and(eq(salesInvoicesTable.companyId, companyId), eq(salesInvoicesTable.docNumber, docNumber)));
+    if (retained.length === 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.deepEqual(retained, []);
+});
+
+test("mobile rejects negative free quantity before persistence", async () => {
+  const docNumber = `${tag}-NEG-FREE`;
+  const response = await fetch(`${baseUrl}/api/sales/sales-invoices`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${restrictedToken}`,
+      "Content-Type": "application/json",
+      "x-app-channel": "mobile",
+    },
+    body: JSON.stringify({
+      mobileSaveMode: "draft",
+      branchId: branch1Id,
+      customerId: customer2Id,
+      docNumber,
+      invoiceDate: "2026-08-20",
+      paymentType: "credit",
+      subtotal: "100",
+      vatAmount: "15",
+      discountAmount: "0",
+      totalAmount: "115",
+      lines: [{ itemId: 999999, itemName: "اختبار", qty: 1, freeQty: -1, unitPrice: 100, vatRate: 15 }],
+    }),
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json() as { error?: string };
+  assert.match(body.error ?? "", /الكمية المجانية/);
+  const retained = await db.select({ id: salesInvoicesTable.id })
+    .from(salesInvoicesTable)
+    .where(and(eq(salesInvoicesTable.companyId, companyId), eq(salesInvoicesTable.docNumber, docNumber)));
+  assert.deepEqual(retained, []);
+});
+
+test("failed inline issue restores its accepted source quotation", async () => {
+  const [quotation] = await db.insert(salesQuotationsTable).values({
+    companyId,
+    branchId: branch1Id,
+    customerId: customer2Id,
+    docNumber: `${tag}-QUOTE`,
+    quotationDate: "2026-08-20",
+    status: "accepted",
+  }).returning({ id: salesQuotationsTable.id });
+  quotationIds.push(quotation.id);
+  const docNumber = `${tag}-QUOTE-ISSUE`;
+  const response = await fetch(`${baseUrl}/api/sales/sales-invoices`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${restrictedToken}`,
+      "Content-Type": "application/json",
+      "x-app-channel": "mobile",
+    },
+    body: JSON.stringify({
+      mobileSaveMode: "issue",
+      sourceQuotationId: quotation.id,
+      branchId: branch1Id,
+      customerId: customer2Id,
+      docNumber,
+      invoiceDate: "2026-08-20",
+      paymentType: "credit",
+      subtotal: "0",
+      vatAmount: "0",
+      discountAmount: "0",
+      totalAmount: "0",
+      lines: [],
+    }),
+  });
+  assert.equal(response.status, 400);
+  let restored: Array<{ status: string; convertedInvoiceId: number | null }> = [];
+  for (let attempt = 0; attempt < 20; attempt++) {
+    restored = await db.select({
+      status: salesQuotationsTable.status,
+      convertedInvoiceId: salesQuotationsTable.convertedInvoiceId,
+    }).from(salesQuotationsTable).where(eq(salesQuotationsTable.id, quotation.id));
+    if (restored[0]?.status === "accepted" && restored[0]?.convertedInvoiceId == null) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.deepEqual(restored, [{ status: "accepted", convertedInvoiceId: null }]);
+  const retained = await db.select({ id: salesInvoicesTable.id })
+    .from(salesInvoicesTable)
+    .where(and(eq(salesInvoicesTable.companyId, companyId), eq(salesInvoicesTable.docNumber, docNumber)));
+  assert.deepEqual(retained, []);
+});
+
 test("bounded paging never advertises phantom pages beyond the safe offset", () => {
   const window = boundedOffsetPage(500_000, 50_000, 10);
   assert.deepEqual(window, {
@@ -270,6 +400,11 @@ test("bounded paging never advertises phantom pages beyond the safe offset", () 
     accessibleTotal: 100_010,
     truncated: true,
   });
+});
+
+test("posting uses synchronized discount percentage and amount only once", () => {
+  assert.equal(effectiveLineDiscount({ discount: "10", discountAmount: "20" }, 200), 20);
+  assert.equal(effectiveLineDiscount({ discount: "10", discountAmount: "0" }, 200), 20);
 });
 
 test("overdue FIFO lookup is one-query equivalent before and after a partial receipt", async () => {

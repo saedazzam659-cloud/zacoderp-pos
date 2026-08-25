@@ -2630,6 +2630,13 @@
     "mobInvoicesView": "View sales invoices",
     "mobInvoiceCreate": "Create sales invoice",
     "mobInvoiceEditPrice": "Edit sale price on invoice",
+    "mobInvoiceSaveDraft": "Save invoice as draft",
+    "mobInvoiceSaveIssue": "Save and issue invoice",
+    "mobInvoiceTabReturns": "Invoice returns tab",
+    "mobInvoiceTabDetails": "Invoice details tab",
+    "mobInvoiceFreeQty": "Invoice line free quantity",
+    "mobInvoiceDiscount": "Invoice line discount",
+    "mobInvoiceUnitSelection": "Invoice line unit selection",
     "mobInvoicePrint": "Print / share invoice PDF",
     "mobInvoiceWhatsapp": "Send invoice via WhatsApp",
     "mobReturnsView": "View sales returns",
@@ -2644,6 +2651,8 @@
     "mobQuotationCreate": "Create quotation",
     "mobReportsView": "Summary & reports",
     "mobHrAttendanceView": "My attendance report (linked employee)"
+    ,"mobOfflineControls": "Offline mode controls"
+    ,"mobServerSettings": "Server settings"
   },
   "perms": {
     "groups": {

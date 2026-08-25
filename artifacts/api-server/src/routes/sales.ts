@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
+import { canPostDoc, requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { randomUUID } from "node:crypto";
 import { db, getActiveExternalDb } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -19,6 +19,7 @@ import {
   goodsDeliveriesTable,
   subscriptionsTable,
   itemsTable,
+  itemUnitPricesTable,
   posSessionsTable,
   itemBrandsTable,
   brandsTable,
@@ -606,6 +607,13 @@ function clampDiscountAndTotal(subtotal: any, vatAmount: any, discountAmount: an
     discountAmount: disc.toFixed(2),
     totalAmount:    total.toFixed(2),
   };
+}
+
+export function effectiveLineDiscount(line: any, gross: number): number {
+  const fixed = Math.max(0, Number(line?.discountAmount) || 0);
+  if (fixed > 0) return Math.min(gross, fixed);
+  const pct = Math.max(0, Math.min(100, Number(line?.discount) || 0));
+  return Math.min(gross, gross * pct / 100);
 }
 
 function guard(req: any, res: any): number | null {
@@ -1419,6 +1427,14 @@ export async function findOldestOutstandingCredit(
 async function enforceMobileSalesRights(
   req: any, res: any, cid: number, lines: any[] | undefined, action: "create" | "edit",
 ): Promise<boolean> {
+  const ls = Array.isArray(lines) ? lines : [];
+  if (ls.some((line: any) => {
+    const freeQty = Number(line?.freeQty ?? 0);
+    return !Number.isFinite(freeQty) || freeQty < 0;
+  })) {
+    res.status(400).json({ error: "الكمية المجانية يجب أن تكون صفراً أو أكبر" });
+    return false;
+  }
   const role = req.authUser?.role;
   if (role === "admin" || role === "superadmin") return true;
   const uid = Number(req.authUser?.id);
@@ -1435,30 +1451,197 @@ async function enforceMobileSalesRights(
   // the per-request header — dropping the header on a mobile session cannot
   // un-bind enforcement.
   if (u.sessionChannel !== "mobile" && !isMobileChannel(req)) return true;
+  req.resolvedMobileSalesContext = true;
   const holder = { role: u.role, mobilePermissions: u.mobilePermissions };
   if (action === "create" && !mobilePermAllowed(holder, "invoice_create")) {
     res.status(403).json({ error: "ليست لديك صلاحية إنشاء فاتورة من تطبيق الموبايل" });
     return false;
   }
+  // The mobile client persists before calling /post, but "save draft" and
+  // "save + issue" are separate user actions.  The explicit intent keeps
+  // those permissions independent; /post still re-checks invoice_save_issue.
+  const saveMode = req.body?.mobileSaveMode === "issue" ? "issue" : "draft";
+  const savePerm = saveMode === "issue" ? "invoice_save_issue" : "invoice_save_draft";
+  if (!mobilePermAllowed(holder, savePerm)) {
+    res.status(403).json({
+      error: saveMode === "issue"
+        ? "ليست لديك صلاحية حفظ وإصدار الفاتورة من تطبيق الموبايل"
+        : "ليست لديك صلاحية حفظ الفاتورة كمسودة من تطبيق الموبايل",
+    });
+    return false;
+  }
+  const unchangedProtectedUnitLines = new Set<any>();
+  const protectedUnitPriceByLine = new Map<any, number>();
+  // PUT replaces all line rows.  Before that happens, merge omitted protected
+  // fields from the stored row and reject explicit changes.  Mobile clients
+  // historically did not retain line ids, so match an id when available and
+  // otherwise use item id + occurrence (the same stable order used by the
+  // mobile form).  This prevents a stale client from changing a hidden field
+  // without turning an omitted field into mapInvoiceLine's zero/null default.
+  if (action === "edit" && ls.length) {
+    const invoiceId = Number(req.params?.id);
+    if (Number.isInteger(invoiceId) && invoiceId > 0) {
+      const stored = await db.select({
+        id: salesInvoiceLinesTable.id, itemId: salesInvoiceLinesTable.itemId,
+        unitPrice: salesInvoiceLinesTable.unitPrice,
+        freeQty: salesInvoiceLinesTable.freeQty, discount: salesInvoiceLinesTable.discount,
+        discountAmount: salesInvoiceLinesTable.discountAmount, unitId: salesInvoiceLinesTable.unitId,
+        unit: salesInvoiceLinesTable.unit, conversionFactor: salesInvoiceLinesTable.conversionFactor,
+      }).from(salesInvoiceLinesTable).where(and(
+        eq(salesInvoiceLinesTable.invoiceId, invoiceId), eq(salesInvoiceLinesTable.companyId, cid),
+      )).orderBy(salesInvoiceLinesTable.id);
+      const byId = new Map(stored.map((row) => [row.id, row]));
+      const byItem = new Map<string, typeof stored>();
+      for (const row of stored) {
+        const key = String(row.itemId ?? "");
+        byItem.set(key, [...(byItem.get(key) ?? []), row]);
+      }
+      const usedByItem = new Map<string, number>();
+      const has = (obj: any, key: string) => Object.prototype.hasOwnProperty.call(obj ?? {}, key);
+      const n = (v: any, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
+      for (const [position, line] of ls.entries()) {
+        const itemKey = String(line?.itemId ?? "");
+        const occurrence = usedByItem.get(itemKey) ?? 0;
+        usedByItem.set(itemKey, occurrence + 1);
+        const old = byId.get(Number(line?.id)) ?? byItem.get(itemKey)?.[occurrence] ?? stored[position];
+        if (!old) {
+          // A new row on an edit has no stored value to merge.  It must still
+          // obey field rights (otherwise adding a line would bypass the PUT
+          // comparison above).
+          if (!mobilePermAllowed(holder, "invoice_free_qty") && Math.abs(n(line?.freeQty)) > 0.0001) {
+            res.status(403).json({ error: "ليست لديك صلاحية الكمية المجانية في الفاتورة من تطبيق الموبايل" }); return false;
+          }
+          if (!mobilePermAllowed(holder, "invoice_discount") &&
+              (Math.abs(n(line?.discount)) > 0.0001 || Math.abs(n(line?.discountAmount)) > 0.0001)) {
+            res.status(403).json({ error: "ليست لديك صلاحية خصم سطر الفاتورة من تطبيق الموبايل" }); return false;
+          }
+          if (!mobilePermAllowed(holder, "invoice_unit_selection") &&
+              Math.abs(n(line?.conversionFactor, 1) - 1) > 0.000001) {
+            res.status(403).json({ error: "ليست لديك صلاحية اختيار وحدة سطر الفاتورة من تطبيق الموبايل" }); return false;
+          }
+          continue;
+        }
+        const protectedNumber = (key: "freeQty" | "discount" | "discountAmount", permission: string) => {
+          const oldValue = n(old[key]);
+          if (!has(line, key)) { line[key] = oldValue; return true; }
+          if (!mobilePermAllowed(holder, permission) && Math.abs(n(line[key]) - oldValue) > 0.0001) return false;
+          return true;
+        };
+        if (!protectedNumber("freeQty", "invoice_free_qty")) {
+          res.status(403).json({ error: "ليست لديك صلاحية تعديل الكمية المجانية في الفاتورة من تطبيق الموبايل" }); return false;
+        }
+        if (!protectedNumber("discount", "invoice_discount") || !protectedNumber("discountAmount", "invoice_discount")) {
+          res.status(403).json({ error: "ليست لديك صلاحية تعديل خصم سطر الفاتورة من تطبيق الموبايل" }); return false;
+        }
+        const unitChanged = (has(line, "unitId") && Number(line.unitId) !== Number(old.unitId)) ||
+          (has(line, "conversionFactor") && Math.abs(n(line.conversionFactor, 1) - n(old.conversionFactor, 1)) > 0.000001);
+        if (!mobilePermAllowed(holder, "invoice_unit_selection") && unitChanged) {
+          res.status(403).json({ error: "ليست لديك صلاحية تعديل وحدة سطر الفاتورة من تطبيق الموبايل" }); return false;
+        }
+        if (!mobilePermAllowed(holder, "invoice_unit_selection") && !unitChanged) {
+          unchangedProtectedUnitLines.add(line);
+          protectedUnitPriceByLine.set(line, n(old.unitPrice));
+        }
+        if (!has(line, "unitId")) line.unitId = old.unitId;
+        if (!has(line, "unit")) line.unit = old.unit;
+        if (!has(line, "conversionFactor")) line.conversionFactor = n(old.conversionFactor, 1);
+      }
+    }
+  }
+  // Do not accept privileged line values from an old/patched mobile client.
+  // Existing protected values are accepted on update so hiding a field never
+  // erases it; only a non-default value introduced by the mobile payload is
+  // rejected here (the normal line writer keeps stored values for omissions).
+  if (action === "create" && !mobilePermAllowed(holder, "invoice_free_qty") &&
+      ls.some((l: any) => Math.abs(Number(l?.freeQty ?? 0)) > 0.0001)) {
+    res.status(403).json({ error: "ليست لديك صلاحية الكمية المجانية في الفاتورة من تطبيق الموبايل" });
+    return false;
+  }
+  if (action === "create" && !mobilePermAllowed(holder, "invoice_discount") &&
+      ls.some((l: any) => Math.abs(Number(l?.discount ?? 0)) > 0.0001 || Math.abs(Number(l?.discountAmount ?? 0)) > 0.0001)) {
+    res.status(403).json({ error: "ليست لديك صلاحية خصم سطر الفاتورة من تطبيق الموبايل" });
+    return false;
+  }
+  if (action === "create" && !mobilePermAllowed(holder, "invoice_unit_selection") &&
+      ls.some((l: any) => Math.abs(Number(l?.conversionFactor ?? 1) - 1) > 0.000001)) {
+    res.status(403).json({ error: "ليست لديك صلاحية اختيار وحدة سطر الفاتورة من تطبيق الموبايل" });
+    return false;
+  }
+  const itemIds = Array.from(new Set(
+    ls.map((l: any) => Number(l?.itemId)).filter((n) => Number.isInteger(n) && n > 0),
+  ));
+  const itemRows = itemIds.length
+    ? await db.select({ id: itemsTable.id, unitId: itemsTable.unitId, salePrice: itemsTable.salePrice })
+      .from(itemsTable)
+      .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds)))
+    : [];
+  const itemById = new Map(itemRows.map((row) => [row.id, row]));
+  const unitSelectionAllowed = mobilePermAllowed(holder, "invoice_unit_selection");
+  const configuredUnitRows = itemIds.length
+    ? await db.select({
+      itemId: itemUnitPricesTable.itemId,
+      unitId: itemUnitPricesTable.unitId,
+      salePrice: itemUnitPricesTable.salePrice,
+      conversionFactor: itemUnitPricesTable.conversionFactor,
+    })
+      .from(itemUnitPricesTable)
+      .where(and(eq(itemUnitPricesTable.companyId, cid), inArray(itemUnitPricesTable.itemId, itemIds)))
+    : [];
+  const configuredUnitByKey = new Map(
+    configuredUnitRows.map((row) => [`${row.itemId}:${row.unitId}`, row]),
+  );
+  const n = (value: unknown, fallback = 0) =>
+    Number.isFinite(Number(value)) ? Number(value) : fallback;
+  for (const line of ls) {
+    const item = itemById.get(Number(line?.itemId));
+    if (!item) continue;
+    const sentUnitId = line?.unitId == null ? null : Number(line.unitId);
+    const sentFactor = n(line?.conversionFactor, 1);
+    if (!unitSelectionAllowed) {
+      if (unchangedProtectedUnitLines.has(line)) continue;
+      if ((sentUnitId != null && sentUnitId !== Number(item.unitId)) ||
+          Math.abs(sentFactor - 1) > 0.000001) {
+        res.status(403).json({ error: "ليست لديك صلاحية اختيار وحدة سطر الفاتورة من تطبيق الموبايل" });
+        return false;
+      }
+      continue;
+    }
+    const configured = sentUnitId == null || sentUnitId === Number(item.unitId)
+      ? null
+      : configuredUnitByKey.get(`${item.id}:${sentUnitId}`);
+    if (sentUnitId != null && sentUnitId !== Number(item.unitId) && !configured) {
+      res.status(403).json({ error: "وحدة الصنف المختارة غير معتمدة لتطبيق الموبايل" });
+      return false;
+    }
+    const expectedFactor = configured ? n(configured.conversionFactor, 1) : 1;
+    if (Math.abs(sentFactor - expectedFactor) > 0.000001) {
+      res.status(403).json({ error: "معامل تحويل وحدة الصنف غير صحيح" });
+      return false;
+    }
+  }
   if (!mobilePermAllowed(holder, "invoice_edit_price")) {
-    const ls = Array.isArray(lines) ? lines : [];
     // Editing without resending lines could silently rewrite header totals —
     // require the full line set when price-editing is denied.
     if (action === "edit" && !ls.length) {
       res.status(403).json({ error: "ليست لديك صلاحية تعديل أسعار/مبالغ الفاتورة من تطبيق الموبايل" });
       return false;
     }
-    const ids = Array.from(new Set(ls.map((l: any) => Number(l?.itemId)).filter((n) => Number.isInteger(n) && n > 0)));
-    if (ids.length) {
-      const rows = await db.select({ id: itemsTable.id, salePrice: itemsTable.salePrice })
-        .from(itemsTable)
-        .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, ids)));
-      const priceById = new Map(rows.map((r) => [r.id, parseFloat(String(r.salePrice ?? "0")) || 0]));
+    if (itemIds.length) {
       for (const l of ls) {
         const iid = Number(l?.itemId);
-        if (!priceById.has(iid)) continue;
+        const item = itemById.get(iid);
+        if (!item) continue;
         const sent = parseFloat(String(l?.unitPrice ?? "0")) || 0;
-        const stored = priceById.get(iid)!;
+        const protectedStoredPrice = protectedUnitPriceByLine.get(l);
+        const selectedUnit = l?.unitId != null &&
+          Number(l.unitId) !== Number(item.unitId)
+          ? configuredUnitByKey.get(`${iid}:${Number(l.unitId)}`)
+          : null;
+        const stored = protectedStoredPrice != null
+          ? protectedStoredPrice
+          : selectedUnit
+          ? parseFloat(String(selectedUnit.salePrice ?? "0")) || 0
+          : parseFloat(String(item.salePrice ?? "0")) || 0;
         if (Math.abs(sent - stored) > 0.01) {
           res.status(403).json({ error: "ليست لديك صلاحية تعديل سعر البيع من تطبيق الموبايل" });
           return false;
@@ -1470,14 +1653,24 @@ async function enforceMobileSalesRights(
     // prices look correct.
     const body = req.body ?? {};
     const inclusive = body.priceIncludesVat === true;
+    const [company] = await db.select({ taxCalculationMode: companiesTable.taxCalculationMode })
+      .from(companiesTable).where(eq(companiesTable.id, cid));
+    const beforeDiscount = company?.taxCalculationMode === "before_discount";
     let expSub = 0, expVat = 0;
     for (const l of ls) {
       const q = parseFloat(String(l?.qty ?? l?.quantity ?? "0")) || 0;
       const p = parseFloat(String(l?.unitPrice ?? "0")) || 0;
       const r = (parseFloat(String(l?.vatRate ?? "15")) || 0) / 100;
-      const gross = q * p;
-      if (inclusive) { const net = gross / (1 + r); expSub += net; expVat += gross - net; }
-      else { expSub += gross; expVat += gross * r; }
+      const fullGross = q * p;
+      const discount = effectiveLineDiscount(l, fullGross);
+      if (beforeDiscount) {
+        if (inclusive) { const net = fullGross / (1 + r); expSub += Math.max(0, net - discount); expVat += fullGross - net; }
+        else { expSub += Math.max(0, fullGross - discount); expVat += fullGross * r; }
+      } else {
+        const gross = Math.max(0, fullGross - discount);
+        if (inclusive) { const net = gross / (1 + r); expSub += net; expVat += gross - net; }
+        else { expSub += gross; expVat += gross * r; }
+      }
     }
     const discount = Math.abs(parseFloat(String(body.discountAmount ?? "0")) || 0);
     const sentTotal = parseFloat(String(body.totalAmount ?? "0")) || 0;
@@ -1516,6 +1709,12 @@ router.post("/sales-invoices", async (req, res) => {
     ));
     const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
     const pType = paymentType || "credit";
+    const issueInline = (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
+      req.body?.mobileSaveMode === "issue";
+    if (issueInline && !canPostDoc(req.authUser as any, "sales")) {
+      res.status(403).json({ error: "ليس لديك صلاحية ترحيل هذا النوع من المستندات" });
+      return;
+    }
     const offerIds = collectInvoiceOfferIds(documentOfferId, lines);
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const repRole = req.authUser?.role;
@@ -1542,8 +1741,11 @@ router.post("/sales-invoices", async (req, res) => {
         ));
     };
     const loadRepInfo = async () => {
-      const effectiveRepId = salesRepId
-        ?? (isManagerRole ? null : await repIdForUser(cid, req.authUser?.id));
+      const linkedRepId = isManagerRole ? null : await repIdForUser(cid, req.authUser?.id);
+      // A normal user linked to a sales rep is always attributed to that rep,
+      // even if a patched mobile/web client submits another salesRepId.
+      // Managers keep the web policy: free choice of any rep or none.
+      const effectiveRepId = linkedRepId ?? salesRepId ?? null;
       return resolveRepCommission(cid, effectiveRepId, totals.totalAmount);
     };
     const loadBuyerCountry = () => customerId
@@ -1775,7 +1977,10 @@ router.post("/sales-invoices", async (req, res) => {
       discountAmount: totals.discountAmount,
       totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
-      status: "draft", notes: notes || null,
+      // "cancelled" is used only as an internal, non-editable issue-pending
+      // sentinel during this same request.  Success changes it to posted;
+      // any failure deletes it via the compensation callback below.
+      status: issueInline ? "cancelled" : "draft", notes: notes || null,
       // Creation channel — 'mobile' when the companion app created the doc.
       sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
       posSessionId: validPosSessionId,
@@ -1841,6 +2046,33 @@ router.post("/sales-invoices", async (req, res) => {
       }
     }
     timing?.mark("post-write-links");
+    if (issueInline) {
+      const previousParams = req.params;
+      req.params = { ...previousParams, id: String(inv.id) };
+      await postSalesInvoiceHandler(req, res, async () => {
+        await db.transaction(async (tx) => {
+          if (validatedSourceQuotation) {
+            await tx.update(salesQuotationsTable).set({
+              status: "accepted",
+              convertedInvoiceId: null,
+              updatedAt: new Date(),
+            }).where(and(
+              eq(salesQuotationsTable.id, validatedSourceQuotation.id),
+              eq(salesQuotationsTable.companyId, cid),
+              eq(salesQuotationsTable.status, "converted"),
+              eq(salesQuotationsTable.convertedInvoiceId, inv.id),
+            ));
+          }
+          await tx.delete(salesInvoicesTable).where(and(
+            eq(salesInvoicesTable.id, inv.id),
+            eq(salesInvoicesTable.companyId, cid),
+            eq(salesInvoicesTable.status, "cancelled"),
+          ));
+        });
+      });
+      req.params = previousParams;
+      return;
+    }
     timing?.completeBusinessOutcome(201);
     res.status(201).json(inv);
   } catch (e: any) {
@@ -1864,6 +2096,12 @@ router.put("/sales-invoices/:id", async (req, res) => {
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "edit"))) return;
     timing?.mark("mobile-rights");
     const id = Number(req.params.id);
+    const issueInline = (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
+      req.body?.mobileSaveMode === "issue";
+    if (issueInline && !canPostDoc(req.authUser as any, "sales")) {
+      res.status(403).json({ error: "ليس لديك صلاحية ترحيل هذا النوع من المستندات" });
+      return;
+    }
     // POSTED-DOC LOCK: a sales invoice that has been posted (status='posted')
     // is immutable from the edit screen. The user must explicitly call the
     // unpost endpoint (admin-only) before any further changes are accepted.
@@ -1875,6 +2113,14 @@ router.put("/sales-invoices/:id", async (req, res) => {
     if (existing.status === "posted") {
       res.status(409).json({ error: "لا يمكن تعديل فاتورة مُرحَّلة. قم بفك الترحيل أولاً." });
       return;
+    }
+    let issueRestoreHeader: any = null;
+    let issueRestoreLines: any[] = [];
+    if (issueInline) {
+      [issueRestoreHeader] = await db.select().from(salesInvoicesTable)
+        .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+      issueRestoreLines = await db.select().from(salesInvoiceLinesTable)
+        .where(and(eq(salesInvoiceLinesTable.invoiceId, id), eq(salesInvoiceLinesTable.companyId, cid)));
     }
     timing?.mark("invoice-read");
     // docNumber is intentionally not destructured here — it is immutable on
@@ -1896,8 +2142,16 @@ router.put("/sales-invoices/:id", async (req, res) => {
       * (parseFloat(String(exchangeRate)) || 1);
     const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");
     const loadRepPatch = async () => {
-      if (!hasRepKey) return {};
-      const r = await resolveRepCommission(cid, (req.body as any).salesRepId, totals.totalAmount);
+      const role = req.authUser?.role;
+      const linkedRepId = role === "admin" || role === "superadmin"
+        ? null
+        : await repIdForUser(cid, req.authUser?.id);
+      if (!hasRepKey && linkedRepId == null) return {};
+      const r = await resolveRepCommission(
+        cid,
+        linkedRepId ?? (req.body as any).salesRepId,
+        totals.totalAmount,
+      );
       return {
         salesRepId: r.salesRepId,
         commissionPct: r.commissionPct,
@@ -1992,6 +2246,9 @@ router.put("/sales-invoices/:id", async (req, res) => {
       }
 
       const [updated] = await tx.update(salesInvoicesTable).set({
+        // See POST: cancelled is a request-local issue-pending sentinel, not
+        // a saved draft.  It is posted or restored before this request ends.
+        status: issueInline ? "cancelled" : "draft",
         branchId: branchId ? Number(branchId) : null,
         invoiceDate,
         customerId: customerId ? Number(customerId) : null,
@@ -2055,6 +2312,28 @@ router.put("/sales-invoices/:id", async (req, res) => {
       await bumpOffersTimesUsed(cid, toBump);
     }
     timing?.mark("offer-links");
+    if (issueInline) {
+      const restoreDraft = async () => {
+        if (!issueRestoreHeader) return;
+        await db.transaction(async (tx) => {
+          const { id: _id, companyId: _companyId, ...headerPatch } = issueRestoreHeader;
+          await tx.update(salesInvoicesTable).set(headerPatch as any).where(and(
+            eq(salesInvoicesTable.id, id),
+            eq(salesInvoicesTable.companyId, cid),
+            eq(salesInvoicesTable.status, "cancelled"),
+          ));
+          await tx.delete(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, id));
+          if (issueRestoreLines.length) {
+            await tx.insert(salesInvoiceLinesTable).values(issueRestoreLines);
+          }
+        });
+      };
+      const previousParams = req.params;
+      req.params = { ...previousParams, id: String(id) };
+      await postSalesInvoiceHandler(req, res, restoreDraft);
+      req.params = previousParams;
+      return;
+    }
     timing?.completeBusinessOutcome(200);
     res.json(inv);
   } catch (e: any) {
@@ -2064,15 +2343,21 @@ router.put("/sales-invoices/:id", async (req, res) => {
   }
 });
 
-router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, res) => {
+async function postSalesInvoiceHandler(
+  req: any,
+  res: any,
+  onFailure?: () => Promise<void>,
+) {
   const timingStart = await beginAgentInvoiceTiming(req, res, "post", 0);
   if (timingStart.blockedReason) {
     res.status(503).json({ error: timingStart.blockedReason });
+    if (onFailure) await onFailure();
     return;
   }
   const timing = timingStart.timing;
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "invoice_save_issue", "ليست لديك صلاحية حفظ وإصدار الفاتورة من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
 
     // Branch-scope guard: a restricted user must not be able to post
@@ -2397,13 +2682,10 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
     for (const ln of lines) {
       const qty     = Number(ln.qty)       || 0;
       const price   = Number(ln.unitPrice) || 0;
-      const discPct = Number(ln.discount)  || 0;
-      const discAmt = Number((ln as any).discountAmount) || 0;
       if (qty <= 0 || price <= 0) continue;
       const grossPre = qty * price;
-      // Percent first, then fixed-amount (matches form's calcLine). Clamp at
-      // grossPre so an over-discount never makes the JE line go negative.
-      const discGross = Math.min(grossPre, grossPre * (discPct / 100) + discAmt);
+      // Percentage and amount are synchronized views of one discount.
+      const discGross = effectiveLineDiscount(ln, grossPre);
       if (discGross <= 0) continue;
       const rate    = (Number(ln.vatRate) || 0) / 100;
       // When prices are VAT-inclusive, the gross saving carries VAT — strip
@@ -2761,8 +3043,21 @@ router.patch("/sales-invoices/:id/post", requirePostRight("sales"), async (req, 
     });
     if (!postedInvoice) return;
     res.json(postedInvoice);
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
-});
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  } finally {
+    if (onFailure && res.statusCode >= 400) {
+      try { await onFailure(); }
+      catch (cleanupError) { console.error("Failed to roll back mobile save-and-issue", cleanupError); }
+    }
+  }
+}
+
+router.patch(
+  "/sales-invoices/:id/post",
+  requirePostRight("sales"),
+  (req, res) => postSalesInvoiceHandler(req, res),
+);
 
 // ─── UNPOST sales invoice (فك الترحيل) ──────────────────────────────────────
 router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (req, res) => {
@@ -3679,11 +3974,9 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
     for (const ln of lines) {
       const qty     = Number(ln.qty)       || 0;
       const price   = Number(ln.unitPrice) || 0;
-      const discPct = Number(ln.discount)  || 0;
-      const discAmt = Number((ln as any).discountAmount) || 0;
       if (qty <= 0 || price <= 0) continue;
       const grossPre = qty * price;
-      const discGross = Math.min(grossPre, grossPre * (discPct / 100) + discAmt);
+      const discGross = effectiveLineDiscount(ln, grossPre);
       if (discGross <= 0) continue;
       const rate    = (Number(ln.vatRate) || 0) / 100;
       lineDiscountTotal += priceIncludesVat && rate > -1

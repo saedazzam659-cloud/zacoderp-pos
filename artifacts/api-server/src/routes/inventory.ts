@@ -147,6 +147,14 @@ function warehouseBranchScope(req: any): any {
   return or(isNull(warehousesTable.branchId), inArray(warehousesTable.branchId, allowed));
 }
 
+function pickerWarehouseScope(req: any): any {
+  if (req.query.onlyUserBranches !== "1" && req.query.onlyUserBranches !== "true") {
+    return warehouseBranchScope(req);
+  }
+  const ids = req.authUser?.branchIds ?? [];
+  return ids.length ? inArray(warehousesTable.branchId, ids) : sql`false`;
+}
+
 // Branch isolation (WRITE): stricter than READ — restricted users can only
 // MUTATE warehouses whose branchId is in their allowed list. Shared (NULL)
 // warehouses are read-only for them; only admin / viewAll users can update
@@ -231,7 +239,7 @@ router.get("/warehouses/quota", async (req, res) => {
 
 router.get("/warehouses", async (req, res) => {
   const cid = getCompanyId(req);
-  const branchCond = warehouseBranchScope(req);
+  const branchCond = pickerWarehouseScope(req);
   const conds: any[] = [];
   if (cid) conds.push(eq(warehousesTable.companyId, cid));
   if (branchCond) conds.push(branchCond);

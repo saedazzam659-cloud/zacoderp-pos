@@ -40,6 +40,10 @@
 //   screen_new        إظهار تبويب جديد (+) في شريط التنقّل السفلي
 //   screen_reports    إظهار شاشة الملخص في شريط التنقّل السفلي
 //   hr_attendance_view  تقرير حضوري وانصرافي (الموظف المرتبط بالمستخدم فقط)
+//   offline_controls, server_settings
+//   invoice_tab_returns, invoice_tab_details, invoice_save_draft,
+//   invoice_save_issue, invoice_free_qty, invoice_discount,
+//   invoice_unit_selection
 
 export type MobilePerms = Record<string, boolean> | null;
 

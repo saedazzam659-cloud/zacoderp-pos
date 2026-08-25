@@ -25,11 +25,21 @@ function branchOrNullScope(req: any, branchCol: any): any {
   return or(isNull(branchCol), inArray(branchCol, allowed));
 }
 
+function pickerBranchScope(req: any): any {
+  if (req.query.onlyUserBranches !== "1" && req.query.onlyUserBranches !== "true") {
+    return branchOrNullScope(req, cashBoxesTable.branchId);
+  }
+  const ids = req.authUser?.branchIds ?? [];
+  return ids.length ? inArray(cashBoxesTable.branchId, ids) : sql`false`;
+}
+
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
   const conds: any[] = [];
   if (cid) conds.push(eq(cashBoxesTable.companyId, cid));
-  conds.push(...multiBranchScopeSpread(req, cashBoxesTable.branchId, req.query.branchIds ?? req.query.branchId));
+  const pickerScope = req.query.onlyUserBranches === "1" || req.query.onlyUserBranches === "true";
+  if (pickerScope) conds.push(pickerBranchScope(req));
+  else conds.push(...multiBranchScopeSpread(req, cashBoxesTable.branchId, req.query.branchIds ?? req.query.branchId));
   const rows = conds.length
     ? await db.select().from(cashBoxesTable).where(and(...conds))
     : await db.select().from(cashBoxesTable);

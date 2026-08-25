@@ -11,15 +11,14 @@ user happens to be linked to a rep.
 **Rule:** manager-role exemption must be enforced in BOTH places, or the fix is half-done:
 1. Frontend picker lock — `GET /api/sales-reps/me/current` must return 404 (treated as
    "not linked") for `req.authUser.role` admin/superadmin, so the UI keeps the picker open.
-2. Backend create auto-attribution — `POST /sales-invoices` falls back to `repIdForUser`
-   only for non-managers (`isManagerRole ? null : await repIdForUser(...)`). Note `null ?? x`
-   is nullish-falsy, so even an explicit empty `salesRepId` would otherwise re-trigger the
-   fallback and silently tag the manager's linked rep.
+2. Backend attribution — create and update must resolve a normal user's active linked rep
+   before considering any submitted `salesRepId`; the link is server-authoritative and a
+   patched client cannot select another rep. Managers bypass this and may pick any rep or none.
 
 **Why:** the picker is the only thing the user sees, but the create handler is what actually
 writes `salesRepId`. Fixing only the UI lets a manager pick "no rep" yet still get auto-tagged
 to their linked rep on save. Both must agree.
 
-**How to apply:** role field is `req.authUser.role`. Auto-attribution helper `repIdForUser`
-is used only in invoice-create; order/quotation/return/update paths use explicit `salesRepId`
-and don't force the linked rep. Normal (non-manager) reps keep auto-tagging on omitted field.
+**How to apply:** role field is `req.authUser.role`. Resolve `repIdForUser` for normal users
+on invoice create/update, use it ahead of submitted values, and snapshot commission from that
+effective rep. Admin/superadmin skip linked-rep resolution.

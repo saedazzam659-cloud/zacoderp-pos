@@ -2633,6 +2633,13 @@
     "mobInvoicesView": "عرض فواتير المبيعات",
     "mobInvoiceCreate": "إنشاء فاتورة مبيعات",
     "mobInvoiceEditPrice": "تعديل سعر البيع في الفاتورة",
+    "mobInvoiceSaveDraft": "حفظ الفاتورة كمسودة",
+    "mobInvoiceSaveIssue": "حفظ وإصدار الفاتورة",
+    "mobInvoiceTabReturns": "تبويب الإرجاع داخل الفاتورة",
+    "mobInvoiceTabDetails": "تبويب التفاصيل داخل الفاتورة",
+    "mobInvoiceFreeQty": "الكمية المجانية في سطر الفاتورة",
+    "mobInvoiceDiscount": "خصم سطر الفاتورة",
+    "mobInvoiceUnitSelection": "اختيار وحدة سطر الفاتورة",
     "mobInvoicePrint": "طباعة / مشاركة الفاتورة PDF",
     "mobInvoiceWhatsapp": "إرسال الفاتورة عبر واتساب",
     "mobReturnsView": "عرض مرتجعات المبيعات",
@@ -2647,6 +2654,8 @@
     "mobQuotationCreate": "إنشاء عرض سعر",
     "mobReportsView": "الملخص والتقارير",
     "mobHrAttendanceView": "تقرير حضوري (حضور وانصراف الموظف المرتبط)"
+    ,"mobOfflineControls": "عناصر التحكم بوضع الأوف لاين"
+    ,"mobServerSettings": "إعدادات الخادم"
   },
   "perms": {
     "groups": {

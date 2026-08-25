@@ -95,6 +95,13 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "invoices_view",      labelKey: "users.mobInvoicesView", editKey: "invoice_edit", deleteKey: "invoice_delete", screenKey: "screen_invoices" },
   { key: "invoice_create",     labelKey: "users.mobInvoiceCreate", screenKey: "screen_new" },
   { key: "invoice_edit_price", labelKey: "users.mobInvoiceEditPrice" },
+  { key: "invoice_save_draft", labelKey: "users.mobInvoiceSaveDraft" },
+  { key: "invoice_save_issue", labelKey: "users.mobInvoiceSaveIssue" },
+  { key: "invoice_tab_returns", labelKey: "users.mobInvoiceTabReturns" },
+  { key: "invoice_tab_details", labelKey: "users.mobInvoiceTabDetails" },
+  { key: "invoice_free_qty", labelKey: "users.mobInvoiceFreeQty" },
+  { key: "invoice_discount", labelKey: "users.mobInvoiceDiscount" },
+  { key: "invoice_unit_selection", labelKey: "users.mobInvoiceUnitSelection" },
   { key: "invoice_print",      labelKey: "users.mobInvoicePrint" },
   { key: "invoice_whatsapp",   labelKey: "users.mobInvoiceWhatsapp" },
   { key: "returns_view",       labelKey: "users.mobReturnsView", editKey: "return_edit", deleteKey: "return_delete" },
@@ -109,6 +116,8 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "quotation_create",   labelKey: "users.mobQuotationCreate" },
   { key: "reports_view",       labelKey: "users.mobReportsView", screenKey: "screen_reports" },
   { key: "hr_attendance_view", labelKey: "users.mobHrAttendanceView" },
+  { key: "offline_controls", labelKey: "users.mobOfflineControls" },
+  { key: "server_settings", labelKey: "users.mobServerSettings" },
 ];
 
 // Every storable key (feature keys + edit/delete keys) — keep deny-all and

@@ -32,6 +32,18 @@ function branchOrNullScope(req: any): any {
   );
 }
 
+function pickerBranchScope(req: any): any {
+  if (req.query.onlyUserBranches !== "1" && req.query.onlyUserBranches !== "true") {
+    return branchOrNullScope(req);
+  }
+  const ids = req.authUser?.branchIds ?? [];
+  if (!ids.length) return sql`false`;
+  return or(
+    arrayOverlaps(bankAccountsTable.branchIds, ids),
+    and(isNull(bankAccountsTable.branchIds), inArray(bankAccountsTable.branchId, ids)),
+  );
+}
+
 /**
  * Multi-branch scope for bank accounts. Honours an explicit `?branchIds=1,2`
  * query param (intersected with the user's allowed list) and falls back to
@@ -89,7 +101,9 @@ function normaliseBranchIds(raw: any): number[] | null {
 
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
-  const branchCond = multiBranchOrNullScope(req, req.query.branchIds ?? req.query.branchId);
+  const branchCond = (req.query.onlyUserBranches === "1" || req.query.onlyUserBranches === "true")
+    ? pickerBranchScope(req)
+    : multiBranchOrNullScope(req, req.query.branchIds ?? req.query.branchId);
   const conds: any[] = [];
   if (cid) conds.push(eq(bankAccountsTable.companyId, cid));
   if (branchCond) conds.push(branchCond);

@@ -24,6 +24,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
+import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
 
 interface Item {
   id: number;
@@ -42,6 +43,12 @@ interface CartLine {
   qty: number;
   unitPrice: number;
   vatRate: number;
+  freeQty: number;
+  discount: number;
+  discountAmount: number;
+  unitId?: number;
+  unitName?: string;
+  conversionFactor: number;
 }
 
 const TABS = [
@@ -72,6 +79,12 @@ export default function InvoiceForm() {
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
 
   const [tab, setTab] = useState<TabKey>('basic');
+  const allowedTabs = useMemo(() => TABS.filter((t) =>
+    (t.key !== 'returns' || mp('invoice_tab_returns')) &&
+    (t.key !== 'details' || mp('invoice_tab_details'))), [mp]);
+  useEffect(() => {
+    if (!allowedTabs.some((t) => t.key === tab)) setTab(allowedTabs[allowedTabs.length - 1]?.key ?? 'basic');
+  }, [allowedTabs, tab]);
 
   // header state
   const [customerId, setCustomerId] = useState<number | null>(null);
@@ -100,6 +113,7 @@ export default function InvoiceForm() {
   const [custSearch, setCustSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [activeGroup, setActiveGroup] = useState<number | 'all'>('all');
+  const [itemUnits, setItemUnits] = useState<Record<number, any[]>>({});
 
   // reference data
   const customersQ = useQuery({
@@ -114,23 +128,23 @@ export default function InvoiceForm() {
   });
   const cashBoxesQ = useQuery({
     queryKey: ['cash-boxes', companyId],
-    queryFn: () => api<any[]>(`/api/cash-boxes?companyId=${companyId}`),
+     queryFn: () => api<any[]>(`/api/cash-boxes?companyId=${companyId}&onlyUserBranches=1`),
     enabled: !!companyId,
   });
   const banksQ = useQuery({
     queryKey: ['bank-accounts', companyId],
-    queryFn: () => api<any[]>(`/api/bank-accounts?companyId=${companyId}`),
+     queryFn: () => api<any[]>(`/api/bank-accounts?companyId=${companyId}&onlyUserBranches=1`),
     enabled: !!companyId,
   });
   const branchesQ = useQuery({
     queryKey: ['branches', companyId],
-    queryFn: () => api<any[]>(`/api/org/branches?companyId=${companyId}`),
+     queryFn: () => api<any[]>(`/api/org/branches?companyId=${companyId}&onlyUserBranches=1`),
     enabled: !!companyId,
     retry: false,
   });
   const warehousesQ = useQuery({
     queryKey: ['warehouses', companyId],
-    queryFn: () => api<any[]>(`/api/inventory/warehouses?companyId=${companyId}`),
+     queryFn: () => api<any[]>(`/api/inventory/warehouses?companyId=${companyId}&onlyUserBranches=1`),
     enabled: !!companyId,
     retry: false,
   });
@@ -172,6 +186,12 @@ export default function InvoiceForm() {
       qty: parseFloat(l.qty ?? l.quantity ?? 1) || 1,
       unitPrice: parseFloat(l.unitPrice ?? 0) || 0,
       vatRate: parseFloat(l.vatRate ?? 15) || 0,
+      freeQty: parseFloat(l.freeQty ?? 0) || 0,
+      discount: parseFloat(l.discount ?? 0) || 0,
+      discountAmount: parseFloat(l.discountAmount ?? 0) || 0,
+      unitId: l.unitId ?? undefined,
+      unitName: l.unit ?? l.unitName ?? undefined,
+      conversionFactor: parseFloat(l.conversionFactor ?? 1) || 1,
     }));
     setLines(ls);
   }, [docQ.data, loadedDoc]);
@@ -251,19 +271,12 @@ export default function InvoiceForm() {
   const totals = useMemo(() => {
     let subtotal = 0, vat = 0;
     for (const l of lines) {
-      const gross = l.qty * l.unitPrice;
-      const r = (l.vatRate ?? 0) / 100;
-      if (priceIncludesVat) {
-        const net = gross / (1 + r);
-        subtotal += net;
-        vat += gross - net;
-      } else {
-        subtotal += gross;
-        vat += gross * r;
-      }
+      const amounts = calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount');
+      subtotal += amounts.subtotal;
+      vat += amounts.vat;
     }
     return { subtotal, vat, total: subtotal + vat };
-  }, [lines, priceIncludesVat]);
+  }, [lines, priceIncludesVat, user?.company?.taxCalculationMode]);
 
   const addItem = (it: Item) => {
     if (readOnly) return;
@@ -282,6 +295,8 @@ export default function InvoiceForm() {
           qty: 1,
           unitPrice: parseFloat(String(it.salePrice ?? 0)) || 0,
           vatRate: parseFloat(String(it.vatRate ?? 15)),
+          freeQty: 0, discount: 0, discountAmount: 0,
+          unitId: it.unit?.id, conversionFactor: 1,
         },
       ];
     });
@@ -304,6 +319,37 @@ export default function InvoiceForm() {
   const setLinePrice = (itemId: number, price: number) => {
     setLines((prev) => prev.map((l) => (l.itemId === itemId ? { ...l, unitPrice: Math.max(0, price) } : l)));
   };
+  const setLineField = (itemId: number, field: 'freeQty' | 'discount' | 'discountAmount', value: number) => {
+    setLines((prev) => prev.map((l) => {
+      if (l.itemId !== itemId) return l;
+      if (field === 'freeQty') return { ...l, freeQty: Math.max(0, value) };
+      return { ...l, ...syncLineDiscount(l, field, value) };
+    }));
+  };
+  // The inventory endpoint is the same item-unit contract used by the web
+  // sales form: each option supplies unitId, conversionFactor and salePrice.
+  const selectNextUnit = async (line: CartLine) => {
+    let options = itemUnits[line.itemId];
+    try {
+      if (!options) {
+        options = await api<any[]>(`/api/inventory/items/${line.itemId}/units?companyId=${companyId}`);
+        setItemUnits((prev) => ({ ...prev, [line.itemId]: options }));
+      }
+    } catch (e: any) {
+      notify('تعذّر تحميل الوحدات', e?.message ?? 'أعد المحاولة');
+      return;
+    }
+    if (!options.length) return;
+    const current = options.findIndex((u: any) => Number(u.unitId) === line.unitId);
+    const next = options[(current + 1) % options.length];
+    setLines((prev) => prev.map((l) => l.itemId === line.itemId ? {
+      ...l,
+      unitId: Number(next.unitId),
+      unitName: next.unit?.nameAr ?? next.unitNameAr ?? next.nameAr ?? String(next.unitId),
+      conversionFactor: parseFloat(String(next.conversionFactor ?? 1)) || 1,
+      unitPrice: next.salePrice != null ? parseFloat(String(next.salePrice)) || 0 : l.unitPrice,
+    } : l));
+  };
 
   const openScanner = () => {
     onScan((code) => {
@@ -315,9 +361,9 @@ export default function InvoiceForm() {
   };
   useEffect(() => () => clearScan(), []);
 
-  const buildBody = () => {
+  const buildBody = (mobileSaveMode: 'draft' | 'issue' = 'draft') => {
     const bodyLines = lines.map((l) => {
-      const gross = l.qty * l.unitPrice;
+      const gross = calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount').total;
       const it = items.find((i) => i.id === l.itemId);
       return {
         itemId: l.itemId,
@@ -325,12 +371,14 @@ export default function InvoiceForm() {
         qty: l.qty,
         unitPrice: l.unitPrice,
         vatRate: l.vatRate,
-        discount: 0,
-        discountAmount: 0,
+        freeQty: l.freeQty,
+        discount: l.discount,
+        discountAmount: l.discountAmount,
         // mirrors the web form: line total is the entered (gross) amount
         lineTotal: +gross.toFixed(2),
         warehouseId: warehouseId ?? undefined,
-        unitId: it?.unit?.id ?? undefined,
+        unitId: l.unitId ?? it?.unit?.id ?? undefined,
+        conversionFactor: l.conversionFactor,
       };
     });
     return {
@@ -349,6 +397,7 @@ export default function InvoiceForm() {
       discountAmount: 0,
       totalAmount: +totals.total.toFixed(2),
       notes: notes || undefined,
+      mobileSaveMode,
       lines: bodyLines,
     };
   };
@@ -373,7 +422,10 @@ export default function InvoiceForm() {
     try {
       let docId = invoiceId;
       if (isNew && !loadedDoc) {
-        const created = await api<any>('/api/sales/sales-invoices', { method: 'POST', body: buildBody() });
+        const created = await api<any>('/api/sales/sales-invoices', {
+          method: 'POST',
+          body: buildBody(thenPost ? 'issue' : 'draft'),
+        });
         // أوف لاين: دخلت الفاتورة صندوق الصادر — لا يوجد معرف بعد، فنتخطى
         // خطوة الترحيل ونعود؛ ستُزامن (وتُرحّل من الويب) عند عودة الاتصال.
         if (created?.offline) {
@@ -386,10 +438,10 @@ export default function InvoiceForm() {
         docId = created?.id ?? created?.invoice?.id;
         setLoadedDoc(created?.invoice ?? created);
       } else {
-        await api(`/api/sales/sales-invoices/${docId}`, { method: 'PUT', body: buildBody() });
-      }
-      if (thenPost && docId) {
-        await api(`/api/sales/sales-invoices/${docId}/post`, { method: 'PATCH', body: { companyId } });
+        await api(`/api/sales/sales-invoices/${docId}`, {
+          method: 'PUT',
+          body: buildBody(thenPost ? 'issue' : 'draft'),
+        });
       }
       qc.invalidateQueries({ queryKey: ['sales-invoices', companyId] });
       notify('تم', thenPost ? 'تم حفظ الفاتورة وإصدارها' : 'تم حفظ الفاتورة كمسودة');
@@ -543,7 +595,7 @@ export default function InvoiceForm() {
         </View>
         {/* step tabs */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, flexDirection: 'row-reverse' }}>
-          {TABS.map((tb, i) => (
+          {allowedTabs.map((tb, i) => (
             <Pressable
               key={tb.key}
               onPress={() => setTab(tb.key)}
@@ -703,6 +755,21 @@ export default function InvoiceForm() {
                             style={{ minWidth: 64, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
                           />
                         ) : null}
+                         {!readOnly && !mp('invoice_tab_details') && mp('invoice_free_qty') ? (
+                           <TextInput testID={`input-cart-free-qty-${item.id}`} value={String(inCart.freeQty)} keyboardType="decimal-pad"
+                             onChangeText={(v) => setLineField(item.id, 'freeQty', parseFloat(v) || 0)}
+                             style={{ width: 42, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                         ) : null}
+                         {!readOnly && !mp('invoice_tab_details') && mp('invoice_discount') ? (
+                           <TextInput testID={`input-cart-discount-${item.id}`} value={String(inCart.discount)} keyboardType="decimal-pad"
+                             onChangeText={(v) => setLineField(item.id, 'discount', parseFloat(v) || 0)}
+                             style={{ width: 42, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                         ) : null}
+                         {!readOnly && !mp('invoice_tab_details') && mp('invoice_unit_selection') ? (
+                           <Pressable onPress={() => selectNextUnit(inCart)} testID={`button-cart-unit-${item.id}`} style={{ padding: 6, borderRadius: 8, backgroundColor: c.muted }}>
+                             <Text style={{ fontSize: 11, color: c.foreground }}>{inCart.unitName ?? 'وحدة'}</Text>
+                           </Pressable>
+                         ) : null}
                         <Pressable onPress={() => setLineQty(item.id, inCart.qty + 1)} style={{ backgroundColor: c.primary, borderRadius: 8, padding: 6 }}>
                           <Feather name="plus" size={14} color="#fff" />
                         </Pressable>
@@ -727,7 +794,14 @@ export default function InvoiceForm() {
                 <Text style={{ color: c.mutedForeground, fontSize: 13 }}>{lines.length} صنف · الإجمالي شامل الضريبة</Text>
                 <Text style={{ color: c.primary, fontSize: 17, fontFamily: 'Inter_700Bold' }}>{money(totals.total)}</Text>
               </View>
-              <Btn title="التالي: التفاصيل والحفظ" onPress={() => setTab('details')} icon="arrow-left" small />
+              {mp('invoice_tab_details') ? (
+                <Btn title="التالي: التفاصيل والحفظ" onPress={() => setTab('details')} icon="arrow-left" small />
+              ) : (
+                <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+                  {mp('invoice_save_issue') ? <View style={{ flex: 1 }}><Btn title="حفظ وإصدار" onPress={() => save(true)} loading={posting} icon="check-circle" small testID="button-items-save-post" /></View> : null}
+                  {mp('invoice_save_draft') ? <View style={{ flex: 1 }}><Btn title="حفظ مسودة" onPress={() => save(false)} loading={saving} kind="outline" small testID="button-items-save-draft" /></View> : null}
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -785,7 +859,8 @@ export default function InvoiceForm() {
           <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
             <Card style={{ gap: 10 }}>
               {lines.map((l) => (
-                <View key={l.itemId} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottomWidth: StyleShim, borderBottomColor: c.border, paddingBottom: 6 }}>
+                <React.Fragment key={l.itemId}>
+                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottomWidth: StyleShim, borderBottomColor: c.border, paddingBottom: 6 }}>
                   <Text style={{ fontSize: 13, color: c.foreground, flex: 1, textAlign: 'right' }}>{l.name} × {fq(l.qty)}</Text>
                   {!readOnly && mp('invoice_edit_price') ? (
                     <TextInput
@@ -799,8 +874,25 @@ export default function InvoiceForm() {
                       style={{ minWidth: 74, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
                     />
                   ) : null}
-                  <Text style={{ fontSize: 13, color: c.foreground, fontFamily: 'Inter_600SemiBold' }}>{money(l.qty * l.unitPrice)}</Text>
+                   <Text style={{ fontSize: 13, color: c.foreground, fontFamily: 'Inter_600SemiBold' }}>{money(calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount').total)}</Text>
                 </View>
+                 {!readOnly && (mp('invoice_free_qty') || mp('invoice_discount')) ? (
+                   <View style={{ flexDirection: 'row-reverse', gap: 8, paddingBottom: 8 }}>
+                     {mp('invoice_free_qty') ? <View style={{ flex: 1 }}>
+                       <Field label="مجاني" value={String(l.freeQty)} keyboardType="decimal-pad" onChangeText={(v) => setLineField(l.itemId, 'freeQty', parseFloat(v) || 0)} testID={`input-line-free-qty-${l.itemId}`} />
+                     </View> : null}
+                     {mp('invoice_discount') ? <View style={{ flex: 1 }}>
+                       <Field label="خصم %" value={String(l.discount)} keyboardType="decimal-pad" onChangeText={(v) => setLineField(l.itemId, 'discount', parseFloat(v) || 0)} testID={`input-line-discount-${l.itemId}`} />
+                       <Field label="خصم مبلغ" value={String(l.discountAmount)} keyboardType="decimal-pad" onChangeText={(v) => setLineField(l.itemId, 'discountAmount', parseFloat(v) || 0)} testID={`input-line-discount-amount-${l.itemId}`} />
+                     </View> : null}
+                   </View>
+                 ) : null}
+                 {!readOnly && mp('invoice_unit_selection') ? (
+                   <Pressable onPress={() => selectNextUnit(l)} testID={`button-line-unit-${l.itemId}`} style={{ alignSelf: 'flex-end', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: c.muted }}>
+                      <Text style={{ color: c.foreground, fontSize: 12 }}>الوحدة: {l.unitName ?? 'الأساسية'} · اضغط لاختيار التالية</Text>
+                   </Pressable>
+                 ) : null}
+                </React.Fragment>
               ))}
               {!lines.length ? <Text style={{ textAlign: 'right', color: c.mutedForeground }}>لا توجد أصناف — ارجع لتبويب الأصناف</Text> : null}
               <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}>
@@ -832,8 +924,8 @@ export default function InvoiceForm() {
                 </View>
               ) : (
               <View style={{ gap: 10 }}>
-                <Btn title="حفظ وإصدار الفاتورة" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post" />
-                <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft" />
+                {mp('invoice_save_issue') ? <Btn title="حفظ وإصدار الفاتورة" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post" /> : null}
+                {mp('invoice_save_draft') ? <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft" /> : null}
                 {!isNew && mp('invoice_delete') ? (
                   <Btn title="حذف الفاتورة" icon="trash-2" kind="destructive" loading={deleting} onPress={doDelete} testID="button-delete-invoice" />
                 ) : null}
