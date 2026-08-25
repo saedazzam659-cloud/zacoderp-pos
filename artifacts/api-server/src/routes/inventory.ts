@@ -1966,15 +1966,55 @@ router.delete("/stock-counts/:id", async (req, res) => {
 // STOCK LEDGER
 // ═══════════════════════════════════════════════════════════════════
 router.get("/stock-ledger", async (req, res) => {
+  const {
+    itemId, warehouseId, from, to, customerId, txType, costCenter,
+    paged, page: pageParam, pageSize: pageSizeParam,
+  } = req.query as Record<string, string>;
+  const wantsPaged = paged === "1";
+  const allowedPageSizes = new Set([10, 25, 50, 100, 1000]);
+  const requestedPageSize = Number(pageSizeParam);
+  const pageSize = allowedPageSizes.has(requestedPageSize) ? requestedPageSize : 25;
+  const page = Math.max(1, Math.floor(Number(pageParam) || 1));
+  const emptyPage = {
+    rows: [],
+    total: 0,
+    page,
+    pageSize,
+    pageCount: 1,
+    summary: { opening: 0, totalIn: 0, totalOut: 0, final: 0 },
+  };
   const cid = getCompanyId(req);
-  if (!cid) { res.json([]); return; }
-  const { itemId, warehouseId, from, to, customerId, txType } = req.query as Record<string, string>;
+  if (!cid) { res.json(wantsPaged ? emptyPage : []); return; }
   const conditions = [eq(stockLedgerTable.companyId, cid)];
   if (itemId)      conditions.push(eq(stockLedgerTable.itemId,      Number(itemId)));
   if (warehouseId) conditions.push(eq(stockLedgerTable.warehouseId, Number(warehouseId)));
   if (from)        conditions.push(gte(stockLedgerTable.txDate, from));
   if (to)          conditions.push(lte(stockLedgerTable.txDate, to));
   if (txType)      conditions.push(eq(stockLedgerTable.txType, txType as any));
+  if (costCenter?.trim()) {
+    const pattern = `%${costCenter.trim()}%`;
+    conditions.push(sql`(
+      (
+        ${stockLedgerTable.refType} = 'sales_invoice'
+        AND EXISTS (
+          SELECT 1 FROM ${salesInvoicesTable}
+          WHERE ${salesInvoicesTable.id} = ${stockLedgerTable.refId}
+            AND ${salesInvoicesTable.companyId} = ${cid}
+            AND COALESCE(${salesInvoicesTable.costCenter}, '') ILIKE ${pattern}
+        )
+      )
+      OR
+      (
+        ${stockLedgerTable.refType} = 'purchase_invoice'
+        AND EXISTS (
+          SELECT 1 FROM ${purchaseInvoicesTable}
+          WHERE ${purchaseInvoicesTable.id} = ${stockLedgerTable.refId}
+            AND ${purchaseInvoicesTable.companyId} = ${cid}
+            AND COALESCE(${purchaseInvoicesTable.costCenter}, '') ILIKE ${pattern}
+        )
+      )
+    )`);
+  }
 
   // Customer filter: restrict ledger to movements that originated from a sales
   // invoice or sales return belonging to that customer. Non-sale rows
@@ -1993,11 +2033,33 @@ router.get("/stock-ledger", async (req, res) => {
     const parts: any[] = [];
     if (invIdList.length) parts.push(and(eq(stockLedgerTable.refType, "sales_invoice"), inArray(stockLedgerTable.refId, invIdList)));
     if (retIdList.length) parts.push(and(eq(stockLedgerTable.refType, "sales_return"),  inArray(stockLedgerTable.refId, retIdList)));
-    if (parts.length === 0) { res.json([]); return; }
+    if (parts.length === 0) { res.json(wantsPaged ? emptyPage : []); return; }
     conditions.push(parts.length === 1 ? parts[0] : or(...parts)!);
   }
 
-  const rows = await db.select({
+  const ledgerWhere = and(...conditions)!;
+  const summaryPromise = wantsPaged
+    ? Promise.all([
+        db.select({
+          total: count(),
+          totalIn: sql<string>`COALESCE(SUM(CASE WHEN ${stockLedgerTable.qty}::numeric > 0 THEN ${stockLedgerTable.qty}::numeric ELSE 0 END), 0)`,
+          totalOut: sql<string>`COALESCE(SUM(CASE WHEN ${stockLedgerTable.qty}::numeric < 0 THEN -${stockLedgerTable.qty}::numeric ELSE 0 END), 0)`,
+        }).from(stockLedgerTable).where(ledgerWhere),
+        db.selectDistinctOn([stockLedgerTable.warehouseId], {
+          qty: stockLedgerTable.qty,
+          balanceQty: stockLedgerTable.balanceQty,
+        }).from(stockLedgerTable)
+          .where(ledgerWhere)
+          .orderBy(stockLedgerTable.warehouseId, asc(stockLedgerTable.txDate), asc(stockLedgerTable.id)),
+        db.selectDistinctOn([stockLedgerTable.warehouseId], {
+          balanceQty: stockLedgerTable.balanceQty,
+        }).from(stockLedgerTable)
+          .where(ledgerWhere)
+          .orderBy(stockLedgerTable.warehouseId, desc(stockLedgerTable.txDate), desc(stockLedgerTable.id)),
+      ])
+    : Promise.resolve(null);
+
+  const rowsPromise = db.select({
     led: stockLedgerTable,
     item: itemsTable,
     wh: warehousesTable,
@@ -2016,9 +2078,12 @@ router.get("/stock-ledger", async (req, res) => {
       eq(itemsTable.unitId, unitsTable.id),
       eq(unitsTable.companyId, cid),
     ))
-    .where(and(...conditions))
+    .where(ledgerWhere)
     .orderBy(desc(stockLedgerTable.txDate), desc(stockLedgerTable.id))
-    .limit(500);
+    .limit(wantsPaged ? pageSize : 500)
+    .offset(wantsPaged ? (page - 1) * pageSize : 0);
+
+  const [rows, summaryParts] = await Promise.all([rowsPromise, summaryPromise]);
 
   // Resolve every source document in batched, tenant-scoped queries. The stock
   // ledger remains the source of truth for quantities/costs; these lookups add
@@ -2251,7 +2316,7 @@ router.get("/stock-ledger", async (req, res) => {
     : [];
   const warehouseNames = new Map(transferWarehouses.map(w => [w.id, w]));
 
-  res.json(rows.map(r => {
+  const mappedRows = rows.map(r => {
     const sourceDocument = r.led.refId && r.led.refType
       ? sourceRefs.get(`${r.led.refType}:${r.led.refId}`)
       : undefined;
@@ -2277,7 +2342,26 @@ router.get("/stock-ledger", async (req, res) => {
       balanceBefore: balanceAfter - qty,
       balanceAfter,
     };
-  }));
+  });
+  if (!wantsPaged || !summaryParts) {
+    res.json(mappedRows);
+    return;
+  }
+  const [[aggregate], openingRows, finalRows] = summaryParts;
+  const total = Number(aggregate?.total ?? 0);
+  res.json({
+    rows: mappedRows,
+    total,
+    page,
+    pageSize,
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
+    summary: {
+      opening: openingRows.reduce((sum, row) => sum + Number(row.balanceQty ?? 0) - Number(row.qty ?? 0), 0),
+      totalIn: Number(aggregate?.totalIn ?? 0),
+      totalOut: Number(aggregate?.totalOut ?? 0),
+      final: finalRows.reduce((sum, row) => sum + Number(row.balanceQty ?? 0), 0),
+    },
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

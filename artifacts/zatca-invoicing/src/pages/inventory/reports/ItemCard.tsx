@@ -14,7 +14,7 @@ import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import { Link } from "wouter";
-import { TablePagination, usePagination } from "@/components/TablePagination";
+import { TablePagination, type PageSize } from "@/components/TablePagination";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -73,6 +73,8 @@ export default function ItemCard() {
   };
   const [filters, setFilters] = useState(emptyFilters);
   const [applied, setApplied] = useState(emptyFilters);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(25);
 
   const { data: items = [] }      = useQuery({ queryKey: ["items", cid],      queryFn: () => inventoryApi.getItems(cid) });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
@@ -105,20 +107,35 @@ export default function ItemCard() {
     [t, i18n.language],
   );
 
-  const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["item-card", cid, applied],
+  const ledgerParams = (pageNumber: number, size: number) => {
+    const params: Record<string, string> = {
+      page: String(pageNumber),
+      pageSize: String(size),
+    };
+    if (cid)                 params.companyId   = String(cid);
+    if (applied.from)        params.from        = applied.from;
+    if (applied.to)          params.to          = applied.to;
+    if (applied.itemId)      params.itemId      = applied.itemId;
+    if (applied.warehouseId) params.warehouseId = applied.warehouseId;
+    if (applied.customerId)  params.customerId  = applied.customerId;
+    if (applied.txType)      params.txType      = applied.txType;
+    if (applied.costCenter)  params.costCenter  = applied.costCenter;
+    return params;
+  };
+  const emptyLedgerPage = {
+    rows: [] as any[],
+    total: 0,
+    page: 1,
+    pageSize,
+    pageCount: 1,
+    summary: { opening: 0, totalIn: 0, totalOut: 0, final: 0 },
+  };
+  const { data: ledgerPage = emptyLedgerPage, isLoading } = useQuery({
+    queryKey: ["item-card", cid, applied, page, pageSize],
     enabled: !!applied.itemId,
-    queryFn: () => {
-      const params: Record<string, string> = {};
-      if (cid)                 params.companyId   = String(cid);
-      if (applied.from)        params.from        = applied.from;
-      if (applied.to)          params.to          = applied.to;
-      if (applied.itemId)      params.itemId      = applied.itemId;
-      if (applied.warehouseId) params.warehouseId = applied.warehouseId;
-      if (applied.customerId)  params.customerId  = applied.customerId;
-      return inventoryApi.getLedger(params);
-    },
+    queryFn: () => inventoryApi.getLedgerPage(ledgerParams(page, pageSize)),
   });
+  const rows = ledgerPage.rows;
 
   const item = (items as any[]).find((i: any) => String(i.id) === applied.itemId);
   const selectedCustomer = (customers as any[]).find((c: any) => String(c.id) === applied.customerId);
@@ -150,30 +167,16 @@ export default function ItemCard() {
         balanceAfter,
         running: balanceAfter,
       };
-    }).filter(r => {
-      if (applied.txType && r.txType !== applied.txType) return false;
-      if (applied.costCenter && !String(r.costCenter ?? "").toLowerCase().includes(applied.costCenter.toLowerCase())) return false;
-      return true;
     });
-  }, [rows, applied.txType, applied.costCenter]);
+  }, [rows]);
 
-  const totals = augmented.reduce((s, r) => ({ in: s.in + r.qtyIn, out: s.out + r.qtyOut }), { in: 0, out: 0 });
-  const pagination = usePagination(augmented, 25);
-  const balanceSummary = useMemo(() => {
-    const firstByWarehouse = new Map<string, number>();
-    const lastByWarehouse = new Map<string, number>();
-    for (const r of augmented) {
-      const key = String(r.warehouseId ?? "");
-      if (!firstByWarehouse.has(key)) firstByWarehouse.set(key, Number(r.balanceBefore) || 0);
-      lastByWarehouse.set(key, Number(r.balanceAfter) || 0);
-    }
-    return {
-      opening: [...firstByWarehouse.values()].reduce((s, n) => s + n, 0),
-      final: [...lastByWarehouse.values()].reduce((s, n) => s + n, 0),
-    };
-  }, [augmented]);
+  const totals = { in: Number(ledgerPage.summary.totalIn) || 0, out: Number(ledgerPage.summary.totalOut) || 0 };
+  const balanceSummary = {
+    opening: Number(ledgerPage.summary.opening) || 0,
+    final: Number(ledgerPage.summary.final) || 0,
+  };
 
-  const exportRows = augmented.map((r: any) => ({
+  const toExportRow = (r: any) => ({
     txDate:        r.txDate,
     txType:        txLabel(r.txType),
     documentNumber: r.documentNumber ?? "",
@@ -193,7 +196,33 @@ export default function ItemCard() {
     expiryDate:    r.expiryDate ?? "",
     createdAt:     r.createdAt ? new Date(r.createdAt).toLocaleString(isRtl ? "ar-SA" : "en-US") : "",
     notes:         r.movementNotes ?? "",
-  }));
+  });
+  const exportRows = augmented.map(toExportRow);
+  const loadAllExportRows = async () => {
+    const first = await inventoryApi.getLedgerPage(ledgerParams(1, 1000));
+    const remaining = first.pageCount > 1
+      ? await Promise.all(
+          Array.from(
+            { length: first.pageCount - 1 },
+            (_, index) => inventoryApi.getLedgerPage(ledgerParams(index + 2, 1000)),
+          ),
+        )
+      : [];
+    return [first, ...remaining]
+      .flatMap(result => result.rows)
+      .sort((a, b) => {
+        const dateOrder = String(a.txDate).localeCompare(String(b.txDate));
+        return dateOrder !== 0 ? dateOrder : Number(a.id) - Number(b.id);
+      })
+      .map((r: any) => {
+        const qty = Number(r.qty) || 0;
+        return toExportRow({
+          ...r,
+          qtyIn: qty > 0 ? qty : 0,
+          qtyOut: qty < 0 ? -qty : 0,
+        });
+      });
+  };
 
   // Grand-totals row appended to Excel and printed/PDF view (renders on the
   // last page only via the centralized exporter).
@@ -230,6 +259,7 @@ export default function ItemCard() {
         </div>
         <ExportButtons
           rows={exportRows}
+          loadRows={loadAllExportRows}
           columns={EXPORT_COLS}
           filename={`${t("inventoryReports.itemCard.exportFilenamePrefix")}-${item?.code ?? "all"}-${applied.from}-${applied.to}${selectedCustomerName ? `-${selectedCustomerName}` : ""}`}
           title={t("inventoryReports.itemCard.title")}
@@ -306,7 +336,7 @@ export default function ItemCard() {
           </p>
         )}
         <div className="flex justify-end mt-4">
-          <Button size="sm" onClick={() => { pagination.reset(); setApplied({ ...filters }); }} disabled={!filters.itemId} className="gap-2">
+          <Button size="sm" onClick={() => { setPage(1); setApplied({ ...filters }); }} disabled={!filters.itemId} className="gap-2">
             <Search className="h-3.5 w-3.5" />{t("inventoryReports.itemCard.showCard")}
           </Button>
         </div>
@@ -393,7 +423,7 @@ export default function ItemCard() {
                   ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={19} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                   : augmented.length === 0
                   ? <tr><td colSpan={19} className="py-12 text-center text-muted-foreground"><IdCard className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("inventoryReports.itemCard.noMoves")}</td></tr>
-                  : pagination.pagedItems.map((r: any) => (
+                  : augmented.map((r: any) => (
                       <tr key={r.id} className="border-t border-border/60 even:bg-muted/10 hover:bg-primary/[0.045] transition-colors">
                         <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{r.txDate}</td>
                         <td className="px-4 py-3 text-xs">{txLabel(r.txType)}</td>
@@ -446,12 +476,15 @@ export default function ItemCard() {
           </div>
           {!isLoading && augmented.length > 0 && (
             <TablePagination
-              page={pagination.page}
-              pageSize={pagination.pageSize}
-              pageCount={pagination.pageCount}
-              total={pagination.total}
-              onPageChange={pagination.setPage}
-              onPageSizeChange={pagination.setPageSize}
+              page={page}
+              pageSize={pageSize}
+              pageCount={ledgerPage.pageCount}
+              total={ledgerPage.total}
+              onPageChange={setPage}
+              onPageSizeChange={(nextSize) => {
+                setPageSize(nextSize);
+                setPage(1);
+              }}
               pageSizeOptions={[10, 25, 50, 100, 1000]}
               className="border-t border-border/80 bg-gradient-to-b from-muted/20 to-muted/40 px-3 py-3"
             />

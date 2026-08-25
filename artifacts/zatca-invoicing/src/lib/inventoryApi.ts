@@ -191,6 +191,14 @@ export const inventoryApi = {
   deleteCount: (id: number)   => del(`/stock-counts/${id}`),
   // Ledger & Balance
   getLedger:  (params: Record<string, string>) => get<any[]>(`/stock-ledger?${new URLSearchParams(params)}`),
+  getLedgerPage: (params: Record<string, string>) => get<{
+    rows: any[];
+    total: number;
+    page: number;
+    pageSize: number;
+    pageCount: number;
+    summary: { opening: number; totalIn: number; totalOut: number; final: number };
+  }>(`/stock-ledger?${new URLSearchParams({ ...params, paged: "1" })}`),
   getBalance: (params: Record<string, string>) => get<any[]>(`/stock-balance?${new URLSearchParams(params)}`),
   getLastMovements: (cid?: number) => get<{ itemId: number; lastDate: string }[]>(`/last-movements${cid ? `?companyId=${cid}` : ""}`),
   // Free-quantities report (تقرير الكميات المجانية) — aggregates `free_qty`
