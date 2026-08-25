@@ -14,6 +14,7 @@ import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import { Link } from "wouter";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -157,6 +158,7 @@ export default function ItemCard() {
   }, [rows, applied.txType, applied.costCenter]);
 
   const totals = augmented.reduce((s, r) => ({ in: s.in + r.qtyIn, out: s.out + r.qtyOut }), { in: 0, out: 0 });
+  const pagination = usePagination(augmented, 25);
   const balanceSummary = useMemo(() => {
     const firstByWarehouse = new Map<string, number>();
     const lastByWarehouse = new Map<string, number>();
@@ -220,7 +222,7 @@ export default function ItemCard() {
     : null;
 
   return (
-    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
+    <div className="w-full min-w-0 max-w-none space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><IdCard className="h-6 w-6 text-primary" />{t("inventoryReports.itemCard.title")}</h1>
@@ -304,7 +306,7 @@ export default function ItemCard() {
           </p>
         )}
         <div className="flex justify-end mt-4">
-          <Button size="sm" onClick={() => setApplied({ ...filters })} disabled={!filters.itemId} className="gap-2">
+          <Button size="sm" onClick={() => { pagination.reset(); setApplied({ ...filters }); }} disabled={!filters.itemId} className="gap-2">
             <Search className="h-3.5 w-3.5" />{t("inventoryReports.itemCard.showCard")}
           </Button>
         </div>
@@ -334,39 +336,65 @@ export default function ItemCard() {
 
       {/* Table */}
       {applied.itemId ? (
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[1900px]">
-              <thead className="bg-muted/50 border-b">
+        <div className="w-full min-w-0 rounded-xl border border-border/80 bg-card overflow-hidden shadow-sm">
+          <div className="w-full overflow-x-auto overscroll-x-contain">
+            <table className="w-full min-w-[1540px] table-fixed border-separate border-spacing-0 text-xs
+              [&_tr>*]:border-e [&_tr>*]:border-border/60 [&_tr>*:last-child]:border-e-0
+              [&_tbody_td]:border-t [&_tbody_td]:border-border/50
+              [&_tr>*:nth-child(3)]:border-e-2 [&_tr>*:nth-child(3)]:border-e-primary/25
+              [&_tr>*:nth-child(9)]:border-e-2 [&_tr>*:nth-child(9)]:border-e-primary/25
+              [&_tr>*:nth-child(15)]:border-e-2 [&_tr>*:nth-child(15)]:border-e-primary/25">
+              <colgroup>
+                <col className="w-[82px]" />
+                <col className="w-[86px]" />
+                <col className="w-[100px]" />
+                <col className="w-[94px]" />
+                <col className="w-[94px]" />
+                <col className="w-[94px]" />
+                <col className="w-[68px]" />
+                <col className="w-[86px]" />
+                <col className="w-[86px]" />
+                <col className="w-[82px]" />
+                <col className="w-[66px]" />
+                <col className="w-[66px]" />
+                <col className="w-[82px]" />
+                <col className="w-[76px]" />
+                <col className="w-[82px]" />
+                <col className="w-[82px]" />
+                <col className="w-[84px]" />
+                <col className="w-[126px]" />
+                <col className="w-[170px]" />
+              </colgroup>
+              <thead className="bg-muted/70">
                 <tr>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.date")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.txType")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.documentNumber")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.common.warehouse")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.sourceWarehouse")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.targetWarehouse")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.unit")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.costCenter")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.project")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.balanceBefore")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-green-700">{t("inventoryReports.itemCard.cols.qtyIn")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-red-700">{t("inventoryReports.itemCard.cols.qtyOut")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.balanceAfter")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.costPrice")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.totalCost")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.batchNumber")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.expiryDate")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.createdAt")}</th>
-                  <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.notes")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.date")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.txType")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.documentNumber")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.common.warehouse")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.sourceWarehouse")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.targetWarehouse")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.unit")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.costCenter")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.project")}</th>
+                  <th className="px-2 py-3 text-center font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.balanceBefore")}</th>
+                  <th className="px-2 py-3 text-center font-semibold leading-4 text-green-700">{t("inventoryReports.itemCard.cols.qtyIn")}</th>
+                  <th className="px-2 py-3 text-center font-semibold leading-4 text-red-700">{t("inventoryReports.itemCard.cols.qtyOut")}</th>
+                  <th className="px-2 py-3 text-center font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.balanceAfter")}</th>
+                  <th className="px-2 py-3 text-center font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.costPrice")}</th>
+                  <th className="px-2 py-3 text-center font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.totalCost")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.batchNumber")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.expiryDate")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.createdAt")}</th>
+                  <th className="px-2 py-3 text-start font-semibold leading-4 text-foreground/70">{t("inventoryReports.itemCard.cols.notes")}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y">
+              <tbody>
                 {isLoading
                   ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={19} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                   : augmented.length === 0
                   ? <tr><td colSpan={19} className="py-12 text-center text-muted-foreground"><IdCard className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("inventoryReports.itemCard.noMoves")}</td></tr>
-                  : augmented.map((r: any) => (
-                      <tr key={r.id} className="hover:bg-muted/20">
+                  : pagination.pagedItems.map((r: any) => (
+                      <tr key={r.id} className="border-t border-border/60 even:bg-muted/10 hover:bg-primary/[0.045] transition-colors">
                         <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{r.txDate}</td>
                         <td className="px-4 py-3 text-xs">{txLabel(r.txType)}</td>
                         <td className="px-4 py-3 text-xs" dir="ltr">
@@ -416,6 +444,18 @@ export default function ItemCard() {
               )}
             </table>
           </div>
+          {!isLoading && augmented.length > 0 && (
+            <TablePagination
+              page={pagination.page}
+              pageSize={pagination.pageSize}
+              pageCount={pagination.pageCount}
+              total={pagination.total}
+              onPageChange={pagination.setPage}
+              onPageSizeChange={pagination.setPageSize}
+              pageSizeOptions={[10, 25, 50, 100, 1000]}
+              className="border-t border-border/80 bg-gradient-to-b from-muted/20 to-muted/40 px-3 py-3"
+            />
+          )}
         </div>
       ) : (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">

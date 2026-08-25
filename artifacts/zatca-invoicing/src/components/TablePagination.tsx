@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-export const PAGE_SIZE_OPTIONS = [10, 50, 100, 500, 1000] as const;
+export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 500, 1000] as const;
 export type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 export const DEFAULT_PAGE_SIZE: PageSize = 10;
 
