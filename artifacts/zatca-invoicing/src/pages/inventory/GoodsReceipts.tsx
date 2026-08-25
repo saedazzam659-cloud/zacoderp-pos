@@ -1267,7 +1267,7 @@ ${sections}
                               onChange={e => updateLine(l._id, "unit", e.target.value)} />
                           );
                         })()}
-                        <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty}
+                        <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty} data-hide-default-one
                           onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
                         <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
                           onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />

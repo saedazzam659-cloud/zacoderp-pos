@@ -24,6 +24,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
+import { NumericEntry } from '@/components/NumericEntry';
 import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
 
 interface Item {
@@ -745,14 +746,10 @@ export default function InvoiceForm() {
                       <View style={{ flex: 1, gap: 6 }}>
                         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'flex-start', gap: 7 }}>
                           {!readOnly && mp('invoice_edit_price') ? (
-                            <TextInput
+                            <NumericEntry
                               testID={`input-cart-price-${item.id}`}
-                              defaultValue={String(inCart.unitPrice)}
-                              keyboardType="decimal-pad"
-                              onEndEditing={(e) => {
-                                const v = parseFloat(String(e.nativeEvent.text).replace(/[^\d.]/g, ''));
-                                if (Number.isFinite(v)) setLinePrice(item.id, v);
-                              }}
+                              value={inCart.unitPrice}
+                              onChangeValue={(v) => setLinePrice(item.id, v)}
                               style={{ minWidth: 64, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
                             />
                           ) : null}
@@ -760,15 +757,12 @@ export default function InvoiceForm() {
                             <Feather name="plus" size={14} color="#fff" />
                           </Pressable>
                           {!readOnly ? (
-                            <TextInput
+                            <NumericEntry
                               testID={`input-cart-qty-${item.id}`}
-                              value={String(inCart.qty)}
-                              keyboardType="decimal-pad"
-                              onChangeText={(v) => {
-                                const clean = v.replace(/[^\d.]/g, '');
-                                const q = parseFloat(clean);
-                                if (Number.isFinite(q)) setLineQty(item.id, q);
-                              }}
+                              value={inCart.qty}
+                              blankWhenZero={false}
+                              blankWhenOne
+                              onChangeValue={(q) => setLineQty(item.id, q)}
                               style={{ width: 52, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 4, textAlign: 'center', fontSize: 14, fontFamily: 'Inter_700Bold', color: c.foreground, backgroundColor: c.background }}
                             />
                           ) : (
@@ -779,33 +773,35 @@ export default function InvoiceForm() {
                           </Pressable>
                         </View>
                         {!readOnly && (mp('invoice_free_qty') || mp('invoice_discount') || mp('invoice_unit_selection')) ? (
-                          <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', alignItems: 'flex-end', gap: 6 }}>
-                            {mp('invoice_free_qty') ? (
-                              <View style={{ flex: 1 }}>
-                                <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>مجاني</Text>
-                                <TextInput testID={`input-cart-free-qty-${item.id}`} value={String(inCart.freeQty)} keyboardType="decimal-pad"
-                                  onChangeText={(v) => setLineField(item.id, 'freeQty', parseFloat(v) || 0)}
-                                  style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
-                              </View>
-                            ) : null}
-                            {mp('invoice_discount') ? (
-                              <View style={{ flex: 1 }}>
-                                <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم %</Text>
-                                <TextInput testID={`input-cart-discount-${item.id}`} value={String(inCart.discount)} keyboardType="decimal-pad"
-                                  onChangeText={(v) => setLineField(item.id, 'discount', parseFloat(v) || 0)}
-                                  style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
-                              </View>
-                            ) : null}
-                            {mp('invoice_discount') ? (
-                              <View style={{ flex: 1 }}>
-                                <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم قيمة</Text>
-                                <TextInput testID={`input-cart-discount-amount-${item.id}`} value={String(inCart.discountAmount)} keyboardType="decimal-pad"
-                                  onChangeText={(v) => setLineField(item.id, 'discountAmount', parseFloat(v) || 0)}
-                                  style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
-                              </View>
-                            ) : null}
+                          <View style={{ gap: 6 }}>
+                            <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 6 }}>
+                              {mp('invoice_free_qty') ? (
+                                <View style={{ flex: 1, minWidth: 0 }}>
+                                  <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>مجاني</Text>
+                                  <NumericEntry testID={`input-cart-free-qty-${item.id}`} value={inCart.freeQty} emptyValue={0}
+                                    onChangeValue={(v) => setLineField(item.id, 'freeQty', v)}
+                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                </View>
+                              ) : null}
+                              {mp('invoice_discount') ? (
+                                <View style={{ flex: 1, minWidth: 0 }}>
+                                  <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم %</Text>
+                                  <NumericEntry testID={`input-cart-discount-${item.id}`} value={inCart.discount} emptyValue={0}
+                                    onChangeValue={(v) => setLineField(item.id, 'discount', v)}
+                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                </View>
+                              ) : null}
+                              {mp('invoice_discount') ? (
+                                <View style={{ flex: 1, minWidth: 0 }}>
+                                  <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم قيمة</Text>
+                                  <NumericEntry testID={`input-cart-discount-amount-${item.id}`} value={inCart.discountAmount} emptyValue={0}
+                                    onChangeValue={(v) => setLineField(item.id, 'discountAmount', v)}
+                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                </View>
+                              ) : null}
+                            </View>
                             {mp('invoice_unit_selection') ? (
-                              <Pressable onPress={() => selectNextUnit(inCart)} testID={`button-cart-unit-${item.id}`} style={{ paddingVertical: 8, paddingHorizontal: 7, borderRadius: 8, backgroundColor: c.muted }}>
+                              <Pressable onPress={() => selectNextUnit(inCart)} testID={`button-cart-unit-${item.id}`} style={{ alignSelf: 'flex-start', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, backgroundColor: c.muted }}>
                                 <Text style={{ fontSize: 11, color: c.foreground }}>{inCart.unitName ?? 'وحدة'}</Text>
                               </Pressable>
                             ) : null}

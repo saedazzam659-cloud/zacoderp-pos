@@ -47,3 +47,16 @@ returns the full company row, so no extra select wiring. Column added via direct
 **Deliberate exemption:** the 4 raw `<input type="number">` in `PrintDesigner.tsx`
 (page width/height mm, column width, element size) are layout-designer dimensions where
 a literal 0 is meaningful and they never default to 0 — left untouched on purpose.
+
+**Default quantity 1:** quantity inputs may opt into rendering the resting default
+value `1` as blank. Keep this explicit and quantity-only; never infer it from
+`inputMode`, because VAT/OTP/identifier and non-quantity numeric fields also use the
+same modes and a real `1` must remain visible there. As with hidden zeros, an actively
+typed `1` stays visible until blur so input remains predictable.
+
+**Why:** invoice users found the prefilled `1` visually confusing, but the app still
+needs quantity 1 in state for totals, stock, and save payloads.
+
+**How to apply:** mark each controlled quantity field with the shared input's
+quantity-default opt-in. Apply it whenever a new document quantity grid is added;
+do not use it for prices, rates, conversion factors, or identifiers.

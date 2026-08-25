@@ -1835,7 +1835,7 @@ export default function PurchaseInvoiceForm() {
                             onChange={e => updateLine(l._id, "unit", e.target.value)} />
                         );
                       })()}
-                      <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty}
+                      <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty} data-hide-default-one
                         onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
                       <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
                         type="text" inputMode="numeric" value={l.freeQty}

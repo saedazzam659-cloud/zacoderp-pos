@@ -130,7 +130,7 @@ function buildTlvBase64(company: any, doc: any, grandTotal: number, vatAmount: n
   push(1, String(company?.nameAr ?? company?.nameEn ?? ''));
   push(2, String(company?.vatNumber ?? ''));
   let ts = '';
-  const raw = doc?.invoiceDate ?? doc?.createdAt;
+  const raw = doc?.invoiceDate ?? doc?.returnDate ?? doc?.quotationDate ?? doc?.createdAt;
   if (raw) {
     const dt = new Date(raw);
     if (!isNaN(dt.getTime())) ts = dt.toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -160,25 +160,61 @@ const esc = (s: any) =>
   String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export interface InvoicePrintInput {
-  doc: any;              // full invoice row incl. lines
+  doc: any;              // full sales document row incl. lines
   lines: any[];
   customer: any | null;
   company: any;
   logoUrl?: string | null; // absolute URL when the company has a logo
+  type?: 'invoice' | 'quotation' | 'return';
+  currency?: any | null;
 }
 
 // ── HTML builder — condensed template 14 ("الأصلي") ─────────────────────────
 export async function buildInvoiceHtml(d: InvoicePrintInput): Promise<string> {
   const { doc, lines, customer, company } = d;
+  const type = d.type ?? 'invoice';
+  const isQuotation = type === 'quotation';
+  const isReturn = type === 'return';
   const t = computeTotals(doc, lines);
   const hasBuyerVat = !!(customer?.vatNumber ?? doc?.buyerVatNumber);
-  const titleAr = hasBuyerVat ? 'فاتورة مبيعات ضريبية' : 'فاتورة مبيعات مبسطة';
-  const titleEn = hasBuyerVat ? 'Tax Invoice' : 'Simplified Tax Invoice';
-  const docNo = doc?.docNumber ?? `SI-${doc?.id ?? ''}`;
-  const dateStr = String(doc?.invoiceDate ?? '').slice(0, 10) || '—';
-  const payLabel = doc?.paymentType === 'cash' ? 'نقداً' : doc?.paymentType === 'bank' ? 'على حساب' : 'آجل';
-  const qrSvg = await buildQrSvg(company, doc, t.grandTotal, t.vatAmount);
+  const titleAr = isQuotation
+    ? 'عرض سعر'
+    : isReturn
+      ? (hasBuyerVat ? 'مرتجع مبيعات ضريبي' : 'مرتجع مبيعات مبسط')
+      : (hasBuyerVat ? 'فاتورة مبيعات ضريبية' : 'فاتورة مبيعات مبسطة');
+  const titleEn = isQuotation
+    ? 'Quotation'
+    : isReturn
+      ? 'Sales Return'
+      : (hasBuyerVat ? 'Tax Invoice' : 'Simplified Tax Invoice');
+  const prefix = isQuotation ? 'SQ' : isReturn ? 'SR' : 'SI';
+  const docNo = doc?.docNumber ?? `${prefix}-${doc?.id ?? ''}`;
+  const dateStr = String(isQuotation ? doc?.quotationDate : isReturn ? doc?.returnDate : doc?.invoiceDate).slice(0, 10) || '—';
+  const payLabel = isQuotation
+    ? `صالح حتى: ${String(doc?.validUntil ?? '—').slice(0, 10)}`
+    : doc?.paymentType === 'cash' ? 'نقداً' : doc?.paymentType === 'bank' ? 'على حساب' : 'آجل';
+  const showQuotationQr = company?.printQuotationShowQr === true;
+  const showQr = !isQuotation || showQuotationQr;
+  const qrSvg = showQr ? await buildQrSvg(company, doc, t.grandTotal, t.vatAmount) : '';
   const logo = d.logoUrl ? `<img src="${esc(d.logoUrl)}" style="max-height:62px;max-width:170px;object-fit:contain;" />` : '';
+  const showEnglishSubtitle = company?.printT14ShowEnSubtitle !== false;
+  const showAccountCode = company?.printT14ShowAccountCode !== false;
+  const showAuditFooter = company?.printT14ShowAuditFooter !== false;
+  const showQuotationAddress = !isQuotation || company?.printQuotationShowCustomerAddress !== false;
+  const currencyName = isQuotation && company?.printQuotationShowCurrencyName !== false
+    ? String(d.currency?.nameAr ?? d.currency?.nameEn ?? '').trim()
+    : '';
+  const customerAddress = [
+    customer?.buildingNumber ?? doc?.buyerBuildingNumber,
+    customer?.street ?? doc?.buyerStreet,
+    customer?.district ?? doc?.buyerDistrict,
+    customer?.city ?? doc?.buyerCity,
+    customer?.postalCode ?? doc?.buyerPostalCode,
+    customer?.nationalAddressShort ?? doc?.buyerNationalAddressShort,
+  ].map((v) => String(v ?? '').trim()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('، ');
+  const accountCode = customer?.accountCode ?? customer?.code ?? (customer?.accountId != null ? `A-${customer.accountId}` : null);
+  const bankText = String(company?.bankAccountText ?? '').trim();
+  const showQrColumn = showQr || !!bankText;
   const createdAt = doc?.createdAt ? new Date(doc.createdAt) : null;
   const createdStr = createdAt && !isNaN(createdAt.getTime())
     ? createdAt.toLocaleString('ar-SA-u-ca-gregory-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -250,7 +286,7 @@ export async function buildInvoiceHtml(d: InvoicePrintInput): Promise<string> {
     </div>
     <div class="col-mid">
       ${logo}
-      <div class="doc-title">${esc(titleAr)}<span class="en">${esc(titleEn)}</span></div>
+       <div class="doc-title">${esc(titleAr)}${showEnglishSubtitle ? `<span class="en">${esc(titleEn)}</span>` : ''}</div>
       <div>
         <span class="pill no"><b>${esc(docNo)}</b></span>
         <span class="pill pay">${payLabel}</span>
@@ -260,17 +296,18 @@ export async function buildInvoiceHtml(d: InvoicePrintInput): Promise<string> {
     <div class="colbox">
       <div class="label">بيانات العميل — CUSTOMER</div>
       <div class="co-name-ar">${esc(customer?.nameAr ?? customer?.name ?? doc?.buyerName ?? 'عميل نقدي')}</div>
+       ${showAccountCode ? crow('كود الحساب', accountCode) : ''}
       ${crow('الرقم الضريبي', customer?.vatNumber ?? doc?.buyerVatNumber)}
       ${crow('الهاتف', customer?.phone)}
-      ${crow('المدينة', customer?.city)}
-      ${crow('رقم المبنى', customer?.buildingNumber)}
+       ${showQuotationAddress ? crow('العنوان', customerAddress || customer?.city) : ''}
+       ${currencyName ? crow('العملة', currencyName) : ''}
     </div>
   </div>
   <table class="lines">
     <thead><tr><th>#</th><th>الصنف</th><th>الوحدة</th><th>الكمية</th><th>السعر</th><th>الضريبة</th><th>الإجمالي</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>
-  <div class="bottom">
+  <div class="bottom" style="grid-template-columns:${showQrColumn ? '1fr 200px' : '1fr'};">
     <div>
       <div class="card">
         <div class="trow" style="font-size:9px;opacity:.7;"><span>نوع التسعير</span><span>${t.inc ? 'الأسعار شاملة الضريبة' : 'ضريبة إضافية'}</span></div>
@@ -282,21 +319,21 @@ export async function buildInvoiceHtml(d: InvoicePrintInput): Promise<string> {
       </div>
       <div class="summary">
         <div style="font-weight:700;margin-bottom:6px;">${esc(t.amountWords)}</div>
-        <div style="display:flex;justify-content:space-between;border-top:1px dashed #cbd5e1;padding-top:6px;">
-          <span>إجمالي أصناف الفاتورة</span><span class="mono" style="font-weight:700;">${t.itemsCount}</span>
+         <div style="display:flex;justify-content:space-between;border-top:1px dashed #cbd5e1;padding-top:6px;">
+           <span>إجمالي الأصناف</span><span class="mono" style="font-weight:700;">${t.itemsCount}</span>
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:3px;">
-          <span>إجمالي كميات الفاتورة</span><span class="mono" style="font-weight:700;">${fmt(t.totalQty)}</span>
+           <span>إجمالي الكميات</span><span class="mono" style="font-weight:700;">${fmt(t.totalQty)}</span>
         </div>
       </div>
       ${doc?.notes ? `<div class="notes-box"><b>ملاحظات:</b> ${esc(doc.notes)}</div>` : ''}
     </div>
-    <div class="card qr-card">${qrSvg || '<div style="width:150px;height:150px;border:1.5px dashed #999;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:#999;">QR ZATCA</div>'}<div class="lbl">ZATCA E-INVOICE QR</div></div>
+     ${showQrColumn ? `<div class="card qr-card">${qrSvg}${qrSvg ? '<div class="lbl">ZATCA QR</div>' : ''}${bankText ? `<div style="white-space:pre-line;text-align:right;margin-top:8px;font-size:10px;">${esc(bankText)}</div>` : ''}</div>` : ''}
   </div>
-  <div class="audit">
+   ${showAuditFooter ? `<div class="audit">
     <span>أنشئت: <b class="mono">${esc(createdStr)}</b></span>
     <span>${esc(company?.nameAr ?? '')} — نظام زاكود ERP</span>
-  </div>
+   </div>` : ''}
 </body></html>`;
 }
 
@@ -316,6 +353,7 @@ export async function shareInvoicePdf(input: InvoicePrintInput): Promise<void> {
     return;
   }
   if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'مشاركة الفاتورة', UTI: 'com.adobe.pdf' });
+    const title = input.type === 'quotation' ? 'مشاركة عرض السعر' : input.type === 'return' ? 'مشاركة مرتجع المبيعات' : 'مشاركة الفاتورة';
+    await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: title, UTI: 'com.adobe.pdf' });
   }
 }

@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { isZeroValue, shouldBlankNumericValue } from "@/lib/inputDisplay"
 import { AuthContext } from "@/contexts/AuthContext"
 
 // Display-only "hide zeros" behavior for numeric inputs.
@@ -10,15 +11,6 @@ import { AuthContext } from "@/contexts/AuthContext"
 // purely what is painted in the box. Read via useContext (not the throwing
 // useAuth hook) so <Input> still works on screens rendered outside AuthProvider
 // (e.g. the login / SuperAdmin-login pages).
-function isZeroValue(value: React.ComponentProps<"input">["value"]): boolean {
-  if (value === 0) return true;
-  if (typeof value === "string") {
-    const t = value.trim();
-    return t !== "" && Number(t) === 0;
-  }
-  return false;
-}
-
 // Strip trailing fractional zeros from a numeric value for DISPLAY only.
 // e.g. "10.0000" -> "10", "300000.00" -> "300000", "10.50" -> "10.5".
 // Only touches plain decimal strings that actually have a fractional part;
@@ -85,6 +77,11 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
       type === "number" ||
       props.inputMode === "numeric" ||
       props.inputMode === "decimal";
+    // Quantity fields explicitly opt in to hiding their default value of 1.
+    // This is independent of the company "show zeros" preference: a resting
+    // default quantity stays visually blank, while the parent still holds 1.
+    const hideDefaultOne = (props as any)["data-hide-default-one"] != null &&
+      (props as any)["data-hide-default-one"] !== false;
     // Excel-style live thousands separators for amount fields. Only controlled
     // text inputs declaring inputMode="decimal" (never type="number" — the
     // browser rejects commas there, and never inputMode="numeric" — that
@@ -95,10 +92,18 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
       (type === undefined || type === "text") &&
       (props as any)["data-no-group"] == null;
     if (isNumericField && isControlled) {
-      if (!showZeros && isZeroValue(value) && !(focused && typedSinceFocus)) {
+      const blankZero = !showZeros && isZeroValue(value);
+      const blankValue = shouldBlankNumericValue({
+        value,
+        showZeros,
+        hideDefaultOne,
+        focused,
+        typedSinceFocus,
+      });
+      if (blankValue) {
         displayValue = "";
         // Faint "0" hint (placeholder:text-muted-foreground in the class list).
-        if (displayPlaceholder == null) displayPlaceholder = "0";
+        if (blankZero && displayPlaceholder == null) displayPlaceholder = "0";
       } else if (!focused) {
         // Drop ugly trailing zeros (e.g. DB numeric strings like "10.0000")
         // from the resting display, globally across every numeric input.

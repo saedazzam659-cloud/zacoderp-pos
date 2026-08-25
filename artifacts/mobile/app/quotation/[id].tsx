@@ -22,6 +22,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
+import { NumericEntry } from '@/components/NumericEntry';
+import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
+import { printInvoice, shareInvoicePdf } from '@/lib/print';
 
 interface Item {
   id: number;
@@ -40,6 +43,12 @@ interface CartLine {
   qty: number;
   unitPrice: number;
   vatRate: number;
+  freeQty: number;
+  discount: number;
+  discountAmount: number;
+  unitId?: number;
+  unitName?: string;
+  conversionFactor: number;
 }
 
 // عرض السعر = فاتورة مبيعات بلا تبويبي المدفوعات والإرجاع
@@ -94,6 +103,7 @@ export default function QuotationForm() {
   const [custSearch, setCustSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [activeGroup, setActiveGroup] = useState<number | 'all'>('all');
+  const [itemUnits, setItemUnits] = useState<Record<number, any[]>>({});
 
   const customersQ = useQuery({
     queryKey: ['customers', companyId],
@@ -140,6 +150,12 @@ export default function QuotationForm() {
       qty: parseFloat(l.qty ?? 1) || 1,
       unitPrice: parseFloat(l.unitPrice ?? 0) || 0,
       vatRate: parseFloat(l.vatRate ?? 15) || 0,
+      freeQty: parseFloat(l.freeQty ?? 0) || 0,
+      discount: parseFloat(l.discount ?? 0) || 0,
+      discountAmount: parseFloat(l.discountAmount ?? 0) || 0,
+      unitId: l.unitId ?? l.unit?.id,
+      unitName: l.unit?.nameAr ?? l.unitName ?? (typeof l.unit === 'string' ? l.unit : undefined),
+      conversionFactor: parseFloat(l.conversionFactor ?? 1) || 1,
     }));
     setLines(ls);
   }, [docQ.data, loadedDoc]);
@@ -190,19 +206,12 @@ export default function QuotationForm() {
   const totals = useMemo(() => {
     let subtotal = 0, vat = 0;
     for (const l of lines) {
-      const gross = l.qty * l.unitPrice;
-      const r = (l.vatRate ?? 0) / 100;
-      if (priceIncludesVat) {
-        const net = gross / (1 + r);
-        subtotal += net;
-        vat += gross - net;
-      } else {
-        subtotal += gross;
-        vat += gross * r;
-      }
+      const amounts = calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount');
+      subtotal += amounts.subtotal;
+      vat += amounts.vat;
     }
     return { subtotal, vat, total: subtotal + vat };
-  }, [lines, priceIncludesVat]);
+  }, [lines, priceIncludesVat, user?.company?.taxCalculationMode]);
 
   const addItem = (it: Item) => {
     if (readOnly) return;
@@ -221,6 +230,12 @@ export default function QuotationForm() {
           qty: 1,
           unitPrice: parseFloat(String(it.salePrice ?? 0)) || 0,
           vatRate: parseFloat(String(it.vatRate ?? 15)),
+          freeQty: 0,
+          discount: 0,
+          discountAmount: 0,
+          unitId: it.unit?.id,
+          unitName: it.unit?.nameAr,
+          conversionFactor: 1,
         },
       ];
     });
@@ -232,6 +247,37 @@ export default function QuotationForm() {
 
   const setLinePrice = (itemId: number, price: number) => {
     setLines((prev) => prev.map((l) => (l.itemId === itemId ? { ...l, unitPrice: Math.max(0, price) } : l)));
+  };
+
+  const setLineField = (itemId: number, field: 'freeQty' | 'discount' | 'discountAmount', value: number) => {
+    setLines((prev) => prev.map((l) => {
+      if (l.itemId !== itemId) return l;
+      if (field === 'freeQty') return { ...l, freeQty: Math.max(0, value) };
+      return { ...l, ...syncLineDiscount(l, field, value) };
+    }));
+  };
+
+  const selectNextUnit = async (line: CartLine) => {
+    let options = itemUnits[line.itemId];
+    try {
+      if (!options) {
+        options = await api<any[]>(`/api/inventory/items/${line.itemId}/units?companyId=${companyId}`);
+        setItemUnits((prev) => ({ ...prev, [line.itemId]: options }));
+      }
+    } catch (e: any) {
+      notify('تعذّر تحميل الوحدات', e?.message ?? 'أعد المحاولة');
+      return;
+    }
+    if (!options.length) return;
+    const current = options.findIndex((u: any) => Number(u.unitId) === line.unitId);
+    const next = options[(current + 1) % options.length];
+    setLines((prev) => prev.map((l) => l.itemId === line.itemId ? {
+      ...l,
+      unitId: Number(next.unitId),
+      unitName: next.unit?.nameAr ?? next.unitNameAr ?? next.nameAr ?? String(next.unitId),
+      conversionFactor: parseFloat(String(next.conversionFactor ?? 1)) || 1,
+      unitPrice: next.salePrice != null ? parseFloat(String(next.salePrice)) || 0 : l.unitPrice,
+    } : l));
   };
 
   useFocusEffect(
@@ -253,18 +299,20 @@ export default function QuotationForm() {
 
   const buildBody = () => {
     const bodyLines = lines.map((l) => {
-      const gross = l.qty * l.unitPrice;
       const it = items.find((i) => i.id === l.itemId);
+      const lineTotal = calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount').total;
       return {
         itemId: l.itemId,
         itemName: l.name,
         qty: l.qty,
         unitPrice: l.unitPrice,
         vatRate: l.vatRate,
-        discount: 0,
-        discountAmount: 0,
-        lineTotal: +gross.toFixed(2),
-        unitId: it?.unit?.id ?? undefined,
+        freeQty: l.freeQty,
+        discount: l.discount,
+        discountAmount: l.discountAmount,
+        lineTotal: +lineTotal.toFixed(2),
+        unitId: l.unitId ?? it?.unit?.id ?? undefined,
+        conversionFactor: l.conversionFactor,
       };
     });
     return {
@@ -379,6 +427,33 @@ export default function QuotationForm() {
       { text: 'إلغاء', style: 'cancel' },
       { text: 'حذف', style: 'destructive', onPress: go },
     ]);
+  };
+
+  const [printing, setPrinting] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const doPrint = async (share: boolean) => {
+    const docId = loadedDoc?.id ?? quotationId;
+    if (!docId) return;
+    share ? setSharing(true) : setPrinting(true);
+    try {
+      const full = await api<any>(`/api/sales/sales-quotations/${docId}?companyId=${companyId}`);
+      const input = {
+        type: 'quotation' as const,
+        doc: full,
+        lines: Array.isArray(full?.lines) ? full.lines : [],
+        customer: full?.customer ?? customer,
+        company: user?.company ?? {},
+        currency: full?.currency ?? currency,
+        logoUrl: typeof user?.company?.logo === 'string' ? user.company.logo : null,
+      };
+      if (share) await shareInvoicePdf(input);
+      else await printInvoice(input);
+    } catch (e: any) {
+      notify('خطأ', typeof e === 'string' ? e : e?.message ?? 'تعذّرت طباعة عرض السعر');
+    } finally {
+      setPrinting(false);
+      setSharing(false);
+    }
   };
 
   const PickRow = ({ label, value, onPress, testID }: { label: string; value: string; onPress: () => void; testID?: string }) => (
@@ -528,26 +603,70 @@ export default function QuotationForm() {
                       </Text>
                     </View>
                     {inCart ? (
-                      <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
-                        {!readOnly ? (
-                          <TextInput
-                            testID={`input-cart-price-${item.id}`}
-                            defaultValue={String(inCart.unitPrice)}
-                            keyboardType="decimal-pad"
-                            onEndEditing={(e) => {
-                              const v = parseFloat(String(e.nativeEvent.text).replace(/[^\d.]/g, ''));
-                              if (Number.isFinite(v)) setLinePrice(item.id, v);
-                            }}
-                            style={{ minWidth: 64, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
-                          />
+                      <View style={{ flex: 1, gap: 6 }}>
+                        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 7 }}>
+                          {!readOnly ? (
+                            <NumericEntry
+                              testID={`input-cart-price-${item.id}`}
+                              value={inCart.unitPrice}
+                              onChangeValue={(v) => setLinePrice(item.id, v)}
+                              style={{ minWidth: 64, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
+                            />
+                          ) : null}
+                          <Pressable onPress={() => setLineQty(item.id, inCart.qty + 1)} style={{ backgroundColor: c.primary, borderRadius: 8, padding: 6 }}>
+                            <Feather name="plus" size={14} color="#fff" />
+                          </Pressable>
+                          {!readOnly ? (
+                            <NumericEntry
+                              testID={`input-cart-qty-${item.id}`}
+                              value={inCart.qty}
+                              blankWhenZero={false}
+                              blankWhenOne
+                              onChangeValue={(q) => setLineQty(item.id, q)}
+                              style={{ width: 52, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 4, textAlign: 'center', fontSize: 14, fontFamily: 'Inter_700Bold', color: c.foreground, backgroundColor: c.background }}
+                            />
+                          ) : (
+                            <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', color: c.foreground, minWidth: 26, textAlign: 'center' }}>{fq(inCart.qty)}</Text>
+                          )}
+                          <Pressable onPress={() => setLineQty(item.id, inCart.qty - 1)} style={{ backgroundColor: c.muted, borderRadius: 8, padding: 6 }}>
+                            <Feather name="minus" size={14} color={c.foreground} />
+                          </Pressable>
+                        </View>
+                        {!readOnly && (mp('invoice_free_qty') || mp('invoice_discount') || mp('invoice_unit_selection')) ? (
+                          <View style={{ gap: 6 }}>
+                            <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 6 }}>
+                              {mp('invoice_free_qty') ? (
+                                <View style={{ flex: 1, minWidth: 0 }}>
+                                  <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>مجاني</Text>
+                                  <NumericEntry testID={`input-cart-free-qty-${item.id}`} value={inCart.freeQty} emptyValue={0}
+                                    onChangeValue={(v) => setLineField(item.id, 'freeQty', v)}
+                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                </View>
+                              ) : null}
+                              {mp('invoice_discount') ? (
+                                <View style={{ flex: 1, minWidth: 0 }}>
+                                  <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم %</Text>
+                                  <NumericEntry testID={`input-cart-discount-${item.id}`} value={inCart.discount} emptyValue={0}
+                                    onChangeValue={(v) => setLineField(item.id, 'discount', v)}
+                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                </View>
+                              ) : null}
+                              {mp('invoice_discount') ? (
+                                <View style={{ flex: 1, minWidth: 0 }}>
+                                  <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم قيمة</Text>
+                                  <NumericEntry testID={`input-cart-discount-amount-${item.id}`} value={inCart.discountAmount} emptyValue={0}
+                                    onChangeValue={(v) => setLineField(item.id, 'discountAmount', v)}
+                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                </View>
+                              ) : null}
+                            </View>
+                            {mp('invoice_unit_selection') ? (
+                              <Pressable onPress={() => selectNextUnit(inCart)} testID={`button-cart-unit-${item.id}`} style={{ alignSelf: 'flex-start', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, backgroundColor: c.muted }}>
+                                <Text style={{ fontSize: 11, color: c.foreground }}>{inCart.unitName ?? 'وحدة'}</Text>
+                              </Pressable>
+                            ) : null}
+                          </View>
                         ) : null}
-                        <Pressable onPress={() => setLineQty(item.id, inCart.qty + 1)} style={{ backgroundColor: c.primary, borderRadius: 8, padding: 6 }}>
-                          <Feather name="plus" size={14} color="#fff" />
-                        </Pressable>
-                        <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', color: c.foreground, minWidth: 26, textAlign: 'center' }}>{fq(inCart.qty)}</Text>
-                        <Pressable onPress={() => setLineQty(item.id, inCart.qty - 1)} style={{ backgroundColor: c.muted, borderRadius: 8, padding: 6 }}>
-                          <Feather name="minus" size={14} color={c.foreground} />
-                        </Pressable>
                       </View>
                     ) : (
                       <Pressable testID={`button-add-item-${item.id}`} disabled={readOnly} onPress={() => addItem(item)} style={{ backgroundColor: c.secondary, borderRadius: 10, padding: 9 }}>
@@ -639,6 +758,12 @@ export default function QuotationForm() {
                 ) : null}
               </View>
             )}
+            {!isNew ? (
+              <View style={{ gap: 10 }}>
+                <Btn title="طباعة عرض السعر (نموذج 14)" icon="printer" loading={printing} onPress={() => doPrint(false)} testID="button-print-quotation" />
+                <Btn title="مشاركة PDF (واتساب / بريد)" icon="share-2" kind="outline" loading={sharing} onPress={() => doPrint(true)} testID="button-share-quotation" />
+              </View>
+            ) : null}
           </ScrollView>
         )}
       </View>

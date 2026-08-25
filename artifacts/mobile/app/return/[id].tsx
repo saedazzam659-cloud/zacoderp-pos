@@ -21,6 +21,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Empty, Field } from '@/components/ui';
+import { NumericEntry } from '@/components/NumericEntry';
+import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
 
 // مرتجع مبيعات — بنفس أسلوب الويب:
 // 1) من داخل فاتورة (invoiceId): تُحمَّل أصناف الفاتورة ويحدد المستخدم الكميات المرتجعة.
@@ -34,8 +36,13 @@ interface RetLine {
   maxQty?: number;      // للسقف عند الإرجاع من فاتورة
   unitPrice: number;
   vatRate: number;
+  freeQty: number;
+  discount: number;
+  discountAmount: number;
   warehouseId?: number | null;
   unitId?: number | null;
+  unitName?: string;
+  conversionFactor: number;
 }
 
 function notify(title: string, msg: string) {
@@ -73,6 +80,7 @@ export default function SalesReturnForm() {
   const [showItemPick, setShowItemPick] = useState(false);
   const [pick, setPick] = useState<null | 'cashbox' | 'bank'>(null);
   const [search, setSearch] = useState('');
+  const [itemUnits, setItemUnits] = useState<Record<number, any[]>>({});
 
   const customersQ = useQuery({
     queryKey: ['customers', companyId],
@@ -177,8 +185,13 @@ export default function SalesReturnForm() {
           maxQty: remaining,
           unitPrice: parseFloat(l.unitPrice ?? 0) || 0,
           vatRate: parseFloat(l.vatRate ?? 15) || 0,
+          freeQty: parseFloat(l.freeQty ?? 0) || 0,
+          discount: parseFloat(l.discount ?? 0) || 0,
+          discountAmount: parseFloat(l.discountAmount ?? 0) || 0,
           warehouseId: l.warehouseId ?? null,
           unitId: l.unitId ?? null,
+          unitName: l.unit?.nameAr ?? l.unitName ?? (typeof l.unit === 'string' ? l.unit : undefined),
+          conversionFactor: parseFloat(l.conversionFactor ?? 1) || 1,
         };
       }));
   }, [srcInvoiceQ.data, srcLoaded, returnedQ.data, returnedQ.isLoading, srcInvoiceId]);
@@ -201,8 +214,13 @@ export default function SalesReturnForm() {
       qty: parseFloat(l.qty ?? 1) || 1,
       unitPrice: parseFloat(l.unitPrice ?? 0) || 0,
       vatRate: parseFloat(l.vatRate ?? 15) || 0,
+      freeQty: parseFloat(l.freeQty ?? 0) || 0,
+      discount: parseFloat(l.discount ?? 0) || 0,
+      discountAmount: parseFloat(l.discountAmount ?? 0) || 0,
       warehouseId: l.warehouseId ?? null,
       unitId: l.unitId ?? null,
+      unitName: l.unit?.nameAr ?? l.unitName ?? (typeof l.unit === 'string' ? l.unit : undefined),
+      conversionFactor: parseFloat(l.conversionFactor ?? 1) || 1,
     })));
   }, [docQ.data, loadedDoc]);
 
@@ -214,13 +232,12 @@ export default function SalesReturnForm() {
   const totals = useMemo(() => {
     let subtotal = 0, vat = 0;
     for (const l of lines) {
-      const gross = l.qty * l.unitPrice;
-      const r = (l.vatRate ?? 0) / 100;
-      if (priceIncludesVat) { const net = gross / (1 + r); subtotal += net; vat += gross - net; }
-      else { subtotal += gross; vat += gross * r; }
+      const amounts = calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount');
+      subtotal += amounts.subtotal;
+      vat += amounts.vat;
     }
     return { subtotal, vat, total: subtotal + vat };
-  }, [lines, priceIncludesVat]);
+  }, [lines, priceIncludesVat, user?.company?.taxCalculationMode]);
 
   const setLineQty = (idx: number, q: number) => {
     setLines((prev) => {
@@ -229,6 +246,38 @@ export default function SalesReturnForm() {
       next[idx] = { ...next[idx], qty: Math.max(0, Math.min(cap, q)) };
       return next;
     });
+  };
+
+  const setLineField = (idx: number, field: 'freeQty' | 'discount' | 'discountAmount', value: number) => {
+    setLines((prev) => prev.map((l, i) => {
+      if (i !== idx) return l;
+      if (field === 'freeQty') return { ...l, freeQty: Math.max(0, value) };
+      return { ...l, ...syncLineDiscount(l, field, value) };
+    }));
+  };
+
+  const selectNextUnit = async (line: RetLine, idx: number) => {
+    if (line.itemId == null) return;
+    let options = itemUnits[line.itemId];
+    try {
+      if (!options) {
+        options = await api<any[]>(`/api/inventory/items/${line.itemId}/units?companyId=${companyId}`);
+        setItemUnits((prev) => ({ ...prev, [line.itemId as number]: options }));
+      }
+    } catch (e: any) {
+      notify('تعذّر تحميل الوحدات', e?.message ?? 'أعد المحاولة');
+      return;
+    }
+    if (!options.length) return;
+    const current = options.findIndex((u: any) => Number(u.unitId) === line.unitId);
+    const next = options[(current + 1) % options.length];
+    setLines((prev) => prev.map((l, i) => i === idx ? {
+      ...l,
+      unitId: Number(next.unitId),
+      unitName: next.unit?.nameAr ?? next.unitNameAr ?? next.nameAr ?? String(next.unitId),
+      conversionFactor: parseFloat(String(next.conversionFactor ?? 1)) || 1,
+      unitPrice: next.salePrice != null ? parseFloat(String(next.salePrice)) || 0 : l.unitPrice,
+    } : l));
   };
 
   const addItem = (it: any) => {
@@ -241,8 +290,13 @@ export default function SalesReturnForm() {
         qty: 1,
         unitPrice: parseFloat(String(it.salePrice ?? 0)) || 0,
         vatRate: parseFloat(String(it.vatRate ?? 15)),
+        freeQty: 0,
+        discount: 0,
+        discountAmount: 0,
         warehouseId: defaultWarehouseId,
         unitId: it.unit?.id ?? null,
+        unitName: it.unit?.nameAr,
+        conversionFactor: 1,
       }];
     });
     setShowItemPick(false);
@@ -274,11 +328,13 @@ export default function SalesReturnForm() {
         qty: l.qty,
         unitPrice: l.unitPrice,
         vatRate: l.vatRate,
-        discount: 0,
-        discountAmount: 0,
-        lineTotal: +(l.qty * l.unitPrice).toFixed(2),
+        freeQty: l.freeQty,
+        discount: l.discount,
+        discountAmount: l.discountAmount,
+        lineTotal: +calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount').total.toFixed(2),
         warehouseId: l.warehouseId ?? defaultWarehouseId ?? undefined,
         unitId: resolveUnitId(l) ?? undefined,
+        conversionFactor: l.conversionFactor,
       }));
       const body = {
         companyId,
@@ -420,26 +476,69 @@ export default function SalesReturnForm() {
           </View>
           {!lines.length ? <Empty icon="package" text="لا توجد أصناف" /> : null}
           {lines.map((l, idx) => (
-            <View key={`${l.itemId}-${idx}`} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: c.border, paddingBottom: 8 }}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Text style={{ textAlign: 'right', fontSize: 13, color: c.foreground }}>{l.itemName}</Text>
-                <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>
-                  {money(l.unitPrice)}{l.maxQty != null ? ` · بالفاتورة ${fq(l.maxQty)}` : ''}
-                </Text>
-              </View>
-              {!readOnly ? (
-                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
-                  <Pressable onPress={() => setLineQty(idx, l.qty + 1)} style={{ backgroundColor: c.primary, borderRadius: 8, padding: 6 }}>
-                    <Feather name="plus" size={13} color="#fff" />
-                  </Pressable>
-                  <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: l.qty > 0 ? c.foreground : c.mutedForeground, minWidth: 26, textAlign: 'center' }}>{fq(l.qty)}</Text>
-                  <Pressable onPress={() => setLineQty(idx, l.qty - 1)} style={{ backgroundColor: c.muted, borderRadius: 8, padding: 6 }}>
-                    <Feather name="minus" size={13} color={c.foreground} />
-                  </Pressable>
+            <View key={`${l.itemId}-${idx}`} style={{ gap: 6, borderBottomWidth: 1, borderBottomColor: c.border, paddingBottom: 8 }}>
+              <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={{ textAlign: 'right', fontSize: 13, color: c.foreground }}>{l.itemName}</Text>
+                  <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>
+                    {money(l.unitPrice)}{l.maxQty != null ? ` · بالفاتورة ${fq(l.maxQty)}` : ''}
+                  </Text>
                 </View>
-              ) : (
-                <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: c.foreground }}>{fq(l.qty)}</Text>
-              )}
+                {!readOnly ? (
+                  <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+                    <Pressable onPress={() => setLineQty(idx, l.qty + 1)} style={{ backgroundColor: c.primary, borderRadius: 8, padding: 6 }}>
+                      <Feather name="plus" size={13} color="#fff" />
+                    </Pressable>
+                    <NumericEntry
+                      testID={`input-return-qty-${l.itemId ?? idx}`}
+                      value={l.qty}
+                      blankWhenOne
+                      onChangeValue={(q) => setLineQty(idx, q)}
+                      style={{ width: 52, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 4, textAlign: 'center', fontSize: 14, fontFamily: 'Inter_700Bold', color: c.foreground, backgroundColor: c.background }}
+                    />
+                    <Pressable onPress={() => setLineQty(idx, l.qty - 1)} style={{ backgroundColor: c.muted, borderRadius: 8, padding: 6 }}>
+                      <Feather name="minus" size={13} color={c.foreground} />
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: c.foreground }}>{fq(l.qty)}</Text>
+                )}
+              </View>
+              {!readOnly && (mp('invoice_free_qty') || mp('invoice_discount') || mp('invoice_unit_selection')) ? (
+                <View style={{ gap: 6 }}>
+                  <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 6 }}>
+                    {mp('invoice_free_qty') ? (
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>مجاني</Text>
+                        <NumericEntry testID={`input-return-free-qty-${l.itemId ?? idx}`} value={l.freeQty} emptyValue={0}
+                          onChangeValue={(v) => setLineField(idx, 'freeQty', v)}
+                          style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                      </View>
+                    ) : null}
+                    {mp('invoice_discount') ? (
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم %</Text>
+                        <NumericEntry testID={`input-return-discount-${l.itemId ?? idx}`} value={l.discount} emptyValue={0}
+                          onChangeValue={(v) => setLineField(idx, 'discount', v)}
+                          style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                      </View>
+                    ) : null}
+                    {mp('invoice_discount') ? (
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم قيمة</Text>
+                        <NumericEntry testID={`input-return-discount-amount-${l.itemId ?? idx}`} value={l.discountAmount} emptyValue={0}
+                          onChangeValue={(v) => setLineField(idx, 'discountAmount', v)}
+                          style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                      </View>
+                    ) : null}
+                  </View>
+                  {mp('invoice_unit_selection') ? (
+                    <Pressable onPress={() => selectNextUnit(l, idx)} testID={`button-return-unit-${l.itemId ?? idx}`} style={{ alignSelf: 'flex-start', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, backgroundColor: c.muted }}>
+                      <Text style={{ fontSize: 11, color: c.foreground }}>{l.unitName ?? 'وحدة'}</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           ))}
         </Card>

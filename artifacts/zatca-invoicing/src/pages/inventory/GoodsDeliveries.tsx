@@ -1252,7 +1252,7 @@ ${sections}
                             </Select>
                           );
                         })()}
-                        <Input className="h-8 text-xs text-end" inputMode="decimal" value={l.qty}
+                        <Input className="h-8 text-xs text-end" inputMode="decimal" value={l.qty} data-hide-default-one
                           onChange={e => updateLine(l._id, "qty", e.target.value)} />
                         <Input className="h-8 text-xs text-end" inputMode="decimal" value={l.unitPrice}
                           onChange={e => updateLine(l._id, "unitPrice", e.target.value)} />

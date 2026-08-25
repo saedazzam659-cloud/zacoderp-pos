@@ -240,7 +240,7 @@ export default function SisterTransferForm() {
                       {(units as any[]).map((u: any) => <option key={u.id} value={u.id}>{u.nameAr}</option>)}
                     </select>
                   </td>
-                  <td className="p-1"><Input type="number" min="0" step="0.001" value={l.qty}
+                  <td className="p-1"><Input type="number" min="0" step="0.001" value={l.qty} data-hide-default-one
                     onChange={e => updateLine(i, "qty", e.target.value)} className="h-8" /></td>
                   <td className="p-1"><Input type="number" min="0" step="0.0001" value={l.costPrice}
                     onChange={e => updateLine(i, "costPrice", e.target.value)} className="h-8" /></td>

@@ -309,7 +309,7 @@ export default function BomTemplateEditor() {
                           onChange={(e) => patchLine(idx, { description: e.target.value })} />
                       </td>
                       <td className="p-2">
-                        <Input type="number" min="0" step="0.0001" value={l.quantity}
+                        <Input type="number" min="0" step="0.0001" value={l.quantity} data-hide-default-one
                           onChange={(e) => patchLine(idx, { quantity: e.target.value })} />
                       </td>
                       <td className="p-2">
