@@ -397,3 +397,10 @@ uri = "file://artifacts/mobile/releases/zacoderp-google-play-v3.aab"
 type = "unspecified"
 title = "Zacode ERP — Google Play AAB v3"
 description = "ملف Android App Bundle جاهز للرفع في مسار Internal testing داخل Google Play Console. هذه نسخة إنتاج أقدم لبدء الاختبار الداخلي."
+
+[[outputs]]
+id = "TsnvG2wdlrJ_-6rsSzfYH"
+uri = "file://artifacts/mobile/releases/zacoderp-google-play-v8.aab"
+type = "unspecified"
+title = "Zacode ERP Android v8 (AAB)"
+description = "آخر نسخة Android Production جاهزة للرفع إلى Google Play، رقم البناء 8."
