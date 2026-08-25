@@ -25,7 +25,7 @@
  *   `${slug}.layout.v1.c${cid|anon}`           — layout (handled by useAuditGridLayout)
  *   `${slug}.condFormat.v1.c${cid|anon}`       — conditional formatting rules
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Search, Layers, Sparkles, RotateCcw, X, ArrowUp, ArrowDown, ArrowUpDown, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +52,10 @@ import { AdvFilterPopover } from "./AdvFilterPopover";
 export interface GridColumn<R> {
   key: string;
   label: string;
+  /** Optional interactive/custom header content (selection checkbox, etc.). */
+  renderHeader?: (pageRows: R[]) => ReactNode;
+  /** Defaults to true. Useful for utility/action columns. */
+  sortable?: boolean;
   /** Drives the advanced-filter operator set + sort comparator. */
   type: ColType;
   align?: "start" | "end" | "center";
@@ -398,6 +402,10 @@ export interface AdvancedReportGridProps<R> {
   rowClassName?: (row: R) => string;
   /** Optional double-click handler on a data row (e.g. drill into source doc). */
   onRowDoubleClick?: (row: R) => void;
+  /** Optional detail row rendered immediately after its parent row. */
+  renderAfterRow?: (row: R, visibleColumnCount: number) => ReactNode;
+  /** Optional native title for a data row. */
+  rowTitle?: (row: R) => string | undefined;
   /** Disable client pagination when rows are already paged by the server. */
   paginate?: boolean;
 }
@@ -411,6 +419,8 @@ export default function AdvancedReportGrid<R>({
   toolbarExtras,
   rowClassName,
   onRowDoubleClick,
+  renderAfterRow,
+  rowTitle,
   paginate = true,
 }: AdvancedReportGridProps<R>) {
   /* ── Layout (order / colors / page-size) ─────────────────────────────── */
@@ -656,15 +666,17 @@ export default function AdvancedReportGrid<R>({
                     className={cn("relative px-3 py-2 font-semibold border-b border-e border-white/20 select-none", align)}
                   >
                     <div className={cn("flex items-center gap-1", headerJustify)}>
-                      <button
-                        type="button"
-                        onClick={() => setSort(p => cycleSort(p, c.key))}
-                        className="flex items-center gap-1 hover:underline cursor-pointer min-w-0"
-                        title={`ترتيب حسب ${c.label}`}
-                      >
-                        <span className="whitespace-normal break-words leading-4">{c.label}</span>
-                        {sortIconFor(c.key)}
-                      </button>
+                       {c.renderHeader ? c.renderHeader(pagedRows) : (
+                         <button
+                           type="button"
+                           onClick={() => c.sortable !== false && setSort(p => cycleSort(p, c.key))}
+                           className={cn("flex items-center gap-1 min-w-0", c.sortable !== false && "hover:underline cursor-pointer")}
+                           title={`ترتيب حسب ${c.label}`}
+                         >
+                           <span className="whitespace-normal break-words leading-4">{c.label}</span>
+                           {c.sortable !== false && sortIconFor(c.key)}
+                         </button>
+                       )}
                       {c.type !== "none" && (
                         <AdvFilterPopover
                           colLabel={c.label}
@@ -733,9 +745,14 @@ export default function AdvancedReportGrid<R>({
                     </td>
                   </tr>
                 ) : (
-                  pagedRows.map((r, i) => (
-                    <tr key={rowKey(r, i) ?? i}
-                        onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(r) : undefined}
+                   pagedRows.map((r, i) => (
+                     <Fragment key={rowKey(r, i) ?? i}>
+                     <tr
+                         onDoubleClick={onRowDoubleClick ? e => {
+                           if ((e.target as Element | null)?.closest("button, a, input, [role='checkbox']")) return;
+                           onRowDoubleClick(r);
+                         } : undefined}
+                         title={rowTitle?.(r)}
                         className={cn("border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40 transition-colors",
                                       onRowDoubleClick && "cursor-pointer",
                                       rowClassName?.(r))}>
@@ -753,6 +770,8 @@ export default function AdvancedReportGrid<R>({
                         );
                       })}
                     </tr>
+                     {renderAfterRow?.(r, visibleCount)}
+                     </Fragment>
                   ))
                 ))
             }

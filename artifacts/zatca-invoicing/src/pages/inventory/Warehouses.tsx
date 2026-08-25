@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBranches } from "@/hooks/useBranches";
@@ -16,6 +16,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useTranslation } from "react-i18next";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", branchId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "", isDefault: false };
 
@@ -127,6 +128,51 @@ export default function Warehouses() {
   );
 
   const pager = usePagination(filtered);
+  const gridColumns = useMemo<GridColumn<any>[]>(() => [
+    {
+      key: "code", label: t("pages.warehouses.table.code"), type: "text", width: 130,
+      className: "font-mono text-xs", value: w => w.code,
+    },
+    {
+      key: "name", label: t("pages.warehouses.table.name"), type: "text", width: 260,
+      value: w => `${pickName(w.nameAr, w.nameEn)} ${isRtl ? (w.nameEn ?? "") : (w.nameAr ?? "")}`,
+      render: w => (
+        <>
+          <p className="font-medium inline-flex items-center gap-1.5">
+            {pickName(w.nameAr, w.nameEn)}
+            {w.isDefault && <span className="text-[10px] rounded-full px-1.5 py-0.5 font-semibold bg-amber-100 text-amber-800">★ {t("inventoryMaster.warehouses.defaultBadge")}</span>}
+          </p>
+          {(isRtl ? w.nameEn : w.nameAr) && <p className="text-xs text-muted-foreground">{isRtl ? w.nameEn : w.nameAr}</p>}
+        </>
+      ),
+    },
+    {
+      key: "group", label: t("pages.warehouses.table.group"), type: "text", width: 180,
+      className: "text-muted-foreground text-xs", value: w => pickName(w.group?.nameAr, w.group?.nameEn),
+      render: w => pickName(w.group?.nameAr, w.group?.nameEn) || "—",
+    },
+    {
+      key: "city", label: t("pages.warehouses.table.city"), type: "text", width: 150,
+      className: "text-muted-foreground text-xs", value: w => w.city,
+      render: w => w.city ?? "—",
+    },
+    {
+      key: "overdraft", label: t("pages.warehouses.table.overdraft"), type: "text", align: "center", width: 120,
+      value: w => w.allowNegative ? "allowed" : "balance-only",
+      render: w => w.allowNegative
+        ? <CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" />
+        : <XCircle className="h-4 w-4 text-muted-foreground/30 mx-auto" />,
+    },
+    {
+      key: "actions", label: t("common.actions"), type: "none", sortable: false, width: 110,
+      value: () => "", render: w => (
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(w)}><Pencil className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.warehouses.messages.confirmDelete"))) deleteMut.mutate(w.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+        </div>
+      ),
+    },
+  ], [isRtl, t, deleteMut]);
 
   return (
     <div className="space-y-6">
@@ -370,6 +416,7 @@ export default function Warehouses() {
               total={pager.total}
               onPageChange={pager.setPage}
               onPageSizeChange={pager.setPageSize}
+              pageSizeOptions={[10, 25, 50, 100, 1000]}
               itemLabel={t("pages.warehouses.itemLabel", { defaultValue: "مستودع" })}
             />
           </div>
@@ -377,59 +424,20 @@ export default function Warehouses() {
       </div>
 
       {/* ─────── DESKTOP TABLE (md+ only) ─────── */}
-      <div className="hidden md:block rounded-xl border bg-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 border-b">
-            <tr>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("pages.warehouses.table.code")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("pages.warehouses.table.name")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("pages.warehouses.table.group")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">{t("pages.warehouses.table.city")}</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-24">{t("pages.warehouses.table.overdraft")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-24">{t("common.actions")}</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {isLoading
-              ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
-              : filtered.length === 0
-              ? <tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground"><Warehouse className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("pages.warehouses.table.noWarehouses")}</td></tr>
-              : pager.pagedItems.map((w: any) => (
-                  <tr key={w.id} className="hover:bg-muted/30">
-                    <td className="px-4 py-3 font-mono text-xs">{w.code}</td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium inline-flex items-center gap-1.5">
-                        {pickName(w.nameAr, w.nameEn)}
-                        {w.isDefault && (
-                          <span className="text-[10px] rounded-full px-1.5 py-0.5 font-semibold bg-amber-100 text-amber-800">★ {t("inventoryMaster.warehouses.defaultBadge")}</span>
-                        )}
-                      </p>
-                      {(isRtl ? w.nameEn : w.nameAr) && <p className="text-xs text-muted-foreground">{isRtl ? w.nameEn : w.nameAr}</p>}
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{pickName(w.group?.nameAr, w.group?.nameEn) || "—"}</td>
-                    <td className="px-4 py-3 hidden md:table-cell text-muted-foreground text-xs">{w.city ?? "—"}</td>
-                    <td className="px-4 py-3 text-center">
-                      {w.allowNegative ? <CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" /> : <XCircle className="h-4 w-4 text-muted-foreground/30 mx-auto" />}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(w)}><Pencil className="h-3.5 w-3.5" /></Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.warehouses.messages.confirmDelete"))) deleteMut.mutate(w.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-          </tbody>
-        </table>
-        {!isLoading && filtered.length > 0 && (
-          <TablePagination
-            page={pager.page}
-            pageSize={pager.pageSize}
-            pageCount={pager.pageCount}
-            total={pager.total}
-            onPageChange={pager.setPage}
-            onPageSizeChange={pager.setPageSize}
-            itemLabel={t("pages.warehouses.itemLabel", { defaultValue: "مستودع" })}
+      <div className="hidden md:block">
+        {isLoading ? (
+          <div className="rounded-xl border bg-card p-4 space-y-2">
+            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+          </div>
+        ) : (
+          <AdvancedReportGrid
+            slug="inventoryWarehousesGrid"
+            cid={cid}
+            columns={gridColumns}
+            rowKey={w => w.id}
+            rows={filtered}
+            unitLabel={t("pages.warehouses.itemLabel", { defaultValue: "مستودع" })}
+            emptyMessage={t("pages.warehouses.table.noWarehouses")}
           />
         )}
       </div>

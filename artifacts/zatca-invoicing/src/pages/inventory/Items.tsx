@@ -1,4 +1,4 @@
-import { useState, Fragment, useEffect, useRef } from "react";
+import { useState, Fragment, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -11,7 +11,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import ExportButtons from "@/components/ExportButtons";
-import { TablePagination, usePagination } from "@/components/TablePagination";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt, trimTrailingZeros } from "@/hooks/use-fmt";
@@ -43,6 +42,7 @@ import {
 import { DateField } from "@/components/ui/date-field";
 import { fmt2 } from "@/lib/format";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 /** CollapsibleSection — labeled, togglable section for the item form (SAP-style). */
 function CollapsibleSection({
@@ -1340,7 +1340,79 @@ export default function Items() {
     return matchText && matchType && matchNature;
   });
 
-  const pager = usePagination(filtered);
+  const itemGridColumns = useMemo<GridColumn<any>[]>(() => [
+    {
+      key: "selection", label: t("pages.items.bulkLabels.selectAll"), type: "none", sortable: false, align: "center", width: 52,
+      value: () => "", renderHeader: pageRows => (
+        <Checkbox
+          checked={pageRows.length > 0 && pageRows.every(it => selectedIds.has(it.id))}
+          onCheckedChange={v => setSelectedIds(prev => {
+            const next = new Set(prev);
+            pageRows.forEach(it => v ? next.add(it.id) : next.delete(it.id));
+            return next;
+          })}
+          aria-label={t("pages.items.bulkLabels.selectAll")}
+        />
+      ),
+      render: it => <Checkbox checked={selectedIds.has(it.id)} onCheckedChange={v => setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (v) next.add(it.id); else next.delete(it.id);
+        return next;
+      })} aria-label={t("pages.items.bulkLabels.selectRow")} />,
+    },
+    {
+      key: "expand", label: "", type: "none", sortable: false, align: "center", width: 48,
+      value: () => "", render: it => (
+        <button onClick={() => toggleExpand(it.id)} className="text-muted-foreground hover:text-foreground">
+          {expandedId === it.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </button>
+      ),
+    },
+    { key: "code", label: t("pages.items.code"), type: "text", width: 130, className: "font-mono text-xs font-bold", value: it => it.code },
+    {
+      key: "item", label: t("pages.items.item"), type: "text", width: 330,
+      value: it => `${pickName(it.nameAr, it.nameEn)} ${it.barcode ?? ""} ${it.tags ?? ""}`,
+      render: it => (
+        <div className="flex items-center gap-2.5">
+          {it.imageUrl ? <img src={it.imageUrl.startsWith("/objects/") ? `/api/storage${it.imageUrl}` : it.imageUrl} alt="" className="w-10 h-10 rounded-md object-cover border border-border shrink-0" />
+            : <div className="w-10 h-10 rounded-md bg-muted grid place-items-center shrink-0"><Package className="h-4 w-4 text-muted-foreground/40" /></div>}
+          <div className="min-w-0">
+            <div className="max-w-[260px] overflow-x-auto whitespace-nowrap pb-1 [scrollbar-width:thin] rounded-sm">
+              <p className="font-medium leading-snug">{pickName(it.nameAr, it.nameEn)}</p>
+              {(isRtl ? it.nameEn : it.nameAr) && <p className="text-xs text-muted-foreground leading-snug">{isRtl ? it.nameEn : it.nameAr}</p>}
+            </div>
+            {it.barcode && <p className="text-[10px] text-muted-foreground/70 font-mono">🔖 {it.barcode}</p>}
+            {it.tags && <div className="flex flex-wrap gap-1 mt-1">{tagsToArray(it.tags).slice(0, 4).map((tag, i) => <span key={i} className="inline-flex items-center gap-0.5 bg-primary/10 text-primary text-[9px] font-medium rounded px-1 py-0.5"><Tag className="h-2 w-2" />{tag}</span>)}</div>}
+          </div>
+        </div>
+      ),
+    },
+    { key: "group", label: t("pages.items.group"), type: "text", width: 170, className: "text-muted-foreground text-xs", value: it => pickName(it.group?.nameAr, it.group?.nameEn), render: it => pickName(it.group?.nameAr, it.group?.nameEn) || "—" },
+    { key: "unit", label: t("pages.items.baseUnit"), type: "text", width: 110, value: it => it.unit?.code, render: it => it.unit ? <span className="text-xs font-mono font-bold text-primary bg-primary/5 rounded px-1.5 py-0.5">{it.unit.code}</span> : "—" },
+    { key: "cost", label: t("pages.items.cost"), type: "num", width: 120, className: "tabular-nums text-xs", value: it => Number(it.costPrice), render: it => fmt(it.costPrice) },
+    { key: "sale", label: t("pages.items.sale"), type: "num", width: 120, className: "tabular-nums text-xs font-medium", value: it => Number(it.salePrice), render: it => fmt(it.salePrice) },
+    {
+      key: "type", label: t("pages.items.itemType"), type: "text", align: "center", width: 150,
+      value: it => `${it.itemType} ${it.itemNature ?? ""}`, render: it => (
+        <div className="flex flex-col items-center gap-1">
+          <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : it.itemType === "fixed_asset" ? "bg-amber-50 text-amber-700" : "bg-purple-50 text-purple-700")}>
+            {it.itemType === "stock" ? t("pages.items.stock") : it.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : it.itemType === "prepaid_expense" ? t("pages.items.prepaidExpense") : t("pages.items.service")}
+          </span>
+          {(it.itemNature ?? "merchandise") !== "merchandise" && <Badge variant="outline" className="text-[9px] px-2 py-0.5">{t(`inventoryMaster.items.nature${it.itemNature === "raw" ? "Raw" : it.itemNature === "semi" ? "Semi" : it.itemNature === "finished" ? "Finished" : "Consumable"}`)}</Badge>}
+        </div>
+      ),
+    },
+    { key: "status", label: t("common.status"), type: "text", align: "center", width: 110, value: it => it.status, render: it => <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.status === "active" ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-500")}>{it.status === "active" ? t("pages.items.active") : t("pages.items.inactive")}</span> },
+    {
+      key: "actions", label: t("common.actions"), type: "none", sortable: false, width: 175, value: () => "",
+      render: it => <div className="flex gap-1">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setQrItem(it)} title={t("pages.items.qr.show")}><QrCode className="h-3.5 w-3.5" /></Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setHistoryItem(it)} title={t("pages.items.history.show")}><History className="h-3.5 w-3.5" /></Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(it)}><Pencil className="h-3.5 w-3.5" /></Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.items.deleteItemConfirm"))) deleteMut.mutate(it.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+      </div>,
+    },
+  ], [expandedId, fmt, isRtl, selectedIds, t, deleteMut]);
 
   const ITEM_EXPORT_COLS = [
     { key: "code",          header: t("pages.items.itemCode"),       width: 16 },
@@ -1775,163 +1847,23 @@ export default function Items() {
           ];
           return <DocColorLegend items={items} />;
         })()}
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 border-b">
-            <tr>
-              <th className="px-3 py-3 text-center font-semibold text-muted-foreground w-10">
-                <Checkbox
-                  checked={pager.pagedItems.length > 0 && pager.pagedItems.every((it: any) => selectedIds.has(it.id))}
-                  onCheckedChange={(v) => {
-                    setSelectedIds(prev => {
-                      const next = new Set(prev);
-                      if (v) {
-                        pager.pagedItems.forEach((it: any) => next.add(it.id));
-                      } else {
-                        pager.pagedItems.forEach((it: any) => next.delete(it.id));
-                      }
-                      return next;
-                    });
-                  }}
-                  aria-label={t("pages.items.bulkLabels.selectAll")}
-                />
-              </th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-8"></th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("pages.items.code")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("pages.items.item")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("pages.items.group")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">{t("pages.items.baseUnit")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden lg:table-cell">{t("pages.items.cost")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden lg:table-cell">{t("pages.items.sale")}</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("pages.items.itemType")}</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("common.status")}</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-24">{t("common.actions")}</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {isLoading
-              ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={11} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
-              : filtered.length === 0
-              ? <tr><td colSpan={11} className="px-4 py-12 text-center text-muted-foreground"><Package className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("pages.items.noItemsFound")}{search ? t("pages.items.matchingSearch") : ""}</td></tr>
-              : pager.pagedItems.map((it: any) => {
-                  const dictStatus = it.status === "active" ? "active" : "inactive";
-                  const isSel = selectedIds.has(it.id);
-                  return (
-                  <Fragment key={it.id}>
-                    <tr
-                      data-status={dictStatus}
-                      onDoubleClick={(e) => {
-                        const el = e.target as Element | null;
-                        if (el?.closest('button, a, input, [role="checkbox"]')) return;
-                        handleEdit(it);
-                      }}
-                      className={cn(
-                        "transition-colors group cursor-pointer",
-                        isSel ? SEL_TONE : rowToneFor({ status: dictStatus, statusMap: DICT_TONES }),
-                      )}
-                      title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
-                    >
-                      <td className="px-3 py-3 text-center">
-                        <Checkbox
-                          checked={selectedIds.has(it.id)}
-                          onCheckedChange={(v) => {
-                            setSelectedIds(prev => {
-                              const next = new Set(prev);
-                              if (v) next.add(it.id); else next.delete(it.id);
-                              return next;
-                            });
-                          }}
-                          aria-label={t("pages.items.bulkLabels.selectRow")}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => toggleExpand(it.id)} className="text-muted-foreground hover:text-foreground">
-                          {expandedId === it.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs font-bold">{it.code}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
-                          {it.imageUrl ? (
-                            <img
-                              src={it.imageUrl.startsWith("/objects/") ? `/api/storage${it.imageUrl}` : it.imageUrl}
-                              alt=""
-                              className="w-10 h-10 rounded-md object-cover border border-border shrink-0"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 rounded-md bg-muted grid place-items-center shrink-0">
-                              <Package className="h-4 w-4 text-muted-foreground/40" />
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <div className="max-w-[200px] md:max-w-[280px] lg:max-w-[340px] overflow-x-auto whitespace-nowrap pb-1 [scrollbar-width:thin] rounded-sm">
-                              <p className="font-medium leading-snug">{pickName(it.nameAr, it.nameEn)}</p>
-                              {(isRtl ? it.nameEn : it.nameAr) && <p className="text-xs text-muted-foreground leading-snug">{isRtl ? it.nameEn : it.nameAr}</p>}
-                            </div>
-                            {it.barcode && <p className="text-[10px] text-muted-foreground/70 font-mono">🔖 {it.barcode}</p>}
-                            {it.tags && tagsToArray(it.tags).length > 0 && (
-                              <div className="flex flex-wrap gap-1 mt-1">
-                                {tagsToArray(it.tags).slice(0, 4).map((tg, i) => (
-                                  <span key={i} className="inline-flex items-center gap-0.5 bg-primary/10 text-primary text-[9px] font-medium rounded px-1 py-0.5">
-                                    <Tag className="h-2 w-2" />{tg}
-                                  </span>
-                                ))}
-                                {tagsToArray(it.tags).length > 4 && (
-                                  <span className="text-[9px] text-muted-foreground">+{tagsToArray(it.tags).length - 4}</span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{pickName(it.group?.nameAr, it.group?.nameEn) || "—"}</td>
-                      <td className="px-4 py-3 hidden md:table-cell">
-                        {it.unit ? (
-                          <span className="text-xs font-mono font-bold text-primary bg-primary/5 rounded px-1.5 py-0.5">{it.unit.code}</span>
-                        ) : <span className="text-xs text-muted-foreground">—</span>}
-                      </td>
-                      <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs">{fmt(it.costPrice)}</td>
-                      <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs font-medium">{fmt(it.salePrice)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <div className="flex flex-col items-center gap-1">
-                          <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : it.itemType === "fixed_asset" ? "bg-amber-50 text-amber-700" : "bg-purple-50 text-purple-700")}>
-                            {it.itemType === "stock" ? t("pages.items.stock") : it.itemType === "fixed_asset" ? t("pages.items.fixedAsset") : it.itemType === "prepaid_expense" ? t("pages.items.prepaidExpense") : t("pages.items.service")}
-                          </span>
-                          {(() => {
-                            const nat = (it.itemNature ?? "merchandise") as string;
-                            if (nat === "merchandise") return null;
-                            const cls =
-                              nat === "raw"        ? "bg-amber-50 text-amber-700 border-amber-200"
-                            : nat === "semi"       ? "bg-orange-50 text-orange-700 border-orange-200"
-                            : nat === "finished"   ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            : nat === "consumable" ? "bg-rose-50 text-rose-700 border-rose-200"
-                            : "bg-slate-50 text-slate-700 border-slate-200";
-                            const label =
-                              nat === "raw"        ? t("inventoryMaster.items.natureRaw")
-                            : nat === "semi"       ? t("inventoryMaster.items.natureSemi")
-                            : nat === "finished"   ? t("inventoryMaster.items.natureFinished")
-                            : nat === "consumable" ? t("inventoryMaster.items.natureConsumable") : t("inventoryMaster.items.natureMerchandise");
-                            return <span className={cn("text-[9px] font-medium rounded-full px-2 py-0.5 border", cls)} data-testid={`badge-nature-${it.id}`}>{label}</span>;
-                          })()}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.status === "active" ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-500")}>
-                          {it.status === "active" ? t("pages.items.active") : t("pages.items.inactive")}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setQrItem(it)} title={t("pages.items.qr.show")}><QrCode className="h-3.5 w-3.5" /></Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setHistoryItem(it)} title={t("pages.items.history.show")}><History className="h-3.5 w-3.5" /></Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(it)}><Pencil className="h-3.5 w-3.5" /></Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.items.deleteItemConfirm"))) deleteMut.mutate(it.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
-                        </div>
-                      </td>
-                    </tr>
-                    {/* Expanded row: tabs for balances + unit prices */}
-                    {expandedId === it.id && (
+        {isLoading ? (
+          <div className="p-4 space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+        ) : (
+          <AdvancedReportGrid
+            slug="inventoryItemsGrid"
+            cid={cid}
+            columns={itemGridColumns}
+            rowKey={it => it.id}
+            rows={filtered}
+            unitLabel={t("pages.items.itemLabel", { defaultValue: "صنف" })}
+            emptyMessage={`${t("pages.items.noItemsFound")}${search ? t("pages.items.matchingSearch") : ""}`}
+            onRowDoubleClick={handleEdit}
+            rowClassName={it => selectedIds.has(it.id) ? SEL_TONE : rowToneFor({ status: it.status === "active" ? "active" : "inactive", statusMap: DICT_TONES })}
+            rowTitle={it => buildToneTooltip({ status: it.status === "active" ? "active" : "inactive", statusMap: DICT_TONES })}
+            renderAfterRow={(it, visibleColumnCount) => expandedId === it.id ? (
                       <tr className="bg-muted/20">
-                        <td colSpan={11} className="px-6 py-4">
+                        <td colSpan={visibleColumnCount} className="px-6 py-4">
                           {/* Tabs */}
                           <div className="flex gap-1 bg-muted/50 p-1 rounded-lg w-fit mb-4 border">
                             <button
@@ -2119,21 +2051,7 @@ export default function Items() {
                           )}
                         </td>
                       </tr>
-                    )}
-                  </Fragment>
-                  );
-                })}
-          </tbody>
-        </table>
-        {!isLoading && (
-          <TablePagination
-            page={pager.page}
-            pageSize={pager.pageSize}
-            pageCount={pager.pageCount}
-            total={pager.total}
-            onPageChange={pager.setPage}
-            onPageSizeChange={pager.setPageSize}
-            itemLabel={t("pages.items.itemLabel", { defaultValue: "صنف" })}
+                    ) : null}
           />
         )}
       </div>
