@@ -24,12 +24,14 @@ import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
 import { NumericEntry } from '@/components/NumericEntry';
 import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
+import { normalizeSearch } from '@/lib/search';
 import { printInvoice, shareInvoicePdf } from '@/lib/print';
 
 interface Item {
   id: number;
   code?: string;
   nameAr?: string;
+  nameEn?: string;
   barcode?: string | null;
   salePrice?: number | string;
   vatRate?: number | string;
@@ -198,8 +200,12 @@ export default function QuotationForm() {
   const visibleItems = useMemo(() => {
     let list = items;
     if (activeGroup !== 'all') list = list.filter((i) => i.group?.id === activeGroup);
-    const s = itemSearch.trim();
-    if (s) list = list.filter((i) => (i.nameAr ?? '').includes(s) || (i.code ?? '').includes(s) || (i.barcode ?? '').includes(s));
+    const s = normalizeSearch(itemSearch);
+    if (s) list = list.filter((i) =>
+      normalizeSearch(i.nameAr).includes(s) ||
+      normalizeSearch(i.nameEn).includes(s) ||
+      normalizeSearch(i.code).includes(s) ||
+      normalizeSearch(i.barcode).includes(s));
     return list.slice(0, 100);
   }, [items, activeGroup, itemSearch]);
 
@@ -815,7 +821,10 @@ export default function QuotationForm() {
               style={{ borderWidth: 1.2, borderColor: c.input, borderRadius: 12, padding: 10, textAlign: 'right', color: c.foreground }}
             />
             <FlatList
-              data={customers.filter((x) => !custSearch.trim() || (x.nameAr ?? '').includes(custSearch.trim()))}
+              data={customers.filter((x) => {
+                const s = normalizeSearch(custSearch);
+                return !s || normalizeSearch(x.nameAr).includes(s) || normalizeSearch(x.nameEn).includes(s) || normalizeSearch(x.code).includes(s);
+              })}
               keyExtractor={(x) => String(x.id)}
               renderItem={({ item }) => (
                 <Pressable

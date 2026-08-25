@@ -9,6 +9,7 @@ import { todayISO } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
+import { normalizeSearch } from '@/lib/search';
 import { Btn, Card, Field } from '@/components/ui';
 
 export default function NewVoucher() {
@@ -75,7 +76,7 @@ export default function NewVoucher() {
   const banks = Array.isArray(banksQ.data) ? banksQ.data : [];
   const customer = useMemo(() => customers.find((x) => x.id === customerId) ?? null, [customers, customerId]);
 
-  const save = async () => {
+  const save = async (thenPost: boolean) => {
     const amt = parseFloat(amount);
     if (!customerId) { setError('اختر العميل'); return; }
     if (!amt || amt <= 0) { setError('أدخل مبلغاً صحيحاً'); return; }
@@ -110,7 +111,7 @@ export default function NewVoucher() {
         }
         newId = created?.id ?? created?.voucher?.id;
       }
-      if (newId && !editId) {
+      if (thenPost && newId) {
         // vouchers are created as drafts — post so the receipt hits the ledger
         await api(`/api/receipt-vouchers/${newId}/post`, { method: 'POST', body: { companyId } });
       }
@@ -173,7 +174,10 @@ export default function NewVoucher() {
         </Card>
         {error ? <Text style={{ color: c.destructive, textAlign: 'right', fontSize: 13 }}>{error}</Text> : null}
         {mp(editId ? 'voucher_edit' : 'voucher_create') ? (
-          <Btn title="حفظ السند" onPress={save} loading={busy} icon="check" testID="button-save-voucher" />
+          <View style={{ gap: 10 }}>
+            {mp('voucher_post') ? <Btn title="حفظ وترحيل السند" onPress={() => save(true)} loading={busy} icon="check-circle" testID="button-save-post-voucher" /> : null}
+            <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={busy} icon="save" kind="outline" testID="button-save-voucher" />
+          </View>
         ) : (
           <Card><Text style={{ textAlign: 'right', color: c.destructive }}>{editId ? 'ليست لديك صلاحية تعديل السندات من التطبيق — تواصل مع مدير النظام.' : 'ليست لديك صلاحية إنشاء سند قبض من التطبيق — تواصل مع مدير النظام.'}</Text></Card>
         )}
@@ -185,7 +189,10 @@ export default function NewVoucher() {
             <Text style={{ fontSize: 16, fontFamily: 'Inter_600SemiBold', textAlign: 'right', color: c.foreground }}>اختيار العميل</Text>
             <TextInput value={search} onChangeText={setSearch} placeholder="بحث..." placeholderTextColor={c.mutedForeground} style={{ borderWidth: 1.2, borderColor: c.input, borderRadius: 12, padding: 10, textAlign: 'right', color: c.foreground }} />
             <FlatList
-              data={customers.filter((x) => !search.trim() || (x.nameAr ?? '').includes(search.trim()))}
+              data={customers.filter((x) => {
+                const s = normalizeSearch(search);
+                return !s || normalizeSearch(x.nameAr).includes(s) || normalizeSearch(x.nameEn).includes(s) || normalizeSearch(x.code).includes(s);
+              })}
               keyExtractor={(x) => String(x.id)}
               renderItem={({ item }) => (
                 <Pressable onPress={() => { setCustomerId(item.id); setShowPick(false); }} style={({ pressed }) => ({ paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: c.border, opacity: pressed ? 0.6 : 1 })}>

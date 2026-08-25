@@ -23,6 +23,7 @@ import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Empty, Field } from '@/components/ui';
 import { NumericEntry } from '@/components/NumericEntry';
 import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
+import { normalizeSearch } from '@/lib/search';
 
 // مرتجع مبيعات — بنفس أسلوب الويب:
 // 1) من داخل فاتورة (invoiceId): تُحمَّل أصناف الفاتورة ويحدد المستخدم الكميات المرتجعة.
@@ -73,6 +74,7 @@ export default function SalesReturnForm() {
   const [lines, setLines] = useState<RetLine[]>([]);
   const [saving, setSaving] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [unposting, setUnposting] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [loadedDoc, setLoadedDoc] = useState<any>(null);
   const [srcLoaded, setSrcLoaded] = useState(false);
@@ -399,6 +401,29 @@ export default function SalesReturnForm() {
     ]);
   };
 
+  const doUnpost = () => {
+    if (!returnId) return;
+    const go = async () => {
+      setUnposting(true);
+      try {
+        await api(`/api/sales/sales-returns/${returnId}/unpost`, { method: 'PATCH', body: { companyId } });
+        await qc.invalidateQueries({ queryKey: ['sales-returns', companyId] });
+        await qc.invalidateQueries({ queryKey: ['sales-return', returnId] });
+        setLoadedDoc((current: any) => current ? { ...current, status: 'draft' } : current);
+        notify('تم', 'تم فك ترحيل المرتجع — أصبح مسودة');
+      } catch (e: any) {
+        notify('تعذّر فك الترحيل', typeof e === 'string' ? e : e?.message ?? 'خطأ غير معروف');
+      } finally {
+        setUnposting(false);
+      }
+    };
+    if (Platform.OS === 'web') { go(); return; }
+    Alert.alert('فك الترحيل', 'سيتم عكس القيد وحركات المخزون ويصبح المرتجع مسودة. متابعة؟', [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'فك الترحيل', style: 'destructive', onPress: go },
+    ]);
+  };
+
   const Seg = ({ options, value, onChange }: { options: { v: string; l: string }[]; value: string; onChange: (v: any) => void }) => (
     <View style={{ flexDirection: 'row-reverse', backgroundColor: c.muted, borderRadius: 12, padding: 3 }}>
       {options.map((o) => (
@@ -570,7 +595,7 @@ export default function SalesReturnForm() {
               <Card><Text style={{ textAlign: 'right', color: c.destructive }}>ليست لديك صلاحية إنشاء مرتجع من التطبيق — تواصل مع مدير النظام.</Text></Card>
             ) : (
               <>
-                <Btn title="حفظ وترحيل المرتجع" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post-return" />
+                {mp('return_post') ? <Btn title="حفظ وترحيل المرتجع" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post-return" /> : null}
                 <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft-return" />
                 {isEditingSaved && mp('return_delete') ? (
                   <Btn title="حذف المرتجع" icon="trash-2" kind="destructive" loading={deleting} onPress={doDelete} testID="button-delete-return" />
@@ -581,6 +606,9 @@ export default function SalesReturnForm() {
         ) : (
           <View style={{ gap: 10 }}>
             <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>{isPosted ? 'هذا المرتجع مرحّل — للعرض فقط.' : 'ليست لديك صلاحية تعديل المرتجعات من التطبيق.'}</Text></Card>
+            {isPosted && mp('return_unpost') ? (
+              <Btn title="فك ترحيل المرتجع" icon="rotate-ccw" kind="destructive" loading={unposting} onPress={doUnpost} testID="button-unpost-return" />
+            ) : null}
             {!isPosted && loadedDoc && mp('return_delete') ? (
               <Btn title="حذف المرتجع" icon="trash-2" kind="destructive" loading={deleting} onPress={doDelete} testID="button-delete-return" />
             ) : null}
@@ -621,7 +649,10 @@ export default function SalesReturnForm() {
             <TextInput value={search} onChangeText={setSearch} placeholder="بحث..." placeholderTextColor={c.mutedForeground}
               style={{ borderWidth: 1.2, borderColor: c.input, borderRadius: 12, padding: 10, textAlign: 'right', color: c.foreground }} />
             <FlatList
-              data={customers.filter((x) => !search.trim() || (x.nameAr ?? '').includes(search.trim()))}
+              data={customers.filter((x) => {
+                const s = normalizeSearch(search);
+                return !s || normalizeSearch(x.nameAr).includes(s) || normalizeSearch(x.nameEn).includes(s) || normalizeSearch(x.code).includes(s);
+              })}
               keyExtractor={(x) => String(x.id)}
               renderItem={({ item }) => (
                 <Pressable onPress={() => { setCustomerId(item.id); setShowCustomerPick(false); }}
@@ -642,7 +673,10 @@ export default function SalesReturnForm() {
             <TextInput value={search} onChangeText={setSearch} placeholder="بحث بالاسم أو الكود..." placeholderTextColor={c.mutedForeground}
               style={{ borderWidth: 1.2, borderColor: c.input, borderRadius: 12, padding: 10, textAlign: 'right', color: c.foreground }} />
             <FlatList
-              data={items.filter((i: any) => !search.trim() || (i.nameAr ?? '').includes(search.trim()) || (i.code ?? '').includes(search.trim())).slice(0, 60)}
+              data={items.filter((i: any) => {
+                const s = normalizeSearch(search);
+                return !s || normalizeSearch(i.nameAr).includes(s) || normalizeSearch(i.nameEn).includes(s) || normalizeSearch(i.code).includes(s) || normalizeSearch(i.barcode).includes(s);
+              }).slice(0, 60)}
               keyExtractor={(x: any) => String(x.id)}
               renderItem={({ item }: any) => (
                 <Pressable onPress={() => addItem(item)}

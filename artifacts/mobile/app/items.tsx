@@ -8,6 +8,7 @@ import { money } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
+import { normalizeSearch } from '@/lib/search';
 import { Btn, Card, Empty, ErrorBox, Field } from '@/components/ui';
 
 // ─── شاشة الأصناف ───────────────────────────────────────────────────────────
@@ -19,6 +20,7 @@ interface ItemRow {
   id: number;
   code?: string;
   nameAr?: string;
+  nameEn?: string;
   barcode?: string;
   itemType?: string;
   salePrice?: number | string;
@@ -78,10 +80,14 @@ export default function Items() {
 
   const rows = useMemo(() => {
     const list = Array.isArray(q.data) ? q.data : [];
-    const s = search.trim();
+    const s = normalizeSearch(search);
     if (!s) return list;
     return list.filter(
-      (r) => (r.nameAr ?? '').includes(s) || (r.code ?? '').includes(s) || (r.barcode ?? '').includes(s),
+      (r) =>
+        normalizeSearch(r.nameAr).includes(s) ||
+        normalizeSearch(r.nameEn).includes(s) ||
+        normalizeSearch(r.code).includes(s) ||
+        normalizeSearch(r.barcode).includes(s),
     );
   }, [q.data, search]);
 

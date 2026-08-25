@@ -1458,8 +1458,8 @@ async function enforceMobileSalesRights(
     return false;
   }
   // The mobile client persists before calling /post, but "save draft" and
-  // "save + issue" are separate user actions.  The explicit intent keeps
-  // those permissions independent; /post still re-checks invoice_save_issue.
+  // "save + issue" remain separate legacy save-intent controls. The actual
+  // posting action is independently enforced by invoice_post in /post.
   const saveMode = req.body?.mobileSaveMode === "issue" ? "issue" : "draft";
   const savePerm = saveMode === "issue" ? "invoice_save_issue" : "invoice_save_draft";
   if (!mobilePermAllowed(holder, savePerm)) {
@@ -2357,7 +2357,7 @@ async function postSalesInvoiceHandler(
   const timing = timingStart.timing;
   try {
     const cid = guard(req, res); if (!cid) return;
-    if (!(await requireMobilePerm(req, res, cid, "invoice_save_issue", "ليست لديك صلاحية حفظ وإصدار الفاتورة من تطبيق الموبايل"))) return;
+    if (!(await requireMobilePerm(req, res, cid, "invoice_post", "ليست لديك صلاحية ترحيل فواتير المبيعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
 
     // Branch-scope guard: a restricted user must not be able to post
@@ -3064,6 +3064,7 @@ router.patch(
 router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "invoice_unpost", "ليست لديك صلاحية فك ترحيل فواتير المبيعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
 
     // Branch-scope guard (mirrors /post above).
@@ -3670,6 +3671,7 @@ router.put("/sales-returns/:id", async (req, res) => {
 router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "return_post", "ليست لديك صلاحية ترحيل مرتجعات المبيعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
 
     // Branch-scope guard: prevent cross-branch posting by ID guess.
@@ -4082,6 +4084,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
 router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await requireMobilePerm(req, res, cid, "return_unpost", "ليست لديك صلاحية فك ترحيل مرتجعات المبيعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
 
     // Branch-scope guard (mirrors /post above).

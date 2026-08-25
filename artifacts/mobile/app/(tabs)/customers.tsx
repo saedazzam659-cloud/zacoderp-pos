@@ -8,12 +8,14 @@ import { pendingOutboxFor } from '@/lib/offline';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
+import { normalizeSearch } from '@/lib/search';
 import { Btn, Card, Empty, ErrorBox, Field } from '@/components/ui';
 
 interface CustomerRow {
   id: number;
   code?: string;
   nameAr?: string;
+  nameEn?: string;
   phone?: string;
   vatNumber?: string;
 }
@@ -61,9 +63,13 @@ export default function Customers() {
   const rows = useMemo(() => {
     const pending = Array.isArray(pendQ.data) ? pendQ.data : [];
     const list = [...pending, ...(Array.isArray(q.data) ? q.data : [])];
-    const s = search.trim();
+    const s = normalizeSearch(search);
     if (!s) return list;
-    return list.filter((r) => (r.nameAr ?? '').includes(s) || (r.phone ?? '').includes(s) || (r.code ?? '').includes(s));
+    return list.filter((r) =>
+      normalizeSearch(r.nameAr).includes(s) ||
+      normalizeSearch(r.nameEn).includes(s) ||
+      normalizeSearch(r.phone).includes(s) ||
+      normalizeSearch(r.code).includes(s));
   }, [q.data, pendQ.data, search]);
 
   const closeModal = () => { setShowAdd(false); setEditId(null); setNameAr(''); setPhone(''); setVatNumber(''); setError(''); };

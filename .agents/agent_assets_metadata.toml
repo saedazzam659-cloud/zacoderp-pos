@@ -404,3 +404,10 @@ uri = "file://artifacts/mobile/releases/zacoderp-google-play-v8.aab"
 type = "unspecified"
 title = "Zacode ERP Android v8 (AAB)"
 description = "آخر نسخة Android Production جاهزة للرفع إلى Google Play، رقم البناء 8."
+
+[[outputs]]
+id = "7wwAROhIK8ZUm6F37M0qH"
+uri = "file://artifacts/mobile/releases/zacoderp-google-play-v11.aab"
+type = "unspecified"
+title = "Zacode ERP Android v11 (AAB) — النسخة النهائية"
+description = "تشمل ترتيب تفاصيل الأصناف، طباعة عروض الأسعار والمرتجعات، صلاحيات الترحيل وفك الترحيل للموبايل، وإصلاح جميع حقول البحث."

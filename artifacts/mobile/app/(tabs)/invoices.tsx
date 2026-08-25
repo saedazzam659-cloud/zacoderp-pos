@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { api, getDomain } from '@/lib/api';
 import { pendingOutboxFor } from '@/lib/offline';
 import { money, showDate } from '@/lib/format';
+import { normalizeSearch } from '@/lib/search';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
@@ -17,6 +18,7 @@ interface InvoiceRow {
   docNumber?: string;
   invoiceDate?: string;
   customerName?: string;
+  customerId?: number | null;
   customer?: { nameAr?: string };
   totalAmount?: number | string;
   status?: string;
@@ -46,6 +48,18 @@ export default function Invoices() {
     queryFn: () => api<InvoiceRow[]>(`/api/sales/sales-invoices?companyId=${companyId}`),
     enabled: !!companyId,
   });
+  const customersQ = useQuery({
+    queryKey: ['customers', companyId],
+    queryFn: () => api<any[]>(`/api/customers?companyId=${companyId}`),
+    enabled: !!companyId,
+  });
+  const customerNames = useMemo(() => {
+    const names = new Map<number, string>();
+    for (const customer of Array.isArray(customersQ.data) ? customersQ.data : []) {
+      names.set(customer.id, customer.nameAr || customer.nameEn || '');
+    }
+    return names;
+  }, [customersQ.data]);
 
   // الفواتير المحفوظة أوف لاين (صندوق الصادر) — تظهر أعلى القائمة بوسم «بانتظار المزامنة»
   const pendQ = useQuery({
@@ -60,6 +74,7 @@ export default function Invoices() {
           return {
             id: 0,
             invoiceDate: b.invoiceDate,
+            customerId: b.customerId ?? null,
             totalAmount: b.totalAmount,
             status: 'pending_sync',
             _pendingId: e.id,
@@ -73,14 +88,14 @@ export default function Invoices() {
   const rows = useMemo(() => {
     const pending = Array.isArray(pendQ.data) ? pendQ.data : [];
     const list = [...pending, ...(Array.isArray(q.data) ? q.data : [])];
-    const s = search.trim();
+    const s = normalizeSearch(search);
     if (!s) return list;
     return list.filter(
       (r) =>
-        (r.docNumber ?? '').includes(s) ||
-        (r.customerName ?? r.customer?.nameAr ?? '').includes(s),
+        normalizeSearch(r.docNumber).includes(s) ||
+        normalizeSearch(r.customerName ?? r.customer?.nameAr ?? (r.customerId ? customerNames.get(r.customerId) : '')).includes(s),
     );
-  }, [q.data, pendQ.data, search]);
+  }, [q.data, pendQ.data, search, customerNames]);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -151,7 +166,7 @@ export default function Invoices() {
                   </View>
                 </View>
                 <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 13 }}>
-                  {item.customerName ?? item.customer?.nameAr ?? 'عميل نقدي'}
+                  {item.customerName ?? item.customer?.nameAr ?? (item.customerId ? customerNames.get(item.customerId) : null) ?? 'عميل نقدي'}
                 </Text>
                 <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}>
                   <Text style={{ color: c.mutedForeground, fontSize: 12 }}>{showDate(item.invoiceDate)}</Text>

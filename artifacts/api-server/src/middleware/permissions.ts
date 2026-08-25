@@ -245,16 +245,28 @@ export function canAccessModule(authUser: any, module: string, action: PermActio
 // the module/action pairs below defer to the mobile permission key instead of
 // hard-denying. Keep in lockstep with src/lib/mobilePerms.ts known keys.
 const MOBILE_MODULE_KEYS: Record<string, Partial<Record<PermAction, string>>> = {
-  sales_invoices:   { view: "invoices_view",  create: "invoice_create",  edit: "invoice_edit",  delete: "invoice_delete",  post: "invoice_create" },
-  sales_returns:    { view: "returns_view",   create: "return_create",   edit: "return_edit",   delete: "return_delete",   post: "return_create" },
-  receipt_vouchers: { view: "vouchers_view",  create: "voucher_create",  edit: "voucher_edit",  delete: "voucher_delete",  post: "voucher_create" },
+  sales_invoices:   { view: "invoices_view",  create: "invoice_create",  edit: "invoice_edit",  delete: "invoice_delete",  post: "invoice_post" },
+  sales_returns:    { view: "returns_view",   create: "return_create",   edit: "return_edit",   delete: "return_delete",   post: "return_post" },
+  receipt_vouchers: { view: "vouchers_view",  create: "voucher_create",  edit: "voucher_edit",  delete: "voucher_delete",  post: "voucher_post" },
   customers:        { view: "customers_view", create: "customer_create", edit: "customer_edit", delete: "customer_delete" },
   sales_quotations: { view: "quotations_view", create: "quotation_create", edit: "quotation_edit", delete: "quotation_delete" },
   items:            { view: "items_view",      create: "item_create",      edit: "item_edit",      delete: "item_delete" },
 };
 
-async function mobileChannelAllowed(u: any, module: string, action: PermAction): Promise<boolean> {
-  const key = MOBILE_MODULE_KEYS[module]?.[action];
+const MOBILE_UNPOST_KEYS: Record<string, string> = {
+  sales_invoices: "invoice_unpost",
+  sales_returns: "return_unpost",
+  receipt_vouchers: "voucher_unpost",
+};
+
+async function mobileChannelAllowed(
+  u: any,
+  module: string,
+  action: PermAction,
+  path = "",
+): Promise<boolean> {
+  const isUnpost = /\/(unpost|reverse)(\/|$)/i.test(path);
+  const key = isUnpost ? MOBILE_UNPOST_KEYS[module] : MOBILE_MODULE_KEYS[module]?.[action];
   if (!key) return false;
   try {
     const [row] = await db.select({
@@ -297,7 +309,7 @@ export function requirePermission(module: string, action: PermAction) {
     // Per-action map + admin / POS / sales-rep bypasses.
     if (userActionAllowed(u, module, action)) { next(); return; }
     // Mobile-channel session → defer to the mobile permission key.
-    if (await mobileChannelAllowed(u, module, action)) { next(); return; }
+    if (await mobileChannelAllowed(u, module, action, req.path || "")) { next(); return; }
     // Fire-and-forget denial audit (don't block the response)
     void writeAudit({
       userId: u.id, username: u.username, role: u.role, companyId: u.companyId,
@@ -327,7 +339,7 @@ export function requirePermissionAny(modules: string[], action: PermAction) {
       if (!companyAllowsModule(u, module)) continue;
       anyCompanyAllowed = true;
       if (userActionAllowed(u, module, action)) { next(); return; }
-      if (await mobileChannelAllowed(u, module, action)) { next(); return; }
+      if (await mobileChannelAllowed(u, module, action, req.path || "")) { next(); return; }
     }
     const primary = modules[0] ?? "unknown";
     void writeAudit({

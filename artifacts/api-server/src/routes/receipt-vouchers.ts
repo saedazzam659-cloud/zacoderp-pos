@@ -983,6 +983,7 @@ router.post("/:id/post", requirePostRight("receipt"), async (req, res) => {
   // Multi-tenant guard — must own the voucher to post it.
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+  if (!(await requireMobilePerm(req, res, cid, "voucher_post", "ليست لديك صلاحية ترحيل سندات القبض من تطبيق الموبايل"))) return;
   const [existing] = await db.select().from(receiptVouchersTable)
     .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
@@ -1007,6 +1008,7 @@ router.post("/:id/unpost", requireUnpostRight("receipt"), async (req, res) => {
   // tenant's voucher even if they happen to know the ID.
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+  if (!(await requireMobilePerm(req, res, cid, "voucher_unpost", "ليست لديك صلاحية فك ترحيل سندات القبض من تطبيق الموبايل"))) return;
   const [existing] = await db.select().from(receiptVouchersTable)
     .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }

@@ -44,6 +44,12 @@
 //   invoice_tab_returns, invoice_tab_details, invoice_save_draft,
 //   invoice_save_issue, invoice_free_qty, invoice_discount,
 //   invoice_unit_selection
+//   invoice_post      ترحيل فاتورة مبيعات
+//   invoice_unpost    فك ترحيل فاتورة مبيعات
+//   return_post       ترحيل مرتجع مبيعات
+//   return_unpost     فك ترحيل مرتجع مبيعات
+//   voucher_post      ترحيل سند قبض
+//   voucher_unpost    فك ترحيل سند قبض
 
 export type MobilePerms = Record<string, boolean> | null;
 

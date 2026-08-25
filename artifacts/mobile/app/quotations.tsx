@@ -9,6 +9,7 @@ import { money, showDate } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
+import { normalizeSearch } from '@/lib/search';
 import { Empty, ErrorBox } from '@/components/ui';
 
 interface QuotationRow {
@@ -17,6 +18,7 @@ interface QuotationRow {
   quotationDate?: string;
   validUntil?: string;
   customerName?: string;
+  customerId?: number | null;
   customer?: { nameAr?: string };
   totalAmount?: number | string;
   status?: string;
@@ -59,14 +61,14 @@ export default function Quotations() {
 
   const rows = useMemo(() => {
     const list = Array.isArray(q.data) ? q.data : [];
-    const s = search.trim();
+    const s = normalizeSearch(search);
     if (!s) return list;
     return list.filter(
       (r) =>
-        (r.docNumber ?? '').includes(s) ||
-        (r.customerName ?? r.customer?.nameAr ?? '').includes(s),
+        normalizeSearch(r.docNumber).includes(s) ||
+        normalizeSearch(r.customerName ?? r.customer?.nameAr ?? (r.customerId ? custName.get(r.customerId) : '')).includes(s),
     );
-  }, [q.data, search]);
+  }, [q.data, search, custName]);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>

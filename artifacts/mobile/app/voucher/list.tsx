@@ -18,7 +18,7 @@ function notify(title: string, msg: string) {
 
 /** سندات القبض — قائمة مع فك الترحيل (نفس سياسة الويب: الخادم يفرض مصفوفة صلاحيات الترحيل) */
 export default function VoucherList() {
-  const { companyId, can } = useAuth();
+  const { companyId } = useAuth();
   const { mp } = useMobilePerms();
   const router = useRouter();
   const c = useColors();
@@ -75,7 +75,18 @@ export default function VoucherList() {
     ]);
   };
 
-  const canUnpost = can('receipt_vouchers', 'post');
+  const doPost = async (v: any) => {
+    setBusyId(v.id);
+    try {
+      await api(`/api/receipt-vouchers/${v.id}/post?companyId=${companyId}`, { method: 'POST', body: { companyId } });
+      await qc.invalidateQueries({ queryKey: ['receipt-vouchers'] });
+      notify('تم', 'تم ترحيل سند القبض');
+    } catch (e: any) {
+      notify('تعذّر الترحيل', typeof e === 'string' ? e : e?.message ?? 'خطأ غير معروف');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -135,7 +146,18 @@ export default function VoucherList() {
                       <Text style={{ fontSize: 12, color: c.destructive, fontFamily: 'Inter_500Medium' }}>حذف</Text>
                     </Pressable>
                   ) : null}
-                  {posted && canUnpost ? (
+                  {!posted && mp('voucher_post') ? (
+                    <Pressable
+                      testID={`post-voucher-${v.id}`}
+                      disabled={busyId === v.id}
+                      onPress={() => doPost(v)}
+                      style={({ pressed }) => ({ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: pressed ? c.muted : 'transparent', borderWidth: 1, borderColor: c.primary, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, opacity: busyId === v.id ? 0.5 : 1 })}
+                    >
+                      {busyId === v.id ? <ActivityIndicator size="small" color={c.primary} /> : <Feather name="check-circle" size={13} color={c.primary} />}
+                      <Text style={{ fontSize: 12, color: c.primary, fontFamily: 'Inter_500Medium' }}>ترحيل</Text>
+                    </Pressable>
+                  ) : null}
+                  {posted && mp('voucher_unpost') ? (
                     <Pressable
                       testID={`unpost-voucher-${v.id}`}
                       disabled={busyId === v.id}

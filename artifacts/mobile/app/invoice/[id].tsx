@@ -26,11 +26,13 @@ import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
 import { NumericEntry } from '@/components/NumericEntry';
 import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
+import { normalizeSearch } from '@/lib/search';
 
 interface Item {
   id: number;
   code?: string;
   nameAr?: string;
+  nameEn?: string;
   barcode?: string | null;
   salePrice?: number | string;
   vatRate?: number | string;
@@ -73,7 +75,7 @@ export default function InvoiceForm() {
   const invoiceId = isNew ? null : Number(id);
   const router = useRouter();
   const qc = useQueryClient();
-  const { companyId, user, can } = useAuth();
+  const { companyId, user } = useAuth();
   const { mp } = useMobilePerms();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -263,8 +265,12 @@ export default function InvoiceForm() {
   const visibleItems = useMemo(() => {
     let list = items;
     if (activeGroup !== 'all') list = list.filter((i) => i.group?.id === activeGroup);
-    const s = itemSearch.trim();
-    if (s) list = list.filter((i) => (i.nameAr ?? '').includes(s) || (i.code ?? '').includes(s) || (i.barcode ?? '').includes(s));
+    const s = normalizeSearch(itemSearch);
+    if (s) list = list.filter((i) =>
+      normalizeSearch(i.nameAr).includes(s) ||
+      normalizeSearch(i.nameEn).includes(s) ||
+      normalizeSearch(i.code).includes(s) ||
+      normalizeSearch(i.barcode).includes(s));
     return list.slice(0, 100);
   }, [items, activeGroup, itemSearch]);
 
@@ -488,6 +494,7 @@ export default function InvoiceForm() {
         await api(`/api/sales/sales-invoices/${invoiceId}/unpost`, { method: 'PATCH', body: { companyId } });
         await qc.invalidateQueries({ queryKey: ['sales-invoices'] });
         await qc.invalidateQueries({ queryKey: ["sales-invoice", invoiceId] });
+        setLoadedDoc((current: any) => current ? { ...current, status: 'draft' } : current);
         notify('تم', 'تم فك ترحيل الفاتورة — أصبحت مسودة قابلة للتعديل');
       } catch (e: any) {
         notify('تعذّر فك الترحيل', typeof e === 'string' ? e : e?.message ?? 'خطأ غير معروف');
@@ -828,7 +835,7 @@ export default function InvoiceForm() {
                 <Btn title="التالي: التفاصيل والحفظ" onPress={() => setTab('details')} icon="arrow-left" small />
               ) : (
                 <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
-                  {mp('invoice_save_issue') ? <View style={{ flex: 1 }}><Btn title="حفظ وإصدار" onPress={() => save(true)} loading={posting} icon="check-circle" small testID="button-items-save-post" /></View> : null}
+                  {mp('invoice_save_issue') && mp('invoice_post') ? <View style={{ flex: 1 }}><Btn title="حفظ وإصدار" onPress={() => save(true)} loading={posting} icon="check-circle" small testID="button-items-save-post" /></View> : null}
                   {mp('invoice_save_draft') ? <View style={{ flex: 1 }}><Btn title="حفظ مسودة" onPress={() => save(false)} loading={saving} kind="outline" small testID="button-items-save-draft" /></View> : null}
                 </View>
               )}
@@ -887,44 +894,98 @@ export default function InvoiceForm() {
 
         {tab === 'details' && (
           <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
-            <Card style={{ gap: 10 }}>
+            <View style={{ gap: 10 }}>
               {lines.map((l) => (
-                <React.Fragment key={l.itemId}>
-                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottomWidth: StyleShim, borderBottomColor: c.border, paddingBottom: 6 }}>
-                  <Text style={{ fontSize: 13, color: c.foreground, flex: 1, textAlign: 'right' }}>{l.name} × {fq(l.qty)}</Text>
-                  {!readOnly && mp('invoice_edit_price') ? (
-                    <TextInput
-                      testID={`input-line-price-${l.itemId}`}
-                      defaultValue={String(l.unitPrice)}
-                      keyboardType="decimal-pad"
-                      onEndEditing={(e) => {
-                        const v = parseFloat(String(e.nativeEvent.text).replace(/[^\d.]/g, ''));
-                        if (Number.isFinite(v)) setLinePrice(l.itemId, v);
-                      }}
-                      style={{ minWidth: 74, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
-                    />
+                <Card key={l.itemId} style={{ gap: 11, borderColor: c.border }}>
+                  <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: c.foreground, textAlign: 'right' }}>{l.name}</Text>
+                      <Text style={{ fontSize: 11, color: c.mutedForeground, textAlign: 'right' }}>
+                        {l.unitName ?? 'الوحدة الأساسية'}
+                      </Text>
+                    </View>
+                    <View style={{ backgroundColor: c.secondary, borderRadius: 10, paddingVertical: 6, paddingHorizontal: 10 }}>
+                      <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', color: c.primary }}>
+                        {money(calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount').total)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+                    <View style={{ flex: 1, gap: 5 }}>
+                      <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>الكمية</Text>
+                      {readOnly ? (
+                        <View style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.background }}>
+                          <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: c.foreground }}>{fq(l.qty)}</Text>
+                        </View>
+                      ) : (
+                        <NumericEntry
+                          testID={`input-line-qty-${l.itemId}`}
+                          value={l.qty}
+                          blankWhenZero={false}
+                          blankWhenOne
+                          onChangeValue={(v) => setLineQty(l.itemId, v)}
+                          style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 8, textAlign: 'center', fontSize: 14, fontFamily: 'Inter_600SemiBold', color: c.foreground, backgroundColor: c.background }}
+                        />
+                      )}
+                    </View>
+                    <View style={{ flex: 1, gap: 5 }}>
+                      <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>سعر الوحدة</Text>
+                      {!readOnly && mp('invoice_edit_price') ? (
+                        <NumericEntry
+                          testID={`input-line-price-${l.itemId}`}
+                          value={l.unitPrice}
+                          blankWhenZero={false}
+                          onChangeValue={(v) => setLinePrice(l.itemId, v)}
+                          style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 8, textAlign: 'center', fontSize: 14, fontFamily: 'Inter_600SemiBold', color: c.foreground, backgroundColor: c.background }}
+                        />
+                      ) : (
+                        <View style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.background }}>
+                          <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: c.foreground }}>{money(l.unitPrice)}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+
+                  {!readOnly && (mp('invoice_free_qty') || mp('invoice_discount')) ? (
+                    <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 8 }}>
+                      {mp('invoice_free_qty') ? (
+                        <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
+                          <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>مجاني</Text>
+                          <NumericEntry testID={`input-line-free-qty-${l.itemId}`} value={l.freeQty} emptyValue={0}
+                            onChangeValue={(v) => setLineField(l.itemId, 'freeQty', v)}
+                            style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                        </View>
+                      ) : null}
+                      {mp('invoice_discount') ? (
+                        <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
+                          <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>خصم %</Text>
+                          <NumericEntry testID={`input-line-discount-${l.itemId}`} value={l.discount} emptyValue={0}
+                            onChangeValue={(v) => setLineField(l.itemId, 'discount', v)}
+                            style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                        </View>
+                      ) : null}
+                      {mp('invoice_discount') ? (
+                        <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
+                          <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>خصم مبلغ</Text>
+                          <NumericEntry testID={`input-line-discount-amount-${l.itemId}`} value={l.discountAmount} emptyValue={0}
+                            onChangeValue={(v) => setLineField(l.itemId, 'discountAmount', v)}
+                            style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                        </View>
+                      ) : null}
+                    </View>
                   ) : null}
-                   <Text style={{ fontSize: 13, color: c.foreground, fontFamily: 'Inter_600SemiBold' }}>{money(calcInvoiceLine(l, priceIncludesVat, user?.company?.taxCalculationMode === 'before_discount' ? 'before_discount' : 'after_discount').total)}</Text>
-                </View>
-                 {!readOnly && (mp('invoice_free_qty') || mp('invoice_discount')) ? (
-                   <View style={{ flexDirection: 'row-reverse', gap: 8, paddingBottom: 8 }}>
-                     {mp('invoice_free_qty') ? <View style={{ flex: 1 }}>
-                       <Field label="مجاني" value={String(l.freeQty)} keyboardType="decimal-pad" onChangeText={(v) => setLineField(l.itemId, 'freeQty', parseFloat(v) || 0)} testID={`input-line-free-qty-${l.itemId}`} />
-                     </View> : null}
-                     {mp('invoice_discount') ? <View style={{ flex: 1 }}>
-                       <Field label="خصم %" value={String(l.discount)} keyboardType="decimal-pad" onChangeText={(v) => setLineField(l.itemId, 'discount', parseFloat(v) || 0)} testID={`input-line-discount-${l.itemId}`} />
-                       <Field label="خصم مبلغ" value={String(l.discountAmount)} keyboardType="decimal-pad" onChangeText={(v) => setLineField(l.itemId, 'discountAmount', parseFloat(v) || 0)} testID={`input-line-discount-amount-${l.itemId}`} />
-                     </View> : null}
-                   </View>
-                 ) : null}
-                 {!readOnly && mp('invoice_unit_selection') ? (
-                   <Pressable onPress={() => selectNextUnit(l)} testID={`button-line-unit-${l.itemId}`} style={{ alignSelf: 'flex-end', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: c.muted }}>
-                      <Text style={{ color: c.foreground, fontSize: 12 }}>الوحدة: {l.unitName ?? 'الأساسية'} · اضغط لاختيار التالية</Text>
-                   </Pressable>
-                 ) : null}
-                </React.Fragment>
+                  {!readOnly && mp('invoice_unit_selection') ? (
+                    <Pressable onPress={() => selectNextUnit(l)} testID={`button-line-unit-${l.itemId}`} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: c.muted }}>
+                      <Text style={{ color: c.foreground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>الوحدة: {l.unitName ?? 'الأساسية'}</Text>
+                      <Text style={{ color: c.primary, fontSize: 11 }}>اضغط للتغيير</Text>
+                    </Pressable>
+                  ) : null}
+                </Card>
               ))}
               {!lines.length ? <Text style={{ textAlign: 'right', color: c.mutedForeground }}>لا توجد أصناف — ارجع لتبويب الأصناف</Text> : null}
+            </View>
+            <Card style={{ gap: 10 }}>
               <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}>
                 <Text style={{ color: c.mutedForeground }}>الإجمالي قبل الضريبة</Text>
                 <Text style={{ fontFamily: 'Inter_600SemiBold', color: c.foreground }}>{money(totals.subtotal)}</Text>
@@ -954,7 +1015,7 @@ export default function InvoiceForm() {
                 </View>
               ) : (
               <View style={{ gap: 10 }}>
-                {mp('invoice_save_issue') ? <Btn title="حفظ وإصدار الفاتورة" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post" /> : null}
+                {mp('invoice_save_issue') && mp('invoice_post') ? <Btn title="حفظ وإصدار الفاتورة" onPress={() => save(true)} loading={posting} icon="check-circle" testID="button-save-post" /> : null}
                 {mp('invoice_save_draft') ? <Btn title="حفظ كمسودة" onPress={() => save(false)} loading={saving} kind="outline" testID="button-save-draft" /> : null}
                 {!isNew && mp('invoice_delete') ? (
                   <Btn title="حذف الفاتورة" icon="trash-2" kind="destructive" loading={deleting} onPress={doDelete} testID="button-delete-invoice" />
@@ -973,7 +1034,7 @@ export default function InvoiceForm() {
                 {mp('invoice_whatsapp') ? (
                   <Btn title="إرسال عبر واتساب" icon="message-circle" kind="outline" onPress={sendWhatsApp} testID="button-whatsapp" />
                 ) : null}
-                {can('sales_invoices', 'post') ? (
+                {mp('invoice_unpost') ? (
                   <Btn title="فك ترحيل الفاتورة" icon="rotate-ccw" kind="destructive" loading={unposting} onPress={doUnpost} testID="button-unpost" />
                 ) : null}
               </View>
@@ -1037,7 +1098,10 @@ export default function InvoiceForm() {
               style={{ borderWidth: 1.2, borderColor: c.input, borderRadius: 12, padding: 10, textAlign: 'right', color: c.foreground }}
             />
             <FlatList
-              data={[{ id: null as any, nameAr: 'بدون عميل (نقدي)' }, ...customers.filter((x) => !custSearch.trim() || (x.nameAr ?? '').includes(custSearch.trim()))]}
+              data={[{ id: null as any, nameAr: 'بدون عميل (نقدي)' }, ...customers.filter((x) => {
+                const s = normalizeSearch(custSearch);
+                return !s || normalizeSearch(x.nameAr).includes(s) || normalizeSearch(x.nameEn).includes(s) || normalizeSearch(x.code).includes(s);
+              })]}
               keyExtractor={(x) => String(x.id ?? 'none')}
               renderItem={({ item }) => (
                 <Pressable
