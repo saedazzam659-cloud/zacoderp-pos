@@ -662,7 +662,7 @@ export default function AdvancedReportGrid<R>({
                         className="flex items-center gap-1 hover:underline cursor-pointer min-w-0"
                         title={`ترتيب حسب ${c.label}`}
                       >
-                        <span className="truncate">{c.label}</span>
+                        <span className="whitespace-normal break-words leading-4">{c.label}</span>
                         {sortIconFor(c.key)}
                       </button>
                       {c.type !== "none" && (
@@ -692,7 +692,7 @@ export default function AdvancedReportGrid<R>({
               <tr key={`__lead_${i}`} className={cn("bg-amber-50/40 border-t border-slate-200", row.__className)}>
                 {orderedColumns.map(c => (
                   <td key={c.key} className={cn(
-                    "px-3 py-2",
+                    "px-3 py-2 border-e border-slate-200 last:border-e-0",
                     c.align === "end" ? "text-end" : c.align === "center" ? "text-center" : "text-start",
                     c.className,
                   )}>
@@ -743,7 +743,7 @@ export default function AdvancedReportGrid<R>({
                         const bg = cellBgFor(r, c);
                         return (
                           <td key={c.key} className={cn(
-                            "px-3 py-2",
+                              "px-3 py-2 border-e border-slate-200 last:border-e-0",
                             c.align === "end" ? "text-end" : c.align === "center" ? "text-center" : "text-start",
                             c.className,
                             bg,
@@ -768,7 +768,7 @@ export default function AdvancedReportGrid<R>({
                   if (idx === 0 && totalsRow.__label != null && totalsRow[c.key] == null) {
                     return (
                       <td key={c.key} className={cn(
-                        "px-3 py-2",
+                        "px-3 py-2 border-e border-slate-200 last:border-e-0",
                         c.align === "end" ? "text-end" : c.align === "center" ? "text-center" : "text-start",
                       )}>
                         {totalsRow.__label}
@@ -777,7 +777,7 @@ export default function AdvancedReportGrid<R>({
                   }
                   return (
                     <td key={c.key} className={cn(
-                      "px-3 py-2",
+                        "px-3 py-2 border-e border-slate-300 last:border-e-0",
                       c.align === "end" ? "text-end" : c.align === "center" ? "text-center" : "text-start",
                       c.className,
                     )}>
