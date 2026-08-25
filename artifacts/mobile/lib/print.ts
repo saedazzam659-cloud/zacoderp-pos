@@ -77,7 +77,7 @@ function lineFigures(l: any, inc: boolean) {
 
 function computeTotals(doc: any, lines: any[]) {
   const inc = !!doc?.priceIncludesVat;
-  let subtotalPreDiscount = 0, discountTotal = 0, netPreVat = 0, vatAmount = 0, totalQty = 0;
+  let subtotalPreDiscount = 0, discountTotal = 0, netPreVat = 0, vatAmount = 0, totalQty = 0, totalFreeQty = 0;
   for (const l of lines ?? []) {
     const f = lineFigures(l, inc);
     subtotalPreDiscount += f.grossEx;
@@ -85,11 +85,12 @@ function computeTotals(doc: any, lines: any[]) {
     netPreVat += f.netEx;
     vatAmount += f.vat;
     totalQty += f.qty;
+    totalFreeQty += Number(l.freeQty) || 0;
   }
   const grandTotal = netPreVat + vatAmount;
   return {
     inc, subtotalPreDiscount, discountTotal, netPreVat, vatAmount, grandTotal,
-    totalQty, itemsCount: (lines ?? []).length,
+    totalQty, totalFreeQty, itemsCount: (lines ?? []).length,
     amountWords: numberToArabicWords(grandTotal),
   };
 }
@@ -219,15 +220,27 @@ export async function buildInvoiceHtml(d: InvoicePrintInput): Promise<string> {
   const createdStr = createdAt && !isNaN(createdAt.getTime())
     ? createdAt.toLocaleString('ar-SA-u-ca-gregory-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '—';
+  const showDiscount = (lines ?? []).some((l) =>
+    (Number(l.discount) || 0) > 0 || (Number(l.discountAmount) || 0) > 0
+  );
+  const showFreeQty = (lines ?? []).some((l) => (Number(l.freeQty) || 0) > 0);
 
   const rowsHtml = (lines ?? []).map((l, i) => {
     const f = lineFigures(l, t.inc);
+    const discountPct = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const freeQty = Math.max(0, Number(l.freeQty) || 0);
+    const unitName = typeof l.unit === 'string'
+      ? l.unit
+      : l.unit?.nameAr ?? l.unitName ?? '—';
     return `<tr>
       <td class="mono">${i + 1}</td>
       <td>${esc(l.itemName ?? l.itemCode ?? '—')}</td>
-      <td>${esc(l.unit ?? '—')}</td>
+      <td>${esc(unitName)}</td>
       <td class="mono">${fmt(f.qty)}</td>
+      ${showFreeQty ? `<td class="mono free">${freeQty > 0 ? fmt(freeQty) : '—'}</td>` : ''}
       <td class="mono">${fmt(f.price)}</td>
+      ${showDiscount ? `<td class="mono discount">${discountPct > 0 ? `${fmt(discountPct)}%` : '—'}</td>` : ''}
+      ${showDiscount ? `<td class="mono discount">${f.disc > 0 ? fmt(f.disc) : '—'}</td>` : ''}
       <td class="mono">${fmt(f.vat)}</td>
       <td class="mono">${fmt(f.tot)}</td>
     </tr>`;
@@ -262,6 +275,8 @@ export async function buildInvoiceHtml(d: InvoicePrintInput): Promise<string> {
   table.lines td { padding:9px 6px; border-bottom:1px solid var(--line); text-align:right; }
   table.lines tbody tr:nth-of-type(odd) td { background:#fafbfc; }
   table.lines tbody tr { page-break-inside: avoid; }
+  table.lines .free { color:#b45309; font-weight:700; }
+  table.lines .discount { color:#b91c1c; }
   .bottom { display:grid; grid-template-columns: 1fr 200px; gap:14px; margin-top:14px; page-break-inside: avoid; }
   .card { border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fff; }
   .qr-card { text-align:center; padding:10px; }
@@ -304,7 +319,13 @@ export async function buildInvoiceHtml(d: InvoicePrintInput): Promise<string> {
     </div>
   </div>
   <table class="lines">
-    <thead><tr><th>#</th><th>الصنف</th><th>الوحدة</th><th>الكمية</th><th>السعر</th><th>الضريبة</th><th>الإجمالي</th></tr></thead>
+    <thead><tr>
+      <th>#</th><th>الصنف</th><th>الوحدة</th><th>الكمية</th>
+      ${showFreeQty ? '<th class="free">مجاني</th>' : ''}
+      <th>السعر</th>
+      ${showDiscount ? '<th>الخصم %</th><th>قيمة الخصم</th>' : ''}
+      <th>قيمة الضريبة</th><th>الإجمالي</th>
+    </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>
   <div class="bottom" style="grid-template-columns:${showQrColumn ? '1fr 200px' : '1fr'};">
@@ -323,7 +344,8 @@ export async function buildInvoiceHtml(d: InvoicePrintInput): Promise<string> {
            <span>إجمالي الأصناف</span><span class="mono" style="font-weight:700;">${t.itemsCount}</span>
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:3px;">
-           <span>إجمالي الكميات</span><span class="mono" style="font-weight:700;">${fmt(t.totalQty)}</span>
+           <span>إجمالي الكميات (شاملة المجانية)</span>
+           <span class="mono" style="font-weight:700;">${fmt(t.totalQty + t.totalFreeQty)}${t.totalFreeQty > 0 ? ` <span class="free">(منها ${fmt(t.totalFreeQty)} مجاني)</span>` : ''}</span>
         </div>
       </div>
       ${doc?.notes ? `<div class="notes-box"><b>ملاحظات:</b> ${esc(doc.notes)}</div>` : ''}

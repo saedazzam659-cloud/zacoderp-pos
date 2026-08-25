@@ -411,3 +411,10 @@ uri = "file://artifacts/mobile/releases/zacoderp-google-play-v11.aab"
 type = "unspecified"
 title = "Zacode ERP Android v11 (AAB) — النسخة النهائية"
 description = "تشمل ترتيب تفاصيل الأصناف، طباعة عروض الأسعار والمرتجعات، صلاحيات الترحيل وفك الترحيل للموبايل، وإصلاح جميع حقول البحث."
+
+[[outputs]]
+id = "9H0VZ9k3v8RYq3f4AWOiW"
+uri = "file://artifacts/mobile/releases/zacoderp-google-play-v13.aab"
+type = "unspecified"
+title = "Zacode ERP Android v13 (AAB) — النسخة النهائية"
+description = "تعرض الخصومات والكميات المجانية في الفاتورة المرحلة للقراءة فقط، وتظهرها أيضًا في طباعة الفواتير وعروض الأسعار."

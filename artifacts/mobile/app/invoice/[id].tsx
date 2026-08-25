@@ -760,9 +760,11 @@ export default function InvoiceForm() {
                               style={{ minWidth: 64, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }}
                             />
                           ) : null}
-                          <Pressable onPress={() => setLineQty(item.id, inCart.qty + 1)} style={{ backgroundColor: c.primary, borderRadius: 8, padding: 6 }}>
-                            <Feather name="plus" size={14} color="#fff" />
-                          </Pressable>
+                          {!readOnly ? (
+                            <Pressable onPress={() => setLineQty(item.id, inCart.qty + 1)} style={{ backgroundColor: c.primary, borderRadius: 8, padding: 6 }}>
+                              <Feather name="plus" size={14} color="#fff" />
+                            </Pressable>
+                          ) : null}
                           {!readOnly ? (
                             <NumericEntry
                               testID={`input-cart-qty-${item.id}`}
@@ -775,39 +777,53 @@ export default function InvoiceForm() {
                           ) : (
                             <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', color: c.foreground, minWidth: 26, textAlign: 'center' }}>{fq(inCart.qty)}</Text>
                           )}
-                          <Pressable onPress={() => setLineQty(item.id, inCart.qty - 1)} style={{ backgroundColor: c.muted, borderRadius: 8, padding: 6 }}>
-                            <Feather name="minus" size={14} color={c.foreground} />
-                          </Pressable>
+                          {!readOnly ? (
+                            <Pressable onPress={() => setLineQty(item.id, inCart.qty - 1)} style={{ backgroundColor: c.muted, borderRadius: 8, padding: 6 }}>
+                              <Feather name="minus" size={14} color={c.foreground} />
+                            </Pressable>
+                          ) : null}
                         </View>
-                        {!readOnly && (mp('invoice_free_qty') || mp('invoice_discount') || mp('invoice_unit_selection')) ? (
+                        {readOnly || mp('invoice_free_qty') || mp('invoice_discount') || mp('invoice_unit_selection') ? (
                           <View style={{ gap: 6 }}>
                             <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 6 }}>
-                              {mp('invoice_free_qty') ? (
+                              {readOnly || mp('invoice_free_qty') ? (
                                 <View style={{ flex: 1, minWidth: 0 }}>
                                   <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>مجاني</Text>
-                                  <NumericEntry testID={`input-cart-free-qty-${item.id}`} value={inCart.freeQty} emptyValue={0}
-                                    onChangeValue={(v) => setLineField(item.id, 'freeQty', v)}
-                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                  {readOnly ? (
+                                    <Text style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 5, textAlign: 'center', fontSize: 12, color: c.foreground }}>{fq(inCart.freeQty)}</Text>
+                                  ) : (
+                                    <NumericEntry testID={`input-cart-free-qty-${item.id}`} value={inCart.freeQty} emptyValue={0}
+                                      onChangeValue={(v) => setLineField(item.id, 'freeQty', v)}
+                                      style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                  )}
                                 </View>
                               ) : null}
-                              {mp('invoice_discount') ? (
+                              {readOnly || mp('invoice_discount') ? (
                                 <View style={{ flex: 1, minWidth: 0 }}>
                                   <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم %</Text>
-                                  <NumericEntry testID={`input-cart-discount-${item.id}`} value={inCart.discount} emptyValue={0}
-                                    onChangeValue={(v) => setLineField(item.id, 'discount', v)}
-                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                  {readOnly ? (
+                                    <Text style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 5, textAlign: 'center', fontSize: 12, color: c.foreground }}>{fq(inCart.discount)}%</Text>
+                                  ) : (
+                                    <NumericEntry testID={`input-cart-discount-${item.id}`} value={inCart.discount} emptyValue={0}
+                                      onChangeValue={(v) => setLineField(item.id, 'discount', v)}
+                                      style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                  )}
                                 </View>
                               ) : null}
-                              {mp('invoice_discount') ? (
+                              {readOnly || mp('invoice_discount') ? (
                                 <View style={{ flex: 1, minWidth: 0 }}>
                                   <Text style={{ textAlign: 'right', fontSize: 10, color: c.mutedForeground }}>خصم قيمة</Text>
-                                  <NumericEntry testID={`input-cart-discount-amount-${item.id}`} value={inCart.discountAmount} emptyValue={0}
-                                    onChangeValue={(v) => setLineField(item.id, 'discountAmount', v)}
-                                    style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                  {readOnly ? (
+                                    <Text style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 5, textAlign: 'center', fontSize: 12, color: c.foreground }}>{money(inCart.discountAmount)}</Text>
+                                  ) : (
+                                    <NumericEntry testID={`input-cart-discount-amount-${item.id}`} value={inCart.discountAmount} emptyValue={0}
+                                      onChangeValue={(v) => setLineField(item.id, 'discountAmount', v)}
+                                      style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingVertical: 4, textAlign: 'center', fontSize: 12, color: c.foreground }} />
+                                  )}
                                 </View>
                               ) : null}
                             </View>
-                            {mp('invoice_unit_selection') ? (
+                            {!readOnly && mp('invoice_unit_selection') ? (
                               <Pressable onPress={() => selectNextUnit(inCart)} testID={`button-cart-unit-${item.id}`} style={{ alignSelf: 'flex-start', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, backgroundColor: c.muted }}>
                                 <Text style={{ fontSize: 11, color: c.foreground }}>{inCart.unitName ?? 'وحدة'}</Text>
                               </Pressable>
@@ -947,30 +963,48 @@ export default function InvoiceForm() {
                     </View>
                   </View>
 
-                  {!readOnly && (mp('invoice_free_qty') || mp('invoice_discount')) ? (
+                  {readOnly || mp('invoice_free_qty') || mp('invoice_discount') ? (
                     <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 8 }}>
-                      {mp('invoice_free_qty') ? (
+                      {readOnly || mp('invoice_free_qty') ? (
                         <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
                           <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>مجاني</Text>
-                          <NumericEntry testID={`input-line-free-qty-${l.itemId}`} value={l.freeQty} emptyValue={0}
-                            onChangeValue={(v) => setLineField(l.itemId, 'freeQty', v)}
-                            style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                          {readOnly ? (
+                            <View style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.background }}>
+                              <Text style={{ fontSize: 13, color: c.foreground }}>{fq(l.freeQty)}</Text>
+                            </View>
+                          ) : (
+                            <NumericEntry testID={`input-line-free-qty-${l.itemId}`} value={l.freeQty} emptyValue={0}
+                              onChangeValue={(v) => setLineField(l.itemId, 'freeQty', v)}
+                              style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                          )}
                         </View>
                       ) : null}
-                      {mp('invoice_discount') ? (
+                      {readOnly || mp('invoice_discount') ? (
                         <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
                           <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>خصم %</Text>
-                          <NumericEntry testID={`input-line-discount-${l.itemId}`} value={l.discount} emptyValue={0}
-                            onChangeValue={(v) => setLineField(l.itemId, 'discount', v)}
-                            style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                          {readOnly ? (
+                            <View style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.background }}>
+                              <Text style={{ fontSize: 13, color: c.foreground }}>{fq(l.discount)}%</Text>
+                            </View>
+                          ) : (
+                            <NumericEntry testID={`input-line-discount-${l.itemId}`} value={l.discount} emptyValue={0}
+                              onChangeValue={(v) => setLineField(l.itemId, 'discount', v)}
+                              style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                          )}
                         </View>
                       ) : null}
-                      {mp('invoice_discount') ? (
+                      {readOnly || mp('invoice_discount') ? (
                         <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
                           <Text style={{ textAlign: 'right', fontSize: 11, color: c.mutedForeground }}>خصم مبلغ</Text>
-                          <NumericEntry testID={`input-line-discount-amount-${l.itemId}`} value={l.discountAmount} emptyValue={0}
-                            onChangeValue={(v) => setLineField(l.itemId, 'discountAmount', v)}
-                            style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                          {readOnly ? (
+                            <View style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.background }}>
+                              <Text style={{ fontSize: 13, color: c.foreground }}>{money(l.discountAmount)}</Text>
+                            </View>
+                          ) : (
+                            <NumericEntry testID={`input-line-discount-amount-${l.itemId}`} value={l.discountAmount} emptyValue={0}
+                              onChangeValue={(v) => setLineField(l.itemId, 'discountAmount', v)}
+                              style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 6, textAlign: 'center', fontSize: 13, color: c.foreground, backgroundColor: c.background }} />
+                          )}
                         </View>
                       ) : null}
                     </View>
