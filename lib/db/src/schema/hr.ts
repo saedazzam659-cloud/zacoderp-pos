@@ -802,6 +802,20 @@ export const employeeCertificatesTable = pgTable("employee_certificates", {
   createdAt:   timestamp("created_at").defaultNow().notNull(),
 });
 
+// ─── وثائق التأمين الطبي — سجل تاريخي، وقد تكون الوثيقة جماعية ───────────────
+export const employeeMedicalInsurancePoliciesTable = pgTable("employee_medical_insurance_policies", {
+  id:              serial("id").primaryKey(),
+  companyId:       integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:      integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  policyNumber:    text("policy_number").notNull(),
+  insuranceCompany:text("insurance_company").notNull(),
+  coverageDetails: text("coverage_details"),
+  startDate:       date("start_date").notNull(),
+  endDate:         date("end_date").notNull(),
+  createdAt:       timestamp("created_at").defaultNow().notNull(),
+  updatedAt:       timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+});
+
 // ─── مستودع مستندات الموظف ──────────────────────────────────────────────────
 export const employeeDocumentsTable = pgTable("employee_documents", {
   id:         serial("id").primaryKey(),

@@ -26,6 +26,19 @@ import {
 import { postDepreciationForCompany, unpostDepreciationRun, repostDepreciationRun, postDepreciationCatchUpForAsset } from "../lib/depreciationPosting.js";
 import { computePeriodDepreciation, buildSchedule } from "../lib/depreciationCalc.js";
 
+const isValidIsoDate = (value: unknown) => {
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\d$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+};
+
+function insuranceDatesValid(start: any, end: any): string | null {
+  if (start != null && start !== "" && !isValidIsoDate(start)) return "صيغة تاريخ بداية التأمين غير صالحة";
+  if (end != null && end !== "" && !isValidIsoDate(end)) return "صيغة تاريخ انتهاء التأمين غير صالحة";
+  if (start && end && end < start) return "تاريخ انتهاء التأمين يجب أن يكون بعد أو مساوياً لتاريخ البدء";
+  return null;
+}
+
 const router = Router();
 router.use(extractAuth);
 router.use(requireModulePermission("fixed_assets"));
@@ -359,6 +372,8 @@ router.post("/assets", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body ?? {};
+    const insuranceDateError = insuranceDatesValid(b.insuranceStart, b.insuranceEnd);
+    if (insuranceDateError) { res.status(400).json({ error: insuranceDateError }); return; }
     const nameAr = String(b.nameAr ?? "").trim();
     if (!nameAr) { res.status(400).json({ error: "اسم الأصل مطلوب" }); return; }
     const code = String(b.code ?? "").trim() || await nextSequenceOrFallback(
@@ -476,6 +491,7 @@ router.post("/assets", async (req, res) => {
       bookValue,
       insuranceCompany: b.insuranceCompany || null,
       insurancePolicyNo: b.insurancePolicyNo || null,
+      insuranceCoverage: b.insuranceCoverage || null,
       insuranceStart: b.insuranceStart || null,
       insuranceEnd: b.insuranceEnd || null,
       insuranceValue: String(b.insuranceValue ?? "0"),
@@ -525,8 +541,17 @@ router.put("/assets/:id", async (req, res) => {
     const id = Number(req.params.id);
     if (!await assertOwn(res, fixedAssetsTable, id, cid, "الأصل")) return;
     const b = req.body ?? {};
+    const [currentInsurance] = await db.select({
+      insuranceStart: fixedAssetsTable.insuranceStart,
+      insuranceEnd: fixedAssetsTable.insuranceEnd,
+    }).from(fixedAssetsTable).where(and(eq(fixedAssetsTable.id, id), eq(fixedAssetsTable.companyId, cid)));
+    const insuranceDateError = insuranceDatesValid(
+      b.insuranceStart !== undefined ? b.insuranceStart : currentInsurance?.insuranceStart,
+      b.insuranceEnd !== undefined ? b.insuranceEnd : currentInsurance?.insuranceEnd,
+    );
+    if (insuranceDateError) { res.status(400).json({ error: insuranceDateError }); return; }
     const patch: any = { updatedAt: new Date() };
-    const strFields = ["code","nameAr","nameEn","supplierName","invoiceNo","acquisitionJeNo","paymentMethod","model","brand","serialNo","serialNumber","plateNumber","color","insuranceCompany","insurancePolicyNo","location","notes"];
+    const strFields = ["code","nameAr","nameEn","supplierName","invoiceNo","acquisitionJeNo","paymentMethod","model","brand","serialNo","serialNumber","plateNumber","color","insuranceCompany","insurancePolicyNo","insuranceCoverage","location","notes"];
     for (const k of strFields) if (b[k] !== undefined) patch[k] = b[k] || null;
     if (b.skipAcquisitionJe !== undefined) patch.skipAcquisitionJe = coerceBool(b.skipAcquisitionJe);
     if (b.isOpeningBalance !== undefined) {

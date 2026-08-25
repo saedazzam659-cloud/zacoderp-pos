@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
-import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, payrollAllocationSnapshotsTable, employeeProjectAssignmentsTable, branchesTable, accountsTable, companiesTable, costCentersTable, contractingProjectsTable, employeeViolationsTable, employeeTravelsTable } from "@workspace/db";
+import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, payrollAllocationSnapshotsTable, employeeProjectAssignmentsTable, branchesTable, accountsTable, companiesTable, costCentersTable, contractingProjectsTable, employeeViolationsTable, employeeTravelsTable, employeeMedicalInsurancePoliciesTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
@@ -158,8 +158,10 @@ router.get("/", async (req, res) => {
 router.get("/alerts", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const today = new Date();
-    const todayStr = today.toISOString().slice(0, 10);
+    const todayStr = businessToday();
+    const dateOnlyMs = (date: string) => Date.UTC(
+      Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)),
+    );
 
     // Per-company alert lead times (days) — configurable from إعدادات التنبيهات.
     const [comp] = await db.select({ th: companiesTable.hrAlertThresholds })
@@ -167,10 +169,13 @@ router.get("/alerts", async (req, res) => {
     const th = (comp?.th ?? {}) as Record<string, number>;
     const days = (k: string) => {
       const v = Number(th[k]);
-      return Number.isFinite(v) && v >= 1 && v <= 3650 ? Math.round(v) : 90;
+      const fallback = k === "vehicleInsurance" ? 60 : 90;
+      return Number.isFinite(v) && v >= 1 && v <= 3650 ? Math.round(v) : fallback;
     };
-    const horizon = (k: string) =>
-      new Date(today.getTime() + days(k) * 86400000).toISOString().slice(0, 10);
+    const horizon = (k: string) => {
+      const date = new Date(dateOnlyMs(todayStr) + days(k) * 86400000);
+      return date.toISOString().slice(0, 10);
+    };
     const in90Str = horizon("iqama");
 
     const expIqamas = await db.select({
@@ -222,13 +227,44 @@ router.get("/alerts", async (req, res) => {
         eq(employeesTable.status, "active"),
       )).orderBy(asc(employeesTable.workPermitExpiry));
 
-    const daysLeft = (d: string) => Math.ceil((new Date(d).getTime() - today.getTime()) / 86400000);
+    const medicalInsurancePolicies = await db.select({
+      id: employeeMedicalInsurancePoliciesTable.id,
+      employeeId: employeeMedicalInsurancePoliciesTable.employeeId,
+      policyNumber: employeeMedicalInsurancePoliciesTable.policyNumber,
+      insuranceCompany: employeeMedicalInsurancePoliciesTable.insuranceCompany,
+      coverageDetails: employeeMedicalInsurancePoliciesTable.coverageDetails,
+      startDate: employeeMedicalInsurancePoliciesTable.startDate,
+      endDate: employeeMedicalInsurancePoliciesTable.endDate,
+      employeeName: employeesTable.nameAr,
+      code: employeesTable.code,
+    }).from(employeeMedicalInsurancePoliciesTable)
+      .innerJoin(employeesTable, eq(employeesTable.id, employeeMedicalInsurancePoliciesTable.employeeId))
+      .where(and(
+        eq(employeeMedicalInsurancePoliciesTable.companyId, cid),
+        eq(employeesTable.companyId, cid),
+        eq(employeesTable.status, "active"),
+        isNotNull(employeeMedicalInsurancePoliciesTable.endDate),
+      )).orderBy(desc(employeeMedicalInsurancePoliciesTable.endDate));
+    // Historical policies are retained, but only the policy with the latest
+    // end date per active employee represents their current coverage.
+    const latestMedicalInsurance = new Map<number, any>();
+    for (const policy of medicalInsurancePolicies) {
+      if (!latestMedicalInsurance.has(policy.employeeId)) latestMedicalInsurance.set(policy.employeeId, policy);
+    }
+    const expMedicalInsurance = [...latestMedicalInsurance.values()]
+      .filter((policy) => policy.endDate <= horizon("medicalInsurance"));
+
+    const daysLeft = (d: string) => Math.round((dateOnlyMs(d) - dateOnlyMs(todayStr)) / 86400000);
     const tag = (rows: any[], field: string) =>
       rows.map(r => ({ ...r, daysLeft: daysLeft(r[field]) }));
+    const insuranceTag = (rows: any[]) => rows.map((r) => {
+      const remaining = daysLeft(r.endDate);
+      return { ...r, daysLeft: remaining, status: remaining < 0 ? "expired" : remaining === 0 ? "expires_today" : "expiring" };
+    });
 
     // الخروج والعودة — travellers still out whose expected return is within
     // one week (or already overdue).
-    const in7Str = new Date(today.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+    const in7Str = new Date(dateOnlyMs(todayStr) + 7 * 86400000).toISOString().slice(0, 10);
     const upcomingReturns = await db.select({
       id: employeeTravelsTable.id,
       employeeId: employeeTravelsTable.employeeId,
@@ -251,7 +287,8 @@ router.get("/alerts", async (req, res) => {
       expiringContracts:   tag(expContracts, "endDate"),
       expiringPassports:   tag(expPassports, "passportExpiry"),
       expiringWorkPermits: tag(expWorkPermits, "workPermitExpiry"),
-      thresholds: { iqama: days("iqama"), contract: days("contract"), passport: days("passport"), workPermit: days("workPermit") },
+      expiringMedicalInsurance: insuranceTag(expMedicalInsurance),
+      thresholds: { iqama: days("iqama"), contract: days("contract"), passport: days("passport"), workPermit: days("workPermit"), medicalInsurance: days("medicalInsurance"), vehicleInsurance: days("vehicleInsurance") },
       todayStr, in90Str,
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }

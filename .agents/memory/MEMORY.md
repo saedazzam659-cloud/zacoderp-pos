@@ -141,3 +141,4 @@
 - [Item-card balance source](item-card-balance-source.md) — use posted per-warehouse balances; never rebuild a date-filtered, cross-warehouse running total from zero.
 - [Safe tenant test fixtures](safe-tenant-test-fixtures.md) — browser/database tests must use owned disposable tenants and prove ownership before any cleanup.
 - [Demo analytics integrity](demo-analytics-integrity.md) — central telemetry uses finite server taxonomy plus verified agent identity and idempotent session/receipt updates.
+- [Materialized reminder lifecycle](materialized-reminder-lifecycle.md) — source-key dedupe prevents duplicates but not stale alerts; reconcile active keys and preserve receipts only for still-current rows.

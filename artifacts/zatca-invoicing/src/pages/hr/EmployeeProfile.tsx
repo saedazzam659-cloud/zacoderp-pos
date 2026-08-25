@@ -9,6 +9,7 @@ import { useRoute, Link } from "wouter";
 import { employeesApi } from "@/lib/employeesApi";
 import { hrCoreApi, type HrSubResource } from "@/lib/hrCoreApi";
 import { fmt2 } from "@/lib/format";
+import { getDaysRemaining } from "@/lib/dateUtils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
@@ -25,7 +26,7 @@ import { DateField } from "@/components/ui/date-field";
 import {
   ArrowRight, Plus, Trash2, Pencil, UserRound, Wallet, ArrowLeftRight, Star,
   PhoneCall, Users, GraduationCap, BadgeCheck, FolderOpen, History, DoorOpen,
-  FileSignature, CalendarDays, Package, CheckCircle2, Camera, ImagePlus, Loader2,
+  FileSignature, CalendarDays, Package, CheckCircle2, Camera, ImagePlus, Loader2, Shield
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -755,9 +756,144 @@ function HistoryTab({ empId, cid }: { empId: number; cid?: number }) {
   );
 }
 
+// ─── تبويب التأمين الطبي ───────────────────────────────────────────────────────
+function MedicalInsuranceTab({ empId, cid }: { empId: number; cid?: number }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { t } = useTranslation();
+  const tr = (k: string, opts?: any) => t(`hrPages.insurance.${k}`, opts) as string;
+  const q = useQuery({ queryKey: ["hr-core", empId, "medical-insurance"], queryFn: () => hrCoreApi.sub(empId, "medical-insurance") });
+  const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [form, setForm] = useState<any>({});
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["hr-core", empId, "medical-insurance"] });
+
+  const saveMut = useMutation({
+    mutationFn: (d: any) => editId ? hrCoreApi.updateSub(empId, "medical-insurance", editId, d) : hrCoreApi.addSub(empId, "medical-insurance", d),
+    onSuccess: () => { invalidate(); setOpen(false); toast({ title: t("common.savedToast.saved") }); },
+    onError: (e: any) => toast({ title: t("common.errorTitle"), description: String(e.message ?? e), variant: "destructive" }),
+  });
+  const delMut = useMutation({
+    mutationFn: (id: number) => hrCoreApi.deleteSub(empId, "medical-insurance", id),
+    onSuccess: () => { invalidate(); toast({ title: t("common.deleted") }); },
+    onError: (e: any) => toast({ title: t("common.errorTitle"), description: String(e.message ?? e), variant: "destructive" }),
+  });
+
+  const rows = (q.data ?? []) as any[];
+
+  const sorted = [...rows].sort((a, b) => new Date(b.endDate || "2099").getTime() - new Date(a.endDate || "2099").getTime());
+  const activePolicy = sorted.find(r => {
+    const days = getDaysRemaining(r.endDate);
+    return days !== null && days >= 0;
+  });
+
+  const columns = useMemo<GridColumn<any>[]>(() => [
+    { key: "policyNumber", label: tr("policyNumber"), type: "text", value: r => r.policyNumber ?? "" },
+    { key: "insuranceCompany", label: tr("insuranceCompany"), type: "text", value: r => r.insuranceCompany ?? "" },
+    { key: "coverageDetails", label: tr("coverageDetails"), type: "text", value: r => r.coverageDetails ?? "" },
+    { key: "startDate", label: tr("startDate"), type: "text", value: r => r.startDate ?? "" },
+    { key: "endDate", label: tr("endDate"), type: "text", value: r => r.endDate ?? "" },
+    {
+      key: "status", label: tr("insuranceStatus"), type: "none", align: "center", value: r => r.endDate,
+      render: r => {
+        if (!r.endDate) return <span className="text-muted-foreground">—</span>;
+        const days = getDaysRemaining(r.endDate);
+        if (days === null) return null;
+        if (days < 0) return <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200">{tr("insuranceExpired", { days: Math.abs(days) })}</Badge>;
+        if (days <= 30) return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">{tr("insuranceExpiring", { days })}</Badge>;
+        return <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">{tr("insuranceActive", { days })}</Badge>;
+      }
+    },
+    actionsCol(r => (
+      <div className="flex gap-1 justify-center">
+        <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={t("common.edit")} title={t("common.edit")} onClick={() => { setEditId(r.id); setForm(r); setOpen(true); }}><Pencil className="h-3.5 w-3.5" /></Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" aria-label={t("common.delete")} title={t("common.delete")} onClick={() => { if (confirm(t("common.deleteConfirm"))) delMut.mutate(r.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+      </div>
+    ))
+  ], [t, tr, delMut]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="font-semibold text-sm flex items-center gap-2"><Shield className="h-4 w-4" />{tr("medicalInsuranceTab")}</h3>
+        <Button size="sm" onClick={() => { setEditId(null); setForm({}); setOpen(true); }}><Plus className="h-4 w-4 ms-1" />{tr("addInsurance")}</Button>
+      </div>
+
+      {q.isLoading ? <Skeleton className="h-32 w-full" /> : q.isError ? (
+        <div className="text-rose-600 text-sm p-4 border border-rose-200 bg-rose-50 rounded-lg">{t("common.errorTitle")}</div>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center p-8 border rounded-lg bg-muted/20 text-muted-foreground">
+          <Shield className="h-12 w-12 text-muted mb-2 opacity-50" />
+          <p className="text-sm font-medium">{tr("noMedicalInsurance")}</p>
+          <p className="text-xs">{tr("addInsuranceToRegister")}</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {activePolicy && (
+            <div className="border border-emerald-200 bg-emerald-50/50 rounded-lg p-4 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-full shrink-0">
+                  <Shield className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-emerald-900">{activePolicy.insuranceCompany}</h4>
+                  <div className="text-xs text-emerald-700 flex flex-wrap gap-2 mt-1">
+                    <span dir="ltr">{tr("policy")} {activePolicy.policyNumber}</span>
+                    <span>• {tr("coverageDetails")}: {activePolicy.coverageDetails || "—"}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                {(() => {
+                  const days = getDaysRemaining(activePolicy.endDate) ?? 0;
+                  return (
+                    <>
+                      <Badge className={days <= 30 ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-emerald-500 hover:bg-emerald-600 text-white"}>
+                        {days <= 30 ? tr("insuranceExpiring", { days }) : tr("insuranceActive", { days })}
+                      </Badge>
+                      <span className="text-xs text-emerald-800">{tr("validUntil")} {activePolicy.endDate}</span>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          <AdvancedReportGrid slug="hrEmp_medicalInsurance" cid={cid} rows={rows} rowKey={(r:any)=>r.id} columns={columns} unitLabel={tr("policy")} emptyMessage={t("common.noResults")} />
+        </div>
+      )}
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>{editId ? tr("editMedicalInsurance") : tr("addMedicalInsurance")}</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs text-muted-foreground block mb-1">{tr("policyNumber")} *</label><Input dir="ltr" value={form.policyNumber ?? ""} onChange={e => setForm((p:any)=>({...p, policyNumber: e.target.value}))} /></div>
+            <div><label className="text-xs text-muted-foreground block mb-1">{tr("insuranceCompany")} *</label><Input value={form.insuranceCompany ?? ""} onChange={e => setForm((p:any)=>({...p, insuranceCompany: e.target.value}))} /></div>
+            <div className="col-span-2"><label className="text-xs text-muted-foreground block mb-1">{tr("coverageDetails")}</label><Input value={form.coverageDetails ?? ""} onChange={e => setForm((p:any)=>({...p, coverageDetails: e.target.value}))} /></div>
+            <div><label className="text-xs text-muted-foreground block mb-1">{tr("startDate")} *</label><DateField value={form.startDate ?? ""} onChange={e => setForm((p:any)=>({...p, startDate: e.target.value}))} /></div>
+            <div><label className="text-xs text-muted-foreground block mb-1">{tr("endDate")} *</label><DateField value={form.endDate ?? ""} onChange={e => setForm((p:any)=>({...p, endDate: e.target.value}))} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={() => {
+              if (!form.policyNumber || !form.insuranceCompany || !form.startDate || !form.endDate) {
+                toast({ title: tr("fillRequiredFields"), variant: "destructive" }); return;
+              }
+              if (form.startDate > form.endDate) {
+                toast({ title: t("common.validationError"), description: tr("dateOrderError"), variant: "destructive" }); return;
+              }
+              saveMut.mutate(form);
+            }} disabled={saveMut.isPending}>{t("common.save")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 // ─── الصفحة الرئيسية ─────────────────────────────────────────────────────────
 export default function EmployeeProfile() {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
   const [, params] = useRoute("/hr/employees/:id/profile");
   const empId = Number(params?.id);
   const { user, token } = useAuth();
@@ -814,6 +950,7 @@ export default function EmployeeProfile() {
           <TabsTrigger value="evaluations"><Star className="h-3.5 w-3.5 ms-1" />التقييمات</TabsTrigger>
           <TabsTrigger value="emergency-contacts"><PhoneCall className="h-3.5 w-3.5 ms-1" />الطوارئ</TabsTrigger>
           <TabsTrigger value="dependents"><Users className="h-3.5 w-3.5 ms-1" />الأسرة</TabsTrigger>
+          <TabsTrigger value="medical-insurance"><Shield className="h-3.5 w-3.5 ms-1" />{t("hrPages.insurance.medicalInsuranceTab")}</TabsTrigger>
           <TabsTrigger value="qualifications"><GraduationCap className="h-3.5 w-3.5 ms-1" />المؤهلات</TabsTrigger>
           <TabsTrigger value="certificates"><BadgeCheck className="h-3.5 w-3.5 ms-1" />الشهادات</TabsTrigger>
           <TabsTrigger value="documents"><FolderOpen className="h-3.5 w-3.5 ms-1" />المستندات</TabsTrigger>
@@ -846,6 +983,7 @@ export default function EmployeeProfile() {
         {(["evaluations", "emergency-contacts", "dependents", "qualifications", "certificates", "documents"] as HrSubResource[]).map(k => (
           <TabsContent key={k} value={k} className="mt-4"><SubTab empId={empId} subKey={k} cid={cid} companyName={companyName} /></TabsContent>
         ))}
+        <TabsContent value="medical-insurance" className="mt-4"><MedicalInsuranceTab empId={empId} cid={cid} /></TabsContent>
         <TabsContent value="history" className="mt-4"><HistoryTab empId={empId} cid={cid} /></TabsContent>
         <TabsContent value="termination" className="mt-4"><TerminationTab empId={empId} /></TabsContent>
       </Tabs>

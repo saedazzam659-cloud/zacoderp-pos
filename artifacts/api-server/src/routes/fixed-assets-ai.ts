@@ -152,17 +152,34 @@ router.get("/forecast", async (req, res) => {
 router.get("/alerts", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
-    const assets = await db.select().from(fixedAssetsTable)
-      .where(eq(fixedAssetsTable.companyId, cid));
-    const today = new Date();
+    const [assets, company] = await Promise.all([
+      db.select().from(fixedAssetsTable).where(eq(fixedAssetsTable.companyId, cid)),
+      db.select({ thresholds: companiesTable.hrAlertThresholds }).from(companiesTable)
+        .where(eq(companiesTable.id, cid)).then((rows) => rows[0]),
+    ]);
+    const configuredThreshold = Number((company?.thresholds as any)?.vehicleInsurance);
+    const vehicleInsuranceThreshold = Number.isFinite(configuredThreshold) && configuredThreshold >= 1 && configuredThreshold <= 3650
+      ? Math.round(configuredThreshold) : 60;
+    const todayStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    const dateOnlyMs = (date: string) => Date.UTC(
+      Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)),
+    );
     const insuranceAlerts = assets
       .filter(a => a.insuranceEnd)
       .map(a => {
-        const end = new Date(a.insuranceEnd!);
-        const daysLeft = Math.ceil((end.getTime() - today.getTime()) / 86_400_000);
-        return { id: a.id, code: a.code, nameAr: a.nameAr, insuranceEnd: a.insuranceEnd, daysLeft };
+        const daysLeft = Math.round((dateOnlyMs(a.insuranceEnd!) - dateOnlyMs(todayStr)) / 86_400_000);
+        const status = daysLeft < 0 ? "expired" : daysLeft === 0 ? "expires_today" : "expiring";
+        return {
+          id: a.id, code: a.code, nameAr: a.nameAr,
+          insuranceCompany: a.insuranceCompany, insurancePolicyNo: a.insurancePolicyNo,
+          insuranceCoverage: a.insuranceCoverage,
+          insuranceStart: a.insuranceStart, insuranceEnd: a.insuranceEnd,
+          daysLeft, status,
+        };
       })
-      .filter(x => x.daysLeft <= 60)
+      .filter(x => x.daysLeft <= vehicleInsuranceThreshold)
       .sort((a, b) => a.daysLeft - b.daysLeft);
     const maintAll = await db.select().from(faMaintenanceTable)
       .where(eq(faMaintenanceTable.companyId, cid));
@@ -175,12 +192,12 @@ router.get("/alerts", async (req, res) => {
       .filter(a => a.status === "active")
       .map(a => {
         const last = lastByAsset[a.id];
-        const dueDays = last ? Math.floor((today.getTime() - new Date(last).getTime()) / 86_400_000) : 9999;
+        const dueDays = last ? Math.floor((dateOnlyMs(todayStr) - dateOnlyMs(last)) / 86_400_000) : 9999;
         return { id: a.id, code: a.code, nameAr: a.nameAr, lastService: last, daysSinceLast: dueDays };
       })
       .filter(x => x.daysSinceLast >= 180)
       .sort((a, b) => b.daysSinceLast - a.daysSinceLast);
-    res.json({ insuranceAlerts, maintenanceAlerts: maintAlerts });
+    res.json({ insuranceAlerts, maintenanceAlerts: maintAlerts, thresholds: { vehicleInsurance: vehicleInsuranceThreshold } });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

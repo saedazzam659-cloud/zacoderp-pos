@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -15,7 +16,7 @@ type AnalyzedAsset = {
   totalMaintenanceCost: number; bookValue: number;
 };
 type AlertItem = {
-  insuranceAlerts: { id:number; code:string; nameAr:string; insuranceEnd:string|null; daysLeft:number }[];
+  insuranceAlerts: { id:number; code:string; nameAr:string; insuranceEnd:string|null; daysLeft:number; insuranceCompany?:string|null; insurancePolicyNo?:string|null; insuranceCoverage?:string|null }[];
   maintenanceAlerts: { id:number; code:string; nameAr:string; lastService:string|null; daysSinceLast:number }[];
 };
 type Forecast = { months: number; series: { period: string; depreciation: number }[] };
@@ -31,6 +32,7 @@ const RECOMMEND_BADGE: Record<string,string> = {
 };
 
 export default function FaAI() {
+  const { t, i18n } = useTranslation();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -79,7 +81,7 @@ export default function FaAI() {
   const items = analyzeMut.data?.items ?? [];
 
   return (
-    <div className="space-y-4 p-4" dir="rtl">
+    <div className="space-y-4 p-4" dir={i18n.dir()}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -125,12 +127,17 @@ export default function FaAI() {
             {!alerts?.insuranceAlerts.length && <div className="text-center text-muted-foreground py-4">لا توجد تنبيهات</div>}
             {alerts?.insuranceAlerts.map(a => (
               <div key={a.id} className={`flex items-center justify-between border-b py-2 text-sm ${a.daysLeft < 0 ? "text-rose-700" : a.daysLeft < 14 ? "text-amber-700" : ""}`}>
-                <div>
+                <div className="space-y-1">
                   <div className="font-semibold">{a.code} — {a.nameAr}</div>
-                  <div className="text-xs text-muted-foreground">ينتهي: {a.insuranceEnd}</div>
+                  <div className="text-xs text-muted-foreground flex flex-wrap gap-2">
+                    <span>{t("hrPages.insurance.endsOn")} {a.insuranceEnd}</span>
+                    {a.insuranceCompany && <span>• {a.insuranceCompany}</span>}
+                    {a.insurancePolicyNo && <span>• {t("hrPages.insurance.policy")} {a.insurancePolicyNo}</span>}
+                  </div>
+                  {a.insuranceCoverage && <div className="text-xs text-muted-foreground opacity-80">{a.insuranceCoverage}</div>}
                 </div>
-                <div className="font-mono font-bold">
-                  {a.daysLeft < 0 ? `منتهية منذ ${Math.abs(a.daysLeft)} يوم` : `${a.daysLeft} يوم`}
+                <div className="font-mono font-bold whitespace-nowrap ms-2">
+                  {a.daysLeft < 0 ? t("hrPages.insurance.insuranceExpired", { days: Math.abs(a.daysLeft) }) : t("hrPages.insurance.insuranceDaysLeft", { days: a.daysLeft })}
                 </div>
               </div>
             ))}
@@ -188,7 +195,7 @@ export default function FaAI() {
             نتائج التحليل ({items.length} أصل) — مرتبة من الأعلى مخاطرة
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs" dir="rtl">
+            <table className="w-full text-xs" dir={i18n.dir()}>
               <thead className="bg-gradient-to-b from-pink-50 to-pink-100 text-pink-900 border-b">
                 <tr>
                   <th className="px-3 py-2 text-start font-semibold">الكود</th>

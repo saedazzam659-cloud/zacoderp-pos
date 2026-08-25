@@ -22,7 +22,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export type HrSubResource =
   | "emergency-contacts" | "dependents" | "qualifications"
-  | "certificates" | "documents" | "evaluations";
+  | "certificates" | "documents" | "evaluations" | "medical-insurance";
 
 export const hrCoreApi = {
   // الهيكل التنظيمي

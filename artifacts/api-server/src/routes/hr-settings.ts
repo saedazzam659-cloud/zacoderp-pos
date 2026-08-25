@@ -9,16 +9,21 @@ const router = Router();
 router.use(extractAuth);
 
 // Clamp each lead time to 1–3650 days; unknown keys dropped, bad values → 90.
-function sanitizeAlertThresholds(raw: any): { iqama: number; contract: number; passport: number; workPermit: number } {
-  const clamp = (v: any) => {
+function sanitizeAlertThresholds(raw: any, previous: any = {}): {
+  iqama: number; contract: number; passport: number; workPermit: number;
+  medicalInsurance: number; vehicleInsurance: number;
+} {
+  const clamp = (v: any, fallback = 90) => {
     const n = Math.round(Number(v));
-    return Number.isFinite(n) && n >= 1 && n <= 3650 ? n : 90;
+    return Number.isFinite(n) && n >= 1 && n <= 3650 ? n : fallback;
   };
   return {
-    iqama:      clamp(raw?.iqama),
-    contract:   clamp(raw?.contract),
-    passport:   clamp(raw?.passport),
-    workPermit: clamp(raw?.workPermit),
+    iqama:      clamp(raw?.iqama ?? previous?.iqama),
+    contract:   clamp(raw?.contract ?? previous?.contract),
+    passport:   clamp(raw?.passport ?? previous?.passport),
+    workPermit: clamp(raw?.workPermit ?? previous?.workPermit),
+    medicalInsurance: clamp(raw?.medicalInsurance ?? previous?.medicalInsurance),
+    vehicleInsurance: clamp(raw?.vehicleInsurance ?? previous?.vehicleInsurance, 60),
   };
 }
 
@@ -67,6 +72,8 @@ router.get("/", async (req, res) => {
         contract:   (company?.hrAlertThresholds as any)?.contract   ?? 90,
         passport:   (company?.hrAlertThresholds as any)?.passport   ?? 90,
         workPermit: (company?.hrAlertThresholds as any)?.workPermit ?? 90,
+        medicalInsurance: (company?.hrAlertThresholds as any)?.medicalInsurance ?? 90,
+        vehicleInsurance: (company?.hrAlertThresholds as any)?.vehicleInsurance ?? 60,
       },
       accounts: allAccounts,
       cashBoxes,
@@ -103,7 +110,9 @@ router.put("/", async (req, res) => {
       });
     }
     if (req.body?.alertThresholds !== undefined) {
-      set.hrAlertThresholds = sanitizeAlertThresholds(req.body.alertThresholds);
+      const [company] = await db.select({ thresholds: companiesTable.hrAlertThresholds })
+        .from(companiesTable).where(eq(companiesTable.id, cid));
+      set.hrAlertThresholds = sanitizeAlertThresholds(req.body.alertThresholds, company?.thresholds);
     }
     await db.update(companiesTable).set(set).where(eq(companiesTable.id, cid));
     res.json({ ok: true });

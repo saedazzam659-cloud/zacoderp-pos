@@ -2,9 +2,9 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   notificationsTable, notificationReadsTable, notificationDismissalsTable,
-  companiesTable,
+  companiesTable, employeesTable, employeeMedicalInsurancePoliciesTable, fixedAssetsTable,
 } from "@workspace/db";
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql } from "drizzle-orm";
 import { extractAuth } from "../middleware/auth.js";
 import { findUnbalancedOpeningDrafts } from "../lib/openingBalances.js";
 
@@ -54,6 +54,17 @@ function cairoNowParts(): { date: string; minutes: number } {
   };
 }
 
+function saudiBusinessDate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
+
+function addDateOnlyDays(date: string, days: number): string {
+  const ms = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)));
+  return new Date(ms + days * 86_400_000).toISOString().slice(0, 10);
+}
+
 // Materialize due reminders lazily when users poll the bell. This keeps the
 // schedule durable and idempotent without depending on a process-local timer.
 async function ensureOpeningBalanceReminders(companyId: number | null | undefined): Promise<void> {
@@ -94,12 +105,113 @@ async function ensureOpeningBalanceReminders(companyId: number | null | undefine
   }))).onConflictDoNothing();
 }
 
+// Insurance alerts are materialized only while the notification bell is read.
+// A stable source key tied to the entity and end date makes this safe under
+// concurrent polling and allows a renewed policy to produce a new reminder.
+async function ensureInsuranceExpiryNotifications(companyId: number | null | undefined): Promise<void> {
+  if (!companyId) return;
+  const [company] = await db.select({ thresholds: companiesTable.hrAlertThresholds })
+    .from(companiesTable).where(eq(companiesTable.id, companyId));
+  const thresholds = (company?.thresholds ?? {}) as Record<string, unknown>;
+  const threshold = (key: string, fallback: number) => {
+    const value = Number(thresholds[key]);
+    return Number.isFinite(value) && value >= 1 && value <= 3650 ? Math.round(value) : fallback;
+  };
+  const today = saudiBusinessDate();
+  const horizon = (days: number) => addDateOnlyDays(today, days);
+  const [medicalPolicies, vehicleAssets] = await Promise.all([
+    db.select({
+      id: employeeMedicalInsurancePoliciesTable.id,
+      employeeId: employeeMedicalInsurancePoliciesTable.employeeId,
+      policyNumber: employeeMedicalInsurancePoliciesTable.policyNumber,
+      insuranceCompany: employeeMedicalInsurancePoliciesTable.insuranceCompany,
+      endDate: employeeMedicalInsurancePoliciesTable.endDate,
+      employeeName: employeesTable.nameAr,
+    }).from(employeeMedicalInsurancePoliciesTable)
+      .innerJoin(employeesTable, eq(employeesTable.id, employeeMedicalInsurancePoliciesTable.employeeId))
+      .where(and(
+        eq(employeeMedicalInsurancePoliciesTable.companyId, companyId),
+        eq(employeesTable.companyId, companyId),
+        eq(employeesTable.status, "active"),
+        isNotNull(employeeMedicalInsurancePoliciesTable.endDate),
+      )).orderBy(desc(employeeMedicalInsurancePoliciesTable.endDate)),
+    db.select({
+      id: fixedAssetsTable.id,
+      code: fixedAssetsTable.code,
+      nameAr: fixedAssetsTable.nameAr,
+      insuranceCompany: fixedAssetsTable.insuranceCompany,
+      insuranceEnd: fixedAssetsTable.insuranceEnd,
+    }).from(fixedAssetsTable).where(and(
+      eq(fixedAssetsTable.companyId, companyId),
+      isNotNull(fixedAssetsTable.insuranceEnd),
+      lte(fixedAssetsTable.insuranceEnd, horizon(threshold("vehicleInsurance", 60))),
+    )),
+  ]);
+  const latestMedicalPolicies = new Map<number, any>();
+  for (const policy of medicalPolicies) {
+    if (!latestMedicalPolicies.has(policy.employeeId)) latestMedicalPolicies.set(policy.employeeId, policy);
+  }
+  const currentMedicalPolicies = [...latestMedicalPolicies.values()]
+    .filter((policy) => policy.endDate <= horizon(threshold("medicalInsurance", 90)));
+  const rows = [
+    ...currentMedicalPolicies.map((policy) => ({
+      companyId,
+      userId: null,
+      title: "تنبيه انتهاء التأمين الطبي",
+      body: `وثيقة ${policy.policyNumber} للموظف ${policy.employeeName} لدى ${policy.insuranceCompany} تنتهي في ${policy.endDate}.`,
+      severity: "high",
+      category: "medical_insurance_expiry",
+      sourceKey: `medical_insurance_expiry:${policy.id}:${policy.endDate}`,
+    })),
+    ...vehicleAssets.map((asset) => ({
+      companyId,
+      userId: null,
+      title: "تنبيه انتهاء تأمين الأصل",
+      body: `تأمين الأصل ${asset.code} (${asset.nameAr}) لدى ${asset.insuranceCompany ?? "شركة التأمين"} ينتهي في ${asset.insuranceEnd}.`,
+      severity: "high",
+      category: "vehicle_insurance_expiry",
+      sourceKey: `vehicle_insurance_expiry:${asset.id}:${asset.insuranceEnd}`,
+    })),
+  ];
+  const categories = ["medical_insurance_expiry", "vehicle_insurance_expiry"];
+  const activeSourceKeys = rows.map((row) => row.sourceKey);
+
+  // A renewal, corrected end date, deleted policy, or removed insurance must
+  // retract its old high-severity reminder instead of leaving false alerts in
+  // the bell forever. Read/dismiss receipts cascade with only the stale row.
+  await db.delete(notificationsTable).where(and(
+    eq(notificationsTable.companyId, companyId),
+    inArray(notificationsTable.category, categories),
+    isNotNull(notificationsTable.sourceKey),
+    ...(activeSourceKeys.length
+      ? [notInArray(notificationsTable.sourceKey, activeSourceKeys)]
+      : []),
+  ));
+
+  if (!rows.length) return;
+  await db.insert(notificationsTable).values(rows).onConflictDoNothing();
+
+  // The source key intentionally stays stable when only descriptive fields
+  // change. Refresh those fields without replacing the notification row, so
+  // existing per-user read/dismiss state remains intact.
+  await Promise.all(rows.map((row) => db.update(notificationsTable).set({
+    title: row.title,
+    body: row.body,
+    severity: row.severity,
+    category: row.category,
+  }).where(and(
+    eq(notificationsTable.companyId, companyId),
+    eq(notificationsTable.sourceKey, row.sourceKey),
+  ))));
+}
+
 // GET /api/notifications  ?unread=1
 //   Returns notifications visible to the current user with a per-user is_read
 //   flag computed from the notification_reads table (broadcast-safe).
 router.get("/", async (req, res) => {
   try {
     await ensureOpeningBalanceReminders(req.authUser!.companyId);
+    await ensureInsuranceExpiryNotifications(req.authUser!.companyId);
     const userId = req.authUser!.id;
     const onlyUnread = req.query.unread === "1";
 
@@ -146,6 +258,7 @@ router.get("/", async (req, res) => {
 router.get("/unread-count", async (req, res) => {
   try {
     await ensureOpeningBalanceReminders(req.authUser!.companyId);
+    await ensureInsuranceExpiryNotifications(req.authUser!.companyId);
     const userId = req.authUser!.id;
     const result = await db.execute(sql`
       SELECT COUNT(*)::int AS c

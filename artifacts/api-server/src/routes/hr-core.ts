@@ -22,6 +22,7 @@ import {
   employeeDependentsTable,
   employeeQualificationsTable,
   employeeCertificatesTable,
+  employeeMedicalInsurancePoliciesTable,
   employeeDocumentsTable,
   employeeHistoryTable,
   employeeTerminationsTable,
@@ -57,6 +58,11 @@ const N = (v: any) => (v == null || v === "" ? null : v);
 const num = (v: any): number => Number(v ?? 0) || 0;
 const uid = (req: any): number | null => req.authUser?.id ?? null;
 const isoDate = (v: unknown) => typeof v === "string" && /^\d{4}-\d\d-\d\d$/.test(v) ? v : "";
+const validIsoDate = (v: unknown) => {
+  if (typeof v !== "string" || !/^\d{4}-\d\d-\d\d$/.test(v)) return false;
+  const date = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === v;
+};
 const todayIso = () => new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit",
 }).format(new Date());
@@ -179,6 +185,7 @@ const SUBRESOURCES: Record<string, {
   build: (b: any) => Record<string, any>;
   historyEvent?: string;                  // append to employee_history on create
   historyDate?: (b: any) => string;
+  validate?: (values: Record<string, any>) => string | null;
 }> = {
   "emergency-contacts": {
     table: employeeEmergencyContactsTable,
@@ -209,6 +216,27 @@ const SUBRESOURCES: Record<string, {
       issueDate: N(b.issueDate), expiryDate: N(b.expiryDate),
       attachmentUrl: N(b.attachmentUrl), notes: N(b.notes),
     }),
+  },
+  "medical-insurance": {
+    table: employeeMedicalInsurancePoliciesTable,
+    build: (b) => ({
+      policyNumber: String(b.policyNumber ?? "").trim(),
+      insuranceCompany: String(b.insuranceCompany ?? "").trim(),
+      coverageDetails: N(b.coverageDetails),
+      startDate: N(b.startDate),
+      endDate: N(b.endDate),
+    }),
+    validate: (values) => {
+      if (!values.policyNumber || !values.insuranceCompany) return "رقم الوثيقة وشركة التأمين مطلوبان";
+      if (!values.startDate || !values.endDate) return "تاريخا بداية وانتهاء التأمين مطلوبان";
+      for (const key of ["startDate", "endDate"]) {
+        if (values[key] != null && !validIsoDate(values[key])) return "صيغة التاريخ يجب أن تكون YYYY-MM-DD";
+      }
+      if (values.startDate && values.endDate && values.endDate < values.startDate) {
+        return "تاريخ الانتهاء يجب أن يكون بعد أو مساوياً لتاريخ البدء";
+      }
+      return null;
+    },
   },
   "documents": {
     table: employeeDocumentsTable,
@@ -253,11 +281,13 @@ for (const [key, cfg] of Object.entries(SUBRESOURCES)) {
       if (typeof vals[requiredKey] === "string" && !vals[requiredKey]) {
         return res.status(400).json({ error: "الحقل الأساسي مطلوب" });
       }
+      const validationError = cfg.validate?.(vals);
+      if (validationError) return res.status(400).json({ error: validationError });
       const row = await db.transaction(async (dx) => {
-        const [r] = await dx.insert(cfg.table).values({
+        const r = ((await dx.insert(cfg.table).values({
           companyId: cid, employeeId, ...vals,
           ...("createdBy" in cfg.table ? { createdBy: uid(req) } : {}),
-        }).returning();
+        }).returning()) as any[])[0];
         if (cfg.historyEvent) {
           await logHistory(dx, {
             companyId: cid, employeeId, eventType: cfg.historyEvent,
@@ -273,11 +303,26 @@ for (const [key, cfg] of Object.entries(SUBRESOURCES)) {
   router.put(`/employees/:employeeId/${key}/:id`, async (req, res) => {
     try {
       const cid = guard(req, res); if (!cid) return;
-      const [row] = await db.update(cfg.table).set(cfg.build(req.body))
+      const employeeId = Number(req.params.employeeId);
+      // Merge against the scoped row before validating so a partial update
+      // cannot bypass the required fields or reverse an existing date range.
+      const current = (await db.select().from(cfg.table).where(and(
+        eq(cfg.table.id, Number(req.params.id)),
+        eq(cfg.table.companyId, cid),
+        eq(cfg.table.employeeId, employeeId),
+      )) as any[])[0];
+      if (!current) return res.status(404).json({ error: "غير موجود" });
+      const values = cfg.build({ ...current, ...req.body });
+      const validationError = cfg.validate?.(values);
+      if (validationError) return res.status(400).json({ error: validationError });
+      const [row] = await db.update(cfg.table).set({
+        ...values,
+        ...("updatedAt" in cfg.table ? { updatedAt: new Date() } : {}),
+      })
         .where(and(
           eq(cfg.table.id, Number(req.params.id)),
           eq(cfg.table.companyId, cid),
-          eq(cfg.table.employeeId, Number(req.params.employeeId)),
+          eq(cfg.table.employeeId, employeeId),
         )).returning();
       if (!row) return res.status(404).json({ error: "غير موجود" });
       res.json(row);
@@ -286,12 +331,12 @@ for (const [key, cfg] of Object.entries(SUBRESOURCES)) {
   router.delete(`/employees/:employeeId/${key}/:id`, async (req, res) => {
     try {
       const cid = guard(req, res); if (!cid) return;
-      const [row] = await db.delete(cfg.table)
+      const row = ((await db.delete(cfg.table)
         .where(and(
           eq(cfg.table.id, Number(req.params.id)),
           eq(cfg.table.companyId, cid),
           eq(cfg.table.employeeId, Number(req.params.employeeId)),
-        )).returning();
+        )).returning()) as any[])[0];
       if (!row) return res.status(404).json({ error: "غير موجود" });
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }

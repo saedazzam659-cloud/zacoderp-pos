@@ -899,6 +899,22 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
         notes TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )` },
+    { label: "create employee_medical_insurance_policies table",
+      sql: `CREATE TABLE IF NOT EXISTS employee_medical_insurance_policies (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id),
+        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        policy_number TEXT NOT NULL,
+        insurance_company TEXT NOT NULL,
+        coverage_details TEXT,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "employee_medical_insurance_policies_company_employee_idx",
+      sql: `CREATE INDEX IF NOT EXISTS employee_medical_insurance_policies_company_employee_idx
+            ON employee_medical_insurance_policies (company_id, employee_id)` },
     { label: "create employee_documents table",
       sql: `CREATE TABLE IF NOT EXISTS employee_documents (
         id SERIAL PRIMARY KEY,
@@ -2034,6 +2050,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS price_includes_vat BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "fixed_assets add is_opening_balance",
       sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS is_opening_balance BOOLEAN NOT NULL DEFAULT FALSE` },
+    { label: "fixed_assets add insurance_coverage",
+      sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS insurance_coverage TEXT` },
     // Source linkage (create-asset-from-purchase-invoice / from-JE): one LIVE
     // asset per (company, source doc, line). sold/scrapped excluded so a
     // disposed asset can be re-created from the same source if needed.

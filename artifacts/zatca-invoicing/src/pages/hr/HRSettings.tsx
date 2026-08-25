@@ -5,6 +5,7 @@ import { employeesApi } from "@/lib/employeesApi";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Settings2, Save, Loader2, Sparkles, Info } from "lucide-react";
@@ -36,13 +37,15 @@ export default function HRSettings() {
 
   const { data, isLoading } = useQuery<any>({ queryKey: ["hr-settings"], queryFn: () => employeesApi.hrSettings() });
   const [mapping, setMapping] = useState<any>({});
+  const [alertThresholds, setAlertThresholds] = useState<any>({});
 
   useEffect(() => {
     if (data?.mapping) setMapping(data.mapping);
+    if (data?.alertThresholds) setAlertThresholds(data.alertThresholds);
   }, [data]);
 
   const save = useMutation({
-    mutationFn: () => employeesApi.updateHrSettings(mapping),
+    mutationFn: () => employeesApi.updateHrSettings(mapping, alertThresholds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["hr-settings"] });
       toast({ title: tr("toastSavedTitle"), description: tr("toastSavedDesc") });
@@ -143,6 +146,40 @@ export default function HRSettings() {
               value={mapping.defaultPayBankAccountId ? String(mapping.defaultPayBankAccountId) : ""}
               onValueChange={(v) => setMapping({ ...mapping, defaultPayBankAccountId: v ? Number(v) : null })}
               placeholder={tr("defaultsNone")}
+              className="w-full"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border bg-card p-3 space-y-3">
+        <div className="text-sm font-semibold">{tr("thresholdsTitle")}</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-sm font-medium">{tr("fldMedicalInsurance")}</label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              dir="ltr"
+              value={alertThresholds.medicalInsurance ?? 90}
+              onChange={(e) => {
+                const value = e.target.value.replace(/\D/g, "");
+                setAlertThresholds({ ...alertThresholds, medicalInsurance: value ? Number(value) : "" });
+              }}
+              className="w-full"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium">{tr("fldVehicleInsurance")}</label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              dir="ltr"
+              value={alertThresholds.vehicleInsurance ?? 60}
+              onChange={(e) => {
+                const value = e.target.value.replace(/\D/g, "");
+                setAlertThresholds({ ...alertThresholds, vehicleInsurance: value ? Number(value) : "" });
+              }}
               className="w-full"
             />
           </div>

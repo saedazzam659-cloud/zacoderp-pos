@@ -153,6 +153,7 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   // ── Insurance ────────────────────────────────────────────────
   insuranceCompany:    text("insurance_company"),
   insurancePolicyNo:   text("insurance_policy_no"),
+  insuranceCoverage:   text("insurance_coverage"),
   insuranceStart:      date("insurance_start"),
   insuranceEnd:        date("insurance_end"),
   insuranceValue:      numeric("insurance_value", { precision: 15, scale: 2 }).notNull().default("0"),

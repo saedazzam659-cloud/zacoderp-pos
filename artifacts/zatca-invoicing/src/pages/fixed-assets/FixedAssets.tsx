@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +21,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { employeesApi } from "@/lib/employeesApi";
 import DepreciationScheduleTimeline from "./DepreciationScheduleTimeline";
 import { fmt2 } from "@/lib/format";
+import { getDaysRemaining } from "@/lib/dateUtils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -42,6 +44,7 @@ type Asset = {
   accumAsOf: string | null;
   insuranceCompany: string | null; insurancePolicyNo: string | null;
   insuranceStart: string | null; insuranceEnd: string | null; insuranceValue: string;
+  insuranceCoverage?: string | null;
   custodianEmployeeId: number | null; location: string | null;
   riskLevel: string | null; aiRecommendation: string | null;
   qrPayload: string | null; notes: string | null;
@@ -73,12 +76,13 @@ const EMPTY = {
   vatRate:"15", priceIncludesVat:false,
   scrapValue:"0", depreciationStart:"",
   accumulatedDepreciation:"0", bookValue:"0", accumAsOf:"",
-  insuranceCompany:"", insurancePolicyNo:"",
+  insuranceCompany:"", insurancePolicyNo:"", insuranceCoverage: "",
   insuranceStart:"", insuranceEnd:"", insuranceValue:"0",
   custodianEmployeeId:"", location:"", notes:"",
 };
 
 export default function FixedAssets() {
+  const { t, i18n } = useTranslation();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -210,6 +214,7 @@ export default function FixedAssets() {
       accumAsOf:a.accumAsOf??"",
       bookValue:String(a.bookValue??"0"),
       insuranceCompany:a.insuranceCompany??"", insurancePolicyNo:a.insurancePolicyNo??"",
+      insuranceCoverage:a.insuranceCoverage??"",
       insuranceStart:a.insuranceStart??"", insuranceEnd:a.insuranceEnd??"",
       insuranceValue:String(a.insuranceValue??"0"),
       custodianEmployeeId:a.custodianEmployeeId?String(a.custodianEmployeeId):"",
@@ -423,7 +428,7 @@ export default function FixedAssets() {
     { id:"tech",         label:"بيانات فنية",        icon: Cog,           grad:"from-amber-500 to-amber-600",     text:"text-amber-700",    border:"border-amber-200" },
     { id:"tax",          label:"الضرائب",           icon: Receipt,       grad:"from-teal-500 to-teal-600",        text:"text-teal-700",    border:"border-teal-200" },
     { id:"depreciation", label:"الإهلاك",            icon: TrendingDown,  grad:"from-violet-500 to-violet-600",   text:"text-violet-700",   border:"border-violet-200" },
-    { id:"insurance",    label:"التأمين",            icon: Shield,        grad:"from-pink-500 to-pink-600",        text:"text-pink-700",    border:"border-pink-200" },
+    { id:"insurance",    label:t("hrPages.insurance.vehicleInsuranceTab"), icon: Shield,        grad:"from-pink-500 to-pink-600",        text:"text-pink-700",    border:"border-pink-200" },
     { id:"extra",        label:"إضافي / ملاحظات",   icon: FileText,      grad:"from-slate-500 to-slate-600",      text:"text-slate-700",   border:"border-slate-200" },
   ] as const;
 
@@ -447,6 +452,7 @@ export default function FixedAssets() {
         accumAsOf: form.accumAsOf || null,
         insuranceStart: form.insuranceStart || null,
         insuranceEnd:   form.insuranceEnd   || null,
+        insuranceCoverage: form.insuranceCoverage || null,
         supplierId:    form.supplierId    ? Number(form.supplierId)    : null,
         // Snapshot supplier name for display continuity
         supplierName:  sup ? (sup.nameAr ?? sup.nameEn ?? form.supplierName ?? null) : (form.supplierName || null),
@@ -513,7 +519,7 @@ export default function FixedAssets() {
   };
 
   return (
-    <div className="space-y-4 p-4" dir="rtl">
+    <div className="space-y-4 p-4" dir={i18n.dir()}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -1066,19 +1072,34 @@ export default function FixedAssets() {
             {activeTab === "insurance" && (
             <fieldset className="border border-pink-200 rounded-lg p-4 bg-pink-50/20">
               <legend className="px-2 text-sm font-bold text-pink-700 flex items-center gap-1">
-                <Shield className="h-4 w-4" /> بيانات التأمين
+                <Shield className="h-4 w-4" /> {t("hrPages.insurance.vehicleInsuranceDetails")}
               </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div><Label>شركة التأمين</Label>
+                <div><Label>{t("hrPages.insurance.insuranceCompany")}</Label>
                   <Input value={form.insuranceCompany} onChange={(e)=>setForm({...form,insuranceCompany:e.target.value})} /></div>
-                <div><Label>رقم الوثيقة</Label>
+                <div><Label>{t("hrPages.insurance.policyNumber")}</Label>
                   <Input value={form.insurancePolicyNo} onChange={(e)=>setForm({...form,insurancePolicyNo:e.target.value})} /></div>
-                <div><Label>قيمة التأمين</Label>
+                <div><Label>{t("hrPages.insurance.insuranceValue")}</Label>
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.insuranceValue} onChange={(e)=>setForm({...form,insuranceValue:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
-                <div><Label>تاريخ البداية</Label>
-                  <DateField value={form.insuranceStart} onChange={(e)=>setForm({...form,insuranceStart:e.target.value})} /></div>
-                <div><Label>تاريخ الانتهاء</Label>
-                  <DateField value={form.insuranceEnd} onChange={(e)=>setForm({...form,insuranceEnd:e.target.value})} /></div>
+                <div className="md:col-span-3"><Label>{t("hrPages.insurance.coverageDetails")}</Label>
+                  <Input value={form.insuranceCoverage} onChange={(e)=>setForm({...form,insuranceCoverage:e.target.value})} /></div>
+                <div><Label>{t("hrPages.insurance.startDate")}</Label>
+                  <DateField placeholder={i18n.language.startsWith("en") ? "DD/MM/YYYY" : "يوم/شهر/سنة"} value={form.insuranceStart} onChange={(e)=>setForm({...form,insuranceStart:e.target.value})} /></div>
+                <div><Label>{t("hrPages.insurance.endDate")}</Label>
+                  <DateField placeholder={i18n.language.startsWith("en") ? "DD/MM/YYYY" : "يوم/شهر/سنة"} value={form.insuranceEnd} onChange={(e)=>setForm({...form,insuranceEnd:e.target.value})} /></div>
+                {form.insuranceEnd && (
+                  <div><Label>{t("hrPages.insurance.insuranceStatus")}</Label>
+                    <div className="flex items-center gap-2 mt-2">
+                      {(() => {
+                        const days = getDaysRemaining(form.insuranceEnd);
+                        if (days === null) return null;
+                        if (days < 0) return <span className="inline-block px-2 py-0.5 text-xs font-semibold rounded-full bg-rose-100 text-rose-800">{t("hrPages.insurance.insuranceExpired", { days: Math.abs(days) })}</span>;
+                        if (days <= 30) return <span className="inline-block px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">{t("hrPages.insurance.insuranceExpiring", { days })}</span>;
+                        return <span className="inline-block px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">{t("hrPages.insurance.insuranceActive", { days })}</span>;
+                      })()}
+                    </div>
+                  </div>
+                )}
               </div>
             </fieldset>
             )}
