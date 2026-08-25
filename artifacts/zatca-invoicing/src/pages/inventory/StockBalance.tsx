@@ -87,11 +87,42 @@ export default function StockBalance() {
     },
   });
 
-  const filtered = rows.filter((r: any) => {
+  const matchingRows = rows.filter((r: any) => {
     const matchText = !search || r.item?.nameAr?.includes(search) || r.item?.nameEn?.toLowerCase().includes(search.toLowerCase()) || r.item?.code?.includes(search);
     const matchReorder = !showBelowReorder || Number(r.qty) < Number(r.item?.reorderLevel ?? 0);
     return matchText && matchReorder;
   });
+
+  // عند اختيار "كل المستودعات" نعرض الصنف مرة واحدة فقط، مع جمع رصيده
+  // وقيمته عبر جميع المستودعات. اختيار مستودع محدد يبقي صفوفه كما هي.
+  const filtered = warehouseId ? matchingRows : Array.from(
+    matchingRows.reduce((byItem: Map<string, any>, row: any) => {
+      const key = String(row.item?.id ?? row.itemId);
+      const qty = Number(row.qty ?? 0);
+      const costValue = qty * Number(row.avgCost ?? 0);
+      const existing = byItem.get(key);
+      if (!existing) {
+        byItem.set(key, {
+          ...row,
+          id: `item-${key}`,
+          qty,
+          avgCost: qty !== 0 ? costValue / qty : Number(row.avgCost ?? 0),
+          __costValue: costValue,
+          warehouse: {
+            nameAr: "كل المستودعات",
+            nameEn: "All warehouses",
+          },
+        });
+        return byItem;
+      }
+      const totalQty = Number(existing.qty ?? 0) + qty;
+      const totalCostValue = Number(existing.__costValue ?? 0) + costValue;
+      existing.qty = totalQty;
+      existing.__costValue = totalCostValue;
+      existing.avgCost = totalQty !== 0 ? totalCostValue / totalQty : 0;
+      return byItem;
+    }, new Map<string, any>()).values(),
+  );
 
   const totalValue = filtered.reduce((s: number, r: any) => s + Number(r.qty) * unitPriceFor(r), 0);
   const totalQty = filtered.reduce((s: number, r: any) => s + Number(r.qty ?? 0), 0);
