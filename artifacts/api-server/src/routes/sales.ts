@@ -2840,16 +2840,17 @@ async function postSalesInvoiceHandler(
     // credit invoices → single DR customer AR; cash/bank WITH a customer GL
     // account → AR pass-through trio; cash/bank WITHOUT one → legacy direct
     // DR cash/bank (statement pairing still shows; GL AR untouched).
+    const journalDescription = `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`;
     const collectionDesc = inv.paymentType === "cash" ? "تحصيل نقدي من العميل" : "تحصيل بنكي من العميل";
     const partyDebitLines =
       (inv.paymentType === "cash" || inv.paymentType === "bank") && invCustomerArAccId
         ? [
             { accountId: invCustomerArAccId, debit: totalAmt,  description: "ذمم العميل (فاتورة نقدية/بنكية)" },
             { accountId: invCustomerArAccId, credit: totalAmt, description: collectionDesc },
-            { accountId: partyAccountId,     debit: totalAmt,  description: inv.paymentType === "cash" ? "تحصيل نقدي" : "تحصيل بنكي" },
+            { accountId: partyAccountId,     debit: totalAmt,  description: inv.paymentType === "cash" ? "تحصيل نقدي" : journalDescription },
           ]
         : [
-            { accountId: partyAccountId, debit: totalAmt, description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
+            { accountId: partyAccountId, debit: totalAmt, description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? journalDescription : "ذمم العميل" },
           ];
 
     let journalId: number | null = null;
@@ -2872,7 +2873,7 @@ async function postSalesInvoiceHandler(
       executor: tx,
       // Header-level cost center tags every JE line for cost-center reports.
       costCenter: (inv as any).costCenter ?? null,
-      description: `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`,
+      description: journalDescription,
       lines: gdnSourced
         ? [
             // Dr Customer/Cash/Bank @ total (AR pass-through for cash/bank)
