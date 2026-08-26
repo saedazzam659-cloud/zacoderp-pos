@@ -269,7 +269,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // the hook (returns editable for everything). Field keys here MUST match
   // FIELD_CATALOGUE.sales in lib/db/src/schema/invoiceFieldPolicies.ts.
   const fp = useFieldPolicy("sales");
-  const overdraftViewPermission = usePermission("sales_invoice_overdraft", "view");
   const overdraftEditPermission = usePermission("sales_invoice_overdraft", "edit");
   const { data: serverOverdraftCapability } = useQuery<{ view: boolean; edit: boolean }>({
     queryKey: ["sales-invoice-overdraft-capability", user?.id, user?.sessionId],
@@ -286,9 +285,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // so a stale/missing client permission map can never hide this tool.
   const normalizedRole = String(user?.role ?? "").trim().toLowerCase();
   const isFullAccessRole = normalizedRole === "admin" || normalizedRole === "superadmin";
-  const canViewOverdraft = isFullAccessRole
-    || overdraftViewPermission
-    || serverOverdraftCapability?.view === true;
   const canEditOverdraft = isFullAccessRole
     || overdraftEditPermission
     || serverOverdraftCapability?.edit === true;
@@ -1782,7 +1778,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                 </label>
                 ) : null}
-                {isInvoice && canViewOverdraft ? (
+                {isInvoice ? (
                   <label
                     data-testid="allow-negative-stock-toggle"
                     className={cn(
@@ -1790,7 +1786,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       !canEditOverdraft || viewMode ? "cursor-not-allowed opacity-70" : "cursor-pointer",
                       allowNegativeStock ? "border-amber-500 bg-amber-50" : "border-border hover:bg-muted/50",
                     )}
-                    title={!canEditOverdraft ? "للقراءة فقط حسب صلاحيات المستخدم" : undefined}
+                    title={!canEditOverdraft ? "غير متاح للتفعيل حسب صلاحيات المستخدم" : undefined}
                   >
                     <input
                       type="checkbox"
