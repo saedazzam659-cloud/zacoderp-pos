@@ -632,6 +632,20 @@ function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
 }
 
+// Authoritative capability probe for the invoice overdraft control.
+// The UI must not infer this sensitive grant from a possibly stale user object:
+// the same backend predicate that protects create/update/post answers here.
+router.get("/sales-invoices/overdraft-capability", (req, res) => {
+  if (!req.authUser) {
+    res.status(401).json({ error: "غير مصرح" });
+    return;
+  }
+  res.json({
+    view: canAccessModule(req.authUser, "sales_invoice_overdraft", "view"),
+    edit: canAccessModule(req.authUser, "sales_invoice_overdraft", "edit"),
+  });
+});
+
 // Cleanup any orphan stock movements / vouchers / journal entries tied to a draft document
 // (defensive: a draft normally has none, but past bugs may have left orphans behind).
 async function cleanupDocArtifacts(opts: {

@@ -271,13 +271,27 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const fp = useFieldPolicy("sales");
   const overdraftViewPermission = usePermission("sales_invoice_overdraft", "view");
   const overdraftEditPermission = usePermission("sales_invoice_overdraft", "edit");
+  const { data: serverOverdraftCapability } = useQuery<{ view: boolean; edit: boolean }>({
+    queryKey: ["sales-invoice-overdraft-capability", user?.id, user?.sessionId],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/sales/sales-invoices/overdraft-capability`, { headers: authH });
+      if (!r.ok) throw new Error("تعذر التحقق من صلاحية السحب على المكشوف");
+      return r.json();
+    },
+    enabled: isInvoice && !!token,
+    staleTime: 30_000,
+  });
   // Company managers have full permissions by definition. Keep this explicit
-  // at the control boundary as well as in usePermission so a stale/missing
-  // granular permission map can never hide this tool from an admin session.
+  // at the control boundary, and merge it with the authoritative server probe,
+  // so a stale/missing client permission map can never hide this tool.
   const normalizedRole = String(user?.role ?? "").trim().toLowerCase();
   const isFullAccessRole = normalizedRole === "admin" || normalizedRole === "superadmin";
-  const canViewOverdraft = isFullAccessRole || overdraftViewPermission;
-  const canEditOverdraft = isFullAccessRole || overdraftEditPermission;
+  const canViewOverdraft = isFullAccessRole
+    || overdraftViewPermission
+    || serverOverdraftCapability?.view === true;
+  const canEditOverdraft = isFullAccessRole
+    || overdraftEditPermission
+    || serverOverdraftCapability?.edit === true;
   const dateBounds = fp.dateBounds("date") ?? {};
 
   const [activeTab, setActiveTab]       = useState("basic");
