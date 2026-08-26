@@ -1770,7 +1770,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         "px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap",
         allowNegativeStock ? "bg-amber-100 text-amber-800" : "bg-muted text-foreground/70",
       )}>
-        {allowNegativeStock ? "مسموح" : "غير مسموح"}
+        {allowNegativeStock ? "مسموح لهذه الفاتورة" : "غير مسموح"}
       </span>
     </label>
   ) : null;

@@ -2545,12 +2545,16 @@ async function postSalesInvoiceHandler(
           const wh = whInfo[demand.warehouseId];
           const cur = stockSnapshots.get(key)?.qty ?? 0;
           const projected = cur - demand.qty;
-          const warehouseAllows = allowInvoiceOverdraft && wh?.allowNegative;
+          // Two intentional ways to permit negative stock:
+          //   1) the warehouse allows it as its standing policy, OR
+          //   2) an authorized user opts in for this invoice only.
+          // The invoice override must never mutate the warehouse setting.
+          const overdraftAllowed = !!wh?.allowNegative || allowInvoiceOverdraft;
           const limit = wh?.negativeLimit;
-          const exceedsLimit = warehouseAllows && limit != null && limit >= 0 && projected < -limit;
-          if (!warehouseAllows && projected < 0) {
+          const exceedsLimit = overdraftAllowed && limit != null && limit >= 0 && projected < -limit;
+          if (!overdraftAllowed && projected < 0) {
             res.status(400).json({
-              error: `رصيد الصنف "${demand.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? demand.warehouseId}" — المتاح ${cur} والمطلوب ${demand.qty}. يلزم تفعيل السحب على المكشوف في الفاتورة والمخزن معًا.`,
+              error: `رصيد الصنف "${demand.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? demand.warehouseId}" — المتاح ${cur} والمطلوب ${demand.qty}. فعّل السحب على المكشوف لهذه الفاتورة أو اسمح به من إعداد المخزن.`,
             });
             return;
           }
