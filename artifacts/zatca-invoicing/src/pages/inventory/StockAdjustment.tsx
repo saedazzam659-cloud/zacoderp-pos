@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, Fragment, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -11,6 +11,7 @@ import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import {
   Plus, Trash2, SlidersHorizontal, Search, X, Send,
   ChevronDown, ChevronUp, Zap, Sparkles, Loader2, RotateCcw,
+  Download, Upload, FileSpreadsheet, AlertTriangle,
 } from "lucide-react";
 import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -25,6 +26,12 @@ import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import { usePermission } from "@/hooks/usePermission";
+import { saveWorkbook } from "@/lib/saveFile";
+import {
+  buildStockAdjustmentWorkbook,
+  readStockAdjustmentWorkbook,
+  type StockAdjustmentImportIssue,
+} from "@/lib/stockAdjustmentWorkbook";
 
 const STATUS_CONFIG: Record<string, { color: string }> = {
   draft:  { color: "bg-amber-50 text-amber-700" },
@@ -81,6 +88,10 @@ export default function StockAdjustment() {
   const [form, setForm] = useState<any>(EMPTY_FORM);
   const [lines, setLines] = useState<any[]>([newLine()]);
   const [showForm, setShowForm] = useState(false);
+  const [importIssues, setImportIssues] = useState<StockAdjustmentImportIssue[]>([]);
+  const [importFilename, setImportFilename] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const seqPeek = useNextSequenceNumber("stock_adjustment", showForm);
   useEffect(() => {
@@ -162,7 +173,66 @@ export default function StockAdjustment() {
   function reset() {
     setForm(EMPTY_FORM);
     setLines([newLine()]);
+    setImportIssues([]);
+    setImportFilename("");
     setShowForm(false);
+  }
+
+  function downloadExcelTemplate() {
+    const stockItems = (items as any[]).filter((item: any) => item.itemType === "stock");
+    if (!stockItems.length) {
+      toast({ title: t("stockAdjustmentPage.excelNoStockItems"), variant: "destructive" });
+      return;
+    }
+    const wb = buildStockAdjustmentWorkbook(stockItems, units as any[]);
+    void saveWorkbook(wb, `stock-adjustment-template-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  function issueLabel(issue: StockAdjustmentImportIssue): string {
+    const row = issue.row > 0 ? t("stockAdjustmentPage.excelRow", { row: issue.row }) : "";
+    const detail = t(`stockAdjustmentPage.excelIssue_${issue.code}`, { value: issue.value || "—" });
+    return row ? `${row}: ${detail}` : detail;
+  }
+
+  async function handleExcelUpload(file: File) {
+    setIsImporting(true);
+    setImportIssues([]);
+    try {
+      const result = readStockAdjustmentWorkbook(await file.arrayBuffer(), items as any[], units as any[]);
+      setImportFilename(file.name);
+      if (result.issues.length) {
+        setImportIssues(result.issues);
+        toast({
+          title: t("stockAdjustmentPage.excelImportFailed"),
+          description: t("stockAdjustmentPage.excelFixIssues", { count: result.issues.length }),
+          variant: "destructive",
+        });
+        return;
+      }
+      // Resolve conversion factors/cost metadata for the imported units before
+      // showing the editable preview. Failure to load metadata is harmless:
+      // the existing form/backend still validates and stores the selected unit.
+      const hydrated = await Promise.all(result.lines.map(async line => {
+        const prices = await fetchItemUnits(line.itemId);
+        const selected = prices.find((u: any) => String(u.unitId) === line.unitId);
+        return {
+          ...line,
+          conversionFactor: selected ? String(selected.conversionFactor ?? 1) : "1",
+        };
+      }));
+      setLines(hydrated);
+      toast({
+        title: t("stockAdjustmentPage.excelImported"),
+        description: t("stockAdjustmentPage.excelImportedCount", { count: hydrated.length }),
+      });
+    } catch {
+      setImportFilename(file.name);
+      setImportIssues([{ row: 1, code: "missing_headers" }]);
+      toast({ title: t("stockAdjustmentPage.excelUnreadable"), variant: "destructive" });
+    } finally {
+      setIsImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
   }
 
   // Fetch unit prices for an item and cache them
@@ -500,12 +570,52 @@ export default function StockAdjustment() {
             <TabsContent value="items" className="space-y-3 mt-0">
             {/* Line items */}
             <div>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
                 <h3 className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">{t("stockAdjustmentPage.items")}</h3>
-                <Button type="button" size="sm" variant="outline" onClick={addLine} className="gap-1 h-7 text-xs">
-                  <Plus className="h-3 w-3" />{t("stockAdjustmentPage.addItem")}
-                </Button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button type="button" size="sm" variant="outline" onClick={downloadExcelTemplate} className="gap-1 h-7 text-xs border-emerald-300 text-emerald-700">
+                    <Download className="h-3 w-3" />{t("stockAdjustmentPage.downloadExcelTemplate")}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" disabled={isImporting} onClick={() => importInputRef.current?.click()} className="gap-1 h-7 text-xs border-blue-300 text-blue-700">
+                    {isImporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                    {t("stockAdjustmentPage.uploadExcel")}
+                  </Button>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="hidden"
+                    onChange={event => {
+                      const file = event.target.files?.[0];
+                      if (file) void handleExcelUpload(file);
+                    }}
+                  />
+                  <Button type="button" size="sm" variant="outline" onClick={addLine} className="gap-1 h-7 text-xs">
+                    <Plus className="h-3 w-3" />{t("stockAdjustmentPage.addItem")}
+                  </Button>
+                </div>
               </div>
+              <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50/50 px-3 py-2 text-xs text-emerald-900 flex items-start gap-2">
+                <FileSpreadsheet className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{t("stockAdjustmentPage.excelHint")}</span>
+              </div>
+              {importFilename && !importIssues.length && (
+                <div className="mb-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                  {t("stockAdjustmentPage.excelPreviewing", { file: importFilename, count: lines.length })}
+                </div>
+              )}
+              {importIssues.length > 0 && (
+                <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-destructive mb-2">
+                    <AlertTriangle className="h-4 w-4" />
+                    {t("stockAdjustmentPage.excelIssuesTitle", { count: importIssues.length })}
+                  </div>
+                  <ul className="space-y-1 text-xs text-destructive list-disc list-inside max-h-36 overflow-auto">
+                    {importIssues.map((issue, index) => <li key={`${issue.row}-${issue.code}-${index}`}>{issueLabel(issue)}</li>)}
+                  </ul>
+                  <p className="mt-2 text-xs text-muted-foreground">{t("stockAdjustmentPage.excelNotApplied")}</p>
+                </div>
+              )}
               <div className="rounded-lg border overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 border-b">
