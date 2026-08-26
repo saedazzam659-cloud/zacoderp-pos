@@ -342,16 +342,20 @@ export default function ZatcaBridge() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Button
-                            size="sm"
-                            variant={status === "rejected" ? "outline" : "default"}
-                            disabled={submit.isPending}
-                            onClick={() => submit.mutate(row)}
-                            className="gap-1"
-                          >
-                            <Send className="h-3.5 w-3.5" />
-                            {status === "pending" ? tr("btnSubmit") : tr("btnResubmit")}
-                          </Button>
+                          {status !== "approved" ? (
+                            <Button
+                              size="sm"
+                              variant={status === "rejected" ? "outline" : "default"}
+                              disabled={submit.isPending}
+                              onClick={() => submit.mutate(row)}
+                              className="gap-1"
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                              {status === "pending" ? tr("btnSubmit") : tr("btnResubmit")}
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
