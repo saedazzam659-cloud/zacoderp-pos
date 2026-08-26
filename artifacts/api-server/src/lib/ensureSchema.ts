@@ -2012,6 +2012,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // behavior; flipping it to false makes new manual JEs land as drafts.
     { label: "companies add auto_post_journal_entry",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS auto_post_journal_entry BOOLEAN NOT NULL DEFAULT TRUE` },
+    { label: "companies add auto_send_zatca_after_post",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS auto_send_zatca_after_post BOOLEAN NOT NULL DEFAULT FALSE` },
     // Optional UX prefs (company-wide): smart JE form + menu placement.
     { label: "companies add journal_smart_form",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS journal_smart_form BOOLEAN NOT NULL DEFAULT FALSE` },

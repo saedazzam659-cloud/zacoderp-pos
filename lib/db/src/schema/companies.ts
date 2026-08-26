@@ -127,6 +127,9 @@ export const companiesTable = pgTable("companies", {
   // P&L per the financial-reports gotcha in replit.md.
   autoPostJournalEntry:  boolean("auto_post_journal_entry").notNull().default(true),
   autoPostSales:         boolean("auto_post_sales").notNull().default(true),
+  // Optional ZATCA automation. OFF by default so every existing/new company
+  // keeps the current manual bridge workflow until an admin explicitly opts in.
+  autoSendZatcaAfterPost: boolean("auto_send_zatca_after_post").notNull().default(false),
   // Sales-invoice save policy (سياسة حفظ فواتير المبيعات): when ON, a sales
   // invoice whose stock lines have no warehouse selected is saved as a DRAFT
   // and the front-end skips the auto-post step (no error) — posting is

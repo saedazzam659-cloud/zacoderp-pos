@@ -3043,6 +3043,31 @@ async function postSalesInvoiceHandler(
     return updated;
     });
     if (!postedInvoice) return;
+    // Optional company-level automation: the invoice/stock/JE transaction has
+    // already committed at this point. A ZATCA rejection or network failure
+    // must never roll back the accounting post; it is persisted on the invoice
+    // and remains retryable from the existing manual bridge.
+    const [postingCompany] = await db.select({
+      autoSendZatcaAfterPost: companiesTable.autoSendZatcaAfterPost,
+    }).from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+    if (postingCompany?.autoSendZatcaAfterPost === true) {
+      try {
+        const autoReq = Object.create(req);
+        autoReq.params = { ...req.params, id: String(id) };
+        let autoStatus = 200;
+        let autoBody: any = null;
+        const autoRes: any = {
+          status(code: number) { autoStatus = code; return this; },
+          json(body: any) { autoBody = body; return this; },
+        };
+        await submitSalesInvoiceToZatcaHandler(autoReq, autoRes);
+        if (autoStatus >= 400 || autoBody?.status === "rejected") {
+          logger.warn({ companyId: cid, invoiceId: id, status: autoStatus, result: autoBody }, "Automatic ZATCA submission was not approved");
+        }
+      } catch (autoError: any) {
+        logger.error({ companyId: cid, invoiceId: id, error: autoError?.message ?? String(autoError) }, "Automatic ZATCA submission failed after posting");
+      }
+    }
     res.json(postedInvoice);
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e.message });
@@ -4889,13 +4914,24 @@ router.delete("/customer-settlements/:id", async (req, res) => {
 // (PCSID preferred) — without onboarding the invoice cannot be submitted.
 // Standard (B2B, customer has 15-digit VAT) → clearance; simplified → reporting.
 // ═══════════════════════════════════════════════════════════════════
-router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
+async function submitSalesInvoiceToZatcaHandler(req: any, res: any) {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const [inv] = await db.select().from(salesInvoicesTable)
       .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    // Posting retries and manual retries must not re-submit an invoice that
+    // ZATCA already accepted. This also makes the optional post hook idempotent.
+    if (inv.zatcaStatus === "cleared" || inv.zatcaStatus === "reported") {
+      res.json({
+        status: "approved",
+        zatcaStatus: inv.zatcaStatus,
+        uuid: inv.zatcaUuid,
+        message: "الفاتورة مرسلة ومعتمدة مسبقًا لدى ZATCA.",
+      });
+      return;
+    }
 
     const lines = await db.select().from(salesInvoiceLinesTable)
       .where(eq(salesInvoiceLinesTable.invoiceId, id));
@@ -5195,7 +5231,9 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: e?.message ?? String(e) });
   }
-});
+}
+
+router.post("/sales-invoices/:id/zatca-submit", submitSalesInvoiceToZatcaHandler);
 
 // ═══════════════════════════════════════════════════════════════════
 // ZATCA — Bridge view: list sales invoices joined with customer name

@@ -144,6 +144,7 @@ export default function GeneralSettings() {
   const [logoError, setLogoError] = useState("");
   const [brandLogoError, setBrandLogoError] = useState("");
   const autoPostingEnabled = user?.company?.autoPostingEnabled !== false;
+  const autoSendZatcaAfterPost = user?.company?.autoSendZatcaAfterPost === true;
   const [postingSaving, setPostingSaving] = useState(false);
   // Per-doc-type auto-posting flags. We treat `undefined` (legacy rows
   // before the columns existed) and `true` the same — only an explicit
@@ -1438,6 +1439,51 @@ export default function GeneralSettings() {
         {brandLogoError && (
           <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{brandLogoError}</p>
         )}
+      </div>
+
+      {/* ─── Optional ZATCA auto-send (default/manual remains unchanged) ─── */}
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <Send className="h-4 w-4 text-emerald-600" />
+          الإرسال إلى هيئة الزكاة والضريبة والجمارك (ZATCA)
+        </h2>
+        <div className="rounded-lg border px-3 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={cn(
+              "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
+              autoSendZatcaAfterPost
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-amber-100 text-amber-700",
+            )}>
+              {autoSendZatcaAfterPost ? <Zap className="h-4 w-4" /> : <Hand className="h-4 w-4" />}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium">إرسال فاتورة المبيعات تلقائيًا بعد الترحيل</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                عند التفعيل تُرسل الفاتورة إلى ZATCA بعد نجاح الترحيل. عند التعطيل يبقى الإرسال يدويًا من جسر ZATCA كما هو حاليًا.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={cn(
+              "text-[10.5px] font-semibold rounded px-1.5 py-0.5 border",
+              autoSendZatcaAfterPost
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                : "bg-amber-50 text-amber-700 border-amber-200",
+            )}>
+              {autoSendZatcaAfterPost ? "تلقائي" : "يدوي"}
+            </span>
+            <Switch
+              checked={autoSendZatcaAfterPost}
+              disabled={postingSaving}
+              onCheckedChange={(v) => togglePostingMode({ autoSendZatcaAfterPost: !!v })}
+              data-testid="toggle-auto-send-zatca-after-post"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          فشل الإرسال أو رفض ZATCA لا يلغي ترحيل الفاتورة محاسبيًا، ويمكن مراجعة السبب وإعادة الإرسال يدويًا من شاشة جسر ZATCA.
+        </p>
       </div>
 
       {/* ─── Posting Mode Section (per-doc-type toggles) ──────────────────── */}
