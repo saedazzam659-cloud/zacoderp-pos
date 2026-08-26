@@ -399,8 +399,9 @@ import ReceiptVouchersReport   from "@/pages/cash/reports/ReceiptVouchersReport"
 import PaymentVouchersReport   from "@/pages/cash/reports/PaymentVouchersReport";
 import TransfersReport         from "@/pages/cash/reports/TransfersReport";
 // Sales
-// SalesInvoices replaced by SalesAuditGrid as the main /sales/invoices screen
-// (SalesAuditGrid is already imported above for the PosOperations alias)
+// SalesAuditGrid is the only sales-invoice register. The retired
+// SalesInvoices implementation was removed to prevent changes targeting a
+// dead screen. SalesAuditGrid is already imported above for PosOperations.
 import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
 import SalesQuotations      from "@/pages/sales/SalesQuotations";
 import SalesQuotationForm   from "@/pages/sales/SalesQuotationForm";

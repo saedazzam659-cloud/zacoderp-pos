@@ -269,6 +269,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // the hook (returns editable for everything). Field keys here MUST match
   // FIELD_CATALOGUE.sales in lib/db/src/schema/invoiceFieldPolicies.ts.
   const fp = useFieldPolicy("sales");
+  const overdraftViewPermission = usePermission("sales_invoice_overdraft", "view");
   const overdraftEditPermission = usePermission("sales_invoice_overdraft", "edit");
   const { data: serverOverdraftCapability } = useQuery<{ view: boolean; edit: boolean }>({
     queryKey: ["sales-invoice-overdraft-capability", user?.id, user?.sessionId],
@@ -285,6 +286,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // so a stale/missing client permission map can never hide this tool.
   const normalizedRole = String(user?.role ?? "").trim().toLowerCase();
   const isFullAccessRole = normalizedRole === "admin" || normalizedRole === "superadmin";
+  const canViewOverdraft = isFullAccessRole
+    || overdraftViewPermission
+    || serverOverdraftCapability?.view === true;
   const canEditOverdraft = isFullAccessRole
     || overdraftEditPermission
     || serverOverdraftCapability?.edit === true;
@@ -1425,7 +1429,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const allowDraftWithoutWarehouse = _co?.allowDraftWithoutWarehouse === true;
 
   // Per-doc-type print preferences for sales invoices. We don't open
-  // the popup directly here — the list page (SalesInvoices) owns the
+      // the popup directly here — the current invoice register owns the
   // SalesPrintModal, so we redirect there with a hint in window.history
   // state and let it pick up `defaultTemplate` + `autoPrintOnOpen`.
   // This only applies to invoices (not quotations / orders).
@@ -1738,6 +1742,39 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       ? t("salesDocForm.subtitleOrder")
       : t("salesDocForm.subtitleQuotation");
 
+  // One shared overdraft control for both the tabbed and classic invoice
+  // layouts. Keeping it independent of either grid prevents a layout switch
+  // from making the capability disappear.
+  const overdraftToggle = isInvoice && canViewOverdraft ? (
+    <label
+      data-testid="allow-negative-stock-toggle"
+      className={cn(
+        "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs select-none transition-colors",
+        !canEditOverdraft || viewMode ? "cursor-not-allowed opacity-70" : "cursor-pointer",
+        allowNegativeStock ? "border-amber-500 bg-amber-50 text-amber-900" : "border-border hover:bg-muted/50",
+      )}
+      title={!canEditOverdraft ? "غير متاح للتفعيل حسب صلاحيات المستخدم" : undefined}
+    >
+      <input
+        type="checkbox"
+        className="h-4 w-4 accent-amber-600 cursor-pointer disabled:cursor-not-allowed"
+        checked={allowNegativeStock}
+        disabled={!canEditOverdraft || viewMode}
+        onChange={e => {
+          if (!canEditOverdraft || viewMode) return;
+          setAllowNegativeStock(e.target.checked);
+        }}
+      />
+      <span className="font-semibold whitespace-nowrap">السحب على المكشوف</span>
+      <span className={cn(
+        "px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap",
+        allowNegativeStock ? "bg-amber-100 text-amber-800" : "bg-muted text-foreground/70",
+      )}>
+        {allowNegativeStock ? "مسموح" : "غير مسموح"}
+      </span>
+    </label>
+  ) : null;
+
   // Totals + ‹price incl. VAT› toggle — extracted so BOTH the classic
   // layout and the tabbed items tab render the same single-sourced footer.
   const linesFooterBlock = (
@@ -1778,36 +1815,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                 </label>
                 ) : null}
-                {isInvoice ? (
-                  <label
-                    data-testid="allow-negative-stock-toggle"
-                    className={cn(
-                      "flex items-start gap-2.5 rounded-xl border-2 p-3 select-none transition-colors max-w-sm",
-                      !canEditOverdraft || viewMode ? "cursor-not-allowed opacity-70" : "cursor-pointer",
-                      allowNegativeStock ? "border-amber-500 bg-amber-50" : "border-border hover:bg-muted/50",
-                    )}
-                    title={!canEditOverdraft ? "غير متاح للتفعيل حسب صلاحيات المستخدم" : undefined}
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 h-4 w-4 accent-amber-600 cursor-pointer disabled:cursor-not-allowed"
-                      checked={allowNegativeStock}
-                      disabled={!canEditOverdraft || viewMode}
-                      onChange={e => {
-                        if (!canEditOverdraft || viewMode) return;
-                        setAllowNegativeStock(e.target.checked);
-                      }}
-                    />
-                    <div className="space-y-0.5">
-                      <p className="text-xs font-semibold">السحب على المكشوف</p>
-                      <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        {allowNegativeStock
-                          ? "مسموح ضمن إعداد وحدّ المخزن"
-                          : "لن يُسمح بتجاوز الرصيد المتاح"}
-                      </p>
-                    </div>
-                  </label>
-                ) : null}
+                {overdraftToggle}
                 </div>
 
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
@@ -1896,7 +1904,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <Plus className="h-4 w-4" />
           <span>إضافة صنف</span>
         </div>
-        {priceInclToggle}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {priceInclToggle}
+          {overdraftToggle}
+        </div>
       </div>
       <div
         ref={quickAddRef}
@@ -3491,7 +3502,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <fieldset disabled={editLock} className="contents">
                     {linesHeaderBlock}
                     {hideQuickAdd
-                      ? <div className="flex justify-end">{priceInclToggle}</div>
+                      ? (
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {priceInclToggle}
+                          {overdraftToggle}
+                        </div>
+                      )
                       : quickAddBar}
                     {displayLinesGrid}
                     {compactFooterBlock}
