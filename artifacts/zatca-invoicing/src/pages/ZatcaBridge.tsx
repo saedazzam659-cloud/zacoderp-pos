@@ -23,6 +23,10 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type BridgeRow = {
   id: number;
+  sourceType: "invoice" | "return";
+  sourceId: number;
+  documentType: "invoice" | "credit";
+  originalDocNumber: string | null;
   docNumber: string | null;
   invoiceDate: string;
   customerId: number | null;
@@ -77,8 +81,9 @@ export default function ZatcaBridge() {
   });
 
   const submit = useMutation({
-    mutationFn: async (id: number) => {
-      const r = await fetch(`${API}/api/sales/sales-invoices/${id}/zatca-submit`, {
+    mutationFn: async (row: BridgeRow) => {
+      const endpoint = row.sourceType === "return" ? "sales-returns" : "sales-invoices";
+      const r = await fetch(`${API}/api/sales/${endpoint}/${row.sourceId}/zatca-submit`, {
         method: "POST",
         headers: { ...authH, "Content-Type": "application/json" },
         body: JSON.stringify({ companyId: cid }),
@@ -115,6 +120,7 @@ export default function ZatcaBridge() {
       if (!s) return true;
       return (
         (r.docNumber ?? "").toLowerCase().includes(s) ||
+        (r.originalDocNumber ?? "").toLowerCase().includes(s) ||
         (r.customerNameAr ?? "").toLowerCase().includes(s) ||
         (r.customerNameEn ?? "").toLowerCase().includes(s) ||
         (r.customerVatNumber ?? "").toLowerCase().includes(s)
@@ -293,8 +299,16 @@ export default function ZatcaBridge() {
                     const errors = parseErrors(row.zatcaErrorMessages);
                     const customerLabel = pickName(row.customerNameAr, row.customerNameEn);
                     return (
-                      <TableRow key={row.id}>
-                        <TableCell className="font-mono">{row.docNumber || `#${row.id}`}</TableCell>
+                      <TableRow key={`${row.sourceType}-${row.sourceId}`}>
+                        <TableCell className="font-mono">
+                          <div>{row.docNumber || `#${row.sourceId}`}</div>
+                          {row.sourceType === "return" && (
+                            <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                              {isRtl ? "المرتجع / إشعار دائن (381)" : "Return / Credit note (381)"}
+                              {row.originalDocNumber ? ` — ${isRtl ? "الفاتورة الأصلية" : "Original"}: ${row.originalDocNumber}` : ""}
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell>{row.invoiceDate?.slice(0, 10)}</TableCell>
                         <TableCell>{customerLabel || <span className="text-muted-foreground">{tr("cashCustomer")}</span>}</TableCell>
                         <TableCell className="font-mono text-xs">{row.customerVatNumber || "—"}</TableCell>
@@ -332,7 +346,7 @@ export default function ZatcaBridge() {
                             size="sm"
                             variant={status === "rejected" ? "outline" : "default"}
                             disabled={submit.isPending}
-                            onClick={() => submit.mutate(row.id)}
+                            onClick={() => submit.mutate(row)}
                             className="gap-1"
                           >
                             <Send className="h-3.5 w-3.5" />
@@ -425,9 +439,9 @@ export default function ZatcaBridge() {
             {dialogRow && (
               <Button
                 onClick={() => {
-                  const id = dialogRow.id;
+                  const id = dialogRow.sourceId;
                   setDialogRow(null);
-                  navigate(`/sales/invoices/${id}`);
+                  navigate(dialogRow.sourceType === "return" ? "/sales/returns" : `/sales/invoices/${id}`);
                 }}
                 className="gap-1 bg-indigo-600 hover:bg-indigo-700"
               >

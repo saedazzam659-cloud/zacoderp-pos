@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { canPostDoc, requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { randomUUID } from "node:crypto";
-import { db, getActiveExternalDb } from "@workspace/db";
+import { db, pool, getActiveExternalDb } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -45,7 +45,7 @@ import { nextSequenceNumber, nextSequenceForPayment, nextPosStationNumber, resol
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { assertInvoiceEditKeepsSettlementsCovered } from "../lib/invoiceSettlement.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
-import { salesInvoiceRowToZatcaData } from "../lib/zatca-sales-mapper.js";
+import { salesInvoiceRowToZatcaData, salesReturnRowToZatcaData } from "../lib/zatca-sales-mapper.js";
 import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH, csidEnvMismatchMessage } from "../lib/zatca-env.js";
 import { boundedOffsetPage } from "../lib/boundedPagination.js";
 import { logger } from "../lib/logger.js";
@@ -4100,6 +4100,20 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
 
     // NOTE: لا نُنشئ سند صرف تلقائياً عند ترحيل مرتجع نقدي/بنكي.
     // القيد المحاسبي أعلاه يكفي لتسجيل الأثر النقدي؛ سند الصرف يُنشأ يدوياً عند الحاجة.
+    // ZATCA is deliberately outside the accounting result. A gateway rejection
+    // or connection failure is logged, never allowed to turn a successful post
+    // into an error response or roll back its inventory / journal effects.
+    const [postCompany] = await db.select({ autoSendZatcaAfterPost: companiesTable.autoSendZatcaAfterPost })
+      .from(companiesTable).where(eq(companiesTable.id, cid));
+    if (postCompany?.autoSendZatcaAfterPost) {
+      void submitSalesReturnToZatca(cid, id).then((outcome) => {
+        if (outcome.httpStatus >= 400 || outcome.body.status === "rejected") {
+          logger.warn({ companyId: cid, returnId: id, outcome: outcome.body }, "Automatic ZATCA sales-return submission rejected");
+        }
+      }).catch((err) => {
+        logger.error({ err, companyId: cid, returnId: id }, "Automatic ZATCA sales-return submission failed");
+      });
+    }
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
@@ -4121,6 +4135,9 @@ router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (re
       ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
+    if (ret.zatcaStatus === "cleared" || ret.zatcaStatus === "reported") {
+      res.status(400).json({ error: "لا يمكن فك ترحيل مرتجع تم اعتماده لدى ZATCA." }); return;
+    }
 
     const ledger = await db.select().from(stockLedgerTable)
       .where(and(
@@ -4178,6 +4195,9 @@ router.delete("/sales-returns/:id", async (req, res) => {
     const [ret] = await db.select().from(salesReturnsTable)
       .where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+    if (ret.zatcaStatus === "cleared" || ret.zatcaStatus === "reported") {
+      res.status(400).json({ error: "لا يمكن حذف مرتجع تم اعتماده لدى ZATCA." }); return;
+    }
     if (ret.status === "posted") {
       res.status(400).json({ error: "لا يمكن حذف مرتجع مُرحَّل. قم بإلغاء الترحيل أولاً ثم احذفه." });
       return;
@@ -4914,7 +4934,7 @@ router.delete("/customer-settlements/:id", async (req, res) => {
 // (PCSID preferred) — without onboarding the invoice cannot be submitted.
 // Standard (B2B, customer has 15-digit VAT) → clearance; simplified → reporting.
 // ═══════════════════════════════════════════════════════════════════
-async function submitSalesInvoiceToZatcaHandler(req: any, res: any) {
+async function submitSalesInvoiceToZatcaUnlocked(req: any, res: any) {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -5032,23 +5052,25 @@ async function submitSalesInvoiceToZatcaHandler(req: any, res: any) {
       return;
     }
 
-    // ─── ICV / PIH chain (scoped to this company's sales invoices) ───────
-    const [{ maxIcv }] = await db
-      .select({ maxIcv: sql<number>`COALESCE(MAX(${salesInvoicesTable.zatcaIcv}), 0)` })
-      .from(salesInvoicesTable)
-      .where(eq(salesInvoicesTable.companyId, cid));
-    const invoiceCounterValue = Number(maxIcv ?? 0) + 1;
-
-    const [prevHashRow] = await db
-      .select({ hash: salesInvoicesTable.invoiceHash })
-      .from(salesInvoicesTable)
-      .where(and(
-        eq(salesInvoicesTable.companyId, cid),
-        sql`${salesInvoicesTable.invoiceHash} IS NOT NULL`,
-      ))
-      .orderBy(desc(salesInvoicesTable.zatcaIcv), desc(salesInvoicesTable.id))
-      .limit(1);
-    const previousInvoiceHash = prevHashRow?.hash || GENESIS_HASH;
+    // ─── ICV / PIH chain (shared by invoices AND credit notes) ────────────
+    const chainMax = await db.execute(sql`
+      SELECT COALESCE(MAX(zatca_icv), 0)::integer AS "maxIcv" FROM (
+        SELECT zatca_icv FROM sales_invoices WHERE company_id = ${cid} AND zatca_status IN ('cleared', 'reported')
+        UNION ALL
+        SELECT zatca_icv FROM sales_returns WHERE company_id = ${cid} AND zatca_status IN ('cleared', 'reported')
+      ) chain
+    `);
+    const invoiceCounterValue = Number(queryRows<{ maxIcv: number }>(chainMax)[0]?.maxIcv ?? 0) + 1;
+    const previousChain = await db.execute(sql`
+      SELECT invoice_hash AS "hash" FROM (
+        SELECT invoice_hash, zatca_icv, id FROM sales_invoices
+         WHERE company_id = ${cid} AND zatca_status IN ('cleared', 'reported') AND invoice_hash IS NOT NULL
+        UNION ALL
+        SELECT invoice_hash, zatca_icv, id FROM sales_returns
+         WHERE company_id = ${cid} AND zatca_status IN ('cleared', 'reported') AND invoice_hash IS NOT NULL
+      ) chain ORDER BY zatca_icv DESC, id DESC LIMIT 1
+    `);
+    const previousInvoiceHash = queryRows<{ hash: string }>(previousChain)[0]?.hash || GENESIS_HASH;
 
     const issueTime = now.toTimeString().split(" ")[0];
     // ZATCA requires the API-body `uuid` (and the matching cbc:UUID embedded in
@@ -5233,7 +5255,175 @@ async function submitSalesInvoiceToZatcaHandler(req: any, res: any) {
   }
 }
 
+const ZATCA_CHAIN_LOCK_KEY = 0x5a43;
+
+async function withZatcaChainLock<T>(companyId: number, work: () => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let locked = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1, $2)", [companyId, ZATCA_CHAIN_LOCK_KEY]);
+    locked = true;
+    return await work();
+  } finally {
+    if (locked) {
+      await client.query("SELECT pg_advisory_unlock($1, $2)", [companyId, ZATCA_CHAIN_LOCK_KEY]).catch(() => {});
+    }
+    client.release();
+  }
+}
+
+async function submitSalesInvoiceToZatcaHandler(req: any, res: any) {
+  const cid = guard(req, res); if (!cid) return;
+  return withZatcaChainLock(cid, () => submitSalesInvoiceToZatcaUnlocked(req, res));
+}
+
 router.post("/sales-invoices/:id/zatca-submit", submitSalesInvoiceToZatcaHandler);
+
+type ZatcaSubmitOutcome = {
+  httpStatus: number;
+  body: Record<string, unknown>;
+};
+
+/**
+ * Submit a posted sales return as a 381 credit note. Kept independent from the
+ * accounting posting transaction: callers may safely log an unsuccessful
+ * submission without rolling back a correctly posted return.
+ */
+async function submitSalesReturnToZatcaUnlocked(companyId: number, id: number): Promise<ZatcaSubmitOutcome> {
+  const [ret] = await db.select().from(salesReturnsTable).where(and(
+    eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, companyId),
+  ));
+  if (!ret) return { httpStatus: 404, body: { error: "المرتجع غير موجود" } };
+  if (ret.zatcaStatus === "cleared" || ret.zatcaStatus === "reported") {
+    return { httpStatus: 200, body: { status: "approved", zatcaStatus: ret.zatcaStatus, uuid: ret.zatcaUuid, message: "المرتجع مرسل ومعتمد مسبقًا لدى ZATCA." } };
+  }
+
+  const lines = await db.select().from(salesReturnLinesTable)
+    .where(and(eq(salesReturnLinesTable.returnId, id), eq(salesReturnLinesTable.companyId, companyId)));
+  const [original] = ret.invoiceId ? await db.select().from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.id, ret.invoiceId), eq(salesInvoicesTable.companyId, companyId),
+  )) : [];
+  const errors: Array<{ code: string; message: string }> = [];
+  if (ret.status !== "posted") errors.push({ code: "BR-KSA-DRAFT", message: "لا يمكن إرسال مرتجع غير مُرحّل إلى الزكاة." });
+  if (!lines.length) errors.push({ code: "BR-KSA-LINES", message: "المرتجع لا يحتوي على أي بنود." });
+  if (Number(ret.totalAmount) <= 0) errors.push({ code: "BR-KSA-AMOUNT", message: "إجمالي المرتجع يجب أن يكون أكبر من صفر." });
+  if (!original || original.status !== "posted" || !original.docNumber) {
+    errors.push({ code: "BR-KSA-ORIGINAL", message: "يلزم ربط المرتجع بفاتورة مصدر مُرحّلة في نفس الشركة ولها رقم مستند." });
+  }
+  const now = new Date();
+  const reject = async (status: number, errs: Array<{ code: string; message: string }>, warnings: unknown[] = []) => {
+    await db.update(salesReturnsTable).set({
+      zatcaStatus: "rejected", zatcaSubmittedAt: now, zatcaUuid: null,
+      zatcaResponseCode: String(status), zatcaErrorMessages: JSON.stringify(errs),
+      zatcaWarningMessages: warnings.length ? JSON.stringify(warnings) : null,
+      zatcaAiSuggestion: null, updatedAt: now,
+    }).where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, companyId)));
+    return { httpStatus: status === 400 ? 200 : status, body: { status: "rejected", errors: errs, warnings } };
+  };
+  if (errors.length) return reject(400, errors);
+
+  const customer = ret.customerId ? (await db.select().from(customersTable).where(and(
+    eq(customersTable.id, ret.customerId), eq(customersTable.companyId, companyId),
+  )))[0] ?? null : null;
+  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
+  if (!company) return { httpStatus: 404, body: { error: "الشركة غير موجودة" } };
+  const authToken = company.zatcaPcsidToken ?? company.zatcaCsidToken;
+  const authSecret = company.zatcaPcsidSecret ?? company.zatcaCsidSecret;
+  if (!authToken || !authSecret || !company.zatcaPrivateKey) {
+    return { httpStatus: 400, body: { error: "لا توجد بيانات توقيع ZATCA مكتملة للشركة." } };
+  }
+  const env = resolveZatcaEnv(company);
+  const mismatch = csidEnvMismatchMessage(authToken, env);
+  if (mismatch) return reject(422, [{ code: "ENV_CSID_MISMATCH", message: mismatch }]);
+
+  // The company chain is shared by invoices and credit notes. Only accepted
+  // documents advance ICV/PIH; rejected attempts never affect it.
+  const chainResult = await db.execute(sql`
+    SELECT COALESCE(MAX(zatca_icv), 0)::integer AS "maxIcv"
+    FROM (
+      SELECT zatca_icv FROM sales_invoices
+       WHERE company_id = ${companyId} AND zatca_status IN ('cleared', 'reported')
+      UNION ALL
+      SELECT zatca_icv FROM sales_returns
+       WHERE company_id = ${companyId} AND zatca_status IN ('cleared', 'reported')
+    ) chain
+  `);
+  const maxIcv = Number(queryRows<{ maxIcv: number }>(chainResult)[0]?.maxIcv ?? 0);
+  const previousResult = await db.execute(sql`
+    SELECT invoice_hash AS "hash", zatca_icv AS "icv" FROM (
+      SELECT invoice_hash, zatca_icv, id FROM sales_invoices
+       WHERE company_id = ${companyId} AND zatca_status IN ('cleared', 'reported') AND invoice_hash IS NOT NULL
+      UNION ALL
+      SELECT invoice_hash, zatca_icv, id FROM sales_returns
+       WHERE company_id = ${companyId} AND zatca_status IN ('cleared', 'reported') AND invoice_hash IS NOT NULL
+    ) chain ORDER BY zatca_icv DESC, id DESC LIMIT 1
+  `);
+  const previousInvoiceHash = queryRows<{ hash: string }>(previousResult)[0]?.hash || GENESIS_HASH;
+  const issueTime = now.toTimeString().split(" ")[0];
+  const mapped = salesReturnRowToZatcaData(ret, lines, company, customer, {
+    invoiceCounterValue: maxIcv + 1, previousInvoiceHash, issueTime,
+  }, original!.docNumber!);
+  const tolerance = 0.02 + lines.length * 0.01;
+  if (Math.abs(mapped.computedGrandTotalSar - mapped.storedGrandTotalSar) > tolerance) {
+    return reject(422, [{ code: "BR-KSA-RECON", message: "تعذّر مطابقة إجمالي المرتجع مع الإجمالي المخزّن." }]);
+  }
+  const uuid = randomUUID();
+  mapped.data.uuid = uuid;
+  const built = buildSignedZatcaInvoice({
+    invoiceData: mapped.data, certificatePem: authToken, privateKeyPem: company.zatcaPrivateKey,
+    seller: { nameAr: company.nameAr ?? "", vatNumber: company.vatNumber ?? "" },
+    qr: { invoiceTimestamp: `${ret.returnDate}T${issueTime}Z`, invoiceTotal: mapped.data.grandTotal, vatAmount: mapped.data.vatTotal },
+  });
+  const simplified = mapped.invoiceType === "simplified";
+  const response = await fetch(`${getZatcaBaseUrl(env)}/invoices/${simplified ? "reporting" : "clearance"}/single`, {
+    method: "POST", headers: {
+      "Accept-Version": "V2", "Accept-Language": "en",
+      "Authorization": "Basic " + Buffer.from(`${authToken}:${authSecret}`).toString("base64"),
+      "Clearance-Status": simplified ? "0" : "1", "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ invoiceHash: built.invoiceHash, uuid, invoice: Buffer.from(built.finalXml).toString("base64") }),
+  });
+  const raw = await response.text();
+  let gateway: any = {}; try { gateway = raw ? JSON.parse(raw) : {}; } catch { /* normalized below */ }
+  const accepted = simplified
+    ? ["REPORTED", "REPORTED_WITH_WARNINGS"].includes(String(gateway.reportingStatus ?? "").toUpperCase())
+    : String(gateway.clearanceStatus ?? "").toUpperCase() === "CLEARED";
+  const succeeded = response.ok && accepted;
+  const normalize = (items: unknown) => (Array.isArray(items) ? items : []).map((m: any) => ({
+    code: String(m?.code ?? m?.type ?? "ZATCA"), message: String(m?.message ?? m ?? "—").trim() || "—",
+  }));
+  const zErrors = normalize(gateway.errorMessages ?? gateway.validationResults?.errorMessages);
+  const zWarnings = normalize(gateway.warningMessages ?? gateway.validationResults?.warningMessages);
+  const finalErrors = succeeded ? zErrors : (zErrors.length ? zErrors : [{
+    code: gateway.code != null ? String(gateway.code) : `HTTP-${response.status}`,
+    message: String(gateway.message ?? "").trim() || (raw.trim().length < 1500 ? raw.trim() : "") || `رفضت بوابة ZATCA إشعار الدائن (رمز ${response.status}).`,
+  }]);
+  const zatcaStatus = succeeded ? (simplified ? "reported" : "cleared") : "rejected";
+  await db.update(salesReturnsTable).set({
+    zatcaStatus, zatcaSubmittedAt: now, zatcaUuid: succeeded ? uuid : null,
+    zatcaResponseCode: String(response.status), zatcaErrorMessages: finalErrors.length ? JSON.stringify(finalErrors) : null,
+    zatcaWarningMessages: zWarnings.length ? JSON.stringify(zWarnings) : null, zatcaAiSuggestion: null,
+    xmlContent: built.finalXml, invoiceHash: succeeded ? built.invoiceHash : null,
+    zatcaIcv: succeeded ? maxIcv + 1 : null, zatcaPih: previousInvoiceHash, updatedAt: now,
+  }).where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, companyId)));
+  return succeeded
+    ? { httpStatus: 200, body: { status: "approved", zatcaStatus, uuid, warnings: zWarnings } }
+    : { httpStatus: response.ok ? 422 : response.status, body: { status: "rejected", zatcaStatus, errors: finalErrors, warnings: zWarnings } };
+}
+
+async function submitSalesReturnToZatca(companyId: number, id: number): Promise<ZatcaSubmitOutcome> {
+  return withZatcaChainLock(companyId, () => submitSalesReturnToZatcaUnlocked(companyId, id));
+}
+
+router.post("/sales-returns/:id/zatca-submit", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const outcome = await submitSalesReturnToZatca(cid, Number(req.params.id));
+    res.status(outcome.httpStatus).json(outcome.body);
+  } catch (e: any) {
+    res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: e?.message ?? String(e) });
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════
 // ZATCA — Bridge view: list sales invoices joined with customer name
@@ -5278,6 +5468,39 @@ router.get("/sales-invoices-zatca-bridge", async (req, res) => {
         ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ))
       .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id));
+    const returnRows = await db.select({
+      id:                   salesReturnsTable.id,
+      docNumber:            salesReturnsTable.docNumber,
+      invoiceDate:          salesReturnsTable.returnDate,
+      customerId:           salesReturnsTable.customerId,
+      customerNameAr:       customersTable.nameAr,
+      customerVatNumber:    customersTable.vatNumber,
+      totalAmount:          salesReturnsTable.totalAmount,
+      vatAmount:            salesReturnsTable.vatAmount,
+      status:               salesReturnsTable.status,
+      zatcaStatus:          salesReturnsTable.zatcaStatus,
+      zatcaSubmittedAt:     salesReturnsTable.zatcaSubmittedAt,
+      zatcaUuid:            salesReturnsTable.zatcaUuid,
+      zatcaErrorMessages:   salesReturnsTable.zatcaErrorMessages,
+      zatcaWarningMessages: salesReturnsTable.zatcaWarningMessages,
+      zatcaResponseCode:    salesReturnsTable.zatcaResponseCode,
+      originalDocNumber:    salesInvoicesTable.docNumber,
+    })
+      .from(salesReturnsTable)
+      .leftJoin(customersTable, and(
+        eq(salesReturnsTable.customerId, customersTable.id),
+        eq(customersTable.companyId, cid),
+      ))
+      .leftJoin(salesInvoicesTable, and(
+        eq(salesReturnsTable.invoiceId, salesInvoicesTable.id),
+        eq(salesInvoicesTable.companyId, cid),
+      ))
+      .where(and(
+        eq(salesReturnsTable.companyId, cid),
+        eq(salesReturnsTable.status, "posted"),
+        ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
+      ))
+      .orderBy(desc(salesReturnsTable.returnDate), desc(salesReturnsTable.id));
     // Normalize the persisted ZATCA status to the 3 buckets the bridge UI
     // renders (approved/rejected/pending). The DB stores the detailed
     // cleared/reported on success — without this, a cleared invoice has NO
@@ -5287,7 +5510,19 @@ router.get("/sales-invoices-zatca-bridge", async (req, res) => {
       if (s === "rejected") return "rejected";
       return "pending";
     };
-    res.json(rows.map((r) => ({ ...r, zatcaStatus: normZatca(r.zatcaStatus) })));
+    // `sourceType` is part of identity: invoice #7 and return #7 are distinct
+    // bridge rows and must route to different submit/detail endpoints.
+    res.json([
+      ...rows.map((r) => ({
+        ...r, sourceType: "invoice" as const, sourceId: r.id,
+        documentType: "invoice" as const, originalDocNumber: null,
+        zatcaStatus: normZatca(r.zatcaStatus),
+      })),
+      ...returnRows.map((r) => ({
+        ...r, sourceType: "return" as const, sourceId: r.id,
+        documentType: "credit" as const, zatcaStatus: normZatca(r.zatcaStatus),
+      })),
+    ].sort((a, b) => String(b.invoiceDate).localeCompare(String(a.invoiceDate)) || b.sourceId - a.sourceId));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 

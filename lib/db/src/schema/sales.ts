@@ -168,6 +168,19 @@ export const salesReturnsTable = pgTable("sales_returns", {
   taxAccountId:       integer("tax_account_id").references(() => accountsTable.id),
   discountAccountId:  integer("discount_account_id").references(() => accountsTable.id),
   journalEntryId:     integer("journal_entry_id"),
+  // ZATCA submission tracking and signed Phase-2 artifacts. Returns are credit
+  // notes and participate in the same company invoice hash chain as invoices.
+  zatcaStatus:           text("zatca_status").default("pending"),
+  zatcaSubmittedAt:      timestamp("zatca_submitted_at"),
+  zatcaUuid:             text("zatca_uuid"),
+  zatcaResponseCode:     text("zatca_response_code"),
+  zatcaErrorMessages:    text("zatca_error_messages"),
+  zatcaWarningMessages:  text("zatca_warning_messages"),
+  zatcaAiSuggestion:     text("zatca_ai_suggestion"),
+  xmlContent:            text("xml_content"),
+  invoiceHash:           text("invoice_hash"),
+  zatcaIcv:              integer("zatca_icv"),
+  zatcaPih:              text("zatca_pih"),
   // Audit: which user created this return (nullable for legacy rows / system-created).
   createdById:  integer("created_by_id"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),

@@ -22,6 +22,8 @@
 import type {
   salesInvoicesTable,
   salesInvoiceLinesTable,
+  salesReturnsTable,
+  salesReturnLinesTable,
   companiesTable,
   customersTable,
 } from "@workspace/db";
@@ -29,6 +31,8 @@ import type { InvoiceData } from "./zatca-xml.js";
 
 type SalesInvoiceRow = typeof salesInvoicesTable.$inferSelect;
 type SalesLineRow = typeof salesInvoiceLinesTable.$inferSelect;
+type SalesReturnRow = typeof salesReturnsTable.$inferSelect;
+type SalesReturnLineRow = typeof salesReturnLinesTable.$inferSelect;
 type CompanyRow = typeof companiesTable.$inferSelect;
 type CustomerRow = typeof customersTable.$inferSelect;
 
@@ -212,4 +216,40 @@ export function salesInvoiceRowToZatcaData(
     computedVatTotalSar,
     invoiceType,
   };
+}
+
+/**
+ * Build a ZATCA credit note from a posted sales return.  Sales-return monetary
+ * fields have the same meaning as their invoice counterparts; deliberately
+ * delegate to the invoice mapper so tax, discount, FX and rounding behaviour
+ * can never drift between 388 and 381 documents.  ZATCA credit-note amounts
+ * are expressed as positive values (the document type carries the reversal).
+ */
+export function salesReturnRowToZatcaData(
+  salesReturn: SalesReturnRow,
+  lines: SalesReturnLineRow[],
+  company: CompanyRow,
+  customer: CustomerRow | null,
+  chain: SalesZatcaChainParams,
+  originalInvoiceDocNumber: string,
+): SalesZatcaMapResult {
+  const mapped = salesInvoiceRowToZatcaData(
+    {
+      ...salesReturn,
+      invoiceDate: salesReturn.returnDate,
+    } as unknown as SalesInvoiceRow,
+    lines as unknown as SalesLineRow[],
+    company,
+    customer,
+    chain,
+  );
+
+  mapped.data.invoiceNumber = salesReturn.docNumber || `SRET-${salesReturn.id}`;
+  mapped.data.documentType = "credit";
+  // A credit note must reference the original human invoice number, not its
+  // database ID. The submitter validates this required value before mapping.
+  mapped.data.billingReferenceId = originalInvoiceDocNumber;
+  mapped.data.instructionNote = salesReturn.notes?.trim() || "مرتجع مبيعات";
+  mapped.data.notes = salesReturn.notes;
+  return mapped;
 }
