@@ -144,3 +144,4 @@
 - [Demo analytics integrity](demo-analytics-integrity.md) — central telemetry uses finite server taxonomy plus verified agent identity and idempotent session/receipt updates.
 - [Materialized reminder lifecycle](materialized-reminder-lifecycle.md) — source-key dedupe prevents duplicates but not stale alerts; reconcile active keys and preserve receipts only for still-current rows.
 - [ZATCA sales-return credit notes](zatca-sales-return-credit-notes.md) — returns are UBL 381 documents sharing the invoice ICV/PIH chain; auto-send is post-commit/background and never reverses accounting.
+- [Sales invoice stock overdraft](sales-invoice-stock-overdraft.md) — negative stock requires invoice opt-in + user grant + warehouse policy; enforce the warehouse limit under the posting transaction.

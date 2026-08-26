@@ -269,6 +269,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // the hook (returns editable for everything). Field keys here MUST match
   // FIELD_CATALOGUE.sales in lib/db/src/schema/invoiceFieldPolicies.ts.
   const fp = useFieldPolicy("sales");
+  const canViewOverdraft = usePermission("sales_invoice_overdraft", "view");
+  const canEditOverdraft = usePermission("sales_invoice_overdraft", "edit");
   const dateBounds = fp.dateBounds("date") ?? {};
 
   const [activeTab, setActiveTab]       = useState("basic");
@@ -302,6 +304,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // user manually clicking the checkbox updates the persisted preference.
   const stickyPriceIncl = useStickyPriceIncludesVat();
   const [priceIncludesVat, setPriceIncludesVat] = useState(stickyPriceIncl.initial);
+  const [allowNegativeStock, setAllowNegativeStock] = useState(false);
   // ── نوع الفاتورة (ZATCA) ─────────────────────────────────────────────────
   // "standard"   = فاتورة ضريبية B2B  → يلزم رقم ضريبي + سجل تجاري + عنوان
   //                                     وطني كامل للعميل (متطلبات زاتكا)
@@ -815,6 +818,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setCostCenter(existing.costCenter ?? "");
     if (usesOps) setSalesRepId(existing.salesRepId ? String(existing.salesRepId) : "");
     setPriceIncludesVat(!!existing.priceIncludesVat);
+    if (isInvoice) setAllowNegativeStock(!!existing.allowNegativeStock);
     // استرجاع نوع الفاتورة المحفوظ — وعلامة المستخدم على «اختاره يدويًا»
     // حتى لا يقوم تأثير الاكتشاف التلقائي بتغييره عند إعادة فتح الفاتورة.
     if (isInvoice && (existing as any).invoiceType) {
@@ -1606,6 +1610,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
       discountAmount: discountAmt.toFixed(2), totalAmount: totalAmount.toFixed(2),
       priceIncludesVat,
+      ...(isInvoice ? { allowNegativeStock } : {}),
       // نوع الفاتورة (ZATCA): "standard" أو "simplified" — يُرسل فقط
       // لفواتير المبيعات حتى يظهر في الطباعة والتقارير ويتحكم في مسار
       // التقديم لزاتكا (Clearance vs Reporting).
@@ -1724,6 +1729,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     (Field Policy / الحوكمة): إذا أخفاه المسؤول للمستخدم
                     تختفي البطاقة وتسقط من الصفّ بالكامل، وإذا جعله للقراءة
                     فقط لا يستطيع المستخدم تبديله. مفتاح القاموس: priceIncludesVat */}
+                <div className="flex flex-wrap items-start gap-3">
                 {fp.isVisible("priceIncludesVat") ? (
                 <label
                   data-testid="price-includes-vat-toggle"
@@ -1754,7 +1760,38 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </p>
                   </div>
                 </label>
-                ) : <span /> /* keeps justify-between layout when hidden */}
+                ) : null}
+                {isInvoice && canViewOverdraft ? (
+                  <label
+                    data-testid="allow-negative-stock-toggle"
+                    className={cn(
+                      "flex items-start gap-2.5 rounded-xl border-2 p-3 select-none transition-colors max-w-sm",
+                      !canEditOverdraft || viewMode ? "cursor-not-allowed opacity-70" : "cursor-pointer",
+                      allowNegativeStock ? "border-amber-500 bg-amber-50" : "border-border hover:bg-muted/50",
+                    )}
+                    title={!canEditOverdraft ? "للقراءة فقط حسب صلاحيات المستخدم" : undefined}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 accent-amber-600 cursor-pointer disabled:cursor-not-allowed"
+                      checked={allowNegativeStock}
+                      disabled={!canEditOverdraft || viewMode}
+                      onChange={e => {
+                        if (!canEditOverdraft || viewMode) return;
+                        setAllowNegativeStock(e.target.checked);
+                      }}
+                    />
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-semibold">السحب على المكشوف</p>
+                      <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        {allowNegativeStock
+                          ? "مسموح ضمن إعداد وحدّ المخزن"
+                          : "لن يُسمح بتجاوز الرصيد المتاح"}
+                      </p>
+                    </div>
+                  </label>
+                ) : null}
+                </div>
 
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">

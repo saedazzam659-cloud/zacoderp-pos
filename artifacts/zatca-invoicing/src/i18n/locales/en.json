@@ -2726,6 +2726,7 @@
       "customers": "Customers",
       "sales_quotations": "Sales Quotations",
       "sales_invoices": "Sales Invoices",
+      "sales_invoice_overdraft": "Sales Invoice Stock Overdraft",
       "sales_returns": "Sales Returns",
       "sales_settlements": "Customer Collections",
       "sales_reps": "Sales Representatives",

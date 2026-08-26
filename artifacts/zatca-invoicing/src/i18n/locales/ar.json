@@ -2729,6 +2729,7 @@
       "customers": "العملاء",
       "sales_quotations": "عروض الأسعار",
       "sales_invoices": "فواتير المبيعات",
+      "sales_invoice_overdraft": "السحب على المكشوف في فواتير المبيعات",
       "sales_returns": "مرتجعات المبيعات",
       "sales_settlements": "تحصيل العملاء",
       "sales_reps": "مناديب المبيعات",

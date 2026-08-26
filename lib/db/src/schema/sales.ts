@@ -29,6 +29,7 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   totalAmount:    numeric("total_amount",    { precision: 15, scale: 2 }).notNull().default("0"),
   priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
+  allowNegativeStock: boolean("allow_negative_stock").notNull().default(false),
   // Dynamic tax catalog reference (soft ref to taxes.id). Drives the default
   // vat_rate flowing into this document's lines. NULL = legacy/default 15%.
   taxId:          integer("tax_id"),

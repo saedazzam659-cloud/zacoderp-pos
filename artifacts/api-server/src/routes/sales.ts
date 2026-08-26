@@ -31,7 +31,7 @@ import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { usersTable } from "@workspace/db";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
-import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
+import { canAccessModule, pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import {
   upsertBalance,
   getBalance,
@@ -419,6 +419,7 @@ async function resolveRepCommission(
 type WarehouseInfo = {
   accountId: number | null;
   allowNegative: boolean;
+  negativeLimit: number | null;
   nameAr: string | null;
 };
 
@@ -430,11 +431,17 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
     id: warehousesTable.id,
     accountId: warehousesTable.accountId,
     allowNegative: warehousesTable.allowNegative,
+    negativeLimit: warehousesTable.negativeLimit,
     nameAr: warehousesTable.nameAr,
   }).from(warehousesTable)
     .where(and(eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, uniq)));
   for (const w of rows) {
-    out[w.id] = { accountId: w.accountId ?? null, allowNegative: !!w.allowNegative, nameAr: w.nameAr ?? null };
+    out[w.id] = {
+      accountId: w.accountId ?? null,
+      allowNegative: !!w.allowNegative,
+      negativeLimit: w.negativeLimit == null ? null : Number(w.negativeLimit),
+      nameAr: w.nameAr ?? null,
+    };
   }
   return out;
 }
@@ -1699,7 +1706,7 @@ router.post("/sales-invoices", async (req, res) => {
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "create"))) return;
     timing?.mark("mobile-rights");
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
     const usageIds = Array.from(new Set<number>(
@@ -1709,6 +1716,11 @@ router.post("/sales-invoices", async (req, res) => {
     ));
     const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
     const pType = paymentType || "credit";
+    const requestedOverdraft = asBool(allowNegativeStock);
+    if (requestedOverdraft && !canAccessModule(req.authUser, "sales_invoice_overdraft", "edit")) {
+      res.status(403).json({ error: "ليست لديك صلاحية تفعيل السحب على المكشوف في فواتير المبيعات" });
+      return;
+    }
     const issueInline = (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
       req.body?.mobileSaveMode === "issue";
     if (issueInline && !canPostDoc(req.authUser as any, "sales")) {
@@ -1977,6 +1989,7 @@ router.post("/sales-invoices", async (req, res) => {
       discountAmount: totals.discountAmount,
       totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
+      allowNegativeStock: requestedOverdraft,
       // "cancelled" is used only as an internal, non-editable issue-pending
       // sentinel during this same request.  Success changes it to posted;
       // any failure deletes it via the compensation callback below.
@@ -2126,7 +2139,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // docNumber is intentionally not destructured here — it is immutable on
     // edit (see the .set() below).
     const { invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             documentOfferId, costCenter, taxId } = req.body;
     // Same required-fields gate as the POST path so a direct PUT (e.g.
@@ -2137,6 +2150,11 @@ router.put("/sales-invoices/:id", async (req, res) => {
     const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
     const incomingOfferIds = collectInvoiceOfferIds(documentOfferId, lines);
     const pType = paymentType || "credit";
+    const requestedOverdraft = asBool(allowNegativeStock);
+    if (requestedOverdraft && !canAccessModule(req.authUser, "sales_invoice_overdraft", "edit")) {
+      res.status(403).json({ error: "ليست لديك صلاحية تفعيل السحب على المكشوف في فواتير المبيعات" });
+      return;
+    }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const newTotalBase = (parseFloat(String(totals.totalAmount)) || 0)
       * (parseFloat(String(exchangeRate)) || 1);
@@ -2261,6 +2279,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
         discountAmount: totals.discountAmount,
         totalAmount: totals.totalAmount,
         priceIncludesVat: asBool(priceIncludesVat),
+        allowNegativeStock: requestedOverdraft,
         notes: notes || null, updatedAt: new Date(),
         cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
         inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
@@ -2497,6 +2516,11 @@ async function postSalesInvoiceHandler(
       }
       inv = lockedInvoice;
       lines = lockedLines;
+      const allowInvoiceOverdraft = !!(lockedInvoice as any).allowNegativeStock;
+      if (allowInvoiceOverdraft && !canAccessModule(req.authUser, "sales_invoice_overdraft", "edit")) {
+        res.status(403).json({ error: "ليست لديك صلاحية ترحيل فاتورة مفعّل بها السحب على المكشوف" });
+        return;
+      }
 
       let stockSnapshots = new Map<string, StockSnapshot>();
       if (!gdnSourced) {
@@ -2505,11 +2529,20 @@ async function postSalesInvoiceHandler(
         timing?.mark("stock-locks-and-snapshots");
         for (const [key, demand] of demandByPair) {
           const wh = whInfo[demand.warehouseId];
-          if (wh?.allowNegative) continue;
           const cur = stockSnapshots.get(key)?.qty ?? 0;
-          if (cur < demand.qty) {
+          const projected = cur - demand.qty;
+          const warehouseAllows = allowInvoiceOverdraft && wh?.allowNegative;
+          const limit = wh?.negativeLimit;
+          const exceedsLimit = warehouseAllows && limit != null && limit >= 0 && projected < -limit;
+          if (!warehouseAllows && projected < 0) {
             res.status(400).json({
-              error: `رصيد الصنف "${demand.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? demand.warehouseId}" — المتاح ${cur} والمطلوب ${demand.qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
+              error: `رصيد الصنف "${demand.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? demand.warehouseId}" — المتاح ${cur} والمطلوب ${demand.qty}. يلزم تفعيل السحب على المكشوف في الفاتورة والمخزن معًا.`,
+            });
+            return;
+          }
+          if (exceedsLimit) {
+            res.status(400).json({
+              error: `تجاوز الصنف "${demand.itemName}" حد السحب على المكشوف في مخزن "${wh?.nameAr ?? demand.warehouseId}" — الرصيد بعد الترحيل ${projected} والحد المسموح -${limit}.`,
             });
             return;
           }

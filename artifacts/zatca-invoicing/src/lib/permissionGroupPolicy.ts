@@ -68,6 +68,7 @@ export const GROUP_USER_PERMISSION_KEYS: Record<PermissionGroupKey, readonly str
   trainingRoom: ["training_room"],
   sales: [
     "customers", "sales_invoices", "sales_quotations", "sales_returns",
+    "sales_invoice_overdraft",
     "sales_settlements", "sales_reps", "sales_reports", "customer_notes",
     "zatca_bridge", "zatca_report", "receipt_vouchers",
   ],

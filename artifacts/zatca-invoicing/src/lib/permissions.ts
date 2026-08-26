@@ -78,6 +78,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "customers",            label: "perms.modules.customers",            group: G.sales,      actions: VC },
   { key: "sales_quotations",     label: "perms.modules.sales_quotations",     group: G.sales,      actions: ALL },
   { key: "sales_invoices",       label: "perms.modules.sales_invoices",       group: G.sales,      actions: ALL },
+  { key: "sales_invoice_overdraft", label: "perms.modules.sales_invoice_overdraft", group: G.sales, actions: ["view", "edit"] },
   { key: "sales_returns",        label: "perms.modules.sales_returns",        group: G.sales,      actions: ALL },
   { key: "sales_settlements",    label: "perms.modules.sales_settlements",    group: G.sales,      actions: VC },
   { key: "sales_reps",           label: "perms.modules.sales_reps",           group: G.sales,      actions: VC },

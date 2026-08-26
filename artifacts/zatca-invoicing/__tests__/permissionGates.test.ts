@@ -128,6 +128,22 @@ test("customer and supplier note permissions follow their company modules", () =
   );
 });
 
+test("sales invoice overdraft has independent view/edit permissions under Sales", () => {
+  const module = PERMISSION_MODULES.find(m => m.key === "sales_invoice_overdraft");
+  assert.ok(module);
+  assert.deepEqual(module.actions, ["view", "edit"]);
+  assert.equal(module.group, "perms.groups.sales");
+  assert.ok(GROUP_USER_PERMISSION_KEYS.sales.includes("sales_invoice_overdraft"));
+  assert.equal(
+    companyAllowsPermissionModule({ sales_module: false }, "sales_invoice_overdraft"),
+    false,
+  );
+  assert.equal(
+    companyAllowsPermissionModule({ sales_module: true }, "sales_invoice_overdraft"),
+    true,
+  );
+});
+
 test("legacy defaults and locked defaults remain unchanged", () => {
   assert.equal(companyAllowsPermissionModule({}, "cash_boxes"), true);
   assert.equal(companyAllowsPermissionModule({}, "office"), false);

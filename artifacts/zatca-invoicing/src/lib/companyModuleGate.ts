@@ -23,6 +23,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   sales_reps: "sales_module",
   sales_quotations: "sales_module",
   sales_invoices: "sales_module",
+  sales_invoice_overdraft: "sales_module",
   sales_returns: "sales_module",
   sales_settlements: "sales_module",
   sales_reports: "sales_reports",
