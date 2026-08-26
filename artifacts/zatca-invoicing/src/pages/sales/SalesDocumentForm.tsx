@@ -269,8 +269,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // the hook (returns editable for everything). Field keys here MUST match
   // FIELD_CATALOGUE.sales in lib/db/src/schema/invoiceFieldPolicies.ts.
   const fp = useFieldPolicy("sales");
-  const canViewOverdraft = usePermission("sales_invoice_overdraft", "view");
-  const canEditOverdraft = usePermission("sales_invoice_overdraft", "edit");
+  const overdraftViewPermission = usePermission("sales_invoice_overdraft", "view");
+  const overdraftEditPermission = usePermission("sales_invoice_overdraft", "edit");
+  // Company managers have full permissions by definition. Keep this explicit
+  // at the control boundary as well as in usePermission so a stale/missing
+  // granular permission map can never hide this tool from an admin session.
+  const normalizedRole = String(user?.role ?? "").trim().toLowerCase();
+  const isFullAccessRole = normalizedRole === "admin" || normalizedRole === "superadmin";
+  const canViewOverdraft = isFullAccessRole || overdraftViewPermission;
+  const canEditOverdraft = isFullAccessRole || overdraftEditPermission;
   const dateBounds = fp.dateBounds("date") ?? {};
 
   const [activeTab, setActiveTab]       = useState("basic");

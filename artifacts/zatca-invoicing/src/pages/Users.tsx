@@ -1202,11 +1202,21 @@ export default function Users() {
                                 <td className="p-2">{t(m.label)}</td>
                                 {(["view", "create", "edit", "delete", "post", "export"] as Action[]).map(a => {
                                   const supported = m.actions.includes(a);
-                                  const checked = !!form.permissions[m.key]?.[a];
+                                  // Company managers always have every supported
+                                  // permission. Render those inherited grants as
+                                  // checked (but locked) instead of showing an
+                                  // empty disabled matrix that looks denied.
+                                  const checked = form.role === "admin"
+                                    ? supported
+                                    : !!form.permissions[m.key]?.[a];
                                   return (
                                     <td key={a} className="p-2 text-center">
                                       {supported ? (
-                                        <Checkbox checked={checked} onCheckedChange={(v) => togglePerm(m.key, a, !!v)} />
+                                        <Checkbox
+                                          checked={checked}
+                                          disabled={form.role === "admin"}
+                                          onCheckedChange={(v) => togglePerm(m.key, a, !!v)}
+                                        />
                                       ) : (
                                         <span className="text-muted-foreground/40">—</span>
                                       )}
