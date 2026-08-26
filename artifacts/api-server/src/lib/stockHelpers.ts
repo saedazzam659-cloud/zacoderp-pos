@@ -217,8 +217,13 @@ export async function pickBatches(
   return allocateBatchPicks(batches, requestedQty);
 }
 
-export async function getBalance(companyId: number, itemId: number, warehouseId: number): Promise<number> {
-  const [bal] = await db.select().from(stockBalanceTable).where(
+export async function getBalance(
+  companyId: number,
+  itemId: number,
+  warehouseId: number,
+  executor: any = db,
+): Promise<number> {
+  const [bal] = await executor.select().from(stockBalanceTable).where(
     and(
       eq(stockBalanceTable.companyId, companyId),
       eq(stockBalanceTable.itemId, itemId),
@@ -228,14 +233,53 @@ export async function getBalance(companyId: number, itemId: number, warehouseId:
   return Number(bal?.qty ?? 0);
 }
 
+export async function lockStockBalance(
+  companyId: number,
+  itemId: number,
+  warehouseId: number,
+  executor: any,
+): Promise<void> {
+  await executor.execute(sql`
+    SELECT pg_advisory_xact_lock(
+      hashtext(${`stock:${companyId}:${itemId}:${warehouseId}`})
+    )
+  `);
+}
+
+export async function lockStockBalances(
+  keys: Array<{ companyId: number; itemId: number; warehouseId: number }>,
+  executor: any,
+): Promise<void> {
+  const unique = new Map<string, { companyId: number; itemId: number; warehouseId: number }>();
+  for (const key of keys) unique.set(`${key.companyId}:${key.itemId}:${key.warehouseId}`, key);
+  const ordered = Array.from(unique.values()).sort(
+    (a, b) => a.companyId - b.companyId || a.itemId - b.itemId || a.warehouseId - b.warehouseId,
+  );
+  for (const key of ordered) {
+    await lockStockBalance(key.companyId, key.itemId, key.warehouseId, executor);
+  }
+}
+
 export async function upsertBalance(
   companyId: number,
   itemId: number,
   warehouseId: number,
   deltaQty: number,
-  costPrice: number
+  costPrice: number,
+  executor: any = db,
 ): Promise<number> {
-  const [existing] = await db.select().from(stockBalanceTable).where(
+  // Legacy callers that do not already own a transaction still need the
+  // advisory lock to span the complete read-modify-write operation.
+  if (executor === db) {
+    return db.transaction((tx: any) =>
+      upsertBalance(companyId, itemId, warehouseId, deltaQty, costPrice, tx),
+    );
+  }
+  // Serialize every mutation of one (tenant,item,warehouse) bucket.  All
+  // document-posting callers pass their transaction here, so the lock lives
+  // until the whole ledger/balance/JE/status operation commits.
+  await lockStockBalance(companyId, itemId, warehouseId, executor);
+  const [existing] = await executor.select().from(stockBalanceTable).where(
     and(
       eq(stockBalanceTable.companyId, companyId),
       eq(stockBalanceTable.itemId, itemId),
@@ -243,7 +287,7 @@ export async function upsertBalance(
     )
   );
   if (!existing) {
-    await db.insert(stockBalanceTable).values({
+    await executor.insert(stockBalanceTable).values({
       companyId, itemId, warehouseId,
       qty: String(deltaQty),
       avgCost: String(costPrice),
@@ -260,7 +304,7 @@ export async function upsertBalance(
       newQty = oldQty + deltaQty;
       newAvg = oldCost;
     }
-    await db.update(stockBalanceTable)
+    await executor.update(stockBalanceTable)
       .set({ qty: String(newQty), avgCost: String(newAvg), updatedAt: new Date() })
       .where(eq(stockBalanceTable.id, existing.id));
     return newQty;

@@ -21,6 +21,8 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
 import { DateField } from "@/components/ui/date-field";
+import { AccountCombobox } from "@/components/AccountCombobox";
+import { usePermission } from "@/hooks/usePermission";
 
 const STATUS_CONFIG: Record<string, { labelKey: string; color: string }> = {
   draft:  { labelKey: "statusDraft",  color: "bg-amber-50 text-amber-700" },
@@ -34,11 +36,19 @@ export default function StockCounting() {
   const tr = (k: string, opts?: any): string => t(`stockCountingPage.${k}`, opts) as string;
   const { fmt, fmtQty } = useFmt();
   const { user } = useAuth();
+  const canCreate = usePermission("stock_counts", "create");
+  const canEdit = usePermission("stock_counts", "edit");
+  const canDelete = usePermission("stock_counts", "delete");
+  const canPost = usePermission("stock_counts", "post");
+  const canExport = usePermission("stock_counts", "export");
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
-  const [form, setForm] = useState<any>({ countNumber: "", countDate: new Date().toISOString().slice(0, 10), warehouseId: "", notes: "" });
+  const [form, setForm] = useState<any>({
+    countNumber: "", countDate: new Date().toISOString().slice(0, 10),
+    warehouseId: "", inventoryAccountId: "", adjustmentAccountId: "", notes: "",
+  });
   const [showForm, setShowForm] = useState(false);
 
   const seqPeek = useNextSequenceNumber("stock_count", showForm);
@@ -64,7 +74,13 @@ export default function StockCounting() {
   const postMut   = useMutation({ mutationFn: inventoryApi.postCount, onSuccess: () => { invalidate(); qc.invalidateQueries({ queryKey: ["stock-balance"] }); toast({ title: tr("toastApproved") }); } });
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteCount, onSuccess: () => { invalidate(); toast({ title: tr("toastDeleted") }); } });
 
-  function reset() { setForm({ countNumber: "", countDate: new Date().toISOString().slice(0, 10), warehouseId: "", notes: "" }); setShowForm(false); }
+  function reset() {
+    setForm({
+      countNumber: "", countDate: new Date().toISOString().slice(0, 10),
+      warehouseId: "", inventoryAccountId: "", adjustmentAccountId: "", notes: "",
+    });
+    setShowForm(false);
+  }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.warehouseId) return;
@@ -170,9 +186,9 @@ export default function StockCounting() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><ClipboardList className="h-6 w-6 text-primary" />{tr("title")}</h1>
           <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
+        {canCreate && <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
           <Plus className="h-4 w-4" />{tr("newCount")}
-        </Button>
+        </Button>}
       </div>
 
       {showForm && (
@@ -207,6 +223,24 @@ export default function StockCounting() {
               />
             </Field>
             <Field label={tr("notes")} className="md:col-span-2"><Input placeholder={tr("notesPlaceholder")} value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+            <Field label={tr("inventoryAccount")}>
+              <AccountCombobox
+                value={form.inventoryAccountId}
+                onValueChange={v => setForm((p: any) => ({ ...p, inventoryAccountId: v }))}
+                placeholder={tr("selectInventoryAccount")}
+                filterTypes={["asset"]}
+                grouped={false}
+              />
+            </Field>
+            <Field label={tr("adjustmentAccount")}>
+              <AccountCombobox
+                value={form.adjustmentAccountId}
+                onValueChange={v => setForm((p: any) => ({ ...p, adjustmentAccountId: v }))}
+                placeholder={tr("selectAdjustmentAccount")}
+                filterTypes={["expense", "revenue", "income"]}
+                grouped={false}
+              />
+            </Field>
             <p className="md:col-span-2 text-xs text-muted-foreground bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">{tr("loadBalancesHint")}</p>
           </FormGrid>
         </FormPanel>
@@ -262,12 +296,12 @@ export default function StockCounting() {
                           <div className="flex gap-1">
                             {cnt.status === "draft" && (
                               <>
-                                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-green-700 border-green-200 hover:bg-green-50" onClick={() => { if (confirm(tr("confirmPost"))) postMut.mutate(cnt.id); }}>
+                                {canPost && <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-green-700 border-green-200 hover:bg-green-50" onClick={() => { if (confirm(tr("confirmPost"))) postMut.mutate(cnt.id); }}>
                                   <Send className="h-3 w-3" />{tr("approve")}
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => { if (confirm(tr("confirmDelete"))) deleteMut.mutate(cnt.id); }}>
+                                </Button>}
+                                {canDelete && <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => { if (confirm(tr("confirmDelete"))) deleteMut.mutate(cnt.id); }}>
                                   <Trash2 className="h-3 w-3" />
-                                </Button>
+                                </Button>}
                               </>
                             )}
                           </div>
@@ -288,7 +322,7 @@ export default function StockCounting() {
                                       className="hidden"
                                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleAiUpload(f); }}
                                     />
-                                    <Button
+                                     {canEdit && <Button
                                       size="sm" variant="outline"
                                       className="h-7 text-xs gap-1 text-purple-700 border-purple-200 hover:bg-purple-50"
                                       onClick={() => fileInputRef.current?.click()}
@@ -296,13 +330,13 @@ export default function StockCounting() {
                                     >
                                       <Sparkles className="h-3 w-3" />
                                       {aiUploading ? tr("analyzing") : tr("uploadExcelAi")}
-                                    </Button>
-                                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => saveActualQty(cnt.id)} disabled={savingId === cnt.id}>
+                                     </Button>}
+                                     {canEdit && <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => saveActualQty(cnt.id)} disabled={savingId === cnt.id}>
                                       <Save className="h-3 w-3" />{savingId === cnt.id ? tr("saving") : tr("saveActualQty")}
-                                    </Button>
+                                     </Button>}
                                   </>
                                 )}
-                                <ExportButtons
+                                 {canExport && <ExportButtons
                                   rows={countExportRows}
                                   columns={[
                                     { key: "itemCode",   header: tr("colItemCode"),   width: 16 },
@@ -317,7 +351,7 @@ export default function StockCounting() {
                                   title={tr("exportTitle")}
                                   subtitle={`${pickName(cnt.warehouse?.nameAr, cnt.warehouse?.nameEn)} — ${cnt.countDate}`}
                                   size="sm"
-                                />
+                                 />}
                               </div>
                             </div>
                             {!countDetail?.items?.length ? <p className="text-xs text-muted-foreground">{tr("noItems")}</p> : (
@@ -343,10 +377,11 @@ export default function StockCounting() {
                                           </td>
                                           <td className="px-3 py-2 text-center tabular-nums">{fmtQty(it.systemQty)}</td>
                                           <td className="px-3 py-2">
-                                            {cnt.status === "draft" ? (
+                                             {cnt.status === "draft" && canEdit ? (
                                               <Input
-                                                type="number"
-                                                step="any"
+                                                 type="text"
+                                                 inputMode="decimal"
+                                                 dir="ltr"
                                                 className="h-7 text-xs text-center"
                                                 value={actualVal}
                                                 onChange={e => setEditedLines(p => ({ ...p, [it.id]: e.target.value }))}

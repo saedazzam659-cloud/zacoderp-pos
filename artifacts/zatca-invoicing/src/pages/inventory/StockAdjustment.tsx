@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import {
   Plus, Trash2, SlidersHorizontal, Search, X, Send,
-  ChevronDown, ChevronUp, Zap, Sparkles, Loader2,
+  ChevronDown, ChevronUp, Zap, Sparkles, Loader2, RotateCcw,
 } from "lucide-react";
 import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -24,13 +24,17 @@ import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
+import { usePermission } from "@/hooks/usePermission";
 
 const STATUS_CONFIG: Record<string, { color: string }> = {
   draft:  { color: "bg-amber-50 text-amber-700" },
   posted: { color: "bg-green-50 text-green-700" },
 };
-const REASONS = ["تعديل كمي", "تلف وخسارة", "فاقد وكسر", "إدخال أول مرة", "مكافآت وهبات", "أخرى"];
+const REASONS = ["رصيد افتتاحي", "إضافة مخزنية", "تصحيح مخزون", "تعديل كمي", "تلف وخسارة", "فاقد وكسر", "مكافآت وهبات", "أخرى"];
 const REASON_KEYS: Record<string, string> = {
+  "رصيد افتتاحي": "reasonOpeningBalance",
+  "إضافة مخزنية": "reasonStockAddition",
+  "تصحيح مخزون": "reasonStockCorrection",
   "تعديل كمي": "reasonQuantityAdjustment",
   "تلف وخسارة": "reasonDamageLoss",
   "فاقد وكسر": "reasonShortageBreakage",
@@ -59,6 +63,13 @@ export default function StockAdjustment() {
     REASON_KEYS[r] ? t(`stockAdjustmentPage.${REASON_KEYS[r]}`) : r;
   const { fmt, fmtQty } = useFmt();
   const { user, token } = useAuth() as any;
+  const canCreate = usePermission("stock_adjustments", "create");
+  const canDelete = usePermission("stock_adjustments", "delete");
+  const canPost = usePermission("stock_adjustments", "post");
+  const shouldAutoPost =
+    canPost &&
+    user?.company?.autoPostingEnabled !== false &&
+    user?.company?.autoPostStockMovement !== false;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const usageModes = useScreenItemModes("stock_adjust");
   const [aiLoading, setAiLoading] = useState(false);
@@ -108,20 +119,20 @@ export default function StockAdjustment() {
   const createMut = useMutation({
     mutationFn: async (d: any) => {
       const created: any = await inventoryApi.createAdjustment(d);
-      if (created?.id && (created.status ?? "draft") === "draft") {
+       if (shouldAutoPost && created?.id && (created.status ?? "draft") === "draft") {
         try {
-          return await inventoryApi.postAdjustment(created.id);
+          return { result: await inventoryApi.postAdjustment(created.id), autoPosted: true };
         } catch (e: any) {
           throw new Error(t("stockAdjustmentPage.savedButPostFailed", { error: e?.message || e }));
         }
       }
-      return created;
+       return { result: created, autoPosted: false };
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       invalidate();
       qc.invalidateQueries({ queryKey: ["stock-balance"] });
       reset();
-      toast({ title: t("stockAdjustmentPage.toastCreated") });
+      toast({ title: t(data?.autoPosted ? "stockAdjustmentPage.toastCreated" : "stockAdjustmentPage.toastSavedDraft") });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -136,6 +147,16 @@ export default function StockAdjustment() {
   const deleteMut = useMutation({
     mutationFn: inventoryApi.deleteAdjustment,
     onSuccess: () => { invalidate(); toast({ title: t("stockAdjustmentPage.toastDeleted") }); },
+  });
+  const reverseMut = useMutation({
+    mutationFn: (id: number) => inventoryApi.reverseAdjustment(id, {
+      date: new Date().toISOString().slice(0, 10),
+    }),
+    onSuccess: () => {
+      invalidate();
+      toast({ title: t("stockAdjustmentPage.toastCorrectionCreated") });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   function reset() {
@@ -264,13 +285,13 @@ export default function StockAdjustment() {
             {t("stockAdjustmentPage.subtitle")}
           </p>
         </div>
-        <Button
+        {canCreate && <Button
           size="sm"
           className="gap-2"
           onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}
         >
           <Plus className="h-4 w-4" />{t("stockAdjustmentPage.newAdjustment")}
-        </Button>
+        </Button>}
       </div>
 
       {/* Form */}
@@ -497,6 +518,7 @@ export default function StockAdjustment() {
                           {t("stockAdjustmentPage.colCostPrice")} <Zap className="h-3 w-3 text-amber-500"><title>{t("stockAdjustmentPage.autoFillTooltip")}</title></Zap>
                         </span>
                       </th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-32">{t("stockAdjustmentPage.colTotalCost")}</th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t("stockAdjustmentPage.note")}</th>
                       <th className="px-3 py-2 w-10" />
                     </tr>
@@ -579,6 +601,10 @@ export default function StockAdjustment() {
                                 </span>
                               )}
                             </div>
+                          </td>
+
+                          <td className="px-3 py-2 text-left tabular-nums font-medium" dir="ltr">
+                            {fmt(Number(line.qty || 0) * Number(line.costPrice || 0))}
                           </td>
 
                           {/* Notes */}
@@ -696,23 +722,36 @@ export default function StockAdjustment() {
                           <div className="flex gap-1">
                             {adj.status === "draft" && (
                               <>
-                                <Button
+                                {canPost && <Button
                                   size="sm"
                                   variant="outline"
                                   className="h-7 text-xs gap-1 text-green-700 border-green-200 hover:bg-green-50"
                                   onClick={() => { if (confirm(t("stockAdjustmentPage.confirmPost"))) postMut.mutate(adj.id); }}
                                 >
                                   <Send className="h-3 w-3" />{t("stockAdjustmentPage.post")}
-                                </Button>
-                                <Button
+                                </Button>}
+                                {canDelete && <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-7 w-7 text-destructive"
                                   onClick={() => { if (confirm(t("stockAdjustmentPage.confirmDelete"))) deleteMut.mutate(adj.id); }}
                                 >
                                   <Trash2 className="h-3 w-3" />
-                                </Button>
+                                </Button>}
                               </>
+                            )}
+                            {adj.status === "posted" && canCreate && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs gap-1 text-amber-700 border-amber-200 hover:bg-amber-50"
+                                onClick={() => {
+                                  if (confirm(t("stockAdjustmentPage.confirmCorrection"))) reverseMut.mutate(adj.id);
+                                }}
+                                disabled={reverseMut.isPending}
+                              >
+                                <RotateCcw className="h-3 w-3" />{t("stockAdjustmentPage.createCorrection")}
+                              </Button>
                             )}
                           </div>
                         </td>

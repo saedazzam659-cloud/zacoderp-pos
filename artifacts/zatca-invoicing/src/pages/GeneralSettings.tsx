@@ -31,6 +31,7 @@ import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import SenderSettingsTab from "./settings/SenderSettingsTab";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -414,6 +415,7 @@ export default function GeneralSettings() {
   const [itemsImporting,    setItemsImporting]    = useState(false);
   const [balancesImporting, setBalancesImporting] = useState(false);
   const [inventoryOpeningAccountId, setInventoryOpeningAccountId] = useState("");
+  const [inventoryOpeningDate, setInventoryOpeningDate] = useState(new Date().toISOString().slice(0, 10));
   const [openingReminderMessage, setOpeningReminderMessage] = useState(
     user?.company?.openingBalanceReminderMessage
       ?? "يوجد قيد أرصدة افتتاحية غير متوازن. يرجى استكماله قبل إقفال الفترة المالية.",
@@ -520,6 +522,7 @@ export default function GeneralSettings() {
         method: "POST", headers, body: JSON.stringify({
           balances,
           accountId: Number(inventoryOpeningAccountId),
+          date: inventoryOpeningDate,
         }),
       });
       const j = await res.json();
@@ -1790,6 +1793,8 @@ export default function GeneralSettings() {
             </div>
           </div>
           <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 dark:bg-emerald-950/15 p-4 space-y-2">
+            <Label className="text-emerald-900 dark:text-emerald-200">تاريخ الرصيد الافتتاحي</Label>
+            <DateField value={inventoryOpeningDate} onChange={e => setInventoryOpeningDate(e.target.value)} />
             <Label className="text-emerald-900 dark:text-emerald-200">حساب قيمة مخزون أول المدة</Label>
             <AccountCombobox
               companyId={companyId}

@@ -48,7 +48,15 @@ import {
 } from "../lib/entityAccounts.js";
 import { nextJeSubSequence, nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
-import { pickBatches, type BatchPick } from "../lib/stockHelpers.js";
+import {
+  getBalance,
+  lockStockBalance,
+  lockStockBalances,
+  upsertBalance,
+  refreshItemCost,
+  pickBatches,
+  type BatchPick,
+} from "../lib/stockHelpers.js";
 import {
   INVENTORY_OPENING_CREDIT_MARKER,
   INVENTORY_OPENING_DEBIT_MARKER,
@@ -1525,6 +1533,10 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), asyn
       if (tr.status !== "draft") throw new HttpError(400, "الحركة مُرحَّلة مسبقاً");
       const lines = await tx.select().from(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
       if (!lines.length) throw new HttpError(400, "لا توجد أصناف");
+      await lockStockBalances(lines.flatMap(line => [
+        { companyId: cid, itemId: line.itemId, warehouseId: tr.fromWarehouseId },
+        { companyId: cid, itemId: line.itemId, warehouseId: tr.toWarehouseId },
+      ]), tx);
 
       // Period guard: do this BEFORE any mutations so a closed period
       // can't even partially write ledger rows. The post-loop JE branch
@@ -1732,23 +1744,44 @@ router.post("/stock-adjustments", async (req, res) => {
     res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم التسوية" });
     return;
   }
-  const [adj] = await db.insert(stockAdjustmentsTable).values({
-    companyId: cid, adjustmentNumber: num, adjustmentDate, warehouseId,
-    accountId: accountId || null,
-    inventoryAccountId:  inventoryAccountId  || null,
-    adjustmentAccountId: adjustmentAccountId || null,
-    reason, notes, status: "draft",
-  }).returning();
-  if (items?.length) {
-    await db.insert(stockAdjustmentItemsTable).values(items.map((it: any) => ({ adjustmentId: adj.id, itemId: it.itemId, unitId: it.unitId || null, qty: String(it.qty), costPrice: String(it.costPrice || 0), notes: it.notes })));
+  if (!Array.isArray(items) || !items.length) { res.status(400).json({ error: "أضف صنفاً واحداً على الأقل" }); return; }
+  const itemIds = Array.from(new Set(items.map((it: any) => Number(it.itemId)).filter((v: number) => Number.isInteger(v) && v > 0))) as number[];
+  const ownedItems = itemIds.length ? await db.select({ id: itemsTable.id }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds),
+  )) : [];
+  if (items.some((it: any) => !Number.isInteger(Number(it.itemId)) || Number(it.itemId) <= 0) || ownedItems.length !== itemIds.length) {
+    res.status(400).json({ error: "تحتوي التسوية على صنف غير صالح" }); return;
   }
+  for (const it of items) {
+    const qty = Number(it.qty);
+    const cost = Number(it.costPrice);
+    if (!Number.isFinite(qty) || qty === 0 || !Number.isFinite(cost) || cost < 0) {
+      res.status(400).json({ error: "الكمية يجب ألا تكون صفراً والتكلفة يجب أن تكون رقماً موجباً أو صفراً" }); return;
+    }
+  }
+  const adj = await db.transaction(async (tx) => {
+    const [created] = await tx.insert(stockAdjustmentsTable).values({
+      companyId: cid, adjustmentNumber: num, adjustmentDate, warehouseId,
+      accountId: accountId || null,
+      inventoryAccountId: inventoryAccountId || null,
+      adjustmentAccountId: adjustmentAccountId || null,
+      reason, notes, status: "draft",
+    }).returning();
+    await tx.insert(stockAdjustmentItemsTable).values(items.map((it: any) => ({
+      adjustmentId: created.id, itemId: Number(it.itemId),
+      unitId: it.unitId ? Number(it.unitId) : null,
+      qty: String(Number(it.qty)), costPrice: String(Number(it.costPrice)),
+      notes: it.notes,
+    })));
+    return created;
+  });
   res.status(201).json(adj);
 });
 
 router.put("/stock-adjustments/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { adjustmentDate, warehouseId, reason, notes, items } = req.body;
+  const { adjustmentDate, warehouseId, inventoryAccountId, adjustmentAccountId, reason, notes, items } = req.body;
   const [existing] = await db.select().from(stockAdjustmentsTable).where(and(eq(stockAdjustmentsTable.id, id), eq(stockAdjustmentsTable.companyId, cid)));
   if (!existing || existing.status === "posted") { res.status(400).json({ error: "لا يمكن التعديل" }); return; }
   try {
@@ -1757,99 +1790,144 @@ router.put("/stock-adjustments/:id", async (req, res) => {
       accounts:   [inventoryAccountId, adjustmentAccountId].map(Number).filter(Boolean) as number[],
     });
   } catch (e: any) { res.status(400).json({ error: e.message }); return; }
-  await db.update(stockAdjustmentsTable).set({
-    adjustmentDate, warehouseId, reason, notes,
-    inventoryAccountId:  inventoryAccountId  || null,
-    adjustmentAccountId: adjustmentAccountId || null,
-    updatedAt: new Date(),
-  }).where(eq(stockAdjustmentsTable.id, id));
-  if (items) {
-    await db.delete(stockAdjustmentItemsTable).where(eq(stockAdjustmentItemsTable.adjustmentId, id));
-    if (items.length) await db.insert(stockAdjustmentItemsTable).values(items.map((it: any) => ({ adjustmentId: id, itemId: it.itemId, unitId: it.unitId || null, qty: String(it.qty), costPrice: String(it.costPrice || 0), notes: it.notes })));
-  }
+  if (items && (!Array.isArray(items) || !items.length)) { res.status(400).json({ error: "أضف صنفاً واحداً على الأقل" }); return; }
+  await db.transaction(async (tx) => {
+    await tx.update(stockAdjustmentsTable).set({
+      adjustmentDate, warehouseId, reason, notes,
+      inventoryAccountId: inventoryAccountId || null,
+      adjustmentAccountId: adjustmentAccountId || null,
+      updatedAt: new Date(),
+    }).where(and(eq(stockAdjustmentsTable.id, id), eq(stockAdjustmentsTable.companyId, cid)));
+    if (items) {
+      await tx.delete(stockAdjustmentItemsTable).where(eq(stockAdjustmentItemsTable.adjustmentId, id));
+      await tx.insert(stockAdjustmentItemsTable).values(items.map((it: any) => ({
+        adjustmentId: id, itemId: Number(it.itemId),
+        unitId: it.unitId ? Number(it.unitId) : null,
+        qty: String(Number(it.qty)), costPrice: String(Number(it.costPrice || 0)),
+        notes: it.notes,
+      })));
+    }
+  });
   res.json({ ok: true });
 });
 
 router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  // Atomic claim: only one concurrent caller can flip draft → posted (we keep status here; final flip after JE).
-  const claim = await db.update(stockAdjustmentsTable)
-    .set({ updatedAt: new Date() })
-    .where(and(eq(stockAdjustmentsTable.id, id), eq(stockAdjustmentsTable.companyId, cid), eq(stockAdjustmentsTable.status, "draft")))
-    .returning();
-  if (!claim.length) { res.status(400).json({ error: "التسوية غير موجودة أو مُرحَّلة مسبقاً" }); return; }
-  const adj = claim[0];
-  const lines = await db.select().from(stockAdjustmentItemsTable).where(eq(stockAdjustmentItemsTable.adjustmentId, id));
-  if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف" }); return; }
-  // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
-  {
-    const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
-    const usageV = await checkItemsUsable(cid, "stock_adjust", usageIds, (req as any).authUser, "post");
-    if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+  class HttpError extends Error {
+    constructor(public httpStatus: number, message: string) { super(message); }
   }
-  // 1) Apply stock movements
-  for (const line of lines) {
-    await upsertBalance(cid, line.itemId, adj.warehouseId, Number(line.qty), Number(line.costPrice));
-    const newBal = await getBalance(cid, line.itemId, adj.warehouseId);
-    await db.insert(stockLedgerTable).values({ companyId: cid, itemId: line.itemId, warehouseId: adj.warehouseId, txDate: adj.adjustmentDate, txType: "adjustment", qty: line.qty, costPrice: line.costPrice, totalCost: String(Number(line.qty) * Number(line.costPrice)), balanceQty: String(newBal), refId: id, refType: "adjustment", notes: line.notes });
-  }
-  // 2) Build JE: inventory account (asset) ↔ adjustment account (expense/income)
-  //    Increase line (qty>0)  → DR inventory  / CR adjustment   (gain/expense reversal)
-  //    Decrease line (qty<0)  → DR adjustment / CR inventory    (loss/expense)
-  // Resolve fallbacks: if invAcc not set, use warehouse.accountId.
-  const [wh] = await db.select().from(warehousesTable).where(eq(warehousesTable.id, adj.warehouseId));
-  const invAccId = adj.inventoryAccountId  || wh?.accountId || null;
-  const adjAccId = adj.adjustmentAccountId || null;
-  let netDebitInv  = 0;  // positive when net stock increase
-  let netCreditInv = 0;  // positive when net stock decrease
-  for (const l of lines) {
-    const amt = Math.abs(Number(l.qty)) * Number(l.costPrice);
-    if (Number(l.qty) > 0) netDebitInv  += amt;
-    else                   netCreditInv += amt;
-  }
-  // Net the two sides so a balanced 2-line JE is created.
-  const debitInv  = Math.max(0, netDebitInv  - netCreditInv);
-  const creditInv = Math.max(0, netCreditInv - netDebitInv);
-  let journalEntryId: number | null = null;
-  if (invAccId && adjAccId && (debitInv > 0 || creditInv > 0) && invAccId !== adjAccId) {
-    // Period guard: block stock-adjustment posting into a closed period.
-    const writability = await assertWritableForDate(cid, adj.adjustmentDate);
-    if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
-    const jeStatus = await resolvePostingStatus(cid, "stockMovement");
-    // JE draws its own continuous "journal_entry" number; the adjustment
-    // number stays in the description + source link. Falls back to ADJ-JE-*.
-    const jeDocNumber = (await nextJeSubSequence(cid, "stock_adjustment_je", {
-      userId: (req as any).authUser?.id ?? null, refTable: "journal_entries",
-      branchId: (adj as any).branchId ?? null, docDate: adj.adjustmentDate as any,
-    })) ?? `ADJ-JE-${adj.adjustmentNumber}`;
-    const [je] = await db.insert(journalEntriesTable).values({
-      companyId: cid,
-      docNumber: jeDocNumber,
-      entryDate: adj.adjustmentDate,
-      description: `قيد تسوية مخزنية: ${adj.adjustmentNumber}${adj.reason ? " — " + adj.reason : ""}`,
-      entryType: "stock_adjustment",
-      status: jeStatus,
-      periodId: writability.period?.id ?? null,
-      ...fullAuditFor(req, jeStatus),
-    }).returning();
-    journalEntryId = je.id;
-    if (debitInv > 0) {
-      // Net increase: DR inventory, CR adjustment (gain)
-      await db.insert(journalEntryLinesTable).values([
-        { entryId: je.id, accountId: invAccId, debit: String(debitInv.toFixed(2)),  credit: "0", description: `زيادة مخزون — ${wh?.nameAr ?? ""}`, sortOrder: 0 },
-        { entryId: je.id, accountId: adjAccId, debit: "0", credit: String(debitInv.toFixed(2)), description: "تسوية — فائض مخزون", sortOrder: 1 },
-      ]);
-    } else {
-      // Net decrease: DR adjustment (loss), CR inventory
-      await db.insert(journalEntryLinesTable).values([
-        { entryId: je.id, accountId: adjAccId, debit: String(creditInv.toFixed(2)),  credit: "0", description: "تسوية — عجز/تالف مخزون", sortOrder: 0 },
-        { entryId: je.id, accountId: invAccId, debit: "0", credit: String(creditInv.toFixed(2)), description: `نقص مخزون — ${wh?.nameAr ?? ""}`, sortOrder: 1 },
-      ]);
+  try {
+    const result = await db.transaction(async (tx) => {
+      const [adj] = await tx.select().from(stockAdjustmentsTable)
+        .where(and(eq(stockAdjustmentsTable.id, id), eq(stockAdjustmentsTable.companyId, cid)))
+        .for("update");
+      if (!adj) throw new HttpError(404, "التسوية غير موجودة");
+      if (adj.status !== "draft") throw new HttpError(409, "التسوية مُرحَّلة مسبقاً");
+
+      const lines = await tx.select().from(stockAdjustmentItemsTable)
+        .where(eq(stockAdjustmentItemsTable.adjustmentId, id))
+        .orderBy(asc(stockAdjustmentItemsTable.itemId), asc(stockAdjustmentItemsTable.id));
+      if (!lines.length) throw new HttpError(400, "لا توجد أصناف");
+
+      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "stock_adjust", usageIds, (req as any).authUser, "post");
+      if (usageV.length) throw new HttpError(403, usageViolationMessage(usageV, "post"));
+
+      const ownedItems = await tx.select({ id: itemsTable.id }).from(itemsTable).where(and(
+        eq(itemsTable.companyId, cid),
+        inArray(itemsTable.id, usageIds),
+      ));
+      if (ownedItems.length !== usageIds.length) throw new HttpError(400, "تحتوي التسوية على صنف لا ينتمي للشركة");
+
+      const writability = await assertWritableForDate(cid, adj.adjustmentDate);
+      if (!writability.ok) throw new HttpError(423, writability.reason ?? "الفترة المالية مغلقة");
+
+      const [wh] = await tx.select().from(warehousesTable).where(and(
+        eq(warehousesTable.id, adj.warehouseId),
+        eq(warehousesTable.companyId, cid),
+      ));
+      if (!wh) throw new HttpError(400, "المخزن غير صالح");
+
+      let inventoryValueDelta = 0;
+      const touchedItems = new Set<number>();
+      await lockStockBalances(lines.map(line => ({
+        companyId: cid, itemId: line.itemId, warehouseId: adj.warehouseId,
+      })), tx);
+      for (const line of lines) {
+        const qty = Number(line.qty);
+        const enteredCost = Number(line.costPrice);
+        if (!Number.isFinite(qty) || qty === 0) throw new HttpError(400, `كمية الصنف #${line.itemId} يجب ألا تكون صفراً`);
+        if (!Number.isFinite(enteredCost) || enteredCost < 0) throw new HttpError(400, `تكلفة الصنف #${line.itemId} غير صحيحة`);
+
+        const newBal = await upsertBalance(cid, line.itemId, adj.warehouseId, qty, enteredCost, tx);
+        const [balanceRow] = await tx.select({ avgCost: stockBalanceTable.avgCost })
+          .from(stockBalanceTable).where(and(
+            eq(stockBalanceTable.companyId, cid),
+            eq(stockBalanceTable.itemId, line.itemId),
+            eq(stockBalanceTable.warehouseId, adj.warehouseId),
+          ));
+        // Outflows keep the warehouse WAC.  Inflows use their entered cost;
+        // this is the same value used by the weighted-average update.
+        const movementCost = qty < 0 ? Number(balanceRow?.avgCost ?? enteredCost) : enteredCost;
+        const totalCost = qty * movementCost;
+        inventoryValueDelta += totalCost;
+        touchedItems.add(line.itemId);
+        await tx.insert(stockLedgerTable).values({
+          companyId: cid, itemId: line.itemId, warehouseId: adj.warehouseId,
+          txDate: adj.adjustmentDate, txType: "adjustment",
+          qty: String(qty), costPrice: String(movementCost),
+          totalCost: String(totalCost), balanceQty: String(newBal),
+          refId: id, refType: "adjustment", notes: line.notes,
+        });
+      }
+      for (const itemId of touchedItems) await refreshItemCost(cid, itemId, tx);
+
+      const invAccId = adj.inventoryAccountId || wh.accountId || null;
+      const adjAccId = adj.adjustmentAccountId || null;
+      const amount = Math.abs(inventoryValueDelta);
+      let journalEntryId: number | null = null;
+      if (amount >= 0.005) {
+        if (!invAccId || !adjAccId) throw new HttpError(400, "حدد حساب المخزون وحساب مقابل التسوية قبل الترحيل");
+        if (invAccId === adjAccId) throw new HttpError(400, "حساب المخزون وحساب مقابل التسوية يجب أن يكونا مختلفين");
+        const jeStatus = await resolvePostingStatus(cid, "stockMovement", (req as any).authUser);
+        const jeDocNumber = (await nextJeSubSequence(cid, "stock_adjustment_je", {
+          userId: (req as any).authUser?.id ?? null,
+          refTable: "journal_entries",
+          branchId: wh.branchId ?? null,
+          docDate: adj.adjustmentDate as any,
+        })) ?? `ADJ-JE-${adj.adjustmentNumber}`;
+        const [je] = await tx.insert(journalEntriesTable).values({
+          companyId: cid, docNumber: jeDocNumber, entryDate: adj.adjustmentDate,
+          description: `قيد تسوية مخزنية: ${adj.adjustmentNumber}${adj.reason ? " — " + adj.reason : ""}`,
+          entryType: "stock_adjustment", status: jeStatus,
+          periodId: writability.period?.id ?? null,
+          ...fullAuditFor(req, jeStatus),
+        }).returning();
+        journalEntryId = je.id;
+        const value = amount.toFixed(2);
+        await tx.insert(journalEntryLinesTable).values(inventoryValueDelta > 0 ? [
+          { entryId: je.id, accountId: invAccId, debit: value, credit: "0", description: `زيادة مخزون — ${wh.nameAr ?? ""}`, sortOrder: 0 },
+          { entryId: je.id, accountId: adjAccId, debit: "0", credit: value, description: "تسوية — فائض مخزون", sortOrder: 1 },
+        ] : [
+          { entryId: je.id, accountId: adjAccId, debit: value, credit: "0", description: "تسوية — عجز/تالف مخزون", sortOrder: 0 },
+          { entryId: je.id, accountId: invAccId, debit: "0", credit: value, description: `نقص مخزون — ${wh.nameAr ?? ""}`, sortOrder: 1 },
+        ]);
+      }
+
+      await tx.update(stockAdjustmentsTable)
+        .set({ status: "posted", journalEntryId, updatedAt: new Date() })
+        .where(and(eq(stockAdjustmentsTable.id, id), eq(stockAdjustmentsTable.companyId, cid)));
+      return { journalEntryId };
+    });
+    res.json({ ok: true, journalEntryId: result.journalEntryId });
+  } catch (e: any) {
+    if (e instanceof HttpError) {
+      res.status(e.httpStatus).json({ error: e.message });
+      return;
     }
+    throw e;
   }
-  await db.update(stockAdjustmentsTable).set({ status: "posted", journalEntryId, updatedAt: new Date() }).where(eq(stockAdjustmentsTable.id, id));
-  res.json({ ok: true, journalEntryId });
 });
 
 router.delete("/stock-adjustments/:id", async (req, res) => {
@@ -1859,6 +1937,72 @@ router.delete("/stock-adjustments/:id", async (req, res) => {
   if (!adj || adj.status === "posted") { res.status(400).json({ error: "لا يمكن الحذف" }); return; }
   await db.delete(stockAdjustmentsTable).where(eq(stockAdjustmentsTable.id, id));
   res.json({ ok: true });
+});
+
+// Create an auditable correcting document instead of editing a posted movement.
+// The new draft reverses every source line and points back to the original.
+router.post("/stock-adjustments/:id/reverse", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const sourceId = Number(req.params.id);
+  const correctionDate = String(req.body?.date || new Date().toISOString().slice(0, 10));
+  let correctionNumber: string;
+  try {
+    correctionNumber = (await nextSequenceNumber(cid, "stock_adjustment", {
+      userId: (req as any).authUser?.id ?? null,
+      refTable: "stock_adjustments",
+      docDate: correctionDate,
+      branchId: null,
+    })) ?? `ADJ-${Date.now()}`;
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "تعذر توليد رقم مستند التصحيح" });
+    return;
+  }
+  try {
+    const correction = await db.transaction(async (tx) => {
+      const [source] = await tx.select().from(stockAdjustmentsTable).where(and(
+        eq(stockAdjustmentsTable.id, sourceId),
+        eq(stockAdjustmentsTable.companyId, cid),
+      )).for("update");
+      if (!source) throw new Error("التسوية الأصلية غير موجودة");
+      if (source.status !== "posted") throw new Error("يمكن إنشاء تصحيح عكسي للمستند المرحّل فقط");
+      const [existingCorrection] = await tx.select({ id: stockAdjustmentsTable.id })
+        .from(stockAdjustmentsTable)
+        .where(and(
+          eq(stockAdjustmentsTable.companyId, cid),
+          eq(stockAdjustmentsTable.correctionOfId, source.id),
+        ))
+        .limit(1);
+      if (existingCorrection) throw new Error("تم إنشاء مستند تصحيح لهذه التسوية مسبقاً");
+      const sourceLines = await tx.select().from(stockAdjustmentItemsTable)
+        .where(eq(stockAdjustmentItemsTable.adjustmentId, sourceId));
+      if (!sourceLines.length) throw new Error("لا توجد بنود في التسوية الأصلية");
+      const [created] = await tx.insert(stockAdjustmentsTable).values({
+        companyId: cid,
+        adjustmentNumber: correctionNumber,
+        adjustmentDate: correctionDate,
+        warehouseId: source.warehouseId,
+        accountId: source.accountId,
+        inventoryAccountId: source.inventoryAccountId,
+        adjustmentAccountId: source.adjustmentAccountId,
+        correctionOfId: source.id,
+        reason: "تصحيح مخزون",
+        notes: `تصحيح عكسي للتسوية ${source.adjustmentNumber}${req.body?.reason ? ` — ${String(req.body.reason).trim()}` : ""}`,
+        status: "draft",
+      }).returning();
+      await tx.insert(stockAdjustmentItemsTable).values(sourceLines.map(line => ({
+        adjustmentId: created.id,
+        itemId: line.itemId,
+        unitId: line.unitId,
+        qty: String(-Number(line.qty)),
+        costPrice: line.costPrice,
+        notes: `عكس بند من ${source.adjustmentNumber}${line.notes ? ` — ${line.notes}` : ""}`,
+      })));
+      return created;
+    });
+    res.status(201).json(correction);
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "تعذر إنشاء مستند التصحيح" });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1890,8 +2034,14 @@ router.get("/stock-counts/:id", async (req, res) => {
 
 router.post("/stock-counts", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { countNumber, countDate, warehouseId, notes } = req.body;
+  const { countNumber, countDate, warehouseId, inventoryAccountId, adjustmentAccountId, notes } = req.body;
   if (!countDate || !warehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
+  try {
+    await assertCompanyOwned(cid, {
+      warehouses: [Number(warehouseId)],
+      accounts: [inventoryAccountId, adjustmentAccountId].map(Number).filter(Boolean) as number[],
+    });
+  } catch (e: any) { res.status(400).json({ error: e.message }); return; }
   // Central sequence engine is authoritative when an active sequence is
   // configured for "stock_count"; otherwise fall back to the caller-
   // supplied value, then to the legacy timestamp scheme. Sequence errors
@@ -1910,15 +2060,39 @@ router.post("/stock-counts", async (req, res) => {
     res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الجرد" });
     return;
   }
-  // Auto-load current system balances for this warehouse
-  const balances = await db.select({ bal: stockBalanceTable, item: itemsTable })
-    .from(stockBalanceTable)
-    .leftJoin(itemsTable, eq(stockBalanceTable.itemId, itemsTable.id))
-    .where(and(eq(stockBalanceTable.warehouseId, Number(warehouseId)), eq(stockBalanceTable.companyId, cid)));
-  const [cnt] = await db.insert(stockCountsTable).values({ companyId: cid, countNumber: num, countDate, warehouseId, notes, status: "draft" }).returning();
-  if (balances.length) {
-    await db.insert(stockCountItemsTable).values(balances.map(b => ({ countId: cnt.id, itemId: b.bal.itemId, systemQty: b.bal.qty, actualQty: b.bal.qty, diff: "0", costPrice: b.bal.avgCost })));
-  }
+  const cnt = await db.transaction(async (tx) => {
+    const stockItems = await tx.select({
+      id: itemsTable.id,
+      costPrice: itemsTable.costPrice,
+    }).from(itemsTable).where(and(
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.itemType, "stock"),
+      eq(itemsTable.status, "active"),
+    )).orderBy(asc(itemsTable.code));
+    const balances = await tx.select().from(stockBalanceTable).where(and(
+      eq(stockBalanceTable.warehouseId, Number(warehouseId)),
+      eq(stockBalanceTable.companyId, cid),
+    ));
+    const balanceByItem = new Map(balances.map(b => [b.itemId, b]));
+    const [created] = await tx.insert(stockCountsTable).values({
+      companyId: cid, countNumber: num, countDate, warehouseId: Number(warehouseId),
+      inventoryAccountId: inventoryAccountId || null,
+      adjustmentAccountId: adjustmentAccountId || null,
+      notes, status: "draft",
+    }).returning();
+    if (stockItems.length) {
+      await tx.insert(stockCountItemsTable).values(stockItems.map(item => {
+        const balance = balanceByItem.get(item.id);
+        const systemQty = balance?.qty ?? "0";
+        return {
+          countId: created.id, itemId: item.id,
+          systemQty, actualQty: systemQty, diff: "0",
+          costPrice: balance?.avgCost ?? item.costPrice ?? "0",
+        };
+      }));
+    }
+    return created;
+  });
   res.status(201).json(cnt);
 });
 
@@ -1926,39 +2100,146 @@ router.put("/stock-counts/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const { items } = req.body; // items: [{id, actualQty}]
-  const [existing] = await db.select().from(stockCountsTable).where(and(eq(stockCountsTable.id, id), eq(stockCountsTable.companyId, cid)));
-  if (!existing || existing.status === "posted") { res.status(400).json({ error: "لا يمكن التعديل" }); return; }
-  if (items?.length) {
-    for (const it of items) {
-      const diff = Number(it.actualQty) - Number(it.systemQty);
-      await db.update(stockCountItemsTable).set({ actualQty: String(it.actualQty), diff: String(diff) }).where(eq(stockCountItemsTable.id, it.id));
+  await db.transaction(async (tx) => {
+    const [existing] = await tx.select().from(stockCountsTable)
+      .where(and(eq(stockCountsTable.id, id), eq(stockCountsTable.companyId, cid)))
+      .for("update");
+    if (!existing || existing.status !== "draft") throw new Error("لا يمكن تعديل جرد مُرحّل");
+    if (items?.length) {
+      const ids = items.map((it: any) => Number(it.id)).filter((v: number) => Number.isInteger(v) && v > 0);
+      const stored = await tx.select().from(stockCountItemsTable).where(and(
+        eq(stockCountItemsTable.countId, id),
+        inArray(stockCountItemsTable.id, ids),
+      ));
+      if (stored.length !== new Set(ids).size) throw new Error("تحتوي البيانات على سطر لا ينتمي إلى مستند الجرد");
+      const storedById = new Map(stored.map(row => [row.id, row]));
+      for (const it of items) {
+        const row = storedById.get(Number(it.id));
+        if (!row) continue;
+        const actualQty = Number(it.actualQty);
+        if (!Number.isFinite(actualQty) || actualQty < 0) throw new Error("الكمية الفعلية يجب أن تكون صفراً أو رقماً موجباً");
+        const diff = actualQty - Number(row.systemQty);
+        await tx.update(stockCountItemsTable)
+          .set({ actualQty: String(actualQty), diff: String(diff), notes: it.notes ?? row.notes })
+          .where(and(eq(stockCountItemsTable.id, row.id), eq(stockCountItemsTable.countId, id)));
+      }
     }
-  }
+  });
   res.json({ ok: true });
 });
 
 router.post("/stock-counts/:id/post", requirePostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const [cnt] = await db.select().from(stockCountsTable).where(and(eq(stockCountsTable.id, id), eq(stockCountsTable.companyId, cid)));
-  if (!cnt || cnt.status !== "draft") { res.status(400).json({ error: "لا يمكن الترحيل" }); return; }
-  const lines = await db.select().from(stockCountItemsTable).where(eq(stockCountItemsTable.countId, id));
-  // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
-  {
-    const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
-    const usageV = await checkItemsUsable(cid, "stock_count", usageIds, (req as any).authUser, "post");
-    if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
+  class HttpError extends Error {
+    constructor(public httpStatus: number, message: string) { super(message); }
   }
-  for (const line of lines) {
-    const diff = Number(line.actualQty) - Number(line.systemQty);
-    if (diff !== 0) {
-      await upsertBalance(cid, line.itemId, cnt.warehouseId, diff, Number(line.costPrice));
-      const newBal = await getBalance(cid, line.itemId, cnt.warehouseId);
-      await db.insert(stockLedgerTable).values({ companyId: cid, itemId: line.itemId, warehouseId: cnt.warehouseId, txDate: cnt.countDate, txType: "count_adj", qty: String(diff), costPrice: line.costPrice, totalCost: String(diff * Number(line.costPrice)), balanceQty: String(newBal), refId: id, refType: "count" });
+  try {
+    const result = await db.transaction(async (tx) => {
+      const [cnt] = await tx.select().from(stockCountsTable)
+        .where(and(eq(stockCountsTable.id, id), eq(stockCountsTable.companyId, cid)))
+        .for("update");
+      if (!cnt) throw new HttpError(404, "مستند الجرد غير موجود");
+      if (cnt.status !== "draft") throw new HttpError(409, "تم ترحيل مستند الجرد مسبقاً");
+
+      const lines = await tx.select().from(stockCountItemsTable)
+        .where(eq(stockCountItemsTable.countId, id))
+        .orderBy(asc(stockCountItemsTable.itemId), asc(stockCountItemsTable.id));
+      if (!lines.length) throw new HttpError(400, "لا توجد أصناف في مستند الجرد");
+      const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const usageV = await checkItemsUsable(cid, "stock_count", usageIds, (req as any).authUser, "post");
+      if (usageV.length) throw new HttpError(403, usageViolationMessage(usageV, "post"));
+
+      const writability = await assertWritableForDate(cid, cnt.countDate);
+      if (!writability.ok) throw new HttpError(423, writability.reason ?? "الفترة المالية مغلقة");
+      const [wh] = await tx.select().from(warehousesTable).where(and(
+        eq(warehousesTable.id, cnt.warehouseId),
+        eq(warehousesTable.companyId, cid),
+      ));
+      if (!wh) throw new HttpError(400, "المخزن غير صالح");
+
+      let inventoryValueDelta = 0;
+      const touchedItems = new Set<number>();
+      await lockStockBalances(lines.map(line => ({
+        companyId: cid, itemId: line.itemId, warehouseId: cnt.warehouseId,
+      })), tx);
+      for (const line of lines) {
+        const actualQty = Number(line.actualQty);
+        if (!Number.isFinite(actualQty) || actualQty < 0) throw new HttpError(400, `الكمية الفعلية للصنف #${line.itemId} غير صحيحة`);
+        const [currentRow] = await tx.select().from(stockBalanceTable).where(and(
+          eq(stockBalanceTable.companyId, cid),
+          eq(stockBalanceTable.itemId, line.itemId),
+          eq(stockBalanceTable.warehouseId, cnt.warehouseId),
+        ));
+        const currentQty = Number(currentRow?.qty ?? 0);
+        const movementCost = Number(currentRow?.avgCost ?? line.costPrice ?? 0);
+        const diff = actualQty - currentQty;
+        await tx.update(stockCountItemsTable).set({
+          systemQty: String(currentQty),
+          diff: String(diff),
+          costPrice: String(movementCost),
+        }).where(and(eq(stockCountItemsTable.id, line.id), eq(stockCountItemsTable.countId, id)));
+        if (Math.abs(diff) < 0.0001) continue;
+        const newBal = await upsertBalance(cid, line.itemId, cnt.warehouseId, diff, movementCost, tx);
+        const totalCost = diff * movementCost;
+        inventoryValueDelta += totalCost;
+        touchedItems.add(line.itemId);
+        await tx.insert(stockLedgerTable).values({
+          companyId: cid, itemId: line.itemId, warehouseId: cnt.warehouseId,
+          txDate: cnt.countDate, txType: "count_adj",
+          qty: String(diff), costPrice: String(movementCost),
+          totalCost: String(totalCost), balanceQty: String(newBal),
+          refId: id, refType: "count",
+          notes: line.notes || `فرق جرد ${cnt.countNumber}`,
+        });
+      }
+      for (const itemId of touchedItems) await refreshItemCost(cid, itemId, tx);
+
+      const invAccId = cnt.inventoryAccountId || wh.accountId || null;
+      const adjAccId = cnt.adjustmentAccountId || null;
+      const amount = Math.abs(inventoryValueDelta);
+      let journalEntryId: number | null = null;
+      if (amount >= 0.005) {
+        if (!invAccId || !adjAccId) throw new HttpError(400, "حدد حساب المخزون وحساب فروق الجرد قبل الترحيل");
+        if (invAccId === adjAccId) throw new HttpError(400, "حساب المخزون وحساب فروق الجرد يجب أن يكونا مختلفين");
+        const jeStatus = await resolvePostingStatus(cid, "stockMovement", (req as any).authUser);
+        const jeDocNumber = (await nextJeSubSequence(cid, "stock_adjustment_je", {
+          userId: (req as any).authUser?.id ?? null,
+          refTable: "journal_entries",
+          branchId: wh.branchId ?? null,
+          docDate: cnt.countDate as any,
+        })) ?? `CNT-JE-${cnt.countNumber}`;
+        const [je] = await tx.insert(journalEntriesTable).values({
+          companyId: cid, docNumber: jeDocNumber, entryDate: cnt.countDate,
+          description: `قيد فروق جرد مخزني: ${cnt.countNumber}`,
+          entryType: "stock_count", status: jeStatus,
+          periodId: writability.period?.id ?? null,
+          ...fullAuditFor(req, jeStatus),
+        }).returning();
+        journalEntryId = je.id;
+        const value = amount.toFixed(2);
+        await tx.insert(journalEntryLinesTable).values(inventoryValueDelta > 0 ? [
+          { entryId: je.id, accountId: invAccId, debit: value, credit: "0", description: `فائض جرد — ${wh.nameAr ?? ""}`, sortOrder: 0 },
+          { entryId: je.id, accountId: adjAccId, debit: "0", credit: value, description: "مقابل فائض الجرد", sortOrder: 1 },
+        ] : [
+          { entryId: je.id, accountId: adjAccId, debit: value, credit: "0", description: "عجز جرد مخزني", sortOrder: 0 },
+          { entryId: je.id, accountId: invAccId, debit: "0", credit: value, description: `نقص جرد — ${wh.nameAr ?? ""}`, sortOrder: 1 },
+        ]);
+      }
+
+      await tx.update(stockCountsTable)
+        .set({ status: "posted", journalEntryId, updatedAt: new Date() })
+        .where(and(eq(stockCountsTable.id, id), eq(stockCountsTable.companyId, cid)));
+      return { journalEntryId };
+    });
+    res.json({ ok: true, journalEntryId: result.journalEntryId });
+  } catch (e: any) {
+    if (e instanceof HttpError) {
+      res.status(e.httpStatus).json({ error: e.message });
+      return;
     }
+    throw e;
   }
-  await db.update(stockCountsTable).set({ status: "posted", updatedAt: new Date() }).where(eq(stockCountsTable.id, id));
-  res.json({ ok: true });
 });
 
 router.delete("/stock-counts/:id", async (req, res) => {
@@ -2446,45 +2727,6 @@ router.get("/dashboard", async (req, res) => {
     recentMovements: recentMovements.map(r => ({ ...r.led, item: r.item, warehouse: r.wh })),
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════
-// HELPER FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════
-// `executor` defaults to the top-level `db` so legacy callers work unchanged.
-// Pass a transaction handle (from `db.transaction(async (tx) => …)`) to make
-// the read+write atomic with the surrounding writes — required for posting
-// flows like stock transfers where partial failure must roll back.
-// `Executor` is intentionally widened to `any` so a drizzle `PgTransaction`
-// (passed from inside `db.transaction(async (tx) => …)`) satisfies the
-// signature. Drizzle's tx and db share all query-builder methods at runtime
-// but their generic instantiations don't unify in TS.
-type Executor = any;
-async function getBalance(companyId: number, itemId: number, warehouseId: number, executor: Executor = db): Promise<number> {
-  const [bal] = await executor.select().from(stockBalanceTable).where(and(eq(stockBalanceTable.companyId, companyId), eq(stockBalanceTable.itemId, itemId), eq(stockBalanceTable.warehouseId, warehouseId)));
-  return Number(bal?.qty ?? 0);
-}
-
-async function upsertBalance(companyId: number, itemId: number, warehouseId: number, deltaQty: number, costPrice: number, executor: Executor = db) {
-  const [existing] = await executor.select().from(stockBalanceTable).where(and(eq(stockBalanceTable.companyId, companyId), eq(stockBalanceTable.itemId, itemId), eq(stockBalanceTable.warehouseId, warehouseId)));
-  if (!existing) {
-    const newQty = deltaQty;
-    await executor.insert(stockBalanceTable).values({ companyId, itemId, warehouseId, qty: String(newQty), avgCost: String(costPrice) });
-  } else {
-    const oldQty  = Number(existing.qty);
-    const oldCost = Number(existing.avgCost);
-    let newQty: number, newAvg: number;
-    if (deltaQty > 0) {
-      // Weighted average on in-flow
-      newQty = oldQty + deltaQty;
-      newAvg = newQty === 0 ? costPrice : (oldQty * oldCost + deltaQty * costPrice) / newQty;
-    } else {
-      // Out-flow — qty decreases, avg cost unchanged
-      newQty = oldQty + deltaQty;
-      newAvg = oldCost;
-    }
-    await executor.update(stockBalanceTable).set({ qty: String(newQty), avgCost: String(newAvg), updatedAt: new Date() }).where(eq(stockBalanceTable.id, existing.id));
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // BULK IMPORT — Items
@@ -3405,7 +3647,7 @@ router.post("/import/items", async (req, res) => {
 // Body: { date?, balances: [{ itemCode, warehouseCode, qty, costPrice }] }
 // Sets balance directly (replaces) and writes a stock_ledger entry of type "opening"
 // ═══════════════════════════════════════════════════════════════════
-router.post("/import/opening-balances", async (req, res) => {
+router.post("/import/opening-balances", requirePostRight("stockMovement"), async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const importLockClient = await pool.connect();
   let importLocked = false;
@@ -3480,72 +3722,35 @@ router.post("/import/opening-balances", async (req, res) => {
   const itemByCode = new Map(items.map((i: any) => [String(i.code).trim().toLowerCase(), i.id]));
   const whByCode   = new Map(wh.map((w: any)   => [String(w.code).trim().toLowerCase(), w.id]));
 
-  let applied = 0;
   const errors: { row: number; error: string }[] = [];
-
+  const normalized: Array<{ row: number; itemId: number; warehouseId: number; qty: number; cost: number }> = [];
+  const seenPairs = new Set<string>();
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i] || {};
-    try {
-      const itemCode = String(r.itemCode ?? "").trim().toLowerCase();
-      const whCode   = String(r.warehouseCode ?? "").trim().toLowerCase();
-      const qty      = Number(r.qty ?? 0);
-      const cost     = Number(r.costPrice ?? 0);
-      if (!itemCode || !whCode) { errors.push({ row: i + 2, error: "كود الصنف وكود المخزن مطلوبان" }); continue; }
-      if (!isFinite(qty)) { errors.push({ row: i + 2, error: "الكمية غير صحيحة" }); continue; }
-      const itemId = itemByCode.get(itemCode);
-      const whId   = whByCode.get(whCode);
-      if (!itemId) { errors.push({ row: i + 2, error: `صنف غير موجود: ${r.itemCode}` }); continue; }
-      if (!whId)   { errors.push({ row: i + 2, error: `مخزن غير موجود: ${r.warehouseCode}` }); continue; }
-
-      await db.transaction(async (tx) => {
-        const [bal] = await tx.select().from(stockBalanceTable).where(and(
-          eq(stockBalanceTable.companyId, cid),
-          eq(stockBalanceTable.itemId, itemId),
-          eq(stockBalanceTable.warehouseId, whId),
-        ));
-        const oldQty = Number(bal?.qty ?? 0);
-        const delta  = qty - oldQty;
-        if (bal) {
-          await tx.update(stockBalanceTable)
-            .set({ qty: String(qty), avgCost: String(cost), updatedAt: new Date() })
-            .where(eq(stockBalanceTable.id, bal.id));
-        } else {
-          await tx.insert(stockBalanceTable).values({
-            companyId: cid, itemId, warehouseId: whId,
-            qty: String(qty), avgCost: String(cost),
-          });
-        }
-        // Idempotency: remove prior opening_balance ledger entries for same item/warehouse
-        // before inserting the new snapshot, so re-importing doesn't pollute the ledger.
-        await tx.delete(stockLedgerTable).where(and(
-          eq(stockLedgerTable.companyId, cid),
-          eq(stockLedgerTable.itemId, itemId),
-          eq(stockLedgerTable.warehouseId, whId),
-          eq(stockLedgerTable.refType, "opening_balance"),
-        ));
-        // Ledger row uses delta (movement) so reports stay consistent with balance math.
-        await tx.insert(stockLedgerTable).values({
-          companyId: cid, itemId, warehouseId: whId, txDate,
-          txType: "opening" as any,
-          qty: String(delta), costPrice: String(cost),
-          totalCost: String(delta * cost), balanceQty: String(qty),
-          refId: 0, refType: "opening_balance",
-          notes: "رصيد افتتاحي مستورد",
-        });
-      });
-      applied++;
-    } catch (e: any) {
-      errors.push({ row: i + 2, error: e?.message || "خطأ غير معروف" });
+    const itemCode = String(r.itemCode ?? "").trim().toLowerCase();
+    const whCode = String(r.warehouseCode ?? "").trim().toLowerCase();
+    const qty = Number(r.qty);
+    const cost = Number(r.costPrice);
+    const itemId = itemByCode.get(itemCode);
+    const warehouseId = whByCode.get(whCode);
+    if (!itemCode || !whCode) errors.push({ row: i + 2, error: "كود الصنف وكود المخزن مطلوبان" });
+    else if (!itemId) errors.push({ row: i + 2, error: `صنف غير موجود: ${r.itemCode}` });
+    else if (!warehouseId) errors.push({ row: i + 2, error: `مخزن غير موجود: ${r.warehouseCode}` });
+    else if (!Number.isFinite(qty) || qty < 0) errors.push({ row: i + 2, error: "الكمية يجب أن تكون صفراً أو رقماً موجباً" });
+    else if (!Number.isFinite(cost) || cost < 0) errors.push({ row: i + 2, error: "التكلفة يجب أن تكون صفراً أو رقماً موجباً" });
+    else {
+      const pair = `${itemId}:${warehouseId}`;
+      if (seenPairs.has(pair)) errors.push({ row: i + 2, error: "الصنف والمخزن مكرران في الملف" });
+      else {
+        seenPairs.add(pair);
+        normalized.push({ row: i + 2, itemId, warehouseId, qty, cost });
+      }
     }
   }
-
-  const [valueRow] = await db.select({
-    total: sql<string>`COALESCE(SUM(${stockLedgerTable.balanceQty} * ${stockLedgerTable.costPrice}), 0)`,
-  }).from(stockLedgerTable).where(and(
-    eq(stockLedgerTable.companyId, cid),
-    eq(stockLedgerTable.refType, "opening_balance"),
-  ));
-  const inventoryOpeningValue = Number(valueRow?.total ?? 0);
+  if (errors.length) {
+    res.status(400).json({ error: "لم يتم تطبيق أي رصيد لوجود أخطاء في الملف", errors, total: rows.length });
+    return;
+  }
 
   let generatedDocNumber: string | null = null;
   if (!existingOpening) {
@@ -3555,24 +3760,81 @@ router.post("/import/opening-balances", async (req, res) => {
         refTable: "journal_entries",
         docDate: txDate,
       });
-    } catch {
-      // The inventory and ledger snapshots are already persisted at this
-      // point. Do not leave them detached from opening balances just because
-      // a company has a broken optional numbering setup; doc_number is
-      // nullable and can safely show the entry id as its fallback label.
-      generatedDocNumber = null;
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message ?? "تعذر توليد رقم قيد الأرصدة الافتتاحية" });
+      return;
     }
   }
 
-  const openingEntryId = await db.transaction(async (tx) => {
+  const atomicResult = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(journalEntriesTable).where(and(
       eq(journalEntriesTable.companyId, cid),
       eq(journalEntriesTable.entryType, "opening"),
       sql`COALESCE(${journalEntriesTable.description}, '') NOT LIKE '%[ob:%'`,
-    )).orderBy(desc(journalEntriesTable.createdAt), desc(journalEntriesTable.id)).limit(1);
+    )).orderBy(desc(journalEntriesTable.createdAt), desc(journalEntriesTable.id)).limit(1).for("update");
     if (current?.status === "posted") {
       throw new Error("قيد الأرصدة الافتتاحية مُرحّل. فك ترحيله قبل إعادة الاستيراد.");
     }
+
+    const selectedItemIds = Array.from(new Set(normalized.map(r => r.itemId)));
+    const selectedWarehouseIds = Array.from(new Set(normalized.map(r => r.warehouseId)));
+    const laterMovements = await tx.select({
+      itemId: stockLedgerTable.itemId,
+      warehouseId: stockLedgerTable.warehouseId,
+    }).from(stockLedgerTable).where(and(
+      eq(stockLedgerTable.companyId, cid),
+      inArray(stockLedgerTable.itemId, selectedItemIds),
+      inArray(stockLedgerTable.warehouseId, selectedWarehouseIds),
+      ne(stockLedgerTable.refType, "opening_balance"),
+    ));
+    const laterPairs = new Set(laterMovements.map(r => `${r.itemId}:${r.warehouseId}`));
+    const blocked = normalized.find(r => laterPairs.has(`${r.itemId}:${r.warehouseId}`));
+    if (blocked) {
+      throw new Error(`لا يمكن استبدال الرصيد الافتتاحي في الصف ${blocked.row} بعد وجود حركات مخزنية لاحقة`);
+    }
+
+    await lockStockBalances(normalized.map(row => ({
+      companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId,
+    })), tx);
+    for (const row of normalized.sort((a, b) => a.warehouseId - b.warehouseId || a.itemId - b.itemId)) {
+      const [balance] = await tx.select().from(stockBalanceTable).where(and(
+        eq(stockBalanceTable.companyId, cid),
+        eq(stockBalanceTable.itemId, row.itemId),
+        eq(stockBalanceTable.warehouseId, row.warehouseId),
+      ));
+      if (balance) {
+        await tx.update(stockBalanceTable).set({
+          qty: String(row.qty), avgCost: String(row.cost), updatedAt: new Date(),
+        }).where(eq(stockBalanceTable.id, balance.id));
+      } else {
+        await tx.insert(stockBalanceTable).values({
+          companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId,
+          qty: String(row.qty), avgCost: String(row.cost),
+        });
+      }
+      await tx.delete(stockLedgerTable).where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.itemId, row.itemId),
+        eq(stockLedgerTable.warehouseId, row.warehouseId),
+        eq(stockLedgerTable.refType, "opening_balance"),
+      ));
+      await tx.insert(stockLedgerTable).values({
+        companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId,
+        txDate, txType: "opening" as any,
+        qty: String(row.qty), costPrice: String(row.cost),
+        totalCost: String(row.qty * row.cost), balanceQty: String(row.qty),
+        refId: 0, refType: "opening_balance", notes: "رصيد افتتاحي مستورد",
+      });
+    }
+    for (const itemId of selectedItemIds) await refreshItemCost(cid, itemId, tx);
+
+    const [valueRow] = await tx.select({
+      total: sql<string>`COALESCE(SUM(${stockLedgerTable.balanceQty} * ${stockLedgerTable.costPrice}), 0)`,
+    }).from(stockLedgerTable).where(and(
+      eq(stockLedgerTable.companyId, cid),
+      eq(stockLedgerTable.refType, "opening_balance"),
+    ));
+    const inventoryOpeningValue = Number(valueRow?.total ?? 0);
 
     await tx.insert(accountingMappingsTable).values({
       companyId: cid,
@@ -3634,15 +3896,15 @@ router.post("/import/opening-balances", async (req, res) => {
         },
       ]);
     }
-    return entryId;
+    return { openingEntryId: entryId, inventoryOpeningValue };
   });
 
   res.json({
-    applied,
-    errors,
+    applied: normalized.length,
+    errors: [],
     total: rows.length,
-    inventoryOpeningValue,
-    openingEntryId,
+    inventoryOpeningValue: atomicResult.inventoryOpeningValue,
+    openingEntryId: atomicResult.openingEntryId,
     inventoryAccountId,
     openingCounterAccountId,
   });

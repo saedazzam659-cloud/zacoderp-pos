@@ -181,6 +181,8 @@ export const inventoryApi = {
   createAdjustment: (data: any)    => post<any>("/stock-adjustments", data),
   updateAdjustment: (id: number, data: any) => put<any>(`/stock-adjustments/${id}`, data),
   postAdjustment:   (id: number)   => post<any>(`/stock-adjustments/${id}/post`, {}),
+  reverseAdjustment: (id: number, data: { date?: string; reason?: string } = {}) =>
+    post<any>(`/stock-adjustments/${id}/reverse`, data),
   deleteAdjustment: (id: number)   => del(`/stock-adjustments/${id}`),
   // Stock Counts
   getCounts:   (cid?: number) => get<any[]>(`/stock-counts${cid ? `?companyId=${cid}` : ""}`),

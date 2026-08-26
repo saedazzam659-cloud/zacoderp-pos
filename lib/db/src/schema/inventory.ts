@@ -474,6 +474,8 @@ export const stockAdjustmentsTable = pgTable("stock_adjustments", {
   adjustmentAccountId: integer("adjustment_account_id").references(() => accountsTable.id),
   // Linked JE id created on post
   journalEntryId:      integer("journal_entry_id"),
+  // Posted adjustments are never edited; a correcting draft points back here.
+  correctionOfId:      integer("correction_of_id"),
   reason:           text("reason"),
   status:           docStatusEnum("status").default("draft").notNull(),
   notes:            text("notes"),
@@ -498,6 +500,9 @@ export const stockCountsTable = pgTable("stock_counts", {
   countNumber: text("count_number").notNull(),
   countDate:   date("count_date").notNull(),
   warehouseId: integer("warehouse_id").notNull().references(() => warehousesTable.id),
+  inventoryAccountId:  integer("inventory_account_id").references(() => accountsTable.id),
+  adjustmentAccountId: integer("adjustment_account_id").references(() => accountsTable.id),
+  journalEntryId:      integer("journal_entry_id"),
   status:      docStatusEnum("status").default("draft").notNull(),
   notes:       text("notes"),
   createdAt:   timestamp("created_at").defaultNow().notNull(),
