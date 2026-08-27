@@ -15,6 +15,7 @@ export const BACKUP_EXCLUDED_TABLES = new Set([
   "dev_studio_sessions", "plan_configs",
   "ai_feature_settings",
   "device_licenses", "device_invoice_ranges", "download_access_codes",
+  "pos_devices",
   "sync_queue_log", "company_clone_runs", "company_templates",
 ]);
 
@@ -39,6 +40,9 @@ const IDENT = /^[a-z_][a-z0-9_]*$/;
 // are matched by their credential-bearing names instead.
 const SENSITIVE = /(?:^password(?:_|$)|password_hash|login_password_hash|password_enc|session_token|current_session_id|(?:^|_)(?:token|otp)(?:_|$)|(?:^|_)(?:secret|credential|private_key|encryption_key|api_key|license_key)(?:_|$)|credentials_enc|csr_private_key_enc|zatca_(?:csid|pcsid|private_key)|^(?:x_amz|x_goog)_(?:signature|credential|security_token))/i;
 const PROTECTED_RESTORE_TABLES = new Set(["users"]);
+// Older schema-v2 files included POS device identities. They must not be
+// restored onto another server, but the rest of such a backup remains valid.
+const LEGACY_IGNORED_RESTORE_TABLES = new Set(["pos_devices"]);
 const UNSAFE_COMPANY_SETTING = /(?:^|_)(?:id|company_id|code|status|domain|identity|subscription|plan|billing|backup|otp|token|secret|key|credential|agent|security)(?:_|$)|^(?:created_at|updated_at)$/i;
 
 export type ForeignKey = {
@@ -351,12 +355,18 @@ export async function buildFullCompanyBackup(companyId: number, exportedBy: stri
 
 export async function restoreFullCompanyBackup(companyId: number, payload: FullCompanyPayload): Promise<Record<string, { received: number; inserted: number; updated: number }>> {
   if (!isFullCompanyBackupPayload(payload)) throw new Error("Invalid schemaVersion 2 backup");
-  const tables = payload.manifest.tables;
-  for (const [name, table] of Object.entries(tables)) {
+  const tables = Object.fromEntries(Object.entries(payload.manifest.tables)
+    .filter(([name]) => !LEGACY_IGNORED_RESTORE_TABLES.has(name)));
+  for (const [name, table] of Object.entries(payload.manifest.tables)) {
+    if (LEGACY_IGNORED_RESTORE_TABLES.has(name)) continue;
     if (!IDENT.test(name) || isExcludedTable(name) || !table.columns.every((column) => IDENT.test(column))) throw new Error("Unsafe backup manifest");
     if (!Object.keys(payload.data).includes(name)) throw new Error(`Missing backup data for ${name}`);
   }
-  for (const name of Object.keys(payload.data)) if (!tables[name]) throw new Error(`Backup data has no manifest entry: ${name}`);
+  for (const name of Object.keys(payload.data)) {
+    if (!LEGACY_IGNORED_RESTORE_TABLES.has(name) && !tables[name]) {
+      throw new Error(`Backup data has no manifest entry: ${name}`);
+    }
+  }
   return db.transaction(async (tx) => {
     const report: Record<string, { received: number; inserted: number; updated: number }> = {};
     const actual = await catalog(tx);

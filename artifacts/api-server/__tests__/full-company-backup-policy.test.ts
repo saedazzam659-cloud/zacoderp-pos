@@ -69,6 +69,7 @@ test("restored users receive deterministic non-login identities", () => {
 test("only control/auth backup exclusions are excluded", () => {
   assert.equal(BACKUP_EXCLUDED_TABLES.has("auto_backups"), true);
   assert.equal(BACKUP_EXCLUDED_TABLES.has("sessions"), true);
+  assert.equal(BACKUP_EXCLUDED_TABLES.has("pos_devices"), true);
   assert.equal(BACKUP_EXCLUDED_TABLES.has("audit_log"), false);
   assert.equal(BACKUP_EXCLUDED_TABLES.has("pos_sessions"), false);
   assert.equal(classifyTable("users", true), "protected-user");
