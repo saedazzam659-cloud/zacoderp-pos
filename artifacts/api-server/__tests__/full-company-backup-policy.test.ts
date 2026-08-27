@@ -4,6 +4,7 @@ import {
   BACKUP_EXCLUDED_TABLES, classifyTable, isSensitiveColumn, sanitizeRow,
   topologicalTableOrder, isFullCompanyBackupPayload, isExternalFileReference,
   catalogsMatch, missingRequiredFullCompanyTables, REQUIRED_FULL_COMPANY_TABLES,
+  restoreParameterValue,
 } from "../src/lib/fullCompanyBackup.js";
 
 test("backup sensitive policy preserves business hashes and removes credentials", () => {
@@ -51,6 +52,13 @@ test("external file reference detection covers stored paths and URLs", () => {
   assert.equal(isExternalFileReference("attachment_url", "https://files.example/a.pdf"), true);
   assert.equal(isExternalFileReference("photo_url", "data:image/png;base64,AA"), false);
   assert.equal(isExternalFileReference("invoice_number", "INV-1"), false);
+});
+
+test("restore serializes json values before raw SQL binding", () => {
+  assert.equal(restoreParameterValue("jsonb", [0, 1, 2]), "[0,1,2]");
+  assert.equal(restoreParameterValue("json", { enabled: true }), '{"enabled":true}');
+  assert.equal(restoreParameterValue("text", "plain"), "plain");
+  assert.equal(restoreParameterValue("jsonb", null), null);
 });
 
 test("only control/auth backup exclusions are excluded", () => {

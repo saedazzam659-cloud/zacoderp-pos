@@ -83,6 +83,12 @@ function normalizedKey(key: string): string {
   return key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^a-zA-Z0-9]+/g, "_").toLowerCase();
 }
 export function isSensitiveColumn(column: string): boolean { return SENSITIVE.test(normalizedKey(column)); }
+export function restoreParameterValue(dataType: string | undefined, value: unknown): unknown {
+  if ((dataType === "json" || dataType === "jsonb") && value !== null && value !== undefined) {
+    return JSON.stringify(value);
+  }
+  return value;
+}
 function sanitizeValue(column: string, value: unknown, tableName?: string, nested = false): unknown {
   if (normalizedKey(column) === "session_id" && (nested || tableName === "users")) return null;
   if (isSensitiveColumn(column)) return null;
@@ -353,6 +359,17 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
     if (!catalogsMatch(tables, actual)) {
       throw new Error("Backup manifest is incomplete or does not match the live full-company catalog");
     }
+    const columnTypes = new Map<string, string>();
+    for (const record of rows(await tx.execute(sql`
+      SELECT "table_name", "column_name", "data_type"
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+    `))) {
+      columnTypes.set(
+        `${String(cell(record, "table_name"))}.${String(cell(record, "column_name"))}`,
+        String(cell(record, "data_type")),
+      );
+    }
     for (const [name, table] of Object.entries(tables)) {
       const live = actual[name];
       if (!live) throw new Error(`Backup table is not available: ${name}`);
@@ -415,7 +432,11 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
           }
         }
         const values: Record<string, unknown> = {};
-        for (const col of table.columns) if (col !== table.primaryKey && !isSensitiveColumn(col) && col in source) values[col] = source[col];
+        for (const col of table.columns) {
+          if (col !== table.primaryKey && !isSensitiveColumn(col) && col in source) {
+            values[col] = restoreParameterValue(columnTypes.get(`${name}.${col}`), source[col]);
+          }
+        }
         if (table.classification === "tenant-root") values.company_id = companyId;
         if (name === "users") {
           values.password_hash = "!backup-import-disabled!";
