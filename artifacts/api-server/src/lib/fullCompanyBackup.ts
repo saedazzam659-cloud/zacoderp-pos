@@ -430,9 +430,20 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
         }
         const columns = Object.keys(values); if (!columns.length) throw new Error(`No restorable columns for ${name}`);
         const returning = table.primaryKey ? sql` RETURNING ${sql.raw(ident(table.primaryKey))}` : sql.empty();
+        const productionShiftConflict = name === "production_shifts"
+          && columns.includes("company_id")
+          && columns.includes("code");
+        const updateColumns = columns.filter((column) => column !== "company_id" && column !== "code");
+        const conflictClause = productionShiftConflict
+          ? sql` ON CONFLICT ("company_id", "code") DO UPDATE SET ${sql.join(
+              updateColumns.map((column) =>
+                sql`${sql.raw(ident(column))} = EXCLUDED.${sql.raw(ident(column))}`),
+              sql`,`,
+            )}`
+          : sql.empty();
         const inserted = rows(await tx.execute(sql`INSERT INTO ${sql.raw(ident(name))}
           (${sql.raw(columns.map(ident).join(","))}) VALUES (${sql.join(columns.map((column) => sql`${values[column]}`), sql`,`)})
-          ${returning}`));
+          ${conflictClause}${returning}`));
         const newId = table.primaryKey ? inserted[0]?.[table.primaryKey] : undefined;
         if (table.primaryKey && newId == null) throw new Error(`Insert did not return primary key for ${name}`);
         if (table.primaryKey) {
