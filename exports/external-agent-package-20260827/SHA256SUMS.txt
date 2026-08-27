@@ -1,0 +1,3 @@
+d1c0e5c00baea35249a3102687f6f45aba560bc6643a4961bc408e83d87bc240  exports/external-agent-package-20260827/backend.tgz
+a5d549129ffa396081b139db25a97c27edcdaeb9a655047fde1a54a4fa448307  exports/external-agent-package-20260827/frontend.tgz
+4c2f46360e74064cf766717b0bb4fe2da3da4957413284633064a8761fb0b7b7  exports/external-agent-package-20260827/database-sanitized.dump

@@ -418,3 +418,38 @@ uri = "file://artifacts/mobile/releases/zacoderp-google-play-v13.aab"
 type = "unspecified"
 title = "Zacode ERP Android v13 (AAB) — النسخة النهائية"
 description = "تعرض الخصومات والكميات المجانية في الفاتورة المرحلة للقراءة فقط، وتظهرها أيضًا في طباعة الفواتير وعروض الأسعار."
+
+[[outputs]]
+id = "e3Qp4ksZq769jm-3x4bR4"
+uri = "file://exports/external-agent-package-20260827/backend.tgz"
+type = "unspecified"
+title = "Backend — النسخة الخارجية"
+description = "ارفعه في خانة Backend. يحتوي index.mjs في جذر الحزمة ومبني من أحدث كود حالي."
+
+[[outputs]]
+id = "gBekNbEOLuCFL4D_At5Cp"
+uri = "file://exports/external-agent-package-20260827/frontend.tgz"
+type = "unspecified"
+title = "Frontend — النسخة الخارجية"
+description = "ارفعه في خانة Frontend. يحتوي index.html في جذر الحزمة ويتضمن أداة Excel الجديدة."
+
+[[outputs]]
+id = "KXPDOUfTP5L7XAqh16z7u"
+uri = "file://exports/external-agent-package-20260827/database-sanitized.dump"
+type = "unspecified"
+title = "Database — نسخة تجريبية معمّاة"
+description = "ارفعه في خانة قاعدة البيانات. PostgreSQL custom dump يحتفظ بالبيانات التشغيلية ويعمي البيانات الحساسة ويعطل التكاملات."
+
+[[outputs]]
+id = "a-A9o7w6EzapRX4lEjKcT"
+uri = "file://exports/external-agent-package-20260827/SHA256SUMS.txt"
+type = "text"
+title = "بصمات التحقق SHA-256"
+description = "بصمات الملفات الثلاثة للتحقق بعد النقل."
+
+[[outputs]]
+id = "o7Oeb-gt0SDJbq2TEIKgn"
+uri = "file://exports/external-agent-package-20260827/README.txt"
+type = "text"
+title = "تعليمات الحزمة الخارجية"
+description = "خريطة رفع الملفات وسياسة التحديث والسلامة."
