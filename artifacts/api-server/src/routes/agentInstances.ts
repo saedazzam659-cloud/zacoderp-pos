@@ -4062,13 +4062,13 @@ RELEASE_LICENSE_KEY=${shQ(inst.licenseKey ?? "")}
 printf 'header = "X-Zacod-Installation-Id: %s"\\nheader = "X-Zacod-License-Key: %s"\\n' "$RELEASE_INSTALLATION_ID" "$RELEASE_LICENSE_KEY" > ${releaseAuthPath}
 unset RELEASE_INSTALLATION_ID RELEASE_LICENSE_KEY
 ${dlCmd(bundleUrl, "/tmp/zacod-app.tgz", true, opts.variant === "upload" ? readPackageMap(inst.externalPackageMeta).backend?.sha256 ?? "" : "")}
-rm -f ${releaseAuthPath}
-trap - EXIT
 rm -rf /opt/zacod/app.new && mkdir -p /opt/zacod/app.new
 tar -xzf /tmp/zacod-app.tgz -C /opt/zacod/app.new
 rm -f /tmp/zacod-app.tgz
 echo ${shQ(relVersion)} > /opt/zacod/app.new/VERSION
 ${frontendCmd || "true"}
+rm -f ${releaseAuthPath}
+trap - EXIT
 if [ -f /opt/zacod/app.env ] && grep -q '^SESSION_SECRET=' /opt/zacod/app.env; then SS=$(grep '^SESSION_SECRET=' /opt/zacod/app.env | cut -d= -f2-); else SS=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \\n'); fi
 { echo "NODE_ENV=production"; echo "PORT=8080"; echo "DATABASE_URL=${localDbUrl}"; echo "SESSION_SECRET=$SS"; echo "PUBLIC_BASE_URL=https://${inst.domain}"; } > /opt/zacod/app.env
 chmod 600 /opt/zacod/app.env
