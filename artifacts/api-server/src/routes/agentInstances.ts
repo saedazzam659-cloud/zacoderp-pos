@@ -4325,7 +4325,16 @@ router.post("/:id/external-package/prepare", async (req, res) => {
   try {
     const dbUrl = decryptSecret(inst.dbUrlEnc);
     if (!dbUrl) throw new Error("تعذّر قراءة رابط قاعدة بيانات الوكيل");
-    const dbHost = new URL(dbUrl).hostname;
+    let parsedDbUrl: URL;
+    try {
+      parsedDbUrl = new URL(dbUrl);
+    } catch {
+      throw new Error("رابط قاعدة بيانات الوكيل غير صالح. ارفع ملف Database الجاهز من تبويب «الحزمة الخارجية»، أو أدخل رابط PostgreSQL كاملًا يبدأ بـ postgresql://");
+    }
+    if (!["postgres:", "postgresql:"].includes(parsedDbUrl.protocol) || !parsedDbUrl.hostname) {
+      throw new Error("رابط قاعدة بيانات الوكيل يجب أن يكون رابط PostgreSQL كاملًا يبدأ بـ postgresql://");
+    }
+    const dbHost = parsedDbUrl.hostname;
     await assertProbeTargetAllowed(dbHost);
     workDir = await fsp.mkdtemp(path.join("/tmp", ".zacod-external-build-"));
     const [{ getReleaseInfo, findDistDir }] = await Promise.all([import("../lib/agentRelease.js")]);
