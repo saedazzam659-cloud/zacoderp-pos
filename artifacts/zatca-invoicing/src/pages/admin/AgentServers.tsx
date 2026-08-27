@@ -598,6 +598,36 @@ export default function AgentServers() {
     } finally { setBusy(null); }
   }
 
+  async function saveSshCredentials() {
+    if (!form.id) return;
+    setBusy(`ssh-save-${form.id}`);
+    try {
+      const payload: Record<string, unknown> = {
+        sshHost: form.sshHost.trim(),
+        sshPort: Number(form.sshPort || 22),
+        sshUser: form.sshUser.trim(),
+      };
+      if (form.sshSecret.trim()) payload.sshSecret = form.sshSecret.trim();
+      const r = await fetch(`${API}/api/admin/agent-instances/${form.id}/ssh-credentials`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل حفظ بيانات SSH");
+      set("sshSecret", "");
+      invalidate();
+      toast({
+        title: "تم حفظ بيانات SSH",
+        description: "تم الحفظ بشكل مستقل عن إعدادات Super Admin والحزمة الخارجية",
+      });
+    } catch (e: any) {
+      toast({ title: "فشل حفظ بيانات SSH", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function checkDomains(a: Agent) {
     setDomainCheck({ agent: a, loading: true });
     try {
@@ -2269,6 +2299,23 @@ export default function AgentServers() {
               <div><label className="text-xs text-muted-foreground block mb-1">المنفذ</label><Input dir="ltr" inputMode="numeric" value={form.sshPort} onChange={e => set("sshPort", e.target.value)} /></div>
               <div><label className="text-xs text-muted-foreground block mb-1">المستخدم</label><Input dir="ltr" value={form.sshUser} onChange={e => set("sshUser", e.target.value)} /></div>
               <div><label className="text-xs text-muted-foreground block mb-1">كلمة المرور / المفتاح</label><Input dir="ltr" type="password" placeholder={isEdit ? "اتركه فارغًا للإبقاء" : ""} value={form.sshSecret} onChange={e => set("sshSecret", e.target.value)} /></div>
+              {isEdit && (
+                <div className="col-span-2 flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy === `ssh-save-${form.id}` || !form.sshHost.trim() || !form.sshUser.trim()}
+                    onClick={saveSshCredentials}
+                    data-testid="button-save-agent-ssh-only"
+                  >
+                    {busy === `ssh-save-${form.id}` && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}
+                    حفظ بيانات SSH فقط
+                  </Button>
+                  <span className="text-[11px] text-muted-foreground">
+                    لا يتأثر بإعدادات Super Admin أو نوع النسخة.
+                  </span>
+                </div>
+              )}
               {isEdit && (
                 <div className="col-span-2">
                   <StandbyServers agentId={form.id} agentMode={form.mode} headers={headers} toast={toast} />

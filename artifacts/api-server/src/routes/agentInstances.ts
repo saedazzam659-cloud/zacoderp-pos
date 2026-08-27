@@ -634,6 +634,14 @@ const upsertSchema = z.object({
   saPassword: z.string().max(200).nullish(),
 });
 
+const sshCredentialsSchema = z.object({
+  sshHost: z.string().trim().min(1).max(255),
+  sshPort: z.number().int().min(1).max(65535),
+  sshUser: z.string().trim().min(1).max(100),
+  // Write-only. Omit it to keep the currently saved password/key.
+  sshSecret: z.string().min(1).max(10000).optional(),
+});
+
 // POST /api/admin/agent-instances
 router.post("/", async (req, res) => {
   const p = upsertSchema.safeParse(req.body);
@@ -696,6 +704,61 @@ router.post("/", async (req, res) => {
   }).returning();
   clearAgentHostCache();
   res.status(201).json(publicRow(row));
+});
+
+// PUT /api/admin/agent-instances/:id/ssh-credentials
+// Save the connection independently from edition/package/Super Admin settings.
+// A broken or incomplete unrelated section must never prevent repairing SSH.
+router.put("/:id/ssh-credentials", async (req, res) => {
+  const id = Number(req.params.id);
+  const p = sshCredentialsSchema.safeParse(req.body);
+  if (!id || !p.success) {
+    const first = p.success ? null : p.error.issues[0];
+    res.status(400).json({
+      error: first
+        ? `بيانات SSH غير صالحة — الحقل: ${first.path?.join(".") || "?"} (${first.message || ""})`
+        : "بيانات غير صالحة",
+    });
+    return;
+  }
+  const [existing] = await db.select().from(agentInstancesTable)
+    .where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (existing.deployStatus === "deploying") {
+    res.status(409).json({ error: "لا يمكن تعديل بيانات السيرفر أثناء عملية نشر أو تسطيب جارية" });
+    return;
+  }
+  if (!p.data.sshSecret && !existing.sshSecretEnc) {
+    res.status(400).json({ error: "أدخل كلمة المرور أو المفتاح أولًا" });
+    return;
+  }
+  try {
+    await assertProbeTargetAllowed(p.data.sshHost);
+  } catch (e: any) {
+    res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") });
+    return;
+  }
+
+  const targetChanged = p.data.sshHost !== existing.sshHost
+    || p.data.sshPort !== (existing.sshPort ?? 22);
+  const [row] = await db.update(agentInstancesTable).set({
+    sshHost: p.data.sshHost,
+    sshPort: p.data.sshPort,
+    sshUser: p.data.sshUser,
+    ...(p.data.sshSecret ? { sshSecretEnc: encryptSecret(p.data.sshSecret) } : {}),
+    ...(targetChanged ? { sshHostKeyFp: null } : {}),
+    sshStatus: "not_configured",
+    sshLastCheckAt: null,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    ne(agentInstancesTable.deployStatus, "deploying"),
+  )).returning();
+  if (!row) {
+    res.status(409).json({ error: "بدأت عملية أخرى على الوكيل — لم تُحفظ بيانات SSH" });
+    return;
+  }
+  res.json(publicRow(row));
 });
 
 // PUT /api/admin/agent-instances/:id
