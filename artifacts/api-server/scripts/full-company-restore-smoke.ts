@@ -30,6 +30,7 @@ async function deleteFixtureCompany(companyId: number): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.execute(sql`DELETE FROM "invoices" WHERE "company_id" = ${companyId}`);
     await tx.execute(sql`DELETE FROM "production_shifts" WHERE "company_id" = ${companyId}`);
+    await tx.execute(sql`DELETE FROM "security_notification_rules" WHERE "company_id" = ${companyId}`);
     await tx.execute(sql`DELETE FROM "users" WHERE "company_id" = ${companyId}`);
     await tx.execute(sql`DELETE FROM "companies" WHERE "id" = ${companyId}`);
   });
@@ -55,6 +56,20 @@ try {
        '!smoke!', 'admin', '{"dashboard":{"view":true}}'::jsonb, false),
       (${sourceCompanyId}, ${`new-${stamp}`}, ${`new-${stamp}@example.test`},
        '!smoke!', 'user', '{"invoices":{"view":true}}'::jsonb, false)
+  `);
+  const sourceCreatorId = Number(rows(await db.execute(sql`
+    SELECT "id" FROM "users"
+    WHERE "company_id" = ${sourceCompanyId} AND "username" = ${`existing-${stamp}`}
+  `))[0]?.id);
+  await db.execute(sql`
+    INSERT INTO "security_notification_rules"
+      ("company_id", "name", "is_active", "min_severity", "event_types",
+       "branch_ids", "target_mode", "target_user_ids", "created_by_user_id",
+       "trigger_type", "action_type", "target_module")
+    VALUES
+      (${sourceCompanyId}, 'اقتحام', true, 'medium', ARRAY['intrusion']::text[],
+       ARRAY[]::integer[], 'broadcast', ARRAY[]::integer[], ${sourceCreatorId},
+       'manual', 'notify', 'none')
   `);
   await db.execute(sql`
     INSERT INTO "invoices"
@@ -87,10 +102,11 @@ try {
     SELECT
       (SELECT "days_of_week" FROM "production_shifts" WHERE "company_id" = ${targetCompanyId} LIMIT 1) AS "days",
       (SELECT count(*) FROM "users" WHERE "company_id" = ${targetCompanyId}) AS "users",
-      (SELECT count(*) FROM "invoices" WHERE "company_id" = ${targetCompanyId}) AS "invoices"
+      (SELECT count(*) FROM "invoices" WHERE "company_id" = ${targetCompanyId}) AS "invoices",
+      (SELECT count(*) FROM "security_notification_rules" WHERE "company_id" = ${targetCompanyId}) AS "rules"
   `))[0];
   if (JSON.stringify(checks.days) !== JSON.stringify([0, 1, 2, 3, 4])
-      || Number(checks.users) !== 2 || Number(checks.invoices) !== 1) {
+      || Number(checks.users) !== 2 || Number(checks.invoices) !== 1 || Number(checks.rules) !== 1) {
     throw new Error(`Restored fixture verification failed: ${JSON.stringify(checks)}`);
   }
 

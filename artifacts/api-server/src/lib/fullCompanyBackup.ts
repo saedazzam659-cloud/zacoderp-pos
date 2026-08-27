@@ -482,7 +482,8 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
             inserted = rows(await tx.execute(sql`
               UPDATE "production_shifts"
               SET ${sql.join(
-                updateColumns.map((column) => sql`${sql.raw(ident(column))} = ${values[column]}`),
+                updateColumns.map((column) =>
+                  sql`${sql.raw(ident(column))} = ${sql.param(values[column])}`),
                 sql`,`,
               )}
               WHERE ${sql.raw(ident(table.primaryKey ?? "id"))} = ${existing[table.primaryKey ?? "id"]}
@@ -491,12 +492,12 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
             didUpdate = true;
           } else {
             inserted = rows(await tx.execute(sql`INSERT INTO ${sql.raw(ident(name))}
-              (${sql.raw(columns.map(ident).join(","))}) VALUES (${sql.join(columns.map((column) => sql`${values[column]}`), sql`,`)})
+              (${sql.raw(columns.map(ident).join(","))}) VALUES (${sql.join(columns.map((column) => sql.param(values[column])), sql`,`)})
               ${returning}`));
           }
         } else {
           inserted = rows(await tx.execute(sql`INSERT INTO ${sql.raw(ident(name))}
-            (${sql.raw(columns.map(ident).join(","))}) VALUES (${sql.join(columns.map((column) => sql`${values[column]}`), sql`,`)})
+            (${sql.raw(columns.map(ident).join(","))}) VALUES (${sql.join(columns.map((column) => sql.param(values[column])), sql`,`)})
             ${returning}`));
         }
         const newId = table.primaryKey ? inserted[0]?.[table.primaryKey] : undefined;
