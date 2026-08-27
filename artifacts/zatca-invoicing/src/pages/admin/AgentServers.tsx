@@ -481,8 +481,6 @@ export default function AgentServers() {
         contactPhone: form.contactPhone || null, contactEmail: form.contactEmail || null,
         extraDomains: form.extraDomainsText.split(/[\n,،]+/).map(s => s.trim()).filter(Boolean),
         mode: form.mode,
-        localSuperadminEnabled: form.mode === "full" && form.localSuperadminEnabled,
-        localSuperadminScreens: form.mode === "full" && form.localSuperadminEnabled ? form.localSuperadminScreens : [],
         packageSource: wantsExternal && editingAgent?.packageSource === "external" ? "external" : "central",
         maxCompanies: form.maxCompanies ? Number(form.maxCompanies) : null,
         licenseExpiresAt: form.licenseExpiresAt || null,
@@ -492,10 +490,16 @@ export default function AgentServers() {
         autoDomainSetup: form.autoDomainSetup,
         autoDomainProxyEnabled: form.autoDomainProxyEnabled,
       };
-      if (form.mode === "full" && form.localSuperadminEnabled) {
+      // Existing agents save their Super Admin policy through its dedicated
+      // button. The general/package save must never submit password fields:
+      // browser password managers can autofill hidden tabs unexpectedly.
+      if (!wasEdit) {
+        payload.localSuperadminEnabled = form.mode === "full" && form.localSuperadminEnabled;
+        payload.localSuperadminScreens = form.mode === "full" && form.localSuperadminEnabled ? form.localSuperadminScreens : [];
+      }
+      if (!wasEdit && form.mode === "full" && form.localSuperadminEnabled) {
         payload.saUsername = form.saUsername.trim() || null;
         payload.saEmail = form.saEmail.trim() || null;
-        // كلمة مرور السوبر أدمن: تُرسل فقط عند إدخال قيمة جديدة (فارغ = الإبقاء).
         if (form.saPassword.trim()) payload.saPassword = form.saPassword.trim();
       }
       // اللوجو: الـ WAF في الإنتاج يمنع data: URIs داخل جسم الطلب — نرسل
@@ -557,8 +561,6 @@ export default function AgentServers() {
           method: "PUT", headers, body: JSON.stringify({
             packageSource: "external",
             mode: "full",
-            localSuperadminEnabled: form.localSuperadminEnabled,
-            localSuperadminScreens: form.localSuperadminScreens,
           }),
         });
         const finalJson = await finalize.json().catch(() => ({}));
@@ -659,6 +661,51 @@ export default function AgentServers() {
       setSmtpRepair(p => ({ ...p, password: "" }));
     } catch (e: any) {
       toast({ title: "فشل إصلاح بريد الوكيل", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveLocalSuperadminSettings() {
+    if (!form.id) return;
+    const existingPassword = editingAgent?.saPasswordSet;
+    if (form.localSuperadminEnabled
+      && (!form.saUsername.trim() || !form.saEmail.trim() || (!existingPassword && !form.saPassword.trim()))) {
+      toast({ title: "أكمل بيانات السوبر أدمن المحلي: اسم المستخدم وكلمة المرور وإيميل OTP", variant: "destructive" });
+      return;
+    }
+    if (form.localSuperadminEnabled && form.localSuperadminScreens.length === 0) {
+      toast({ title: "اختر شاشة واحدة على الأقل للوحة Super Admin", variant: "destructive" });
+      return;
+    }
+    setBusy(`save-local-sa-${form.id}`);
+    try {
+      const payload: Record<string, unknown> = {
+        localSuperadminEnabled: form.localSuperadminEnabled,
+        localSuperadminScreens: form.localSuperadminEnabled ? form.localSuperadminScreens : [],
+      };
+      if (form.localSuperadminEnabled) {
+        payload.saUsername = form.saUsername.trim();
+        payload.saEmail = form.saEmail.trim();
+        if (form.saPassword.trim()) payload.saPassword = form.saPassword.trim();
+      }
+      const r = await fetch(`${API}/api/admin/agent-instances/${form.id}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل حفظ إعدادات Super Admin");
+      set("saPassword", "");
+      invalidate();
+      toast({
+        title: "تم حفظ إعدادات Super Admin فقط",
+        description: existingPassword && !form.saPassword.trim()
+          ? "تم الإبقاء على كلمة المرور المشفّرة الحالية."
+          : undefined,
+      });
+    } catch (e: any) {
+      toast({ title: "فشل حفظ إعدادات Super Admin", description: String(e?.message ?? e), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -2047,12 +2094,12 @@ export default function AgentServers() {
               <Button onClick={() => {
                 if (!form.name.trim() || !form.domain.trim()) { toast({ title: "الاسم والدومين مطلوبان", variant: "destructive" }); return; }
                 const existingPassword = agents.find(x => x.id === form.id)?.saPasswordSet;
-                if (form.mode === "full" && form.localSuperadminEnabled
+                if (!isEdit && form.mode === "full" && form.localSuperadminEnabled
                   && (!form.saUsername.trim() || !form.saEmail.trim() || (!existingPassword && !form.saPassword.trim()))) {
                   toast({ title: "أكمل بيانات السوبر أدمن المحلي: اسم المستخدم وكلمة المرور وإيميل OTP", variant: "destructive" });
                   return;
                 }
-                if (form.mode === "full" && form.localSuperadminEnabled && form.localSuperadminScreens.length === 0) {
+                if (!isEdit && form.mode === "full" && form.localSuperadminEnabled && form.localSuperadminScreens.length === 0) {
                   toast({ title: "اختر شاشة واحدة على الأقل للوحة Super Admin", variant: "destructive" });
                   return;
                 }
@@ -2122,11 +2169,26 @@ export default function AgentServers() {
                     <div><label className="text-xs text-muted-foreground block mb-1">اسم المستخدم</label>
                       <Input dir="ltr" placeholder="admin" value={form.saUsername} onChange={e => set("saUsername", e.target.value)} data-testid="input-agent-sa-username" /></div>
                     <div><label className="text-xs text-muted-foreground block mb-1">كلمة المرور {isEdit && agents.find(x => x.id === form.id)?.saPasswordSet && <span className="opacity-70">(محفوظة — فارغ = الإبقاء)</span>}</label>
-                      <Input dir="ltr" type="password" placeholder="10 أحرف فأكثر (أحرف وأرقام)" value={form.saPassword} onChange={e => set("saPassword", e.target.value)} data-testid="input-agent-sa-password" /></div>
+                      <Input dir="ltr" type="password" autoComplete="new-password" name={`agent-sa-password-${form.id || "new"}`} placeholder="10 أحرف فأكثر (أحرف وأرقام)" value={form.saPassword} onChange={e => set("saPassword", e.target.value)} data-testid="input-agent-sa-password" /></div>
                     <div><label className="text-xs text-muted-foreground block mb-1">إيميل استقبال OTP</label>
                       <Input dir="ltr" placeholder="owner@agent.com" value={form.saEmail} onChange={e => set("saEmail", e.target.value)} data-testid="input-agent-sa-email" /></div>
                   </div>
                   <div className="text-[11px] text-muted-foreground leading-relaxed">كلمة المرور تُحفظ مشفّرة ولا تُعرض بعد الحفظ. عند الدخول للوحة تحكم نسخة الوكيل يصل رمز التحقق (OTP) إلى هذا الإيميل. إذا كانت النسخة مسطّبة، يطبّق الحفظ التغيير مباشرةً على إعداد السيرفر والحساب والجلسات.</div>
+                  {isEdit && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={busy === `save-local-sa-${form.id}`}
+                        onClick={saveLocalSuperadminSettings}
+                        data-testid="button-save-local-superadmin-only"
+                      >
+                        {busy === `save-local-sa-${form.id}` && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}
+                        حفظ إعدادات Super Admin فقط
+                      </Button>
+                      <span className="text-[11px] text-muted-foreground">لا تُرسل هذه البيانات عند حفظ الحزمة أو السيرفر أو الهوية.</span>
+                    </div>
+                  )}
                 </div>
               )}
               {form.mode === "full" && form.localSuperadminEnabled && (
