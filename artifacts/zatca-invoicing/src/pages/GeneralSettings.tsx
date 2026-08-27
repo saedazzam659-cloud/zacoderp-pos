@@ -681,6 +681,8 @@ export default function GeneralSettings() {
   const [aiSummary, setAiSummary] = useState<{ summary: string; warnings: string[]; counts: Record<string, number> } | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreReport, setRestoreReport] = useState<any | null>(null);
+  const uploadedBackupVersion = Number(uploadedBackup?.meta?.schemaVersion ?? 1);
+  const isFullCompanyBackup = uploadedBackupVersion >= 2 && uploadedBackup?.meta?.scope === "full_company";
 
   // ─── Scheduled auto-backup + email (cloud) destination ───────────────────
   type BackupSettings = {
@@ -1040,13 +1042,20 @@ export default function GeneralSettings() {
 
   async function handleBackupRestore() {
     if (!uploadedBackup) return;
-    if (!window.confirm(t("pages.generalSettings.confirmRestore"))) return;
+    const confirmationKey = isFullCompanyBackup
+      ? "pages.generalSettings.confirmFullRestore"
+      : "pages.generalSettings.confirmRestore";
+    if (!window.confirm(t(confirmationKey))) return;
     setRestoring(true);
     try {
       const cid = user?.company?.id ?? user?.companyId;
       const res = await fetch(`${API}/api/backup/restore`, {
         method: "POST", headers,
-        body: JSON.stringify({ companyId: cid, backup: uploadedBackup }),
+        body: JSON.stringify({
+          companyId: cid,
+          backup: uploadedBackup,
+          mode: isFullCompanyBackup ? "replace" : "merge",
+        }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || t("pages.generalSettings.restoreFailed"));
@@ -2562,7 +2571,11 @@ export default function GeneralSettings() {
                 </p>
                 <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 mt-2 inline-flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
-                  {t("pages.generalSettings.backupImportWarning")}
+                  {!uploadedBackup
+                    ? t("pages.generalSettings.backupImportPreUploadWarning")
+                    : isFullCompanyBackup
+                      ? t("pages.generalSettings.fullBackupImportWarning")
+                      : t("pages.generalSettings.backupImportWarning")}
                 </p>
               </div>
             </div>
@@ -2596,11 +2609,31 @@ export default function GeneralSettings() {
                     date: uploadedBackup.meta?.exportedAt?.slice(0, 16).replace("T", " ") ?? "?",
                     version: uploadedBackup.meta?.schemaVersion ?? "?",
                   })}</span>
+                  <span className={cn(
+                    "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                    isFullCompanyBackup
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-amber-100 text-amber-700",
+                  )}>
+                    {isFullCompanyBackup
+                      ? t("pages.generalSettings.fullCompanyBackup")
+                      : t("pages.generalSettings.legacyLimitedBackup")}
+                  </span>
                 </div>
                 {analyzing && (
                   <div className="flex items-center gap-2 text-violet-700">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     <span>{t("pages.generalSettings.aiAnalyzing")}</span>
+                  </div>
+                )}
+                {(uploadedBackup.meta?.files?.referenced ?? 0) > 0 && (
+                  <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      {t("pages.generalSettings.backupFileReferencesWarning", {
+                        count: uploadedBackup.meta.files.referenced,
+                      })}
+                    </span>
                   </div>
                 )}
                 {aiSummary && (
@@ -2648,9 +2681,21 @@ export default function GeneralSettings() {
               <div className="rounded-md border bg-card px-3 py-2 text-xs">
                 <p className="font-medium mb-1">{t("pages.generalSettings.restoreReport")}</p>
                 <ul className="space-y-0.5 font-mono text-[11px]">
-                  {Object.entries(restoreReport).map(([k, r]: any) => (
+                  {Object.entries(restoreReport)
+                    .filter(([, r]: any) => (r?.received ?? 0) > 0 || (r?.inserted ?? 0) > 0 || (r?.updated ?? 0) > 0 || (r?.failed ?? 0) > 0)
+                    .map(([k, r]: any) => (
                     <li key={k}>
-                      {k}: <span className="text-green-600">+{r.inserted}</span> · <span className="text-muted-foreground">{r.skipped} {t("pages.generalSettings.skipped")}</span> / {r.received}
+                      {k}: <span className="text-green-600">+{r.inserted ?? 0}</span>
+                      {(r.matched ?? r.skipped ?? 0) > 0 && (
+                        <> · <span className="text-muted-foreground">{r.matched ?? r.skipped} {t("pages.generalSettings.skipped")}</span></>
+                      )}
+                      {(r.failed ?? 0) > 0 && (
+                        <> · <span className="text-red-600">{r.failed} {t("pages.generalSettings.failed")}</span></>
+                      )}
+                      {(r.updated ?? 0) > 0 && (
+                        <> · <span className="text-sky-600">{r.updated} {t("pages.generalSettings.updated")}</span></>
+                      )}
+                      {" "}/ {r.received}
                     </li>
                   ))}
                 </ul>

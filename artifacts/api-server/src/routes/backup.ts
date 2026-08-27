@@ -21,6 +21,7 @@ import {
 } from "../lib/whatsapp.js";
 import { randomInt, createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { buildFullCompanyBackup, restoreFullCompanyBackup } from "../lib/fullCompanyBackup.js";
 
 /* ─── Auto-backup schedule + email helpers ──────────────────────────────────
  * The flexible schedule stores a (value, unit) pair; we normalise it to
@@ -330,31 +331,14 @@ function makeBusinessKey(row: any, keys: string[]): string | null {
   return null;
 }
 
-/* ─── GET /export ─── download JSON backup of all master data ─────────────── */
+/* ─── GET /export ─── download a schema-v2 full-company JSON backup ───────── */
 router.get("/export", async (req, res) => {
   try {
     const companyId = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
-    const data: Record<string, any[]> = {};
-    for (const t of TABLES) {
-      const rows = t.hasCompanyId
-        ? await db.select().from(t.table).where(eq(t.table.companyId, companyId))
-        : await db.select().from(t.table);
-      data[t.key] = rows;
-    }
-
-    res.json({
-      meta: {
-        schemaVersion: 1,
-        companyId,
-        exportedAt: new Date().toISOString(),
-        exportedBy: (req.authUser as any)?.username ?? null,
-        appName: "ZATCA Invoicing",
-      },
-      counts: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length])),
-      data,
-    });
+    const { payload } = await buildFullCompanyBackup(companyId, (req.authUser as any)?.username ?? null);
+    res.json(payload);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -367,18 +351,16 @@ router.post("/ai-analyze", requireAiFeature("report_analyzer"), async (req, res)
       return;
     }
 
-    const counts: Record<string, number> = {};
-    for (const t of TABLES) {
-      counts[t.key] = Array.isArray(payload.data[t.key]) ? payload.data[t.key].length : 0;
-    }
+    const counts: Record<string, number> = Object.fromEntries(Object.entries(payload.data)
+      .map(([name, value]) => [name, Array.isArray(value) ? value.length : 0]));
     const totalRows = Object.values(counts).reduce((a, b) => a + b, 0);
 
     const samples: Record<string, any> = {};
-    for (const t of TABLES) {
-      const first = Array.isArray(payload.data[t.key]) ? payload.data[t.key][0] : null;
+    for (const [name, tableRows] of Object.entries(payload.data)) {
+      const first = Array.isArray(tableRows) ? tableRows[0] : null;
       if (first) {
         const { id: _i, createdAt: _c, updatedAt: _u, ...rest } = first;
-        samples[t.key] = rest;
+        samples[name] = rest;
       }
     }
 
@@ -386,7 +368,7 @@ router.post("/ai-analyze", requireAiFeature("report_analyzer"), async (req, res)
     const OPENAI_KEY  = "AI_PROXY";
 
     const fallbackSummary = () => {
-      const parts = TABLES.filter(t => counts[t.key] > 0).map(t => `• ${t.label}: ${counts[t.key]}`);
+      const parts = Object.entries(counts).filter(([, count]) => count > 0).map(([name, count]) => `• ${name}: ${count}`);
       return `نسخة احتياطية تحتوي على ${totalRows} سجلاً.\n${parts.join("\n")}`;
     };
 
@@ -395,14 +377,14 @@ router.post("/ai-analyze", requireAiFeature("report_analyzer"), async (req, res)
       return;
     }
 
-    const tableList = TABLES.map(t => `- ${t.key} (${t.label}): ${counts[t.key]} سجل`).join("\n");
+    const tableList = Object.entries(counts).map(([name, count]) => `- ${name}: ${count} سجل`).join("\n");
     const prompt = `هذه نسخة احتياطية من نظام فاتورة إلكترونية سعودي (ZATCA).
 معلومات النسخة:
 - شركة رقم: ${payload.meta?.companyId ?? "?"}
 - تاريخ التصدير: ${payload.meta?.exportedAt ?? "?"}
 - إصدار التخطيط: ${payload.meta?.schemaVersion ?? "?"}
 
-جداول النسخة (البيانات الرئيسية):
+جداول النسخة الكاملة:
 ${tableList}
 
 عيّنات من كل جدول:
@@ -453,7 +435,7 @@ ${JSON.stringify(samples, null, 2).slice(0, 3500)}
 });
 
 /* ─── POST /restore ───────────────────────────────────────────────────────────
- * Restore is idempotent and non-destructive:
+ * Schema v1 restore is idempotent and non-destructive:
  *   • For every incoming row we look for an existing row in the TARGET company
  *     with the same business key (`code`). If found, we DON'T insert —
  *     instead we record oldId→existingId in the table's id-map.
@@ -483,6 +465,10 @@ export async function restoreFromSnapshotPayload(
 }> {
   if (!payload || typeof payload !== "object" || !payload.data) {
     throw new Error("ملف نسخة احتياطية غير صالح");
+  }
+  if ((payload as any).meta?.schemaVersion === 2) {
+    const report = await restoreFullCompanyBackup(companyId, payload as any);
+    return { ok: true, companyId, report: report as any };
   }
   const report: Record<string, { received: number; inserted: number; matched: number; failed: number }> = {};
   const idMap: Record<string, Map<number, number>> = {};
@@ -617,19 +603,7 @@ router.post("/restore", async (req, res) => {
 
 /** Reusable: build a full snapshot payload for one company (same shape as /export). */
 export async function buildSnapshot(companyId: number): Promise<{ payload: any; counts: Record<string, number> }> {
-  const data: Record<string, any[]> = {};
-  for (const t of TABLES) {
-    const rows = t.hasCompanyId
-      ? await db.select().from(t.table).where(eq(t.table.companyId, companyId))
-      : await db.select().from(t.table);
-    data[t.key] = rows;
-  }
-  const counts = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length]));
-  const payload = {
-    meta: { schemaVersion: 1, companyId, exportedAt: new Date().toISOString(), exportedBy: "scheduler", appName: "ZATCA Invoicing" },
-    counts, data,
-  };
-  return { payload, counts };
+  return buildFullCompanyBackup(companyId, "scheduler");
 }
 
 /** Write a snapshot row and enforce per-company retention. */
