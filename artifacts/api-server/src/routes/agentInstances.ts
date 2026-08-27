@@ -4062,6 +4062,27 @@ echo "Frontend مرفوع: تم فكّه"`;
         bundleUrl = `${origin}/api/agent/release/bundle?manual=1&version=${encodeURIComponent(rel.version)}${encQ}`;
         log.push(`إصدار الحزمة: ${rel.version} (${Math.round(rel.sizeBytes / 1024 / 1024)}MB)${enc ? " — مشفّرة أثناء النقل" : ""}`);
       }
+      // Full agents run independently from Replit, so they cannot use the
+      // central Outlook connector. Preserve an agent's existing SMTP config
+      // across reinstalls, or seed it once from this deployment's SMTP env.
+      // Values are written only to the remote mode-0600 EnvironmentFile and
+      // are never added to the installation log.
+      const systemdEnvLine = (key: string, value: string): string => {
+        const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r?\n/g, "");
+        return `${key}="${escaped}"`;
+      };
+      const smtpSeedLines = ([
+        ["SMTP_HOST", process.env.SMTP_HOST],
+        ["SMTP_PORT", process.env.SMTP_PORT],
+        ["SMTP_USER", process.env.SMTP_USER],
+        ["SMTP_PASS", process.env.SMTP_PASS],
+        ["SMTP_FROM", process.env.SMTP_FROM],
+      ] as const)
+        .filter((entry): entry is readonly [string, string] => !!entry[1])
+        .map(([key, value]) =>
+          `if [ -f "$OLD_ENV" ] && grep -q '^${key}=' "$OLD_ENV"; then grep '^${key}=' "$OLD_ENV" | tail -n1 >> "$NEW_ENV"; else printf '%s\\n' ${shQ(systemdEnvLine(key, value))} >> "$NEW_ENV"; fi`,
+        )
+        .join("\n");
       await runSsh(`set -e
 export DEBIAN_FRONTEND=noninteractive
 ${keyExport}
@@ -4085,8 +4106,12 @@ echo ${shQ(relVersion)} > /opt/zacod/app.new/VERSION
 ${frontendCmd || "true"}
 rm -f ${releaseAuthPath}
 trap - EXIT
-if [ -f /opt/zacod/app.env ] && grep -q '^SESSION_SECRET=' /opt/zacod/app.env; then SS=$(grep '^SESSION_SECRET=' /opt/zacod/app.env | cut -d= -f2-); else SS=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \\n'); fi
-{ echo "NODE_ENV=production"; echo "PORT=8080"; echo "DATABASE_URL=${localDbUrl}"; echo "SESSION_SECRET=$SS"; echo "PUBLIC_BASE_URL=https://${inst.domain}"; } > /opt/zacod/app.env
+OLD_ENV=/opt/zacod/app.env
+NEW_ENV=/opt/zacod/app.env.new
+if [ -f "$OLD_ENV" ] && grep -q '^SESSION_SECRET=' "$OLD_ENV"; then SS=$(grep '^SESSION_SECRET=' "$OLD_ENV" | cut -d= -f2-); else SS=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \\n'); fi
+{ echo "NODE_ENV=production"; echo "PORT=8080"; echo "DATABASE_URL=${localDbUrl}"; echo "SESSION_SECRET=$SS"; echo "PUBLIC_BASE_URL=https://${inst.domain}"; } > "$NEW_ENV"
+${smtpSeedLines || "true"}
+mv "$NEW_ENV" "$OLD_ENV"
 chmod 600 /opt/zacod/app.env
 true
 rm -rf /opt/zacod/app.old; [ -d /opt/zacod/app ] && mv /opt/zacod/app /opt/zacod/app.old; mv /opt/zacod/app.new /opt/zacod/app
