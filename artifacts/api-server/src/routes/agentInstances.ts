@@ -31,7 +31,10 @@ import { pbkdf2Sync, createCipheriv, createHmac, randomBytes, randomUUID, timing
 // agent's cloned DB has an empty registry — following the proxy would
 // silently disable suspend/register-block enforcement).
 import { centralDb as db } from "@workspace/db";
-import { agentInstancesTable, agentSecurityEventsTable, agentServersTable, agentInvoiceSamplesTable } from "@workspace/db";
+import {
+  agentInstancesTable, agentSecurityEventsTable, agentServersTable, agentInvoiceSamplesTable,
+  agentPlatformLinkInvitesTable, agentControllerLinksTable,
+} from "@workspace/db";
 import { eq, desc, and, or, ne, lt, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { PgPool, type PgPoolType } from "@workspace/db";
@@ -95,6 +98,21 @@ import {
 } from "../lib/agentInvoiceAcceleration.js";
 import { logger } from "../lib/logger.js";
 import { sanitizeSchemaDumpForExternalAgent } from "../lib/agentExternalSchema.js";
+import {
+  assertMonotonicEpoch,
+  assertStoredInviteUsable,
+  buildControllerLinkFile,
+  constantTimeHexEqual,
+  createPlatformLinkInvite,
+  deriveControllerToken,
+  highestControllerState,
+  licenseKeyVerifier,
+  normalizeHttpsOrigin,
+  platformId,
+  sha256Verifier,
+  validateInvite,
+  verifyControllerLinkFile,
+} from "../lib/agentControllerLinks.js";
 
 /**
  * SSRF guard for agent-server probes: the SA may point tests at any PUBLIC
@@ -2153,6 +2171,15 @@ function resolveCentralOrigin(): string {
   return c.replace(/\/+$/, "");
 }
 
+function localPlatformIdentity(): { platformId: string; origin: string } {
+  const origin = normalizeHttpsOrigin(resolveCentralOrigin());
+  const configured = process.env.ZACOD_PLATFORM_ID;
+  return {
+    platformId: configured ? platformId(configured) : `platform:${sha256Verifier(origin).slice(0, 24)}`,
+    origin,
+  };
+}
+
 /** Strict DNS hostname validation — these values are interpolated into a
  *  root-executed shell script and a Caddyfile, so anything outside plain
  *  hostname syntax is rejected outright (heredoc/shell injection guard). */
@@ -2191,6 +2218,19 @@ async function buildSetupKit(
   if (originUrl.protocol !== "https:" && originUrl.protocol !== "http:") throw new Error("أصل المنصة غير صالح");
   const proxyToken = await ensureProxySecret(inst);
   if (!/^[a-f0-9]{64}$/.test(proxyToken)) throw new Error("رمز الوكيل غير صالح — أعد توليده");
+  const controller = localPlatformIdentity();
+  const outboundLinks = await db.select().from(agentControllerLinksTable).where(and(
+    eq(agentControllerLinksTable.localAgentId, inst.id),
+    eq(agentControllerLinksTable.direction, "outbound"),
+  ));
+  const newestLeadership = outboundLinks.reduce<typeof outboundLinks[number] | null>(
+    (best, row) => !best || row.controllerEpoch > best.controllerEpoch ? row : best, null,
+  );
+  const controllerOrigins = [
+    { platformId: controller.platformId, origin: controller.origin, auth: "license" },
+    ...outboundLinks.map(row => ({ platformId: row.targetPlatformId, origin: row.targetOrigin,
+      auth: "controllerToken", controllerToken: row.controllerTokenEnc ? decryptSecret(row.controllerTokenEnc) : "" })),
+  ].filter((item, index, all) => all.findIndex(x => x.platformId === item.platformId) === index);
   const config = {
     domain: inst.domain,
     mode: inst.mode,
@@ -2202,6 +2242,9 @@ async function buildSetupKit(
     licenseKey: inst.licenseKey ?? "",
     fingerprint: inst.dbFingerprint ?? "",
     centralOrigin: origin,
+    controllerOrigins,
+    activeControllerId: newestLeadership?.activeControllerId ?? controller.platformId,
+    controllerEpoch: newestLeadership?.controllerEpoch ?? 0,
     heartbeatUrl: `${origin}/api/agent/heartbeat`,
     serverMarker: hbMarker,
   };
@@ -2209,15 +2252,19 @@ async function buildSetupKit(
 # zacod agent heartbeat — validates license/identity with the central platform.
 # On a definitive 403 (suspended / revoked license) the local proxy is stopped.
 CFG=/opt/zacod/config.json
-URL=$(grep -o '"heartbeatUrl": *"[^"]*"' $CFG | cut -d'"' -f4)
-BODY=$(printf '{"installationId":"%s","licenseKey":"%s","domain":"%s","fingerprint":"%s","serverMarker":"%s","version":"%s"}' \\
-  "$(grep -o '"installationId": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
-  "$(grep -o '"licenseKey": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
-  "$(grep -o '"domain": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
-  "$(grep -o '"fingerprint": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
-  "$(grep -o '"serverMarker": *"[^"]*"' $CFG | cut -d'"' -f4)" \\
-  "$(cat /opt/zacod/app/VERSION 2>/dev/null || true)")
-CODE=$(curl -s -o /tmp/zacod_hb.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$BODY" "$URL")
+# Every controller receives monitoring heartbeats. Only the active controller's
+# definitive 403 can suspend this shell. A newer signed/controller state from
+# either controller is adopted atomically without a service restart.
+CODE=$(CFG="$CFG" node - <<'NODE'
+const fs=require("node:fs");
+(async()=>{const p=process.env.CFG,c=JSON.parse(fs.readFileSync(p,"utf8"));
+const cs=Array.isArray(c.controllerOrigins)&&c.controllerOrigins.length?c.controllerOrigins:[{platformId:c.activeControllerId||"legacy",origin:c.centralOrigin}];
+const base={installationId:c.installationId,domain:c.domain,fingerprint:c.fingerprint||"",serverMarker:c.serverMarker||"",controllerEpoch:Number(c.controllerEpoch)||0,activeControllerId:c.activeControllerId||"",version:(()=>{try{return fs.readFileSync("/opt/zacod/app/VERSION","utf8").trim()}catch{return ""}})()};
+let best=Number(c.controllerEpoch)||0,bestId=c.activeControllerId,codes={};
+for(const x of cs){try{const body={...base,...(x.auth==="controllerToken"?{controllerToken:x.controllerToken}:{licenseKey:c.licenseKey})};const r=await fetch(new URL("/api/agent/heartbeat",x.origin),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});codes[x.platformId]=r.status;const j=await r.json().catch(()=>null);if(r.ok&&Number.isSafeInteger(j?.controllerEpoch)&&cs.some(y=>y.platformId===j.activeControllerId)&&(j.controllerEpoch>best||(j.controllerEpoch===best&&String(j.activeControllerId)>String(bestId)))){best=j.controllerEpoch;bestId=j.activeControllerId}}catch{}}
+if(best>Number(c.controllerEpoch||0)||(best===Number(c.controllerEpoch||0)&&bestId!==c.activeControllerId)){c.controllerEpoch=best;c.activeControllerId=bestId;const t=p+".tmp-"+process.pid;fs.writeFileSync(t,JSON.stringify(c,null,2),{mode:0o600});fs.renameSync(t,p)}console.log(codes[bestId]||0)})().catch(()=>console.log(0));
+NODE
+)
 if [ "$CODE" = "403" ]; then
   touch /opt/zacod/SUSPENDED
   systemctl stop caddy 2>/dev/null || true
@@ -2593,6 +2640,37 @@ async function sshRunScript(
     });
   });
   return { ...result, hostKeyFp: seenHostKeyFp };
+}
+
+/** Best-effort only: synchronises controller metadata, never DB credentials or
+ * service state. The caller intentionally does not restart the shell. */
+async function syncShellControllerConfig(inst: typeof agentInstancesTable.$inferSelect): Promise<void> {
+  const local = localPlatformIdentity();
+  const links = await db.select().from(agentControllerLinksTable).where(and(
+    eq(agentControllerLinksTable.localAgentId, inst.id), eq(agentControllerLinksTable.direction, "outbound"),
+  ));
+  const lead = links.reduce<typeof links[number] | null>((best, row) =>
+    !best || row.controllerEpoch > best.controllerEpoch ? row : best, null);
+  const controllers = [{ platformId: local.platformId, origin: local.origin, auth: "license" },
+    ...links.map(x => ({ platformId: x.targetPlatformId, origin: x.targetOrigin, auth: "controllerToken",
+      controllerToken: x.controllerTokenEnc ? decryptSecret(x.controllerTokenEnc) : "" }))]
+    .filter((x, i, a) => a.findIndex(y => y.platformId === x.platformId) === i);
+  const state = Buffer.from(JSON.stringify({
+    controllerOrigins: controllers,
+    activeControllerId: lead?.activeControllerId ?? local.platformId,
+    controllerEpoch: lead?.controllerEpoch ?? 0,
+  })).toString("base64");
+  const result = await sshRunScript(inst, `set -e
+STATE_B64='${state}' node - <<'NODE'
+const fs=require("node:fs"); const p="/opt/zacod/config.json";
+const add=JSON.parse(Buffer.from(process.env.STATE_B64,"base64").toString("utf8"));
+const old=JSON.parse(fs.readFileSync(p,"utf8")); Object.assign(old,add);
+const tmp=p+".tmp-"+process.pid; fs.writeFileSync(tmp,JSON.stringify(old,null,2),{mode:0o600}); fs.renameSync(tmp,p);
+NODE
+echo ZACOD_CONTROLLER_SYNCED`);
+  if (result.code !== 0 || !result.out.includes("ZACOD_CONTROLLER_SYNCED")) {
+    throw new Error("shell_controller_sync_failed");
+  }
 }
 
 const REMOTE_CONTROL_LOCK = "/var/lock/zacod-control.lock";
@@ -4785,6 +4863,244 @@ router.post("/security-events/:id/resolve", async (req, res) => {
   res.json({ ok: true });
 });
 
+// Create a capability on the target platform. The plaintext capability is
+// returned exactly once; only its verifier remains in PostgreSQL.
+router.post("/platform-links/invites", async (req, res) => {
+  try {
+    const identity = localPlatformIdentity();
+    const invite = createPlatformLinkInvite({
+      targetPlatformId: identity.platformId,
+      targetOrigin: identity.origin,
+      lifetimeMs: Number(req.body?.lifetimeSeconds) * 1000 || undefined,
+    });
+    await db.insert(agentPlatformLinkInvitesTable).values({
+      inviteId: invite.inviteId,
+      targetPlatformId: invite.targetPlatformId,
+      targetOrigin: invite.targetOrigin,
+      secretVerifier: sha256Verifier(invite.inviteSecret),
+      secretEnc: encryptSecret(invite.inviteSecret),
+      expiresAt: new Date(invite.expiresAt),
+      createdByUserId: (req as any).authUser?.id ?? null,
+    });
+    await logAgentEvent(null, "platform_link_invite_created", {
+      inviteId: invite.inviteId, targetPlatformId: invite.targetPlatformId, expiresAt: invite.expiresAt,
+    }, req);
+    res.status(201).json(invite);
+  } catch (error: any) {
+    res.status(400).json({ error: String(error?.message ?? error).slice(0, 200) });
+  }
+});
+
+// Run on the source platform. The resulting portable file contains neither
+// the invite secret, raw license, DB URL nor any business data.
+router.post("/:id/controller-links/export", async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const invite = validateInvite(req.body?.invite);
+    const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+    if (!inst || !inst.licenseKey) { res.status(404).json({ error: "agent_or_license_not_found" }); return; }
+    const source = localPlatformIdentity();
+    const existing = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.localAgentId, inst.id), eq(agentControllerLinksTable.direction, "outbound"),
+    ));
+    const previous = existing.length ? highestControllerState(existing, [
+      source.platformId, invite.targetPlatformId, ...existing.map(x => x.targetPlatformId),
+    ]) : null;
+    const epoch = previous?.controllerEpoch ?? 0;
+    const activeControllerId = previous?.activeControllerId ?? source.platformId;
+    const linkId = randomUUID();
+    const controllerToken = deriveControllerToken(invite.inviteSecret, linkId, invite.targetPlatformId);
+    const payload = {
+      schemaVersion: 1 as const,
+      linkId,
+      inviteId: invite.inviteId,
+      expiresAt: invite.expiresAt,
+      agent: {
+        name: inst.name,
+        domain: inst.domain,
+        extraDomains: Array.isArray(inst.extraDomains) ? inst.extraDomains as string[] : [],
+        installationId: inst.installationId,
+        dbFingerprint: inst.dbFingerprint,
+        licenseExpiresAt: inst.licenseExpiresAt?.toISOString() ?? null,
+        maxCompanies: inst.maxCompanies,
+        version: inst.deployedVersion,
+        status: inst.status,
+        packageSource: inst.packageSource,
+        licenseVerifier: licenseKeyVerifier(inst.licenseKey),
+      },
+      source,
+      target: { platformId: invite.targetPlatformId, origin: invite.targetOrigin },
+      controllerEpoch: epoch,
+      activeControllerId,
+    };
+    const file = buildControllerLinkFile(payload, invite.inviteSecret);
+    await db.insert(agentControllerLinksTable).values({
+      linkId, direction: "outbound", localAgentId: inst.id,
+      sourcePlatformId: source.platformId, sourceOrigin: source.origin,
+      targetPlatformId: invite.targetPlatformId, targetOrigin: invite.targetOrigin,
+      name: inst.name, domain: inst.domain, extraDomains: payload.agent.extraDomains,
+      installationId: inst.installationId, dbFingerprint: inst.dbFingerprint,
+      licenseVerifier: payload.agent.licenseVerifier, licenseExpiresAt: inst.licenseExpiresAt,
+      controllerTokenVerifier: sha256Verifier(controllerToken), controllerTokenEnc: encryptSecret(controllerToken),
+      maxCompanies: inst.maxCompanies, agentVersion: inst.deployedVersion,
+      status: inst.status, packageSource: inst.packageSource, controllerEpoch: epoch,
+      activeControllerId,
+    });
+    const shell = await syncShellControllerConfig(inst).then(() => ({ shellSynced: true })).catch((e: any) => ({
+      shellSynced: false, shellSyncError: String(e?.message ?? e).slice(0, 160),
+    }));
+    await logAgentEvent(inst.id, "controller_link_exported", {
+      linkId, inviteId: invite.inviteId, targetPlatformId: invite.targetPlatformId,
+    }, req);
+    res.status(201).json({ file, ...shell });
+  } catch (error: any) {
+    res.status(400).json({ error: String(error?.message ?? error).slice(0, 200) });
+  }
+});
+
+async function inspectControllerImport(body: any, now = new Date()) {
+  const identity = localPlatformIdentity();
+  const inviteId = String(body?.file?.payload?.inviteId ?? "");
+  const [stored] = await db.select().from(agentPlatformLinkInvitesTable)
+    .where(eq(agentPlatformLinkInvitesTable.inviteId, inviteId)).limit(1);
+  if (!stored) throw new Error("invite_not_found");
+  const secret = stored.secretEnc ? decryptSecret(stored.secretEnc) : "";
+  if (!secret) throw new Error("invite_secret_unavailable");
+  assertStoredInviteUsable(stored, secret, now);
+  const file = verifyControllerLinkFile(body.file, secret, {
+    inviteId, platformId: identity.platformId, origin: identity.origin,
+  }, now);
+  const a = file.payload.agent;
+  const candidates = [a.domain, ...a.extraDomains];
+  const localConflict = await findDomainConflict(candidates, null);
+  if (localConflict) throw new Error(`domain_conflict:${localConflict}`);
+  const [localInstall] = await db.select({ id: agentInstancesTable.id }).from(agentInstancesTable)
+    .where(eq(agentInstancesTable.installationId, a.installationId)).limit(1);
+  if (localInstall) throw new Error("installation_conflict");
+  const imported = await db.select().from(agentControllerLinksTable)
+    .where(eq(agentControllerLinksTable.direction, "imported"));
+  for (const row of imported) {
+    if (row.linkId === file.payload.linkId) continue;
+    const owned = [row.domain, ...(Array.isArray(row.extraDomains) ? row.extraDomains as string[] : [])];
+    if (row.installationId === a.installationId) throw new Error("installation_conflict");
+    const conflict = candidates.find(d => owned.includes(d));
+    if (conflict) throw new Error(`domain_conflict:${conflict}`);
+  }
+  return { stored, secret, file };
+}
+
+router.post("/platform-links/preview", async (req, res) => {
+  try {
+    const { file } = await inspectControllerImport(req.body);
+    res.json({ valid: true, link: file.payload });
+  } catch (error: any) {
+    res.status(400).json({ valid: false, error: String(error?.message ?? error).slice(0, 200) });
+  }
+});
+
+router.post("/platform-links/import", async (req, res) => {
+  try {
+    const { file, secret } = await inspectControllerImport(req.body);
+    const p = file.payload;
+    await db.transaction(async tx => {
+      const consumed = await tx.update(agentPlatformLinkInvitesTable)
+        .set({ consumedAt: new Date() })
+        .where(and(
+          eq(agentPlatformLinkInvitesTable.inviteId, p.inviteId),
+          sql`${agentPlatformLinkInvitesTable.consumedAt} IS NULL`,
+          sql`${agentPlatformLinkInvitesTable.expiresAt} > NOW()`,
+        )).returning({ inviteId: agentPlatformLinkInvitesTable.inviteId });
+      if (!consumed.length) throw new Error("invite_already_consumed");
+      await tx.insert(agentControllerLinksTable).values({
+        linkId: p.linkId, direction: "imported", localAgentId: null,
+        sourcePlatformId: p.source.platformId, sourceOrigin: p.source.origin,
+        targetPlatformId: p.target.platformId, targetOrigin: p.target.origin,
+        name: p.agent.name, domain: p.agent.domain, extraDomains: p.agent.extraDomains,
+        installationId: p.agent.installationId, dbFingerprint: p.agent.dbFingerprint,
+        licenseVerifier: p.agent.licenseVerifier,
+        controllerTokenVerifier: sha256Verifier(deriveControllerToken(secret, p.linkId, p.target.platformId)),
+        licenseExpiresAt: p.agent.licenseExpiresAt ? new Date(p.agent.licenseExpiresAt) : null,
+        maxCompanies: p.agent.maxCompanies, agentVersion: p.agent.version,
+        status: p.agent.status, packageSource: p.agent.packageSource,
+        controllerEpoch: p.controllerEpoch, activeControllerId: p.activeControllerId,
+      });
+    });
+    await logAgentEvent(null, "controller_link_imported", {
+      linkId: p.linkId, inviteId: p.inviteId, sourcePlatformId: p.source.platformId,
+    }, req);
+    res.status(201).json({ imported: true, linkId: p.linkId });
+  } catch (error: any) {
+    res.status(400).json({ error: String(error?.message ?? error).slice(0, 200) });
+  }
+});
+
+router.post("/:id/controller-leadership", async (req, res) => {
+  const agentId = Number(req.params.id);
+  try {
+    const requestedEpoch = Number(req.body?.controllerEpoch);
+    const activeControllerId = platformId(String(req.body?.activeControllerId ?? ""));
+    const local = localPlatformIdentity();
+    const rows = await db.select().from(agentControllerLinksTable)
+      .where(and(eq(agentControllerLinksTable.localAgentId, agentId), eq(agentControllerLinksTable.direction, "outbound")));
+    if (!rows.length) throw new Error("controller_link_not_found");
+    const current = Math.max(...rows.map(r => r.controllerEpoch));
+    assertMonotonicEpoch(current, requestedEpoch);
+    if (activeControllerId !== local.platformId && !rows.some(r => r.targetPlatformId === activeControllerId)) {
+      throw new Error("unknown_controller");
+    }
+    await db.update(agentControllerLinksTable).set({
+      controllerEpoch: requestedEpoch, activeControllerId, updatedAt: new Date(),
+    }).where(and(eq(agentControllerLinksTable.localAgentId, agentId), eq(agentControllerLinksTable.direction, "outbound")));
+    const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, agentId)).limit(1);
+    const shell = inst ? await syncShellControllerConfig(inst).then(() => ({ shellSynced: true })).catch((e: any) => ({
+      shellSynced: false, shellSyncError: String(e?.message ?? e).slice(0, 160),
+    })) : { shellSynced: false, shellSyncError: "agent_not_found" };
+    await logAgentEvent(agentId, "controller_leadership_changed", {
+      activeControllerId, controllerEpoch: requestedEpoch,
+    }, req);
+    res.json({ activeControllerId, controllerEpoch: requestedEpoch, restartRequired: false, ...shell });
+  } catch (error: any) {
+    res.status(409).json({ error: String(error?.message ?? error).slice(0, 200) });
+  }
+});
+
+router.post("/platform-links/:linkId/leadership", async (req, res) => {
+  try {
+    const [link] = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.linkId, req.params.linkId),
+      eq(agentControllerLinksTable.direction, "imported"),
+    )).limit(1);
+    if (!link) { res.status(404).json({ error: "controller_link_not_found" }); return; }
+    const requestedEpoch = Number(req.body?.controllerEpoch);
+    const activeControllerId = platformId(String(req.body?.activeControllerId ?? ""));
+    assertMonotonicEpoch(link.controllerEpoch, requestedEpoch);
+    if (![link.sourcePlatformId, link.targetPlatformId].includes(activeControllerId)) throw new Error("unknown_controller");
+    await db.update(agentControllerLinksTable).set({
+      controllerEpoch: requestedEpoch, activeControllerId, updatedAt: new Date(),
+    }).where(eq(agentControllerLinksTable.id, link.id));
+    await logAgentEvent(null, "linked_controller_leadership_changed", {
+      linkId: link.linkId, activeControllerId, controllerEpoch: requestedEpoch,
+    }, req);
+    res.json({ activeControllerId, controllerEpoch: requestedEpoch, restartRequired: false });
+  } catch (error: any) {
+    res.status(409).json({ error: String(error?.message ?? error).slice(0, 200) });
+  }
+});
+
+router.get("/:id/controller-links", async (req, res) => {
+  const agentId = Number(req.params.id);
+  const rows = await db.select().from(agentControllerLinksTable).where(and(
+    eq(agentControllerLinksTable.localAgentId, agentId), eq(agentControllerLinksTable.direction, "outbound"),
+  ));
+  res.json(rows.map(({ licenseVerifier: _v, controllerTokenVerifier: _tv, controllerTokenEnc: _te, ...safe }) => safe));
+});
+
+router.get("/platform-links/imported", async (_req, res) => {
+  const rows = await db.select().from(agentControllerLinksTable)
+    .where(eq(agentControllerLinksTable.direction, "imported"));
+  res.json(rows.map(({ licenseVerifier: _v, controllerTokenVerifier: _tv, controllerTokenEnc: _te, ...safe }) => safe));
+});
+
 export default router;
 
 // ── Public router (no auth) — branding + heartbeat ─────────────────────────
@@ -4894,20 +5210,50 @@ async function authReleaseRequest(
   req: any,
   res: any,
   options: { headersOnly?: boolean } = {},
-): Promise<typeof agentInstancesTable.$inferSelect | null> {
+): Promise<(typeof agentInstancesTable.$inferSelect & { importedLink?: false }) | (typeof agentControllerLinksTable.$inferSelect & { importedLink: true }) | null> {
   const { installationId, licenseKey } = resolveAgentReleaseCredentials({
     manual: options.headersOnly === true || isManualAgentReleaseRequest(req.query.manual),
     headers: req.headers ?? {},
     query: req.query ?? {},
   });
-  if (!installationId || !licenseKey) { res.status(400).json({ error: "bad_request" }); return null; }
-  const [inst] = await db.select().from(agentInstancesTable)
+  const suppliedControllerToken = String(req.headers?.["x-zacod-controller-token"] ?? "");
+  if (!installationId || (!licenseKey && !suppliedControllerToken)) { res.status(400).json({ error: "bad_request" }); return null; }
+  const [localInst] = await db.select().from(agentInstancesTable)
     .where(eq(agentInstancesTable.installationId, installationId)).limit(1);
-  if (!inst || !inst.licenseKey || inst.licenseKey !== licenseKey) {
-    await logAgentEvent(inst?.id ?? null, "release_auth_failed", { installationId: installationId.slice(0, 64) }, req);
+  let inst: any = localInst;
+  if (!inst) {
+    const [linked] = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.installationId, installationId),
+      eq(agentControllerLinksTable.direction, "imported"),
+    )).limit(1);
+    const domain = normalizeHost(String(req.headers?.["x-zacod-domain"] ?? ""));
+    const fingerprint = String(req.headers?.["x-zacod-db-fingerprint"] ?? "");
+    const extras = Array.isArray(linked?.extraDomains) ? linked.extraDomains as string[] : [];
+    const identity = localPlatformIdentity();
+    const controllerToken = suppliedControllerToken;
+    if (linked &&
+        constantTimeHexEqual(sha256Verifier(controllerToken), linked.controllerTokenVerifier) &&
+        !!domain && (domain === linked.domain || extras.includes(domain)) &&
+        (!linked.dbFingerprint || fingerprint === linked.dbFingerprint) &&
+        linked.activeControllerId === identity.platformId) {
+      inst = { ...linked, importedLink: true };
+    }
+  }
+  if (!inst || (!inst.importedLink && (!inst.licenseKey || inst.licenseKey !== licenseKey))) {
+    await logAgentEvent(localInst?.id ?? null, "release_auth_failed", { installationId: installationId.slice(0, 64) }, req);
     res.status(403).json({ error: "forbidden" }); return null;
   }
-  if (inst.mode !== "full") { res.status(403).json({ error: "not_full_edition" }); return null; }
+  if (!inst.importedLink) {
+    const outbound = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.localAgentId, inst.id), eq(agentControllerLinksTable.direction, "outbound"),
+    ));
+    const lead = outbound.reduce<typeof outbound[number] | null>((best, row) =>
+      !best || row.controllerEpoch > best.controllerEpoch ? row : best, null);
+    if (lead && lead.activeControllerId !== localPlatformIdentity().platformId) {
+      res.status(403).json({ error: "inactive_controller" }); return null;
+    }
+  }
+  if (!inst.importedLink && inst.mode !== "full") { res.status(403).json({ error: "not_full_edition" }); return null; }
   if (inst.status !== "active") { res.status(403).json({ error: "suspended" }); return null; }
   if (inst.licenseExpiresAt && new Date(inst.licenseExpiresAt) < new Date()) { res.status(403).json({ error: "license_expired" }); return null; }
   return inst;
@@ -4957,10 +5303,16 @@ agentPublicRouter.get("/agent/release/bundle", async (req, res) => {
       return;
     }
     const enc = req.query.enc === "1";
-    await logAgentEvent(inst.id, "release_downloaded", { version: rel.version, encrypted: enc }, req);
+    await logAgentEvent(inst.importedLink ? null : inst.id, "release_downloaded", {
+      version: rel.version, encrypted: enc, linked: !!inst.importedLink,
+    }, req);
     if (enc) {
       // حزمة مشفّرة: AES-256-CBC/PBKDF2 بصيغة openssl — المفتاح مشتق لكل
       // وكيل ولا يمر في أي URL (يُسلَّم عبر SSH أثناء التسطيب فقط).
+      if (inst.importedLink) {
+        res.status(409).json({ error: "linked_encryption_not_supported" });
+        return;
+      }
       streamFileMaybeEncrypted(res, rel.tarPath, `zacod-app-${rel.version}.tgz.enc`, bundlePassphrase(inst));
       return;
     }
@@ -4977,6 +5329,7 @@ agentPublicRouter.get("/agent/release/custom", async (req, res) => {
   req.originalUrl = stripAgentReleaseCredentialsFromUrl(req.originalUrl);
   const inst = await authReleaseRequest(req, res, { headersOnly: true });
   if (!inst) return;
+  if (inst.importedLink) { res.status(404).json({ error: "not_uploaded" }); return; }
   const kind = String(req.query.kind ?? "") as CustomKind;
   if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "bad_kind" }); return; }
   const meta = readPackageMap(inst.externalPackageMeta);
@@ -5009,8 +5362,42 @@ agentPublicRouter.post("/agent/heartbeat", async (req, res) => {
   const [inst] = await db.select().from(agentInstancesTable)
     .where(eq(agentInstancesTable.installationId, installationId)).limit(1);
   if (!inst) {
-    await logAgentEvent(null, "unknown_installation", { installationId: String(installationId).slice(0, 64), domain }, req);
-    res.status(403).json({ ok: false, error: "unknown_installation" }); return;
+    const [linked] = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.installationId, installationId),
+      eq(agentControllerLinksTable.direction, "imported"),
+    )).limit(1);
+    if (!linked) {
+      await logAgentEvent(null, "unknown_installation", { installationId: String(installationId).slice(0, 64), domain }, req);
+      res.status(403).json({ ok: false, error: "unknown_installation" }); return;
+    }
+    const problems: string[] = [];
+    const extras = Array.isArray(linked.extraDomains) ? linked.extraDomains as string[] : [];
+    if (!domain || (domain !== linked.domain && !extras.includes(domain))) problems.push("unknown_domain");
+    const controllerToken = typeof req.body?.controllerToken === "string" ? req.body.controllerToken : "";
+    if (!constantTimeHexEqual(sha256Verifier(controllerToken), linked.controllerTokenVerifier)) problems.push("controller_token_mismatch");
+    if (linked.dbFingerprint && fingerprint !== linked.dbFingerprint) problems.push("db_fingerprint_mismatch");
+    if (linked.licenseExpiresAt && linked.licenseExpiresAt < new Date()) problems.push("license_expired");
+    if (linked.status !== "active") problems.push("suspended");
+    if (problems.length) {
+      await logAgentEvent(null, problems[0], { problems, domain, linkedLinkId: linked.linkId }, req);
+      res.status(403).json({ ok: false, error: problems[0], problems }); return;
+    }
+    const reportedEpoch = Number(req.body?.controllerEpoch);
+    const reportedActive = typeof req.body?.activeControllerId === "string" ? req.body.activeControllerId : "";
+    const canConverge = Number.isSafeInteger(reportedEpoch) &&
+      [linked.sourcePlatformId, linked.targetPlatformId].includes(reportedActive) &&
+      (reportedEpoch > linked.controllerEpoch ||
+        (reportedEpoch === linked.controllerEpoch && reportedActive.localeCompare(linked.activeControllerId) > 0));
+    await db.update(agentControllerLinksTable).set({
+      lastHeartbeatAt: new Date(), lastSeenIp: clientIp(req),
+      ...(typeof version === "string" && version ? { deployedVersion: version.slice(0, 40) } : {}),
+      ...(canConverge ? { controllerEpoch: reportedEpoch, activeControllerId: reportedActive } : {}),
+      updatedAt: new Date(),
+    }).where(eq(agentControllerLinksTable.id, linked.id));
+    res.json({ ok: true, status: "active", licenseExpiresAt: linked.licenseExpiresAt, linked: true,
+      activeControllerId: canConverge ? reportedActive : linked.activeControllerId,
+      controllerEpoch: canConverge ? reportedEpoch : linked.controllerEpoch });
+    return;
   }
 
   const problems: string[] = [];
@@ -5053,5 +5440,23 @@ agentPublicRouter.post("/agent/heartbeat", async (req, res) => {
       await logAgentEvent(inst.id, "unknown_server_marker", { marker: marker.slice(0, 40), domain }, req);
     }
   }
-  res.json({ ok: true, status: "active", licenseExpiresAt: inst.licenseExpiresAt });
+  const outbound = await db.select().from(agentControllerLinksTable).where(and(
+    eq(agentControllerLinksTable.localAgentId, inst.id), eq(agentControllerLinksTable.direction, "outbound"),
+  ));
+  const lead = outbound.reduce<typeof outbound[number] | null>((best, row) =>
+    !best || row.controllerEpoch > best.controllerEpoch ? row : best, null);
+  const reportedEpoch = Number(req.body?.controllerEpoch);
+  const reportedActive = typeof req.body?.activeControllerId === "string" ? req.body.activeControllerId : "";
+  if (lead && Number.isSafeInteger(reportedEpoch) &&
+      [localPlatformIdentity().platformId, ...outbound.map(x => x.targetPlatformId)].includes(reportedActive) &&
+      (reportedEpoch > lead.controllerEpoch ||
+        (reportedEpoch === lead.controllerEpoch && reportedActive.localeCompare(lead.activeControllerId) > 0))) {
+    await db.update(agentControllerLinksTable).set({
+      controllerEpoch: reportedEpoch, activeControllerId: reportedActive, updatedAt: new Date(),
+    }).where(and(eq(agentControllerLinksTable.localAgentId, inst.id), eq(agentControllerLinksTable.direction, "outbound")));
+    lead.controllerEpoch = reportedEpoch; lead.activeControllerId = reportedActive;
+  }
+  res.json({ ok: true, status: "active", licenseExpiresAt: inst.licenseExpiresAt,
+    activeControllerId: lead?.activeControllerId ?? localPlatformIdentity().platformId,
+    controllerEpoch: lead?.controllerEpoch ?? 0 });
 });

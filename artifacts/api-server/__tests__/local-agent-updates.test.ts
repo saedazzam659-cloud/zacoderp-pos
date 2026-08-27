@@ -187,6 +187,8 @@ test("external edition requires all three encrypted artifacts and strips control
     "agent_instances",
     "agent_servers",
     "agent_security_events",
+    "agent_platform_link_invites",
+    "agent_controller_links",
     "zacod_installation",
     "sa_sessions",
     "sa_otp_codes",

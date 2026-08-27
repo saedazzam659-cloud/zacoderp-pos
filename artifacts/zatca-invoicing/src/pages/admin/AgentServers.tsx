@@ -20,9 +20,12 @@ import {
   Server, Plus, Pencil, Trash2, Database, KeyRound, ShieldAlert, Globe,
   Plug, Loader2, CheckCircle2, XCircle, Ban, Play, Copy, Palette, RefreshCw,
   HeartPulse, AlertTriangle, UploadCloud, FileDown, Mail, Check, LockKeyhole,
-  Zap, Activity, BarChart, ServerCog,
+  Zap, Activity, BarChart, ServerCog, Link as LinkIcon
 } from "lucide-react";
 import { DEFAULT_LOCAL_SUPERADMIN_SCREENS, LOCAL_SUPERADMIN_SCREENS } from "@/lib/localSuperadminScreens";
+import { PlatformLinksTopLevel } from "./platform-links/PlatformLinksManagement";
+import { LocalAgentLinks } from "./platform-links/LocalAgentLinks";
+import { ImportedAgentsList } from "./platform-links/ImportedAgentsList";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -1074,11 +1077,25 @@ export default function AgentServers() {
       <Tabs defaultValue="agents">
         <TabsList>
           <TabsTrigger value="agents"><Server className="h-3.5 w-3.5 ms-1" />الوكلاء ({agents.length})</TabsTrigger>
+          <TabsTrigger value="platform-links" data-testid="tab-platform-links">
+            <LinkIcon className="h-3.5 w-3.5 ms-1" />الربط الآمن
+          </TabsTrigger>
           <TabsTrigger value="security" data-testid="tab-security-events">
             <ShieldAlert className="h-3.5 w-3.5 ms-1" />تنبيهات الأمان
             {unresolvedCount > 0 && <Badge variant="destructive" className="ms-1 h-5 px-1.5 text-[10px]">{unresolvedCount}</Badge>}
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="platform-links" className="mt-4">
+          <PlatformLinksTopLevel />
+          <div className="mt-8 border-t pt-6">
+            <div className="flex items-center gap-2 mb-4 text-muted-foreground">
+              <Server className="h-5 w-5" />
+              <h3 className="font-semibold text-foreground">الوكلاء المستوردون (التحكم الخارجي)</h3>
+            </div>
+            <ImportedAgentsList />
+          </div>
+        </TabsContent>
 
         {/* ── الوكلاء ── */}
         <TabsContent value="agents" className="mt-4 space-y-3">
@@ -1314,6 +1331,7 @@ export default function AgentServers() {
               </div>
 
               <AgentAccelerationCard agent={a} invalidate={invalidate} />
+              <LocalAgentLinks agentId={a.id} />
 
               {a.mode === "full" && a.packageSource === "external" && (
                 <div className="border rounded-lg p-3 bg-slate-50/70 dark:bg-slate-950/20 space-y-2" data-testid={`external-package-${a.id}`}>

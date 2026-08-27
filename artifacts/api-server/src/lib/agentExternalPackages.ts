@@ -14,6 +14,8 @@ export const AGENT_DB_EXCLUDED_TABLE_DATA = [
   "agent_instances",
   "agent_servers",
   "agent_security_events",
+  "agent_platform_link_invites",
+  "agent_controller_links",
   "zacod_installation",
   "sa_otp_codes",
   "sa_sessions",

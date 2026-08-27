@@ -166,6 +166,63 @@ export const agentSecurityEventsTable = pgTable("agent_security_events", {
   typeIdx:  index("agent_security_events_type_idx").on(t.eventType),
 }));
 
+// One-time, short-lived hand-off capability issued by a target platform.
+// Only a SHA-256 verifier of the capability secret is persisted.
+export const agentPlatformLinkInvitesTable = pgTable("agent_platform_link_invites", {
+  inviteId: text("invite_id").primaryKey(),
+  targetPlatformId: text("target_platform_id").notNull(),
+  targetOrigin: text("target_origin").notNull(),
+  secretVerifier: text("secret_verifier").notNull(),
+  // AES-GCM encrypted capability: enables one-file import while the verifier
+  // remains a defence-in-depth check. Never selected for public responses.
+  secretEnc: text("secret_enc").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  consumedAt: timestamp("consumed_at"),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  expiryIdx: index("agent_platform_link_invites_expiry_idx").on(t.expiresAt),
+}));
+
+// Portable controller metadata only. In particular this table must never gain
+// an agent DB URL or a raw license key.
+export const agentControllerLinksTable = pgTable("agent_controller_links", {
+  id: serial("id").primaryKey(),
+  linkId: text("link_id").notNull(),
+  direction: text("direction").notNull(), // outbound | imported
+  localAgentId: integer("local_agent_id").references(() => agentInstancesTable.id, { onDelete: "cascade" }),
+  sourcePlatformId: text("source_platform_id").notNull(),
+  sourceOrigin: text("source_origin").notNull(),
+  targetPlatformId: text("target_platform_id").notNull(),
+  targetOrigin: text("target_origin").notNull(),
+  name: text("name").notNull(),
+  domain: text("domain").notNull(),
+  extraDomains: jsonb("extra_domains"),
+  installationId: text("installation_id").notNull(),
+  dbFingerprint: text("db_fingerprint"),
+  licenseVerifier: text("license_verifier").notNull(),
+  controllerTokenVerifier: text("controller_token_verifier").notNull(),
+  // Source-side only: encrypted so setup-kit/config resync can provision the
+  // linked controller credential without retaining plaintext in the registry.
+  controllerTokenEnc: text("controller_token_enc"),
+  licenseExpiresAt: timestamp("license_expires_at"),
+  maxCompanies: integer("max_companies"),
+  agentVersion: text("agent_version"),
+  status: text("status").notNull(),
+  packageSource: text("package_source").notNull(),
+  controllerEpoch: integer("controller_epoch").notNull().default(0),
+  activeControllerId: text("active_controller_id").notNull(),
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  lastSeenIp: text("last_seen_ip"),
+  deployedVersion: text("deployed_version"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  linkUniq: uniqueIndex("agent_controller_links_link_uniq").on(t.linkId, t.direction),
+  installIdx: index("agent_controller_links_install_idx").on(t.installationId),
+  domainIdx: index("agent_controller_links_domain_idx").on(t.domain),
+}));
+
 // ─────────────────────────────────────────────────────────────────────────
 // Agent Servers — سيرفرات إضافية (احتياطية) لكل وكيل.
 // السيرفر «الرئيسي» يبقى على أعمدة agent_instances نفسها (كل الكود القائم
@@ -236,5 +293,7 @@ export const agentInvoiceSamplesTable = pgTable("agent_invoice_samples", {
 
 export type AgentInstance = typeof agentInstancesTable.$inferSelect;
 export type AgentSecurityEvent = typeof agentSecurityEventsTable.$inferSelect;
+export type AgentPlatformLinkInvite = typeof agentPlatformLinkInvitesTable.$inferSelect;
+export type AgentControllerLink = typeof agentControllerLinksTable.$inferSelect;
 export type AgentServer = typeof agentServersTable.$inferSelect;
 export type AgentInvoiceSample = typeof agentInvoiceSamplesTable.$inferSelect;

@@ -16,6 +16,10 @@ type AgentConfig = {
   installationId?: string;
   licenseKey?: string;
   centralOrigin?: string;
+  fingerprint?: string;
+  controllerOrigins?: Array<{ platformId: string; origin: string; auth?: string; controllerToken?: string }>;
+  activeControllerId?: string;
+  controllerEpoch?: number;
 };
 
 type UpdateState =
@@ -42,6 +46,7 @@ type ManualManifest = {
   sizeBytes: number;
   sha256: string;
   publishedAt?: string;
+  origin?: string;
 };
 
 type AgentPaths = {
@@ -100,17 +105,32 @@ async function readAgentConfig(): Promise<{ config: AgentConfig; paths: AgentPat
     config.localSuperadminEnabled === false ||
     !/^[A-Za-z0-9._-]{8,200}$/.test(safeText(config.installationId, 200)) ||
     !/^[A-Za-z0-9._-]{8,500}$/.test(safeText(config.licenseKey, 500)) ||
-    !safeText(config.centralOrigin, 1000)
+    !safeText(activeControllerOrigin(config), 1000)
   ) {
     return null;
   }
   try {
-    const origin = new URL(config.centralOrigin!);
+    const origin = new URL(activeControllerOrigin(config));
     if (origin.protocol !== "https:") return null;
   } catch {
     return null;
   }
   return { config, paths };
+}
+
+function activeControllerOrigin(config: AgentConfig): string {
+  const selected = Array.isArray(config.controllerOrigins)
+    ? config.controllerOrigins.find(c => c?.platformId === config.activeControllerId)?.origin
+    : undefined;
+  return safeText(selected || config.centralOrigin, 1000);
+}
+
+export function controllerOriginsInOrder(config: AgentConfig): string[] {
+  const active = activeControllerOrigin(config);
+  const all = Array.isArray(config.controllerOrigins)
+    ? config.controllerOrigins.map(x => safeText(x?.origin, 1000)).filter(Boolean)
+    : [];
+  return [active, ...all.filter(origin => origin !== active)].filter((x, i, a) => a.indexOf(x) === i);
 }
 
 async function readCurrentVersion(paths: AgentPaths): Promise<string> {
@@ -149,32 +169,42 @@ async function writeUpdateStatus(paths: AgentPaths, status: PersistedUpdateStatu
   await fs.rename(tmp, paths.statusFile);
 }
 
-function manualManifestUrl(config: AgentConfig): URL {
-  const url = new URL("/api/agent/release/manifest", config.centralOrigin);
+function manualManifestUrl(config: AgentConfig, origin = activeControllerOrigin(config)): URL {
+  const url = new URL("/api/agent/release/manifest", origin);
   url.searchParams.set("manual", "1");
   return url;
 }
 
-function manualBundleUrl(config: AgentConfig, version: string): URL {
-  const url = new URL("/api/agent/release/bundle", config.centralOrigin);
+function manualBundleUrl(config: AgentConfig, version: string, origin = activeControllerOrigin(config)): URL {
+  const url = new URL("/api/agent/release/bundle", origin);
   url.searchParams.set("manual", "1");
   url.searchParams.set("version", version);
   return url;
 }
 
 async function fetchManualManifest(config: AgentConfig): Promise<ManualManifest> {
-  const response = await fetch(manualManifestUrl(config), {
+  let lastError: Error | null = null;
+  const origins = controllerOriginsInOrder(config);
+  for (const origin of origins) try {
+  const controller = config.controllerOrigins?.find(x => x.origin === origin);
+  const response = await fetch(manualManifestUrl(config, origin), {
     headers: {
       Accept: "application/json",
       "X-Zacod-Installation-Id": config.installationId!,
-      "X-Zacod-License-Key": config.licenseKey!,
+      ...(controller?.auth === "controllerToken"
+        ? { "X-Zacod-Controller-Token": controller.controllerToken ?? "" }
+        : { "X-Zacod-License-Key": config.licenseKey! }),
+      "X-Zacod-Domain": config.domain ?? "",
+      "X-Zacod-Db-Fingerprint": config.fingerprint ?? "",
     },
     redirect: "error",
     signal: AbortSignal.timeout(20_000),
   });
   const raw = await response.text();
   if (!response.ok) {
-    throw new Error(response.status === 403 ? "ترخيص الوكيل غير صالح أو موقوف" : "تعذّر فحص التحديثات من المنصة");
+    if (response.status === 403 && origin === origins[0]) throw new Error("ترخيص الوكيل غير صالح أو موقوف");
+    if (response.status < 500) throw new Error("تعذّر فحص التحديثات من المنصة");
+    lastError = new Error("تعذّر فحص التحديثات من المنصة"); continue;
   }
   let body: any;
   try {
@@ -199,7 +229,13 @@ async function fetchManualManifest(config: AgentConfig): Promise<ManualManifest>
     sha256,
     sizeBytes,
     publishedAt: safeText(body?.publishedAt, 80) || undefined,
+    origin,
   };
+  } catch (error: any) {
+    if (error?.message === "ترخيص الوكيل غير صالح أو موقوف") throw error;
+    lastError = error instanceof Error ? error : new Error("تعذّر فحص التحديثات من المنصة");
+  }
+  throw lastError ?? new Error("تعذّر فحص التحديثات من المنصة");
 }
 
 function shQuote(value: string): string {
@@ -319,12 +355,18 @@ const fs = require("node:fs");
 const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, "utf8"));
 const installationId = String(cfg.installationId || "");
 const licenseKey = String(cfg.licenseKey || "");
+const active = Array.isArray(cfg.controllerOrigins) ? cfg.controllerOrigins.find(x => x && x.platformId === cfg.activeControllerId) : null;
+const controllerToken = active && active.auth === "controllerToken" ? String(active.controllerToken || "") : "";
+const domain = String(cfg.domain || "");
+const fingerprint = String(cfg.fingerprint || "");
 if (!/^[A-Za-z0-9._-]{8,200}$/.test(installationId) || !/^[A-Za-z0-9._-]{8,500}$/.test(licenseKey)) {
   throw new Error("invalid release credentials");
 }
 fs.writeFileSync(process.env.AUTH_FILE, [
   'header = "X-Zacod-Installation-Id: ' + installationId + '"',
-  'header = "X-Zacod-License-Key: ' + licenseKey + '"',
+  controllerToken ? 'header = "X-Zacod-Controller-Token: ' + controllerToken + '"' : 'header = "X-Zacod-License-Key: ' + licenseKey + '"',
+  'header = "X-Zacod-Domain: ' + domain + '"',
+  'header = "X-Zacod-Db-Fingerprint: ' + fingerprint + '"',
   ""
 ].join("\\n"), { mode: 0o600 });
 NODE
@@ -460,7 +502,7 @@ router.post("/apply", async (req, res) => {
     const script = buildManualUpdateScript({
       paths: local.paths,
       manifest,
-      bundleUrl: manualBundleUrl(local.config, manifest.version).toString(),
+      bundleUrl: manualBundleUrl(local.config, manifest.version, manifest.origin).toString(),
       scriptPath,
     });
     await fs.writeFile(scriptPath, script, { mode: 0o700 });
