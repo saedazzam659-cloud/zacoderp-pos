@@ -1345,6 +1345,113 @@ router.post("/:id/test-ssh", async (req, res) => {
   res.json({ ok: true, host: inst.sshHost, port, auth: false, note: "تم فحص الوصول فقط — أدخل المستخدم وكلمة المرور لاختبار الدخول الفعلي" });
 });
 
+// POST /:id/repair-email — seed the full agent's local SMTP configuration
+// from the central deployment, restart the service, and send a real test
+// message to the configured local Super Admin. This deliberately avoids a
+// full reinstall/database restore when only OTP delivery needs repair.
+router.post("/:id/repair-email", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.mode !== "full") { res.status(400).json({ error: "إصلاح البريد متاح للنسخة الكاملة فقط" }); return; }
+  if (!inst.saEmail) { res.status(400).json({ error: "أدخل بريد Super Admin للوكيل أولًا" }); return; }
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
+    res.status(400).json({ error: "احفظ بيانات SSH أولًا" });
+    return;
+  }
+  try { await assertProbeTargetAllowed(inst.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+
+  const smtp = {
+    SMTP_HOST: process.env.SMTP_HOST ?? "",
+    SMTP_PORT: process.env.SMTP_PORT ?? "587",
+    SMTP_USER: process.env.SMTP_USER ?? "",
+    SMTP_PASS: process.env.SMTP_PASS ?? "",
+    SMTP_FROM: process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "",
+    SMTP_TEST_TO: inst.saEmail,
+  };
+  if (!smtp.SMTP_HOST || !smtp.SMTP_USER || !smtp.SMTP_PASS) {
+    res.status(409).json({ error: "البريد المركزي SMTP غير مهيّأ؛ أضف SMTP_HOST وSMTP_USER وSMTP_PASS أولًا" });
+    return;
+  }
+
+  const exports = Object.entries(smtp)
+    .map(([key, value]) => `export ZACOD_${key}_B64=${shQ(Buffer.from(value, "utf8").toString("base64"))}`)
+    .join("\n");
+  const script = `set -e
+umask 077
+test -f /opt/zacod/app.env
+${exports}
+python3 <<'PY'
+import base64, os, pathlib
+p = pathlib.Path("/opt/zacod/app.env")
+keys = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM")
+vals = {k: base64.b64decode(os.environ["ZACOD_" + k + "_B64"]).decode("utf-8") for k in keys}
+old = p.read_text(encoding="utf-8").splitlines()
+kept = [line for line in old if not any(line.startswith(k + "=") for k in keys)]
+def quote(v):
+    return '"' + v.replace("\\\\", "\\\\\\\\").replace('"', '\\\\"').replace("\\r", "").replace("\\n", "") + '"'
+tmp = p.with_suffix(".env.new")
+tmp.write_text("\\n".join(kept + [k + "=" + quote(vals[k]) for k in keys]) + "\\n", encoding="utf-8")
+tmp.chmod(0o600)
+tmp.replace(p)
+PY
+systemctl restart zacod-app
+sleep 3
+python3 <<'PY'
+import base64, os, smtplib, ssl
+from email.message import EmailMessage
+def val(k):
+    return base64.b64decode(os.environ["ZACOD_" + k + "_B64"]).decode("utf-8")
+host, user, password = val("SMTP_HOST"), val("SMTP_USER"), val("SMTP_PASS")
+port = int(val("SMTP_PORT") or "587")
+sender, recipient = val("SMTP_FROM") or user, val("SMTP_TEST_TO")
+msg = EmailMessage()
+msg["From"], msg["To"] = sender, recipient
+msg["Subject"] = "اختبار بريد نسخة الوكيل — Zacod ERP"
+msg.set_content("تم ربط خدمة البريد بنجاح. يمكنك الآن طلب رمز OTP جديد من صفحة الدخول.")
+ctx = ssl.create_default_context()
+if port == 465:
+    client = smtplib.SMTP_SSL(host, port, timeout=20, context=ctx)
+else:
+    client = smtplib.SMTP(host, port, timeout=20)
+    client.ehlo()
+    if client.has_extn("starttls"):
+        client.starttls(context=ctx)
+        client.ehlo()
+try:
+    client.login(user, password)
+    client.send_message(msg)
+finally:
+    try: client.quit()
+    except Exception: pass
+print("SMTP_TEST_OK")
+PY`;
+
+  try {
+    const result = await sshRunScript(inst, script, { timeoutMs: 60_000 });
+    await pinHostKey(inst, result.hostKeyFp);
+    if (result.code !== 0 || !result.out.includes("SMTP_TEST_OK")) {
+      const detail = result.out
+        .replace(/[A-Za-z0-9+/]{28,}={0,2}/g, "[REDACTED]")
+        .replace(/(password|pass|credential|auth)[^:\n]*:[^\n]*/gi, "$1: [REDACTED]")
+        .slice(-700);
+      res.status(502).json({ error: "فشل اختبار SMTP على سيرفر الوكيل", detail: detail || "راجع إعداد مزود البريد" });
+      return;
+    }
+    await logAgentEvent(id, "agent_email_repaired", { to: inst.saEmail, by: (req as any).authUser?.username ?? null }, req);
+    res.json({
+      ok: true,
+      note: `تم إصلاح البريد وإرسال رسالة اختبار إلى ${inst.saEmail}. بعد وصولها اطلب OTP جديدًا.`,
+    });
+  } catch (e: any) {
+    const detail = String(e?.message ?? e)
+      .replace(/[A-Za-z0-9+/]{28,}={0,2}/g, "[REDACTED]")
+      .slice(0, 700);
+    res.status(502).json({ error: "تعذّر إصلاح البريد على سيرفر الوكيل", detail });
+  }
+});
+
 // POST /:id/check-ban — هل سيرفر الوكيل حاظر عنوان المنصة (fail2ban ونحوه)؟
 // يقارن منفذ SSH بمنافذ الويب (443/80) على نفس السيرفر: لو الويب يستجيب
 // وSSH «مهلة» فهذا نمط الحظر الكلاسيكي (fail2ban يسقط الحزم بصمت).

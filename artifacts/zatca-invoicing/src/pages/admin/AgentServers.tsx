@@ -628,6 +628,27 @@ export default function AgentServers() {
     }
   }
 
+  async function repairAgentEmail() {
+    if (!form.id) return;
+    setBusy(`repair-email-${form.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${form.id}/repair-email`, {
+        method: "POST",
+        headers,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل إصلاح البريد");
+      toast({
+        title: "تم إصلاح بريد الوكيل",
+        description: j.note ?? "تم إرسال رسالة اختبار. اطلب رمز OTP جديدًا بعد وصولها.",
+      });
+    } catch (e: any) {
+      toast({ title: "فشل إصلاح بريد الوكيل", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function checkDomains(a: Agent) {
     setDomainCheck({ agent: a, loading: true });
     try {
@@ -2313,6 +2334,23 @@ export default function AgentServers() {
                   </Button>
                   <span className="text-[11px] text-muted-foreground">
                     لا يتأثر بإعدادات Super Admin أو نوع النسخة.
+                  </span>
+                </div>
+              )}
+              {isEdit && form.mode === "full" && (
+                <div className="col-span-2 flex items-center gap-2 border-t pt-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy === `repair-email-${form.id}` || !editingAgent?.sshSecretSet || !editingAgent?.saEmail}
+                    onClick={repairAgentEmail}
+                    data-testid="button-repair-agent-email"
+                  >
+                    {busy === `repair-email-${form.id}` ? <Loader2 className="h-4 w-4 ms-1 animate-spin" /> : <Mail className="h-4 w-4 ms-1" />}
+                    إصلاح البريد وإرسال اختبار
+                  </Button>
+                  <span className="text-[11px] text-muted-foreground">
+                    يصلح SMTP فقط، بدون إعادة التسطيب أو استعادة قاعدة البيانات.
                   </span>
                 </div>
               )}
