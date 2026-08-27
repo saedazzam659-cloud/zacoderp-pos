@@ -453,3 +453,10 @@ uri = "file://exports/external-agent-package-20260827/README.txt"
 type = "text"
 title = "تعليمات الحزمة الخارجية"
 description = "خريطة رفع الملفات وسياسة التحديث والسلامة."
+
+[[outputs]]
+id = "UO2XUN9XG-E5hL8cTIb5u"
+uri = "file://exports/external-agent-package-20260827/database-empty.dump"
+type = "unspecified"
+title = "قاعدة بيانات الوكيل الفارغة"
+description = "PostgreSQL custom dump ببنية النظام كاملة وبدون أي بيانات. ارفعها كملف Database للوكيل KARM AZZAM ثم أعد التسطيب."
