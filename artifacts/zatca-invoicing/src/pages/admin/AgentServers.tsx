@@ -437,6 +437,13 @@ export default function AgentServers() {
   const [form, setForm] = useState({ ...emptyForm });
   const [formPackageFiles, setFormPackageFiles] = useState<Record<PackageKind, File | null>>({ backend: null, frontend: null, db: null });
   const [formPackageProgress, setFormPackageProgress] = useState<string | null>(null);
+  const [smtpRepair, setSmtpRepair] = useState({
+    host: "smtp.gmail.com",
+    port: "587",
+    user: "",
+    password: "",
+    from: "",
+  });
   const [busy, setBusy] = useState<string | null>(null); // "<action>-<id>"
   const [logView, setLogView] = useState<{ title: string; text: string } | null>(null);
   const [showLogoDialog, setShowLogoDialog] = useState(false);
@@ -635,6 +642,13 @@ export default function AgentServers() {
       const r = await fetch(`${API}/api/admin/agent-instances/${form.id}/repair-email`, {
         method: "POST",
         headers,
+        body: JSON.stringify({
+          host: smtpRepair.host.trim(),
+          port: Number(smtpRepair.port || 587),
+          user: smtpRepair.user.trim(),
+          password: smtpRepair.password,
+          from: smtpRepair.from.trim() || smtpRepair.user.trim(),
+        }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل إصلاح البريد");
@@ -642,6 +656,7 @@ export default function AgentServers() {
         title: "تم إصلاح بريد الوكيل",
         description: j.note ?? "تم إرسال رسالة اختبار. اطلب رمز OTP جديدًا بعد وصولها.",
       });
+      setSmtpRepair(p => ({ ...p, password: "" }));
     } catch (e: any) {
       toast({ title: "فشل إصلاح بريد الوكيل", description: String(e?.message ?? e), variant: "destructive" });
     } finally {
@@ -2338,20 +2353,55 @@ export default function AgentServers() {
                 </div>
               )}
               {isEdit && form.mode === "full" && (
-                <div className="col-span-2 flex items-center gap-2 border-t pt-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={busy === `repair-email-${form.id}` || !editingAgent?.sshSecretSet || !editingAgent?.saEmail}
-                    onClick={repairAgentEmail}
-                    data-testid="button-repair-agent-email"
-                  >
-                    {busy === `repair-email-${form.id}` ? <Loader2 className="h-4 w-4 ms-1 animate-spin" /> : <Mail className="h-4 w-4 ms-1" />}
-                    إصلاح البريد وإرسال اختبار
-                  </Button>
-                  <span className="text-[11px] text-muted-foreground">
-                    يصلح SMTP فقط، بدون إعادة التسطيب أو استعادة قاعدة البيانات.
-                  </span>
+                <div className="col-span-2 border-t pt-3 space-y-3">
+                  <div className="text-xs font-medium flex items-center gap-1.5">
+                    <Mail className="h-4 w-4" />
+                    بريد OTP المستقل للوكيل
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    أدخل حساب الإرسال وكلمة مرور التطبيق. تُرسل مباشرة إلى السيرفر المشفّر ولا تُحفظ في المتصفح أو سجل التسطيب.
+                    لحساب Gmail فعّل التحقق بخطوتين وأنشئ <b>App Password</b>؛ لا تستخدم كلمة مرور Gmail العادية.
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] text-muted-foreground block mb-1">خادم SMTP</label>
+                      <Input dir="ltr" value={smtpRepair.host} onChange={e => setSmtpRepair(p => ({ ...p, host: e.target.value }))} placeholder="smtp.gmail.com" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted-foreground block mb-1">المنفذ</label>
+                      <Input dir="ltr" inputMode="numeric" value={smtpRepair.port} onChange={e => setSmtpRepair(p => ({ ...p, port: e.target.value }))} placeholder="587" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted-foreground block mb-1">بريد الإرسال</label>
+                      <Input dir="ltr" type="email" value={smtpRepair.user} onChange={e => setSmtpRepair(p => ({ ...p, user: e.target.value, from: e.target.value }))} placeholder="sender@gmail.com" autoComplete="off" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted-foreground block mb-1">كلمة مرور التطبيق</label>
+                      <Input dir="ltr" type="password" value={smtpRepair.password} onChange={e => setSmtpRepair(p => ({ ...p, password: e.target.value }))} placeholder="App Password" autoComplete="new-password" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={
+                        busy === `repair-email-${form.id}` ||
+                        !editingAgent?.sshSecretSet ||
+                        !editingAgent?.saEmail ||
+                        !smtpRepair.host.trim() ||
+                        !smtpRepair.user.trim() ||
+                        !smtpRepair.password
+                      }
+                      onClick={repairAgentEmail}
+                      data-testid="button-repair-agent-email"
+                    >
+                      {busy === `repair-email-${form.id}` ? <Loader2 className="h-4 w-4 ms-1 animate-spin" /> : <Mail className="h-4 w-4 ms-1" />}
+                      حفظ SMTP وإرسال اختبار
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">
+                      بدون إعادة التسطيب أو استعادة قاعدة البيانات.
+                    </span>
+                  </div>
                 </div>
               )}
               {isEdit && (

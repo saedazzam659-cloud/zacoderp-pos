@@ -1362,16 +1362,36 @@ router.post("/:id/repair-email", async (req, res) => {
   try { await assertProbeTargetAllowed(inst.sshHost); }
   catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
 
+  const smtpInput = z.object({
+    host: z.string().trim().min(1).max(255).optional(),
+    port: z.coerce.number().int().min(1).max(65535).optional(),
+    user: z.string().trim().min(1).max(320).optional(),
+    password: z.string().min(1).max(1000).optional(),
+    from: z.string().trim().max(500).optional(),
+  }).safeParse(req.body ?? {});
+  if (!smtpInput.success) {
+    res.status(400).json({ error: "بيانات SMTP غير صالحة" });
+    return;
+  }
+  const supplied = smtpInput.data;
   const smtp = {
-    SMTP_HOST: process.env.SMTP_HOST ?? "",
-    SMTP_PORT: process.env.SMTP_PORT ?? "587",
-    SMTP_USER: process.env.SMTP_USER ?? "",
-    SMTP_PASS: process.env.SMTP_PASS ?? "",
-    SMTP_FROM: process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "",
+    SMTP_HOST: supplied.host ?? process.env.SMTP_HOST ?? "",
+    SMTP_PORT: String(supplied.port ?? process.env.SMTP_PORT ?? "587"),
+    SMTP_USER: supplied.user ?? process.env.SMTP_USER ?? "",
+    SMTP_PASS: supplied.password ?? process.env.SMTP_PASS ?? "",
+    SMTP_FROM: supplied.from || supplied.user || process.env.SMTP_FROM || process.env.SMTP_USER || "",
     SMTP_TEST_TO: inst.saEmail,
   };
+  if (Object.values(smtp).some(v => /[\r\n]/.test(v))) {
+    res.status(400).json({ error: "قيم SMTP لا تقبل أسطرًا جديدة" });
+    return;
+  }
+  if (smtpInput.data.host && !/^[a-z0-9.-]+$/i.test(smtpInput.data.host)) {
+    res.status(400).json({ error: "اسم خادم SMTP غير صالح" });
+    return;
+  }
   if (!smtp.SMTP_HOST || !smtp.SMTP_USER || !smtp.SMTP_PASS) {
-    res.status(409).json({ error: "البريد المركزي SMTP غير مهيّأ؛ أضف SMTP_HOST وSMTP_USER وSMTP_PASS أولًا" });
+    res.status(409).json({ error: "أدخل خادم SMTP وبريد الإرسال وكلمة مرور التطبيق" });
     return;
   }
 

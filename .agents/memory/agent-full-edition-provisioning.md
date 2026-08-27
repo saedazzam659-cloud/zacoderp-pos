@@ -16,7 +16,7 @@ description: Invariants for the «نسخة كاملة» agent edition, its relea
 - Claim (`deployStatus='deploying'` conditional UPDATE, 30-min stale reclaim) must happen BEFORE license auto-mint, then re-read the row — otherwise a concurrent request overwrites the key the pipeline uses and release downloads 403.
 - UI: deploy + init-db + provision buttons all disable while `deployStatus==="deploying"` (they share the lease).
 - Full-mode app env uses a LOOPBACK DATABASE_URL (rewrite host→127.0.0.1, drop sslmode); central keeps the public URL because schema init/fingerprint run from central — that is why the agent Postgres is remotely reachable (scram + strong hex password). Tightening exposure = known follow-up.
-- Full agents cannot use the central Outlook connector. Seed SMTP_* into the remote mode-0600 app.env on first install, preserve the agent's existing SMTP values on reinstall, and never print the values in deploy logs; otherwise Super Admin OTP delivery is silently unavailable.
+- Full agents cannot use the central Outlook connector. Seed SMTP_* into the remote mode-0600 app.env on first install and preserve it on reinstall. Also provide an SSH-backed per-agent SMTP repair/test using operator-entered provider credentials; never print them in logs.
 - Progress streams into deployLog (reused column, no DDL); UI polls the list every 3s while deploying.
 - Full-mode Caddy must route `/api*` (and backend utility paths) to local Node, while static files and the SPA fallback come from the installed frontend. A catch-all reverse proxy produces `Cannot GET /` even though DNS/TLS and the app service are healthy.
 
@@ -36,6 +36,6 @@ description: Invariants for the «نسخة كاملة» agent edition, its relea
 
 **Why:** الاستحقاق الأمني لا يجوز أن يعتمد على حالة مركزية لا يراها الخادم المحلي وقت انقطاعه، ولا يجوز أن يترك التعطيل جلسة Super Admin قائمة أو نافذة تحديث يدوية.
 
-كما أن دخول Super Admin يعتمد على OTP أمني لا يستخدم Outlook fallback؛ لذلك يجب أن تكون وسيلة SMTP محلية جزءًا من تسطيب النسخة الكاملة المستقلة.
+كما أن دخول Super Admin يعتمد على OTP أمني لا يستخدم Outlook fallback؛ لذلك يجب أن تكون وسيلة SMTP محلية جزءًا من تسطيب النسخة الكاملة المستقلة، وألا تعتمد على اسم SMTP مركزي قد لا يكون عامًا أو قابلًا للحل من VPS خارجي.
 
 **How to apply:** أي مسار محلي جديد لـ Super Admin أو موافقات التحديث يجب أن يمر من البوابة نفسها؛ وأي شاشة محلية جديدة يجب تسجيلها في قائمة الاختيار مع منع افتراضي للمسارات المميزة غير المسجلة.
