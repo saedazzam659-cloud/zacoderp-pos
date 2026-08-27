@@ -1059,6 +1059,11 @@ export default function GeneralSettings() {
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || t("pages.generalSettings.restoreFailed"));
+      if (isFullCompanyBackup && j.restoreMode !== "full_company_v2") {
+        throw new Error(
+          "لم تُستعد النسخة: خادم هذه المنصة قديم ويستخدم المستورد المحدود. حدّث Backend المنصة أولًا ثم أعد استيراد نفس الملف.",
+        );
+      }
       setRestoreReport(j.report);
       const inserted = Object.values(j.report || {}).reduce((a: number, r: any) => a + (r?.inserted || 0), 0);
       toast({ title: t("pages.generalSettings.restoreSuccess", { count: inserted }) });

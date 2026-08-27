@@ -461,6 +461,7 @@ export async function restoreFromSnapshotPayload(
 ): Promise<{
   ok: true;
   companyId: number;
+  restoreMode: "full_company_v2" | "legacy_limited";
   report: Record<string, { received: number; inserted: number; matched: number; failed: number }>;
 }> {
   if (!payload || typeof payload !== "object" || !payload.data) {
@@ -468,7 +469,7 @@ export async function restoreFromSnapshotPayload(
   }
   if ((payload as any).meta?.schemaVersion === 2) {
     const report = await restoreFullCompanyBackup(companyId, payload as any);
-    return { ok: true, companyId, report: report as any };
+    return { ok: true, companyId, restoreMode: "full_company_v2", report: report as any };
   }
   const report: Record<string, { received: number; inserted: number; matched: number; failed: number }> = {};
   const idMap: Record<string, Map<number, number>> = {};
@@ -560,7 +561,7 @@ export async function restoreFromSnapshotPayload(
       }
     });
 
-  return { ok: true, companyId, report };
+  return { ok: true, companyId, restoreMode: "legacy_limited", report };
 }
 
 router.post("/restore", async (req, res) => {
