@@ -3952,6 +3952,8 @@ type ProvisionOpts = {
   variant: "full" | "no_db" | "upload";
   /** إرسال الحزمة مشفّرة (AES-256) ويفكّها السيرفر عند الاستلام */
   encryptBundle: boolean;
+  /** External-package updates may install app files without restoring DB. */
+  restoreUploadedDb?: boolean;
 };
 
 type ProvisionAutoDomainContext = {
@@ -4108,7 +4110,7 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
     // 3.5) استعادة نسخة قاعدة البيانات المرفوعة — يجب أن تسبق زرع السكيما
     // والبصمة (الخطوة 4)، وإلا مسحت الاستعادةُ بصمةَ التركيب وجدول التنصيب
     // فيتعطل النبض. أي فشل هنا يُسقط التسطيب كاملًا (لا استعادة صامتة).
-    if (opts.variant === "upload" && inst.mode === "full") {
+    if (opts.variant === "upload" && opts.restoreUploadedDb !== false && inst.mode === "full") {
       const metaR = readPackageMap(inst.externalPackageMeta);
       if (metaR.db && verifyPackageEntry(inst.id, "db", metaR.db)) {
         await step("استعادة نسخة قاعدة البيانات المرفوعة");
@@ -4405,6 +4407,7 @@ router.post("/:id/provision", async (req, res) => {
   // and local-manual-update policy checks.
   const variant: ProvisionOpts["variant"] = inst.packageSource === "external" ? "upload" : requestedVariant;
   const encryptBundle = variant === "upload" ? true : req.body?.encryptBundle === true;
+  const restoreUploadedDb = !(inst.packageSource === "external" && req.body?.variant === "upload_no_db");
   if (variant === "no_db" && !inst.dbUrlEnc) {
     res.status(400).json({ error: "«تسطيب بدون قاعدة بيانات» يتطلب إدخال رابط قاعدة البيانات في بيانات الوكيل أولًا" }); return;
   }
@@ -4536,12 +4539,13 @@ router.post("/:id/provision", async (req, res) => {
     packageSource: inst.packageSource,
     variant,
     encryptBundle,
+    restoreUploadedDb,
     automaticDomain: !!autoDomainPlan,
   }, req).catch(() => {});
   res.json({ ok: true, started: true });
   void runProvision(
     fresh,
-    { variant, encryptBundle },
+    { variant, encryptBundle, restoreUploadedDb },
     operationId,
     stopHeartbeat,
     autoDomainPlan ? { plan: autoDomainPlan, operationId } : undefined,

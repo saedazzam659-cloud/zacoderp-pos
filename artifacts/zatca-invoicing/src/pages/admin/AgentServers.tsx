@@ -808,7 +808,7 @@ export default function AgentServers() {
   // ── التسطيب الكامل بضغطة واحدة ──
   const [provisionAgentId, setProvisionAgentId] = useState<number | null>(null);
   // نافذة اختيار طريقة التسطيب: كامل / بدون قاعدة بيانات / برفع ملفات (+ تشفير)
-  const [installDlg, setInstallDlg] = useState<{ agentId: number; variant: "full" | "no_db" | "upload"; encrypt: boolean; autoDomainToken?: string } | null>(null);
+  const [installDlg, setInstallDlg] = useState<{ agentId: number; variant: "full" | "no_db" | "upload" | "upload_no_db"; encrypt: boolean; autoDomainToken?: string } | null>(null);
   const installAgent = (listQ.data ?? []).find(x => x.id === installDlg?.agentId) ?? null;
   const [pkgStatus, setPkgStatus] = useState<PackageStatus | null>(null);
   const [pkgBusy, setPkgBusy] = useState<string | null>(null);
@@ -1006,7 +1006,7 @@ export default function AgentServers() {
     }
   }
 
-  async function provisionNow(a: Agent, opts: { variant: "full" | "no_db" | "upload"; encryptBundle: boolean; autoDomainConfirmationToken?: string }) {
+  async function provisionNow(a: Agent, opts: { variant: "full" | "no_db" | "upload" | "upload_no_db"; encryptBundle: boolean; autoDomainConfirmationToken?: string }) {
     setBusy(`provision-${a.id}`);
     try {
       const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/provision`, {
@@ -1997,7 +1997,14 @@ export default function AgentServers() {
                     ? "يثبّت Backend وFrontend وقاعدة البيانات من الحزم المشفّرة والموقّعة الخاصة بهذا الوكيل. تبقى تحديثات المنصة متاحة لاحقًا، لكن تثبيتها يتطلب موافقة المسؤول المحلي ولا توجد إعادة تشغيل تلقائية."
                     : "ترفع ملفات Backend وFrontend وقاعدة البيانات مباشرة إلى التخزين الخاص؛ يتحقق الخادم منها ويحوّلها إلى حزم مشفّرة قبل اعتمادها (للنسخة الكاملة فقط).",
                 },
-              ]).filter(opt => installAgent.packageSource !== "external" || opt.v === "upload").map(opt => (
+                {
+                  v: "upload_no_db" as const,
+                  title: "تحديث Backend وFrontend فقط",
+                  desc: "يثبّت أحدث حزم التطبيق الخارجية على قاعدة البيانات الحالية، بدون تنزيل أو استعادة ملف قاعدة البيانات وبدون حذف بياناتها.",
+                },
+              ]).filter(opt => installAgent.packageSource !== "external"
+                ? opt.v !== "upload_no_db"
+                : opt.v === "upload" || opt.v === "upload_no_db").map(opt => (
                 <button key={opt.v} type="button" onClick={() => setInstallDlg(p => p && { ...p, variant: opt.v })}
                   className={`w-full text-start border rounded-xl p-3 transition-colors ${installDlg.variant === opt.v ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40"}`}
                   data-testid={`install-variant-${opt.v}`}>
@@ -2009,13 +2016,13 @@ export default function AgentServers() {
                 </button>
               ))}
 
-              {installDlg.variant === "upload" && (
+              {(installDlg.variant === "upload" || installDlg.variant === "upload_no_db") && (
                 <div className="border rounded-xl p-3 space-y-2 bg-muted/30">
                   <div className="text-xs font-medium">ملفات التسطيب</div>
                     {([
                     { k: "backend" as const, label: "ملف Backend (tar.gz)", required: true, accept: ".tgz,.tar.gz,.gz" },
                     { k: "frontend" as const, label: "ملف Frontend (tar.gz)", required: installAgent.packageSource === "external", accept: ".tgz,.tar.gz,.gz" },
-                    { k: "db" as const, label: "نسخة قاعدة البيانات", required: installAgent.packageSource === "external", accept: ".dump,.backup,.sql,.gz" },
+                     { k: "db" as const, label: "نسخة قاعدة البيانات", required: installAgent.packageSource === "external" && installDlg.variant === "upload", accept: ".dump,.backup,.sql,.gz" },
                   ]).map(row => {
                     const st = pkgStatus?.[row.k] ?? null;
                     return (
@@ -2063,13 +2070,13 @@ export default function AgentServers() {
                 </div>
               )}
 
-              <label className={`flex items-center gap-2 border rounded-xl p-3 text-sm ${installDlg.variant === "upload" ? "cursor-not-allowed bg-muted/40" : "cursor-pointer"}`}>
+              <label className={`flex items-center gap-2 border rounded-xl p-3 text-sm ${installDlg.variant === "upload" || installDlg.variant === "upload_no_db" ? "cursor-not-allowed bg-muted/40" : "cursor-pointer"}`}>
                 <input type="checkbox" className="h-4 w-4 accent-primary" checked={installDlg.encrypt}
-                  disabled={installDlg.variant === "upload"}
+                  disabled={installDlg.variant === "upload" || installDlg.variant === "upload_no_db"}
                   onChange={e => setInstallDlg(p => p && { ...p, encrypt: e.target.checked })} data-testid="checkbox-encrypt-bundle" />
                 <span>
                   إرسال الحزمة <b>مشفّرة</b> (AES-256)
-                  <span className="block text-[11px] text-muted-foreground">{installDlg.variant === "upload" ? "إلزامي للحزم الخارجية: مخزنة ومنقولة مشفّرة، ويُسلّم مفتاح الفك عبر جلسة SSH فقط دون حفظه." : "تُنقل الحزمة مشفّرة ويفكّها سيرفر الوكيل بمفتاح يُسلَّم عبر SSH فقط."}</span>
+                  <span className="block text-[11px] text-muted-foreground">{installDlg.variant === "upload" || installDlg.variant === "upload_no_db" ? "إلزامي للحزم الخارجية: مخزنة ومنقولة مشفّرة، ويُسلّم مفتاح الفك عبر جلسة SSH فقط دون حفظه." : "تُنقل الحزمة مشفّرة ويفكّها سيرفر الوكيل بمفتاح يُسلَّم عبر SSH فقط."}</span>
                 </span>
               </label>
             </div>
@@ -2080,8 +2087,8 @@ export default function AgentServers() {
               disabled={!installAgent
                 || busy === `provision-${installDlg?.agentId}`
                 || (!!installAgent?.autoDomainSetup && !installDlg?.autoDomainToken)
-                || (installDlg?.variant === "upload" && !pkgStatus?.backend)
-                || (installAgent?.packageSource === "external" && (!pkgStatus?.backend || !pkgStatus?.frontend || !pkgStatus?.db))}
+                || ((installDlg?.variant === "upload" || installDlg?.variant === "upload_no_db") && !pkgStatus?.backend)
+                || (installAgent?.packageSource === "external" && (!pkgStatus?.backend || !pkgStatus?.frontend || (installDlg?.variant === "upload" && !pkgStatus?.db)))}
               onClick={() => installAgent && installDlg && provisionNow(installAgent, {
                 variant: installDlg.variant,
                 encryptBundle: installDlg.encrypt,
