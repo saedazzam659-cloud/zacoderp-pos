@@ -21,7 +21,11 @@ import {
 } from "../lib/whatsapp.js";
 import { randomInt, createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { buildFullCompanyBackup, restoreFullCompanyBackup } from "../lib/fullCompanyBackup.js";
+import {
+  buildFullCompanyBackup,
+  restoreFullCompanyBackup,
+  REQUIRED_FULL_COMPANY_TABLES,
+} from "../lib/fullCompanyBackup.js";
 
 /* ─── Auto-backup schedule + email helpers ──────────────────────────────────
  * The flexible schedule stores a (value, unit) pair; we normalise it to
@@ -367,13 +371,34 @@ router.post("/ai-analyze", requireAiFeature("report_analyzer"), async (req, res)
     const OPENAI_BASE = "AI_PROXY";
     const OPENAI_KEY  = "AI_PROXY";
 
-    const fallbackSummary = () => {
-      const parts = Object.entries(counts).filter(([, count]) => count > 0).map(([name, count]) => `• ${name}: ${count}`);
-      return `نسخة احتياطية تحتوي على ${totalRows} سجلاً.\n${parts.join("\n")}`;
+    const coreLabels: Record<string, string> = {
+      accounts: "الحسابات",
+      journal_entries: "القيود المحاسبية",
+      sales_invoices: "فواتير المبيعات",
+      purchase_invoices: "فواتير المشتريات",
+      employees: "الموظفون",
+      cash_boxes: "الخزن النقدية",
+      bank_accounts: "الحسابات البنكية",
     };
+    const deterministicSummary = () => {
+      const parts = REQUIRED_FULL_COMPANY_TABLES.map((name) =>
+        Object.prototype.hasOwnProperty.call(counts, name)
+          ? `• ${coreLabels[name] ?? name}: ${counts[name]}`
+          : `• ${coreLabels[name] ?? name}: غير موجود في الملف`,
+      );
+      return `نسخة احتياطية تحتوي فعليًا على ${totalRows} سجلاً في جميع الجداول.\n${parts.join("\n")}`;
+    };
+    const missingCoreTables = REQUIRED_FULL_COMPANY_TABLES
+      .filter((name) => !Object.prototype.hasOwnProperty.call(counts, name));
 
     if (!isAIAvailable()) {
-      res.json({ summary: fallbackSummary(), warnings: [], counts });
+      res.json({
+        summary: deterministicSummary(),
+        warnings: missingCoreTables.length
+          ? [`الملف لا يحتوي جداول أساسية: ${missingCoreTables.join(", ")}`]
+          : [],
+        counts,
+      });
       return;
     }
 
@@ -414,12 +439,28 @@ ${JSON.stringify(samples, null, 2).slice(0, 3500)}
       });
     } catch (e: any) {
       clearTimeout(timer);
-      res.json({ summary: fallbackSummary(), warnings: [e?.name === "AbortError" ? "انتهت مهلة الذكاء الاصطناعي" : "تعذّر الاتصال بالذكاء الاصطناعي"], counts });
+      res.json({
+        summary: deterministicSummary(),
+        warnings: [
+          ...(missingCoreTables.length ? [`الملف لا يحتوي جداول أساسية: ${missingCoreTables.join(", ")}`] : []),
+          e?.name === "AbortError" ? "انتهت مهلة الذكاء الاصطناعي" : "تعذّر الاتصال بالذكاء الاصطناعي",
+        ],
+        counts,
+      });
       return;
     }
     clearTimeout(timer);
 
-    if (!aiRes.ok) { res.json({ summary: fallbackSummary(), warnings: [], counts }); return; }
+    if (!aiRes.ok) {
+      res.json({
+        summary: deterministicSummary(),
+        warnings: missingCoreTables.length
+          ? [`الملف لا يحتوي جداول أساسية: ${missingCoreTables.join(", ")}`]
+          : [],
+        counts,
+      });
+      return;
+    }
 
     const data = await aiRes.json() as any;
     const content = data?.choices?.[0]?.message?.content ?? "{}";
@@ -427,8 +468,15 @@ ${JSON.stringify(samples, null, 2).slice(0, 3500)}
     try { parsed = JSON.parse(content); } catch {}
 
     res.json({
-      summary: String(parsed.summary || fallbackSummary()).slice(0, 1500),
-      warnings: Array.isArray(parsed.warnings) ? parsed.warnings.slice(0, 10).map((w: any) => String(w).slice(0, 300)) : [],
+      // Counts are authoritative and must never be summarized/calculated by
+      // the model. AI contributes warnings only.
+      summary: deterministicSummary(),
+      warnings: [
+        ...(missingCoreTables.length ? [`الملف لا يحتوي جداول أساسية: ${missingCoreTables.join(", ")}`] : []),
+        ...(Array.isArray(parsed.warnings)
+          ? parsed.warnings.slice(0, 10).map((w: any) => String(w).slice(0, 300))
+          : []),
+      ],
       counts,
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }

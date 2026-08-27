@@ -18,6 +18,21 @@ export const BACKUP_EXCLUDED_TABLES = new Set([
   "sync_queue_log", "company_clone_runs", "company_templates",
 ]);
 
+/**
+ * A schema-v2 export must never call itself "full_company" unless these core
+ * business domains are present in the live catalog. Empty tables are valid;
+ * omitted tables are not.
+ */
+export const REQUIRED_FULL_COMPANY_TABLES = [
+  "accounts",
+  "journal_entries",
+  "sales_invoices",
+  "purchase_invoices",
+  "employees",
+  "cash_boxes",
+  "bank_accounts",
+] as const;
+
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 // Deliberately not a generic hash/salt rule: invoice_hash, PIH and hash-chain
 // values are business/audit evidence. Password hashes and actual credentials
@@ -144,6 +159,12 @@ export function catalogsMatch(
         === live.foreignKeys.map(fkSignature).sort().join("\n");
   });
 }
+
+export function missingRequiredFullCompanyTables(
+  tables: Record<string, BackupTable>,
+): string[] {
+  return REQUIRED_FULL_COMPANY_TABLES.filter((name) => !tables[name]);
+}
 function tenantPredicate(
   name: string, tables: Record<string, BackupTable>, companyId: number, alias = "target",
   seen = new Set<string>(),
@@ -259,6 +280,12 @@ export async function buildFullCompanyBackup(companyId: number, exportedBy: stri
   if (!Number.isInteger(companyId) || companyId <= 0) throw new Error("Invalid company id");
   return db.transaction(async (tx) => {
     const tables = await catalog(tx); const data: FullCompanyPayload["data"] = {};
+    const missingRequired = missingRequiredFullCompanyTables(tables);
+    if (missingRequired.length) {
+      throw new Error(
+        `تعذر إنشاء نسخة كاملة: كتالوج قاعدة البيانات لا يحتوي الجداول الأساسية التالية: ${missingRequired.join(", ")}`,
+      );
+    }
     for (const table of Object.values(tables)) data[table.name] = [];
     // Roots first, then repeatedly fetch children whose parent IDs were included.
     for (const table of Object.values(tables).filter((t) => t.classification !== "dependent-child")) {

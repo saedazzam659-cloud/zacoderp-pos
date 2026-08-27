@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   BACKUP_EXCLUDED_TABLES, classifyTable, isSensitiveColumn, sanitizeRow,
   topologicalTableOrder, isFullCompanyBackupPayload, isExternalFileReference,
-  catalogsMatch,
+  catalogsMatch, missingRequiredFullCompanyTables, REQUIRED_FULL_COMPANY_TABLES,
 } from "../src/lib/fullCompanyBackup.js";
 
 test("backup sensitive policy preserves business hashes and removes credentials", () => {
@@ -92,4 +92,16 @@ test("canonical catalog validation rejects omitted tables and foreign keys", () 
   assert.equal(catalogsMatch({ parent, child }, { parent, child }), true);
   assert.equal(catalogsMatch({ parent }, { parent, child }), false);
   assert.equal(catalogsMatch({ parent, child: { ...child, foreignKeys: [] } }, { parent, child }), false);
+});
+
+test("full-company export refuses catalogs missing core business domains", () => {
+  const table = (name: string): any => ({
+    name, primaryKey: "id", primaryKeys: ["id"], columns: ["id", "company_id"],
+    foreignKeys: [], classification: "tenant-root",
+  });
+  const complete = Object.fromEntries(REQUIRED_FULL_COMPANY_TABLES.map((name) => [name, table(name)]));
+  assert.deepEqual(missingRequiredFullCompanyTables(complete), []);
+  delete complete.journal_entries;
+  delete complete.employees;
+  assert.deepEqual(missingRequiredFullCompanyTables(complete), ["journal_entries", "employees"]);
 });
