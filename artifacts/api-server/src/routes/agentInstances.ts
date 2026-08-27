@@ -2111,11 +2111,27 @@ else
   rm -f /opt/zacod/www/index.html.tmp
 fi
 `}`;
-  // «full» edition runs the whole app locally — Caddy fronts the local app
-  // (TLS + kill-switch via heartbeat) instead of proxying to the central API.
+  // «full» edition runs the whole app locally. Caddy serves the uploaded
+  // frontend itself and proxies only backend paths to the local Node service.
+  // Proxying every path makes Express answer the browser shell with
+  // "Cannot GET /", because the API bundle deliberately has no SPA fallback.
   const caddyfile = inst.mode === "full"
     ? `${inst.domain} {
-  reverse_proxy 127.0.0.1:8080
+  encode zstd gzip
+
+  @backend {
+    path /api /api/* /storage/* /objects/* /healthz /robots.txt /sitemap.xml
+  }
+  handle @backend {
+    reverse_proxy 127.0.0.1:8080
+  }
+
+  handle {
+    root * /opt/zacod/app/public
+    try_files {path} /index.html
+    header /index.html Cache-Control "no-cache, no-store, must-revalidate"
+    file_server
+  }
 }
 `
     : `${inst.domain} {

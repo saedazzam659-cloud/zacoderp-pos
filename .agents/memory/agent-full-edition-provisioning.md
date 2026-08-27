@@ -4,7 +4,7 @@ description: Invariants for the «نسخة كاملة» agent edition, its relea
 ---
 
 ## Editions
-`agent_instances.mode`: `frontend_only`, `full_shell`, `full`. `full` runs the whole api-server bundle locally on the agent server (systemd `zacod-app` on 127.0.0.1:8080, Caddy fronting it); the other two are served from central.
+`agent_instances.mode`: `frontend_only`, `full_shell`, `full`. `full` runs the whole api-server bundle locally on the agent server (systemd `zacod-app` on 127.0.0.1:8080); Caddy serves the local SPA from the installed `public/` directory and proxies backend paths only. The other two modes are served from central.
 
 ## Release channel
 - `lib/agentRelease.ts` tars the server's OWN `dist/` (version = sha256(index.mjs)[:16]) → every central Publish is automatically a new agent release. `dist/public/` SPA assets ride along only in the PRODUCTION build — dev dist has no UI, so full-edition install tests must pull from prod.
@@ -17,6 +17,7 @@ description: Invariants for the «نسخة كاملة» agent edition, its relea
 - UI: deploy + init-db + provision buttons all disable while `deployStatus==="deploying"` (they share the lease).
 - Full-mode app env uses a LOOPBACK DATABASE_URL (rewrite host→127.0.0.1, drop sslmode); central keeps the public URL because schema init/fingerprint run from central — that is why the agent Postgres is remotely reachable (scram + strong hex password). Tightening exposure = known follow-up.
 - Progress streams into deployLog (reused column, no DDL); UI polls the list every 3s while deploying.
+- Full-mode Caddy must route `/api*` (and backend utility paths) to local Node, while static files and the SPA fallback come from the installed frontend. A catch-all reverse proxy produces `Cannot GET /` even though DNS/TLS and the app service are healthy.
 
 ## خيارات التسطيب (variants)
 - `/provision` body: `{variant: full|no_db|upload, encryptBundle}` — الافتراضي يطابق السلوك القديم تمامًا.
