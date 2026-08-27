@@ -4,7 +4,7 @@ import {
   BACKUP_EXCLUDED_TABLES, classifyTable, isSensitiveColumn, sanitizeRow,
   topologicalTableOrder, isFullCompanyBackupPayload, isExternalFileReference,
   catalogsMatch, missingRequiredFullCompanyTables, REQUIRED_FULL_COMPANY_TABLES,
-  restoreParameterValue,
+  restoreParameterValue, restoredUsername,
 } from "../src/lib/fullCompanyBackup.js";
 
 test("backup sensitive policy preserves business hashes and removes credentials", () => {
@@ -59,6 +59,11 @@ test("restore serializes json values before raw SQL binding", () => {
   assert.equal(restoreParameterValue("json", { enabled: true }), '{"enabled":true}');
   assert.equal(restoreParameterValue("text", "plain"), "plain");
   assert.equal(restoreParameterValue("jsonb", null), null);
+});
+
+test("restored users receive deterministic non-login identities", () => {
+  assert.equal(restoredUsername("admin", 1, 23), "admin.restored.1.23");
+  assert.ok(restoredUsername("x".repeat(200), 1, 23).length <= 120);
 });
 
 test("only control/auth backup exclusions are excluded", () => {

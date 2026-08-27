@@ -82,6 +82,10 @@ function cell(row: Record<string, any>, snake: string): any {
 function normalizedKey(key: string): string {
   return key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^a-zA-Z0-9]+/g, "_").toLowerCase();
 }
+export function restoredUsername(username: string, companyId: number, sourceId: unknown): string {
+  const suffix = `.restored.${companyId}.${String(sourceId).replace(/[^a-zA-Z0-9]/g, "") || "user"}`;
+  return `${username.slice(0, Math.max(1, 120 - suffix.length))}${suffix}`;
+}
 export function isSensitiveColumn(column: string): boolean { return SENSITIVE.test(normalizedKey(column)); }
 export function restoreParameterValue(dataType: string | undefined, value: unknown): unknown {
   if ((dataType === "json" || dataType === "jsonb") && value !== null && value !== undefined) {
@@ -425,11 +429,19 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
           if (typeof username !== "string" || !username.trim()) throw new Error("Backup user has no username");
           const found = rows(await tx.execute(sql`SELECT "id" FROM "users" WHERE "company_id" = ${companyId} AND "username" = ${username}`))[0];
           if (found) { maps.get(name)!.set(source[table.primaryKey], found.id); continue; }
-          const collision = rows(await tx.execute(sql`SELECT "id" FROM "users" WHERE "username" = ${username} LIMIT 1`))[0];
-          if (collision) {
-            const suffix = `.restored.${companyId}.${String(source[table.primaryKey]).replace(/[^a-zA-Z0-9]/g, "")}`;
-            source = { ...source, username: `${username.slice(0, Math.max(1, 120 - suffix.length))}${suffix}`, email: null };
-          }
+          // Restored users are intentionally disabled. Always give a newly
+          // inserted user a restore-only identity so old agent schemas that
+          // still enforce global username/email uniqueness cannot collide.
+          source = {
+            ...source,
+            username: restoredUsername(username, companyId, source[table.primaryKey]),
+            email: null,
+            is_trainee: false,
+            session_token: null,
+            session_id: null,
+            session_channel: null,
+            current_session_id: null,
+          };
         }
         const values: Record<string, unknown> = {};
         for (const col of table.columns) {
@@ -437,7 +449,9 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
             values[col] = restoreParameterValue(columnTypes.get(`${name}.${col}`), source[col]);
           }
         }
-        if (table.classification === "tenant-root") values.company_id = companyId;
+        if (table.classification !== "dependent-child" && table.columns.includes("company_id")) {
+          values.company_id = companyId;
+        }
         if (name === "users") {
           values.password_hash = "!backup-import-disabled!";
           if (table.columns.includes("is_active")) values.is_active = false;
