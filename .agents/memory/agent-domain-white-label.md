@@ -19,3 +19,8 @@ Rule: on registered agent domains (agent_instances.brand_name), the static index
 - Brand replacement must be token-ordered longest-first (`زاكود المحاسبي` → `زاكود`, `Zacoderp` → `Zacod ERP` → `Zacode`) or "Zacoderp" degrades to "<brand>rp"; lowercase zacoderp.com URLs must stay intact.
 - JSON-LD `<script type="application/ld+json">` blocks are DROPPED on agent domains — HTML-escaped replacements corrupt the JSON, and Zacode org schema is wrong for the brand anyway.
 - The prod platform wrapper serves existing static files first; only non-file paths (/login etc.) are guaranteed to reach express — verify "/" behavior on a real agent domain after publish.
+- On the central monorepo deployment, branded HTML must be read from the root web artifact before any API-bundle `dist/public` snapshot. Otherwise the branded index can reference a hash absent from the static artifact; the missing module falls through to `index.html` (`text/html`) and produces a white screen.
+
+**Why:** the API release may carry its own frontend snapshot for external-agent installation, but central production serves `/assets/*` from the separately built web artifact.
+
+**How to apply:** resolve the web artifact relative to both monorepo cwd and the API runtime directory, prefer it when present, and verify the branded index's main asset exists in that same web `dist/public`.

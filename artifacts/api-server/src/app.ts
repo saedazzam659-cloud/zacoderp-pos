@@ -258,9 +258,21 @@ export async function readSpaIndexHtml(): Promise<{ path: string; html: string }
   if (cachedIndexHtml === null && Date.now() < indexHtmlMissRetryAt) return null;
   const { promises: fsp } = await import("node:fs");
   const path = await import("node:path");
+  const runtimeDir = process.argv[1] ? path.dirname(process.argv[1]) : "";
   const candidates = [
+    // Central monorepo deployment: always read the index from the root web
+    // artifact whose /assets directory is actually served. The API bundle can
+    // also contain a dist/public snapshot for external-agent releases; using
+    // that snapshot here can pair a newer index hash with the central static
+    // artifact's older assets and blank the whole site.
+    path.resolve(process.cwd(), "artifacts", "zatca-invoicing", "dist", "public", "index.html"),
+    // Same central deployment when the service runner chooses the API
+    // artifact as cwd instead of the monorepo root.
+    runtimeDir
+      ? path.resolve(runtimeDir, "..", "..", "zatca-invoicing", "dist", "public", "index.html")
+      : "",
     // Deployed bundle: SPA assets ride alongside index.mjs (dist/public).
-    process.argv[1] ? path.join(path.dirname(process.argv[1]), "public", "index.html") : "",
+    runtimeDir ? path.join(runtimeDir, "public", "index.html") : "",
     path.resolve(process.cwd(), "public", "index.html"),
     path.resolve(process.cwd(), "dist", "public", "index.html"),
     // Dev workspace fallback (built web artifact).
