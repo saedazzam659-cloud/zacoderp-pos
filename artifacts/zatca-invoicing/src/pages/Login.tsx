@@ -155,6 +155,9 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [demoPhone, setDemoPhone] = useState("");
+  const [showDemoPhoneConfirm, setShowDemoPhoneConfirm] = useState(false);
+  const [demoPhoneLoading, setDemoPhoneLoading] = useState(false);
+  const [demoPhoneError, setDemoPhoneError] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showDemoPreparation, setShowDemoPreparation] = useState(false);
@@ -350,9 +353,10 @@ export default function Login() {
   const checkDemoPreparation = async (
     cleanUsername: string,
     cleanCompanyCode: string,
-  ): Promise<{ needsPreparation: boolean; transferRequired: boolean }> => {
+    phone = "",
+  ): Promise<{ needsPreparation: boolean; transferRequired: boolean; phoneRequired: boolean }> => {
     if (!cleanCompanyCode || loginMode !== "company") {
-      return { needsPreparation: false, transferRequired: false };
+      return { needsPreparation: false, transferRequired: false, phoneRequired: false };
     }
     let legacyDeviceToken = "";
     try {
@@ -370,19 +374,20 @@ export default function Login() {
           password,
           companyCode: cleanCompanyCode,
           intent: "check_demo_preparation",
-          ...(demoPhone.trim() ? { demoPhone: demoPhone.trim() } : {}),
+          ...(phone.trim() ? { demoPhone: phone.trim() } : {}),
           ...(legacyDeviceToken ? { demoDeviceToken: legacyDeviceToken } : {}),
         }),
       });
-      if (!response.ok) return { needsPreparation: false, transferRequired: false };
+      if (!response.ok) return { needsPreparation: false, transferRequired: false, phoneRequired: false };
       const data = await response.json().catch(() => ({}));
       return {
         needsPreparation: data.needsPreparation === true,
         transferRequired: data.transferRequired === true,
+        phoneRequired: data.phoneRequired === true,
       };
     } catch {
       // The real login request below remains the source of truth for errors.
-      return { needsPreparation: false, transferRequired: false };
+      return { needsPreparation: false, transferRequired: false, phoneRequired: false };
     }
   };
 
@@ -416,6 +421,53 @@ export default function Login() {
     }
   };
 
+  const confirmDemoPhoneAndLogin = async () => {
+    const phone = demoPhone.trim();
+    if (!/^[+\d][\d\s()-]{6,24}$/.test(phone)) {
+      setDemoPhoneError("أدخل رقم هاتف صحيحًا للمتابعة");
+      return;
+    }
+    const cleanCompanyCode = companyCode.trim().toUpperCase();
+    const cleanUsername = username.trim();
+    setDemoPhoneLoading(true);
+    setDemoPhoneError("");
+    try {
+      const preflight = await checkDemoPreparation(cleanUsername, cleanCompanyCode, phone);
+      if (preflight.phoneRequired) {
+        setDemoPhoneError("تعذر تأكيد رقم الهاتف. راجع الرقم وحاول مرة أخرى.");
+        return;
+      }
+      if (preflight.transferRequired) {
+        setShowDemoPhoneConfirm(false);
+        setShowDemoTransfer(true);
+        return;
+      }
+      if (preflight.needsPreparation) {
+        setDemoPreparationProgress(0);
+        setShowDemoPreparation(true);
+      }
+      await login(cleanUsername, password, cleanCompanyCode, { demoPhone: phone });
+      rememberCompanyCode(cleanCompanyCode);
+      setDemoPreparationProgress(100);
+      setShowDemoPhoneConfirm(false);
+      goAfterLogin();
+    } catch (err: any) {
+      if (err?.status === 409 && err?.data?.code === "DEMO_SESSION_TRANSFER_REQUIRED") {
+        setShowDemoPhoneConfirm(false);
+        setShowDemoTransfer(true);
+        return;
+      }
+      setDemoPhoneError(
+        isServerUnreachable(err)
+          ? SERVER_UPDATING_MSG
+          : friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")),
+      );
+    } finally {
+      setShowDemoPreparation(false);
+      setDemoPhoneLoading(false);
+    }
+  };
+
   // ── Submit credentials ─────────────────────────────────────────────────
   const submitCreds = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -439,6 +491,12 @@ export default function Login() {
         const trimmedCode = loginMode === "trainee" ? "" : companyCode.trim().toUpperCase();
         const trimmedUsername = username.trim();
         const demoPreflight = await checkDemoPreparation(trimmedUsername, trimmedCode);
+        if (demoPreflight.phoneRequired) {
+          setDemoPhone("");
+          setDemoPhoneError("");
+          setShowDemoPhoneConfirm(true);
+          return;
+        }
         if (demoPreflight.transferRequired) {
           setDemoTransferError("");
           setShowDemoTransfer(true);
@@ -462,6 +520,12 @@ export default function Login() {
         goAfterLogin();
         return;
       } catch (err: any) {
+        if (err?.status === 428 && err?.data?.code === "DEMO_PHONE_REQUIRED") {
+          setDemoPhone("");
+          setDemoPhoneError("");
+          setShowDemoPhoneConfirm(true);
+          return;
+        }
         if (err?.status === 409 && err?.data?.code === "DEMO_SESSION_TRANSFER_REQUIRED") {
           setDemoTransferError("");
           setShowDemoTransfer(true);
@@ -630,6 +694,68 @@ export default function Login() {
         isVisible={showDemoPreparation}
         progress={demoPreparationProgress}
       />
+      <AlertDialog
+        open={showDemoPhoneConfirm}
+        onOpenChange={(open) => {
+          if (demoPhoneLoading) return;
+          setShowDemoPhoneConfirm(open);
+          if (!open) setDemoPhoneError("");
+        }}
+      >
+        <AlertDialogContent dir="rtl" data-testid="demo-phone-dialog">
+          <AlertDialogHeader className="text-right sm:text-right">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary sm:mx-0">
+              <Smartphone className="h-6 w-6" />
+            </div>
+            <AlertDialogTitle>تأكيد رقم الهاتف للديمو</AlertDialogTitle>
+            <AlertDialogDescription className="text-right leading-6">
+              أدخل رقم هاتفك لحفظ بيئة الديمو الخاصة بك واستعادتها عند الدخول من جهاز آخر.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">رقم الهاتف</label>
+            <Input
+              value={demoPhone}
+              onChange={(event) => {
+                setDemoPhone(event.target.value);
+                setDemoPhoneError("");
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void confirmDemoPhoneAndLogin();
+                }
+              }}
+              placeholder="05xxxxxxxx"
+              dir="ltr"
+              inputMode="tel"
+              autoFocus
+              disabled={demoPhoneLoading}
+              data-testid="demo-phone-input"
+            />
+          </div>
+          {demoPhoneError && (
+            <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+              {demoPhoneError}
+            </div>
+          )}
+          <AlertDialogFooter className="gap-2 sm:space-x-0">
+            <AlertDialogCancel disabled={demoPhoneLoading}>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={demoPhoneLoading || !demoPhone.trim()}
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDemoPhoneAndLogin();
+              }}
+              data-testid="demo-phone-confirm"
+              className="gap-2"
+            >
+              {demoPhoneLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+              {demoPhoneLoading ? "جارٍ تجهيز الديمو..." : "تأكيد والدخول"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={showDemoTransfer}
         onOpenChange={(open) => {
@@ -938,25 +1064,6 @@ export default function Login() {
                   </p>
                 )}
               </div>
-
-              {!isSuperAdminFlow && loginMode === "company" && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    رقم الهاتف <span className="text-xs text-muted-foreground">(مطلوب لحساب الديمو فقط)</span>
-                  </label>
-                  <Input
-                    value={demoPhone}
-                    onChange={e => setDemoPhone(e.target.value)}
-                    placeholder="05xxxxxxxx"
-                    dir="ltr"
-                    inputMode="tel"
-                    className="text-left"
-                    autoComplete="tel"
-                    disabled={step === "blocked"}
-                    data-testid="login-demo-phone"
-                  />
-                </div>
-              )}
 
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">{t("auth.password")}</label>
