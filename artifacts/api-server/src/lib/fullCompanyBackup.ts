@@ -93,6 +93,9 @@ export function restoredUsername(username: string, companyId: number, sourceId: 
   const suffix = `.restored.${companyId}.${String(sourceId).replace(/[^a-zA-Z0-9]/g, "") || "user"}`;
   return `${username.slice(0, Math.max(1, 120 - suffix.length))}${suffix}`;
 }
+export function restoredUsernames(username: string, companyId: number, sourceId: unknown): [string, string] {
+  return [username, restoredUsername(username, companyId, sourceId)];
+}
 export function isSensitiveColumn(column: string): boolean { return SENSITIVE.test(normalizedKey(column)); }
 export function restoreParameterValue(dataType: string | undefined, value: unknown): unknown {
   if ((dataType === "json" || dataType === "jsonb") && value !== null && value !== undefined) {
@@ -478,14 +481,29 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
           if (!table.primaryKey) throw new Error("Users table must have a scalar primary key");
           const username = source.username;
           if (typeof username !== "string" || !username.trim()) throw new Error("Backup user has no username");
-          const found = rows(await tx.execute(sql`SELECT "id" FROM "users" WHERE "company_id" = ${companyId} AND "username" = ${username}`))[0];
+          const [liveUsername, restoreUsername] = restoredUsernames(
+            username,
+            companyId,
+            source[table.primaryKey],
+          );
+          // Users are deliberately preserved so the operator cannot lock
+          // themselves out. A repeated restore must therefore reuse either
+          // the live account or the deterministic disabled restore account
+          // created by an earlier import instead of inserting it again.
+          const found = rows(await tx.execute(sql`
+            SELECT "id" FROM "users"
+            WHERE "company_id" = ${companyId}
+              AND "username" IN (${liveUsername}, ${restoreUsername})
+            ORDER BY CASE WHEN "username" = ${liveUsername} THEN 0 ELSE 1 END
+            LIMIT 1
+          `))[0];
           if (found) { maps.get(name)!.set(source[table.primaryKey], found.id); continue; }
           // Restored users are intentionally disabled. Always give a newly
           // inserted user a restore-only identity so old agent schemas that
           // still enforce global username/email uniqueness cannot collide.
           source = {
             ...source,
-            username: restoredUsername(username, companyId, source[table.primaryKey]),
+            username: restoreUsername,
             email: null,
             is_trainee: false,
             session_token: null,
