@@ -42,6 +42,27 @@ let targetCompanyId: number | null = null;
 
 try {
   sourceCompanyId = await createCompany(`SOURCE-${stamp}`);
+  // Regression fixture: company settings can contain JSON arrays. These must
+  // be bound as one SQL parameter during restore, never expanded into multiple
+  // placeholders (which previously caused a 101-vs-100 bind failure).
+  await db.execute(sql`
+    UPDATE "companies"
+    SET "print_enabled_templates" = '[1,2,3]'::jsonb
+    WHERE "id" = ${sourceCompanyId}
+  `);
+  const categoryId = Number(rows(await db.execute(sql`
+    INSERT INTO "fa_categories" ("company_id", "code", "name_ar")
+    VALUES (${sourceCompanyId}, ${`FA-CAT-${stamp}`}, 'فئة أصل اختبارية')
+    RETURNING "id"
+  `))[0]?.id);
+  await db.execute(sql`
+    INSERT INTO "fixed_assets"
+      ("company_id", "category_id", "code", "name_ar", "purchase_value",
+       "book_value", "is_opening_balance", "skip_acquisition_je")
+    VALUES
+      (${sourceCompanyId}, ${categoryId}, ${`FA-${stamp}`}, 'أصل ثابت اختباري',
+       '125000.00', '100000.00', true, true)
+  `);
   await db.execute(sql`
     INSERT INTO "production_shifts"
       ("company_id", "name", "code", "start_time", "end_time", "days_of_week")
@@ -103,10 +124,14 @@ try {
       (SELECT "days_of_week" FROM "production_shifts" WHERE "company_id" = ${targetCompanyId} LIMIT 1) AS "days",
       (SELECT count(*) FROM "users" WHERE "company_id" = ${targetCompanyId}) AS "users",
       (SELECT count(*) FROM "invoices" WHERE "company_id" = ${targetCompanyId}) AS "invoices",
-      (SELECT count(*) FROM "security_notification_rules" WHERE "company_id" = ${targetCompanyId}) AS "rules"
+      (SELECT count(*) FROM "security_notification_rules" WHERE "company_id" = ${targetCompanyId}) AS "rules",
+      (SELECT count(*) FROM "fixed_assets" WHERE "company_id" = ${targetCompanyId}) AS "fixed_assets",
+      (SELECT "print_enabled_templates" FROM "companies" WHERE "id" = ${targetCompanyId}) AS "templates"
   `))[0];
   if (JSON.stringify(checks.days) !== JSON.stringify([0, 1, 2, 3, 4])
-      || Number(checks.users) !== 2 || Number(checks.invoices) !== 1 || Number(checks.rules) !== 1) {
+      || Number(checks.users) !== 2 || Number(checks.invoices) !== 1 || Number(checks.rules) !== 1
+      || Number(checks.fixed_assets) !== 1
+      || JSON.stringify(checks.templates) !== JSON.stringify([1, 2, 3])) {
     throw new Error(`Restored fixture verification failed: ${JSON.stringify(checks)}`);
   }
 

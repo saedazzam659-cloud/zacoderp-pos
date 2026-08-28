@@ -554,7 +554,9 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
         IDENT.test(key) && liveCompanyColumns.has(key) && !isSensitiveColumn(key) && !UNSAFE_COMPANY_SETTING.test(key)));
       const columns = Object.keys(safe);
       if (columns.length) await tx.execute(sql`UPDATE "companies" SET ${sql.join(columns.map((column) =>
-        sql`${sql.raw(ident(column))} = ${safe[column]}`), sql`, `)} WHERE "id" = ${companyId}`);
+        sql`${sql.raw(ident(column))} = ${sql.param(
+          restoreParameterValue(columnTypes.get(`companies.${column}`), safe[column]),
+        )}`), sql`, `)} WHERE "id" = ${companyId}`);
     }
     return report;
   });

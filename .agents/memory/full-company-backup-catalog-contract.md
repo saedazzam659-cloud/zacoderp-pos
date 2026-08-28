@@ -8,3 +8,7 @@ Schema-v2 full-company restore must compare the uploaded manifest bidirectionall
 **Why:** An uploaded manifest is attacker-controlled. If it can omit a table or FK, “full replace” silently leaves old rows behind or inserts raw IDs that can reference another tenant. Generic secret-name matching is also unsafe because business hashes such as invoice hashes and ZATCA PIH are evidence, not credentials.
 
 **How to apply:** Discover company roots and dependent children from PostgreSQL metadata; sanitize actual credentials recursively (including signed URLs and JSONB) while preserving business hashes; restore in one transaction with ID remapping. Explicitly report file references whose bytes are not embedded.
+
+Company-settings restore must bind every value with `sql.param` after type normalization; never interpolate raw arrays/JSON into a dynamic SET list.
+
+**Why:** Drizzle can expand an interpolated JSON array into multiple query parameters, producing a PostgreSQL bind-count mismatch only at the final company-settings step. The transaction then rolls back all otherwise-restored module rows.

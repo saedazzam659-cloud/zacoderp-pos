@@ -57,6 +57,7 @@ test("external file reference detection covers stored paths and URLs", () => {
 test("restore serializes json values before raw SQL binding", () => {
   assert.equal(restoreParameterValue("jsonb", [0, 1, 2]), "[0,1,2]");
   assert.equal(restoreParameterValue("json", { enabled: true }), '{"enabled":true}');
+  assert.deepEqual(restoreParameterValue("ARRAY", ["sun", "mon"]), ["sun", "mon"]);
   assert.equal(restoreParameterValue("text", "plain"), "plain");
   assert.equal(restoreParameterValue("jsonb", null), null);
 });
