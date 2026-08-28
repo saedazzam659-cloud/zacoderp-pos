@@ -4161,7 +4161,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               top-nav layout. Mobile keeps the drawer (hidden md:flex inside). */}
           {topNav && <TopNavBar {...sharedProps} />}
         </div>
-        <main className="flex-1 p-4 sm:p-6 md:p-8 bg-muted/30">{children}</main>
+        <main className="min-w-0 max-w-full flex-1 overflow-x-hidden p-3 sm:p-6 md:p-8 bg-muted/30">
+          <div className="min-w-0 max-w-full">{children}</div>
+        </main>
       </div>
 
       {/* Manual-session picker: opens once per login when the user has 0 or

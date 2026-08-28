@@ -243,19 +243,19 @@ export default function Dashboard() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 max-w-full space-y-6">
       {/* Page header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-foreground">{t("pages.dashboard.title")}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{t("pages.dashboard.subtitle")}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <BranchFilter value={branchId} onChange={setBranchId} className="min-w-[180px]" />
-          <Button asChild variant="outline" size="sm" className="gap-1.5">
+        <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+          <BranchFilter value={branchId} onChange={setBranchId} className="col-span-2 w-full min-w-0 sm:w-[180px]" />
+          <Button asChild variant="outline" size="sm" className="min-w-0 gap-1.5">
             <Link href="/invoices"><FileText className="h-4 w-4" />{t("pages.dashboard.invoices")}</Link>
           </Button>
-          <Button asChild size="sm" className="gap-1.5">
+          <Button asChild size="sm" className="min-w-0 gap-1.5">
             <Link href="/sales/invoices/new"><Plus className="h-4 w-4" />{t("pages.dashboard.newInvoice")}</Link>
           </Button>
         </div>
