@@ -345,7 +345,7 @@ test("source invariant: acceleration telemetry DDL is central-only", () => {
     "external/full schema identity reconciliation must not create the central telemetry table",
   );
   assert.ok(
-    ensureSchemaSrc.includes('optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples"]'),
+    /optionalMissingTables:\s*\[[^\]]*"integration_invoice_queue"[^\]]*"agent_invoice_samples"[^\]]*\]/s.test(ensureSchemaSrc),
     "strict external request healing must allow the intentionally central-only telemetry table to be absent",
   );
   for (const column of [

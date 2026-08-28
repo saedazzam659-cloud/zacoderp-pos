@@ -40,6 +40,20 @@ export const companiesTable = pgTable("companies", {
   // the production-csid step (/production/csids) no longer depends on the
   // browser's localStorage to carry it across sessions/devices.
   zatcaComplianceRequestId: text("zatca_compliance_request_id"),
+  // ZATCA registration hand-off fence.  These fields deliberately live with
+  // the company in both central and agent schemas: submission paths can reject
+  // a frozen/moved registration without consulting the control plane.
+  zatcaTransferState: text("zatca_transfer_state").notNull().default("active"),
+  zatcaTransferId: text("zatca_transfer_id"),
+  // Opaque target binding (installation id + database fingerprint digest), not
+  // a connection string and never a credential.
+  zatcaTransferTargetBinding: text("zatca_transfer_target_binding"),
+  zatcaTransferLockedAt: timestamp("zatca_transfer_locked_at"),
+  zatcaTransferCompletedAt: timestamp("zatca_transfer_completed_at"),
+  // Seed used when this company receives an already-established shared chain.
+  // invoice_hash values remain business evidence and are not secrets.
+  zatcaChainSeedIcv: integer("zatca_chain_seed_icv"),
+  zatcaChainSeedPih: text("zatca_chain_seed_pih"),
   invoiceCounter: integer("invoice_counter").notNull().default(0),
   // General settings
   logo: text("logo"),                          // base64 data URL

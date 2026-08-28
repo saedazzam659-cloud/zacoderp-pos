@@ -26,6 +26,7 @@ import { DEFAULT_LOCAL_SUPERADMIN_SCREENS, LOCAL_SUPERADMIN_SCREENS } from "@/li
 import { PlatformLinksTopLevel } from "./platform-links/PlatformLinksManagement";
 import { LocalAgentLinks } from "./platform-links/LocalAgentLinks";
 import { ImportedAgentsList } from "./platform-links/ImportedAgentsList";
+import { ZatcaTransferAction } from "./ZatcaTransferWizard";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -1340,12 +1341,15 @@ export default function AgentServers() {
                       <div className="text-xs font-semibold flex items-center gap-1.5"><LockKeyhole className="h-3.5 w-3.5" />حزمة النسخة الكاملة الخارجية</div>
                       <div className="text-[11px] text-muted-foreground">تُخزّن مشفّرة في التخزين الخاص؛ التنزيل والتسطيب يتحققان من البصمة والتوقيع.</div>
                     </div>
-                    <Button variant="outline" size="sm" className="h-7 text-xs"
-                      disabled={!a.dbUrlSet || pkgBusy === "prepare" || a.deployStatus === "deploying"}
-                      onClick={() => prepareExternalPackage(a)} data-testid={`button-prepare-external-${a.id}`}>
-                      {pkgBusy === "prepare" ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}
-                      تجهيز إصدار جديد
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <ZatcaTransferAction agentId={a.id} agentName={a.name} agentDomain={a.domain} onComplete={invalidate} />
+                      <Button variant="outline" size="sm" className="h-7 text-xs"
+                        disabled={!a.dbUrlSet || pkgBusy === "prepare" || a.deployStatus === "deploying"}
+                        onClick={() => prepareExternalPackage(a)} data-testid={`button-prepare-external-${a.id}`}>
+                        {pkgBusy === "prepare" ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}
+                        تجهيز إصدار جديد
+                      </Button>
+                    </div>
                   </div>
                   <div className="grid md:grid-cols-3 gap-2">
                     {(["backend", "frontend", "db"] as PackageKind[]).map(kind => {

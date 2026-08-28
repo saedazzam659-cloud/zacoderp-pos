@@ -19,6 +19,7 @@ import { getZatcaBaseUrl, resolveZatcaEnv, envArabic, GENESIS_HASH, csidEnvMisma
 import { createHash } from "crypto";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
+import { assertZatcaSubmissionAllowed, withZatcaChainLock } from "../lib/zatcaRegistrationTransfer.js";
 
 const router = Router();
 
@@ -31,6 +32,34 @@ function requireAuthed(req: Request, res: Response, next: NextFunction) {
   next();
 }
 router.use(requireAuthed);
+
+// Every company-level onboarding/compliance mutation uses or replaces EGS
+// credentials. Hold the same chain lock for the complete Express operation
+// (including gateway I/O), and re-read the transfer gate after acquiring it.
+// This middleware intentionally excludes /invoices/:id/submit, whose company
+// namespace is resolved from the invoice and locked by its dedicated wrapper.
+router.use("/companies/:id", async (req, res, next) => {
+  if (req.method !== "POST") { next(); return; }
+  const companyId = Number(req.params.id);
+  if (!Number.isInteger(companyId) || companyId <= 0) { next(); return; }
+  try {
+    await withZatcaChainLock(companyId, async () => {
+      await assertZatcaSubmissionAllowed(companyId);
+      await new Promise<void>((resolve, reject) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        res.once("finish", finish); res.once("close", finish);
+        try { next(); } catch (e) { reject(e); }
+      });
+    });
+  } catch (err: any) {
+    if (res.headersSent) return;
+    if (err?.code === "ZATCA_TRANSFER_LOCKED") {
+      res.status(err.httpStatus ?? 409).json({ error: err.message, code: err.code }); return;
+    }
+    next(err);
+  }
+});
 
 // ZATCA environment/gateway resolution + the genesis chain hash now live in
 // lib/zatca-env.ts so the sales-invoice bridge resolves the SAME gateway and
@@ -194,6 +223,10 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
       message: "تم الحصول على CSID بنجاح. الشركة جاهزة لإصدار الفواتير التجريبية.",
     });
   } catch (err) {
+    if ((err as any)?.code === "ZATCA_TRANSFER_LOCKED") {
+      res.status((err as any).httpStatus ?? 409).json({ error: (err as any).message, code: (err as any).code });
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({
       error: "فشل الاتصال بـ ZATCA",
@@ -540,7 +573,7 @@ router.post("/companies/:id/auto-compliance-check", requirePermission("zatca_set
 });
 
 // ─── 4. Submit Invoice to ZATCA ───────────────────────────────────────────────
-router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"), audit("zatca_bridge", "create"), async (req, res) => {
+async function submitLegacyInvoiceToZatcaUnlocked(req: any, res: any) {
   const id = parseInt(req.params.id);
 
   const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
@@ -560,6 +593,12 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
 
   if (!company) {
     res.status(400).json({ error: "الشركة غير موجودة" });
+    return;
+  }
+  try {
+    await assertZatcaSubmissionAllowed(invoice.companyId!);
+  } catch (err: any) {
+    res.status(err?.httpStatus ?? 409).json({ error: err?.message ?? "إرسال ZATCA موقوف مؤقتًا" });
     return;
   }
 
@@ -715,6 +754,23 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: message });
+  }
+}
+
+// Resolve the company only to select its advisory-lock namespace, then re-read
+// the invoice and transfer gate inside the lock in the unlocked handler. This
+// keeps a prepare/freeze from racing legacy submission network I/O.
+router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"), audit("zatca_bridge", "create"), async (req, res) => {
+  const id = parseInt(String(req.params.id));
+  const [invoice] = await db.select({ companyId: invoicesTable.companyId }).from(invoicesTable).where(eq(invoicesTable.id, id));
+  if (!invoice?.companyId) { res.status(404).json({ error: "Invoice not found" }); return; }
+  try {
+    await withZatcaChainLock(invoice.companyId, async () => submitLegacyInvoiceToZatcaUnlocked(req, res));
+  } catch (err: any) {
+    if (err?.code === "ZATCA_TRANSFER_LOCKED") {
+      res.status(err.httpStatus ?? 409).json({ error: err.message, code: err.code }); return;
+    }
+    res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: err?.message ?? String(err) });
   }
 });
 

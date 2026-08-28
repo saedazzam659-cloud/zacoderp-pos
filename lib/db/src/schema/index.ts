@@ -88,6 +88,7 @@ export * from "./devStudio";
 export * from "./trainees";
 export * from "./trainingRoom";
 export * from "./agentInstances";
+export * from "./zatcaRegistrationTransfers";
 export * from "./externalDatabases";
 export * from "./demoDeviceWorkspaces";
 export * from "./demoAnalytics";

@@ -17,6 +17,9 @@ export const BACKUP_EXCLUDED_TABLES = new Set([
   "device_licenses", "device_invoice_ranges", "download_access_codes",
   "pos_devices",
   "sync_queue_log", "company_clone_runs", "company_templates",
+  // Central-only ZATCA registration transport/control-plane state.  Invoice
+  // hashes are intentionally not excluded: they are business chain evidence.
+  "zatca_registration_transfers",
 ]);
 
 /**
@@ -43,7 +46,7 @@ const PROTECTED_RESTORE_TABLES = new Set(["users"]);
 // Older schema-v2 files included POS device identities. They must not be
 // restored onto another server, but the rest of such a backup remains valid.
 const LEGACY_IGNORED_RESTORE_TABLES = new Set(["pos_devices"]);
-const UNSAFE_COMPANY_SETTING = /(?:^|_)(?:id|company_id|code|status|domain|identity|subscription|plan|billing|backup|otp|token|secret|key|credential|agent|security)(?:_|$)|^(?:created_at|updated_at)$/i;
+const UNSAFE_COMPANY_SETTING = /(?:^|_)(?:id|company_id|code|status|domain|identity|subscription|plan|billing|backup|otp|token|secret|key|credential|agent|security)(?:_|$)|^zatca_(?:transfer|chain_seed)|^(?:created_at|updated_at)$/i;
 
 export type ForeignKey = {
   column: string; referencedTable: string; referencedColumn: string; nullable: boolean;

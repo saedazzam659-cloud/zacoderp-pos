@@ -183,6 +183,10 @@ const CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS = [
   "agent_instances.invoice_acceleration_baseline",
 ] as const;
 
+// These control-plane records contain an encrypted, one-time registration
+// envelope and must never be materialized in an agent's independent database.
+const CENTRAL_ONLY_ZATCA_TRANSFER_TABLES = ["zatca_registration_transfers"] as const;
+
 // Boot-time DDL (ALTER TABLE ADD COLUMN / CREATE INDEX) must never hang forever
 // waiting on a relation lock held by another backend — most importantly the
 // PREVIOUS revision still serving traffic during an autoscale promote. A blocked
@@ -3299,6 +3303,48 @@ async function ensureCentralAgentInvoiceAccelerationSchema(): Promise<void> {
   }
 }
 
+/**
+ * Registration-transfer envelopes are central control-plane material.  Do not
+ * move this DDL into the shared tenant setup list: external agents only receive
+ * the company-side transfer gate columns, never a copy of encrypted envelopes.
+ */
+async function ensureCentralZatcaRegistrationTransferSchema(): Promise<void> {
+  const stmts = [
+    `CREATE TABLE IF NOT EXISTS zatca_registration_transfers (
+      id UUID PRIMARY KEY,
+      source_company_id INTEGER NOT NULL REFERENCES companies(id),
+      target_agent_id INTEGER NOT NULL REFERENCES agent_instances(id),
+      target_company_id INTEGER NOT NULL,
+      target_installation_id TEXT NOT NULL,
+      target_db_fingerprint TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'prepared' CHECK (state IN ('prepared', 'completed', 'cancelled', 'expired')),
+      payload_enc TEXT,
+      payload_hash TEXT NOT NULL,
+      target_binding TEXT NOT NULL,
+      chain_snapshot JSONB NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      consumed_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      cancelled_at TIMESTAMPTZ,
+      created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      completed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      cancelled_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      error TEXT,
+      audit_meta JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS zatca_registration_transfers_source_state_idx
+       ON zatca_registration_transfers (source_company_id, state)`,
+    `CREATE INDEX IF NOT EXISTS zatca_registration_transfers_expiry_idx
+       ON zatca_registration_transfers (expires_at)`,
+  ];
+  for (const stmt of stmts) {
+    try { await execCentralDDL(stmt); }
+    catch (err) { logger.warn({ err }, "ensureSchema: central ZATCA transfer step failed (continuing)"); }
+  }
+}
+
 /** Demo telemetry is central control-plane data, never part of an agent tenant DB. */
 async function ensureCentralDemoAnalyticsSchema(): Promise<void> {
   const stmts = [
@@ -3471,6 +3517,7 @@ export function ensureSchemaUpToDate(): Promise<void> {
       // Create central-only control-plane tables before generic schema
       // inspection, so they are never reported as missing on startup.
       await ensureCentralDemoAnalyticsSchema();
+       await ensureCentralZatcaRegistrationTransferSchema();
       await runHeal();
       await ensureCentralAgentInvoiceAccelerationSchema();
     })();
@@ -3486,7 +3533,7 @@ export function ensureSchemaUpToDate(): Promise<void> {
  */
 export function runSchemaHealOnActiveDb(): Promise<void> {
   return runHeal({
-    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts"],
+    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts", ...CENTRAL_ONLY_ZATCA_TRANSFER_TABLES],
     excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
   });
 }
@@ -3510,7 +3557,7 @@ export function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
     // Both are intentionally lazy/control-plane-only and must not block an
     // external agent request. agent_invoice_samples is created only on the
     // central DB by ensureCentralAgentInvoiceAccelerationSchema().
-    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts"],
+    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts", ...CENTRAL_ONLY_ZATCA_TRANSFER_TABLES],
     excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
   });
 }

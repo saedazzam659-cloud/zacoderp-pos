@@ -34,6 +34,7 @@ import { centralDb as db } from "@workspace/db";
 import {
   agentInstancesTable, agentSecurityEventsTable, agentServersTable, agentInvoiceSamplesTable,
   agentPlatformLinkInvitesTable, agentControllerLinksTable,
+  companiesTable, zatcaRegistrationTransfersTable,
 } from "@workspace/db";
 import { eq, desc, and, or, ne, lt, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -97,6 +98,12 @@ import {
   _logCentralEvent,
 } from "../lib/agentInvoiceAcceleration.js";
 import { logger } from "../lib/logger.js";
+import {
+  assertZatcaSubmissionAllowed, chooseZatcaChain, credentialFingerprint, decryptTransferEnvelope,
+  encryptTransferEnvelope, normalizeVat, resolveZatcaChain, transferBinding,
+  withZatcaChainLock, mayCompleteExpiredTransfer, hasActivatedTransferBinding,
+  completionChainAllowed, type ZatcaTransferEnvelope,
+} from "../lib/zatcaRegistrationTransfer.js";
 import { sanitizeSchemaDumpForExternalAgent } from "../lib/agentExternalSchema.js";
 import {
   assertMonotonicEpoch,
@@ -562,6 +569,78 @@ function publicPackageMap(meta: ExternalPackageMap): Record<ExternalPackageKind,
   return out;
 }
 
+// ── ZATCA registration hand-off (central SuperAdmin only) ──────────────────
+// The browser receives status/presence booleans only.  Credentials remain in
+// the encrypted central envelope and are written directly to the target DB.
+const zatcaTransferInput = z.object({
+  sourceCompanyId: z.number().int().positive(),
+  targetCompanyId: z.number().int().positive(),
+});
+const transferCredentialFields = [
+  "zatcaPrivateKey", "zatcaCsr", "zatcaCsid", "zatcaPcsid",
+  "zatcaCsidToken", "zatcaCsidSecret", "zatcaPcsidToken", "zatcaPcsidSecret",
+] as const;
+function companyTransferCredentials(c: any): Record<string, string> {
+  return Object.fromEntries(transferCredentialFields.flatMap(k => typeof c?.[k] === "string" && c[k] ? [[k, c[k]]] : []));
+}
+function hasCompleteTransferCredentials(c: any): boolean {
+  const x = companyTransferCredentials(c);
+  return !!x.zatcaPrivateKey && !!(x.zatcaPcsidToken || x.zatcaCsidToken) && !!(x.zatcaPcsidSecret || x.zatcaCsidSecret);
+}
+async function targetChain(ctx: any, companyId: number): Promise<{ maxIcv: number; previousInvoiceHash: string }> {
+  const seed = await ctx.db.select({ icv: companiesTable.zatcaChainSeedIcv, pih: companiesTable.zatcaChainSeedPih })
+    .from(companiesTable).where(eq(companiesTable.id, companyId));
+  const q = await ctx.db.execute(sql`SELECT zatca_icv AS icv, invoice_hash AS hash FROM (
+    SELECT zatca_icv, invoice_hash, id, 1 AS source_rank FROM sales_invoices WHERE company_id=${companyId} AND zatca_status IN ('cleared','reported')
+    UNION ALL SELECT zatca_icv, invoice_hash, id, 0 AS source_rank FROM sales_returns WHERE company_id=${companyId} AND zatca_status IN ('cleared','reported')
+  ) c WHERE zatca_icv IS NOT NULL ORDER BY zatca_icv DESC, id DESC, source_rank DESC LIMIT 1`);
+  const row = ((q as any).rows ?? q as any)[0];
+  return chooseZatcaChain(seed[0] ?? {}, row);
+}
+async function inspectTransferAgent(agentId: number) {
+  const [agent] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, agentId));
+  if (!agent || agent.dbStatus !== "initialized" || !agent.dbUrlEnc || !agent.dbFingerprint) throw Object.assign(new Error("قاعدة بيانات الوكيل غير مهيأة"), { httpStatus: 409 });
+  const { getAgentDbContext } = await import("../lib/agentDb.js");
+  const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
+  const { runWithExternalDb } = await import("@workspace/db");
+  const healed = await startAgentSchemaHeal(agent.id, ctx, runWithExternalDb);
+  if (!healed.ok) {
+    throw Object.assign(new Error("تعذّر تجهيز مخطط قاعدة بيانات الوكيل للنقل بأمان"), { httpStatus: 503 });
+  }
+  const identity = await ctx.pool.query("SELECT installation_id, fingerprint FROM zacod_installation WHERE id = 1");
+  const found = identity.rows[0];
+  if (!found || found.installation_id !== agent.installationId || found.fingerprint !== agent.dbFingerprint) throw Object.assign(new Error("تعذّر التحقق من هوية قاعدة بيانات الوكيل"), { httpStatus: 409 });
+  return { agent, ctx };
+}
+async function inspectTransferTarget(agentId: number, targetCompanyId: number) {
+  const { agent, ctx } = await inspectTransferAgent(agentId);
+  const [company] = await (ctx.db as any).select().from(companiesTable).where(eq(companiesTable.id, targetCompanyId));
+  if (!company) throw Object.assign(new Error("شركة الهدف غير موجودة"), { httpStatus: 404 });
+  return { agent, ctx, company };
+}
+async function transferPreflight(agentId: number, sourceCompanyId: number, targetCompanyId: number) {
+  const [source] = await db.select().from(companiesTable).where(eq(companiesTable.id, sourceCompanyId));
+  if (!source) throw Object.assign(new Error("شركة المصدر غير موجودة"), { httpStatus: 404 });
+  await assertZatcaSubmissionAllowed(sourceCompanyId);
+  if (!hasCompleteTransferCredentials(source)) throw Object.assign(new Error("بيانات ZATCA للمصدر غير مكتملة"), { httpStatus: 422 });
+  const target = await inspectTransferTarget(agentId, targetCompanyId);
+  if ((target.company.zatcaTransferState ?? "active") !== "active") throw Object.assign(new Error("شركة الهدف مجمّدة أو مرتبطة بنقل آخر"), { httpStatus: 409 });
+  if (normalizeVat(source.vatNumber) !== normalizeVat(target.company.vatNumber) ||
+      (source.zatcaEnvironment ?? "") !== (target.company.zatcaEnvironment ?? "")) throw Object.assign(new Error("رقم ضريبة القيمة المضافة أو البيئة لا يطابقان"), { httpStatus: 422 });
+  const sourceChain = await resolveZatcaChain(sourceCompanyId);
+  const targetState = await targetChain(target.ctx, targetCompanyId);
+  // Sales sends are synchronous in this deployment. `pending` is the normal
+  // never-submitted state and deliberately must not block a transfer; the
+  // advisory lock is the in-flight submission fence.  No durable ZATCA queue
+  // is present in the application schema (the optional integration queue is
+  // unrelated), so there is no additional queued-send state to inspect.
+  const targetCredentials = companyTransferCredentials(target.company);
+  const sameCredentials = !Object.keys(targetCredentials).length || credentialFingerprint(targetCredentials) === credentialFingerprint(companyTransferCredentials(source));
+  if (!sameCredentials) throw Object.assign(new Error("شركة الهدف لديها تسجيل ZATCA مختلف"), { httpStatus: 409 });
+  if (targetState.maxIcv !== 0 && (targetState.maxIcv !== sourceChain.maxIcv || targetState.previousInvoiceHash !== sourceChain.previousInvoiceHash)) throw Object.assign(new Error("سلسلة ZATCA للهدف لا تطابق المصدر"), { httpStatus: 409 });
+  return { source, target, sourceChain, sameCredentials };
+}
+
 function packageMapSigned(agentId: number, meta: ExternalPackageMap, requireAll: boolean): boolean {
   const required = requireAll ? EXTERNAL_PACKAGE_KINDS : (["backend"] as const);
   return required.every(kind => {
@@ -613,6 +692,213 @@ async function replacePackageMap(agentId: number, next: ExternalPackageMap): Pro
 router.get("/", async (_req, res) => {
   const rows = await db.select().from(agentInstancesTable).orderBy(desc(agentInstancesTable.id)).limit(500);
   res.json(rows.map(publicRow));
+});
+
+router.get("/:agentId/zatca-transfer/companies", async (req, res) => {
+  try {
+    const agentId = Number(req.params.agentId);
+    const { ctx } = await inspectTransferAgent(agentId);
+    const targets = await (ctx.db as any).select().from(companiesTable).orderBy(companiesTable.id);
+    const source = await db.select().from(companiesTable).orderBy(companiesTable.id);
+    res.json({
+      sourceCompanies: source.map(x => ({ id: x.id, nameAr: x.nameAr, vatNumber: x.vatNumber, environment: x.zatcaEnvironment, transferState: x.zatcaTransferState, credentialsSet: hasCompleteTransferCredentials(x) })),
+      targetCompanies: targets.map((x: any) => ({ id: x.id, nameAr: x.nameAr, vatNumber: x.vatNumber, environment: x.zatcaEnvironment, transferState: x.zatcaTransferState, credentialsSet: Object.keys(companyTransferCredentials(x)).length > 0 })),
+    });
+  } catch (e: any) { res.status(e?.httpStatus ?? 400).json({ error: e?.message ?? "تعذر قراءة حالة النقل" }); }
+});
+router.get("/:agentId/zatca-transfer/:transferId", async (req, res) => {
+  try {
+    const transferId = z.string().uuid().parse(req.params.transferId);
+    const [row] = await db.select({
+      id: zatcaRegistrationTransfersTable.id, sourceCompanyId: zatcaRegistrationTransfersTable.sourceCompanyId,
+      targetCompanyId: zatcaRegistrationTransfersTable.targetCompanyId, state: zatcaRegistrationTransfersTable.state,
+      expiresAt: zatcaRegistrationTransfersTable.expiresAt, consumedAt: zatcaRegistrationTransfersTable.consumedAt,
+      completedAt: zatcaRegistrationTransfersTable.completedAt, cancelledAt: zatcaRegistrationTransfersTable.cancelledAt,
+    }).from(zatcaRegistrationTransfersTable).where(and(eq(zatcaRegistrationTransfersTable.id, transferId), eq(zatcaRegistrationTransfersTable.targetAgentId, Number(req.params.agentId))));
+    if (!row) { res.status(404).json({ error: "طلب النقل غير موجود" }); return; }
+    res.json({ ...row, payloadPresent: row.state === "prepared" && !row.consumedAt && !row.cancelledAt });
+  } catch (e: any) { res.status(400).json({ error: e?.message ?? "معرّف نقل غير صالح" }); }
+});
+router.post("/:agentId/zatca-transfer/preflight", async (req, res) => {
+  try {
+    const input = zatcaTransferInput.parse(req.body);
+    const r = await transferPreflight(Number(req.params.agentId), input.sourceCompanyId, input.targetCompanyId);
+    await logAgentEvent(r.target.agent.id, "zatca_transfer_preflight", { sourceCompanyId: input.sourceCompanyId, targetCompanyId: input.targetCompanyId }, req);
+    res.json({ ok: true, sourceCredentialsSet: true, targetCredentialsSameOrEmpty: r.sameCredentials, chainReady: true });
+  } catch (e: any) { res.status(e?.httpStatus ?? 422).json({ ok: false, error: e?.message ?? "فشل الفحص المسبق" }); }
+});
+router.post("/:agentId/zatca-transfer/prepare", async (req, res) => {
+  try {
+    const input = zatcaTransferInput.parse(req.body); const actor = (req as any).authUser?.id ?? null;
+    const result = await withZatcaChainLock(input.sourceCompanyId, async () => {
+      const r = await transferPreflight(Number(req.params.agentId), input.sourceCompanyId, input.targetCompanyId);
+      const id = randomUUID(); const expiresAt = new Date(Date.now() + 10 * 60_000);
+      const targetRef = { agentId: r.target.agent.id, installationId: r.target.agent.installationId, dbFingerprint: r.target.agent.dbFingerprint!, companyId: input.targetCompanyId };
+      const envelope: ZatcaTransferEnvelope = {
+        version: 1, sourceCompanyId: input.sourceCompanyId, vatNumber: normalizeVat(r.source.vatNumber),
+        environment: r.source.zatcaEnvironment ?? "", target: targetRef, credentials: companyTransferCredentials(r.source),
+        chain: { icv: r.sourceChain.maxIcv, pih: r.sourceChain.previousInvoiceHash }, nonce: randomUUID(),
+        issuedAt: new Date().toISOString(), expiresAt: expiresAt.toISOString(),
+      };
+      const payloadEnc = JSON.stringify(encryptTransferEnvelope(envelope));
+      const binding = transferBinding(targetRef);
+      // Deterministic cross-database lock order: central source, then external
+      // target. Both remain held until source row + transfer record commit.
+      await withZatcaChainLock(input.targetCompanyId, async () => {
+        const fresh = await inspectTransferTarget(r.target.agent.id, input.targetCompanyId);
+        const freshCredentials = companyTransferCredentials(fresh.company);
+        const freshChain = await targetChain(fresh.ctx, input.targetCompanyId);
+        if ((fresh.company.zatcaTransferState ?? "active") !== "active" ||
+            normalizeVat(fresh.company.vatNumber) !== envelope.vatNumber ||
+            (fresh.company.zatcaEnvironment ?? "") !== envelope.environment ||
+            (Object.keys(freshCredentials).length && credentialFingerprint(freshCredentials) !== credentialFingerprint(envelope.credentials)) ||
+            (freshChain.maxIcv !== 0 && (freshChain.maxIcv !== envelope.chain.icv || freshChain.previousInvoiceHash !== envelope.chain.pih))) {
+          throw Object.assign(new Error("تغيّرت هوية أو بيانات أو سلسلة شركة الهدف"), { httpStatus: 409 });
+        }
+        await (fresh.ctx.db as any).transaction(async (targetTx: any) => {
+          const frozen = await targetTx.update(companiesTable).set({
+            zatcaTransferState: "frozen", zatcaTransferId: id,
+            zatcaTransferTargetBinding: binding, zatcaTransferLockedAt: new Date(),
+          }).where(and(eq(companiesTable.id, input.targetCompanyId), eq(companiesTable.zatcaTransferState, "active"))).returning({ id: companiesTable.id });
+          if (frozen.length !== 1) throw Object.assign(new Error("تعذر تجميد شركة الهدف بأمان"), { httpStatus: 409 });
+        });
+        try {
+          await db.transaction(async tx => {
+            await tx.update(companiesTable).set({ zatcaTransferState: "frozen", zatcaTransferId: id, zatcaTransferTargetBinding: binding, zatcaTransferLockedAt: new Date() }).where(eq(companiesTable.id, input.sourceCompanyId));
+            await tx.insert(zatcaRegistrationTransfersTable).values({ id, sourceCompanyId: input.sourceCompanyId, targetAgentId: r.target.agent.id, targetCompanyId: input.targetCompanyId, targetInstallationId: targetRef.installationId, targetDbFingerprint: targetRef.dbFingerprint, state: "prepared", payloadEnc, payloadHash: credentialFingerprint(envelope.credentials), targetBinding: binding, chainSnapshot: { source: envelope.chain, target: freshChain }, expiresAt, createdByUserId: actor, auditMeta: { preparedBy: actor } });
+          });
+        } catch (centralError) {
+          try {
+            const cleared = await (fresh.ctx.db as any).update(companiesTable).set({
+              zatcaTransferState: "active", zatcaTransferId: null,
+              zatcaTransferTargetBinding: null, zatcaTransferLockedAt: null,
+            }).where(and(eq(companiesTable.id, input.targetCompanyId), eq(companiesTable.zatcaTransferId, id), eq(companiesTable.zatcaTransferTargetBinding, binding), eq(companiesTable.zatcaTransferState, "frozen"))).returning({ id: companiesTable.id });
+            if (cleared.length !== 1) throw new Error("target compensation binding changed");
+          } catch {
+            throw Object.assign(new Error("تعذر تأكيد التراجع عن تجميد الهدف؛ بقي الهدف مغلقًا للحماية"), { httpStatus: 503, cause: centralError });
+          }
+          throw centralError;
+        }
+      }, r.target.ctx.pool);
+      return { id, expiresAt };
+    });
+    await logAgentEvent(Number(req.params.agentId), "zatca_transfer_prepared", { sourceCompanyId: input.sourceCompanyId, targetCompanyId: input.targetCompanyId, transferId: result.id }, req);
+    res.status(201).json({ ok: true, transferId: result.id, expiresAt: result.expiresAt });
+  } catch (e: any) { res.status(e?.httpStatus ?? 422).json({ ok: false, error: e?.message ?? "تعذر تجهيز النقل" }); }
+});
+const transferIdInput = z.object({ transferId: z.string().uuid() });
+router.post("/:agentId/zatca-transfer/complete", async (req, res) => {
+  try {
+    const { transferId } = transferIdInput.parse(req.body); const actor = (req as any).authUser?.id ?? null;
+    // Row lock gives one-time consumption semantics.  The target commit happens
+    // before central completion; a crash/failure therefore leaves the source
+    // frozen (and cancellable) rather than reopening a registration that moved.
+    await db.transaction(async tx => {
+      const [transfer] = await tx.select().from(zatcaRegistrationTransfersTable).where(eq(zatcaRegistrationTransfersTable.id, transferId)).for("update");
+      if (!transfer || transfer.targetAgentId !== Number(req.params.agentId)) throw Object.assign(new Error("طلب النقل غير موجود"), { httpStatus: 404 });
+      if (transfer.state !== "prepared" || transfer.consumedAt || transfer.cancelledAt) throw Object.assign(new Error("طلب النقل استُخدم بالفعل"), { httpStatus: 409 });
+      const target = await inspectTransferTarget(transfer.targetAgentId, transfer.targetCompanyId);
+      const targetRef = { agentId: transfer.targetAgentId, installationId: transfer.targetInstallationId, dbFingerprint: transfer.targetDbFingerprint, companyId: transfer.targetCompanyId };
+      const targetAlreadyActive = hasActivatedTransferBinding(target.company, transfer.id, transfer.targetBinding);
+      if (!mayCompleteExpiredTransfer(transfer.expiresAt, targetAlreadyActive)) throw Object.assign(new Error("طلب النقل منتهٍ"), { httpStatus: 409 });
+      const envelope = decryptTransferEnvelope(JSON.parse(transfer.payloadEnc || "{}"), targetRef, new Date(), targetAlreadyActive);
+      const [source] = await tx.select().from(companiesTable).where(eq(companiesTable.id, transfer.sourceCompanyId));
+      if (!source || source.zatcaTransferState !== "frozen" || source.zatcaTransferId !== transfer.id ||
+          source.zatcaTransferTargetBinding !== transfer.targetBinding) throw Object.assign(new Error("حالة المصدر لا تسمح بإكمال النقل"), { httpStatus: 409 });
+      const existing = companyTransferCredentials(target.company);
+      if (Object.keys(existing).length && credentialFingerprint(existing) !== credentialFingerprint(envelope.credentials)) throw Object.assign(new Error("شركة الهدف لديها تسجيل مختلف"), { httpStatus: 409 });
+      const existingChain = await targetChain(target.ctx, transfer.targetCompanyId);
+      if (!targetAlreadyActive && existingChain.maxIcv &&
+          (existingChain.maxIcv !== envelope.chain.icv || existingChain.previousInvoiceHash !== envelope.chain.pih)) {
+        throw Object.assign(new Error("سلسلة شركة الهدف تغيّرت"), { httpStatus: 409 });
+      }
+      await withZatcaChainLock(transfer.targetCompanyId, async () => {
+        // Re-read under the target's submission lock, then atomically install
+        // credentials plus chain seed on that external database.
+        const [boundTarget] = await (target.ctx.db as any).select().from(companiesTable).where(eq(companiesTable.id, transfer.targetCompanyId));
+        if (!boundTarget || boundTarget.zatcaTransferId !== transfer.id ||
+            boundTarget.zatcaTransferTargetBinding !== transfer.targetBinding ||
+            !["frozen", "active", "completed"].includes(boundTarget.zatcaTransferState)) {
+          throw Object.assign(new Error("ارتباط شركة الهدف بطلب النقل تغيّر"), { httpStatus: 409 });
+        }
+        const recoveringCommittedActivation = hasActivatedTransferBinding(boundTarget, transfer.id, transfer.targetBinding);
+        const lockedCredentials = companyTransferCredentials(boundTarget);
+        if ((recoveringCommittedActivation || Object.keys(lockedCredentials).length > 0) &&
+            credentialFingerprint(lockedCredentials) !== credentialFingerprint(envelope.credentials)) {
+          throw Object.assign(new Error("بيانات تسجيل شركة الهدف تغيّرت"), { httpStatus: 409 });
+        }
+        const current = await targetChain(target.ctx, transfer.targetCompanyId);
+        if (!recoveringCommittedActivation) {
+          const emptyTargetChain = current.maxIcv === 0;
+          if (!emptyTargetChain && !completionChainAllowed(boundTarget, transfer.id, transfer.targetBinding, current, envelope.chain)) {
+            throw Object.assign(new Error("سلسلة شركة الهدف تغيّرت"), { httpStatus: 409 });
+          }
+          await (target.ctx.db as any).transaction(async (targetTx: any) => {
+            const activated = await targetTx.update(companiesTable).set({
+              ...envelope.credentials, zatcaChainSeedIcv: envelope.chain.icv, zatcaChainSeedPih: envelope.chain.pih,
+              zatcaTransferState: "active", zatcaTransferId: transfer.id, zatcaTransferTargetBinding: transfer.targetBinding,
+              zatcaTransferCompletedAt: new Date(),
+            }).where(and(eq(companiesTable.id, transfer.targetCompanyId), eq(companiesTable.zatcaTransferId, transfer.id), eq(companiesTable.zatcaTransferTargetBinding, transfer.targetBinding))).returning({ id: companiesTable.id });
+            if (activated.length !== 1) throw Object.assign(new Error("فشل تفعيل ارتباط الهدف بشكل مؤكد"), { httpStatus: 409 });
+          });
+        }
+      }, target.ctx.pool);
+      await tx.update(zatcaRegistrationTransfersTable).set({ state: "completed", consumedAt: new Date(), completedAt: new Date(), completedByUserId: actor, payloadEnc: null, updatedAt: new Date() }).where(eq(zatcaRegistrationTransfersTable.id, transfer.id));
+      await tx.update(companiesTable).set({ zatcaTransferState: "moved", zatcaTransferCompletedAt: new Date() }).where(eq(companiesTable.id, transfer.sourceCompanyId));
+    });
+    await logAgentEvent(Number(req.params.agentId), "zatca_transfer_completed", { transferId }, req);
+    res.json({ ok: true, completed: true });
+  } catch (e: any) { res.status(e?.httpStatus ?? 422).json({ ok: false, error: e?.message ?? "تعذر إكمال النقل" }); }
+});
+router.post("/:agentId/zatca-transfer/cancel", async (req, res) => {
+  try {
+    const { transferId } = transferIdInput.parse(req.body); const actor = (req as any).authUser?.id ?? null;
+    await db.transaction(async tx => {
+      const [transfer] = await tx.select().from(zatcaRegistrationTransfersTable).where(eq(zatcaRegistrationTransfersTable.id, transferId)).for("update");
+      if (!transfer || transfer.targetAgentId !== Number(req.params.agentId)) throw Object.assign(new Error("طلب النقل غير موجود"), { httpStatus: 404 });
+      if (transfer.state !== "prepared" || transfer.consumedAt || transfer.completedAt) throw Object.assign(new Error("لا يمكن إلغاء نقل مكتمل أو مستهلك"), { httpStatus: 409 });
+      const [source] = await tx.select().from(companiesTable).where(eq(companiesTable.id, transfer.sourceCompanyId)).for("update");
+      if (!source || source.zatcaTransferState !== "frozen" || source.zatcaTransferId !== transfer.id ||
+          source.zatcaTransferTargetBinding !== transfer.targetBinding) {
+        throw Object.assign(new Error("تغيّر ارتباط المصدر؛ أبقي الطرفان مغلقين للحماية"), { httpStatus: 409 });
+      }
+      // A target commit can succeed immediately before the central completion
+      // write (process crash/network loss). Never cancel in that recovery
+      // window: retrying complete is idempotent and is the only safe finalizer.
+      const target = await inspectTransferTarget(transfer.targetAgentId, transfer.targetCompanyId);
+      if (target.company.zatcaTransferId === transfer.id &&
+          (target.company.zatcaTransferState === "active" || target.company.zatcaTransferState === "completed")) {
+        throw Object.assign(new Error("تم تفعيل التسجيل في الهدف؛ أعد محاولة الإكمال بدل الإلغاء"), { httpStatus: 409 });
+      }
+      const snapshots = transfer.chainSnapshot as any;
+      const targetSnapshot = snapshots?.target ?? snapshots;
+      const targetRef = { agentId: transfer.targetAgentId, installationId: transfer.targetInstallationId, dbFingerprint: transfer.targetDbFingerprint, companyId: transfer.targetCompanyId };
+      const envelope = decryptTransferEnvelope(JSON.parse(transfer.payloadEnc || "{}"), targetRef, new Date(), true);
+      await withZatcaChainLock(transfer.targetCompanyId, async () => {
+        const fresh = await inspectTransferTarget(transfer.targetAgentId, transfer.targetCompanyId);
+        const chain = await targetChain(fresh.ctx, transfer.targetCompanyId);
+        const currentCredentials = companyTransferCredentials(fresh.company);
+        if (fresh.company.zatcaTransferState !== "frozen" ||
+            fresh.company.zatcaTransferId !== transfer.id ||
+            fresh.company.zatcaTransferTargetBinding !== transfer.targetBinding ||
+            (Object.keys(currentCredentials).length > 0 &&
+              credentialFingerprint(currentCredentials) !== credentialFingerprint(envelope.credentials)) ||
+            chain.maxIcv !== Number(targetSnapshot.maxIcv ?? targetSnapshot.icv) ||
+            chain.previousInvoiceHash !== (targetSnapshot.previousInvoiceHash ?? targetSnapshot.pih)) {
+          throw Object.assign(new Error("تغيّر ارتباط أو سلسلة الهدف؛ أبقي الطرفان مغلقين للحماية"), { httpStatus: 409 });
+        }
+        const cleared = await (fresh.ctx.db as any).update(companiesTable).set({
+          zatcaTransferState: "active", zatcaTransferId: null,
+          zatcaTransferTargetBinding: null, zatcaTransferLockedAt: null,
+        }).where(and(eq(companiesTable.id, transfer.targetCompanyId), eq(companiesTable.zatcaTransferId, transfer.id), eq(companiesTable.zatcaTransferTargetBinding, transfer.targetBinding), eq(companiesTable.zatcaTransferState, "frozen"))).returning({ id: companiesTable.id });
+        if (cleared.length !== 1) throw Object.assign(new Error("تعذر إلغاء تجميد الهدف بشكل مؤكد"), { httpStatus: 503 });
+      }, target.ctx.pool);
+      await tx.update(zatcaRegistrationTransfersTable).set({ state: "cancelled", cancelledAt: new Date(), cancelledByUserId: actor, payloadEnc: null, updatedAt: new Date() }).where(eq(zatcaRegistrationTransfersTable.id, transfer.id));
+      await tx.update(companiesTable).set({ zatcaTransferState: "active", zatcaTransferId: null, zatcaTransferTargetBinding: null, zatcaTransferLockedAt: null }).where(and(eq(companiesTable.id, transfer.sourceCompanyId), eq(companiesTable.zatcaTransferId, transfer.id)));
+    });
+    await logAgentEvent(Number(req.params.agentId), "zatca_transfer_cancelled", { transferId }, req);
+    res.json({ ok: true, cancelled: true });
+  } catch (e: any) { res.status(e?.httpStatus ?? 422).json({ ok: false, error: e?.message ?? "تعذر إلغاء النقل" }); }
 });
 
 const upsertSchema = z.object({

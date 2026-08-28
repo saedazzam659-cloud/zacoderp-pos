@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { canPostDoc, requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { randomUUID } from "node:crypto";
-import { db, pool, getActiveExternalDb } from "@workspace/db";
+import { db, getActiveExternalDb } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -50,6 +50,7 @@ import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH, csidEnvMismatchMessage 
 import { boundedOffsetPage } from "../lib/boundedPagination.js";
 import { logger } from "../lib/logger.js";
 import { getAgentDbPoolStats } from "../lib/agentDb.js";
+import { assertZatcaSubmissionAllowed, resolveZatcaChain, withZatcaChainLock } from "../lib/zatcaRegistrationTransfer.js";
 import {
   admitInvoiceAcceleration,
   getInvoiceAccelerationMode,
@@ -5082,6 +5083,9 @@ async function submitSalesInvoiceToZatcaUnlocked(req: any, res: any) {
       return;
     }
 
+    // Re-check while holding the same advisory chain lock as transfer prepare.
+    // This closes the submit-vs-freeze race.
+    await assertZatcaSubmissionAllowed(cid);
     // ─── Company onboarding gate: need a signing key + a CSID/PCSID ──────
     const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, cid));
     if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
@@ -5104,24 +5108,9 @@ async function submitSalesInvoiceToZatcaUnlocked(req: any, res: any) {
     }
 
     // ─── ICV / PIH chain (shared by invoices AND credit notes) ────────────
-    const chainMax = await db.execute(sql`
-      SELECT COALESCE(MAX(zatca_icv), 0)::integer AS "maxIcv" FROM (
-        SELECT zatca_icv FROM sales_invoices WHERE company_id = ${cid} AND zatca_status IN ('cleared', 'reported')
-        UNION ALL
-        SELECT zatca_icv FROM sales_returns WHERE company_id = ${cid} AND zatca_status IN ('cleared', 'reported')
-      ) chain
-    `);
-    const invoiceCounterValue = Number(queryRows<{ maxIcv: number }>(chainMax)[0]?.maxIcv ?? 0) + 1;
-    const previousChain = await db.execute(sql`
-      SELECT invoice_hash AS "hash" FROM (
-        SELECT invoice_hash, zatca_icv, id FROM sales_invoices
-         WHERE company_id = ${cid} AND zatca_status IN ('cleared', 'reported') AND invoice_hash IS NOT NULL
-        UNION ALL
-        SELECT invoice_hash, zatca_icv, id FROM sales_returns
-         WHERE company_id = ${cid} AND zatca_status IN ('cleared', 'reported') AND invoice_hash IS NOT NULL
-      ) chain ORDER BY zatca_icv DESC, id DESC LIMIT 1
-    `);
-    const previousInvoiceHash = queryRows<{ hash: string }>(previousChain)[0]?.hash || GENESIS_HASH;
+    const chain = await resolveZatcaChain(cid);
+    const invoiceCounterValue = chain.maxIcv + 1;
+    const previousInvoiceHash = chain.previousInvoiceHash;
 
     const issueTime = now.toTimeString().split(" ")[0];
     // ZATCA requires the API-body `uuid` (and the matching cbc:UUID embedded in
@@ -5302,24 +5291,11 @@ async function submitSalesInvoiceToZatcaUnlocked(req: any, res: any) {
         : "تم تخليص الفاتورة الضريبية بنجاح.",
     });
   } catch (e: any) {
-    res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: e?.message ?? String(e) });
-  }
-}
-
-const ZATCA_CHAIN_LOCK_KEY = 0x5a43;
-
-async function withZatcaChainLock<T>(companyId: number, work: () => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  let locked = false;
-  try {
-    await client.query("SELECT pg_advisory_lock($1, $2)", [companyId, ZATCA_CHAIN_LOCK_KEY]);
-    locked = true;
-    return await work();
-  } finally {
-    if (locked) {
-      await client.query("SELECT pg_advisory_unlock($1, $2)", [companyId, ZATCA_CHAIN_LOCK_KEY]).catch(() => {});
+    if (e?.code === "ZATCA_TRANSFER_LOCKED") {
+      res.status(e.httpStatus ?? 409).json({ error: e.message, code: e.code });
+      return;
     }
-    client.release();
+    res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: e?.message ?? String(e) });
   }
 }
 
@@ -5341,6 +5317,7 @@ type ZatcaSubmitOutcome = {
  * submission without rolling back a correctly posted return.
  */
 async function submitSalesReturnToZatcaUnlocked(companyId: number, id: number): Promise<ZatcaSubmitOutcome> {
+  await assertZatcaSubmissionAllowed(companyId);
   const [ret] = await db.select().from(salesReturnsTable).where(and(
     eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, companyId),
   ));
@@ -5389,27 +5366,9 @@ async function submitSalesReturnToZatcaUnlocked(companyId: number, id: number): 
 
   // The company chain is shared by invoices and credit notes. Only accepted
   // documents advance ICV/PIH; rejected attempts never affect it.
-  const chainResult = await db.execute(sql`
-    SELECT COALESCE(MAX(zatca_icv), 0)::integer AS "maxIcv"
-    FROM (
-      SELECT zatca_icv FROM sales_invoices
-       WHERE company_id = ${companyId} AND zatca_status IN ('cleared', 'reported')
-      UNION ALL
-      SELECT zatca_icv FROM sales_returns
-       WHERE company_id = ${companyId} AND zatca_status IN ('cleared', 'reported')
-    ) chain
-  `);
-  const maxIcv = Number(queryRows<{ maxIcv: number }>(chainResult)[0]?.maxIcv ?? 0);
-  const previousResult = await db.execute(sql`
-    SELECT invoice_hash AS "hash", zatca_icv AS "icv" FROM (
-      SELECT invoice_hash, zatca_icv, id FROM sales_invoices
-       WHERE company_id = ${companyId} AND zatca_status IN ('cleared', 'reported') AND invoice_hash IS NOT NULL
-      UNION ALL
-      SELECT invoice_hash, zatca_icv, id FROM sales_returns
-       WHERE company_id = ${companyId} AND zatca_status IN ('cleared', 'reported') AND invoice_hash IS NOT NULL
-    ) chain ORDER BY zatca_icv DESC, id DESC LIMIT 1
-  `);
-  const previousInvoiceHash = queryRows<{ hash: string }>(previousResult)[0]?.hash || GENESIS_HASH;
+  const chain = await resolveZatcaChain(companyId);
+  const maxIcv = chain.maxIcv;
+  const previousInvoiceHash = chain.previousInvoiceHash;
   const issueTime = now.toTimeString().split(" ")[0];
   const mapped = salesReturnRowToZatcaData(ret, lines, company, customer, {
     invoiceCounterValue: maxIcv + 1, previousInvoiceHash, issueTime,
@@ -5472,6 +5431,10 @@ router.post("/sales-returns/:id/zatca-submit", async (req, res) => {
     const outcome = await submitSalesReturnToZatca(cid, Number(req.params.id));
     res.status(outcome.httpStatus).json(outcome.body);
   } catch (e: any) {
+    if (e?.code === "ZATCA_TRANSFER_LOCKED") {
+      res.status(e.httpStatus ?? 409).json({ error: e.message, code: e.code });
+      return;
+    }
     res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: e?.message ?? String(e) });
   }
 });
