@@ -303,8 +303,59 @@ health_ok() {
   [ "$code" = "200" ]
 }
 
+# Older full-agent installs proxied only the home page correctly. A browser
+# refresh on a client-side route (for example /sales/invoices) therefore
+# returned an empty/404 response. Every accepted app update also reconciles the
+# managed Caddy gateway so deep links and the page left open during an update
+# always fall back to the SPA index.
+repair_spa_gateway() {
+  command -v caddy >/dev/null 2>&1 || return 0
+  [ -f "$CONFIG_FILE" ] || return 0
+  local domain caddy_file caddy_tmp caddy_bak
+  domain=$(CONFIG_FILE="$CONFIG_FILE" node - <<'NODE'
+const fs = require("node:fs");
+const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, "utf8"));
+const domain = String(cfg.domain || "").trim().toLowerCase();
+if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$/.test(domain)) process.exit(1);
+process.stdout.write(domain);
+NODE
+)
+  caddy_file=/etc/caddy/Caddyfile
+  caddy_tmp=/etc/caddy/Caddyfile.zacod-new
+  caddy_bak=/etc/caddy/Caddyfile.zacod-backup
+  mkdir -p /etc/caddy
+  cat > "$caddy_tmp" <<EOF
+$domain {
+  encode zstd gzip
+
+  @backend {
+    path /api /api/* /storage/* /objects/* /healthz /robots.txt /sitemap.xml
+  }
+  handle @backend {
+    reverse_proxy 127.0.0.1:8080
+  }
+
+  handle {
+    root * /opt/zacod/app/public
+    try_files {path} /index.html
+    header /index.html Cache-Control "no-cache, no-store, must-revalidate"
+    file_server
+  }
+}
+EOF
+  caddy validate --config "$caddy_tmp"
+  [ ! -f "$caddy_file" ] || cp "$caddy_file" "$caddy_bak"
+  mv "$caddy_tmp" "$caddy_file"
+  if ! systemctl reload caddy; then
+    [ ! -f "$caddy_bak" ] || mv "$caddy_bak" "$caddy_file"
+    systemctl reload caddy || true
+    return 1
+  fi
+  rm -f "$caddy_bak"
+}
+
 cleanup() {
-  rm -f "$BUNDLE_FILE" "$AUTH_FILE" "$DISPATCH_LOCK" "$SCRIPT_FILE"
+  rm -f "$BUNDLE_FILE" "$AUTH_FILE" "$DISPATCH_LOCK" "$SCRIPT_FILE" /etc/caddy/Caddyfile.zacod-new
 }
 
 rollback() {
@@ -390,6 +441,28 @@ tar -xzf "$BUNDLE_FILE" -C "$NEW_DIR"
 [ -f "$NEW_DIR/public/index.html" ]
 echo "$TARGET_VERSION" > "$NEW_DIR/VERSION"
 
+# Keep exactly one previous generation of hashed Vite assets. Browsers that
+# were open while the update swapped directories may still request an old lazy
+# chunk for the next screen they open. Without this grace generation that
+# request is a 404 and React can appear as a blank page. The marker prevents
+# retained files from accumulating across later updates.
+RETAINED_LIST="$NEW_DIR/.retained-update-assets"
+: > "$RETAINED_LIST"
+if [ -d "$APP_DIR/public/assets" ]; then
+  OLD_RETAINED="$APP_DIR/.retained-update-assets"
+  while IFS= read -r -d '' old_asset; do
+    rel_asset=\${old_asset#"$APP_DIR/public/"}
+    if [ -f "$OLD_RETAINED" ] && grep -Fqx "$rel_asset" "$OLD_RETAINED"; then
+      continue
+    fi
+    if [ ! -e "$NEW_DIR/public/$rel_asset" ]; then
+      mkdir -p "$(dirname "$NEW_DIR/public/$rel_asset")"
+      cp -p "$old_asset" "$NEW_DIR/public/$rel_asset"
+      printf '%s\\n' "$rel_asset" >> "$RETAINED_LIST"
+    fi
+  done < <(find "$APP_DIR/public/assets" -type f -print0)
+fi
+
 rm -rf "$OLD_DIR" "$FAILED_DIR"
 mv "$APP_DIR" "$OLD_DIR"
 mv "$NEW_DIR" "$APP_DIR"
@@ -403,6 +476,7 @@ for _ in $(seq 1 ${healthAttempts}); do
   if health_ok; then HEALTHY=1; break; fi
 done
 [ "$HEALTHY" = "1" ]
+repair_spa_gateway
 
 SWAPPED=0
 write_status "completed" "تم تثبيت التحديث وتشغيل الخدمة بنجاح"
