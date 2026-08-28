@@ -335,10 +335,16 @@ $domain {
     reverse_proxy 127.0.0.1:8080
   }
 
+  handle /assets/* {
+    root * /opt/zacod/app/public
+    header Cache-Control "public, max-age=31536000, immutable"
+    file_server
+  }
+
   handle {
     root * /opt/zacod/app/public
     try_files {path} /index.html
-    header /index.html Cache-Control "no-cache, no-store, must-revalidate"
+    header Cache-Control "no-cache, no-store, must-revalidate"
     file_server
   }
 }

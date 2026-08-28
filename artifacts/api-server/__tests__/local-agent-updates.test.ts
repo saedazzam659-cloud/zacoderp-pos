@@ -322,6 +322,9 @@ exit 0
   assert.equal(script.includes("license-test-123"), false);
   assert.match(script, /--max-filesize "\$MAX_BUNDLE_SIZE"/);
   assert.match(script, /try_files \{path\} \/index\.html/);
+  assert.match(script, /handle \/assets\/\*/);
+  assert.match(script, /public, max-age=31536000, immutable/);
+  assert.match(script, /header Cache-Control "no-cache, no-store, must-revalidate"/);
   assert.match(script, /repair_spa_gateway/);
   assert.match(script, /\.retained-update-assets/);
   assert.match(script, /find "\$APP_DIR\/public\/assets" -type f -print0/);
