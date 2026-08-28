@@ -30,6 +30,22 @@ export function isDemoDeviceIsolationEnabled(): boolean {
   return process.env.DEMO_DEVICE_ISOLATION_ENABLED !== "false";
 }
 
+/**
+ * Once a source user has ever owned an isolated phone workspace, isolation is
+ * sticky. Schema re-initialisation, cross-server restore, or an older user row
+ * must never silently downgrade later logins back into the shared source
+ * company. The explicit flag still enables first-time provisioning.
+ */
+async function sourceRequiresDemoIsolation(sourceUser: SourceUser): Promise<boolean> {
+  if (!isDemoDeviceIsolationEnabled()) return false;
+  if (sourceUser.demoDeviceIsolation) return true;
+  const [history] = await db.select({ id: demoDeviceWorkspacesTable.id })
+    .from(demoDeviceWorkspacesTable)
+    .where(eq(demoDeviceWorkspacesTable.sourceUserId, sourceUser.id))
+    .limit(1);
+  return !!history;
+}
+
 export class DemoDeviceError extends Error {
   constructor(
     message: string,
@@ -81,7 +97,7 @@ export async function getDemoBrowserLoginPreflight(
   rawDeviceToken: unknown,
   rawPhone?: unknown,
 ): Promise<DemoBrowserLoginPreflight> {
-  if (!isDemoDeviceIsolationEnabled() || !sourceUser.demoDeviceIsolation) {
+  if (!(await sourceRequiresDemoIsolation(sourceUser))) {
     return { needsPreparation: false, transferRequired: false, phoneRequired: false };
   }
   const phone = normalizePhone(rawPhone);
@@ -618,7 +634,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
   phone: string | null;
 }> {
   const source = input.sourceUser;
-  if (!isDemoDeviceIsolationEnabled() || !source.demoDeviceIsolation) {
+  if (!(await sourceRequiresDemoIsolation(source))) {
     return {
       effectiveUser: source,
       deviceToken: null,

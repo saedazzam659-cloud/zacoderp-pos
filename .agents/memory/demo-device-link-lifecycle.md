@@ -27,5 +27,6 @@ A shared demo source account creates one independent workspace per normalized ph
 - `/auth/me` must not reject every `isDemoShadow` user after `resolveBearerToken` succeeds; the resolver's ready-link + cookie check is the authority. Otherwise login succeeds but the first focus refresh logs out a retained legacy workspace.
 - Source-user RBAC edits and source-company menu grants must propagate to every ready, non-revoked retained shadow workspace and emit a refresh for the shadow company. A normal user needs both layers; an admin can hide this drift because it bypasses per-user RBAC.
 - `/auth/me` must self-heal a retained shadow's user permissions and company menu permissions from its source records. This repairs workspaces that were already stale before live propagation existed, without making the admin toggle settings again.
+- Isolation is sticky once any workspace history exists for the source user. A stale/restored false user flag must not downgrade later phone logins into the shared source company.
 - SameSite=None seen in the Replit preview is proxy rewriting, not a bug.
 - First-browser preparation and transfer UX must use the credential-gated, read-only server probe against the HttpOnly cookie and submitted phone.
