@@ -147,3 +147,4 @@
 - [Sales invoice stock overdraft](sales-invoice-stock-overdraft.md) — negative stock requires invoice opt-in + user grant + warehouse policy; enforce the warehouse limit under the posting transaction.
 - [Full-company backup catalog contract](full-company-backup-catalog-contract.md) — v2 restore requires an exact live catalog match; never trust a partial uploaded manifest.
 - [Dual-platform agent control](dual-platform-agent-control.md) — second controllers use invite-derived link tokens, never raw licenses; leadership convergence uses one locale-independent `(epoch, controllerId)` order.
+- [External-agent local objects](external-agent-local-objects.md) — full agents use private filesystem objects when Replit Object Storage is unavailable; keep `/objects/...` references backend-neutral.

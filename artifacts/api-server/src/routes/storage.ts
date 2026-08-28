@@ -1,7 +1,9 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { Readable } from "stream";
 import { z } from "zod";
-import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage";
+import {
+  ObjectStorageService, ObjectNotFoundError, canReadPrivateObjectPath,
+} from "../lib/objectStorage";
 import { extractAuth } from "../middleware/auth.js";
 
 const RequestUploadUrlBody = z.object({
@@ -105,6 +107,10 @@ router.get("/storage/objects/*path", extractAuth, requireAuthed, async (req: Req
   try {
     const raw = req.params.path;
     const wildcardPath = Array.isArray(raw) ? raw.join("/") : raw;
+    if (!canReadPrivateObjectPath(wildcardPath, (req as any).authUser)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     const objectPath = `/objects/${wildcardPath}`;
     const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
 

@@ -1078,7 +1078,10 @@ export default function GeneralSettings() {
         setRestorePhase("جارٍ رفع حزمة البيانات والملفات...");
         const uploadRes = await fetch(target.uploadURL, {
           method: "PUT",
-          headers: { "Content-Type": "application/octet-stream" },
+          headers: {
+            "Content-Type": "application/octet-stream",
+            ...(target.requiresAuth ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: uploadedPortableBackup,
         });
         if (!uploadRes.ok) throw new Error("تعذّر رفع حزمة النسخة إلى الخادم");

@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { mkdtemp, readFile, rm, utimes } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -7,6 +12,7 @@ import {
   rewritePortablePayload, separateRoutedDocumentArchiveRows, serializePortableManifest, validatePortableManifest,
   verifyPortableContainerBuffer, restorePortableBackupPackage,
 } from "../src/lib/companyBackupPackage.js";
+import { ObjectStorageService, canReadPrivateObjectPath } from "../src/lib/objectStorage.js";
 
 const payload: any = {
   meta: { schemaVersion: 2, scope: "full_company", companyId: 1, exportedAt: "2025-01-01", exportedBy: null, appName: "x", files: { mode: "references_only", referenced: 0, warning: null } },
@@ -78,4 +84,46 @@ test("separates routed document archives without changing original payload", () 
   assert.equal(separated.payload.data.document_archives.length, 0);
   assert.equal(separated.payload.counts.document_archives, 0);
   assert.equal(source.data.document_archives.length, 1);
+});
+test("external agents can stage and read private objects from local storage", async () => {
+  const root = await mkdtemp(join(tmpdir(), "zacod-local-objects-"));
+  const previous = process.env.ZACOD_LOCAL_OBJECT_DIR;
+  process.env.ZACOD_LOCAL_OBJECT_DIR = root;
+  try {
+    const service = new ObjectStorageService();
+    assert.equal(service.usesLocalPrivateStorage(), true);
+    const target = service.getPrivateObjectFile("company-backup-packages/18/test.zacbackup");
+    await pipeline(
+      createReadStream(new URL(import.meta.url)),
+      target.createWriteStream({ metadata: { contentType: "application/octet-stream" } }),
+    );
+    const loaded = await service.getObjectEntityFile("/objects/company-backup-packages/18/test.zacbackup");
+    const chunks: Buffer[] = [];
+    for await (const chunk of loaded.createReadStream()) chunks.push(Buffer.from(chunk));
+    assert.match(Buffer.concat(chunks).toString("utf8"), /external agents can stage/);
+    const storedPath = join(root, "company-backup-packages/18/test.zacbackup");
+    await utimes(storedPath, new Date(0), new Date(0));
+    assert.equal(await service.deletePrivateObjectsUnderPrefix("company-backup-packages", {
+      olderThan: new Date(Date.now() - 60_000),
+    }), 1);
+    await assert.rejects(() => readFile(join(root, "company-backup-packages/18/test.zacbackup")));
+  } finally {
+    if (previous === undefined) delete process.env.ZACOD_LOCAL_OBJECT_DIR;
+    else process.env.ZACOD_LOCAL_OBJECT_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("portable staging is never downloadable and restored files are tenant isolated", () => {
+  assert.equal(canReadPrivateObjectPath("company-backup-packages/18/a.zacbackup", {
+    role: "admin", companyId: 18,
+  }), false);
+  assert.equal(canReadPrivateObjectPath("company-backup-files/18/id/0", {
+    role: "admin", companyId: 19,
+  }), false);
+  assert.equal(canReadPrivateObjectPath("company-backup-files/18/id/0", {
+    role: "admin", companyId: 18,
+  }), true);
+  assert.equal(canReadPrivateObjectPath("company-backup-files/18/id/0", {
+    role: "superadmin", companyId: null,
+  }), true);
 });

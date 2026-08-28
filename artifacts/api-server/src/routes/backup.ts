@@ -19,9 +19,10 @@ import {
   whatsappConfigured, normalizeWhatsappPhone,
   sendWhatsappOtp, sendWhatsappBackupNotice,
 } from "../lib/whatsapp.js";
-import { randomInt, createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { randomInt, randomUUID, createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   buildFullCompanyBackup,
@@ -232,6 +233,55 @@ function isCrossTenantSuperadmin(req: any): boolean {
 }
 
 const router = Router();
+const portableLocalUploads = new Map<string, {
+  companyId: number; relativeKey: string; objectPath: string; sizeBytes: number;
+  expiresAt: number; state: "waiting" | "uploading" | "ready" | "restoring"; timer: NodeJS.Timeout;
+}>();
+const PORTABLE_LOCAL_UPLOAD_TTL_MS = 15 * 60_000;
+const MAX_LOCAL_UPLOAD_SESSIONS = 64;
+const MAX_LOCAL_UPLOAD_SESSIONS_PER_COMPANY = 4;
+
+function removePortableLocalUpload(token: string, deleteObject = true): void {
+  const session = portableLocalUploads.get(token);
+  if (!session) return;
+  portableLocalUploads.delete(token);
+  clearTimeout(session.timer);
+  if (deleteObject) {
+    const service = new ObjectStorageService();
+    if (service.usesLocalPrivateStorage()) {
+      void service.getPrivateObjectFile(session.relativeKey)
+        .delete({ ignoreNotFound: true }).catch(() => {});
+    }
+  }
+}
+
+function schedulePortableLocalUploadExpiry(token: string, session: Omit<
+  (typeof portableLocalUploads extends Map<string, infer V> ? V : never), "timer"
+>): NodeJS.Timeout {
+  const timer = setTimeout(() => removePortableLocalUpload(token), PORTABLE_LOCAL_UPLOAD_TTL_MS);
+  timer.unref();
+  return timer;
+}
+
+function claimPortableLocalUploadObject(objectPath: string): string | null {
+  for (const [token, session] of portableLocalUploads) {
+    if (session.objectPath === objectPath) {
+      if (session.state !== "ready") return null;
+      clearTimeout(session.timer);
+      session.state = "restoring";
+      return token;
+    }
+  }
+  return null;
+}
+
+const stalePortableUploadSweep = setInterval(() => {
+  const service = new ObjectStorageService();
+  void service.deletePrivateObjectsUnderPrefix("company-backup-packages", {
+    olderThan: new Date(Date.now() - PORTABLE_LOCAL_UPLOAD_TTL_MS * 2),
+  }).catch(() => {});
+}, PORTABLE_LOCAL_UPLOAD_TTL_MS);
+stalePortableUploadSweep.unref();
   // ─────────────────────────────────────────────────────────────────────────
   // Gemini-first transparent redirect (see notes in routes/ai.ts).
   // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
@@ -419,6 +469,36 @@ router.post("/portable/upload-target", async (req, res) => {
       return;
     }
     const service = new ObjectStorageService();
+    if (service.usesLocalPrivateStorage()) {
+      for (const [token, session] of portableLocalUploads) {
+        if (session.expiresAt <= Date.now()) removePortableLocalUpload(token);
+      }
+      const companySessions = [...portableLocalUploads.values()]
+        .filter((session) => session.companyId === companyId).length;
+      if (portableLocalUploads.size >= MAX_LOCAL_UPLOAD_SESSIONS
+        || companySessions >= MAX_LOCAL_UPLOAD_SESSIONS_PER_COMPANY) {
+        res.status(429).json({ error: "يوجد عدد كبير من عمليات الرفع المعلقة؛ انتظر قليلاً ثم حاول مجددًا" });
+        return;
+      }
+      const relativeKey = createPortablePackageUploadKey(companyId);
+      const token = randomUUID();
+      const objectPath = `/objects/${relativeKey}`;
+      const sessionBase = {
+        companyId, relativeKey, objectPath, sizeBytes,
+        expiresAt: Date.now() + PORTABLE_LOCAL_UPLOAD_TTL_MS,
+        state: "waiting" as const,
+      };
+      portableLocalUploads.set(token, {
+        ...sessionBase,
+        timer: schedulePortableLocalUploadExpiry(token, sessionBase),
+      });
+      res.json({
+        uploadURL: `/api/backup/portable/local-upload/${token}`,
+        objectPath,
+        requiresAuth: true,
+      });
+      return;
+    }
     const target = await service.getPrivateUploadTarget(createPortablePackageUploadKey(companyId), {
       sizeBytes,
       origin: req.get("origin"),
@@ -429,8 +509,66 @@ router.post("/portable/upload-target", async (req, res) => {
   }
 });
 
+router.put("/portable/local-upload/:token", async (req, res) => {
+  const session = portableLocalUploads.get(req.params.token);
+  if (!session || session.expiresAt < Date.now() || session.state !== "waiting") {
+    if (session?.expiresAt && session.expiresAt < Date.now()) removePortableLocalUpload(req.params.token);
+    res.status(404).json({ error: "رابط رفع الحزمة غير صالح أو منتهي" });
+    return;
+  }
+  clearTimeout(session.timer);
+  session.state = "uploading";
+  try {
+    const companyId = resolveCompanyId(req, session.companyId);
+    if (companyId !== session.companyId) {
+      res.status(403).json({ error: "رفع الحزمة غير مصرح به" });
+      return;
+    }
+    const declared = Number(req.get("content-length"));
+    if (!Number.isSafeInteger(declared) || declared !== session.sizeBytes) {
+      res.status(400).json({ error: "حجم الحزمة لا يطابق الحجم المعلن" });
+      return;
+    }
+    const service = new ObjectStorageService();
+    if (!service.usesLocalPrivateStorage()) {
+      res.status(409).json({ error: "مسار الرفع المحلي غير متاح" });
+      return;
+    }
+    const target = service.getPrivateObjectFile(session.relativeKey);
+    let received = 0;
+    req.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > session.sizeBytes) req.destroy(new Error("حجم الحزمة يتجاوز الحجم المعلن"));
+    });
+    await pipeline(req, target.createWriteStream({
+      metadata: { contentType: "application/octet-stream", cacheControl: "private, no-store" },
+    }));
+    if (received !== session.sizeBytes) {
+      removePortableLocalUpload(req.params.token);
+      res.status(400).json({ error: "لم يكتمل رفع حزمة النسخة" });
+      return;
+    }
+    clearTimeout(session.timer);
+    session.expiresAt = Date.now() + PORTABLE_LOCAL_UPLOAD_TTL_MS;
+    session.timer = schedulePortableLocalUploadExpiry(req.params.token, {
+      companyId: session.companyId,
+      relativeKey: session.relativeKey,
+      objectPath: session.objectPath,
+      sizeBytes: session.sizeBytes,
+      expiresAt: session.expiresAt,
+      state: "ready",
+    });
+    session.state = "ready";
+    res.status(204).end();
+  } catch (e: any) {
+    removePortableLocalUpload(req.params.token);
+    if (!res.headersSent) res.status(400).json({ error: e?.message ?? "تعذّر رفع الحزمة" });
+  }
+});
+
 router.post("/portable/restore", async (req, res) => {
   let companyId: number | undefined;
+  let localUploadToken: string | null = null;
   try {
     companyId = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -438,6 +576,7 @@ router.post("/portable/restore", async (req, res) => {
       res.status(400).json({ error: "مسار حزمة النسخة مطلوب" });
       return;
     }
+    localUploadToken = claimPortableLocalUploadObject(req.body.objectPath);
     const out = await restorePortableBackupPackage(companyId, req.body.objectPath);
     await writeAudit({
       userId: req.authUser?.id ?? null,
@@ -462,6 +601,8 @@ router.post("/portable/restore", async (req, res) => {
       }).catch(() => {});
     }
     res.status(400).json({ error: e?.message ?? "فشل استعادة الحزمة" });
+  } finally {
+    if (localUploadToken) removePortableLocalUpload(localUploadToken, false);
   }
 });
 

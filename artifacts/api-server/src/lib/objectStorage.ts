@@ -2,6 +2,11 @@ import { Storage, File } from "@google-cloud/storage";
 import { Readable } from "stream";
 import { randomUUID } from "crypto";
 import {
+  createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync,
+} from "node:fs";
+import { readdir, rm, stat } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
+import {
   ObjectAclPolicy,
   ObjectPermission,
   canAccessObject,
@@ -10,6 +15,86 @@ import {
 } from "./objectAcl";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
+
+type LocalFileLike = File & { __zacodLocalFile?: true };
+const activeLocalObjectReads = new Set<string>();
+
+function localPrivateObjectRoot(): string | null {
+  const explicit = process.env.ZACOD_LOCAL_OBJECT_DIR?.trim();
+  const configPath = process.env.ZACOD_AGENT_CONFIG || "/opt/zacod/config.json";
+  if (!explicit && !existsSync(configPath)) return null;
+  return resolve(explicit || join(dirname(configPath), "storage", "private"));
+}
+
+function safeLocalPath(root: string, relativeKey: string): string {
+  const key = relativeKey.replace(/^\/+/, "");
+  if (!key || key.includes("..") || !/^[A-Za-z0-9/_\-.]+$/.test(key)) {
+    throw new Error("Invalid private object key");
+  }
+  const target = resolve(root, key);
+  if (target !== root && !target.startsWith(root + sep)) throw new Error("Invalid private object key");
+  return target;
+}
+
+function localFile(root: string, relativeKey: string): LocalFileLike {
+  const path = safeLocalPath(root, relativeKey);
+  const metadataPath = `${path}.zacmeta.json`;
+  return {
+    __zacodLocalFile: true,
+    name: relativeKey,
+    exists: async () => [existsSync(path)],
+    getMetadata: async () => {
+      const info = await stat(path);
+      let stored: Record<string, unknown> = {};
+      try { stored = JSON.parse(readFileSync(metadataPath, "utf8")); } catch { /* legacy local file */ }
+      return [{
+        size: String(info.size),
+        contentType: typeof stored.contentType === "string" ? stored.contentType : "application/octet-stream",
+        cacheControl: typeof stored.cacheControl === "string" ? stored.cacheControl : "private, no-store",
+        timeCreated: info.birthtime.toISOString(),
+        updated: info.mtime.toISOString(),
+      }];
+    },
+    createReadStream: (options?: any) => {
+      const stream = createReadStream(path, options);
+      activeLocalObjectReads.add(path);
+      const release = () => activeLocalObjectReads.delete(path);
+      stream.once("close", release);
+      stream.once("error", release);
+      return stream;
+    },
+    createWriteStream: (options?: any) => {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      const stream = createWriteStream(path, { flags: "w", mode: 0o600 });
+      const metadata = options?.metadata;
+      stream.once("finish", () => {
+        try {
+          writeFileSync(metadataPath, JSON.stringify({
+            contentType: metadata?.contentType || "application/octet-stream",
+            cacheControl: metadata?.cacheControl || "private, no-store",
+          }), { mode: 0o600 });
+        } catch { /* metadata is best-effort; bytes remain valid */ }
+      });
+      return stream;
+    },
+    delete: async () => {
+      await Promise.all([rm(path, { force: true }), rm(metadataPath, { force: true })]);
+      return [{}];
+    },
+  } as unknown as LocalFileLike;
+}
+
+async function localFilesUnder(dir: string): Promise<string[]> {
+  let entries;
+  try { entries = await readdir(dir, { withFileTypes: true }); } catch { return []; }
+  const files: string[] = [];
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...await localFilesUnder(path));
+    else if (entry.isFile() && !entry.name.endsWith(".zacmeta.json")) files.push(path);
+  }
+  return files;
+}
 
 export const objectStorageClient = new Storage({
   credentials: {
@@ -37,8 +122,22 @@ export class ObjectNotFoundError extends Error {
   }
 }
 
+export function canReadPrivateObjectPath(
+  wildcardPath: string,
+  auth: { role?: string | null; companyId?: number | null } | null | undefined,
+): boolean {
+  if (wildcardPath.startsWith("company-backup-packages/")) return false;
+  const restoredMatch = /^company-backup-files\/(\d+)\//.exec(wildcardPath);
+  if (!restoredMatch) return true;
+  return auth?.role === "superadmin" || Number(auth?.companyId) === Number(restoredMatch[1]);
+}
+
 export class ObjectStorageService {
   constructor() {}
+
+  usesLocalPrivateStorage(): boolean {
+    return localPrivateObjectRoot() !== null;
+  }
 
   getPublicObjectSearchPaths(): Array<string> {
     const pathsStr = process.env.PUBLIC_OBJECT_SEARCH_PATHS || "";
@@ -89,7 +188,7 @@ export class ObjectStorageService {
 
   async downloadObject(file: File, cacheTtlSec: number = 3600): Promise<Response> {
     const [metadata] = await file.getMetadata();
-    const aclPolicy = await getObjectAclPolicy(file);
+    const aclPolicy = (file as LocalFileLike).__zacodLocalFile ? null : await getObjectAclPolicy(file);
     const isPublic = aclPolicy?.visibility === "public";
 
     const nodeStream = file.createReadStream();
@@ -179,6 +278,8 @@ export class ObjectStorageService {
     if (!safeKey || safeKey.includes("..") || !/^[A-Za-z0-9/_\-.]+$/.test(safeKey)) {
       throw new Error("Invalid private object key");
     }
+    const localRoot = localPrivateObjectRoot();
+    if (localRoot) return localFile(localRoot, safeKey);
     const privateObjectDir = this.getPrivateObjectDir().replace(/\/+$/, "");
     const { bucketName, objectName } = parseObjectPath(`${privateObjectDir}/${safeKey}`);
     return objectStorageClient.bucket(bucketName).file(objectName);
@@ -196,6 +297,30 @@ export class ObjectStorageService {
     const safePrefix = relativePrefix.replace(/^\/+/, "").replace(/\/+$/, "");
     if (!safePrefix || safePrefix.includes("..") || !/^[A-Za-z0-9/_\-.]+$/.test(safePrefix)) {
       throw new Error("Invalid private object prefix");
+    }
+    const localRoot = localPrivateObjectRoot();
+    if (localRoot) {
+      const target = safeLocalPath(localRoot, safePrefix);
+      if (!options.olderThan && !options.requiredSegment) {
+        await rm(target, { recursive: true, force: true });
+        return 1;
+      }
+      let deleted = 0;
+      for (const path of await localFilesUnder(target)) {
+        if (activeLocalObjectReads.has(path)) continue;
+        const relative = path.slice(localRoot.length + 1);
+        if (options.requiredSegment && !relative.includes(options.requiredSegment)) continue;
+        if (options.olderThan) {
+          const info = await stat(path);
+          if (info.mtime.getTime() >= options.olderThan.getTime()) continue;
+        }
+        await Promise.all([
+          rm(path, { force: true }),
+          rm(`${path}.zacmeta.json`, { force: true }),
+        ]);
+        deleted++;
+      }
+      return deleted;
     }
     const privateObjectDir = this.getPrivateObjectDir().replace(/\/+$/, "");
     const { bucketName, objectName } = parseObjectPath(`${privateObjectDir}/${safePrefix}/`);
@@ -226,6 +351,13 @@ export class ObjectStorageService {
     }
 
     const entityId = parts.slice(1).join("/");
+    const localRoot = localPrivateObjectRoot();
+    if (localRoot) {
+      const file = localFile(localRoot, entityId);
+      const [exists] = await file.exists();
+      if (!exists) throw new ObjectNotFoundError();
+      return file;
+    }
     let entityDir = this.getPrivateObjectDir();
     if (!entityDir.endsWith("/")) {
       entityDir = `${entityDir}/`;
