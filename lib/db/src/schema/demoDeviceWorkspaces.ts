@@ -27,6 +27,7 @@ export const demoDeviceWorkspacesTable = pgTable("demo_device_workspaces", {
     .references(() => companiesTable.id, { onDelete: "cascade" }),
   workspaceUserId: integer("workspace_user_id")
     .references(() => usersTable.id, { onDelete: "cascade" }),
+  phone: varchar("phone", { length: 32 }),
   deviceTokenHash: varchar("device_token_hash", { length: 64 }).notNull(),
   deviceLabel: varchar("device_label", { length: 180 }),
   userAgent: text("user_agent"),
@@ -42,6 +43,7 @@ export const demoDeviceWorkspacesTable = pgTable("demo_device_workspaces", {
   sourceDeviceUnique: uniqueIndex("demo_device_workspaces_source_device_uq")
     .on(t.sourceUserId, t.deviceTokenHash),
   sourceIdx: index("demo_device_workspaces_source_idx").on(t.sourceUserId),
+  sourcePhoneIdx: index("demo_device_workspaces_source_phone_idx").on(t.sourceUserId, t.phone),
   workspaceIdx: index("demo_device_workspaces_company_idx").on(t.workspaceCompanyId),
 }));
 

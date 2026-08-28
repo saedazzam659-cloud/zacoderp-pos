@@ -17,9 +17,9 @@ export interface DemoAnalyticsStatus {
   phoneRequired: boolean;
   profileId?: number;
   enabled?: boolean;
-  actionLimit?: number;
+  actionLimit?: number | null;
   actionsUsed?: number;
-  remaining?: number;
+  remaining?: number | null;
   warningRemaining?: number;
   subscriptionMessage?: string;
   blocked?: boolean;
@@ -223,7 +223,7 @@ export function DemoAnalyticsProvider({ children }: { children: React.ReactNode 
 
   return (
     <DemoAnalyticsContext.Provider value={{ status, trackEvent, refreshStatus, consumeAction }}>
-      {status?.applicable && status.warningRemaining !== undefined && status.remaining !== undefined && (
+      {status?.applicable && status.warningRemaining !== undefined && status.remaining != null && (
         <DemoQuotaBanner status={status} />
       )}
       {children}

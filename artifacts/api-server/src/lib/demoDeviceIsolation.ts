@@ -9,6 +9,8 @@ import {
   userBranchesTable,
   usersTable,
 } from "@workspace/db";
+import { cloneCompany } from "./cloneCompany.js";
+import { normalizePhone } from "./demoAnalytics.js";
 
 const DEVICE_TOKEN_MIN = 24;
 const DEVICE_TOKEN_MAX = 256;
@@ -63,6 +65,7 @@ export function readDemoBrowserCookie(rawHeader: string | undefined): string | u
 export interface DemoBrowserLoginPreflight {
   needsPreparation: boolean;
   transferRequired: boolean;
+  phoneRequired: boolean;
 }
 
 /**
@@ -73,10 +76,13 @@ export interface DemoBrowserLoginPreflight {
 export async function getDemoBrowserLoginPreflight(
   sourceUser: SourceUser,
   rawDeviceToken: unknown,
+  rawPhone?: unknown,
 ): Promise<DemoBrowserLoginPreflight> {
   if (!isDemoDeviceIsolationEnabled() || !sourceUser.demoDeviceIsolation) {
-    return { needsPreparation: false, transferRequired: false };
+    return { needsPreparation: false, transferRequired: false, phoneRequired: false };
   }
+  const phone = normalizePhone(rawPhone);
+  if (!phone) return { needsPreparation: false, transferRequired: false, phoneRequired: true };
 
   const tokenHash = validDeviceToken(rawDeviceToken) ? sha256(rawDeviceToken) : null;
   const [current, active] = await Promise.all([
@@ -84,6 +90,7 @@ export async function getDemoBrowserLoginPreflight(
       ? db.select({
           status: demoDeviceWorkspacesTable.status,
           revokedAt: demoDeviceWorkspacesTable.revokedAt,
+          phone: demoDeviceWorkspacesTable.phone,
         }).from(demoDeviceWorkspacesTable).where(and(
           eq(demoDeviceWorkspacesTable.sourceUserId, sourceUser.id),
           eq(demoDeviceWorkspacesTable.deviceTokenHash, tokenHash),
@@ -93,6 +100,7 @@ export async function getDemoBrowserLoginPreflight(
       .from(demoDeviceWorkspacesTable)
       .where(and(
         eq(demoDeviceWorkspacesTable.sourceUserId, sourceUser.id),
+        eq(demoDeviceWorkspacesTable.phone, phone),
         isNull(demoDeviceWorkspacesTable.revokedAt),
         ne(demoDeviceWorkspacesTable.status, "failed"),
       ))
@@ -100,20 +108,21 @@ export async function getDemoBrowserLoginPreflight(
   ]);
 
   const currentBinding = current[0];
-  if (currentBinding?.status === "ready" && currentBinding.revokedAt == null) {
-    return { needsPreparation: false, transferRequired: false };
+  if (currentBinding?.phone === phone && currentBinding.status === "ready" && currentBinding.revokedAt == null) {
+    return { needsPreparation: false, transferRequired: false, phoneRequired: false };
   }
   if (active.length > 0) {
-    return { needsPreparation: false, transferRequired: true };
+    return { needsPreparation: false, transferRequired: true, phoneRequired: false };
   }
-  return { needsPreparation: true, transferRequired: false };
+  return { needsPreparation: true, transferRequired: false, phoneRequired: false };
 }
 
 export async function needsDemoDevicePreparation(
   sourceUser: SourceUser,
   rawDeviceToken: unknown,
+  rawPhone?: unknown,
 ): Promise<boolean> {
-  return (await getDemoBrowserLoginPreflight(sourceUser, rawDeviceToken)).needsPreparation;
+  return (await getDemoBrowserLoginPreflight(sourceUser, rawDeviceToken, rawPhone)).needsPreparation;
 }
 
 export async function verifyStrictDemoBrowserBinding(
@@ -389,6 +398,7 @@ async function loadReadyWorkspace(source: SourceUser, link: typeof demoDeviceWor
 
 export interface ResolveDemoLoginInput {
   sourceUser: SourceUser;
+  phone?: unknown;
   deviceToken?: unknown;
   pairCode?: unknown;
   confirmTransfer?: unknown;
@@ -421,6 +431,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
   isPrimary: boolean;
   bindingWasCreated: boolean;
   sessionIssuedAtomically: boolean;
+  phone: string | null;
 }> {
   const source = input.sourceUser;
   if (!isDemoDeviceIsolationEnabled() || !source.demoDeviceIsolation) {
@@ -432,10 +443,19 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       isPrimary: true,
       bindingWasCreated: false,
       sessionIssuedAtomically: false,
+      phone: null,
     };
   }
   if (source.isDemoShadow || !source.companyId) {
     throw new DemoDeviceError("لا يمكن تسجيل الدخول المباشر إلى مستخدم مساحة ديمو", 403, "DEMO_SHADOW_LOGIN_DENIED");
+  }
+  const phone = normalizePhone(input.phone);
+  if (!phone) {
+    throw new DemoDeviceError(
+      "رقم الهاتف مطلوب لإنشاء مساحة الديمو المستقلة",
+      428,
+      "DEMO_PHONE_REQUIRED",
+    );
   }
 
   let deviceToken = validDeviceToken(input.deviceToken)
@@ -450,7 +470,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
     eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
     eq(demoDeviceWorkspacesTable.deviceTokenHash, deviceTokenHash),
   ));
-  if (existing?.status === "ready" && existing.revokedAt == null) {
+  if (existing?.phone === phone && existing.status === "ready" && existing.revokedAt == null) {
     const effectiveUser = await loadReadyWorkspace(source, existing);
     await db.update(demoDeviceWorkspacesTable).set({
       deviceLabel: label,
@@ -465,9 +485,10 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       isPrimary: existing.isPrimary,
       bindingWasCreated: false,
       sessionIssuedAtomically: false,
+      phone,
     };
   }
-  if (existing && existing.revokedAt == null && existing.status === "provisioning") {
+  if (existing?.phone === phone && existing.revokedAt == null && existing.status === "provisioning") {
     throw new DemoDeviceError(
       "مساحة الديمو قيد التجهيز. حاول تسجيل الدخول مرة أخرى بعد لحظات.",
       409,
@@ -489,10 +510,10 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
       eq(demoDeviceWorkspacesTable.deviceTokenHash, deviceTokenHash),
     ));
-    if (raced?.status === "ready" && raced.revokedAt == null) {
-      return { link: raced, created: false, sessionIssuedAtomically: false, effectiveUser: null };
+    if (raced?.phone === phone && raced.status === "ready" && raced.revokedAt == null) {
+      return { link: raced, created: false, sessionIssuedAtomically: false, effectiveUser: null, needsProvision: false };
     }
-    if (raced && raced.revokedAt == null && raced.status === "provisioning") {
+    if (raced?.phone === phone && raced.revokedAt == null && raced.status === "provisioning") {
       throw new DemoDeviceError(
         "مساحة الديمو قيد التجهيز. حاول تسجيل الدخول مرة أخرى بعد لحظات.",
         409,
@@ -509,6 +530,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       lastSeenAt: demoDeviceWorkspacesTable.lastSeenAt,
     }).from(demoDeviceWorkspacesTable).where(and(
       eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
+      eq(demoDeviceWorkspacesTable.phone, phone),
       isNull(demoDeviceWorkspacesTable.revokedAt),
       ne(demoDeviceWorkspacesTable.status, "failed"),
     ));
@@ -549,6 +571,7 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
         updatedAt: now,
       }).where(and(
         eq(demoDeviceWorkspacesTable.sourceUserId, source.id),
+        eq(demoDeviceWorkspacesTable.phone, phone),
         isNull(demoDeviceWorkspacesTable.revokedAt),
         ne(demoDeviceWorkspacesTable.status, "failed"),
       ));
@@ -579,25 +602,33 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       }
     }
 
-    const workspaceCompanyId = transferTarget?.workspaceCompanyId ?? source.companyId;
-    const workspaceUserId = transferTarget?.workspaceUserId ?? source.id;
+    const workspaceCompanyId = transferTarget?.workspaceCompanyId ?? null;
+    const workspaceUserId = transferTarget?.workspaceUserId ?? null;
     const [link] = await tx.insert(demoDeviceWorkspacesTable).values({
       sourceUserId: source.id,
       sourceCompanyId: source.companyId!,
       workspaceCompanyId,
       workspaceUserId,
+      phone,
       deviceTokenHash,
       deviceLabel: label,
       userAgent: input.userAgent ?? null,
       firstIp: input.ip ?? null,
       lastIp: input.ip ?? null,
-      isPrimary: workspaceUserId === source.id,
-      status: "ready",
+      isPrimary: true,
+      status: transferTarget ? "ready" : "provisioning",
     }).returning();
 
     let effectiveUser: SourceUser | null = null;
     let sessionIssuedAtomically = false;
     if (active.length > 0) {
+      if (workspaceUserId == null) {
+        throw new DemoDeviceError(
+          "مساحة الديمو المرتبطة غير مكتملة.",
+          409,
+          "DEMO_BROWSER_PREPARING",
+        );
+      }
       const sessionIssue = input.sessionIssue!;
       const [issuedUser] = await tx.update(usersTable).set({
         ...(workspaceUserId === source.id
@@ -639,18 +670,76 @@ export async function resolveDemoDeviceLogin(input: ResolveDemoLoginInput): Prom
       effectiveUser = issuedUser;
       sessionIssuedAtomically = true;
     }
-    return { link, created: true, sessionIssuedAtomically, effectiveUser };
+    return { link, created: true, sessionIssuedAtomically, effectiveUser, needsProvision: !transferTarget };
   });
 
-  const effectiveUser = claim.effectiveUser ?? await loadReadyWorkspace(source, claim.link);
+  let readyLink = claim.link;
+  if (claim.needsProvision) {
+    try {
+      const [sourceCompany] = await db.select().from(companiesTable)
+        .where(eq(companiesTable.id, source.companyId)).limit(1);
+      if (!sourceCompany) throw new Error("شركة الديمو المصدر غير موجودة");
+      const suffix = crypto.randomBytes(6).toString("hex");
+      const cloned = await cloneCompany({
+        sourceCompanyId: source.companyId,
+        identity: {
+          nameAr: `ديمو ${phone}`,
+          nameEn: `Demo ${phone}`,
+          vatNumber: sourceCompany.vatNumber,
+          crNumber: sourceCompany.crNumber,
+          city: sourceCompany.city,
+          district: sourceCompany.district,
+          street: sourceCompany.street,
+          buildingNumber: sourceCompany.buildingNumber,
+          postalCode: sourceCompany.postalCode,
+          additionalNumber: sourceCompany.additionalNumber,
+          phone,
+          country: sourceCompany.country,
+          industryName: sourceCompany.industryName,
+        },
+        admin: {
+          username: `demo_${source.id}_${suffix}`,
+          password: crypto.randomBytes(32).toString("base64url"),
+          nameAr: source.nameAr,
+          nameEn: source.nameEn,
+        },
+        copyUsers: false,
+        internalDemoWorkspace: true,
+      });
+      const [updated] = await db.update(demoDeviceWorkspacesTable).set({
+        workspaceCompanyId: cloned.newCompanyId,
+        workspaceUserId: cloned.adminUserId,
+        status: "ready",
+        updatedAt: new Date(),
+      }).where(and(
+        eq(demoDeviceWorkspacesTable.id, claim.link.id),
+        eq(demoDeviceWorkspacesTable.status, "provisioning"),
+      )).returning();
+      if (!updated) throw new Error("تعذر ربط مساحة الديمو الجديدة");
+      readyLink = updated;
+    } catch (error) {
+      await db.update(demoDeviceWorkspacesTable).set({
+        status: "failed",
+        revokedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(eq(demoDeviceWorkspacesTable.id, claim.link.id)).catch(() => {});
+      throw new DemoDeviceError(
+        "تعذر إنشاء مساحة الديمو المستقلة. حاول مرة أخرى.",
+        500,
+        "DEMO_WORKSPACE_PROVISION_FAILED",
+      );
+    }
+  }
+  const effectiveUser = claim.effectiveUser ?? await loadReadyWorkspace(source, readyLink);
   return {
     effectiveUser,
     deviceToken,
-    deviceLinkId: claim.link.id,
-    workspaceCompanyId: claim.link.workspaceCompanyId,
-    isPrimary: claim.link.isPrimary,
+    deviceLinkId: readyLink.id,
+    workspaceCompanyId: readyLink.workspaceCompanyId,
+    isPrimary: readyLink.isPrimary,
     bindingWasCreated: claim.created,
     sessionIssuedAtomically: claim.sessionIssuedAtomically,
+    phone,
   };
 }
 

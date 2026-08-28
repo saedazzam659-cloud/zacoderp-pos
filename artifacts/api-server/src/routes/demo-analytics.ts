@@ -77,13 +77,17 @@ router.get("/status", async (req, res) => {
   const used = await actionsUsed(profile!.id);
   const [session] = await centralDb.select({ id: demoAnalyticsSessionsTable.id }).from(demoAnalyticsSessionsTable)
     .where(and(eq(demoAnalyticsSessionsTable.profileId, profile!.id), sql`${demoAnalyticsSessionsTable.endedAt} IS NULL`)).orderBy(desc(demoAnalyticsSessionsTable.startedAt)).limit(1);
-  const remaining = Math.max(0, policy.actionLimit - used);
-  return res.json({ applicable: true, phoneRequired: !profile!.phone, profileId: profile!.id, enabled: policy.enabled, actionLimit: policy.actionLimit, actionsUsed: used, remaining, warningRemaining: policy.warningRemaining, subscriptionMessage: policy.subscriptionMessage ?? null, blocked: !policy.enabled || remaining <= 0, currentSessionId: session?.id ?? null });
+  const effectiveLimit = policy.limitEnabled ? policy.actionLimit : null;
+  const remaining = effectiveLimit == null ? null : Math.max(0, effectiveLimit - used);
+  return res.json({ applicable: true, phoneRequired: !profile!.phone, profileId: profile!.id, enabled: policy.enabled, limitEnabled: policy.limitEnabled, actionLimit: effectiveLimit, actionsUsed: used, remaining, warningRemaining: policy.warningRemaining, subscriptionMessage: policy.subscriptionMessage ?? null, blocked: !policy.enabled || (remaining != null && remaining <= 0), currentSessionId: session?.id ?? null });
 });
 router.post("/phone", async (req, res) => {
   const c = await current(req, res); if (!c) return;
   const phone = normalizePhone(req.body?.phone);
   if (!phone) return res.status(422).json({ error: "Invalid phone", code: "DEMO_PHONE_INVALID" });
+  if (c.profile.phone && c.profile.phone !== phone) {
+    return res.status(409).json({ error: "رقم الديمو مرتبط بهذه المساحة ولا يمكن تغييره", code: "DEMO_PHONE_IMMUTABLE" });
+  }
   await centralDb.update(demoAnalyticsProfilesTable).set({ phone, updatedAt: new Date() }).where(eq(demoAnalyticsProfilesTable.id, c.profile.id));
   return res.json({ phone });
 });
@@ -151,7 +155,8 @@ router.post("/actions/consume", async (req, res) => {
   if (!r.ok) return res.status(r.status).json({ code: r.code });
   await finalizeDemoAction(r.reservationId, true, `/demo-analytics/actions/${action}`);
   const used = await actionsUsed(c.profile.id);
-  return res.json({ action, actionsUsed: used, remaining: Math.max(0, r.policy.actionLimit - used) });
+  const effectiveLimit = r.policy.limitEnabled ? r.policy.actionLimit : null;
+  return res.json({ action, actionsUsed: used, remaining: effectiveLimit == null ? null : Math.max(0, effectiveLimit - used) });
 });
 // Agent proxy authentication has already validated x-zacod-agent-token before
 // setting verifiedAgentProxyIdentity. It is intentionally not a tenant bearer endpoint.

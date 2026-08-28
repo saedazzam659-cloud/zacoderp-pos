@@ -1460,6 +1460,7 @@ async function ensureUsersSecurityNoticeColumn(): Promise<void> {
         source_company_id integer NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
         workspace_company_id integer REFERENCES companies(id) ON DELETE CASCADE,
         workspace_user_id integer REFERENCES users(id) ON DELETE CASCADE,
+        phone varchar(32),
         device_token_hash varchar(64) NOT NULL,
         device_label varchar(180),
         user_agent text,
@@ -1473,7 +1474,9 @@ async function ensureUsersSecurityNoticeColumn(): Promise<void> {
         updated_at timestamptz NOT NULL DEFAULT now()
       )
     `);
+    await db.execute(sql`ALTER TABLE demo_device_workspaces ADD COLUMN IF NOT EXISTS phone varchar(32)`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS demo_device_workspaces_source_device_uq ON demo_device_workspaces(source_user_id, device_token_hash)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS demo_device_workspaces_source_phone_idx ON demo_device_workspaces(source_user_id, phone)`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS demo_device_pair_codes (
         id serial PRIMARY KEY,

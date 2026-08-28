@@ -17,6 +17,10 @@ import {
   warehousesTable,
   itemGroupsTable,
   unitsTable,
+  itemsTable,
+  itemUnitPricesTable,
+  itemCurrencyPricesTable,
+  itemBundleComponentsTable,
   cashBoxesTable,
   bankAccountsTable,
   sequencesTable,
@@ -396,28 +400,108 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     bump("warehouses", warehouses.length);
 
     // ── 13. Item groups ─────────────────────────────────────────────────────
+    const itemGroupMap = new Map<number, number>();
     const itemGroups = await tx.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, sourceId));
     for (const g of itemGroups) {
       const { id: srcId, createdAt, updatedAt, companyId, costAccountId, revenueAccountId, ...rest } = g as any;
-      await tx.insert(itemGroupsTable).values({
+      const [ins] = await tx.insert(itemGroupsTable).values({
         ...rest,
         companyId:        newCompanyId,
         costAccountId:    remap(accountMap, costAccountId),
         revenueAccountId: remap(accountMap, revenueAccountId),
-      } as typeof itemGroupsTable.$inferInsert);
+      } as typeof itemGroupsTable.$inferInsert).returning({ id: itemGroupsTable.id });
+      itemGroupMap.set(srcId, ins.id);
     }
     bump("item_groups", itemGroups.length);
 
     // ── 14. Units ───────────────────────────────────────────────────────────
+    const unitMap = new Map<number, number>();
     const units = await tx.select().from(unitsTable).where(eq(unitsTable.companyId, sourceId));
     for (const u of units) {
       const { id: srcId, createdAt, updatedAt, companyId, ...rest } = u as any;
-      await tx.insert(unitsTable)
-        .values({ ...rest, companyId: newCompanyId } as typeof unitsTable.$inferInsert);
+      const [ins] = await tx.insert(unitsTable)
+        .values({ ...rest, companyId: newCompanyId } as typeof unitsTable.$inferInsert)
+        .returning({ id: unitsTable.id });
+      unitMap.set(srcId, ins.id);
     }
     bump("units", units.length);
 
-    // ── 15. Cash boxes ──────────────────────────────────────────────────────
+    // ── 15. Items and non-transactional item setup ──────────────────────────
+    // Catalog definitions belong in a fresh demo workspace; stock balances,
+    // ledgers and document lines deliberately do not.
+    const itemMap = new Map<number, number>();
+    const items = await tx.select().from(itemsTable).where(eq(itemsTable.companyId, sourceId));
+    for (const item of items) {
+      const {
+        id: srcId, createdAt, updatedAt, companyId,
+        groupId, unitId, parentItemId, costAccountId, revenueAccountId, ...rest
+      } = item;
+      const [ins] = await tx.insert(itemsTable).values({
+        ...rest,
+        companyId: newCompanyId,
+        groupId: remap(itemGroupMap, groupId),
+        unitId: remap(unitMap, unitId),
+        parentItemId: null,
+        costAccountId: remap(accountMap, costAccountId),
+        revenueAccountId: remap(accountMap, revenueAccountId),
+      } as typeof itemsTable.$inferInsert).returning({ id: itemsTable.id });
+      itemMap.set(srcId, ins.id);
+    }
+    for (const item of items) {
+      if (!isInt(item.parentItemId)) continue;
+      const newId = itemMap.get(item.id);
+      const newParentId = itemMap.get(item.parentItemId);
+      if (newId != null && newParentId != null) {
+        await tx.update(itemsTable).set({ parentItemId: newParentId }).where(eq(itemsTable.id, newId));
+      }
+    }
+    bump("items", items.length);
+
+    const itemUnitPrices = await tx.select().from(itemUnitPricesTable)
+      .where(eq(itemUnitPricesTable.companyId, sourceId));
+    let itemUnitPriceCount = 0;
+    for (const row of itemUnitPrices) {
+      const { id, companyId, itemId, unitId, createdAt, ...rest } = row;
+      const newItemId = remap(itemMap, itemId);
+      const newUnitId = remap(unitMap, unitId);
+      if (newItemId == null || newUnitId == null) continue;
+      await tx.insert(itemUnitPricesTable).values({
+        ...rest, companyId: newCompanyId, itemId: newItemId, unitId: newUnitId,
+      } as typeof itemUnitPricesTable.$inferInsert);
+      itemUnitPriceCount++;
+    }
+    bump("item_unit_prices", itemUnitPriceCount);
+
+    const itemCurrencyPrices = await tx.select().from(itemCurrencyPricesTable)
+      .where(eq(itemCurrencyPricesTable.companyId, sourceId));
+    let itemCurrencyPriceCount = 0;
+    for (const row of itemCurrencyPrices) {
+      const { id, companyId, itemId, createdAt, updatedAt, ...rest } = row as any;
+      const newItemId = remap(itemMap, itemId);
+      if (newItemId == null) continue;
+      await tx.insert(itemCurrencyPricesTable).values({
+        ...rest, companyId: newCompanyId, itemId: newItemId,
+      } as typeof itemCurrencyPricesTable.$inferInsert);
+      itemCurrencyPriceCount++;
+    }
+    bump("item_currency_prices", itemCurrencyPriceCount);
+
+    const bundleComponents = await tx.select().from(itemBundleComponentsTable)
+      .where(eq(itemBundleComponentsTable.companyId, sourceId));
+    let bundleCount = 0;
+    for (const row of bundleComponents) {
+      const { id, companyId, parentItemId, childItemId, createdAt, ...rest } = row;
+      const newParentId = remap(itemMap, parentItemId);
+      const newChildId = remap(itemMap, childItemId);
+      if (newParentId == null || newChildId == null) continue;
+      await tx.insert(itemBundleComponentsTable).values({
+        ...rest, companyId: newCompanyId, parentItemId: newParentId, childItemId: newChildId,
+      } as typeof itemBundleComponentsTable.$inferInsert);
+      bundleCount++;
+    }
+    bump("item_bundle_components", bundleCount);
+
+    // ── 16. Cash boxes ──────────────────────────────────────────────────────
     const cashBoxMap = new Map<number, number>();
     const cashBoxes = await tx.select().from(cashBoxesTable).where(eq(cashBoxesTable.companyId, sourceId));
     for (const c of cashBoxes) {

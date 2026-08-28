@@ -59,7 +59,8 @@ router.get("/:id", async (req, res) => {
   const id = Number(req.params.id); const [profile] = await centralDb.select().from(demoAnalyticsProfilesTable).where(eq(demoAnalyticsProfilesTable.id, id));
   if (!profile) return res.status(404).json({ code: "DEMO_PROFILE_NOT_FOUND" });
   const [sessions, events, policy, used] = await Promise.all([centralDb.select().from(demoAnalyticsSessionsTable).where(eq(demoAnalyticsSessionsTable.profileId, id)).orderBy(desc(demoAnalyticsSessionsTable.startedAt)), centralDb.select().from(demoAnalyticsEventsTable).where(eq(demoAnalyticsEventsTable.profileId, id)).orderBy(desc(demoAnalyticsEventsTable.occurredAt)).limit(500), getPolicy(id), actionsUsed(id)]);
-  return res.json({ profile, policy, actionsUsed: used, remaining: Math.max(0, policy.actionLimit - used), sessions, events });
+  const effectiveLimit = policy.limitEnabled ? policy.actionLimit : null;
+  return res.json({ profile, policy: { ...policy, actionLimit: effectiveLimit }, actionsUsed: used, remaining: effectiveLimit == null ? null : Math.max(0, effectiveLimit - used), sessions, events });
 });
 router.put("/:id/policy", async (req, res) => {
   const profileId = Number(req.params.id);
@@ -67,10 +68,12 @@ router.put("/:id/policy", async (req, res) => {
   const [profile] = await centralDb.select({ id: demoAnalyticsProfilesTable.id }).from(demoAnalyticsProfilesTable).where(eq(demoAnalyticsProfilesTable.id, profileId));
   if (!profile) return res.status(404).json({ code: "DEMO_PROFILE_NOT_FOUND" });
   const existing = await getPolicy(profileId); const b = req.body ?? {}; const values: any = { profileId, updatedAt: new Date() };
-  for (const k of ["enabled", "actionLimit", "warningRemaining", "subscriptionMessage"]) if (k in b) values[k] = b[k];
+  for (const k of ["enabled", "limitEnabled", "actionLimit", "warningRemaining", "subscriptionMessage"]) if (k in b) values[k] = b[k];
   if (("enabled" in values && typeof values.enabled !== "boolean") ||
-      (values.actionLimit != null && (!Number.isInteger(values.actionLimit) || values.actionLimit < 0)) ||
-      (values.warningRemaining != null && (!Number.isInteger(values.warningRemaining) || values.warningRemaining < 0 || values.warningRemaining > (values.actionLimit ?? existing.actionLimit))) ||
+      ("limitEnabled" in values && typeof values.limitEnabled !== "boolean") ||
+      (values.limitEnabled === true && values.actionLimit == null) ||
+      ("actionLimit" in values && values.actionLimit != null && (!Number.isInteger(values.actionLimit) || values.actionLimit < 1)) ||
+      (values.warningRemaining != null && (!Number.isInteger(values.warningRemaining) || values.warningRemaining < 0 || ((values.actionLimit ?? existing.actionLimit) != null && values.warningRemaining > (values.actionLimit ?? existing.actionLimit)))) ||
       (values.subscriptionMessage != null && (typeof values.subscriptionMessage !== "string" || values.subscriptionMessage.length > 1000))) return res.status(422).json({ code: "DEMO_POLICY_INVALID" });
   const where = eq(demoAnalyticsPoliciesTable.profileId, profileId);
   const [old] = await centralDb.select().from(demoAnalyticsPoliciesTable).where(where);

@@ -636,6 +636,7 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
         source_company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
         workspace_company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
         workspace_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        phone VARCHAR(32),
         device_token_hash VARCHAR(64) NOT NULL,
         device_label VARCHAR(180),
         user_agent TEXT,
@@ -648,10 +649,14 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )` },
+    { label: "demo_device_workspaces.phone",
+      sql: `ALTER TABLE demo_device_workspaces ADD COLUMN IF NOT EXISTS phone VARCHAR(32)` },
     { label: "demo_device_workspaces_source_device_uq",
       sql: `CREATE UNIQUE INDEX IF NOT EXISTS demo_device_workspaces_source_device_uq ON demo_device_workspaces(source_user_id, device_token_hash)` },
     { label: "demo_device_workspaces_source_idx",
       sql: `CREATE INDEX IF NOT EXISTS demo_device_workspaces_source_idx ON demo_device_workspaces(source_user_id)` },
+    { label: "demo_device_workspaces_source_phone_idx",
+      sql: `CREATE INDEX IF NOT EXISTS demo_device_workspaces_source_phone_idx ON demo_device_workspaces(source_user_id, phone)` },
     { label: "demo_device_workspaces_company_idx",
       sql: `CREATE INDEX IF NOT EXISTS demo_device_workspaces_company_idx ON demo_device_workspaces(workspace_company_id)` },
     { label: "create demo_device_pair_codes table",
@@ -3310,10 +3315,13 @@ async function ensureCentralDemoAnalyticsSchema(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS demo_analytics_profiles_phone_idx ON demo_analytics_profiles(phone)`,
     `CREATE TABLE IF NOT EXISTS demo_analytics_policies (
       id SERIAL PRIMARY KEY, profile_id INTEGER REFERENCES demo_analytics_profiles(id) ON DELETE CASCADE,
-      enabled BOOLEAN NOT NULL DEFAULT TRUE, action_limit INTEGER NOT NULL DEFAULT 25,
+       enabled BOOLEAN NOT NULL DEFAULT TRUE, limit_enabled BOOLEAN NOT NULL DEFAULT FALSE, action_limit INTEGER,
       warning_remaining INTEGER NOT NULL DEFAULT 5, subscription_message TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
     `ALTER TABLE demo_analytics_policies ADD COLUMN IF NOT EXISTS profile_id INTEGER REFERENCES demo_analytics_profiles(id) ON DELETE CASCADE`,
+    `ALTER TABLE demo_analytics_policies ADD COLUMN IF NOT EXISTS limit_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+    `ALTER TABLE demo_analytics_policies ALTER COLUMN action_limit DROP DEFAULT`,
+    `ALTER TABLE demo_analytics_policies ALTER COLUMN action_limit DROP NOT NULL`,
     `DO $$ BEGIN
        IF EXISTS (
          SELECT 1 FROM information_schema.columns

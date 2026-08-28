@@ -36,6 +36,7 @@ export default function DemoAnalyticsDetail() {
 
   const [policyForm, setPolicyForm] = useState({
     enabled: true,
+    limitEnabled: false,
     actionLimit: 100,
     warningRemaining: 20,
     subscriptionMessage: ""
@@ -52,6 +53,7 @@ export default function DemoAnalyticsDetail() {
     if (data?.policy) {
       setPolicyForm({
         enabled: data.policy.enabled !== false,
+        limitEnabled: data.policy.limitEnabled === true,
         actionLimit: data.policy.actionLimit ?? 100,
         warningRemaining: data.policy.warningRemaining ?? 20,
         subscriptionMessage: data.policy.subscriptionMessage ?? ""
@@ -74,6 +76,7 @@ export default function DemoAnalyticsDetail() {
     onSuccess: (persisted: any, submitted: any) => {
       if (
         persisted?.actionLimit !== submitted.actionLimit ||
+        persisted?.limitEnabled !== submitted.limitEnabled ||
         persisted?.warningRemaining !== submitted.warningRemaining ||
         persisted?.enabled !== submitted.enabled
       ) {
@@ -82,6 +85,7 @@ export default function DemoAnalyticsDetail() {
       }
       setPolicyForm({
         enabled: persisted.enabled !== false,
+        limitEnabled: persisted.limitEnabled === true,
         actionLimit: persisted.actionLimit ?? 100,
         warningRemaining: persisted.warningRemaining ?? 20,
         subscriptionMessage: persisted.subscriptionMessage ?? "",
@@ -111,7 +115,7 @@ export default function DemoAnalyticsDetail() {
     e.preventDefault();
     updatePolicy.mutate({
       enabled: policyForm.enabled,
-      actionLimit: Number(policyForm.actionLimit),
+      actionLimit: policyForm.limitEnabled ? Number(policyForm.actionLimit) : null,
       warningRemaining: Number(policyForm.warningRemaining),
       subscriptionMessage: policyForm.subscriptionMessage
     });
@@ -218,12 +222,24 @@ export default function DemoAnalyticsDetail() {
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2 flex items-center justify-between rounded-md border p-3">
+                    <div>
+                      <Label>تحديد سقف للعمليات</Label>
+                      <div className="text-xs text-muted-foreground">غير مفعّل افتراضيًا؛ العمليات مفتوحة بدون قفل تلقائي</div>
+                    </div>
+                    <Switch
+                      checked={policyForm.limitEnabled}
+                      onCheckedChange={(c) => setPolicyForm(f => ({ ...f, limitEnabled: c }))}
+                      data-testid="policy-limit-enabled"
+                    />
+                  </div>
                   <div className="space-y-2">
                     <Label>سقف العمليات</Label>
                     <Input 
                       type="number" 
                       min="1"
                       value={policyForm.actionLimit}
+                      disabled={!policyForm.limitEnabled}
                       onChange={(e) => setPolicyForm(f => ({ ...f, actionLimit: Number(e.target.value) }))}
                       data-testid="policy-limit"
                     />
@@ -234,6 +250,7 @@ export default function DemoAnalyticsDetail() {
                       type="number" 
                       min="0"
                       value={policyForm.warningRemaining}
+                      disabled={!policyForm.limitEnabled}
                       onChange={(e) => setPolicyForm(f => ({ ...f, warningRemaining: Number(e.target.value) }))}
                       data-testid="policy-warning"
                     />
@@ -283,9 +300,9 @@ export default function DemoAnalyticsDetail() {
               <CardContent className="p-4 text-center">
                 <p className="text-xs text-muted-foreground mb-1">عمليات الحصة</p>
                 <p className="text-xl font-bold text-amber-700" data-testid="detail-quota">
-                  {actionsUsed || 0} / {policy?.actionLimit || 100}
+                  {actionsUsed || 0} / {policy?.actionLimit ?? "مفتوح"}
                 </p>
-                {remaining !== undefined && <p className="text-[10px] text-muted-foreground mt-1">متبقي: {remaining}</p>}
+                {remaining != null && <p className="text-[10px] text-muted-foreground mt-1">متبقي: {remaining}</p>}
               </CardContent>
             </Card>
           </div>

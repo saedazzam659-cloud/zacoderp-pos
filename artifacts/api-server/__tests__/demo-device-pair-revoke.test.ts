@@ -15,13 +15,13 @@ import {
   createDemoPairCode,
   DEMO_BROWSER_COOKIE,
   DemoDeviceError,
-  getDemoBrowserLoginPreflight,
-  needsDemoDevicePreparation,
+  getDemoBrowserLoginPreflight as rawGetDemoBrowserLoginPreflight,
+  needsDemoDevicePreparation as rawNeedsDemoDevicePreparation,
   propagateDemoSourcePermissions,
   propagateDemoWorkspaceMenuPermissions,
   refreshDemoShadowAuthorization,
   releaseDemoDeviceLink,
-  resolveDemoDeviceLogin,
+  resolveDemoDeviceLogin as rawResolveDemoDeviceLogin,
   revokeDemoDevice,
 } from "../src/lib/demoDeviceIsolation.ts";
 import { resolveBearerToken } from "../src/middleware/auth.ts";
@@ -39,6 +39,13 @@ const sessionIssue = (issuedAt = new Date()) => ({
 });
 const deviceHash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
+const TEST_PHONE = "+966500000001";
+const getDemoBrowserLoginPreflight = (source: any, token: unknown) =>
+  rawGetDemoBrowserLoginPreflight(source, token, TEST_PHONE);
+const needsDemoDevicePreparation = (source: any, token: unknown) =>
+  rawNeedsDemoDevicePreparation(source, token, TEST_PHONE);
+const resolveDemoDeviceLogin = (input: any) =>
+  rawResolveDemoDeviceLogin({ phone: TEST_PHONE, ...input });
 
 before(async () => {
   const [company] = await db.insert(companiesTable).values({

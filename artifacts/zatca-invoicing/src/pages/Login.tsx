@@ -154,6 +154,7 @@ export default function Login() {
   const [loginMode, setLoginMode] = useState<"company" | "trainee">("company");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [demoPhone, setDemoPhone] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showDemoPreparation, setShowDemoPreparation] = useState(false);
@@ -369,6 +370,7 @@ export default function Login() {
           password,
           companyCode: cleanCompanyCode,
           intent: "check_demo_preparation",
+          ...(demoPhone.trim() ? { demoPhone: demoPhone.trim() } : {}),
           ...(legacyDeviceToken ? { demoDeviceToken: legacyDeviceToken } : {}),
         }),
       });
@@ -398,6 +400,7 @@ export default function Login() {
     try {
       await login(cleanUsername, password, cleanCompanyCode, {
         confirmDemoSessionTransfer: true,
+        demoPhone,
       });
       rememberCompanyCode(cleanCompanyCode);
       setShowDemoTransfer(false);
@@ -448,7 +451,7 @@ export default function Login() {
           setShowDemoPreparation(true);
         }
 
-        await login(trimmedUsername, password, trimmedCode);
+        await login(trimmedUsername, password, trimmedCode, { demoPhone });
         rememberCompanyCode(trimmedCode);
         if (preparationShownForAttempt) {
           setDemoPreparationProgress(100);
@@ -935,6 +938,25 @@ export default function Login() {
                   </p>
                 )}
               </div>
+
+              {!isSuperAdminFlow && loginMode === "company" && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    رقم الهاتف <span className="text-xs text-muted-foreground">(مطلوب لحساب الديمو فقط)</span>
+                  </label>
+                  <Input
+                    value={demoPhone}
+                    onChange={e => setDemoPhone(e.target.value)}
+                    placeholder="05xxxxxxxx"
+                    dir="ltr"
+                    inputMode="tel"
+                    className="text-left"
+                    autoComplete="tel"
+                    disabled={step === "blocked"}
+                    data-testid="login-demo-phone"
+                  />
+                </div>
+              )}
 
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">{t("auth.password")}</label>

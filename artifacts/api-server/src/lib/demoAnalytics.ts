@@ -42,6 +42,17 @@ export async function getProfile(identity: DemoIdentity, create = true) {
   return profile ?? null;
 }
 
+export async function bindDemoProfilePhone(identity: DemoIdentity, phone: string) {
+  const profile = await getProfile(identity);
+  if (!profile) throw new Error("Demo analytics profile could not be created");
+  if (profile.phone !== phone) {
+    await centralDb.update(demoAnalyticsProfilesTable)
+      .set({ phone, updatedAt: new Date() })
+      .where(eq(demoAnalyticsProfilesTable.id, profile.id));
+  }
+  return profile.id;
+}
+
 export async function getPolicy(profileId: number) {
   let [policy] = await centralDb.select().from(demoAnalyticsPoliciesTable).where(eq(demoAnalyticsPoliciesTable.profileId, profileId)).limit(1);
   if (!policy) {
@@ -88,7 +99,7 @@ export async function reserveDemoAction(profileId: number, route: string, key: s
     await tx.execute(sql`SELECT id FROM demo_analytics_profiles WHERE id = ${profileId} FOR UPDATE`);
     const [policy] = await tx.select().from(demoAnalyticsPoliciesTable)
       .where(eq(demoAnalyticsPoliciesTable.profileId, profileId)).limit(1);
-    const p = policy ?? { enabled: true, actionLimit: 25, warningRemaining: 5, subscriptionMessage: null };
+    const p = policy ?? { enabled: true, limitEnabled: false, actionLimit: null, warningRemaining: 5, subscriptionMessage: null };
     if (!p.enabled) return { ok: false as const, code: "DEMO_DISABLED", status: 402, policy: p };
     const [existing] = await tx.select().from(demoActionReservationsTable).where(and(eq(demoActionReservationsTable.profileId, profileId), eq(demoActionReservationsTable.idempotencyKey, key))).limit(1);
     if (existing && existing.route !== route) return { ok: false as const, code: "DEMO_IDEMPOTENCY_ROUTE_MISMATCH", status: 409, policy: p };
@@ -96,7 +107,9 @@ export async function reserveDemoAction(profileId: number, route: string, key: s
     await tx.delete(demoActionReservationsTable).where(and(eq(demoActionReservationsTable.profileId, profileId), eq(demoActionReservationsTable.status, "reserved"), sql`${demoActionReservationsTable.createdAt} < now() - interval '15 minutes'`));
     const [count] = await tx.select({ count: sql<number>`count(*)` }).from(demoActionReservationsTable)
       .where(and(eq(demoActionReservationsTable.profileId, profileId), sql`${demoActionReservationsTable.status} IN ('reserved','success')`));
-    if (Number(count?.count ?? 0) >= p.actionLimit) return { ok: false as const, code: "DEMO_ACTION_LIMIT_EXHAUSTED", status: 429, policy: p };
+    if (p.limitEnabled && p.actionLimit != null && Number(count?.count ?? 0) >= p.actionLimit) {
+      return { ok: false as const, code: "DEMO_ACTION_LIMIT_EXHAUSTED", status: 429, policy: p };
+    }
     const [reservation] = await tx.insert(demoActionReservationsTable).values({ profileId, route, idempotencyKey: key }).returning({ id: demoActionReservationsTable.id });
     return { ok: true as const, reservationId: reservation.id, replay: false, policy: p };
   });

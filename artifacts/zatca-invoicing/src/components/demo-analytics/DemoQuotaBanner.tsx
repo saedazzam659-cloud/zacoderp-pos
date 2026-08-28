@@ -3,7 +3,7 @@ import { AlertTriangle, AlertCircle } from "lucide-react";
 import { DemoAnalyticsStatus } from "@/contexts/DemoAnalyticsContext";
 
 export default function DemoQuotaBanner({ status }: { status: DemoAnalyticsStatus }) {
-  if (status.remaining === undefined || status.warningRemaining === undefined) return null;
+  if (status.remaining == null || status.warningRemaining === undefined) return null;
 
   if (status.remaining > status.warningRemaining && !status.blocked) return null;
 

@@ -76,6 +76,7 @@ import {
   releaseDemoDeviceLink,
   resolveDemoDeviceLogin,
 } from "../lib/demoDeviceIsolation.js";
+import { bindDemoProfilePhone } from "../lib/demoAnalytics.js";
 
 const router = Router();
 
@@ -415,6 +416,7 @@ router.post("/login", async (req, res) => {
     const preflight = await getDemoBrowserLoginPreflight(
       user,
       readDemoBrowserCookie(req.headers.cookie) ?? req.body?.demoDeviceToken,
+      req.body?.demoPhone,
     );
     res.json(preflight);
     return;
@@ -434,6 +436,7 @@ router.post("/login", async (req, res) => {
   try {
     demoLogin = await resolveDemoDeviceLogin({
       sourceUser: user,
+      phone: req.body?.demoPhone,
       deviceToken: readDemoBrowserCookie(req.headers.cookie) ?? req.body?.demoDeviceToken,
       confirmTransfer: req.body?.confirmDemoSessionTransfer === true,
       sessionIssue: {
@@ -458,6 +461,15 @@ router.post("/login", async (req, res) => {
     return;
   }
   const sessionUser = demoLogin.effectiveUser;
+  if (demoLogin.phone && sessionUser.companyId) {
+    const hit = (req as any).agentDomainHit;
+    await bindDemoProfilePhone({
+      sourceKind: hit?.id ? "agent" : "central",
+      sourceInstanceId: hit?.id ?? null,
+      localCompanyId: sessionUser.companyId,
+      localUserId: sessionUser.id,
+    }, demoLogin.phone);
+  }
 
   let issuedSession: Array<{ id: number }>;
   if (demoLogin.sessionIssuedAtomically) {
