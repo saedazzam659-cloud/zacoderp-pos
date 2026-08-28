@@ -17,50 +17,59 @@ import { logger } from "./logger.js";
  * orders them that way but we sort defensively.
  */
 export async function seedDefaultChartOfAccounts(companyId: number): Promise<{ inserted: number }> {
-  return db.transaction(async (tx) => {
-    const existing = await tx
-      .select({ id: accountsTable.id })
-      .from(accountsTable)
-      .where(eq(accountsTable.companyId, companyId))
-      .limit(1);
-    if (existing.length > 0) {
-      logger.info({ companyId }, "default-coa.skip-existing");
-      return { inserted: 0 };
+  return db.transaction((tx) => seedDefaultChartOfAccountsTx(tx, companyId));
+}
+
+/**
+ * Transaction-aware primitive used when company creation already owns the
+ * surrounding transaction (for example phone-isolated demo provisioning).
+ */
+export async function seedDefaultChartOfAccountsTx(
+  tx: any,
+  companyId: number,
+): Promise<{ inserted: number }> {
+  const existing = await tx
+    .select({ id: accountsTable.id })
+    .from(accountsTable)
+    .where(eq(accountsTable.companyId, companyId))
+    .limit(1);
+  if (existing.length > 0) {
+    logger.info({ companyId }, "default-coa.skip-existing");
+    return { inserted: 0 };
+  }
+
+  const codeToId = new Map<string, number>();
+  const sorted = [...DEFAULT_CHART_OF_ACCOUNTS].sort((a, b) => a.level - b.level);
+  let inserted = 0;
+
+  for (const row of sorted) {
+    const parentId = row.parentCode ? codeToId.get(row.parentCode) ?? null : null;
+    if (row.parentCode && parentId === null) {
+      logger.warn(
+        { companyId, code: row.code, parentCode: row.parentCode },
+        "default-coa.missing-parent",
+      );
+      continue;
     }
+    const [created] = await tx
+      .insert(accountsTable)
+      .values({
+        companyId,
+        parentId,
+        code: row.code,
+        nameAr: row.nameAr,
+        nameEn: row.nameEn,
+        accountType: row.accountType,
+        reportDirection: row.reportDirection,
+        level: row.level,
+        isPosting: row.isPosting,
+        isActive: row.isActive,
+      })
+      .returning({ id: accountsTable.id });
+    codeToId.set(row.code, created.id);
+    inserted++;
+  }
 
-    const codeToId = new Map<string, number>();
-    const sorted = [...DEFAULT_CHART_OF_ACCOUNTS].sort((a, b) => a.level - b.level);
-    let inserted = 0;
-
-    for (const row of sorted) {
-      const parentId = row.parentCode ? codeToId.get(row.parentCode) ?? null : null;
-      if (row.parentCode && parentId === null) {
-        logger.warn(
-          { companyId, code: row.code, parentCode: row.parentCode },
-          "default-coa.missing-parent",
-        );
-        continue;
-      }
-      const [created] = await tx
-        .insert(accountsTable)
-        .values({
-          companyId,
-          parentId,
-          code: row.code,
-          nameAr: row.nameAr,
-          nameEn: row.nameEn,
-          accountType: row.accountType,
-          reportDirection: row.reportDirection,
-          level: row.level,
-          isPosting: row.isPosting,
-          isActive: row.isActive,
-        })
-        .returning({ id: accountsTable.id });
-      codeToId.set(row.code, created.id);
-      inserted++;
-    }
-
-    logger.info({ companyId, inserted }, "default-coa.seeded");
-    return { inserted };
-  });
+  logger.info({ companyId, inserted }, "default-coa.seeded");
+  return { inserted };
 }

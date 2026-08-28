@@ -108,14 +108,17 @@ test("a new browser requires confirmation, then atomically replaces the prior de
   assert.deepEqual(await getDemoBrowserLoginPreflight(source, tokenA), {
     needsPreparation: true,
     transferRequired: false,
+    phoneRequired: false,
   });
   const first = await resolveDemoDeviceLogin({
     sourceUser: source, deviceToken: tokenA, deviceLabel: "browser-a",
   });
   assert.equal(first.isPrimary, true);
   assert.equal(first.bindingWasCreated, true);
-  assert.equal(first.effectiveUser.id, sourceUserId);
-  assert.equal(first.workspaceCompanyId, companyId);
+  assert.notEqual(first.effectiveUser.id, sourceUserId);
+  assert.notEqual(first.workspaceCompanyId, companyId);
+  cleanupUserIds.push(first.effectiveUser.id);
+  cleanupCompanyIds.push(first.workspaceCompanyId);
   assert.equal(
     await needsDemoDevicePreparation(source, tokenA),
     false,
@@ -132,13 +135,14 @@ test("a new browser requires confirmation, then atomically replaces the prior de
   assert.deepEqual(await getDemoBrowserLoginPreflight(source, tokenB), {
     needsPreparation: false,
     transferRequired: true,
+    phoneRequired: false,
   });
   const primaryBearer = `bearer-${randomBytes(24).toString("hex")}`;
   await db.update(usersTable).set({ sessionToken: primaryBearer, sessionId: "demo-primary-test" })
-    .where(eq(usersTable.id, sourceUserId));
+    .where(eq(usersTable.id, first.effectiveUser.id));
   assert.equal(await resolveBearerToken(primaryBearer), null, "primary bearer without cookie must be rejected");
   const primaryOk = await resolveBearerToken(primaryBearer, `${DEMO_BROWSER_COOKIE}=${tokenA}`);
-  assert.equal(primaryOk?.user.id, sourceUserId);
+  assert.equal(primaryOk?.user.id, first.effectiveUser.id);
 
   await assert.rejects(
     () => resolveDemoDeviceLogin({
@@ -151,7 +155,7 @@ test("a new browser requires confirmation, then atomically replaces the prior de
   );
   assert.equal(
     (await resolveBearerToken(primaryBearer, `${DEMO_BROWSER_COOKIE}=${tokenA}`))?.user.id,
-    sourceUserId,
+    first.effectiveUser.id,
     "cancelling/omitting confirmation must leave the old browser active",
   );
 
@@ -165,8 +169,8 @@ test("a new browser requires confirmation, then atomically replaces the prior de
   });
   assert.equal(transferred.isPrimary, true);
   assert.equal(transferred.bindingWasCreated, true);
-  assert.equal(transferred.workspaceCompanyId, companyId);
-  assert.equal(transferred.effectiveUser.id, sourceUserId);
+  assert.equal(transferred.workspaceCompanyId, first.workspaceCompanyId);
+  assert.equal(transferred.effectiveUser.id, first.effectiveUser.id);
   assert.notEqual(transferred.deviceLinkId, first.deviceLinkId);
 
   assert.equal(
@@ -185,7 +189,7 @@ test("a new browser requires confirmation, then atomically replaces the prior de
       transferredSession.sessionToken,
       `${DEMO_BROWSER_COOKIE}=${transferred.deviceToken}`,
     ))?.user.id,
-    sourceUserId,
+    transferred.effectiveUser.id,
   );
 
   const active = await db.select({ id: demoDeviceWorkspacesTable.id })
@@ -323,9 +327,10 @@ test("a failed atomic session write rolls the whole handoff back", async () => {
     isNull(demoDeviceWorkspacesTable.revokedAt),
   ));
   assert.ok(before);
+  assert.ok(before.workspaceUserId);
   const [sourceBefore] = await db.select({
     sessionToken: usersTable.sessionToken,
-  }).from(usersTable).where(eq(usersTable.id, sourceUserId));
+  }).from(usersTable).where(eq(usersTable.id, before.workspaceUserId));
   assert.ok(sourceBefore?.sessionToken);
 
   await assert.rejects(() => resolveDemoDeviceLogin({
@@ -343,7 +348,7 @@ test("a failed atomic session write rolls the whole handoff back", async () => {
   assert.deepEqual(active.map((row) => row.id), [before.id]);
   const [sourceAfter] = await db.select({
     sessionToken: usersTable.sessionToken,
-  }).from(usersTable).where(eq(usersTable.id, sourceUserId));
+  }).from(usersTable).where(eq(usersTable.id, before.workspaceUserId));
   assert.equal(
     sourceAfter?.sessionToken,
     sourceBefore.sessionToken,
@@ -408,7 +413,7 @@ test("releaseDemoDeviceLink deletes the link row so the browser can rebind", asy
   }
 });
 
-test("legacy handoff keeps the most recently used shadow workspace", async () => {
+test("legacy rows without a phone workspace are replaced by a clean phone-keyed workspace", async () => {
   const source = await loadSource();
   const now = new Date();
   await db.update(demoDeviceWorkspacesTable).set({
@@ -482,16 +487,21 @@ test("legacy handoff keeps the most recently used shadow workspace", async () =>
     confirmTransfer: true,
     sessionIssue: handoffSession,
   });
-  assert.equal(handoff.workspaceCompanyId, shadowCompany.id);
-  assert.equal(handoff.effectiveUser.id, shadowUser.id);
-  assert.equal(handoff.isPrimary, false);
-  assert.equal(handoff.sessionIssuedAtomically, true);
+  assert.notEqual(handoff.workspaceCompanyId, companyId);
+  assert.notEqual(handoff.workspaceCompanyId, shadowCompany.id);
+  assert.notEqual(handoff.effectiveUser.id, sourceUserId);
+  assert.notEqual(handoff.effectiveUser.id, shadowUser.id);
+  cleanupCompanyIds.push(handoff.workspaceCompanyId);
+  cleanupUserIds.push(handoff.effectiveUser.id);
+  assert.equal(handoff.isPrimary, true);
+  assert.equal(handoff.sessionIssuedAtomically, false);
   assert.equal(
-    (await resolveBearerToken(
+    await resolveBearerToken(
       handoffSession.sessionToken,
       `${DEMO_BROWSER_COOKIE}=${handoff.deviceToken}`,
-    ))?.user.id,
-    shadowUser.id,
+    ),
+    null,
+    "fresh phone workspace provisioning leaves session issuance to the caller",
   );
 
   const authRouteSource = readFileSync(
@@ -517,11 +527,13 @@ test("simultaneous confirmed transfers leave exactly one active browser binding"
     await revokeDemoDevice(sourceUserId, row.id);
   }
   const primaryToken = randomBytes(32).toString("base64url");
-  await resolveDemoDeviceLogin({
+  const primary = await resolveDemoDeviceLogin({
     sourceUser: source,
     deviceToken: primaryToken,
     deviceLabel: "race-primary",
   });
+  cleanupCompanyIds.push(primary.workspaceCompanyId);
+  cleanupUserIds.push(primary.effectiveUser.id);
 
   const tokenA = randomBytes(32).toString("base64url");
   const tokenB = randomBytes(32).toString("base64url");
@@ -562,8 +574,8 @@ test("simultaneous confirmed transfers leave exactly one active browser binding"
       eq(demoDeviceWorkspacesTable.status, "ready"),
     ));
   assert.equal(active.length, 1, "only the final confirmed browser may stay active");
-  assert.equal(active[0].workspaceUserId, sourceUserId);
-  assert.equal(active[0].workspaceCompanyId, companyId);
+  assert.equal(active[0].workspaceUserId, primary.effectiveUser.id);
+  assert.equal(active[0].workspaceCompanyId, primary.workspaceCompanyId);
   const usable = await Promise.all([
     resolveBearerToken(issueA.sessionToken, `${DEMO_BROWSER_COOKIE}=${tokenA}`),
     resolveBearerToken(issueB.sessionToken, `${DEMO_BROWSER_COOKIE}=${tokenB}`),

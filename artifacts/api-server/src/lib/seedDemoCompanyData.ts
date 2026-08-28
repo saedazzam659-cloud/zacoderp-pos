@@ -3,7 +3,7 @@
 import { db } from "@workspace/db";
 import {
   bankAccountsTable, branchesTable, cashBoxesTable, currenciesTable,
-  customersTable, itemGroupsTable, itemsTable, suppliersTable, unitsTable, warehousesTable,
+  costCentersTable, customersTable, itemGroupsTable, itemsTable, suppliersTable, unitsTable, warehousesTable,
 } from "@workspace/db";
 import { and, eq, or, sql } from "drizzle-orm";
 import {
@@ -14,6 +14,17 @@ import {
 type Logger = { info?: (o: unknown, msg?: string) => void; warn?: (o: unknown, msg?: string) => void };
 type SeedResult = { seeded: string[]; reused: string[]; repaired: string[] };
 type Tx = any;
+export type DemoBaselineIds = {
+  branchId: number;
+  warehouseId: number;
+  currencyId: number;
+  costCenterId: number | null;
+  customerId: number;
+  supplierId: number;
+  cashBoxId: number;
+  bankAccountId: number;
+};
+export type DemoBaselineSeedResult = SeedResult & { ids: DemoBaselineIds };
 
 const DEMO = {
   branch: { code: "BR-0001", name: "الفرع الرئيسي" },
@@ -25,6 +36,7 @@ const DEMO = {
   supplier: { code: "SUP-0001", name: "مورد محلي" },
   bank: { code: "BNK-0001", name: "البنك العام" },
   cash: { code: "CSH-0001", name: "الخزنة الرئيسية" },
+  costCenter: { code: "CC-0001", name: "مركز تكلفة عام" },
 } as const;
 
 /** Pick an existing demo row by stable code/name, without ever reading another tenant. */
@@ -38,14 +50,34 @@ async function findDemo(tx: Tx, table: any, companyId: number, code: string | nu
 
 export async function seedDemoCompanyData(
   companyId: number,
-  opts: { country: string; currencyCode: string },
+  opts: { country: string; currencyCode: string; includeGeneralCostCenter?: boolean },
   log?: Logger,
-): Promise<SeedResult> {
+): Promise<DemoBaselineSeedResult> {
   const result: SeedResult = { seeded: [], reused: [], repaired: [] };
-  const mark = (name: string, state: keyof SeedResult) => result[state].push(name);
 
   try {
-    await db.transaction(async (tx) => {
+    const seeded = await db.transaction((tx) =>
+      seedDemoCompanyDataTx(tx, companyId, opts, result));
+    log?.info?.({ companyId, ...result }, "demo company seed complete");
+    return seeded;
+  } catch (err) {
+    log?.warn?.({ err, companyId, result }, "demo company seed rolled back");
+    throw err;
+  }
+}
+
+/**
+ * Transaction-aware demo baseline primitive. Callers that are already
+ * creating a company transactionally can seed the entire tenant without
+ * opening a second transaction or exposing a half-provisioned workspace.
+ */
+export async function seedDemoCompanyDataTx(
+  tx: Tx,
+  companyId: number,
+  opts: { country: string; currencyCode: string; includeGeneralCostCenter?: boolean },
+  result: SeedResult = { seeded: [], reused: [], repaired: [] },
+): Promise<DemoBaselineSeedResult> {
+      const mark = (name: string, state: keyof SeedResult) => result[state].push(name);
       // Serialize all seed/retry callers for this tenant before any lookup.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${companyId})`);
       // SAR is intentionally the demo base currency, irrespective of a
@@ -72,6 +104,30 @@ export async function seedDemoCompanyData(
       await tx.update(branchesTable).set({ isMain: false }).where(eq(branchesTable.companyId, companyId));
       await tx.update(branchesTable).set({ isMain: true, status: "active" })
         .where(and(eq(branchesTable.id, branch.id), eq(branchesTable.companyId, companyId)));
+
+      let costCenter: typeof costCentersTable.$inferSelect | null = null;
+      if (opts.includeGeneralCostCenter) {
+        costCenter = await findDemo(tx, costCentersTable, companyId, DEMO.costCenter.code, DEMO.costCenter.name);
+        if (!costCenter) {
+          [costCenter] = await tx.insert(costCentersTable).values({
+            companyId,
+            code: DEMO.costCenter.code,
+            nameAr: DEMO.costCenter.name,
+            level: 1,
+            isPosting: true,
+            isActive: true,
+          }).returning();
+          mark("general cost center", "seeded");
+        } else {
+          await tx.update(costCentersTable).set({
+            parentId: null,
+            level: 1,
+            isPosting: true,
+            isActive: true,
+          }).where(and(eq(costCentersTable.id, costCenter.id), eq(costCentersTable.companyId, companyId)));
+          mark("general cost center", "repaired");
+        }
+      }
 
       let warehouse = await findDemo(tx, warehousesTable, companyId, DEMO.warehouse.code, DEMO.warehouse.name);
       const warehouseAccountId = await ensureWarehouseAccount(companyId, DEMO.warehouse.name, tx);
@@ -135,10 +191,10 @@ export async function seedDemoCompanyData(
       let bank = await findDemo(tx, bankAccountsTable, companyId, DEMO.bank.code, DEMO.bank.name);
       const bankAccountId = await ensureBankAccountLedger(companyId, DEMO.bank.name, tx);
       if (!bank) {
-        await tx.insert(bankAccountsTable).values({
+        [bank] = await tx.insert(bankAccountsTable).values({
           companyId, code: DEMO.bank.code, nameAr: DEMO.bank.name, branchId: branch.id,
           currencyId: currency.id, accountId: bankAccountId,
-        });
+        }).returning();
         mark("general bank", "seeded");
       } else {
         await tx.update(bankAccountsTable).set({
@@ -150,10 +206,10 @@ export async function seedDemoCompanyData(
       let cashbox = await findDemo(tx, cashBoxesTable, companyId, DEMO.cash.code, DEMO.cash.name);
       const cashAccountId = await ensureCashBoxAccount(companyId, DEMO.cash.name, tx);
       if (!cashbox) {
-        await tx.insert(cashBoxesTable).values({
+        [cashbox] = await tx.insert(cashBoxesTable).values({
           companyId, code: DEMO.cash.code, nameAr: DEMO.cash.name, branchId: branch.id,
           currencyId: currency.id, accountId: cashAccountId,
-        });
+        }).returning();
         mark("main cashbox/treasury", "seeded");
       } else {
         await tx.update(cashBoxesTable).set({
@@ -161,11 +217,18 @@ export async function seedDemoCompanyData(
         }).where(and(eq(cashBoxesTable.id, cashbox.id), eq(cashBoxesTable.companyId, companyId)));
         mark("main cashbox/treasury", "repaired");
       }
-    });
-    log?.info?.({ companyId, ...result }, "demo company seed complete");
-    return result;
-  } catch (err) {
-    log?.warn?.({ err, companyId, result }, "demo company seed rolled back");
-    throw err;
-  }
+
+      return {
+        ...result,
+        ids: {
+          branchId: branch.id,
+          warehouseId: warehouse.id,
+          currencyId: currency.id,
+          costCenterId: costCenter?.id ?? null,
+          customerId: customer.id,
+          supplierId: supplier.id,
+          cashBoxId: cashbox.id,
+          bankAccountId: bank.id,
+        },
+      };
 }

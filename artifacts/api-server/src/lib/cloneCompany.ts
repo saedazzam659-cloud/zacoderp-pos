@@ -31,6 +31,8 @@ import {
   workSessionSettingsTable,
   companyCloneRunsTable,
 } from "@workspace/db";
+import { seedDefaultChartOfAccountsTx } from "./seedDefaultChartOfAccounts.js";
+import { seedDemoCompanyDataTx } from "./seedDemoCompanyData.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -216,7 +218,9 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
 
     // ── 2. Regions ──────────────────────────────────────────────────────────
     const regionMap = new Map<number, number>();
-    const regions = await tx.select().from(regionsTable).where(eq(regionsTable.companyId, sourceId));
+    const regions = internalDemo
+      ? []
+      : await tx.select().from(regionsTable).where(eq(regionsTable.companyId, sourceId));
     for (const r of regions) {
       const { id: srcId, createdAt, updatedAt, companyId, ...rest } = r;
       const [ins] = await tx.insert(regionsTable)
@@ -228,7 +232,9 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
 
     // ── 3. Branches ─────────────────────────────────────────────────────────
     const branchMap = new Map<number, number>();
-    const branches = await tx.select().from(branchesTable).where(eq(branchesTable.companyId, sourceId));
+    const branches = internalDemo
+      ? []
+      : await tx.select().from(branchesTable).where(eq(branchesTable.companyId, sourceId));
     for (const b of branches) {
       const { id: srcId, createdAt, updatedAt, companyId, regionId, ...rest } = b;
       const [ins] = await tx.insert(branchesTable)
@@ -253,6 +259,43 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     } as typeof usersTable.$inferInsert).returning({ id: usersTable.id });
     const adminUserId = adminUser.id;
     bump("users");
+
+    if (internalDemo) {
+      // Phone-isolated demos get a deterministic baseline built from code.
+      // Do not copy any source-owned master rows: the source may have been
+      // customised before isolation, and leaking those rows makes one demo
+      // appear to inherit another user's setup.
+      const coa = await seedDefaultChartOfAccountsTx(tx, newCompanyId);
+      const baseline = await seedDemoCompanyDataTx(tx, newCompanyId, {
+        country: id.country ?? source.country ?? "SA",
+        currencyCode: "SAR",
+        includeGeneralCostCenter: true,
+      });
+
+      bump("accounts", coa.inserted);
+      bump("branches");
+      bump("cost_centers");
+      bump("currencies");
+      bump("warehouses");
+      bump("units");
+      bump("item_groups");
+      bump("items");
+      bump("customers");
+      bump("suppliers");
+      bump("cash_boxes");
+      bump("bank_accounts");
+
+      await tx.update(companiesTable).set({
+        hrDefaultPayCashBoxId: baseline.ids.cashBoxId,
+        hrDefaultPayBankAccountId: baseline.ids.bankAccountId,
+        posCashCashBoxId: baseline.ids.cashBoxId,
+        posCardBankAccountId: baseline.ids.bankAccountId,
+        posAppleBankAccountId: baseline.ids.bankAccountId,
+        posWalletBankAccountId: baseline.ids.bankAccountId,
+      }).where(eq(companiesTable.id, newCompanyId));
+
+      return { newCompanyId, newCompanyCode, adminUserId };
+    }
 
     if (copyUsers) {
       const srcUsers = await tx.select().from(usersTable).where(and(
