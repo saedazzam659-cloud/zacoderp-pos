@@ -999,11 +999,12 @@ export default function GeneralSettings() {
     }
   }
 
-  async function handleBackupExport() {
+  async function handleBackupExport(includeAttachments: boolean) {
     setExporting(true);
     try {
       const cid = user?.company?.id ?? user?.companyId;
-      const res = await fetch(`${API}/api/backup/export-portable?companyId=${cid}`, { headers });
+      const endpoint = includeAttachments ? "export-portable" : "export";
+      const res = await fetch(`${API}/api/backup/${endpoint}?companyId=${cid}`, { headers });
       if (!res.ok) {
         const raw = await res.text();
         let message = t("pages.generalSettings.exportFailed");
@@ -1015,10 +1016,17 @@ export default function GeneralSettings() {
       const a = document.createElement("a");
       const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
       a.href = url;
-      a.download = `backup-${user?.company?.nameAr?.replace(/\s+/g, "_") || "company"}-${ts}.zacbackup`;
+      const safeCompanyName = user?.company?.nameAr?.replace(/\s+/g, "_") || "company";
+      a.download = includeAttachments
+        ? `backup-${safeCompanyName}-${ts}-with-attachments.zacbackup`
+        : `backup-${safeCompanyName}-${ts}-data-only.json`;
       a.click();
       URL.revokeObjectURL(url);
-      toast({ title: "تم تصدير بيانات الشركة وملفات الأرشيف والمرفقات في حزمة واحدة" });
+      toast({
+        title: t(includeAttachments
+          ? "pages.generalSettings.exportWithAttachmentsSuccess"
+          : "pages.generalSettings.exportDataOnlySuccess"),
+      });
     } catch (e: any) {
       toast({ title: e.message || t("pages.generalSettings.exportFailed"), variant: "destructive" });
     } finally {
@@ -2268,17 +2276,53 @@ export default function GeneralSettings() {
                 </p>
               </div>
             </div>
-            <Button
-              type="button"
-              onClick={handleBackupExport}
-              disabled={exporting}
-              className="gap-2 bg-indigo-600 hover:bg-indigo-700"
-            >
-              {exporting
-                ? <><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</>
-                : <><Download className="h-4 w-4" />{t("pages.generalSettings.downloadBackup")}</>
-              }
-            </Button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <Cloud className="h-4 w-4 mt-0.5 text-indigo-700 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold">{t("pages.generalSettings.exportWithAttachmentsTitle")}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t("pages.generalSettings.exportWithAttachmentsDesc")}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => handleBackupExport(true)}
+                  disabled={exporting}
+                  className="gap-2 bg-indigo-600 hover:bg-indigo-700"
+                >
+                  {exporting
+                    ? <><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</>
+                    : <><Download className="h-4 w-4" />{t("pages.generalSettings.downloadWithAttachments")}</>
+                  }
+                </Button>
+              </div>
+              <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <FileJson className="h-4 w-4 mt-0.5 text-slate-700 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold">{t("pages.generalSettings.exportDataOnlyTitle")}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t("pages.generalSettings.exportDataOnlyDesc")}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleBackupExport(false)}
+                  disabled={exporting}
+                  className="gap-2"
+                >
+                  {exporting
+                    ? <><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</>
+                    : <><Download className="h-4 w-4" />{t("pages.generalSettings.downloadDataOnly")}</>
+                  }
+                </Button>
+              </div>
+            </div>
           </div>
 
           {/* ─── Scheduled auto-backup card ─────────────────────────────── */}

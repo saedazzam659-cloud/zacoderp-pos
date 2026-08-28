@@ -5,7 +5,7 @@ import {
   createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync,
 } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   ObjectAclPolicy,
   ObjectPermission,
@@ -137,6 +137,31 @@ export class ObjectStorageService {
 
   usesLocalPrivateStorage(): boolean {
     return localPrivateObjectRoot() !== null;
+  }
+
+  /**
+   * Older external-agent rows may contain a relative/absolute local storage
+   * path instead of the public-neutral `/objects/...` form. Convert only paths
+   * that resolve to an existing file inside this agent's private object root.
+   */
+  normalizePrivateObjectReference(rawPath: string): string | null {
+    const value = rawPath.trim();
+    if (value.startsWith("/objects/")) return value;
+    const root = localPrivateObjectRoot();
+    if (!root || !value) return null;
+    let candidate = value;
+    if (value.startsWith("file://")) {
+      try { candidate = new URL(value).pathname; } catch { return null; }
+    }
+    let target: string;
+    try {
+      target = isAbsolute(candidate) ? resolve(candidate) : safeLocalPath(root, candidate);
+    } catch {
+      return null;
+    }
+    if (target === root || !target.startsWith(root + sep) || !existsSync(target)) return null;
+    const key = relative(root, target).split(sep).join("/");
+    return key && !key.includes("..") ? `/objects/${key}` : null;
   }
 
   getPublicObjectSearchPaths(): Array<string> {

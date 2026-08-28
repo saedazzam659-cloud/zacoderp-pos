@@ -95,6 +95,12 @@ export function restoreParameterValue(dataType: string | undefined, value: unkno
   if ((dataType === "json" || dataType === "jsonb") && value !== null && value !== undefined) {
     return JSON.stringify(value);
   }
+  if (dataType === "boolean" && value !== null && value !== undefined) {
+    if (typeof value === "boolean") return value;
+    if (value === 1 || value === "1" || value === "true" || value === "t") return true;
+    if (value === 0 || value === "0" || value === "false" || value === "f") return false;
+    throw new Error("Invalid boolean value in backup");
+  }
   return value;
 }
 function sanitizeValue(column: string, value: unknown, tableName?: string, nested = false): unknown {
@@ -172,6 +178,26 @@ export function catalogsMatch(
       && table.foreignKeys.map(fkSignature).sort().join("\n")
         === live.foreignKeys.map(fkSignature).sort().join("\n");
   });
+}
+
+/**
+ * Business tables must keep an exact catalog match. The users table is the
+ * sole compatibility boundary: it is protected (never deleted), imported
+ * users are disabled, and agent/cloud releases may add profile or permission
+ * columns at different times. Column drift there is therefore reconciled to
+ * the live table without weakening the full-company catalog invariant.
+ */
+export function restoreCatalogsCompatible(
+  manifest: Record<string, BackupTable>,
+  liveCatalog: Record<string, BackupTable>,
+): boolean {
+  const sourceUsers = manifest.users;
+  const liveUsers = liveCatalog.users;
+  if (!sourceUsers || !liveUsers) return catalogsMatch(manifest, liveCatalog);
+  return catalogsMatch({
+    ...manifest,
+    users: { ...sourceUsers, columns: [...liveUsers.columns] },
+  }, liveCatalog);
 }
 
 export function missingRequiredFullCompanyTables(
@@ -355,7 +381,7 @@ export async function buildFullCompanyBackup(companyId: number, exportedBy: stri
 
 export async function restoreFullCompanyBackup(companyId: number, payload: FullCompanyPayload): Promise<Record<string, { received: number; inserted: number; updated: number }>> {
   if (!isFullCompanyBackupPayload(payload)) throw new Error("Invalid schemaVersion 2 backup");
-  const tables = Object.fromEntries(Object.entries(payload.manifest.tables)
+  const manifestTables = Object.fromEntries(Object.entries(payload.manifest.tables)
     .filter(([name]) => !LEGACY_IGNORED_RESTORE_TABLES.has(name)));
   for (const [name, table] of Object.entries(payload.manifest.tables)) {
     if (LEGACY_IGNORED_RESTORE_TABLES.has(name)) continue;
@@ -363,25 +389,37 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
     if (!Object.keys(payload.data).includes(name)) throw new Error(`Missing backup data for ${name}`);
   }
   for (const name of Object.keys(payload.data)) {
-    if (!LEGACY_IGNORED_RESTORE_TABLES.has(name) && !tables[name]) {
+    if (!LEGACY_IGNORED_RESTORE_TABLES.has(name) && !manifestTables[name]) {
       throw new Error(`Backup data has no manifest entry: ${name}`);
     }
   }
   return db.transaction(async (tx) => {
     const report: Record<string, { received: number; inserted: number; updated: number }> = {};
     const actual = await catalog(tx);
-    if (!catalogsMatch(tables, actual)) {
-      throw new Error("Backup manifest is incomplete or does not match the live full-company catalog");
+    if (!restoreCatalogsCompatible(manifestTables, actual)) {
+      throw new Error(
+        "تعذر استعادة النسخة لأن إصدار جداول بيانات الشركة يختلف بين الخادم المصدر والهدف. حدّث الخادمين إلى الإصدار نفسه ثم أعد المحاولة.",
+      );
     }
-    const columnTypes = new Map<string, string>();
+    const tables = { ...manifestTables };
+    for (const name of PROTECTED_RESTORE_TABLES) {
+      if (actual[name] && manifestTables[name]) tables[name] = actual[name];
+    }
+    const columnMeta = new Map<string, {
+      dataType: string; nullable: boolean; hasDefault: boolean;
+    }>();
     for (const record of rows(await tx.execute(sql`
-      SELECT "table_name", "column_name", "data_type"
+      SELECT "table_name", "column_name", "data_type", "is_nullable", "column_default"
       FROM information_schema.columns
       WHERE table_schema = 'public'
     `))) {
-      columnTypes.set(
+      columnMeta.set(
         `${String(cell(record, "table_name"))}.${String(cell(record, "column_name"))}`,
-        String(cell(record, "data_type")),
+        {
+          dataType: String(cell(record, "data_type")),
+          nullable: String(cell(record, "is_nullable")) === "YES",
+          hasDefault: cell(record, "column_default") != null,
+        },
       );
     }
     for (const [name, table] of Object.entries(tables)) {
@@ -390,7 +428,7 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
       if (!Array.isArray(payload.data[name])) throw new Error(`Backup data for ${name} must be an array`);
       if (payload.counts?.[name] !== payload.data[name].length) throw new Error(`Backup count mismatch for ${name}`);
       for (const record of payload.data[name]) for (const key of Object.keys(record)) {
-        if (!table.columns.includes(key)) throw new Error(`Unexpected column ${name}.${key}`);
+        if (!manifestTables[name].columns.includes(key)) throw new Error(`Unexpected column ${name}.${key}`);
       }
     }
     const sourceUsernames = (payload.data.users ?? [])
@@ -456,7 +494,15 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
         const values: Record<string, unknown> = {};
         for (const col of table.columns) {
           if (col !== table.primaryKey && !isSensitiveColumn(col) && col in source) {
-            values[col] = restoreParameterValue(columnTypes.get(`${name}.${col}`), source[col]);
+            const meta = columnMeta.get(`${name}.${col}`);
+            // Older agents sometimes added new user flags as nullable columns,
+            // while current servers enforce NOT NULL with a default. Omitting
+            // an explicit legacy NULL lets PostgreSQL apply the safe live
+            // default. Other business rows retain exact value semantics.
+            if (name === "users" && source[col] == null && meta && !meta.nullable && meta.hasDefault) {
+              continue;
+            }
+            values[col] = restoreParameterValue(meta?.dataType, source[col]);
           }
         }
         if (table.classification !== "dependent-child" && table.columns.includes("company_id")) {
@@ -555,7 +601,7 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
       const columns = Object.keys(safe);
       if (columns.length) await tx.execute(sql`UPDATE "companies" SET ${sql.join(columns.map((column) =>
         sql`${sql.raw(ident(column))} = ${sql.param(
-          restoreParameterValue(columnTypes.get(`companies.${column}`), safe[column]),
+          restoreParameterValue(columnMeta.get(`companies.${column}`)?.dataType, safe[column]),
         )}`), sql`, `)} WHERE "id" = ${companyId}`);
     }
     return report;

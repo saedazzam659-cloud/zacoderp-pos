@@ -3,11 +3,11 @@ name: Full-company backup catalog contract
 description: Safety rules for dynamic full-tenant export and replace restore.
 ---
 
-Schema-v2 full-company restore must compare the uploaded manifest bidirectionally against the complete live catalog before deleting anything: exact tables, ordered columns, primary-key metadata, and foreign keys. Missing or unsupported relationships must fail closed, never degrade to a partial restore.
+Schema-v2 full-company restore must compare the uploaded manifest bidirectionally against the complete live catalog before deleting anything: exact tables, ordered columns, primary-key metadata, and foreign keys. Missing or unsupported relationships must fail closed, never degrade to a partial restore. The only allowed column-drift boundary is the protected users table: users are never deleted, imported identities are disabled, and values must be reconciled to live columns/defaults.
 
 **Why:** An uploaded manifest is attacker-controlled. If it can omit a table or FK, “full replace” silently leaves old rows behind or inserts raw IDs that can reference another tenant. Generic secret-name matching is also unsafe because business hashes such as invoice hashes and ZATCA PIH are evidence, not credentials.
 
-**How to apply:** Discover company roots and dependent children from PostgreSQL metadata; sanitize actual credentials recursively (including signed URLs and JSONB) while preserving business hashes; restore in one transaction with ID remapping. Explicitly report file references whose bytes are not embedded.
+**How to apply:** Discover company roots and dependent children from PostgreSQL metadata; sanitize actual credentials recursively (including signed URLs and JSONB) while preserving business hashes; restore in one transaction with ID remapping. Keep business-table catalogs exact. For protected users only, ignore source-only columns, apply live defaults for absent/legacy-null required fields, and normalize boolean encodings. Explicitly report file references whose bytes are not embedded.
 
 Company-settings restore must bind every value with `sql.param` after type normalization; never interpolate raw arrays/JSON into a dynamic SET list.
 

@@ -4,7 +4,7 @@ import {
   BACKUP_EXCLUDED_TABLES, classifyTable, isSensitiveColumn, sanitizeRow,
   topologicalTableOrder, isFullCompanyBackupPayload, isExternalFileReference,
   catalogsMatch, missingRequiredFullCompanyTables, REQUIRED_FULL_COMPANY_TABLES,
-  restoreParameterValue, restoredUsername,
+  restoreCatalogsCompatible, restoreParameterValue, restoredUsername,
 } from "../src/lib/fullCompanyBackup.js";
 
 test("backup sensitive policy preserves business hashes and removes credentials", () => {
@@ -62,6 +62,15 @@ test("restore serializes json values before raw SQL binding", () => {
   assert.equal(restoreParameterValue("jsonb", null), null);
 });
 
+test("restore normalizes legacy boolean encodings", () => {
+  assert.equal(restoreParameterValue("boolean", false), false);
+  assert.equal(restoreParameterValue("boolean", "false"), false);
+  assert.equal(restoreParameterValue("boolean", "0"), false);
+  assert.equal(restoreParameterValue("boolean", "true"), true);
+  assert.equal(restoreParameterValue("boolean", 1), true);
+  assert.throws(() => restoreParameterValue("boolean", "not-a-boolean"));
+});
+
 test("restored users receive deterministic non-login identities", () => {
   assert.equal(restoredUsername("admin", 1, 23), "admin.restored.1.23");
   assert.ok(restoredUsername("x".repeat(200), 1, 23).length <= 120);
@@ -107,6 +116,30 @@ test("canonical catalog validation rejects omitted tables and foreign keys", () 
   assert.equal(catalogsMatch({ parent, child }, { parent, child }), true);
   assert.equal(catalogsMatch({ parent }, { parent, child }), false);
   assert.equal(catalogsMatch({ parent, child: { ...child, foreignKeys: [] } }, { parent, child }), false);
+});
+
+test("restore compatibility permits only protected-user column drift", () => {
+  const table = (name: string, classification: any = "tenant-root"): any => ({
+    name, primaryKey: "id", primaryKeys: ["id"], columns: ["id", "company_id"],
+    foreignKeys: [], classification,
+  });
+  const source = {
+    accounts: table("accounts"),
+    users: table("users", "protected-user"),
+  };
+  const newerUsers = {
+    ...source.users,
+    columns: [...source.users.columns, "demo_device_isolation", "is_demo_shadow"],
+  };
+  assert.equal(restoreCatalogsCompatible(source, { ...source, users: newerUsers }), true);
+  assert.equal(restoreCatalogsCompatible(
+    source,
+    { ...source, accounts: { ...source.accounts, columns: [...source.accounts.columns, "new_business_field"] } },
+  ), false);
+  assert.equal(restoreCatalogsCompatible(
+    source,
+    { ...source, users: { ...newerUsers, primaryKey: "user_id", primaryKeys: ["user_id"] } },
+  ), false);
 });
 
 test("full-company export refuses catalogs missing core business domains", () => {

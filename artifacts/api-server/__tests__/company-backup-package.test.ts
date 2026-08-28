@@ -9,7 +9,7 @@ import test from "node:test";
 import {
   MAX_PACKAGE_FILES, MAX_PACKAGE_FILE_BYTES, MAX_PACKAGE_TOTAL_BYTES,
   assertPortableExportLimits, collectPortableFileReferences, parsePortableManifest,
-  rewritePortablePayload, separateRoutedDocumentArchiveRows, serializePortableManifest, validatePortableManifest,
+  normalizeLegacyPortableFileReferences, rewritePortablePayload, separateRoutedDocumentArchiveRows, serializePortableManifest, validatePortableManifest,
   verifyPortableContainerBuffer, restorePortableBackupPackage,
 } from "../src/lib/companyBackupPackage.js";
 import { ObjectStorageService, canReadPrivateObjectPath } from "../src/lib/objectStorage.js";
@@ -107,6 +107,30 @@ test("external agents can stage and read private objects from local storage", as
       olderThan: new Date(Date.now() - 60_000),
     }), 1);
     await assert.rejects(() => readFile(join(root, "company-backup-packages/18/test.zacbackup")));
+  } finally {
+    if (previous === undefined) delete process.env.ZACOD_LOCAL_OBJECT_DIR;
+    else process.env.ZACOD_LOCAL_OBJECT_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("portable export canonicalizes legacy local attachment paths inside the private root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "zacod-local-legacy-"));
+  const previous = process.env.ZACOD_LOCAL_OBJECT_DIR;
+  process.env.ZACOD_LOCAL_OBJECT_DIR = root;
+  try {
+    const service = new ObjectStorageService();
+    const target = service.getPrivateObjectFile("uploads/legacy.pdf");
+    await pipeline(
+      createReadStream(new URL(import.meta.url)),
+      target.createWriteStream({ metadata: { contentType: "application/pdf" } }),
+    );
+    const legacyPayload: any = JSON.parse(JSON.stringify(payload));
+    legacyPayload.data.docs[0].attachment_path = join(root, "uploads/legacy.pdf");
+    legacyPayload.data.docs[1].attachment_path = "uploads/legacy.pdf";
+    assert.equal(normalizeLegacyPortableFileReferences(legacyPayload, service), 2);
+    const collected = collectPortableFileReferences(legacyPayload);
+    assert.equal(collected.files.some((file) => file.sourcePath === "/objects/uploads/legacy.pdf"), true);
+    assert.equal(collected.skippedExternal.length, 1);
   } finally {
     if (previous === undefined) delete process.env.ZACOD_LOCAL_OBJECT_DIR;
     else process.env.ZACOD_LOCAL_OBJECT_DIR = previous;

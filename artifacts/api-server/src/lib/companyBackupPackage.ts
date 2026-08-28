@@ -61,6 +61,31 @@ function pointerValue(payload: FullCompanyPayload, pointer: FilePointer): unknow
   if (pointer.kind === "companySettings") return payload.companySettings?.[pointer.column];
   return payload.data[pointer.table]?.[pointer.row]?.[pointer.column];
 }
+function setPointerValue(payload: FullCompanyPayload, pointer: FilePointer, value: string): void {
+  if (pointer.kind === "companySettings") payload.companySettings![pointer.column] = value;
+  else payload.data[pointer.table][pointer.row][pointer.column] = value;
+}
+
+/**
+ * Canonicalize legacy local-agent filesystem references before packaging.
+ * The storage service accepts them only when they point to an existing file
+ * beneath the configured private root, so arbitrary host files cannot enter a
+ * backup package.
+ */
+export function normalizeLegacyPortableFileReferences(
+  payload: FullCompanyPayload,
+  service: ObjectStorageService,
+): number {
+  const initial = collectPortableFileReferences(payload);
+  let normalized = 0;
+  for (const skipped of initial.skippedExternal) {
+    const canonical = service.normalizePrivateObjectReference(skipped.value);
+    if (!canonical) continue;
+    setPointerValue(payload, skipped.pointer, canonical);
+    normalized++;
+  }
+  return normalized;
+}
 function validatePointer(payload: FullCompanyPayload, pointer: unknown): asserts pointer is FilePointer {
   if (!pointer || typeof pointer !== "object") fail("مؤشر ملف غير صالح");
   const p = pointer as Partial<FilePointer>;
@@ -260,9 +285,10 @@ export async function buildPortableBackupPackage(companyId: number, exportedBy: 
       payload.counts.document_archives = routedRows.length;
     }
   }
+  const service = new ObjectStorageService(); const dir = await mkdtemp(join(tmpdir(), "company-backup-"));
+  normalizeLegacyPortableFileReferences(payload, service);
   const collected = collectPortableFileReferences(payload);
   assertPortableExportLimits(collected.files.length, []);
-  const service = new ObjectStorageService(); const dir = await mkdtemp(join(tmpdir(), "company-backup-"));
   const cleanup = async () => { await rm(dir, { recursive: true, force: true }); };
   try {
     const planned: Array<{
