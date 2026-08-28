@@ -1,9 +1,12 @@
 import crypto from "node:crypto";
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import {
+  accountingMappingsTable,
+  accountsTable,
   db,
   branchesTable,
   companiesTable,
+  costCentersTable,
   demoDevicePairCodesTable,
   demoDeviceWorkspacesTable,
   userBranchesTable,
@@ -334,6 +337,182 @@ async function syncRetainedWorkspaceMenuPermissions(
 }
 
 /**
+ * One-time repair for phone workspaces created by the old deterministic demo
+ * baseline. Those tenants have a valid local COA but zero posting mappings,
+ * so every document save fails. We add only missing account definitions and
+ * source mappings; existing documents, balances, parties and stock are never
+ * touched. Any workspace that already has at least one mapping is left alone.
+ */
+export async function repairLegacyDemoAccountingSetup(
+  sourceCompanyId: number,
+  workspaceCompanyId: number,
+): Promise<boolean> {
+  if (sourceCompanyId === workspaceCompanyId) return false;
+
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${91_000_000 + workspaceCompanyId})`);
+
+    const [workspace] = await tx.select({
+      isInternalDemoWorkspace: companiesTable.isInternalDemoWorkspace,
+      demoParentCompanyId: companiesTable.demoParentCompanyId,
+    }).from(companiesTable).where(eq(companiesTable.id, workspaceCompanyId)).limit(1);
+    if (
+      !workspace?.isInternalDemoWorkspace
+      || workspace.demoParentCompanyId !== sourceCompanyId
+    ) return false;
+
+    const existingMappings = await tx.select({ id: accountingMappingsTable.id })
+      .from(accountingMappingsTable)
+      .where(eq(accountingMappingsTable.companyId, workspaceCompanyId))
+      .limit(1);
+    if (existingMappings.length > 0) return false;
+
+    // A Drizzle transaction owns one pg client; keep these reads sequential
+    // rather than issuing concurrent client.query calls on that same client.
+    const [sourceCompany] = await tx.select().from(companiesTable)
+      .where(eq(companiesTable.id, sourceCompanyId)).limit(1);
+    const sourceAccounts = await tx.select().from(accountsTable)
+      .where(eq(accountsTable.companyId, sourceCompanyId));
+    const sourceMappings = await tx.select().from(accountingMappingsTable)
+      .where(eq(accountingMappingsTable.companyId, sourceCompanyId));
+    const targetAccounts = await tx.select().from(accountsTable)
+      .where(eq(accountsTable.companyId, workspaceCompanyId));
+    const sourceCostCenters = await tx.select().from(costCentersTable)
+      .where(eq(costCentersTable.companyId, sourceCompanyId));
+    const targetCostCenters = await tx.select().from(costCentersTable)
+      .where(eq(costCentersTable.companyId, workspaceCompanyId));
+    if (!sourceCompany || sourceMappings.length === 0) return false;
+
+    const sourceById = new Map(sourceAccounts.map((account) => [account.id, account]));
+    const targetByCode = new Map(
+      targetAccounts.map((account) => [account.code, account]),
+    );
+    const sourceCostCenterById = new Map(
+      sourceCostCenters.map((costCenter) => [costCenter.id, costCenter]),
+    );
+    const targetCostCenterByCode = new Map(
+      targetCostCenters.map((costCenter) => [costCenter.code, costCenter]),
+    );
+    const accountMap = new Map<number, number>();
+    const costCenterMap = new Map<number, number>();
+    const resolving = new Set<number>();
+    const resolvingCostCenters = new Set<number>();
+
+    const ensureTargetCostCenter = async (sourceCostCenterId: number): Promise<number | null> => {
+      const mapped = costCenterMap.get(sourceCostCenterId);
+      if (mapped != null) return mapped;
+      const sourceCostCenter = sourceCostCenterById.get(sourceCostCenterId);
+      if (!sourceCostCenter || resolvingCostCenters.has(sourceCostCenterId)) return null;
+
+      const sameCode = targetCostCenterByCode.get(sourceCostCenter.code);
+      if (sameCode) {
+        costCenterMap.set(sourceCostCenterId, sameCode.id);
+        return sameCode.id;
+      }
+
+      resolvingCostCenters.add(sourceCostCenterId);
+      const parentId = sourceCostCenter.parentId == null
+        ? null
+        : await ensureTargetCostCenter(sourceCostCenter.parentId);
+      const [created] = await tx.insert(costCentersTable).values({
+        companyId: workspaceCompanyId,
+        parentId,
+        code: sourceCostCenter.code,
+        nameAr: sourceCostCenter.nameAr,
+        nameEn: sourceCostCenter.nameEn,
+        level: sourceCostCenter.level,
+        isPosting: sourceCostCenter.isPosting,
+        isActive: sourceCostCenter.isActive,
+        notes: sourceCostCenter.notes,
+      }).returning();
+      resolvingCostCenters.delete(sourceCostCenterId);
+      targetCostCenterByCode.set(created.code, created);
+      costCenterMap.set(sourceCostCenterId, created.id);
+      return created.id;
+    };
+
+    const ensureTargetAccount = async (sourceAccountId: number): Promise<number | null> => {
+      const mapped = accountMap.get(sourceAccountId);
+      if (mapped != null) return mapped;
+      const sourceAccount = sourceById.get(sourceAccountId);
+      if (!sourceAccount || resolving.has(sourceAccountId)) return null;
+
+      const sameCode = targetByCode.get(sourceAccount.code);
+      if (sameCode) {
+        accountMap.set(sourceAccountId, sameCode.id);
+        return sameCode.id;
+      }
+
+      resolving.add(sourceAccountId);
+      const parentId = sourceAccount.parentId == null
+        ? null
+        : await ensureTargetAccount(sourceAccount.parentId);
+      const costCenterId = sourceAccount.costCenterId == null
+        ? null
+        : await ensureTargetCostCenter(sourceAccount.costCenterId);
+      const [created] = await tx.insert(accountsTable).values({
+        companyId: workspaceCompanyId,
+        parentId,
+        costCenterId,
+        code: sourceAccount.code,
+        nameAr: sourceAccount.nameAr,
+        nameEn: sourceAccount.nameEn,
+        accountType: sourceAccount.accountType,
+        reportDirection: sourceAccount.reportDirection,
+        level: sourceAccount.level,
+        isPosting: sourceAccount.isPosting,
+        isActive: sourceAccount.isActive,
+        notes: sourceAccount.notes,
+      }).returning();
+      resolving.delete(sourceAccountId);
+      targetByCode.set(created.code, created);
+      accountMap.set(sourceAccountId, created.id);
+      return created.id;
+    };
+
+    for (const mapping of sourceMappings) {
+      const targetAccountId = mapping.accountId == null
+        ? null
+        : await ensureTargetAccount(mapping.accountId);
+      await tx.insert(accountingMappingsTable).values({
+        companyId: workspaceCompanyId,
+        documentType: mapping.documentType,
+        roleKey: mapping.roleKey,
+        accountId: targetAccountId,
+        isLocked: mapping.isLocked,
+      });
+    }
+
+    await tx.update(companiesTable).set({
+      brandLogo: sourceCompany.brandLogo,
+      hideQuickAddBar: sourceCompany.hideQuickAddBar,
+      allowUnbalancedOpeningBalances: sourceCompany.allowUnbalancedOpeningBalances,
+      openingBalanceReminderMessage: sourceCompany.openingBalanceReminderMessage,
+      openingBalanceReminderStartTime: sourceCompany.openingBalanceReminderStartTime,
+      openingBalanceReminderRepeatCount: sourceCompany.openingBalanceReminderRepeatCount,
+      invoiceFormLayout: sourceCompany.invoiceFormLayout,
+      statementPrintFormat: sourceCompany.statementPrintFormat,
+      autoSendZatcaAfterPost: sourceCompany.autoSendZatcaAfterPost,
+      allowDraftWithoutWarehouse: sourceCompany.allowDraftWithoutWarehouse,
+      payrollCostBasis: sourceCompany.payrollCostBasis,
+      hrAlertThresholds: sourceCompany.hrAlertThresholds,
+      printT14ShowEnSubtitle: sourceCompany.printT14ShowEnSubtitle,
+      printT14ShowAccountCode: sourceCompany.printT14ShowAccountCode,
+      printT14ShowAuditFooter: sourceCompany.printT14ShowAuditFooter,
+      printDefaultTemplateQuotation: sourceCompany.printDefaultTemplateQuotation,
+      printDefaultTemplateOrder: sourceCompany.printDefaultTemplateOrder,
+      printDefaultTemplateReturn: sourceCompany.printDefaultTemplateReturn,
+      archiveSettings: sourceCompany.archiveSettings
+        ? { ...sourceCompany.archiveSettings, allowedUserIds: [] }
+        : null,
+      updatedAt: new Date(),
+    }).where(eq(companiesTable.id, workspaceCompanyId));
+
+    return true;
+  });
+}
+
+/**
  * Self-heal a retained shadow when `/auth/me` is refreshed. This repairs
  * workspaces that were already stale before the propagation hooks were
  * deployed, without requiring the admin to toggle permissions a second time.
@@ -352,6 +531,10 @@ export async function refreshDemoShadowAuthorization<
     .where(eq(usersTable.id, link.sourceUserId))
     .limit(1);
   if (!source) return user;
+  await repairLegacyDemoAccountingSetup(
+    link.sourceCompanyId,
+    link.workspaceCompanyId,
+  );
   await syncRetainedWorkspaceMenuPermissions(
     link.sourceCompanyId,
     link.workspaceCompanyId,
@@ -377,6 +560,7 @@ async function loadReadyWorkspace(source: SourceUser, link: typeof demoDeviceWor
     );
   }
   if (link.workspaceCompanyId !== source.companyId && source.companyId != null) {
+    await repairLegacyDemoAccountingSetup(source.companyId, link.workspaceCompanyId);
     await syncRetainedWorkspaceMenuPermissions(source.companyId, link.workspaceCompanyId);
   }
   const effectiveUser = link.workspaceUserId === source.id

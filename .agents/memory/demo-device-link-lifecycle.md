@@ -8,7 +8,8 @@ A shared demo source account creates one independent workspace per normalized ph
 - A first login for a phone must clone master/setup data into a shadow company; it must never bind the phone to the shared source company.
 - The same phone reuses its existing ready workspace. A different browser must explicitly confirm transfer after valid credentials.
 - A different phone creates a different workspace even when both use the same shared demo credentials.
-- A new phone workspace must use a deterministic code-owned baseline, not clone mutable master rows from the shared source or another phone workspace. Seed a fresh COA plus the canonical branch/warehouse/SAR/cost-center/customer/supplier/cash/bank/item set in the company-creation transaction.
+- A new phone workspace inherits the source company’s setup/master configuration (COA, mappings, branches, warehouses, currencies, catalog/prices/bundles, sequences, form/print/session settings) with every FK remapped tenant-locally.
+- Source customers/suppliers are business data and are not inherited; create one tenant-local default customer and supplier after the source COA is remapped.
 - Never re-seed an existing ready phone workspace; same-phone restoration must preserve everything that user already configured.
 - Never copy invoices, journals, vouchers, stock balances, stock movements, or ledgers between demo workspaces.
 - The per-browser token remains an HttpOnly cookie re-verified with the bearer on every authenticated request; a copied bearer alone is useless.
@@ -18,7 +19,8 @@ A shared demo source account creates one independent workspace per normalized ph
 **How to apply:**
 - Normalize and require the phone before provisioning. Scope active-link queries and revocation by both source user and phone.
 - Under the source-user advisory lock, claim a provisioning row before cloning so concurrent first logins cannot create duplicate workspaces.
-- Keep the deterministic baseline gated to internal phone-demo provisioning. Normal company cloning and other demo-company seeders must retain their own behavior.
+- Keep source-setup inheritance gated to internal phone-demo provisioning. Do not copy source users, subscriptions, security rules, backup destinations, secrets, or operational state.
+- Legacy internal workspaces created with zero accounting mappings may self-repair only while they still have zero mappings: add missing mapped account/cost-center ancestors and source mappings, then copy omitted UI settings. Once any mapping exists, never overwrite local customization.
 - On same-phone transfer, retain the most recently seen ready workspace and issue the replacement bearer in the same transaction that revokes the prior phone-scoped link.
 - Disable only superseded legacy shadow users; keep the retained shadow active.
 - `decorateDemoShadowUser` must resolve `demoSourceUserId` from the ready, non-revoked link.

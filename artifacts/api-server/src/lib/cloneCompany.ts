@@ -30,9 +30,10 @@ import {
   securityNotificationRulesTable,
   workSessionSettingsTable,
   companyCloneRunsTable,
+  customersTable,
+  suppliersTable,
 } from "@workspace/db";
-import { seedDefaultChartOfAccountsTx } from "./seedDefaultChartOfAccounts.js";
-import { seedDemoCompanyDataTx } from "./seedDemoCompanyData.js";
+import { ensureCustomerLedger, ensureSupplierLedger } from "./entityAccounts.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -148,22 +149,33 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       // settings (verbatim from source)
       invoiceType:               source.invoiceType,
       logo:                      source.logo,
+      brandLogo:                 source.brandLogo,
       decimalPlaces:             source.decimalPlaces,
       showZeros:                 source.showZeros,
+      hideQuickAddBar:           source.hideQuickAddBar,
       menuPermissions:           source.menuPermissions,
       windowsModulePermissions:  source.windowsModulePermissions,
       autoPostingEnabled:        source.autoPostingEnabled,
+      allowUnbalancedOpeningBalances: source.allowUnbalancedOpeningBalances,
+      openingBalanceReminderMessage: source.openingBalanceReminderMessage,
+      openingBalanceReminderStartTime: source.openingBalanceReminderStartTime,
+      openingBalanceReminderRepeatCount: source.openingBalanceReminderRepeatCount,
       journalEntryFormMode:      source.journalEntryFormMode,
       journalSmartForm:          source.journalSmartForm,
       menuLayout:                source.menuLayout,
+      invoiceFormLayout:         source.invoiceFormLayout,
+      statementPrintFormat:      source.statementPrintFormat,
       autoPostJournalEntry:      source.autoPostJournalEntry,
       autoPostSales:             source.autoPostSales,
+      autoSendZatcaAfterPost:    source.autoSendZatcaAfterPost,
+      allowDraftWithoutWarehouse: source.allowDraftWithoutWarehouse,
       autoPostPurchase:          source.autoPostPurchase,
       autoPostReceipt:           source.autoPostReceipt,
       autoPostPayment:           source.autoPostPayment,
       autoPostFinancial:         source.autoPostFinancial,
       autoPostCashTransfer:      source.autoPostCashTransfer,
       autoPostPayroll:           source.autoPostPayroll,
+      payrollCostBasis:          source.payrollCostBasis,
       autoPostProduction:        source.autoPostProduction,
       autoPostStockMovement:     source.autoPostStockMovement,
       autoPostGoodsReceipt:      source.autoPostGoodsReceipt,
@@ -175,6 +187,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       faAutoDepDay:              source.faAutoDepDay,
       autoPostCtgOutgoingBill:   source.autoPostCtgOutgoingBill,
       autoPostCtgIncomingBill:   source.autoPostCtgIncomingBill,
+      hrAlertThresholds:         source.hrAlertThresholds,
       printFooterInvoice:        source.printFooterInvoice,
       printFooterReturn:         source.printFooterReturn,
       printShowTimestamp:        source.printShowTimestamp,
@@ -184,8 +197,14 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       printQuotationShowCustomerAddress: source.printQuotationShowCustomerAddress,
       bankAccountText:           source.bankAccountText,
       printShowItemsSummary:     source.printShowItemsSummary,
+      printT14ShowEnSubtitle:    source.printT14ShowEnSubtitle,
+      printT14ShowAccountCode:   source.printT14ShowAccountCode,
+      printT14ShowAuditFooter:   source.printT14ShowAuditFooter,
       printEnabledTemplates:     source.printEnabledTemplates,
       printDefaultTemplate:      source.printDefaultTemplate,
+      printDefaultTemplateQuotation: source.printDefaultTemplateQuotation,
+      printDefaultTemplateOrder: source.printDefaultTemplateOrder,
+      printDefaultTemplateReturn: source.printDefaultTemplateReturn,
       invoicePrintLanguage:      source.invoicePrintLanguage,
       sequenceDateSource:        source.sequenceDateSource,
       printAutoAfterSaveSales:   source.printAutoAfterSaveSales,
@@ -201,6 +220,9 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       autoBackupRetention:       source.autoBackupRetention,
       taxCalculationMode:        source.taxCalculationMode,
       enableOfflinePos:          internalDemo ? false : source.enableOfflinePos,
+      archiveSettings: source.archiveSettings
+        ? { ...source.archiveSettings, allowedUserIds: [] }
+        : null,
       // reset / safe defaults
       invoiceCounter: 0,
       status:         "active",
@@ -218,9 +240,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
 
     // ── 2. Regions ──────────────────────────────────────────────────────────
     const regionMap = new Map<number, number>();
-    const regions = internalDemo
-      ? []
-      : await tx.select().from(regionsTable).where(eq(regionsTable.companyId, sourceId));
+    const regions = await tx.select().from(regionsTable).where(eq(regionsTable.companyId, sourceId));
     for (const r of regions) {
       const { id: srcId, createdAt, updatedAt, companyId, ...rest } = r;
       const [ins] = await tx.insert(regionsTable)
@@ -232,9 +252,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
 
     // ── 3. Branches ─────────────────────────────────────────────────────────
     const branchMap = new Map<number, number>();
-    const branches = internalDemo
-      ? []
-      : await tx.select().from(branchesTable).where(eq(branchesTable.companyId, sourceId));
+    const branches = await tx.select().from(branchesTable).where(eq(branchesTable.companyId, sourceId));
     for (const b of branches) {
       const { id: srcId, createdAt, updatedAt, companyId, regionId, ...rest } = b;
       const [ins] = await tx.insert(branchesTable)
@@ -259,43 +277,6 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     } as typeof usersTable.$inferInsert).returning({ id: usersTable.id });
     const adminUserId = adminUser.id;
     bump("users");
-
-    if (internalDemo) {
-      // Phone-isolated demos get a deterministic baseline built from code.
-      // Do not copy any source-owned master rows: the source may have been
-      // customised before isolation, and leaking those rows makes one demo
-      // appear to inherit another user's setup.
-      const coa = await seedDefaultChartOfAccountsTx(tx, newCompanyId);
-      const baseline = await seedDemoCompanyDataTx(tx, newCompanyId, {
-        country: id.country ?? source.country ?? "SA",
-        currencyCode: "SAR",
-        includeGeneralCostCenter: true,
-      });
-
-      bump("accounts", coa.inserted);
-      bump("branches");
-      bump("cost_centers");
-      bump("currencies");
-      bump("warehouses");
-      bump("units");
-      bump("item_groups");
-      bump("items");
-      bump("customers");
-      bump("suppliers");
-      bump("cash_boxes");
-      bump("bank_accounts");
-
-      await tx.update(companiesTable).set({
-        hrDefaultPayCashBoxId: baseline.ids.cashBoxId,
-        hrDefaultPayBankAccountId: baseline.ids.bankAccountId,
-        posCashCashBoxId: baseline.ids.cashBoxId,
-        posCardBankAccountId: baseline.ids.bankAccountId,
-        posAppleBankAccountId: baseline.ids.bankAccountId,
-        posWalletBankAccountId: baseline.ids.bankAccountId,
-      }).where(eq(companiesTable.id, newCompanyId));
-
-      return { newCompanyId, newCompanyCode, adminUserId };
-    }
 
     if (copyUsers) {
       const srcUsers = await tx.select().from(usersTable).where(and(
@@ -415,6 +396,33 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     }
     bump("accounting_mappings", mappings.length);
 
+    // Internal phone demos inherit all accounting setup but never source party
+    // master data. Give each fresh workspace its own usable customer/supplier
+    // records linked to newly remapped tenant-local ledgers.
+    if (internalDemo) {
+      const sourceMainBranch = branches.find((branch) => branch.isMain) ?? branches[0];
+      const defaultBranchId = sourceMainBranch ? remap(branchMap, sourceMainBranch.id) : null;
+      const customerAccountId = await ensureCustomerLedger(newCompanyId, "عميل نقدي", false, "local", tx);
+      const supplierAccountId = await ensureSupplierLedger(newCompanyId, "مورد محلي", "local", tx);
+      await tx.insert(customersTable).values({
+        companyId: newCompanyId,
+        nameAr: "عميل نقدي",
+        accountId: customerAccountId,
+        branchId: defaultBranchId,
+      } as typeof customersTable.$inferInsert);
+      await tx.insert(suppliersTable).values({
+        companyId: newCompanyId,
+        code: "SUP-0001",
+        nameAr: "مورد محلي",
+        accountId: supplierAccountId,
+        branchId: defaultBranchId,
+        country: id.country ?? source.country ?? "SA",
+        currencyCode: "SAR",
+      } as typeof suppliersTable.$inferInsert);
+      bump("customers");
+      bump("suppliers");
+    }
+
     // ── 11. Warehouse groups ────────────────────────────────────────────────
     const whGroupMap = new Map<number, number>();
     const whGroups = await tx.select().from(warehouseGroupsTable).where(eq(warehouseGroupsTable.companyId, sourceId));
@@ -431,12 +439,13 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     const warehouseMap = new Map<number, number>();
     const warehouses = await tx.select().from(warehousesTable).where(eq(warehousesTable.companyId, sourceId));
     for (const w of warehouses) {
-      const { id: srcId, createdAt, updatedAt, companyId, groupId, branchId, ...rest } = w as any;
+      const { id: srcId, createdAt, updatedAt, companyId, groupId, branchId, accountId, ...rest } = w as any;
       const [ins] = await tx.insert(warehousesTable).values({
         ...rest,
         companyId: newCompanyId,
         groupId:   remap(whGroupMap, groupId),
         branchId:  remap(branchMap, branchId),
+        accountId: remap(accountMap, accountId),
       } as typeof warehousesTable.$inferInsert).returning({ id: warehousesTable.id });
       warehouseMap.set(srcId, ins.id);
     }
@@ -446,12 +455,17 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     const itemGroupMap = new Map<number, number>();
     const itemGroups = await tx.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, sourceId));
     for (const g of itemGroups) {
-      const { id: srcId, createdAt, updatedAt, companyId, costAccountId, revenueAccountId, ...rest } = g as any;
+      const {
+        id: srcId, createdAt, updatedAt, companyId,
+        costAccountId, revenueAccountId, parentAccountId, accountId, ...rest
+      } = g as any;
       const [ins] = await tx.insert(itemGroupsTable).values({
         ...rest,
         companyId:        newCompanyId,
         costAccountId:    remap(accountMap, costAccountId),
         revenueAccountId: remap(accountMap, revenueAccountId),
+        parentAccountId:  remap(accountMap, parentAccountId),
+        accountId:        remap(accountMap, accountId),
       } as typeof itemGroupsTable.$inferInsert).returning({ id: itemGroupsTable.id });
       itemGroupMap.set(srcId, ins.id);
     }
