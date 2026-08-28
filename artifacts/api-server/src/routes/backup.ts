@@ -20,12 +20,22 @@ import {
   sendWhatsappOtp, sendWhatsappBackupNotice,
 } from "../lib/whatsapp.js";
 import { randomInt, createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   buildFullCompanyBackup,
   restoreFullCompanyBackup,
   REQUIRED_FULL_COMPANY_TABLES,
 } from "../lib/fullCompanyBackup.js";
+import {
+  MAX_PACKAGE_MANIFEST_BYTES,
+  MAX_PACKAGE_TOTAL_BYTES,
+  buildPortableBackupPackage,
+  createPortablePackageUploadKey,
+  restorePortableBackupPackage,
+} from "../lib/companyBackupPackage.js";
+import { ObjectStorageService } from "../lib/objectStorage.js";
 
 /* ─── Auto-backup schedule + email helpers ──────────────────────────────────
  * The flexible schedule stores a (value, unit) pair; we normalise it to
@@ -344,6 +354,115 @@ router.get("/export", async (req, res) => {
     const { payload } = await buildFullCompanyBackup(companyId, (req.authUser as any)?.username ?? null);
     res.json(payload);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── Portable v3 package: database + actual private object bytes ─────────── */
+router.get("/export-portable", async (req, res) => {
+  let cleanup: (() => Promise<void>) | undefined;
+  let companyId: number | undefined;
+  try {
+    companyId = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const built = await buildPortableBackupPackage(companyId, (req.authUser as any)?.username ?? null);
+    cleanup = built.cleanup;
+    const info = await stat(built.path);
+    res.setHeader("Content-Type", "application/x-zacode-company-backup");
+    res.setHeader("Content-Length", String(info.size));
+    res.setHeader("Content-Disposition", `attachment; filename="${built.filename}"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("X-Backup-File-Count", String(built.summary.files));
+    res.setHeader("X-Backup-File-Bytes", String(built.summary.bytes));
+    res.setHeader("X-Backup-Skipped-External", String(built.summary.skippedExternal));
+    await writeAudit({
+      userId: req.authUser?.id ?? null,
+      username: req.authUser?.username ?? null,
+      companyId,
+      module: "backups",
+      action: "export",
+      success: true,
+      message: `تصدير حزمة شركة محمولة للشركة #${companyId}: ${built.summary.files} ملف`,
+    });
+    const stream = createReadStream(built.path);
+    const done = () => { void cleanup?.(); cleanup = undefined; };
+    stream.once("error", (error) => {
+      done();
+      if (!res.headersSent) res.status(500).json({ error: error.message });
+      else res.destroy(error);
+    });
+    res.once("close", done);
+    stream.pipe(res);
+  } catch (e: any) {
+    await cleanup?.().catch(() => {});
+    if (companyId) {
+      await writeAudit({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        companyId,
+        module: "backups",
+        action: "export",
+        success: false,
+        message: `فشل تصدير حزمة الشركة #${companyId}: ${e?.message ?? "خطأ"}`,
+      }).catch(() => {});
+    }
+    if (!res.headersSent) res.status(500).json({ error: e?.message ?? "فشل تصدير الحزمة" });
+  }
+});
+
+router.post("/portable/upload-target", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const sizeBytes = Number(req.body?.sizeBytes);
+    const maxUploadBytes = MAX_PACKAGE_TOTAL_BYTES + MAX_PACKAGE_MANIFEST_BYTES + 1024 * 1024;
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > maxUploadBytes) {
+      res.status(400).json({ error: "حجم حزمة النسخة غير صالح أو يتجاوز الحد المسموح" });
+      return;
+    }
+    const service = new ObjectStorageService();
+    const target = await service.getPrivateUploadTarget(createPortablePackageUploadKey(companyId), {
+      sizeBytes,
+      origin: req.get("origin"),
+    });
+    res.json(target);
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "تعذر تجهيز رفع الحزمة" });
+  }
+});
+
+router.post("/portable/restore", async (req, res) => {
+  let companyId: number | undefined;
+  try {
+    companyId = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    if (typeof req.body?.objectPath !== "string") {
+      res.status(400).json({ error: "مسار حزمة النسخة مطلوب" });
+      return;
+    }
+    const out = await restorePortableBackupPackage(companyId, req.body.objectPath);
+    await writeAudit({
+      userId: req.authUser?.id ?? null,
+      username: req.authUser?.username ?? null,
+      companyId,
+      module: "backups",
+      action: "restore",
+      success: true,
+      message: `استعادة حزمة شركة محمولة للشركة #${companyId}: ${out.files.copied} ملف`,
+    });
+    res.json({ ok: true, companyId, restoreMode: "full_company_v3_portable", ...out });
+  } catch (e: any) {
+    if (companyId) {
+      await writeAudit({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        companyId,
+        module: "backups",
+        action: "restore",
+        success: false,
+        message: `فشل استعادة حزمة الشركة #${companyId}: ${e?.message ?? "خطأ"}`,
+      }).catch(() => {});
+    }
+    res.status(400).json({ error: e?.message ?? "فشل استعادة الحزمة" });
+  }
 });
 
 /* ─── POST /ai-analyze ─── AI natural-language summary of an uploaded backup  */

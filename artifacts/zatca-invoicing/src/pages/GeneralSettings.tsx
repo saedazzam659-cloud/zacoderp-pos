@@ -677,12 +677,17 @@ export default function GeneralSettings() {
   const backupFileRef = useRef<HTMLInputElement>(null);
   const [exporting, setExporting] = useState(false);
   const [uploadedBackup, setUploadedBackup] = useState<any | null>(null);
+  const [uploadedPortableBackup, setUploadedPortableBackup] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [aiSummary, setAiSummary] = useState<{ summary: string; warnings: string[]; counts: Record<string, number> } | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const [restorePhase, setRestorePhase] = useState<string | null>(null);
   const [restoreReport, setRestoreReport] = useState<any | null>(null);
+  const [restoredFilesReport, setRestoredFilesReport] = useState<{ copied: number; bytes: number; skippedExternal: number } | null>(null);
   const uploadedBackupVersion = Number(uploadedBackup?.meta?.schemaVersion ?? 1);
-  const isFullCompanyBackup = uploadedBackupVersion >= 2 && uploadedBackup?.meta?.scope === "full_company";
+  const isPortableCompanyBackup = uploadedPortableBackup !== null;
+  const isFullCompanyBackup = isPortableCompanyBackup
+    || (uploadedBackupVersion >= 2 && uploadedBackup?.meta?.scope === "full_company");
 
   // ─── Scheduled auto-backup + email (cloud) destination ───────────────────
   type BackupSettings = {
@@ -998,19 +1003,22 @@ export default function GeneralSettings() {
     setExporting(true);
     try {
       const cid = user?.company?.id ?? user?.companyId;
-      const res = await fetch(`${API}/api/backup/export?companyId=${cid}`, { headers });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.exportFailed"));
-      const blob = new Blob([JSON.stringify(j, null, 2)], { type: "application/json" });
+      const res = await fetch(`${API}/api/backup/export-portable?companyId=${cid}`, { headers });
+      if (!res.ok) {
+        const raw = await res.text();
+        let message = t("pages.generalSettings.exportFailed");
+        try { message = JSON.parse(raw)?.error || message; } catch { /* keep fallback */ }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
       a.href = url;
-      a.download = `backup-${user?.company?.nameAr?.replace(/\s+/g, "_") || "company"}-${ts}.json`;
+      a.download = `backup-${user?.company?.nameAr?.replace(/\s+/g, "_") || "company"}-${ts}.zacbackup`;
       a.click();
       URL.revokeObjectURL(url);
-      const total = Object.values(j.counts || {}).reduce((a: number, b: any) => a + Number(b), 0);
-      toast({ title: t("pages.generalSettings.exportSuccess", { count: total }) });
+      toast({ title: "تم تصدير بيانات الشركة وملفات الأرشيف والمرفقات في حزمة واحدة" });
     } catch (e: any) {
       toast({ title: e.message || t("pages.generalSettings.exportFailed"), variant: "destructive" });
     } finally {
@@ -1019,8 +1027,14 @@ export default function GeneralSettings() {
   }
 
   async function handleBackupFilePicked(file: File) {
-    setUploadedBackup(null); setAiSummary(null); setRestoreReport(null);
+    setUploadedBackup(null); setUploadedPortableBackup(null); setAiSummary(null);
+    setRestoreReport(null); setRestoredFilesReport(null);
     try {
+      if (file.name.toLowerCase().endsWith(".zacbackup")) {
+        if (file.size <= 0) throw new Error("ملف النسخة المحمولة فارغ");
+        setUploadedPortableBackup(file);
+        return;
+      }
       const text = await file.text();
       const parsed = JSON.parse(text);
       if (!parsed?.data || typeof parsed.data !== "object") {
@@ -1041,14 +1055,58 @@ export default function GeneralSettings() {
   }
 
   async function handleBackupRestore() {
-    if (!uploadedBackup) return;
+    if (!uploadedBackup && !uploadedPortableBackup) return;
     const confirmationKey = isFullCompanyBackup
       ? "pages.generalSettings.confirmFullRestore"
       : "pages.generalSettings.confirmRestore";
     if (!window.confirm(t(confirmationKey))) return;
     setRestoring(true);
+    setRestorePhase("جارٍ تجهيز الاستعادة...");
     try {
       const cid = user?.company?.id ?? user?.companyId;
+      if (uploadedPortableBackup) {
+        const targetRes = await fetch(`${API}/api/backup/portable/upload-target`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            companyId: cid,
+            sizeBytes: uploadedPortableBackup.size,
+          }),
+        });
+        const target = await targetRes.json();
+        if (!targetRes.ok) throw new Error(target.error || "تعذّر تجهيز رفع النسخة");
+        setRestorePhase("جارٍ رفع حزمة البيانات والملفات...");
+        const uploadRes = await fetch(target.uploadURL, {
+          method: "PUT",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: uploadedPortableBackup,
+        });
+        if (!uploadRes.ok) throw new Error("تعذّر رفع حزمة النسخة إلى الخادم");
+        setRestorePhase("جارٍ التحقق من الملفات واستعادة البيانات...");
+        const restoreRes = await fetch(`${API}/api/backup/portable/restore`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            companyId: cid,
+            objectPath: target.objectPath,
+            sizeBytes: uploadedPortableBackup.size,
+          }),
+        });
+        const restored = await restoreRes.json();
+        if (!restoreRes.ok) throw new Error(restored.error || t("pages.generalSettings.restoreFailed"));
+        setRestoreReport(restored.report);
+        setRestoredFilesReport(restored.files ?? null);
+        const inserted = Number(Object.values(restored.report || {}).reduce(
+          (a: number, r: any) => a + Number(r?.inserted || 0),
+          0,
+        ));
+        toast({
+          title: `تمت استعادة ${inserted.toLocaleString("en-US")} سجل و${Number(restored.files?.copied ?? 0).toLocaleString("en-US")} ملف`,
+        });
+        qc.invalidateQueries();
+        return;
+      }
+      setRestorePhase("جارٍ استعادة بيانات النسخة القديمة...");
       const res = await fetch(`${API}/api/backup/restore`, {
         method: "POST", headers,
         body: JSON.stringify({
@@ -1072,6 +1130,7 @@ export default function GeneralSettings() {
       toast({ title: e.message || t("pages.generalSettings.restoreFailed"), variant: "destructive" });
     } finally {
       setRestoring(false);
+      setRestorePhase(null);
     }
   }
 
@@ -2201,6 +2260,9 @@ export default function GeneralSettings() {
                 <p className="text-[11px] text-muted-foreground mt-1">
                   {t("pages.generalSettings.backupExportIncludes")}
                 </p>
+                <p className="text-[11px] text-emerald-700 mt-1">
+                  تشمل الحزمة المحمولة الملفات الفعلية وتعيد ربطها تلقائيًا بنفس الفواتير والمستندات والموديولات.
+                </p>
               </div>
             </div>
             <Button
@@ -2576,8 +2638,10 @@ export default function GeneralSettings() {
                 </p>
                 <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 mt-2 inline-flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
-                  {!uploadedBackup
+                  {!uploadedBackup && !uploadedPortableBackup
                     ? t("pages.generalSettings.backupImportPreUploadWarning")
+                    : isPortableCompanyBackup
+                      ? "ستُستبدل بيانات الشركة وتُرفع الملفات إلى مسارات جديدة مملوكة لهذه الشركة."
                     : isFullCompanyBackup
                       ? t("pages.generalSettings.fullBackupImportWarning")
                       : t("pages.generalSettings.backupImportWarning")}
@@ -2599,7 +2663,7 @@ export default function GeneralSettings() {
               <input
                 ref={backupFileRef}
                 type="file"
-                accept=".json,application/json"
+                 accept=".zacbackup,.json,application/json,application/octet-stream"
                 className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBackupFilePicked(f); e.target.value = ""; }}
               />
@@ -2668,7 +2732,22 @@ export default function GeneralSettings() {
               </div>
             )}
 
-            {uploadedBackup && (
+            {uploadedPortableBackup && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 px-3 py-2 space-y-1 text-xs">
+                <div className="flex items-center gap-2 text-emerald-800">
+                  <DatabaseBackup className="h-3.5 w-3.5" />
+                  <span className="font-medium">{uploadedPortableBackup.name}</span>
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px]">
+                    نسخة محمولة: بيانات + ملفات
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  الحجم: {(uploadedPortableBackup.size / 1024 / 1024).toLocaleString("en-US", { maximumFractionDigits: 2 })} MB
+                </p>
+              </div>
+            )}
+
+            {(uploadedBackup || uploadedPortableBackup) && (
               <Button
                 type="button"
                 onClick={handleBackupRestore}
@@ -2676,7 +2755,7 @@ export default function GeneralSettings() {
                 className="gap-2 bg-emerald-600 hover:bg-emerald-700"
               >
                 {restoring
-                  ? <><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</>
+                  ? <><Loader2 className="h-4 w-4 animate-spin" />{restorePhase ?? t("common.loading")}</>
                   : <><CheckCircle2 className="h-4 w-4" />{t("pages.generalSettings.restoreBackup")}</>
                 }
               </Button>
@@ -2704,6 +2783,18 @@ export default function GeneralSettings() {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {restoredFilesReport && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                <p className="font-medium">نتيجة نقل الملفات</p>
+                <p>
+                  نُسخ {restoredFilesReport.copied.toLocaleString("en-US")} ملف
+                  {" "}({(restoredFilesReport.bytes / 1024 / 1024).toLocaleString("en-US", { maximumFractionDigits: 2 })} MB)
+                  {restoredFilesReport.skippedExternal > 0
+                    ? ` · تم إبقاء ${restoredFilesReport.skippedExternal.toLocaleString("en-US")} رابط خارجي دون نسخ`
+                    : ""}
+                </p>
               </div>
             )}
           </div>

@@ -12,3 +12,9 @@ Schema-v2 full-company restore must compare the uploaded manifest bidirectionall
 Company-settings restore must bind every value with `sql.param` after type normalization; never interpolate raw arrays/JSON into a dynamic SET list.
 
 **Why:** Drizzle can expand an interpolated JSON array into multiple query parameters, producing a PostgreSQL bind-count mismatch only at the final company-settings step. The transaction then rolls back all otherwise-restored module rows.
+
+Portable company backups must carry private object bytes with a per-file SHA-256 manifest, then restore them under fresh target-company object keys before rewriting database references. Never reuse source paths or copy arbitrary external URLs.
+
+**Why:** Database-only copies leave invoice/archive/image references pointing at missing or source-owned objects. Reusing those paths also couples tenant access and deletion lifecycles.
+
+**How to apply:** Deduplicate identical private object paths, bound and hash every file, reject unsafe package structure before upload, clean staged target objects if database restore fails, and preserve legacy JSON as data-only restore.
