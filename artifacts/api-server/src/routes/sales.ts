@@ -51,6 +51,7 @@ import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH, csidEnvMismatchMessage 
 import { boundedOffsetPage } from "../lib/boundedPagination.js";
 import { logger } from "../lib/logger.js";
 import { getAgentDbPoolStats } from "../lib/agentDb.js";
+import { ensureCustomerLedger } from "../lib/entityAccounts.js";
 import { assertZatcaSubmissionAllowed, resolveZatcaChain, withZatcaChainLock } from "../lib/zatcaRegistrationTransfer.js";
 import {
   admitInvoiceAcceleration,
@@ -368,11 +369,31 @@ export async function createJournalEntry(opts: {
   return entry.id;
 }
 
-async function getCustomerAccountId(cid: number, customerId: number | null | undefined): Promise<number | null> {
+async function getCustomerAccountId(
+  cid: number,
+  customerId: number | null | undefined,
+  executor: any = db,
+): Promise<number | null> {
   if (!customerId) return null;
-  const [c] = await db.select().from(customersTable)
+  const [c] = await executor.select().from(customersTable)
     .where(and(eq(customersTable.id, customerId), eq(customersTable.companyId, cid)));
-  return c?.accountId ?? null;
+  if (!c) return null;
+
+  if (c.accountId) {
+    const [ownedAccount] = await executor.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, c.accountId), eq(accountsTable.companyId, cid)));
+    if (ownedAccount) return ownedAccount.id;
+  }
+
+  // Cross-company backups can carry the source company's customer.account_id.
+  // Re-mint/reuse the customer's ledger under the target company's AR parent,
+  // then persist the repaired link in the same posting transaction.
+  const repairedAccountId = await ensureCustomerLedger(cid, c.nameAr, false, undefined, executor);
+  if (!repairedAccountId) return null;
+  await executor.update(customersTable)
+    .set({ accountId: repairedAccountId, updatedAt: new Date() })
+    .where(and(eq(customersTable.id, c.id), eq(customersTable.companyId, cid)));
+  return repairedAccountId;
 }
 async function getCashBoxAccountId(cid: number, cashBoxId: number | null | undefined): Promise<number | null> {
   if (!cashBoxId) return null;
@@ -2913,7 +2934,7 @@ async function postSalesInvoiceHandler(
     const partyAccountPromise =
       inv.paymentType === "cash" ? getCashBoxAccountId(cid, inv.cashBoxId)
       : inv.paymentType === "bank" ? getBankAccountAccountId(cid, (inv as any).bankAccountId)
-      : getCustomerAccountId(cid, inv.customerId);
+      : getCustomerAccountId(cid, inv.customerId, tx);
     // AR pass-through (mirrors the supplier AP pass-through on purchases):
     // cash/bank invoices route the sale THROUGH the customer's receivable
     // account (DR AR + CR AR collection leg + DR cash/bank) so the turnover
@@ -2921,7 +2942,7 @@ async function postSalesInvoiceHandler(
     // Falls back to the old direct debit when the customer has no GL account.
     const customerArPromise =
       (inv.paymentType === "cash" || inv.paymentType === "bank")
-        ? getCustomerAccountId(cid, inv.customerId)
+        ? getCustomerAccountId(cid, inv.customerId, tx)
         : Promise.resolve(null);
     const [partyAccountId, invCustomerArAccId] = await Promise.all([
       partyAccountPromise,
@@ -4138,13 +4159,13 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
     const partyAccountId =
       ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
       : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId)
-      : await getCustomerAccountId(cid, ret.customerId);
+      : await getCustomerAccountId(cid, ret.customerId, tx);
     // AR pass-through (mirrors purchases): cash/bank returns route through
     // the customer's receivable account (CR AR + DR AR refund leg + CR
     // cash/bank) so the return AND the cash refund both show on the ledger.
     const retCustomerArAccId =
       (ret.paymentType === "cash" || ret.paymentType === "bank")
-        ? await getCustomerAccountId(cid, ret.customerId)
+        ? await getCustomerAccountId(cid, ret.customerId, tx)
         : null;
     if (!partyAccountId) {
       res.status(400).json({ error:

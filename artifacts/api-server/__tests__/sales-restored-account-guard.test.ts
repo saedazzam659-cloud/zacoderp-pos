@@ -29,3 +29,14 @@ test("journal creation rejects every account that is outside the current company
     "account ownership must be checked before the journal header is inserted",
   );
 });
+
+test("credit sales repairs a restored customer ledger inside the posting transaction", () => {
+  const start = salesRoute.indexOf("async function getCustomerAccountId");
+  const end = salesRoute.indexOf("async function getCashBoxAccountId", start);
+  const helper = salesRoute.slice(start, end);
+
+  assert.match(helper, /eq\(accountsTable\.companyId, cid\)/);
+  assert.match(helper, /ensureCustomerLedger\(cid, c\.nameAr, false, undefined, executor\)/);
+  assert.match(helper, /set\(\{ accountId: repairedAccountId/);
+  assert.match(salesRoute, /getCustomerAccountId\(cid, inv\.customerId, tx\)/);
+});
