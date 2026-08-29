@@ -149,3 +149,4 @@
 - [Dual-platform agent control](dual-platform-agent-control.md) — second controllers use invite-derived link tokens, never raw licenses; leadership convergence uses one locale-independent `(epoch, controllerId)` order.
 - [External-agent local objects](external-agent-local-objects.md) — full agents use private filesystem objects when Replit Object Storage is unavailable; keep `/objects/...` references backend-neutral.
 - [ZATCA registration cutover](zatca-registration-cutover.md) — freeze and bind both databases before hand-off; committed target activation is authoritative for retry recovery even if its chain advances.
+- [KARM production role](karm-production-role.md) — KARM is the live full platform; central is development/staging. App-only updates migrate KARM’s existing DB in place and never restore the development DB.

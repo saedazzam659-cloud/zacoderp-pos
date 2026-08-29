@@ -1353,6 +1353,42 @@ async function withAgentPool<T>(dbUrlEnc: string, fn: (pool: PgPoolType) => Prom
   try { return await fn(pool); } finally { await pool.end().catch(() => {}); }
 }
 
+const REQUIRED_AGENT_SUPPLIER_METADATA_COLUMNS = {
+  journal_entry_lines: [
+    "supplier_name",
+    "supplier_tax_number",
+    "supplier_vat_number",
+    "supplier_invoice_number",
+    "supplier_invoice_date",
+  ],
+  payment_voucher_lines: [
+    "supplier_name",
+    "supplier_tax_number",
+    "supplier_vat_number",
+    "supplier_invoice_number",
+    "supplier_invoice_date",
+  ],
+} as const;
+
+async function assertAgentSupplierMetadataSchema(pool: PgPoolType): Promise<void> {
+  const result = await pool.query<{ table_name: string; column_name: string }>(
+    `SELECT table_name, column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = ANY($1::text[])`,
+    [Object.keys(REQUIRED_AGENT_SUPPLIER_METADATA_COLUMNS)],
+  );
+  const present = new Set(result.rows.map(row => `${row.table_name}.${row.column_name}`));
+  const missing = Object.entries(REQUIRED_AGENT_SUPPLIER_METADATA_COLUMNS).flatMap(([tableName, columns]) =>
+    columns
+      .filter(columnName => !present.has(`${tableName}.${columnName}`))
+      .map(columnName => `${tableName}.${columnName}`),
+  );
+  if (missing.length) {
+    throw new Error(`ترقية قاعدة بيانات الوكيل غير مكتملة؛ الأعمدة الناقصة: ${missing.join(", ")}`);
+  }
+}
+
 /** يطبّق استحقاق السوبر أدمن على قاعدة الوكيل ويُلغي كل الجلسات القديمة.
  *  عند التعطيل: يُعطّل كل حسابات SA المحلية ويمسح أسرارها المؤقتة.
  *  عند التفعيل: يعيد زرع الحساب المحدد فقط ويُبقي بقية حسابات SA معطّلة. */
@@ -4264,6 +4300,7 @@ async function runProvision(
   const log: string[] = [];
   const autoDomainLog: string[] = [];
   let autoDomainApplied: AppliedRecord | null = null;
+  let installedAppVersion: string | null = null;
   const save = async (status?: "ok" | "error") => {
     const rows = await db.update(agentInstancesTable).set({
       deployLog: log.join("\n").slice(-8000),
@@ -4540,6 +4577,7 @@ rm -f ${out}.enc`
           throw new Error("لم تُرفع حزمة Backend — ارفع الملفات من نافذة «تسطيب برفع ملفات» أولًا.");
         }
         relVersion = meta.backend.version || `external-${meta.backend.sha256.slice(0, 16)}`;
+        installedAppVersion = relVersion;
         bundleUrl = buildCustomAgentReleaseUrl(origin, "backend", true);
         log.push(`مصدر التطبيق: ${inst.packageSource === "external" ? "نسخة كاملة خارجية" : "ملفات مرفوعة"} (${meta.backend.filename}, ${Math.round(meta.backend.sizeBytes / 1024 / 1024)}MB) — مشفّرة ومتحقق من بصمتها`);
         if (meta.frontend && verifyPackageEntry(inst.id, "frontend", meta.frontend)) {
@@ -4558,6 +4596,7 @@ echo "Frontend مرفوع: تم فكّه"`;
         const { getReleaseInfo } = await import("../lib/agentRelease.js");
         const rel = await getReleaseInfo();
         relVersion = rel.version;
+        installedAppVersion = relVersion;
         bundleUrl = `${origin}/api/agent/release/bundle?manual=1&version=${encodeURIComponent(rel.version)}${encQ}`;
         log.push(`إصدار الحزمة: ${rel.version} (${Math.round(rel.sizeBytes / 1024 / 1024)}MB)${enc ? " — مشفّرة أثناء النقل" : ""}`);
       }
@@ -4582,7 +4621,7 @@ echo "Frontend مرفوع: تم فكّه"`;
           `if [ -f "$OLD_ENV" ] && grep -q '^${key}=' "$OLD_ENV"; then grep '^${key}=' "$OLD_ENV" | tail -n1 >> "$NEW_ENV"; else printf '%s\\n' ${shQ(systemdEnvLine(key, value))} >> "$NEW_ENV"; fi`,
         )
         .join("\n");
-      await runSsh(`set -e
+      await runSsh(`set -Ee
 export DEBIAN_FRONTEND=noninteractive
 ${keyExport}
 NEED_NODE=1
@@ -4613,7 +4652,24 @@ ${smtpSeedLines || "true"}
 mv "$NEW_ENV" "$OLD_ENV"
 chmod 600 /opt/zacod/app.env
 true
+APP_SWAPPED=0
+rollback_app() {
+  local rc=$?
+  trap - ERR
+  set +e
+  if [ "$APP_SWAPPED" = "1" ]; then
+    systemctl stop zacod-app
+    rm -rf /opt/zacod/app.failed
+    [ ! -d /opt/zacod/app ] || mv /opt/zacod/app /opt/zacod/app.failed
+    [ ! -d /opt/zacod/app.old ] || mv /opt/zacod/app.old /opt/zacod/app
+    systemctl start zacod-app
+  fi
+  echo "ERROR: فشل إصدار التطبيق الجديد وتمت محاولة استعادة الإصدار السابق"
+  exit "$rc"
+}
+trap rollback_app ERR
 rm -rf /opt/zacod/app.old; [ -d /opt/zacod/app ] && mv /opt/zacod/app /opt/zacod/app.old; mv /opt/zacod/app.new /opt/zacod/app
+APP_SWAPPED=1
 NODE_BIN=$(command -v node)
 cat > /etc/systemd/system/zacod-app.service <<EOF
 [Unit]
@@ -4634,9 +4690,19 @@ rm -f /opt/zacod/update.sh
 systemctl daemon-reload
 systemctl enable zacod-app >/dev/null 2>&1
 systemctl restart zacod-app
-for i in $(seq 1 12); do sleep 5; CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ || echo 000); [ "$CODE" != "000" ] && break; done
-echo "HTTP local: $CODE"
-[ "$CODE" != "000" ] || { echo "ERROR: التطبيق لم يستجب محليًا"; journalctl -u zacod-app -n 40 --no-pager 2>/dev/null | tail -40; exit 1; }
+TARGET_VERSION=${shQ(relVersion)}
+CODE=000
+for i in $(seq 1 24); do
+  sleep 5
+  CODE=$(curl -s -o /tmp/zacod-update-ready.json -w '%{http_code}' --max-time 4 "http://127.0.0.1:8080/api/healthz/agent-update?version=$TARGET_VERSION" || echo 000)
+  [ "$CODE" = "200" ] && break
+done
+echo "Update readiness HTTP: $CODE"
+[ "$CODE" = "200" ] || { cat /tmp/zacod-update-ready.json 2>/dev/null || true; journalctl -u zacod-app -n 60 --no-pager 2>/dev/null | tail -60; false; }
+APP_SWAPPED=0
+trap - ERR
+rm -f /tmp/zacod-update-ready.json
+echo "الإصدار المثبت: $TARGET_VERSION — ترقية السكيما جاهزة"
 echo ZACOD_APP_DONE`, "ZACOD_APP_DONE", 600_000);
     } else {
       await step("5/6 تثبيت التطبيق");
@@ -4646,7 +4712,13 @@ echo ZACOD_APP_DONE`, "ZACOD_APP_DONE", 600_000);
     // 6) final health
     await step("6/6 الفحص النهائي");
     await reload();
-    await withAgentPool(inst.dbUrlEnc!, (pool) => pool.query("SELECT 1"));
+    await withAgentPool(inst.dbUrlEnc!, async (pool) => {
+      await pool.query("SELECT 1");
+      await assertAgentSupplierMetadataSchema(pool);
+    });
+    if (installedAppVersion) {
+      log.push(`تم التحقق من إصدار Backend المثبت (${installedAppVersion}) وترقية مخطط قاعدة البيانات ✔`);
+    }
     if (autoDomain && autoDomainApplied) {
       await verifyPreparedAutoDomain(
         inst,
@@ -4664,7 +4736,7 @@ echo ZACOD_APP_DONE`, "ZACOD_APP_DONE", 600_000);
         duringProvision: true,
       });
     }
-    log.push("قاعدة البيانات تستجيب. اكتمل التسطيب بنجاح ✔");
+    log.push("قاعدة البيانات تستجيب ومخططها متوافق. اكتمل التسطيب بنجاح ✔");
     if (!autoDomain) {
       log.push(`تذكير: وجّه دومين ${inst.domain} (سجل A) إلى IP السيرفر ليصدر Caddy شهادة SSL تلقائيًا.`);
     }
@@ -4880,7 +4952,9 @@ router.post("/:id/external-package/prepare", async (req, res) => {
     await assertProbeTargetAllowed(dbHost);
     workDir = await fsp.mkdtemp(path.join("/tmp", ".zacod-external-build-"));
     const [{ getReleaseInfo, findDistDir }] = await Promise.all([import("../lib/agentRelease.js")]);
-    const release = await getReleaseInfo();
+    // The user explicitly requested a new package. Rebuild from the current
+    // dist instead of reusing getReleaseInfo's immutable download cache.
+    const release = await getReleaseInfo({ forceRebuild: true });
     const distDir = await findDistDir();
     const frontendPath = await buildFrontendArchive(distDir, workDir);
     const databasePath = await buildAgentDatabaseDump(dbUrl, workDir);

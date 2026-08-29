@@ -298,8 +298,14 @@ NODE
 }
 
 health_ok() {
-  local code
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:8080/api/healthz 2>/dev/null || true)
+  local mode="\${1:-target}"
+  local code url
+  if [ "$mode" = "target" ]; then
+    url="http://127.0.0.1:8080/api/healthz/agent-update?version=$TARGET_VERSION"
+  else
+    url="http://127.0.0.1:8080/api/healthz"
+  fi
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 "$url" 2>/dev/null || true)
   [ "$code" = "200" ]
 }
 
@@ -375,7 +381,7 @@ rollback() {
     systemctl start zacod-app
     for _ in $(seq 1 ${healthAttempts}); do
       sleep ${healthDelaySeconds}
-      health_ok && {
+       health_ok basic && {
         write_status "rolled_back" "تعذر تثبيت التحديث وتمت استعادة النسخة السابقة بنجاح"
         cleanup
         exit 1
@@ -479,13 +485,13 @@ systemctl restart zacod-app
 HEALTHY=0
 for _ in $(seq 1 ${healthAttempts}); do
   sleep ${healthDelaySeconds}
-  if health_ok; then HEALTHY=1; break; fi
+   if health_ok target; then HEALTHY=1; break; fi
 done
 [ "$HEALTHY" = "1" ]
 repair_spa_gateway
 
 SWAPPED=0
-write_status "completed" "تم تثبيت التحديث وتشغيل الخدمة بنجاح"
+write_status "completed" "تم تثبيت الإصدار $TARGET_VERSION والتحقق من ترقية قاعدة البيانات بنجاح"
 cleanup
 exit 0
 `;

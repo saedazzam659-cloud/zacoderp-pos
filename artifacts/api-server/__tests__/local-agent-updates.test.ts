@@ -326,6 +326,8 @@ exit 0
   assert.match(script, /public, max-age=31536000, immutable/);
   assert.match(script, /header Cache-Control "no-cache, no-store, must-revalidate"/);
   assert.match(script, /repair_spa_gateway/);
+  assert.match(script, /healthz\/agent-update\?version=\$TARGET_VERSION/);
+  assert.match(script, /health_ok basic/);
   assert.match(script, /\.retained-update-assets/);
   assert.match(script, /find "\$APP_DIR\/public\/assets" -type f -print0/);
   await fs.writeFile(scriptPath, script, { mode: 0o700 });

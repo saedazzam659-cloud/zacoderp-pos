@@ -7,6 +7,15 @@ import { PgEnum } from "drizzle-orm/pg-core";
 import { logger } from "./logger";
 
 let healPromise: Promise<void> | null = null;
+type SchemaReconciliationState =
+  | { state: "idle" | "running" }
+  | { state: "ready"; completedAt: string }
+  | { state: "failed"; error: string };
+let schemaReconciliationState: SchemaReconciliationState = { state: "idle" };
+
+export function getSchemaReconciliationState(): SchemaReconciliationState {
+  return { ...schemaReconciliationState };
+}
 
 /**
  * Database-level invariant for every JE producer (invoices, returns, vouchers,
@@ -191,21 +200,26 @@ const CENTRAL_ONLY_ZATCA_TRANSFER_TABLES = ["zatca_registration_transfers"] as c
 // schema uses supplier_vat_number. Keep both additive columns during the
 // rolling-upgrade window so saving a purchase invoice cannot fail while an
 // agent is moving between those package generations.
-const JOURNAL_LINE_SUPPLIER_METADATA_DDL = [
+const SUPPLIER_METADATA_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_name TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_tax_number TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_vat_number TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_invoice_date TEXT`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_name TEXT`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_tax_number TEXT`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_vat_number TEXT`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_invoice_date TEXT`,
 ] as const;
 
-async function ensureJournalLineSupplierMetadata(options: { strict?: boolean } = {}): Promise<void> {
-  for (const stmt of JOURNAL_LINE_SUPPLIER_METADATA_DDL) {
+async function ensureSupplierMetadataCompatibility(): Promise<void> {
+  for (const stmt of SUPPLIER_METADATA_COMPATIBILITY_DDL) {
     try {
       await execDDL(stmt);
     } catch (err) {
-      logger.error({ err, stmt }, "ensureSchema: journal-line supplier metadata reconciliation failed");
-      if (options.strict) throw err;
+      logger.error({ err, stmt }, "ensureSchema: supplier metadata compatibility reconciliation failed");
+      throw err;
     }
   }
 }
@@ -3455,7 +3469,7 @@ async function runHeal(options: {
   // Run this compatibility DDL before generic inspection. Purchase-invoice
   // posting writes these JE-line fields during the same request that follows an
   // agent package update, so a partially-upgraded agent must heal first.
-  await ensureJournalLineSupplierMetadata({ strict: strictSchema });
+  await ensureSupplierMetadataCompatibility();
 
   // These two payroll tables have complete additive DDL here, unlike generic
   // schema entities. Create them before strict missing-table validation so an
@@ -3542,12 +3556,22 @@ async function runHeal(options: {
 export function ensureSchemaUpToDate(): Promise<void> {
   if (!healPromise) {
     healPromise = (async () => {
-      // Create central-only control-plane tables before generic schema
-      // inspection, so they are never reported as missing on startup.
-      await ensureCentralDemoAnalyticsSchema();
-       await ensureCentralZatcaRegistrationTransferSchema();
-      await runHeal();
-      await ensureCentralAgentInvoiceAccelerationSchema();
+      schemaReconciliationState = { state: "running" };
+      try {
+        // Create central-only control-plane tables before generic schema
+        // inspection, so they are never reported as missing on startup.
+        await ensureCentralDemoAnalyticsSchema();
+        await ensureCentralZatcaRegistrationTransferSchema();
+        await runHeal();
+        await ensureCentralAgentInvoiceAccelerationSchema();
+        schemaReconciliationState = { state: "ready", completedAt: new Date().toISOString() };
+      } catch (error) {
+        schemaReconciliationState = {
+          state: "failed",
+          error: String((error as any)?.message ?? error).slice(0, 500),
+        };
+        throw error;
+      }
     })();
   }
   return healPromise;

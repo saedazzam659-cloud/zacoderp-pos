@@ -111,12 +111,19 @@ async function buildRelease(): Promise<ReleaseInfo> {
   return rel;
 }
 
-/** Immutable version+tarball of the current running build (single-flight). */
-export async function getReleaseInfo(): Promise<ReleaseInfo> {
-  if (!inFlight) {
-    inFlight = buildRelease().catch((error) => {
-      inFlight = null;
-      throw error;
+/**
+ * Immutable version+tarball of the current built dist.
+ *
+ * Normal release downloads share one cached archive. Explicit package
+ * preparation must pass forceRebuild so clicking "prepare a new release" after
+ * a fresh build cannot silently reuse an archive prepared from an older dist.
+ */
+export async function getReleaseInfo(options: { forceRebuild?: boolean } = {}): Promise<ReleaseInfo> {
+  if (options.forceRebuild || !inFlight) {
+    const pending = buildRelease();
+    inFlight = pending;
+    pending.catch(() => {
+      if (inFlight === pending) inFlight = null;
     });
   }
   return inFlight;
