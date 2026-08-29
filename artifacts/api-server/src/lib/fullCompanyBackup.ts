@@ -583,6 +583,12 @@ async function analyzeRestore(
           if (name === "audit_log" && foreignKey.column === "user_id" && count === 0) {
             continue;
           }
+          if (
+            count === 0
+            && columnMeta.get(`${name}.${foreignKey.column}`)?.nullable === true
+          ) {
+            continue;
+          }
           issues.push({
             severity: "error",
             code: "missing_physical_reference",
@@ -603,6 +609,23 @@ async function analyzeRestore(
     ? buildRestoreReferencePlan(payload, tables)
     : { references: [], issues: [], checked: 0, physicalForeignKeysSkipped: 0 };
   issues.push(...referencePlan.issues);
+  for (const reference of referencePlan.references) {
+    if (
+      reference.sourceMissing
+      && columnMeta.get(`${reference.table}.${reference.column}`)?.nullable !== true
+    ) {
+      issues.push({
+        severity: "error",
+        code: "missing_reference_row",
+        table: reference.table,
+        column: reference.column,
+        rowId: reference.rowId,
+        sourceValue: reference.sourceValue,
+        referencedTable: reference.rule.referencedTable,
+        message: `تعذر إعادة ربط ${reference.table}.${reference.column} لأنه مطلوب وغير موجود في النسخة`,
+      });
+    }
+  }
   const postedJournalIds = new Set(
     (payload.data.journal_entries ?? [])
       .filter((entry) => String(entry.status ?? "").toLowerCase() === "posted")
@@ -743,6 +766,7 @@ export async function restoreFullCompanyBackup(
     }
     if (pending.length) throw new Error(`Cannot replace tenant data: ${pending.join(", ")}`);
     const maps = new Map<string, Map<unknown, unknown>>();
+    const restoreSourceIndexes = sourceReferenceIndexes(payload, tables);
     const deferred: Array<{ table: BackupTable; pk: unknown; fk: ForeignKey; source: unknown }> = [];
     const logicalDeferred: PlannedRestoreReference[] = [];
     const logicalByRow = new Map<string, PlannedRestoreReference[]>();
@@ -834,6 +858,12 @@ export async function restoreFullCompanyBackup(
           const rowKey = `${name}\0${restoreReferenceKey(source[table.primaryKey])}`;
           for (const reference of logicalByRow.get(rowKey) ?? []) {
             if (!(reference.column in values)) continue;
+            if (reference.sourceMissing) {
+              if (columnMeta.get(`${name}.${reference.column}`)?.nullable === true) {
+                values[reference.column] = null;
+              }
+              continue;
+            }
             logicalDeferred.push(reference);
             if (columnMeta.get(`${name}.${reference.column}`)?.nullable) {
               values[reference.column] = null;
@@ -848,8 +878,23 @@ export async function restoreFullCompanyBackup(
             && fk.column === "user_id"
             && columnMeta.get("audit_log.user_id")?.nullable === true
           ) values[fk.column] = null;
-          else if (fk.nullable) { deferred.push({ table, pk: source[table.primaryKey ?? "id"], fk, source: values[fk.column] }); values[fk.column] = null; }
-          else throw new Error(`Unresolved required FK ${name}.${fk.column}`);
+          else {
+            const sourceCount = restoreSourceIndexes
+              .get(fk.referencedTable)
+              ?.get(fk.referencedColumn)
+              ?.get(restoreReferenceKey(values[fk.column])) ?? 0;
+            if (
+              sourceCount === 0
+              && columnMeta.get(`${name}.${fk.column}`)?.nullable === true
+            ) {
+              values[fk.column] = null;
+            } else if (fk.nullable) {
+              deferred.push({ table, pk: source[table.primaryKey ?? "id"], fk, source: values[fk.column] });
+              values[fk.column] = null;
+            } else {
+              throw new Error(`Unresolved required FK ${name}.${fk.column}`);
+            }
+          }
         }
         const columns = Object.keys(values); if (!columns.length) throw new Error(`No restorable columns for ${name}`);
         const returning = table.primaryKey ? sql` RETURNING ${sql.raw(ident(table.primaryKey))}` : sql.empty();

@@ -61,6 +61,7 @@ export type PlannedRestoreReference = {
   rowId: unknown;
   sourceValue: unknown;
   rule: RestoreReferenceRule;
+  sourceMissing?: boolean;
 };
 
 export type RestoreReferencePlan = {
@@ -398,21 +399,12 @@ export function buildRestoreReferencePlan(
         continue;
       }
       let valid = true;
+      let sourceMissing = false;
       for (const value of values) {
         if (value == null || (rule.allowZero && Number(value) === 0)) continue;
         const count = indexes.get(rule.referencedTable)?.get(key(value)) ?? 0;
         if (count === 0) {
-          valid = false;
-          issues.push({
-            severity: "error",
-            code: "missing_reference_row",
-            table: tableName,
-            column,
-            rowId,
-            sourceValue: value,
-            referencedTable: rule.referencedTable,
-            message: `المرجع ${String(value)} في ${tableName}.${column} لا يطابق صفًا داخل ${rule.referencedTable}`,
-          });
+          sourceMissing = true;
         } else if (count > 1) {
           valid = false;
           issues.push({
@@ -427,7 +419,14 @@ export function buildRestoreReferencePlan(
           });
         }
       }
-      if (valid) references.push({ table: tableName, column, rowId, sourceValue, rule });
+      if (valid) references.push({
+        table: tableName,
+        column,
+        rowId,
+        sourceValue,
+        rule,
+        sourceMissing,
+      });
     }
   };
 
