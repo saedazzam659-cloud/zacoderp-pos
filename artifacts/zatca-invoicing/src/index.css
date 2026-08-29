@@ -1,6 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
+
+/* Posted/generated journal entries are intentionally non-editable, but their
+   values must remain comfortably readable. Native disabled controls otherwise
+   fade text to a very low contrast, especially in Chromium on Windows. */
+fieldset.journal-readonly:disabled {
+  opacity: 1;
+}
+fieldset.journal-readonly:disabled :is(input, textarea, select, button, [role="combobox"]) {
+  opacity: 1 !important;
+  color: hsl(var(--foreground)) !important;
+  -webkit-text-fill-color: hsl(var(--foreground));
+}
+fieldset.journal-readonly:disabled :is(input, textarea, select, [role="combobox"]) {
+  background-color: hsl(var(--muted) / 0.32) !important;
+  border-color: hsl(var(--border) / 0.9) !important;
+  font-weight: 500;
+}
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));

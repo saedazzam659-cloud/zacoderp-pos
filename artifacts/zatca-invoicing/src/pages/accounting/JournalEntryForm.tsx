@@ -2033,6 +2033,21 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
         </div>
       )}
 
+      {/* The accounting fields are locked for generated entries, but their
+          source attachments must remain viewable. Native disabled fieldsets
+          disable every nested button, so render the archive control outside. */}
+      {isLockedSourceEntry && fp.isVisible("attachments") && (
+        <div className="flex justify-start">
+          <JournalScanArchive
+            jeKey={existing?.docNumber ?? `JE-${editId}`}
+            screenKey="journal_entries"
+            companyName={user?.company?.nameAr ?? null}
+            sourceJournalEntryId={editId ?? undefined}
+            readOnly
+          />
+        </div>
+      )}
+
       {/* ─── Tabs ─────────────────────────────────────────────────
           The whole form (header + lines + add/remove-line buttons)
           is wrapped in a native <fieldset disabled> when the entry
@@ -2043,7 +2058,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
           fieldset styling so layout is preserved. */}
       <fieldset
         disabled={isLockedSourceEntry}
-        className="m-0 p-0 border-0 disabled:opacity-75"
+        className="m-0 p-0 border-0 journal-readonly"
         data-testid="journal-form-fieldset"
       >
       {/* ── سداد فاتورة مرتبط ─────────────────────────────────────
@@ -2402,7 +2417,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                         printed قيد carries a complete party reference for
                         Zakat & Income Tax compliance. */}
                     <div className="flex items-center gap-2">
-                      {fp.isVisible("attachments") && (
+                      {fp.isVisible("attachments") && !isLockedSourceEntry && (
                         <JournalScanArchive
                           jeKey={isNew ? newArchiveKey : (existing?.docNumber ?? `JE-${editId}`)}
                           screenKey="journal_entries"

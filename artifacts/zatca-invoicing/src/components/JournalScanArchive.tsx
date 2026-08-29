@@ -64,6 +64,8 @@ interface Props {
   className?: string;
   /** When viewing a generated JE, also show its source document's archive. */
   sourceJournalEntryId?: number;
+  /** Generated entries may view source attachments but must not create copies. */
+  readOnly?: boolean;
 }
 
 /** A cloud-archived file row as returned by /api/document-archives. */
@@ -126,7 +128,7 @@ function formatBytes(b: number): string {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export function JournalScanArchive({ jeKey, screenKey, companyName, className, sourceJournalEntryId }: Props) {
+export function JournalScanArchive({ jeKey, screenKey, companyName, className, sourceJournalEntryId, readOnly = false }: Props) {
   const { toast } = useToast();
   const { user, token } = useAuth();
   const supported = isFsAccessSupported();
@@ -311,6 +313,19 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
   useEffect(() => { if (!isCloud) setArchived(getArchivedFiles(jeKey)); }, [isCloud, jeKey]);
   const sourceBadgeCount = sourceCloudFiles.length + sourceLocalFiles.length;
   const totalBadgeCount = badgeCount + sourceBadgeCount;
+  const panelIsCloud = isCloud || (badgeCount === 0 && sourceArchive?.mode === "cloud");
+  const panelCloudFiles = panelIsCloud
+    ? [
+        ...(isCloud ? cloudFiles : []),
+        ...sourceCloudFiles.map((f) => ({ ...f, readOnly: true })),
+      ]
+    : [];
+  const panelLocalFiles = !panelIsCloud
+    ? [
+        ...(!isCloud ? archived : []),
+        ...sourceLocalFiles,
+      ]
+    : [];
 
   // New document key → new context: close the panel and re-arm the auto-open.
   useEffect(() => {
@@ -518,7 +533,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
 
   return (
     <>
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setPages([]); stopCamera(); } }}>
+    {!readOnly && <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setPages([]); stopCamera(); } }}>
       <DialogTrigger asChild>
         <Button
           type="button"
@@ -925,6 +940,13 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
                       {" · "}{new Date(f.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
                     </div>
                   </div>
+                  <Button
+                    type="button" size="sm" variant="ghost" className="h-7 w-7 p-0"
+                    title="عرض في لوحة المعاينة الجانبية"
+                    onClick={() => { setPanelFocusId(f.id); setOpen(false); setPanelOpen(true); }}
+                  >
+                    <PanelLeftOpen className="h-3.5 w-3.5" />
+                  </Button>
                   <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0" title="فتح الملف" onClick={() => openCloud(f)}>
                     <ExternalLink className="h-3.5 w-3.5" />
                   </Button>
@@ -952,7 +974,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
           <Button type="button" variant="outline" onClick={() => setOpen(false)}>إغلاق</Button>
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+    </Dialog>}
 
     {/* Split-view trigger — visible whenever archived files exist. */}
     {totalBadgeCount > 0 && (
@@ -974,9 +996,9 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
     <ArchivePreviewPanel
       open={panelOpen}
       onClose={() => setPanelOpen(false)}
-      isCloud={isCloud}
-      cloudFiles={cloudFiles}
-      localFiles={archived}
+      isCloud={panelIsCloud}
+      cloudFiles={panelCloudFiles}
+      localFiles={panelLocalFiles}
       token={token ?? null}
       companyName={companyName}
       focusCloudId={panelFocusId}

@@ -31,6 +31,8 @@ export interface PanelCloudFile {
   pages?: number | null;
   uploadedByName?: string | null;
   createdAt: string;
+  /** Source-document files are visible from a generated JE but remain canonical on the source. */
+  readOnly?: boolean;
 }
 
 interface Props {
@@ -150,6 +152,9 @@ export function ArchivePreviewPanel({
               ? `${fmtBytes(cloud?.bytes)}${cloud?.pages ? ` · ${cloud.pages} صفحة` : ""}${cloud?.uploadedByName ? ` · ${cloud.uploadedByName}` : ""}`
               : `${fmtBytes(local?.bytes)}${local?.pages ? ` · ${local.pages} صفحة` : ""}`}
           </div>
+          {cloud?.readOnly && (
+            <div className="mt-0.5 text-[10px] font-medium text-sky-700">مرفق المستند المصدر — للعرض فقط</div>
+          )}
         </div>
         {count > 1 && (
           <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
@@ -186,13 +191,15 @@ export function ArchivePreviewPanel({
               companyName={companyName}
               variant="toolbar"
             />
-            <Button
-              type="button" size="sm" variant="outline"
-              className="h-8 gap-1.5 text-xs text-destructive hover:bg-destructive/10"
-              onClick={() => onDeleteCloud(cloud)}
-            >
-              <Trash2 className="h-3.5 w-3.5" />حذف
-            </Button>
+            {!cloud.readOnly && (
+              <Button
+                type="button" size="sm" variant="outline"
+                className="h-8 gap-1.5 text-xs text-destructive hover:bg-destructive/10"
+                onClick={() => onDeleteCloud(cloud)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />حذف
+              </Button>
+            )}
           </>
         )}
         {!isCloud && local && (
