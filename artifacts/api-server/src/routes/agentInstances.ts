@@ -25,7 +25,7 @@ import express, { Router, type Request } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { promises as fsp } from "node:fs";
-import { pbkdf2Sync, createCipheriv, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { pbkdf2Sync, createCipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 // Control-plane module: ALL registry reads/writes here must hit the CENTRAL
 // DB even when the request is running inside an agent-DB ALS context (an
 // agent's cloned DB has an empty registry — following the proxy would
