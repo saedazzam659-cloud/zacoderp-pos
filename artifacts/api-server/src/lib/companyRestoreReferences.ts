@@ -314,6 +314,19 @@ export function buildRestoreReferencePlan(
       if (sourceValue == null) continue;
       const rule = resolveRestoreReferenceRule(tableName, column, row);
       if (!rule) continue;
+      if (
+        tableName === "audit_log"
+        && column === "user_id"
+        && typeof rule !== "string"
+        && rule.referencedTable === "users"
+        && (indexes.get("users")?.get(key(sourceValue)) ?? 0) === 0
+      ) {
+        // Historical audit rows can outlive deleted users. Legacy backup
+        // catalogs may omit this physical FK, causing the generic logical-ID
+        // detector to see it instead. Restore handles it as NULL (or drops
+        // only the audit row on a truly NOT NULL target).
+        continue;
+      }
       if (isPhysicalForeignKey(table, column)) {
         physicalForeignKeysSkipped++;
         continue;

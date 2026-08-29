@@ -244,6 +244,29 @@ test("logical restore registry leaves physical foreign keys to the catalog engin
   assert.equal(plan.physicalForeignKeysSkipped, 1);
 });
 
+test("legacy audit rows do not fail when their deleted user is absent", () => {
+  const tables: any = {
+    users: {
+      name: "users", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "company_id"], foreignKeys: [], classification: "protected-user",
+    },
+    audit_log: {
+      name: "audit_log", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "company_id", "user_id"], foreignKeys: [], classification: "tenant-root",
+    },
+  };
+  const payload: any = {
+    meta: { schemaVersion: 2, scope: "full_company", companyId: 7 },
+    manifest: { format: "full-company", tables, exclusions: [] },
+    counts: { users: 0, audit_log: 1 },
+    companySettings: null,
+    data: { users: [], audit_log: [{ id: 1, company_id: 7, user_id: 999 }] },
+  };
+  const plan = buildRestoreReferencePlan(payload, tables);
+  assert.equal(plan.issues.length, 0);
+  assert.equal(plan.references.length, 0);
+});
+
 test("logical restore registry rejects unknown numeric id columns instead of preserving source ids", () => {
   const tables: any = {
     surveillance_devices: {

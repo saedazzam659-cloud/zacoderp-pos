@@ -757,12 +757,14 @@ export async function restoreFullCompanyBackup(
       report[name] = { received: records.length, inserted: 0, updated: 0 }; maps.set(name, new Map());
       for (const sourceRecord of records) {
         let source = sourceRecord;
-        if (
+        const orphanedAuditUser = (
           name === "audit_log"
           && source.user_id != null
           && mappedValue(maps.get("users"), source.user_id) === undefined
-          && columnMeta.get("audit_log.user_id")?.nullable !== true
-        ) {
+        );
+        if (orphanedAuditUser && columnMeta.get("audit_log.user_id")?.nullable === true) {
+          source = { ...source, user_id: null };
+        } else if (orphanedAuditUser) {
           // On legacy targets where audit_log.user_id is truly NOT NULL, keep
           // the business restore compatible by dropping only the orphaned
           // historical audit row rather than rejecting the whole backup.
