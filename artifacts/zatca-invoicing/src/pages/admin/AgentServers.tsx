@@ -76,6 +76,7 @@ type Agent = {
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
   lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
   deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
+  operationKind?: "schema" | "provision" | null;
   saUsername: string | null; saEmail: string | null; saPasswordSet: boolean;
   externalPackage: PackageStatus;
   notes: string | null; createdAt: string; updatedAt: string;
@@ -808,6 +809,8 @@ export default function AgentServers() {
 
   // ── التسطيب الكامل بضغطة واحدة ──
   const [provisionAgentId, setProvisionAgentId] = useState<number | null>(null);
+  const [operationViewKind, setOperationViewKind] = useState<"provision" | "schema">("provision");
+  const [schemaUpgradeAgent, setSchemaUpgradeAgent] = useState<Agent | null>(null);
   // نافذة اختيار طريقة التسطيب: كامل / بدون قاعدة بيانات / برفع ملفات (+ تشفير)
   const [installDlg, setInstallDlg] = useState<{ agentId: number; variant: "full" | "no_db" | "upload" | "upload_no_db"; encrypt: boolean; autoDomainToken?: string } | null>(null);
   const installAgent = (listQ.data ?? []).find(x => x.id === installDlg?.agentId) ?? null;
@@ -908,6 +911,7 @@ export default function AgentServers() {
     } finally { setPkgBusy(null); }
   }
   const provisionAgent = (listQ.data ?? []).find(x => x.id === provisionAgentId) ?? null;
+  const operationIsSchema = provisionAgent?.operationKind === "schema" || operationViewKind === "schema";
   const anyDeploying = (listQ.data ?? []).some(x =>
     x.deployStatus === "deploying" ||
     ["checking", "configuring", "waiting_dns", "verifying"].includes(x.autoDomainStatus)
@@ -942,6 +946,29 @@ export default function AgentServers() {
     } catch (e: any) {
       toast({ title: "لم يتم تحرير القفل", description: String(e.message ?? e), variant: "destructive" });
       invalidate();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function upgradeAgentDatabase(a: Agent) {
+    setSchemaUpgradeAgent(null);
+    setBusy(`schema-upgrade-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/schema-upgrade`, {
+        method: "POST", headers, body: JSON.stringify({ confirm: true }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail ?? j.error ?? "تعذّر بدء ترقية قاعدة البيانات");
+      setOperationViewKind("schema");
+      setProvisionAgentId(a.id);
+      invalidate();
+      toast({
+        title: "بدأت ترقية قاعدة بيانات الوكيل",
+        description: "سيتم إنشاء نسخة أمان أولًا، ولن تُستبدل قاعدة البيانات الحالية.",
+      });
+    } catch (e: any) {
+      toast({ title: "فشل بدء ترقية القاعدة", description: String(e.message ?? e), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -1016,6 +1043,7 @@ export default function AgentServers() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل");
       setInstallDlg(null);
+      setOperationViewKind("provision");
       setProvisionAgentId(a.id);
       invalidate();
     } catch (e: any) {
@@ -1261,6 +1289,19 @@ export default function AgentServers() {
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}` || a.deployStatus === "deploying" || isAutoDomainBusy(a)} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
                       {busy === `deploy-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <UploadCloud className="h-3 w-3 ms-1" />}نشر
                     </Button>
+                    {a.mode === "full" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+                        disabled={!a.dbUrlSet || !a.sshHost || !a.sshSecretSet || busy === `schema-upgrade-${a.id}` || a.deployStatus === "deploying" || isAutoDomainBusy(a)}
+                        onClick={() => setSchemaUpgradeAgent(a)}
+                        data-testid={`button-schema-upgrade-${a.id}`}
+                      >
+                        {busy === `schema-upgrade-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin ms-1" /> : <Database className="h-3 w-3 ms-1" />}
+                        ترقية قاعدة البيانات
+                      </Button>
+                    )}
                     {a.autoDomainSetup && a.deployStatus === "ok" && (
                       <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy != null || isAutoDomainBusy(a)} onClick={() => loadPreview(a)} data-testid={`button-preview-domain-${a.id}`}>
                         <Globe className="h-3 w-3 ms-1" />إعداد النطاق
@@ -1443,6 +1484,40 @@ export default function AgentServers() {
         </DialogContent>
       </Dialog>
 
+      {/* ── تأكيد ترقية قاعدة الوكيل الحالية ── */}
+      <Dialog open={!!schemaUpgradeAgent} onOpenChange={(o) => !o && setSchemaUpgradeAgent(null)}>
+        <DialogContent className="max-w-lg" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Database className="h-5 w-5 text-emerald-700" />
+              ترقية قاعدة البيانات — {schemaUpgradeAgent?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
+              ستتم ترقية قاعدة الوكيل الحالية على <b dir="ltr">{schemaUpgradeAgent?.domain}</b> في مكانها.
+            </div>
+            <ul className="list-disc pr-5 text-xs text-muted-foreground space-y-1">
+              <li>تُنشأ نسخة أمان كاملة على سيرفر الوكيل قبل أي تعديل.</li>
+              <li>تُضاف عناصر المخطط الناقصة فقط؛ لا تُستعاد قاعدة التطوير.</li>
+              <li>لا تُحذف بيانات العملاء أو الفواتير أو المرفقات.</li>
+              <li>لن تظهر العملية ناجحة إلا بعد فحص الأعمدة الحرجة وإصدار التطبيق.</li>
+            </ul>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setSchemaUpgradeAgent(null)}>إلغاء</Button>
+            <Button
+              className="bg-emerald-700 hover:bg-emerald-800"
+              onClick={() => schemaUpgradeAgent && upgradeAgentDatabase(schemaUpgradeAgent)}
+              data-testid="button-schema-upgrade-confirm"
+            >
+              <Database className="h-4 w-4 ms-1" />
+              إنشاء نسخة أمان ثم الترقية
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── تأكيد الحذف الكامل من سيرفر الوكيل ── */}
       <Dialog open={!!wipeAgent} onOpenChange={(o) => !o && setWipeAgent(null)}>
         <DialogContent className="max-w-md">
@@ -1478,7 +1553,7 @@ export default function AgentServers() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {provisionAgent?.deployStatus === "deploying" && <Loader2 className="h-4 w-4 animate-spin" />}
-              التسطيب الكامل — {provisionAgent?.name}
+              {operationIsSchema ? "ترقية قاعدة البيانات" : "التسطيب الكامل"} — {provisionAgent?.name}
               {provisionAgent?.deployStatus === "ok" && <Badge className="bg-emerald-600">اكتمل ✔</Badge>}
               {provisionAgent?.deployStatus === "error" && <Badge variant="destructive">فشل</Badge>}
             </DialogTitle>
@@ -1487,14 +1562,16 @@ export default function AgentServers() {
             const logText = provisionAgent?.deployLog || "";
             const status = provisionAgent?.deployStatus;
             // العناوين الافتراضية للخطوات الست (تُستبدل بما يصل فعليًا من السجل)
-            const defaults = [
-              "فحص السيرفر",
-              "قاعدة البيانات PostgreSQL",
-              "بوابة الدخول والنبض (Caddy)",
-              "تهيئة قاعدة البيانات (السكيما + البصمة)",
-              "تثبيت التطبيق",
-              "الفحص النهائي",
-            ];
+            const defaults = operationIsSchema
+              ? ["إنشاء نسخة الأمان", "تطبيق ترقية المخطط", "فحص الأعمدة والإصدار"]
+              : [
+                  "فحص السيرفر",
+                  "قاعدة البيانات PostgreSQL",
+                  "بوابة الدخول والنبض (Caddy)",
+                  "تهيئة قاعدة البيانات (السكيما + البصمة)",
+                  "تثبيت التطبيق",
+                  "الفحص النهائي",
+                ];
             // اجمع علامات الخطوات "■ n/6 عنوان" من السجل
             const markers = Array.from(logText.matchAll(/■\s*(\d+)\/(\d+)\s*([^\n]*)/g));
             const total = markers.length ? Math.max(...markers.map(m => Number(m[2]))) : defaults.length;
@@ -1518,7 +1595,11 @@ export default function AgentServers() {
                 {/* شريط التقدم */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{status === "ok" ? "اكتمل التسطيب بنجاح" : status === "error" ? "توقف التسطيب عند خطأ" : "جارٍ التسطيب على سيرفر الوكيل…"}</span>
+                    <span>{status === "ok"
+                      ? operationIsSchema ? "اكتملت ترقية القاعدة بنجاح" : "اكتمل التسطيب بنجاح"
+                      : status === "error"
+                        ? operationIsSchema ? "توقفت ترقية القاعدة عند خطأ" : "توقف التسطيب عند خطأ"
+                        : operationIsSchema ? "جارٍ ترقية قاعدة بيانات الوكيل…" : "جارٍ التسطيب على سيرفر الوكيل…"}</span>
                     <span className="tabular-nums font-semibold">{pct}%</span>
                   </div>
                   <div className="h-2.5 rounded-full bg-muted overflow-hidden">

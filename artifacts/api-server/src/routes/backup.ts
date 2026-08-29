@@ -37,6 +37,7 @@ import {
   restorePortableBackupPackage,
 } from "../lib/companyBackupPackage.js";
 import { ObjectStorageService } from "../lib/objectStorage.js";
+import { runAgentRequestSchemaHealOnActiveDb } from "../lib/ensureSchema.js";
 
 /* ─── Auto-backup schedule + email helpers ──────────────────────────────────
  * The flexible schedule stores a (value, unit) pair; we normalise it to
@@ -578,6 +579,7 @@ router.post("/portable/restore", async (req, res) => {
     }
     localUploadToken = claimPortableLocalUploadObject(req.body.objectPath);
     const out = await restorePortableBackupPackage(companyId, req.body.objectPath);
+    await runAgentRequestSchemaHealOnActiveDb();
     await writeAudit({
       userId: req.authUser?.id ?? null,
       username: req.authUser?.username ?? null,
@@ -777,6 +779,7 @@ export async function restoreFromSnapshotPayload(
   }
   if ((payload as any).meta?.schemaVersion === 2) {
     const report = await restoreFullCompanyBackup(companyId, payload as any);
+    await runAgentRequestSchemaHealOnActiveDb();
     return { ok: true, companyId, restoreMode: "full_company_v2", report: report as any };
   }
   const report: Record<string, { received: number; inserted: number; matched: number; failed: number }> = {};
@@ -869,6 +872,7 @@ export async function restoreFromSnapshotPayload(
       }
     });
 
+  await runAgentRequestSchemaHealOnActiveDb();
   return { ok: true, companyId, restoreMode: "legacy_limited", report };
 }
 

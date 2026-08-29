@@ -534,6 +534,9 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
   // server — never the ciphertext and never any plaintext fragment.
   return {
     ...rest,
+    operationKind: typeof r.deployOperationPhase === "string" && r.deployOperationPhase.startsWith("schema_")
+      ? "schema"
+      : r.deployStatus === "deploying" ? "provision" : null,
     localSuperadminEnabled: effectiveLocalSuperadminEnabled(r.mode, r.localSuperadminEnabled),
     localSuperadminScreens: effectiveLocalSuperadminEnabled(r.mode, r.localSuperadminEnabled)
       ? normalizeLocalSuperadminScreens(r.localSuperadminScreens)
@@ -3152,6 +3155,8 @@ router.post("/:id/operation/recover", async (req, res) => {
     res.status(409).json({ error: "لا يمكن إثبات توقف العملية البعيدة دون بيانات SSH محفوظة" });
     return;
   }
+  const isSchemaUpgrade = typeof inst.deployOperationPhase === "string"
+    && inst.deployOperationPhase.startsWith("schema_");
 
   const oldOperationId = inst.deployLeaseId;
   const recoveryId = randomBytes(16).toString("hex");
@@ -3172,8 +3177,19 @@ router.post("/:id/operation/recover", async (req, res) => {
   }
 
   let remote: { ok: boolean; log: string };
+  let schemaServiceResumed = !isSchemaUpgrade;
   try {
-    remote = await revokeRemoteOperationFence(inst, recoveryId);
+    if (isSchemaUpgrade) {
+      await withAgentSchemaUpgradeLock(inst, async () => {
+        remote = await revokeRemoteOperationFence(inst, recoveryId);
+        if (!remote.ok) return;
+        const resumed = await resumeAgentServiceAfterSchemaUpgrade(inst, recoveryId);
+        schemaServiceResumed = resumed.ok;
+        if (!resumed.ok) remote = { ok: false, log: `تعذّر استئناف خدمة الوكيل: ${resumed.log}` };
+      });
+    } else {
+      remote = await revokeRemoteOperationFence(inst, recoveryId);
+    }
   } catch (e: any) {
     remote = { ok: false, log: String(e?.message ?? e).slice(0, 500) };
   }
@@ -3192,6 +3208,10 @@ router.post("/:id/operation/recover", async (req, res) => {
     });
     return;
   }
+  if (isSchemaUpgrade && !schemaServiceResumed) {
+    res.status(409).json({ error: "تعذّر استئناف خدمة الوكيل؛ بقي القفل مغلقًا." });
+    return;
+  }
 
   const recoveryMessage = "أُوقفت المهمة المفقودة بأمان بعد انقطاع نبضها؛ يمكنك إعادة المحاولة.";
   const [released] = await db.update(agentInstancesTable).set({
@@ -3199,6 +3219,11 @@ router.post("/:id/operation/recover", async (req, res) => {
     deployLeaseId: null,
     deployOperationPhase: null,
     deployProviderMutationUntil: null,
+    ...(isSchemaUpgrade ? {
+      dbStatus: "error",
+      dbLastCheckAt: new Date(),
+      dbLastError: "توقفت ترقية مخطط قاعدة البيانات قبل التحقق النهائي؛ أعد تشغيل أداة الترقية",
+    } : {}),
     autoDomainLeaseAt: null,
     deployLog: `${inst.deployLog ?? ""}\n[recovery] ${recoveryMessage}`.slice(-8000),
     ...(inst.autoDomainSetup ? {
@@ -3936,6 +3961,344 @@ router.post("/:id/deploy", async (req, res) => {
   } finally {
     stopHeartbeat();
   }
+});
+
+const AGENT_SCHEMA_UPGRADE_LOCK_NAME = "zacod_agent_schema_upgrade_v1";
+
+function agentDatabaseIdentity(inst: typeof agentInstancesTable.$inferSelect): string {
+  if (!inst.dbUrlEnc) throw new Error("لم يتم إدخال رابط قاعدة البيانات بعد");
+  const raw = decryptSecret(inst.dbUrlEnc);
+  if (!raw) throw new Error("تعذّر فك رابط قاعدة البيانات");
+  const parsed = new URL(raw);
+  let host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || (inst.sshHost && host === inst.sshHost.toLowerCase())) host = "127.0.0.1";
+  const identity = JSON.stringify([
+    host,
+    String(parsed.port || "5432"),
+    decodeURIComponent(parsed.pathname.replace(/^\/+/, "")),
+    decodeURIComponent(parsed.username),
+  ]);
+  return createHash("sha256").update(identity).digest("hex");
+}
+
+async function withAgentSchemaUpgradeLock<T>(
+  inst: typeof agentInstancesTable.$inferSelect,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!inst.dbUrlEnc) throw new Error("لا يمكن فحص قفل ترقية القاعدة دون رابط الاتصال");
+  return withAgentPool(inst.dbUrlEnc, async (pool) => {
+    const client = await pool.connect();
+    let locked = false;
+    try {
+      const result = await client.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+        [AGENT_SCHEMA_UPGRADE_LOCK_NAME],
+      );
+      locked = result.rows[0]?.locked === true;
+      if (!locked) throw new Error("تسوية قاعدة البيانات القديمة ما زالت تعمل؛ انتظر قليلًا ثم أعد الاستعادة");
+      return await operation();
+    } finally {
+      if (locked) await client.query("SELECT pg_advisory_unlock(hashtext($1))", [AGENT_SCHEMA_UPGRADE_LOCK_NAME]).catch(() => {});
+      client.release();
+    }
+  });
+}
+
+async function reconcileAgentDatabaseSchema(
+  inst: typeof agentInstancesTable.$inferSelect,
+): Promise<string> {
+  if (!inst.dbUrlEnc) throw new Error("لم يتم إدخال رابط قاعدة البيانات بعد");
+  const url = decryptSecret(inst.dbUrlEnc);
+  if (!url) throw new Error("تعذّر فك رابط قاعدة البيانات");
+  const ctx = createExternalDb(url);
+  const lockClient = await ctx.pool.connect();
+  let locked = false;
+  try {
+    const lockResult = await lockClient.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [AGENT_SCHEMA_UPGRADE_LOCK_NAME],
+    );
+    locked = lockResult.rows[0]?.locked === true;
+    if (!locked) throw new Error("توجد عملية تسوية مخطط أخرى ما زالت فعالة على قاعدة الوكيل");
+
+    await runWithExternalDb(ctx, async () => {
+      await runSchemaHealOnActiveDb();
+      await ensureAgentSchemaTable();
+      const versionCheck = await ensureAndCheckAgentSchemaVersion();
+      if (!versionCheck.compatible) throw new Error(versionCheck.error ?? "إصدار مخطط قاعدة الوكيل غير متوافق");
+      await assertAgentSupplierMetadataSchema(ctx.pool);
+      await ctx.pool.query("SELECT 1 FROM journal_entry_lines LIMIT 1");
+      await ctx.pool.query("SELECT 1 FROM payment_voucher_lines LIMIT 1");
+    });
+    return await computeDbFingerprint(ctx.pool);
+  } finally {
+    if (locked) {
+      await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [AGENT_SCHEMA_UPGRADE_LOCK_NAME]).catch(() => {});
+    }
+    lockClient.release();
+    await ctx.pool.end().catch(() => {});
+  }
+}
+
+async function resumeAgentServiceAfterSchemaUpgrade(
+  inst: typeof agentInstancesTable.$inferSelect,
+  operationId: string,
+): Promise<{ ok: boolean; log: string }> {
+  const result = await sshRunOperationScript(inst, operationId, `set -e
+MARKER=/var/tmp/zacod-schema-maintenance-${operationId}
+WAS_ACTIVE="$(cat "$MARKER" 2>/dev/null || echo 1)"
+if [ "$WAS_ACTIVE" = "1" ]; then
+  systemctl start zacod-app
+  systemctl is-active --quiet zacod-app
+fi
+rm -f "$MARKER"
+echo ZACOD_SCHEMA_SERVICE_RESUMED`, { timeoutMs: 90_000 });
+  return {
+    ok: result.code === 0 && result.out.includes("ZACOD_SCHEMA_SERVICE_RESUMED"),
+    log: result.out.slice(-700),
+  };
+}
+
+async function runAgentDatabaseSchemaUpgrade(
+  inst: typeof agentInstancesTable.$inferSelect,
+  operationId: string,
+  stopHeartbeat: () => void,
+): Promise<void> {
+  const log: string[] = [];
+  let serviceHeld = false;
+  const progress = async (phase: string, message: string) => {
+    log.push(message);
+    const updated = await db.update(agentInstancesTable).set({
+      deployOperationPhase: phase,
+      deployLog: log.join("\n").slice(-8000),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, inst.id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).returning({ id: agentInstancesTable.id });
+    if (!updated.length) throw new Error("فُقد قفل ترقية قاعدة البيانات");
+  };
+  const finish = async (ok: boolean, message: string, fingerprint?: string) => {
+    log.push(message);
+    await db.update(agentInstancesTable).set({
+      deployStatus: ok ? "ok" : "error",
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      deployLog: log.join("\n").slice(-8000),
+      lastDeployAt: new Date(),
+      dbStatus: ok ? "initialized" : "error",
+      ...(ok && fingerprint ? { dbFingerprint: fingerprint } : {}),
+      dbLastCheckAt: new Date(),
+      dbLastError: ok ? null : message.slice(0, 500),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, inst.id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
+    clearAgentHostCache();
+    const { evictAgentDb } = await import("../lib/agentDb.js");
+    evictAgentDb(inst.id);
+  };
+
+  try {
+    await progress("schema_backup", "■ 1/3 إيقاف الكتابة وإنشاء نسخة أمان لقاعدة الوكيل الحالية");
+    const backup = await sshRunOperationScript(inst, operationId, `set -e
+set +x
+umask 077
+command -v pg_dump >/dev/null 2>&1 || { echo "ZACOD_SCHEMA_NO_PG_DUMP"; exit 76; }
+command -v python3 >/dev/null 2>&1 || { echo "ZACOD_SCHEMA_NO_PYTHON"; exit 77; }
+[ -f /opt/zacod/app.env ] || { echo "ZACOD_SCHEMA_NO_APP_ENV"; exit 78; }
+BACKUP_DIR=/opt/zacod/backups/schema-upgrades
+MAINTENANCE_MARKER=/var/tmp/zacod-schema-maintenance-${operationId}
+WAS_ACTIVE=0
+systemctl is-active --quiet zacod-app && WAS_ACTIVE=1 || true
+printf '%s' "$WAS_ACTIVE" > "$MAINTENANCE_MARKER"
+chmod 600 "$MAINTENANCE_MARKER"
+systemctl stop zacod-app
+PASSFILE="$(mktemp /root/.zacod-schema-pgpass.XXXXXX)"
+CONNFILE="$(mktemp /root/.zacod-schema-pgconn.XXXXXX)"
+BACKUP_READY=0
+cleanup_schema_backup() {
+  rm -f "$PASSFILE" "$CONNFILE"
+  if [ "$BACKUP_READY" != "1" ]; then
+    [ "$WAS_ACTIVE" = "1" ] && systemctl start zacod-app || true
+    rm -f "$MAINTENANCE_MARKER"
+  fi
+}
+trap cleanup_schema_backup EXIT
+python3 - "$PASSFILE" "$CONNFILE" <<'PY'
+import os, shlex, sys
+import hashlib, json
+from urllib.parse import unquote, urlsplit
+env_path = "/opt/zacod/app.env"
+raw = ""
+with open(env_path, "r", encoding="utf-8") as handle:
+    for line in handle:
+        if line.startswith("DATABASE_URL="):
+            raw = line.split("=", 1)[1].strip()
+            break
+if not raw:
+    raise SystemExit("DATABASE_URL missing from app.env")
+url = urlsplit(raw)
+host = url.hostname or ""
+if host.lower() == "localhost":
+    host = "127.0.0.1"
+port = str(url.port or 5432)
+database = unquote(url.path.lstrip("/"))
+user = unquote(url.username or "")
+password = unquote(url.password or "")
+if not all((host, port, database, user, password)):
+    raise SystemExit("DATABASE_URL is incomplete")
+def pgpass(value):
+    return value.replace("\\\\", "\\\\\\\\").replace(":", "\\\\:")
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(":".join(pgpass(v) for v in (host, port, database, user, password)) + "\\n")
+os.chmod(sys.argv[1], 0o600)
+query = dict(part.split("=", 1) for part in url.query.split("&") if "=" in part)
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    for key, value in {
+        "PGHOST": host,
+        "PGPORT": port,
+        "PGUSER": user,
+        "PGDATABASE": database,
+        "PGSSLMODE": query.get("sslmode", "prefer"),
+    }.items():
+        handle.write(f"{key}={shlex.quote(value)}\\n")
+    identity = json.dumps([host.lower(), port, database, user], separators=(",", ":"))
+    handle.write(f"DB_IDENTITY_SHA256={hashlib.sha256(identity.encode()).hexdigest()}\\n")
+os.chmod(sys.argv[2], 0o600)
+PY
+. "$CONNFILE"
+rm -f "$CONNFILE"
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+BACKUP_FILE="$BACKUP_DIR/pre-schema-upgrade-$(date -u +%Y%m%dT%H%M%SZ).dump"
+PGPASSFILE="$PASSFILE" PGHOST="$PGHOST" PGPORT="$PGPORT" \
+PGUSER="$PGUSER" PGDATABASE="$PGDATABASE" PGSSLMODE="$PGSSLMODE" PGCONNECT_TIMEOUT=15 \
+pg_dump --format=custom --no-owner --no-privileges --file="$BACKUP_FILE"
+test -s "$BACKUP_FILE"
+chmod 600 "$BACKUP_FILE"
+BACKUP_READY=1
+printf 'ZACOD_SCHEMA_DB_IDENTITY=%s\n' "$DB_IDENTITY_SHA256"
+printf 'ZACOD_SCHEMA_BACKUP=%s\n' "$BACKUP_FILE"`, { timeoutMs: 600_000 });
+    if (backup.code !== 0 || !backup.out.includes("ZACOD_SCHEMA_BACKUP=")) {
+      throw new Error(`فشل إنشاء نسخة الأمان؛ لم تبدأ الترقية: ${backup.out.slice(-500)}`);
+    }
+    serviceHeld = true;
+    const remoteIdentity = backup.out.match(/ZACOD_SCHEMA_DB_IDENTITY=([a-f0-9]{64})/)?.[1];
+    if (!remoteIdentity || remoteIdentity !== agentDatabaseIdentity(inst)) {
+      throw new Error("قاعدة النسخة الاحتياطية لا تطابق قاعدة الوكيل المسجلة؛ أُوقفت الترقية دون تعديل المخطط");
+    }
+    await pinHostKey(inst, backup.hostKeyFp);
+    const backupPath = backup.out.match(/ZACOD_SCHEMA_BACKUP=(\/[^\s]+)/)?.[1] ?? "تم حفظها على سيرفر الوكيل";
+    log.push(`نسخة الأمان: ${backupPath}`);
+
+    await progress("schema_reconcile", "■ 2/3 تطبيق ترقية المخطط الإضافية الآمنة");
+    await assertAgentOperationOwned(inst.id, operationId);
+    const fingerprint = await reconcileAgentDatabaseSchema(inst);
+    await assertAgentOperationOwned(inst.id, operationId);
+
+    await progress("schema_verify", "■ 3/3 فحص الأعمدة الحرجة وإصدار التطبيق ثم استئناف الخدمة");
+    const versionResult = await sshRunOperationScript(inst, operationId, `set -e
+VERSION="$(cat /opt/zacod/app/VERSION 2>/dev/null || true)"
+printf 'ZACOD_SCHEMA_VERSION=%s\n' "$VERSION"`, { timeoutMs: 60_000 });
+    if (versionResult.code !== 0) throw new Error("تعذّر التحقق من إصدار التطبيق بعد الترقية");
+    const installedVersion = versionResult.out.match(/ZACOD_SCHEMA_VERSION=([A-Za-z0-9._-]+)/)?.[1]
+      ?? inst.deployedVersion
+      ?? "غير معروف";
+    const resumed = await resumeAgentServiceAfterSchemaUpgrade(inst, operationId);
+    if (!resumed.ok) throw new Error(`اكتملت تسوية المخطط لكن تعذّر استئناف خدمة الوكيل: ${resumed.log}`);
+    serviceHeld = false;
+
+    await finish(true, `اكتملت الترقية بنجاح — الإصدار ${installedVersion} — المخطط جاهز وأعمدة بيانات المورد موجودة والخدمة تعمل.`, fingerprint);
+    await logAgentEvent(inst.id, "agent_database_schema_upgraded", {
+      version: installedVersion,
+      backupPath,
+    }).catch(() => {});
+  } catch (error: any) {
+    let message = String(error?.message ?? error).slice(0, 500);
+    if (serviceHeld) {
+      try {
+        const resumed = await resumeAgentServiceAfterSchemaUpgrade(inst, operationId);
+        if (!resumed.ok) message = `${message} — وتعذّر استئناف الخدمة: ${resumed.log}`.slice(0, 500);
+        else log.push("تم استئناف خدمة الوكيل بعد فشل الترقية.");
+      } catch (resumeError: any) {
+        message = `${message} — وتعذّر استئناف الخدمة: ${String(resumeError?.message ?? resumeError)}`.slice(0, 500);
+      }
+    }
+    await finish(false, `فشلت ترقية قاعدة البيانات: ${message}`);
+    await logAgentEvent(inst.id, "agent_database_schema_upgrade_failed", { error: message }).catch(() => {});
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+// POST /:id/schema-upgrade — repair an existing full-agent database in place.
+// This never restores the central database or replaces business data.
+router.post("/:id/schema-upgrade", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (inst.mode !== "full") {
+    res.status(400).json({ error: "أداة ترقية القاعدة مخصصة لنسخ الوكيل الكاملة فقط" });
+    return;
+  }
+  if (!inst.dbUrlEnc) { res.status(400).json({ error: "لم يتم إدخال رابط قاعدة البيانات بعد" }); return; }
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
+    res.status(400).json({ error: "أكمل بيانات SSH أولًا لإنشاء نسخة الأمان على سيرفر الوكيل" });
+    return;
+  }
+  try { await assertProbeTargetAllowed(inst.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+
+  const operationId = randomBytes(16).toString("hex");
+  const claimed = await db.update(agentInstancesTable).set({
+    deployStatus: "deploying",
+    deployLeaseId: operationId,
+    deployOperationPhase: "schema_preflight",
+    deployProviderMutationUntil: null,
+    deployLog: "بدء ترقية قاعدة بيانات الوكيل دون استبدال البيانات…",
+    dbStatus: "initializing",
+    dbLastError: "ترقية مخطط قاعدة البيانات جارية",
+    updatedAt: new Date(),
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    ne(agentInstancesTable.deployStatus, "deploying"),
+  )).returning({ id: agentInstancesTable.id });
+  if (!claimed.length) {
+    res.status(409).json({ error: "يوجد نشر أو ترقية أخرى جارية بالفعل" });
+    return;
+  }
+  const stopHeartbeat = startAgentOperationHeartbeat(id, operationId);
+  try {
+    await initializeRemoteOperationFence(inst, operationId);
+  } catch (e: any) {
+    stopHeartbeat();
+    const message = String(e?.message ?? e).slice(0, 500);
+    await db.update(agentInstancesTable).set({
+      deployStatus: "error",
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployLog: `تعذّر بدء ترقية قاعدة البيانات: ${message}`,
+      dbStatus: inst.dbStatus,
+      dbLastError: inst.dbLastError,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).catch(() => {});
+    res.status(409).json({ error: message });
+    return;
+  }
+
+  await logAgentEvent(id, "agent_database_schema_upgrade_started", {
+    by: (req as any).authUser?.username ?? null,
+  }, req).catch(() => {});
+  res.status(202).json({ ok: true, started: true, operationId });
+  void runAgentDatabaseSchemaUpgrade(inst, operationId, stopHeartbeat);
 });
 
 // ── تعدد السيرفرات (سيرفرات احتياطية لكل وكيل) ─────────────────────────────
