@@ -94,11 +94,37 @@ const DOCUMENT_TABLES: Record<string, string> = {
   receipt_vouchers: "receipt_vouchers",
   inventory_adjustment: "inventory_adjustments",
   inventory_adjustments: "inventory_adjustments",
+  stock_adjustment: "stock_adjustments",
+  stock_adjustments: "stock_adjustments",
+  adjustment: "stock_adjustments",
+  stock_count: "stock_counts",
+  stock_counts: "stock_counts",
+  count: "stock_counts",
+  stock_transfer: "stock_transfers",
+  stock_transfers: "stock_transfers",
+  transfer: "stock_transfers",
+  goods_receipt: "goods_receipts",
+  goods_receipts: "goods_receipts",
+  goods_delivery: "goods_deliveries",
+  goods_deliveries: "goods_deliveries",
+  production_order: "production_orders",
+  production_order_cancel: "production_orders",
+  production_orders: "production_orders",
+  sister_transfer: "sister_transfers",
+  sister_transfers: "sister_transfers",
+  sister_return: "sister_returns",
+  sister_returns: "sister_returns",
+  account_note: "account_notes",
+  account_notes: "account_notes",
 };
 
 const EXACT_REFERENCE_TABLES: Record<string, { domain: RestoreReferenceDomain; table: string }> = {
   "asset_custodies.asset_id": { domain: "document", table: "fixed_assets" },
   "accounting_adjustments.parent_adjustment_id": { domain: "document", table: "accounting_adjustments" },
+  "attendance_movements.exit_permission_id": { domain: "document", table: "exit_permissions" },
+  "chat_messages.reply_to_id": { domain: "document", table: "chat_messages" },
+  "chat_participants.last_read_message_id": { domain: "document", table: "chat_messages" },
+  "crm_leads.campaign_id": { domain: "document", table: "crm_campaigns" },
   "delivery_receipt_documents.invoice_id": { domain: "document", table: "sales_invoices" },
   "delivery_receipt_documents.party_id": { domain: "customer", table: "customers" },
   "employee_attendance.camera_in_id": { domain: "camera", table: "attendance_cameras" },
@@ -106,12 +132,15 @@ const EXACT_REFERENCE_TABLES: Record<string, { domain: RestoreReferenceDomain; t
   "employee_contracts.renewed_from_id": { domain: "document", table: "employee_contracts" },
   "employee_contracts.shift_id": { domain: "document", table: "employee_shifts" },
   "employee_violations.payroll_run_id": { domain: "document", table: "payroll_runs" },
+  "exit_permissions.approver_id": { domain: "user", table: "users" },
+  "face_recognition_logs.attendance_id": { domain: "document", table: "employee_attendance" },
   "fixed_assets.source_document_id": { domain: "document", table: "purchase_invoices" },
   "fixed_assets.source_line_id": { domain: "document", table: "purchase_invoice_lines" },
-  "goods_deliveries.created_by_id": { domain: "user", table: "users" },
-  "goods_deliveries.posted_by_id": { domain: "user", table: "users" },
-  "goods_receipts.created_by_id": { domain: "user", table: "users" },
-  "goods_receipts.posted_by_id": { domain: "user", table: "users" },
+  "field_locations.asset_id": { domain: "document", table: "fixed_assets" },
+  "field_service_tickets.asset_id": { domain: "document", table: "fixed_assets" },
+  "field_visits.asset_id": { domain: "document", table: "fixed_assets" },
+  "field_visits.ticket_id": { domain: "document", table: "field_service_tickets" },
+  "inbox_messages.notification_id": { domain: "document", table: "notifications" },
   "journal_entries.sales_invoice_id": { domain: "document", table: "sales_invoices" },
   "journal_entries.purchase_invoice_id": { domain: "document", table: "purchase_invoices" },
   "maintenance_orders.field_ticket_id": { domain: "document", table: "field_service_tickets" },
@@ -121,10 +150,28 @@ const EXACT_REFERENCE_TABLES: Record<string, { domain: RestoreReferenceDomain; t
   "payroll_runs.posted_journal_id": { domain: "journal_entry", table: "journal_entries" },
   "payroll_runs.payment_journal_id": { domain: "journal_entry", table: "journal_entries" },
   "production_downtime_events.production_order_id": { domain: "document", table: "production_orders" },
+  "pos_orders.billed_invoice_id": { domain: "document", table: "sales_invoices" },
+  "pos_orders.table_id": { domain: "document", table: "pos_tables" },
+  "pos_orders.waiter_id": { domain: "user", table: "users" },
+  "pos_tables.current_order_id": { domain: "document", table: "pos_orders" },
+  "payment_vouchers.session_id": { domain: "pos_session", table: "pos_sessions" },
   "purchase_invoices.source_grn_id": { domain: "document", table: "goods_receipts" },
+  "receipt_vouchers.session_id": { domain: "pos_session", table: "pos_sessions" },
+  "sales_invoices.session_id": { domain: "pos_session", table: "pos_sessions" },
   "sales_invoices.source_gdn_id": { domain: "document", table: "goods_deliveries" },
+  "sales_returns.session_id": { domain: "pos_session", table: "pos_sessions" },
+  "sequence_counters.sequence_id": { domain: "document", table: "sequences" },
+  "sequence_logs.sequence_id": { domain: "document", table: "sequences" },
+  "settlement_links.purchase_invoice_id": { domain: "document", table: "purchase_invoices" },
+  "settlement_links.sales_invoice_id": { domain: "document", table: "sales_invoices" },
   "stock_adjustments.correction_of_id": { domain: "document", table: "stock_adjustments" },
+  "suppliers.group_id": { domain: "supplier_group", table: "supplier_groups" },
   "surveillance_devices.parent_device_id": { domain: "document", table: "surveillance_devices" },
+  "training_attendance.session_id": { domain: "document", table: "training_sessions" },
+  "trial_balances.source_trial_balance_id": { domain: "document", table: "trial_balances" },
+  "user_invoice_field_policies.profile_id": { domain: "document", table: "invoice_field_policy_profiles" },
+  "user_visits.zone_id": { domain: "document", table: "tracking_zones" },
+  "voice_command_log.work_session_id": { domain: "document", table: "work_sessions" },
 };
 
 const ATTENDANCE_AUDIT_ENTITY_TABLES: Record<string, string> = {
@@ -151,6 +198,9 @@ const IGNORED_IDENTIFIER_COLUMNS = new Set([
   "companies.zatca_transfer_id",
   "users.session_id",
   "users.current_session_id",
+  // Tombstone row IDs point to records which were intentionally deleted. They
+  // are audit evidence, not live references that can be remapped.
+  "deleted_records.record_id",
 ]);
 
 function key(value: unknown): string {
@@ -195,6 +245,15 @@ function scalarRule(column: string): RestoreReferenceRule | null {
   if (/(?:^|_)employee_id$/.test(column)) {
     return { domain: "employee", referencedTable: "employees", shape: "scalar" };
   }
+  // Legacy document tables commonly store the acting user without a physical
+  // foreign key. Cover every audit-actor column instead of registering
+  // created_by_id / posted_by_id one table at a time.
+  if (/_by_id$/.test(column)) {
+    return { domain: "user", referencedTable: "users", shape: "scalar" };
+  }
+  if (/_by$/.test(column)) {
+    return { domain: "user", referencedTable: "users", shape: "scalar" };
+  }
   if (/(?:^|_)user_id$/.test(column)) {
     return { domain: "user", referencedTable: "users", shape: "scalar" };
   }
@@ -220,6 +279,7 @@ function scalarRule(column: string): RestoreReferenceRule | null {
     [/(?:^|_)fiscal_year_id$/, "fiscal_year", "fiscal_years"],
     [/(?:^|_)pos_session_id$/, "pos_session", "pos_sessions"],
     [/(?:^|_)pos_terminal_id$/, "pos_terminal", "pos_terminals"],
+    [/(?:^|_)project_id$/, "document", "contracting_projects"],
   ];
   for (const [pattern, domain, referencedTable] of extended) {
     if (pattern.test(column)) return { domain, referencedTable, shape: "scalar" };
@@ -257,6 +317,58 @@ export function resolveRestoreReferenceRule(
       payment_voucher: "payment_vouchers",
     };
     const referencedTable = sourceTables[String(row.source_type ?? "")];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "crm_activities" && column === "related_id") {
+    const referencedTable = {
+      customer: "customers",
+      lead: "crm_leads",
+      opportunity: "crm_opportunities",
+    }[String(row.related_type ?? "").trim().toLowerCase()];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "settlement_links" && column === "source_id") {
+    const referencedTable = {
+      je: "journal_entries",
+      receipt_voucher: "receipt_vouchers",
+      payment_voucher: "payment_vouchers",
+    }[String(row.source_type ?? "").trim().toLowerCase()];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "stock_ledger" && column === "ref_id") {
+    const refType = String(row.ref_type ?? "").trim().toLowerCase();
+    if (refType === "opening_balance" && Number(row.ref_id) === 0) return null;
+    const referencedTable = DOCUMENT_TABLES[refType];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "je_number_reservations" && column === "source_id") {
+    const referencedTable = DOCUMENT_TABLES[
+      String(row.source_type ?? "").trim().toLowerCase()
+    ];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "security_actions" && column === "target_ref_id") {
+    const targetModule = String(row.target_module ?? "").trim().toLowerCase();
+    if (!targetModule || targetModule === "none") return null;
+    const referencedTable = DOCUMENT_TABLES[targetModule];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "security_events" && column === "ref_id") {
+    const linkedModule = String(row.linked_module ?? "").trim().toLowerCase();
+    if (!linkedModule || linkedModule === "none") return null;
+    const referencedTable = DOCUMENT_TABLES[linkedModule];
     return referencedTable
       ? { domain: "document", referencedTable, shape: "scalar" }
       : "unsupported-reference";

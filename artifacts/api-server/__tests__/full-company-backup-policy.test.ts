@@ -86,6 +86,7 @@ test("only control/auth backup exclusions are excluded", () => {
   assert.equal(BACKUP_EXCLUDED_TABLES.has("auto_backups"), true);
   assert.equal(BACKUP_EXCLUDED_TABLES.has("sessions"), true);
   assert.equal(BACKUP_EXCLUDED_TABLES.has("pos_devices"), true);
+  assert.equal(BACKUP_EXCLUDED_TABLES.has("extension_purchases"), true);
   assert.equal(BACKUP_EXCLUDED_TABLES.has("audit_log"), false);
   assert.equal(BACKUP_EXCLUDED_TABLES.has("pos_sessions"), false);
   assert.equal(classifyTable("users", true), "protected-user");
@@ -325,5 +326,107 @@ test("legacy soft references used by backups are remapped by their discriminator
       { deferred_adjustment_id: 11 },
     )?.referencedTable,
     "accounting_adjustments",
+  );
+});
+
+test("all legacy audit actor columns remap to restored users across document tables", () => {
+  const actorColumns = [
+    "created_by_id",
+    "updated_by_id",
+    "posted_by_id",
+    "approved_by_id",
+    "rejected_by_id",
+    "cancelled_by_id",
+    "closed_by_id",
+    "locked_by_id",
+    "unlocked_by_id",
+    "deleted_by_id",
+    "restored_by_id",
+    "verified_by_id",
+  ];
+  for (const table of ["purchase_invoices", "sales_invoices", "goods_receipts", "goods_deliveries"]) {
+    for (const column of actorColumns) {
+      assert.equal(
+        resolveRestoreReferenceRule(table, column, { [column]: 42 })?.referencedTable,
+        "users",
+        `${table}.${column}`,
+      );
+    }
+  }
+  for (const column of ["created_by", "updated_by", "posted_by", "approved_by", "deleted_by"]) {
+    assert.equal(
+      resolveRestoreReferenceRule("any_tenant_table", column, { [column]: 42 })?.referencedTable,
+      "users",
+      column,
+    );
+  }
+});
+
+test("full-company restore covers known non-FK business reference families", () => {
+  const exactCases: Array<[string, string, string]> = [
+    ["account_notes", "project_id", "contracting_projects"],
+    ["attendance_movements", "exit_permission_id", "exit_permissions"],
+    ["chat_messages", "reply_to_id", "chat_messages"],
+    ["chat_participants", "last_read_message_id", "chat_messages"],
+    ["crm_leads", "campaign_id", "crm_campaigns"],
+    ["exit_permissions", "approver_id", "users"],
+    ["face_recognition_logs", "attendance_id", "employee_attendance"],
+    ["field_visits", "asset_id", "fixed_assets"],
+    ["field_visits", "project_id", "contracting_projects"],
+    ["field_visits", "ticket_id", "field_service_tickets"],
+    ["inbox_messages", "notification_id", "notifications"],
+    ["payment_vouchers", "session_id", "pos_sessions"],
+    ["sales_invoices", "session_id", "pos_sessions"],
+    ["pos_orders", "billed_invoice_id", "sales_invoices"],
+    ["pos_orders", "table_id", "pos_tables"],
+    ["pos_orders", "waiter_id", "users"],
+    ["pos_tables", "current_order_id", "pos_orders"],
+    ["sequence_logs", "sequence_id", "sequences"],
+    ["settlement_links", "sales_invoice_id", "sales_invoices"],
+    ["settlement_links", "purchase_invoice_id", "purchase_invoices"],
+    ["suppliers", "group_id", "supplier_groups"],
+    ["training_attendance", "session_id", "training_sessions"],
+    ["trial_balances", "source_trial_balance_id", "trial_balances"],
+    ["user_invoice_field_policies", "profile_id", "invoice_field_policy_profiles"],
+    ["user_visits", "zone_id", "tracking_zones"],
+    ["voice_command_log", "work_session_id", "work_sessions"],
+  ];
+  for (const [table, column, referencedTable] of exactCases) {
+    assert.equal(
+      resolveRestoreReferenceRule(table, column, { [column]: 1 })?.referencedTable,
+      referencedTable,
+      `${table}.${column}`,
+    );
+  }
+  assert.equal(
+    resolveRestoreReferenceRule("deleted_records", "record_id", { record_id: 7 }),
+    null,
+  );
+});
+
+test("polymorphic business references use their discriminator and reject unknown types", () => {
+  const cases: Array<[string, string, Record<string, unknown>, string]> = [
+    ["crm_activities", "related_id", { related_id: 1, related_type: "lead" }, "crm_leads"],
+    ["settlement_links", "source_id", { source_id: 1, source_type: "je" }, "journal_entries"],
+    ["stock_ledger", "ref_id", { ref_id: 1, ref_type: "sales_invoice" }, "sales_invoices"],
+    ["stock_ledger", "ref_id", { ref_id: 1, ref_type: "transfer" }, "stock_transfers"],
+    ["stock_ledger", "ref_id", { ref_id: 1, ref_type: "count" }, "stock_counts"],
+    ["je_number_reservations", "source_id", { source_id: 1, source_type: "goods_receipt" }, "goods_receipts"],
+    ["security_events", "ref_id", { ref_id: 1, linked_module: "purchase_invoice" }, "purchase_invoices"],
+  ];
+  for (const [table, column, row, referencedTable] of cases) {
+    assert.equal(
+      resolveRestoreReferenceRule(table, column, row)?.referencedTable,
+      referencedTable,
+      `${table}.${column}`,
+    );
+  }
+  assert.equal(
+    resolveRestoreReferenceRule("stock_ledger", "ref_id", { ref_id: 1, ref_type: "unknown" }),
+    "unsupported-reference",
+  );
+  assert.equal(
+    resolveRestoreReferenceRule("stock_ledger", "ref_id", { ref_id: 0, ref_type: "opening_balance" }),
+    null,
   );
 });
