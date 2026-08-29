@@ -77,8 +77,13 @@ test("all full-company restore paths reconcile the active schema before reportin
   assert.match(portableRestore, /restorePortableBackupPackage[\s\S]*runAgentRequestSchemaHealOnActiveDb/);
   assert.equal(
     (restoreWorker.match(/runAgentRequestSchemaHealOnActiveDb\(\)/g) ?? []).length,
-    2,
-    "v2 and legacy restore branches must both reconcile the active schema",
+    1,
+    "the strict full-company restore must reconcile the active schema",
+  );
+  assert.match(
+    restoreWorker,
+    /هذه نسخة قديمة محدودة لا تحتوي كتالوج المراجع اللازم لاستعادة آمنة/,
+    "legacy limited snapshots must be rejected before mutation",
   );
 });
 

@@ -1104,7 +1104,15 @@ export default function GeneralSettings() {
         if (res.ok) setAiSummary(j);
       } catch {/* non-fatal */} finally { setAnalyzing(false); }
     } catch (e: any) {
-      toast({ title: e.message || t("pages.generalSettings.invalidBackupFile"), variant: "destructive" });
+      const message = e instanceof SyntaxError
+        ? "ملف النسخة غير صالح أو تالف، وتعذر قراءة محتواه"
+        : (e.message || t("pages.generalSettings.invalidBackupFile"));
+      setPreflightReport({
+        ok: false,
+        summary: { tables: 0, rows: 0, physicalReferences: 0, logicalReferences: 0 },
+        issues: [{ message }],
+      });
+      toast({ title: message, variant: "destructive" });
     } finally {
       setPreflighting(false);
       setRestorePhase(null);
@@ -2924,10 +2932,31 @@ export default function GeneralSettings() {
             )}
             {restoreIntegrity && (
               <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-                <p className="font-medium flex items-center gap-1.5">
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  اكتمل تدقيق سلامة الاستعادة
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-medium flex items-center gap-1.5">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    اكتمل تدقيق سلامة الاستعادة
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-[11px]"
+                    onClick={() => {
+                      const blob = new Blob([JSON.stringify(restoreIntegrity, null, 2)], { type: "application/json;charset=utf-8" });
+                      const url = URL.createObjectURL(blob);
+                      const anchor = document.createElement("a");
+                      anchor.href = url;
+                      anchor.download = `restore-integrity-${new Date().toISOString().slice(0, 10)}.json`;
+                      anchor.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    data-testid="download-restore-integrity"
+                  >
+                    <Download className="h-3 w-3" />
+                    تنزيل التقرير
+                  </Button>
+                </div>
                 <p className="mt-1 text-[11px]">
                   أُعيد ربط {Number(restoreIntegrity.summary?.remapped ?? 0).toLocaleString("en-US")} مرجع،
                   {" "}واجتاز {Number(restoreIntegrity.summary?.audited ?? 0).toLocaleString("en-US")} فحص ملكية وتطابق.

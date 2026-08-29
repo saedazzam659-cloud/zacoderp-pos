@@ -38,7 +38,11 @@ test("manifest parser rejects malformed values and limits", () => {
   assert.throws(() => validatePortableManifest({ version: 3, payload, files: Array.from({ length: MAX_PACKAGE_FILES + 1 }, () => ({})) }));
   assert.throws(() => validatePortableManifest({ version: 3, payload, skippedExternal: "1", files: [] }));
   const found = collectPortableFileReferences(payload);
-  const header = serializePortableManifest({ version: 3, payload, skippedExternal: 1, files: found.files.map(x => ({ ...x, size: 0, sha256: "a".repeat(64), contentType: "application/octet-stream" })) });
+  assert.throws(
+    () => validatePortableManifest({ version: 3, payload, skippedExternal: 1, files: [] }),
+    /مراجع ملفات خارجية/,
+  );
+  const header = serializePortableManifest({ version: 3, payload, skippedExternal: 0, files: found.files.map(x => ({ ...x, size: 0, sha256: "a".repeat(64), contentType: "application/octet-stream" })) });
   assert.equal(parsePortableManifest(header).manifest.version, 3);
 });
 test("container byte verification rejects traversal, duplicate ids, bad hashes, and trailing data", () => {
@@ -46,7 +50,7 @@ test("container byte verification rejects traversal, duplicate ids, bad hashes, 
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const found = collectPortableFileReferences(payload);
   const first = { ...found.files[0], size: bytes.length, sha256, contentType: "text/plain" };
-  const manifest = { version: 3 as const, payload, skippedExternal: 1, files: [first] };
+  const manifest = { version: 3 as const, payload, skippedExternal: 0, files: [first] };
   const container = Buffer.concat([serializePortableManifest(manifest), bytes]);
   assert.equal(verifyPortableContainerBuffer(container).files.length, 1);
   assert.throws(() => verifyPortableContainerBuffer(Buffer.concat([container, Buffer.from("extra")])));

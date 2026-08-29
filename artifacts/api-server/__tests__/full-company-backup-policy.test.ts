@@ -243,3 +243,23 @@ test("logical restore registry leaves physical foreign keys to the catalog engin
   assert.equal(plan.references.length, 0);
   assert.equal(plan.physicalForeignKeysSkipped, 1);
 });
+
+test("logical restore registry rejects unknown numeric id columns instead of preserving source ids", () => {
+  const tables: any = {
+    surveillance_devices: {
+      name: "surveillance_devices", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "company_id", "unknown_device_group_id"],
+      foreignKeys: [], classification: "tenant-root",
+    },
+  };
+  const payload: any = {
+    meta: { schemaVersion: 2, scope: "full_company", companyId: 7 },
+    manifest: { format: "full-company", tables, exclusions: [] },
+    counts: { surveillance_devices: 1 },
+    companySettings: null,
+    data: { surveillance_devices: [{ id: 1, company_id: 7, unknown_device_group_id: 999 }] },
+  };
+  const plan = buildRestoreReferencePlan(payload, tables);
+  assert.equal(plan.references.length, 0);
+  assert.equal(plan.issues[0]?.code, "unsupported_reference");
+});

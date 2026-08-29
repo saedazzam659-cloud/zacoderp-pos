@@ -17,6 +17,18 @@ export type RestoreReferenceDomain =
   | "unit"
   | "tax"
   | "journal_entry"
+  | "region"
+  | "customer_group"
+  | "supplier_group"
+  | "sales_rep"
+  | "brand"
+  | "camera"
+  | "department"
+  | "production_line"
+  | "work_center"
+  | "fiscal_year"
+  | "pos_session"
+  | "pos_terminal"
   | "document";
 
 export type RestoreReferenceRule = {
@@ -33,6 +45,7 @@ export type RestoreReferenceIssue = {
     | "missing_reference_row"
     | "ambiguous_reference_row"
     | "unsupported_document_type"
+    | "unsupported_reference"
     | "missing_primary_key";
   table: string;
   column: string;
@@ -81,6 +94,44 @@ const DOCUMENT_TABLES: Record<string, string> = {
   inventory_adjustment: "inventory_adjustments",
   inventory_adjustments: "inventory_adjustments",
 };
+
+const EXACT_REFERENCE_TABLES: Record<string, { domain: RestoreReferenceDomain; table: string }> = {
+  "asset_custodies.asset_id": { domain: "document", table: "fixed_assets" },
+  "delivery_receipt_documents.invoice_id": { domain: "document", table: "sales_invoices" },
+  "delivery_receipt_documents.party_id": { domain: "customer", table: "customers" },
+  "employee_attendance.camera_in_id": { domain: "camera", table: "attendance_cameras" },
+  "employee_attendance.camera_out_id": { domain: "camera", table: "attendance_cameras" },
+  "employee_contracts.renewed_from_id": { domain: "document", table: "employee_contracts" },
+  "employee_contracts.shift_id": { domain: "document", table: "employee_shifts" },
+  "employee_violations.payroll_run_id": { domain: "document", table: "payroll_runs" },
+  "fixed_assets.source_document_id": { domain: "document", table: "purchase_invoices" },
+  "fixed_assets.source_line_id": { domain: "document", table: "purchase_invoice_lines" },
+  "goods_deliveries.created_by_id": { domain: "user", table: "users" },
+  "goods_deliveries.posted_by_id": { domain: "user", table: "users" },
+  "goods_receipts.created_by_id": { domain: "user", table: "users" },
+  "goods_receipts.posted_by_id": { domain: "user", table: "users" },
+  "journal_entries.sales_invoice_id": { domain: "document", table: "sales_invoices" },
+  "journal_entries.purchase_invoice_id": { domain: "document", table: "purchase_invoices" },
+  "maintenance_orders.field_ticket_id": { domain: "document", table: "field_service_tickets" },
+  "payment_voucher_lines.deferred_adjustment_id": { domain: "document", table: "accounting_adjustments" },
+  "payment_voucher_lines.op_ref_id": { domain: "document", table: "accounting_adjustments" },
+  "payroll_runs.posted_journal_id": { domain: "journal_entry", table: "journal_entries" },
+  "payroll_runs.payment_journal_id": { domain: "journal_entry", table: "journal_entries" },
+  "production_downtime_events.production_order_id": { domain: "document", table: "production_orders" },
+  "purchase_invoices.source_grn_id": { domain: "document", table: "goods_receipts" },
+  "sales_invoices.source_gdn_id": { domain: "document", table: "goods_deliveries" },
+  "stock_adjustments.correction_of_id": { domain: "document", table: "stock_adjustments" },
+  "surveillance_devices.parent_device_id": { domain: "document", table: "surveillance_devices" },
+};
+
+const IGNORED_IDENTIFIER_COLUMNS = new Set([
+  "companies.home_domain_id",
+  "companies.demo_parent_company_id",
+  "companies.zatca_compliance_request_id",
+  "companies.zatca_transfer_id",
+  "users.session_id",
+  "users.current_session_id",
+]);
 
 function key(value: unknown): string {
   if (typeof value === "number" && Number.isFinite(value)) return `n:${value}`;
@@ -136,6 +187,23 @@ function scalarRule(column: string): RestoreReferenceRule | null {
   if (/(?:^|_)journal_entry_id$/.test(column)) {
     return { domain: "journal_entry", referencedTable: "journal_entries", shape: "scalar" };
   }
+  const extended: Array<[RegExp, RestoreReferenceDomain, string]> = [
+    [/(?:^|_)region_id$/, "region", "regions"],
+    [/(?:^|_)customer_group_id$/, "customer_group", "customer_groups"],
+    [/(?:^|_)supplier_group_id$/, "supplier_group", "supplier_groups"],
+    [/(?:^|_)sales_rep_id$/, "sales_rep", "sales_reps"],
+    [/(?:^|_)brand_id$/, "brand", "brands"],
+    [/(?:^|_)camera_id$/, "camera", "attendance_cameras"],
+    [/(?:^|_)department_id$/, "department", "hr_departments"],
+    [/(?:^|_)production_line_id$/, "production_line", "production_lines"],
+    [/(?:^|_)work_center_id$/, "work_center", "work_centers"],
+    [/(?:^|_)fiscal_year_id$/, "fiscal_year", "fiscal_years"],
+    [/(?:^|_)pos_session_id$/, "pos_session", "pos_sessions"],
+    [/(?:^|_)pos_terminal_id$/, "pos_terminal", "pos_terminals"],
+  ];
+  for (const [pattern, domain, referencedTable] of extended) {
+    if (pattern.test(column)) return { domain, referencedTable, shape: "scalar" };
+  }
   if (/(?:^|_)account_id$/.test(column)) {
     return { domain: "account", referencedTable: "accounts", shape: "scalar" };
   }
@@ -159,7 +227,15 @@ export function resolveRestoreReferenceRule(
   table: string,
   column: string,
   row: Record<string, unknown>,
-): RestoreReferenceRule | "unsupported-document" | null {
+): RestoreReferenceRule | "unsupported-document" | "unsupported-reference" | null {
+  if (column === "id" || column === "company_id") return null;
+  const exactKey = `${table}.${column}`;
+  if (IGNORED_IDENTIFIER_COLUMNS.has(exactKey)) return null;
+  const exact = EXACT_REFERENCE_TABLES[exactKey];
+  if (exact) return { domain: exact.domain, referencedTable: exact.table, shape: "scalar" };
+  if (column === "parent_id") {
+    return { domain: "document", referencedTable: table, shape: "scalar" };
+  }
   if (table === "approval_log" && column === "document_id") {
     const documentType = String(row.document_type ?? "").trim().toLowerCase();
     const referencedTable = DOCUMENT_TABLES[documentType];
@@ -167,7 +243,16 @@ export function resolveRestoreReferenceRule(
       ? { domain: "document", referencedTable, shape: "scalar" }
       : "unsupported-document";
   }
-  return arrayRule(column) ?? scalarRule(column);
+  const known = arrayRule(column) ?? scalarRule(column);
+  if (known) return known;
+  const value = row[column];
+  const numericScalar = typeof value === "number" && Number.isFinite(value);
+  const numericArray = Array.isArray(value)
+    && value.some((entry) => typeof entry === "number" && Number.isFinite(entry));
+  if ((numericScalar && /(?:^|_)id$/.test(column)) || (numericArray && /_ids$/.test(column))) {
+    return "unsupported-reference";
+  }
+  return null;
 }
 
 function sourceIndexes(
@@ -220,6 +305,18 @@ export function buildRestoreReferencePlan(
       if (!rule) continue;
       if (isPhysicalForeignKey(table, column)) {
         physicalForeignKeysSkipped++;
+        continue;
+      }
+      if (rule === "unsupported-reference") {
+        issues.push({
+          severity: "error",
+          code: "unsupported_reference",
+          table: tableName,
+          column,
+          rowId,
+          sourceValue,
+          message: `المرجع المنطقي ${tableName}.${column} غير مسجل للاستعادة الآمنة`,
+        });
         continue;
       }
       if (rule === "unsupported-document") {

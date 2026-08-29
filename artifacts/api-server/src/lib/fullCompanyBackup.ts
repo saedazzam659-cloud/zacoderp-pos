@@ -111,6 +111,9 @@ export type FullCompanyRestoreResult = {
   report: Record<string, RestoreTableReport>;
   integrity: FullCompanyIntegrityReport;
 };
+export type FullCompanyRestoreOptions = {
+  beforeCommit?: () => Promise<void>;
+};
 
 type RestoreColumnMeta = { dataType: string; nullable: boolean; hasDefault: boolean };
 type RestoreAnalysis = {
@@ -593,6 +596,30 @@ async function analyzeRestore(
     ? buildRestoreReferencePlan(payload, tables)
     : { references: [], issues: [], checked: 0, physicalForeignKeysSkipped: 0 };
   issues.push(...referencePlan.issues);
+  const postedJournalIds = new Set(
+    (payload.data.journal_entries ?? [])
+      .filter((entry) => String(entry.status ?? "").toLowerCase() === "posted")
+      .map((entry) => restoreReferenceKey(entry.id)),
+  );
+  const sourceJournalBalances = new Map<string, number>();
+  for (const line of payload.data.journal_entry_lines ?? []) {
+    const entryKey = restoreReferenceKey(line.entry_id);
+    if (!postedJournalIds.has(entryKey)) continue;
+    const balance = sourceJournalBalances.get(entryKey) ?? 0;
+    sourceJournalBalances.set(entryKey, balance + Number(line.debit ?? 0) - Number(line.credit ?? 0));
+  }
+  for (const [entryKey, balance] of sourceJournalBalances) {
+    if (Math.abs(balance) < 0.005) continue;
+    issues.push({
+      severity: "error",
+      code: "unbalanced_journal_entry",
+      table: "journal_entries",
+      column: "id",
+      rowId: entryKey,
+      sourceValue: balance,
+      message: `القيد المرحل ${entryKey} غير متوازن داخل النسخة (${balance.toFixed(2)})`,
+    });
+  }
   const integrity: FullCompanyIntegrityReport = {
     ok: !issues.some((issue) => issue.severity === "error"),
     phase: "preflight",
@@ -656,6 +683,7 @@ function remapLogicalValue(
 export async function restoreFullCompanyBackup(
   companyId: number,
   payload: FullCompanyPayload,
+  options: FullCompanyRestoreOptions = {},
 ): Promise<FullCompanyRestoreResult> {
   if (!Number.isInteger(companyId) || companyId <= 0) throw new Error("Invalid company id");
   const manifestTables = validateRestoreManifest(payload);
@@ -870,6 +898,10 @@ export async function restoreFullCompanyBackup(
       current.set(restoreReferenceKey(targetId), targetId);
       ownershipAuditIds.set(tableName, current);
     };
+    for (const [tableName, idMap] of maps) {
+      if (!actual[tableName]?.columns.includes("company_id")) continue;
+      for (const targetId of idMap.values()) rememberAuditTarget(tableName, targetId);
+    }
     for (const reference of logicalDeferred) {
       const table = tables[reference.table];
       const mappedPk = mappedValue(maps.get(reference.table), reference.rowId);
@@ -914,14 +946,14 @@ export async function restoreFullCompanyBackup(
         WHERE table_schema = 'public' AND table_name = 'companies'`)).map((row) => String(cell(row, "column_name"))));
       const safe = Object.fromEntries(Object.entries(payload.companySettings).filter(([key]) => {
         const rule = resolveRestoreReferenceRule("companies", key, payload.companySettings!);
-        const registeredReference = !!rule && rule !== "unsupported-document";
+        const registeredReference = !!rule && typeof rule !== "string";
         return IDENT.test(key) && liveCompanyColumns.has(key) && !isSensitiveColumn(key)
           && (!UNSAFE_COMPANY_SETTING.test(key) || registeredReference);
       }));
       for (const [column, sourceValue] of Object.entries(safe)) {
         if (sourceValue == null) continue;
         const rule = resolveRestoreReferenceRule("companies", column, payload.companySettings);
-        if (!rule || rule === "unsupported-document") continue;
+        if (!rule || typeof rule === "string") continue;
         const remapped = remapLogicalValue(rule, sourceValue, maps);
         safe[column] = remapped.value;
         for (const targetId of remapped.targetIds) rememberAuditTarget(rule.referencedTable, targetId);
@@ -973,6 +1005,40 @@ export async function restoreFullCompanyBackup(
       }
       auditedReferences += targetMap.size;
     }
+    if (actual.journal_entries && actual.journal_entry_lines) {
+      const unbalanced = rows(await tx.execute(sql`
+        SELECT je."id", COALESCE(SUM(jel."debit" - jel."credit"), 0)::numeric AS "balance"
+        FROM "journal_entries" je
+        LEFT JOIN "journal_entry_lines" jel ON jel."entry_id" = je."id"
+        WHERE je."company_id" = ${companyId} AND je."status" = 'posted'
+        GROUP BY je."id"
+        HAVING ABS(COALESCE(SUM(jel."debit" - jel."credit"), 0)) >= 0.005
+        LIMIT 20
+      `));
+      if (unbalanced.length) {
+        const integrity: FullCompanyIntegrityReport = {
+          ...analysis.integrity,
+          ok: false,
+          phase: "completed",
+          issues: unbalanced.map((entry) => ({
+            severity: "error" as const,
+            code: "unbalanced_journal_entry",
+            table: "journal_entries",
+            column: "id",
+            rowId: cell(entry, "id"),
+            sourceValue: cell(entry, "balance"),
+            message: `فشل تدقيق توازن القيد ${String(cell(entry, "id"))}`,
+          })),
+          summary: {
+            ...analysis.integrity.summary,
+            remapped: remappedReferences,
+            audited: auditedReferences,
+          },
+        };
+        throw new FullCompanyIntegrityError(integrity);
+      }
+    }
+    if (options.beforeCommit) await options.beforeCommit();
     return {
       report,
       integrity: {

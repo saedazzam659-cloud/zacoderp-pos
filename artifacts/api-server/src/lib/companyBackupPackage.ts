@@ -114,6 +114,9 @@ export function validatePortableManifest(value: unknown): PortableManifest {
     || typeof skippedExternal !== "number" || !Number.isSafeInteger(skippedExternal) || skippedExternal < 0) {
     fail("إصدار أو محتوى بيان الحزمة غير صالح");
   }
+  if (skippedExternal > 0) {
+    fail("تحتوي الحزمة على مراجع ملفات خارجية لم تُضمّن؛ أعد التصدير بعد نقلها إلى تخزين الشركة");
+  }
   if (manifest.files.length > MAX_PACKAGE_FILES) fail("عدد الملفات يتجاوز الحد المسموح");
   let total = 0; const ids = new Set<string>();
   for (const file of manifest.files) {
@@ -296,6 +299,9 @@ export async function buildPortableBackupPackage(companyId: number, exportedBy: 
   const service = new ObjectStorageService(); const dir = await mkdtemp(join(tmpdir(), "company-backup-"));
   normalizeLegacyPortableFileReferences(payload, service);
   const collected = collectPortableFileReferences(payload);
+  if (collected.skippedExternal.length > 0) {
+    fail("تعذر إنشاء حزمة مكتملة لأن بعض المرفقات تشير إلى ملفات خارج تخزين الشركة");
+  }
   assertPortableExportLimits(collected.files.length, []);
   const cleanup = async () => { await rm(dir, { recursive: true, force: true }); };
   try {
@@ -395,10 +401,36 @@ export async function restorePortableBackupPackage(companyId: number, packageObj
       const routed = await getRoutedDb("document_archive");
       const isRouted = routed !== db && !!payload.manifest.tables.document_archives;
       const separated = isRouted ? separateRoutedDocumentArchiveRows(payload) : null;
-      const restored = await restoreFullCompanyBackup(companyId, separated?.payload ?? payload);
+      const previousArchiveRows = separated ? await loadRoutedDocumentArchives(companyId) : null;
+      let routedArchiveCommitted = false;
+      const restored = await restoreFullCompanyBackup(
+        companyId,
+        separated?.payload ?? payload,
+        separated
+          ? {
+            beforeCommit: async () => {
+              await replaceRoutedDocumentArchives(companyId, separated.archiveRows);
+              routedArchiveCommitted = true;
+            },
+          }
+          : {},
+      ).catch(async (error) => {
+        if (routedArchiveCommitted && previousArchiveRows) {
+          try {
+            await replaceRoutedDocumentArchives(companyId, previousArchiveRows);
+          } catch (rollbackError) {
+            const reason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+            throw new Error(`فشلت الاستعادة وفشل كذلك إرجاع أرشيف المستندات السابق: ${reason}`, { cause: error });
+          }
+        }
+        throw error;
+      });
       if (separated) {
-        const restoredArchives = await replaceRoutedDocumentArchives(companyId, separated.archiveRows);
-        restored.report.document_archives = { received: restoredArchives, inserted: restoredArchives, updated: 0 };
+        restored.report.document_archives = {
+          received: separated.archiveRows.length,
+          inserted: separated.archiveRows.length,
+          updated: 0,
+        };
       }
       return {
         report: restored.report,
