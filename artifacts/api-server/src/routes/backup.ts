@@ -26,6 +26,8 @@ import { pipeline } from "node:stream/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   buildFullCompanyBackup,
+  FullCompanyIntegrityError,
+  preflightFullCompanyBackup,
   restoreFullCompanyBackup,
   REQUIRED_FULL_COMPANY_TABLES,
 } from "../lib/fullCompanyBackup.js";
@@ -34,6 +36,7 @@ import {
   MAX_PACKAGE_TOTAL_BYTES,
   buildPortableBackupPackage,
   createPortablePackageUploadKey,
+  preflightPortableBackupPackage,
   restorePortableBackupPackage,
 } from "../lib/companyBackupPackage.js";
 import { ObjectStorageService } from "../lib/objectStorage.js";
@@ -407,6 +410,20 @@ router.get("/export", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+router.post("/preflight", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const integrity = await preflightFullCompanyBackup(companyId, req.body?.backup);
+    res.json({ ok: integrity.ok, companyId, integrity });
+  } catch (e: any) {
+    res.status(400).json({
+      error: e?.message ?? "تعذر فحص النسخة الاحتياطية",
+      ...(e instanceof FullCompanyIntegrityError ? { integrity: e.integrity } : {}),
+    });
+  }
+});
+
 /* ─── Portable v3 package: database + actual private object bytes ─────────── */
 router.get("/export-portable", async (req, res) => {
   let cleanup: (() => Promise<void>) | undefined;
@@ -567,6 +584,24 @@ router.put("/portable/local-upload/:token", async (req, res) => {
   }
 });
 
+router.post("/portable/preflight", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    if (typeof req.body?.objectPath !== "string") {
+      res.status(400).json({ error: "مسار حزمة النسخة مطلوب" });
+      return;
+    }
+    const out = await preflightPortableBackupPackage(companyId, req.body.objectPath);
+    res.json({ ok: out.integrity.ok, companyId, ...out });
+  } catch (e: any) {
+    res.status(400).json({
+      error: e?.message ?? "تعذر فحص حزمة النسخة",
+      ...(e instanceof FullCompanyIntegrityError ? { integrity: e.integrity } : {}),
+    });
+  }
+});
+
 router.post("/portable/restore", async (req, res) => {
   let companyId: number | undefined;
   let localUploadToken: string | null = null;
@@ -602,7 +637,10 @@ router.post("/portable/restore", async (req, res) => {
         message: `فشل استعادة حزمة الشركة #${companyId}: ${e?.message ?? "خطأ"}`,
       }).catch(() => {});
     }
-    res.status(400).json({ error: e?.message ?? "فشل استعادة الحزمة" });
+    res.status(400).json({
+      error: e?.message ?? "فشل استعادة الحزمة",
+      ...(e instanceof FullCompanyIntegrityError ? { integrity: e.integrity } : {}),
+    });
   } finally {
     if (localUploadToken) removePortableLocalUpload(localUploadToken, false);
   }
@@ -771,109 +809,27 @@ export async function restoreFromSnapshotPayload(
 ): Promise<{
   ok: true;
   companyId: number;
-  restoreMode: "full_company_v2" | "legacy_limited";
+  restoreMode: "full_company_v2";
   report: Record<string, { received: number; inserted: number; matched: number; failed: number }>;
+  integrity: unknown;
 }> {
   if (!payload || typeof payload !== "object" || !payload.data) {
     throw new Error("ملف نسخة احتياطية غير صالح");
   }
   if ((payload as any).meta?.schemaVersion === 2) {
-    const report = await restoreFullCompanyBackup(companyId, payload as any);
+    const restored = await restoreFullCompanyBackup(companyId, payload as any);
     await runAgentRequestSchemaHealOnActiveDb();
-    return { ok: true, companyId, restoreMode: "full_company_v2", report: report as any };
+    return {
+      ok: true,
+      companyId,
+      restoreMode: "full_company_v2",
+      report: restored.report as any,
+      integrity: restored.integrity,
+    };
   }
-  const report: Record<string, { received: number; inserted: number; matched: number; failed: number }> = {};
-  const idMap: Record<string, Map<number, number>> = {};
-  const data = payload.data;
-
-  await db.transaction(async (tx) => {
-      for (const t of TABLES) {
-        idMap[t.key] = new Map();
-        const raw = data[t.key];
-        const rows: SnapshotRow[] = Array.isArray(raw) ? raw as SnapshotRow[] : [];
-        report[t.key] = { received: rows.length, inserted: 0, matched: 0, failed: 0 };
-        if (!rows.length) continue;
-
-        const existingByKey = new Map<string, number>();
-        if (t.businessKeys.length) {
-          const existing: SnapshotRow[] = t.hasCompanyId
-            ? await tx.select().from(t.table).where(eq(t.table.companyId, companyId))
-            : await tx.select().from(t.table);
-          for (const r of existing) {
-            for (const k of t.businessKeys) {
-              const v = r[k];
-              if (v != null && String(v).trim() !== "") {
-                const idVal = Number(r.id);
-                if (Number.isFinite(idVal)) existingByKey.set(`${k}:${String(v).trim()}`, idVal);
-              }
-            }
-          }
-        }
-
-        const ordered = t.selfRef
-          ? sortByParentDepth(rows, "id", t.selfRef)
-          : rows;
-
-        for (const r of ordered) {
-          const oldId = typeof r.id === "number" ? r.id : Number(r.id);
-          const bkComposite = makeBusinessKey(r, t.businessKeys);
-
-          if (bkComposite && existingByKey.has(bkComposite)) {
-            const existingId = existingByKey.get(bkComposite)!;
-            if (Number.isFinite(oldId)) idMap[t.key].set(oldId, existingId);
-            report[t.key].matched++;
-            continue;
-          }
-
-          // Build the insert payload by stripping system fields and remapping FKs.
-          const rest: Record<string, unknown> = { ...r };
-          delete rest.id;
-          delete rest.createdAt;
-          delete rest.updatedAt;
-          if (t.hasCompanyId) rest.companyId = companyId;
-
-          for (const fk of t.fks) {
-            const oldFk = rest[fk.col];
-            if (oldFk == null) continue;
-            const mapped = idMap[fk.ref]?.get(Number(oldFk));
-            rest[fk.col] = mapped ?? null;
-          }
-
-          if (t.selfRef) {
-            const oldSelf = rest[t.selfRef];
-            if (oldSelf != null) {
-              const mapped = idMap[t.key].get(Number(oldSelf));
-              rest[t.selfRef] = mapped ?? null;
-            }
-          }
-
-          try {
-            const inserted: SnapshotRow[] = await tx.transaction(async (inner) => {
-              return await inner.insert(t.table).values(rest).returning();
-            });
-            const newIdRaw = inserted[0]?.id;
-            const newId = typeof newIdRaw === "number" ? newIdRaw : Number(newIdRaw);
-            if (Number.isFinite(newId) && Number.isFinite(oldId)) idMap[t.key].set(oldId, newId);
-            // Re-index the just-inserted row by every business key so
-            // subsequent rows in the same payload can dedup against it.
-            if (Number.isFinite(newId)) {
-              for (const k of t.businessKeys) {
-                const v = rest[k];
-                if (v != null && String(v).trim() !== "") {
-                  existingByKey.set(`${k}:${String(v).trim()}`, newId);
-                }
-              }
-            }
-            report[t.key].inserted++;
-          } catch {
-            report[t.key].failed++;
-          }
-        }
-      }
-    });
-
-  await runAgentRequestSchemaHealOnActiveDb();
-  return { ok: true, companyId, restoreMode: "legacy_limited", report };
+  throw new Error(
+    "هذه نسخة قديمة محدودة لا تحتوي كتالوج المراجع اللازم لاستعادة آمنة. صدّر نسخة كاملة جديدة من خادم محدث ثم أعد المحاولة.",
+  );
 }
 
 router.post("/restore", async (req, res) => {
@@ -903,7 +859,10 @@ router.post("/restore", async (req, res) => {
         message: `فشل استعادة ملف نسخة احتياطية للشركة #${companyId}: ${e?.message ?? "خطأ"}`,
       });
     }
-    res.status(400).json({ error: e.message });
+    res.status(400).json({
+      error: e.message,
+      ...(e instanceof FullCompanyIntegrityError ? { integrity: e.integrity } : {}),
+    });
   }
 });
 

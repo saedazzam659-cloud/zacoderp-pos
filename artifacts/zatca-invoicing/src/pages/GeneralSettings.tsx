@@ -16,7 +16,7 @@ import {
   Wand2, PanelTop, PanelRight, Scale,
   Archive, Cloud, HardDrive, Ban,
   LayoutTemplate, LayoutGrid, LayoutList,
-  Mail, Send, ShieldAlert, MessageCircle
+  Mail, Send, ShieldAlert, MessageCircle, XCircle
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -678,8 +678,12 @@ export default function GeneralSettings() {
   const [exporting, setExporting] = useState(false);
   const [uploadedBackup, setUploadedBackup] = useState<any | null>(null);
   const [uploadedPortableBackup, setUploadedPortableBackup] = useState<File | null>(null);
+  const [uploadedPortableTarget, setUploadedPortableTarget] = useState<{ objectPath: string; sizeBytes: number } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [aiSummary, setAiSummary] = useState<{ summary: string; warnings: string[]; counts: Record<string, number> } | null>(null);
+  const [preflighting, setPreflighting] = useState(false);
+  const [preflightReport, setPreflightReport] = useState<any | null>(null);
+  const [restoreIntegrity, setRestoreIntegrity] = useState<any | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restorePhase, setRestorePhase] = useState<string | null>(null);
   const [restoreReport, setRestoreReport] = useState<any | null>(null);
@@ -1035,12 +1039,44 @@ export default function GeneralSettings() {
   }
 
   async function handleBackupFilePicked(file: File) {
-    setUploadedBackup(null); setUploadedPortableBackup(null); setAiSummary(null);
+    setUploadedBackup(null); setUploadedPortableBackup(null); setUploadedPortableTarget(null);
+    setAiSummary(null); setPreflightReport(null); setRestoreIntegrity(null);
     setRestoreReport(null); setRestoredFilesReport(null);
     try {
+      const cid = user?.company?.id ?? user?.companyId;
+      if (!cid) throw new Error("تعذر تحديد الشركة الحالية");
       if (file.name.toLowerCase().endsWith(".zacbackup")) {
         if (file.size <= 0) throw new Error("ملف النسخة المحمولة فارغ");
         setUploadedPortableBackup(file);
+        setPreflighting(true);
+        const targetRes = await fetch(`${API}/api/backup/portable/upload-target`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ companyId: cid, sizeBytes: file.size }),
+        });
+        const target = await targetRes.json();
+        if (!targetRes.ok) throw new Error(target.error || "تعذّر تجهيز رفع النسخة");
+        setRestorePhase("جارٍ رفع الحزمة للفحص...");
+        const uploadRes = await fetch(target.uploadURL, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            ...(target.requiresAuth ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: file,
+        });
+        if (!uploadRes.ok) throw new Error("تعذّر رفع حزمة النسخة إلى الخادم");
+        const portableTarget = { objectPath: target.objectPath, sizeBytes: file.size };
+        setUploadedPortableTarget(portableTarget);
+        setRestorePhase("جارٍ التحقق من البصمات والمراجع...");
+        const preflightRes = await fetch(`${API}/api/backup/portable/preflight`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ companyId: cid, ...portableTarget }),
+        });
+        const checked = await preflightRes.json();
+        if (!preflightRes.ok) throw new Error(checked.error || "تعذر فحص حزمة النسخة");
+        setPreflightReport(checked.integrity);
         return;
       }
       const text = await file.text();
@@ -1049,6 +1085,16 @@ export default function GeneralSettings() {
         throw new Error(t("pages.generalSettings.invalidBackupFile"));
       }
       setUploadedBackup(parsed);
+      setPreflighting(true);
+      setRestorePhase("جارٍ فحص كتالوج النسخة والمراجع...");
+      const preflightRes = await fetch(`${API}/api/backup/preflight`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ companyId: cid, backup: parsed }),
+      });
+      const checked = await preflightRes.json();
+      if (!preflightRes.ok) throw new Error(checked.error || "تعذر فحص النسخة");
+      setPreflightReport(checked.integrity);
       setAnalyzing(true);
       try {
         const res = await fetch(`${API}/api/backup/ai-analyze`, {
@@ -1059,11 +1105,18 @@ export default function GeneralSettings() {
       } catch {/* non-fatal */} finally { setAnalyzing(false); }
     } catch (e: any) {
       toast({ title: e.message || t("pages.generalSettings.invalidBackupFile"), variant: "destructive" });
+    } finally {
+      setPreflighting(false);
+      setRestorePhase(null);
     }
   }
 
   async function handleBackupRestore() {
     if (!uploadedBackup && !uploadedPortableBackup) return;
+    if (!preflightReport?.ok) {
+      toast({ title: "لا يمكن الاستعادة قبل اجتياز فحص السلامة", variant: "destructive" });
+      return;
+    }
     const confirmationKey = isFullCompanyBackup
       ? "pages.generalSettings.confirmFullRestore"
       : "pages.generalSettings.confirmRestore";
@@ -1073,39 +1126,20 @@ export default function GeneralSettings() {
     try {
       const cid = user?.company?.id ?? user?.companyId;
       if (uploadedPortableBackup) {
-        const targetRes = await fetch(`${API}/api/backup/portable/upload-target`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            companyId: cid,
-            sizeBytes: uploadedPortableBackup.size,
-          }),
-        });
-        const target = await targetRes.json();
-        if (!targetRes.ok) throw new Error(target.error || "تعذّر تجهيز رفع النسخة");
-        setRestorePhase("جارٍ رفع حزمة البيانات والملفات...");
-        const uploadRes = await fetch(target.uploadURL, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/octet-stream",
-            ...(target.requiresAuth ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: uploadedPortableBackup,
-        });
-        if (!uploadRes.ok) throw new Error("تعذّر رفع حزمة النسخة إلى الخادم");
+        if (!uploadedPortableTarget) throw new Error("يجب إعادة اختيار الحزمة لإكمال الفحص");
         setRestorePhase("جارٍ التحقق من الملفات واستعادة البيانات...");
         const restoreRes = await fetch(`${API}/api/backup/portable/restore`, {
           method: "POST",
           headers,
           body: JSON.stringify({
             companyId: cid,
-            objectPath: target.objectPath,
-            sizeBytes: uploadedPortableBackup.size,
+            ...uploadedPortableTarget,
           }),
         });
         const restored = await restoreRes.json();
         if (!restoreRes.ok) throw new Error(restored.error || t("pages.generalSettings.restoreFailed"));
         setRestoreReport(restored.report);
+        setRestoreIntegrity(restored.integrity ?? null);
         setRestoredFilesReport(restored.files ?? null);
         const inserted = Number(Object.values(restored.report || {}).reduce(
           (a: number, r: any) => a + Number(r?.inserted || 0),
@@ -1117,7 +1151,7 @@ export default function GeneralSettings() {
         qc.invalidateQueries();
         return;
       }
-      setRestorePhase("جارٍ استعادة بيانات النسخة القديمة...");
+      setRestorePhase("جارٍ استعادة بيانات النسخة الكاملة...");
       const res = await fetch(`${API}/api/backup/restore`, {
         method: "POST", headers,
         body: JSON.stringify({
@@ -1134,6 +1168,7 @@ export default function GeneralSettings() {
         );
       }
       setRestoreReport(j.report);
+      setRestoreIntegrity(j.integrity ?? null);
       const inserted = Object.values(j.report || {}).reduce((a: number, r: any) => a + (r?.inserted || 0), 0);
       toast({ title: t("pages.generalSettings.restoreSuccess", { count: inserted }) });
       qc.invalidateQueries();
@@ -2794,11 +2829,66 @@ export default function GeneralSettings() {
               </div>
             )}
 
+            {(preflighting || preflightReport) && (
+              <div className={cn(
+                "rounded-lg border px-3 py-3 text-xs space-y-2",
+                preflighting
+                  ? "border-sky-200 bg-sky-50/60"
+                  : preflightReport?.ok
+                    ? "border-emerald-200 bg-emerald-50/60"
+                    : "border-red-200 bg-red-50/60",
+              )} data-testid="backup-preflight-report">
+                <div className="flex items-center gap-2 font-medium">
+                  {preflighting
+                    ? <Loader2 className="h-4 w-4 animate-spin text-sky-700" />
+                    : preflightReport?.ok
+                      ? <ShieldCheck className="h-4 w-4 text-emerald-700" />
+                      : <XCircle className="h-4 w-4 text-red-700" />}
+                  <span>
+                    {preflighting
+                      ? (restorePhase ?? "جارٍ فحص النسخة...")
+                      : preflightReport?.ok
+                        ? "اجتازت النسخة فحص السلامة ويمكن استعادتها"
+                        : "فشل فحص السلامة ولن تُنفذ الاستعادة"}
+                  </span>
+                </div>
+                {preflightReport?.summary && (
+                  <div className="flex flex-wrap gap-1.5 text-[11px]">
+                    <span className="rounded border bg-background px-2 py-0.5">
+                      {Number(preflightReport.summary.tables ?? 0).toLocaleString("en-US")} جدول
+                    </span>
+                    <span className="rounded border bg-background px-2 py-0.5">
+                      {Number(preflightReport.summary.rows ?? 0).toLocaleString("en-US")} سجل
+                    </span>
+                    <span className="rounded border bg-background px-2 py-0.5">
+                      {Number(preflightReport.summary.physicalReferences ?? 0).toLocaleString("en-US")} مرجع فعلي
+                    </span>
+                    <span className="rounded border bg-background px-2 py-0.5">
+                      {Number(preflightReport.summary.logicalReferences ?? 0).toLocaleString("en-US")} مرجع منطقي
+                    </span>
+                  </div>
+                )}
+                {preflightReport?.issues?.length > 0 && (
+                  <ul className="space-y-1 text-[11px] text-red-800">
+                    {preflightReport.issues.slice(0, 8).map((issue: any, index: number) => (
+                      <li key={`${issue.code}-${index}`} className="flex items-start gap-1.5">
+                        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span>{issue.message}</span>
+                      </li>
+                    ))}
+                    {preflightReport.issues.length > 8 && (
+                      <li>و{(preflightReport.issues.length - 8).toLocaleString("en-US")} مشكلة أخرى</li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
+
             {(uploadedBackup || uploadedPortableBackup) && (
               <Button
                 type="button"
                 onClick={handleBackupRestore}
-                disabled={restoring || analyzing}
+                disabled={restoring || analyzing || preflighting || !preflightReport?.ok}
                 className="gap-2 bg-emerald-600 hover:bg-emerald-700"
               >
                 {restoring
@@ -2830,6 +2920,18 @@ export default function GeneralSettings() {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {restoreIntegrity && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                <p className="font-medium flex items-center gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  اكتمل تدقيق سلامة الاستعادة
+                </p>
+                <p className="mt-1 text-[11px]">
+                  أُعيد ربط {Number(restoreIntegrity.summary?.remapped ?? 0).toLocaleString("en-US")} مرجع،
+                  {" "}واجتاز {Number(restoreIntegrity.summary?.audited ?? 0).toLocaleString("en-US")} فحص ملكية وتطابق.
+                </p>
               </div>
             )}
             {restoredFilesReport && (

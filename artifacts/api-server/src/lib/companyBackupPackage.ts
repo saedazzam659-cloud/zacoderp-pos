@@ -9,7 +9,15 @@ import { createGunzip, createGzip } from "node:zlib";
 import { db, documentArchivesTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { getRoutedDb } from "./externalDbRouting";
-import { buildFullCompanyBackup, isExternalFileReference, isFullCompanyBackupPayload, restoreFullCompanyBackup, sanitizeRow, type FullCompanyPayload } from "./fullCompanyBackup";
+import {
+  buildFullCompanyBackup,
+  isExternalFileReference,
+  isFullCompanyBackupPayload,
+  preflightFullCompanyBackup,
+  restoreFullCompanyBackup,
+  sanitizeRow,
+  type FullCompanyPayload,
+} from "./fullCompanyBackup";
 import { ObjectStorageService } from "./objectStorage";
 
 const MAGIC = Buffer.from("ZCBP3\0", "ascii");
@@ -387,13 +395,14 @@ export async function restorePortableBackupPackage(companyId: number, packageObj
       const routed = await getRoutedDb("document_archive");
       const isRouted = routed !== db && !!payload.manifest.tables.document_archives;
       const separated = isRouted ? separateRoutedDocumentArchiveRows(payload) : null;
-      const report = await restoreFullCompanyBackup(companyId, separated?.payload ?? payload);
+      const restored = await restoreFullCompanyBackup(companyId, separated?.payload ?? payload);
       if (separated) {
-        const restored = await replaceRoutedDocumentArchives(companyId, separated.archiveRows);
-        report.document_archives = { received: restored, inserted: restored, updated: 0 };
+        const restoredArchives = await replaceRoutedDocumentArchives(companyId, separated.archiveRows);
+        restored.report.document_archives = { received: restoredArchives, inserted: restoredArchives, updated: 0 };
       }
       return {
-        report,
+        report: restored.report,
+        integrity: restored.integrity,
         files: {
           copied: manifest.files.length,
           bytes: manifest.files.reduce((sum, file) => sum + file.size, 0),
@@ -407,6 +416,66 @@ export async function restorePortableBackupPackage(companyId: number, packageObj
     throw error;
   } finally {
     await source.delete({ ignoreNotFound: true }).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+export async function preflightPortableBackupPackage(companyId: number, packageObjectPath: string) {
+  const expected = `/objects/${portablePackagePrefix(companyId)}`;
+  if (!packageObjectPath.startsWith(expected) || !safeObjectPath(packageObjectPath)) {
+    fail("مسار حزمة الاستعادة غير مصرح به");
+  }
+  const service = new ObjectStorageService();
+  const dir = await mkdtemp(join(tmpdir(), "company-preflight-"));
+  const source = await service.getObjectEntityFile(packageObjectPath);
+  try {
+    const [packageMetadata] = await source.getMetadata();
+    const packageBytes = Number(packageMetadata.size ?? 0);
+    if (!Number.isSafeInteger(packageBytes) || packageBytes <= 0
+      || packageBytes > MAX_PACKAGE_TOTAL_BYTES + MAX_PACKAGE_MANIFEST_BYTES + 1024 * 1024) {
+      fail("حجم ملف الحزمة غير صالح");
+    }
+    const raw = tempName(dir, "incoming.zcbp");
+    await streamWithLimit(
+      source.createReadStream().pipe(createGunzip()),
+      createWriteStream(raw, { flags: "wx" }),
+      MAX_PACKAGE_TOTAL_BYTES + MAX_PACKAGE_MANIFEST_BYTES + HEADER_BYTES,
+    );
+    const fd = await open(raw, "r");
+    const prefix = Buffer.alloc(MAX_PACKAGE_MANIFEST_BYTES + HEADER_BYTES);
+    const read = await fd.read(prefix, 0, prefix.length, 0);
+    await fd.close();
+    const { manifest, dataOffset } = parsePortableManifest(prefix.subarray(0, read.bytesRead));
+    let offset = dataOffset;
+    for (const file of manifest.files) {
+      const staged = tempName(dir, `verify-${file.id}`);
+      const hashed = file.size === 0
+        ? (() => ({ size: 0, sha256: createHash("sha256").digest("hex") }))()
+        : await hashCopy(
+          createReadStream(raw, { start: offset, end: offset + file.size - 1 }),
+          staged,
+          file.size,
+        );
+      if (file.size === 0) {
+        const empty = await open(staged, "wx");
+        await empty.close();
+      }
+      if (hashed.size !== file.size || hashed.sha256 !== file.sha256) {
+        fail("بصمة أحد الملفات لا تطابق الحزمة");
+      }
+      offset += file.size;
+    }
+    if ((await stat(raw)).size !== offset) fail("تحتوي الحزمة على بيانات زائدة");
+    const integrity = await preflightFullCompanyBackup(companyId, manifest.payload);
+    return {
+      integrity,
+      files: {
+        verified: manifest.files.length,
+        bytes: manifest.files.reduce((sum, file) => sum + file.size, 0),
+        skippedExternal: manifest.skippedExternal,
+      },
+    };
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }

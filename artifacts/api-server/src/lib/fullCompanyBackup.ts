@@ -1,5 +1,14 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import {
+  buildRestoreReferencePlan,
+  resolveRestoreReferenceRule,
+  restoreReferenceKey,
+  type PlannedRestoreReference,
+  type RestoreReferenceIssue,
+  type RestoreReferencePlan,
+  type RestoreReferenceRule,
+} from "./companyRestoreReferences.js";
 
 /**
  * Tables deliberately outside a tenant backup.  They are central control-plane
@@ -70,6 +79,57 @@ export type FullCompanyPayload = {
   companySettings: Record<string, unknown> | null;
   data: Record<string, Record<string, unknown>[]>;
 };
+export type RestoreTableReport = { received: number; inserted: number; updated: number };
+export type FullCompanyIntegrityIssue = RestoreReferenceIssue | {
+  severity: "error" | "warning";
+  code: "catalog_mismatch" | "count_mismatch" | "unexpected_column" | "missing_physical_reference";
+  table: string;
+  column: string;
+  rowId: unknown;
+  sourceValue: unknown;
+  referencedTable?: string;
+  message: string;
+};
+export type FullCompanyIntegrityReport = {
+  ok: boolean;
+  phase: "preflight" | "completed";
+  sourceCompanyId: number;
+  targetCompanyId: number;
+  checkedAt: string;
+  summary: {
+    tables: number;
+    rows: number;
+    physicalReferences: number;
+    logicalReferences: number;
+    physicalForeignKeysSkipped: number;
+    remapped: number;
+    audited: number;
+  };
+  issues: FullCompanyIntegrityIssue[];
+};
+export type FullCompanyRestoreResult = {
+  report: Record<string, RestoreTableReport>;
+  integrity: FullCompanyIntegrityReport;
+};
+
+type RestoreColumnMeta = { dataType: string; nullable: boolean; hasDefault: boolean };
+type RestoreAnalysis = {
+  actual: Record<string, BackupTable>;
+  tables: Record<string, BackupTable>;
+  columnMeta: Map<string, RestoreColumnMeta>;
+  referencePlan: RestoreReferencePlan;
+  integrity: FullCompanyIntegrityReport;
+};
+
+export class FullCompanyIntegrityError extends Error {
+  integrity: FullCompanyIntegrityReport;
+
+  constructor(integrity: FullCompanyIntegrityReport) {
+    super(integrity.issues[0]?.message || "فشل فحص سلامة النسخة الاحتياطية");
+    this.name = "FullCompanyIntegrityError";
+    this.integrity = integrity;
+  }
+}
 
 function isExcludedTable(name: string): boolean {
   return BACKUP_EXCLUDED_TABLES.has(name)
@@ -385,7 +445,7 @@ export async function buildFullCompanyBackup(companyId: number, exportedBy: stri
   });
 }
 
-export async function restoreFullCompanyBackup(companyId: number, payload: FullCompanyPayload): Promise<Record<string, { received: number; inserted: number; updated: number }>> {
+function validateRestoreManifest(payload: FullCompanyPayload): Record<string, BackupTable> {
   if (!isFullCompanyBackupPayload(payload)) throw new Error("Invalid schemaVersion 2 backup");
   const manifestTables = Object.fromEntries(Object.entries(payload.manifest.tables)
     .filter(([name]) => !LEGACY_IGNORED_RESTORE_TABLES.has(name)));
@@ -399,35 +459,211 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
       throw new Error(`Backup data has no manifest entry: ${name}`);
     }
   }
+  return manifestTables;
+}
+
+function sourceReferenceIndexes(
+  payload: FullCompanyPayload,
+  tables: Record<string, BackupTable>,
+): Map<string, Map<string, Map<string, number>>> {
+  const indexes = new Map<string, Map<string, Map<string, number>>>();
+  for (const [tableName, table] of Object.entries(tables)) {
+    const referencedColumns = new Set<string>();
+    if (table.primaryKey) referencedColumns.add(table.primaryKey);
+    for (const candidate of Object.values(tables)) {
+      for (const foreignKey of candidate.foreignKeys) {
+        if (foreignKey.referencedTable === tableName) referencedColumns.add(foreignKey.referencedColumn);
+      }
+    }
+    const tableIndexes = new Map<string, Map<string, number>>();
+    for (const column of referencedColumns) tableIndexes.set(column, new Map());
+    for (const row of payload.data[tableName] ?? []) {
+      for (const column of referencedColumns) {
+        const value = row[column];
+        if (value == null) continue;
+        const normalized = restoreReferenceKey(value);
+        const index = tableIndexes.get(column)!;
+        index.set(normalized, (index.get(normalized) ?? 0) + 1);
+      }
+    }
+    indexes.set(tableName, tableIndexes);
+  }
+  return indexes;
+}
+
+async function analyzeRestore(
+  tx: any,
+  companyId: number,
+  payload: FullCompanyPayload,
+  manifestTables: Record<string, BackupTable>,
+): Promise<RestoreAnalysis> {
+  const actual = await catalog(tx);
+  const issues: FullCompanyIntegrityIssue[] = [];
+  const compatible = restoreCatalogsCompatible(manifestTables, actual);
+  if (!compatible) {
+    issues.push({
+      severity: "error",
+      code: "catalog_mismatch",
+      table: "*",
+      column: "*",
+      rowId: null,
+      sourceValue: null,
+      message: "تعذر استعادة النسخة لأن إصدار جداول بيانات الشركة يختلف بين الخادم المصدر والهدف. حدّث الخادمين إلى الإصدار نفسه ثم أعد المحاولة.",
+    });
+  }
+  const tables = { ...manifestTables };
+  for (const name of PROTECTED_RESTORE_TABLES) {
+    if (actual[name] && manifestTables[name]) tables[name] = actual[name];
+  }
+  const columnMeta = new Map<string, RestoreColumnMeta>();
+  for (const record of rows(await tx.execute(sql`
+    SELECT "table_name", "column_name", "data_type", "is_nullable", "column_default"
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+  `))) {
+    columnMeta.set(
+      `${String(cell(record, "table_name"))}.${String(cell(record, "column_name"))}`,
+      {
+        dataType: String(cell(record, "data_type")),
+        nullable: String(cell(record, "is_nullable")) === "YES",
+        hasDefault: cell(record, "column_default") != null,
+      },
+    );
+  }
+  for (const [name, table] of Object.entries(tables)) {
+    const live = actual[name];
+    if (!live || !Array.isArray(payload.data[name])) continue;
+    if (payload.counts?.[name] !== payload.data[name].length) {
+      issues.push({
+        severity: "error",
+        code: "count_mismatch",
+        table: name,
+        column: "*",
+        rowId: null,
+        sourceValue: payload.counts?.[name],
+        message: `عدد سجلات ${name} لا يطابق بيان النسخة`,
+      });
+    }
+    for (const record of payload.data[name]) {
+      for (const key of Object.keys(record)) {
+        if (!manifestTables[name].columns.includes(key)) {
+          issues.push({
+            severity: "error",
+            code: "unexpected_column",
+            table: name,
+            column: key,
+            rowId: table.primaryKey ? record[table.primaryKey] : null,
+            sourceValue: record[key],
+            message: `العمود ${name}.${key} غير مسجل في بيان النسخة`,
+          });
+        }
+      }
+    }
+  }
+  const sourceIndexes = sourceReferenceIndexes(payload, tables);
+  let physicalReferences = 0;
+  for (const [name, table] of Object.entries(tables)) {
+    for (const record of payload.data[name] ?? []) {
+      for (const foreignKey of table.foreignKeys) {
+        const value = record[foreignKey.column];
+        if (value == null) continue;
+        physicalReferences++;
+        const count = sourceIndexes
+          .get(foreignKey.referencedTable)
+          ?.get(foreignKey.referencedColumn)
+          ?.get(restoreReferenceKey(value)) ?? 0;
+        if (count !== 1) {
+          issues.push({
+            severity: "error",
+            code: "missing_physical_reference",
+            table: name,
+            column: foreignKey.column,
+            rowId: table.primaryKey ? record[table.primaryKey] : null,
+            sourceValue: value,
+            referencedTable: foreignKey.referencedTable,
+            message: count > 1
+              ? `المرجع الفعلي ${name}.${foreignKey.column} ملتبس داخل ${foreignKey.referencedTable}`
+              : `المرجع الفعلي ${name}.${foreignKey.column} لا يطابق صفًا داخل ${foreignKey.referencedTable}`,
+          });
+        }
+      }
+    }
+  }
+  const referencePlan = compatible
+    ? buildRestoreReferencePlan(payload, tables)
+    : { references: [], issues: [], checked: 0, physicalForeignKeysSkipped: 0 };
+  issues.push(...referencePlan.issues);
+  const integrity: FullCompanyIntegrityReport = {
+    ok: !issues.some((issue) => issue.severity === "error"),
+    phase: "preflight",
+    sourceCompanyId: payload.meta.companyId,
+    targetCompanyId: companyId,
+    checkedAt: new Date().toISOString(),
+    summary: {
+      tables: Object.keys(tables).length,
+      rows: Object.values(payload.data).reduce((total, tableRows) => total + tableRows.length, 0),
+      physicalReferences,
+      logicalReferences: referencePlan.checked,
+      physicalForeignKeysSkipped: referencePlan.physicalForeignKeysSkipped,
+      remapped: 0,
+      audited: 0,
+    },
+    issues: issues.slice(0, 1_000),
+  };
+  return { actual, tables, columnMeta, referencePlan, integrity };
+}
+
+export async function preflightFullCompanyBackup(
+  companyId: number,
+  payload: FullCompanyPayload,
+): Promise<FullCompanyIntegrityReport> {
+  if (!Number.isInteger(companyId) || companyId <= 0) throw new Error("Invalid company id");
+  const manifestTables = validateRestoreManifest(payload);
+  return db.transaction(async (tx) =>
+    (await analyzeRestore(tx, companyId, payload, manifestTables)).integrity);
+}
+
+function rememberMappedValue(map: Map<unknown, unknown>, source: unknown, target: unknown): void {
+  map.set(source, target);
+  map.set(restoreReferenceKey(source), target);
+}
+
+function mappedValue(map: Map<unknown, unknown> | undefined, source: unknown): unknown {
+  if (!map) return undefined;
+  return map.get(source) ?? map.get(restoreReferenceKey(source));
+}
+
+function remapLogicalValue(
+  rule: RestoreReferenceRule,
+  sourceValue: unknown,
+  maps: Map<string, Map<unknown, unknown>>,
+): { value: unknown; targetIds: unknown[]; remapped: number } {
+  const values = rule.shape === "array" ? sourceValue : [sourceValue];
+  if (!Array.isArray(values)) throw new Error(`Invalid ${rule.referencedTable} reference array`);
+  const targetIds: unknown[] = [];
+  let remapped = 0;
+  const mapped = values.map((value) => {
+    if (value == null || (rule.allowZero && Number(value) === 0)) return value;
+    const target = mappedValue(maps.get(rule.referencedTable), value);
+    if (target === undefined) throw new Error(`Unresolved logical reference to ${rule.referencedTable}`);
+    targetIds.push(target);
+    remapped++;
+    return target;
+  });
+  return { value: rule.shape === "array" ? mapped : mapped[0], targetIds, remapped };
+}
+
+export async function restoreFullCompanyBackup(
+  companyId: number,
+  payload: FullCompanyPayload,
+): Promise<FullCompanyRestoreResult> {
+  if (!Number.isInteger(companyId) || companyId <= 0) throw new Error("Invalid company id");
+  const manifestTables = validateRestoreManifest(payload);
   return db.transaction(async (tx) => {
-    const report: Record<string, { received: number; inserted: number; updated: number }> = {};
-    const actual = await catalog(tx);
-    if (!restoreCatalogsCompatible(manifestTables, actual)) {
-      throw new Error(
-        "تعذر استعادة النسخة لأن إصدار جداول بيانات الشركة يختلف بين الخادم المصدر والهدف. حدّث الخادمين إلى الإصدار نفسه ثم أعد المحاولة.",
-      );
-    }
-    const tables = { ...manifestTables };
-    for (const name of PROTECTED_RESTORE_TABLES) {
-      if (actual[name] && manifestTables[name]) tables[name] = actual[name];
-    }
-    const columnMeta = new Map<string, {
-      dataType: string; nullable: boolean; hasDefault: boolean;
-    }>();
-    for (const record of rows(await tx.execute(sql`
-      SELECT "table_name", "column_name", "data_type", "is_nullable", "column_default"
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-    `))) {
-      columnMeta.set(
-        `${String(cell(record, "table_name"))}.${String(cell(record, "column_name"))}`,
-        {
-          dataType: String(cell(record, "data_type")),
-          nullable: String(cell(record, "is_nullable")) === "YES",
-          hasDefault: cell(record, "column_default") != null,
-        },
-      );
-    }
+    const analysis = await analyzeRestore(tx, companyId, payload, manifestTables);
+    if (!analysis.integrity.ok) throw new FullCompanyIntegrityError(analysis.integrity);
+    const { actual, tables, columnMeta, referencePlan } = analysis;
+    const report: Record<string, RestoreTableReport> = {};
     for (const [name, table] of Object.entries(tables)) {
       const live = actual[name];
       if (!live) throw new Error(`Backup table is not available: ${name}`);
@@ -471,7 +707,16 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
       pending = next;
     }
     if (pending.length) throw new Error(`Cannot replace tenant data: ${pending.join(", ")}`);
-    const maps = new Map<string, Map<unknown, unknown>>(); const deferred: Array<{ table: BackupTable; pk: unknown; fk: ForeignKey; source: unknown }> = [];
+    const maps = new Map<string, Map<unknown, unknown>>();
+    const deferred: Array<{ table: BackupTable; pk: unknown; fk: ForeignKey; source: unknown }> = [];
+    const logicalDeferred: PlannedRestoreReference[] = [];
+    const logicalByRow = new Map<string, PlannedRestoreReference[]>();
+    for (const reference of referencePlan.references.filter((item) => item.table !== "companies")) {
+      const rowKey = `${reference.table}\0${restoreReferenceKey(reference.rowId)}`;
+      const current = logicalByRow.get(rowKey) ?? [];
+      current.push(reference);
+      logicalByRow.set(rowKey, current);
+    }
     for (const name of topologicalTableOrder(tables)) {
       const table = tables[name]; const records = Array.isArray(payload.data[name]) ? payload.data[name] : [];
       report[name] = { received: records.length, inserted: 0, updated: 0 }; maps.set(name, new Map());
@@ -497,7 +742,10 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
             ORDER BY CASE WHEN "username" = ${liveUsername} THEN 0 ELSE 1 END
             LIMIT 1
           `))[0];
-          if (found) { maps.get(name)!.set(source[table.primaryKey], found.id); continue; }
+          if (found) {
+            rememberMappedValue(maps.get(name)!, source[table.primaryKey], found.id);
+            continue;
+          }
           // Restored users are intentionally disabled. Always give a newly
           // inserted user a restore-only identity so old agent schemas that
           // still enforce global username/email uniqueness cannot collide.
@@ -534,8 +782,18 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
           if (table.columns.includes("is_active")) values.is_active = false;
           if (table.columns.includes("active")) values.active = false;
         }
+        if (table.primaryKey) {
+          const rowKey = `${name}\0${restoreReferenceKey(source[table.primaryKey])}`;
+          for (const reference of logicalByRow.get(rowKey) ?? []) {
+            if (!(reference.column in values)) continue;
+            logicalDeferred.push(reference);
+            if (columnMeta.get(`${name}.${reference.column}`)?.nullable) {
+              values[reference.column] = null;
+            }
+          }
+        }
         for (const fk of table.foreignKeys) if (values[fk.column] != null) {
-          const mapped = maps.get(fk.referencedTable)?.get(values[fk.column]);
+          const mapped = mappedValue(maps.get(fk.referencedTable), values[fk.column]);
           if (mapped !== undefined) values[fk.column] = mapped;
           else if (fk.nullable) { deferred.push({ table, pk: source[table.primaryKey ?? "id"], fk, source: values[fk.column] }); values[fk.column] = null; }
           else throw new Error(`Unresolved required FK ${name}.${fk.column}`);
@@ -581,12 +839,14 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
         if (table.primaryKey && newId == null) throw new Error(`Insert did not return primary key for ${name}`);
         if (table.primaryKey) {
           const ownMap = maps.get(name)!;
-          ownMap.set(source[table.primaryKey], newId);
+          rememberMappedValue(ownMap, source[table.primaryKey], newId);
           // Most relationships target the PK, but catalog metadata also permits
           // a single-column FK to a unique business column.
           for (const consumer of Object.values(tables)) {
             for (const fk of consumer.foreignKeys.filter((candidate) => candidate.referencedTable === name)) {
-              if (source[fk.referencedColumn] != null) ownMap.set(source[fk.referencedColumn], newId);
+              if (source[fk.referencedColumn] != null) {
+                rememberMappedValue(ownMap, source[fk.referencedColumn], newId);
+              }
             }
           }
         }
@@ -595,12 +855,47 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
       }
     }
     for (const item of deferred) {
-      const mappedFk = maps.get(item.fk.referencedTable)?.get(item.source);
-      const mappedPk = maps.get(item.table.name)?.get(item.pk);
+      const mappedFk = mappedValue(maps.get(item.fk.referencedTable), item.source);
+      const mappedPk = mappedValue(maps.get(item.table.name), item.pk);
       if (mappedFk === undefined || mappedPk === undefined) throw new Error(`Unresolved cyclic FK ${item.table.name}.${item.fk.column}`);
       await tx.execute(sql`UPDATE ${sql.raw(ident(item.table.name))} SET ${sql.raw(ident(item.fk.column))} = ${mappedFk}
         WHERE ${sql.raw(ident(item.table.primaryKey ?? "id"))} = ${mappedPk}`);
       report[item.table.name].updated++;
+    }
+    const ownershipAuditIds = new Map<string, Map<string, unknown>>();
+    let remappedReferences = 0;
+    let auditedReferences = 0;
+    const rememberAuditTarget = (tableName: string, targetId: unknown) => {
+      const current = ownershipAuditIds.get(tableName) ?? new Map<string, unknown>();
+      current.set(restoreReferenceKey(targetId), targetId);
+      ownershipAuditIds.set(tableName, current);
+    };
+    for (const reference of logicalDeferred) {
+      const table = tables[reference.table];
+      const mappedPk = mappedValue(maps.get(reference.table), reference.rowId);
+      if (!table?.primaryKey || mappedPk === undefined) {
+        throw new Error(`Unresolved logical-reference owner ${reference.table}.${reference.column}`);
+      }
+      const remapped = remapLogicalValue(reference.rule, reference.sourceValue, maps);
+      const restoredValue = restoreParameterValue(
+        columnMeta.get(`${reference.table}.${reference.column}`)?.dataType,
+        remapped.value,
+      );
+      const updated = rows(await tx.execute(sql`
+        UPDATE ${sql.raw(ident(reference.table))}
+        SET ${sql.raw(ident(reference.column))} = ${sql.param(restoredValue)}
+        WHERE ${sql.raw(ident(table.primaryKey))} = ${mappedPk}
+        RETURNING ${sql.raw(ident(reference.column))}
+      `))[0];
+      if (!updated) throw new Error(`Logical-reference owner disappeared: ${reference.table}.${reference.column}`);
+      const persisted = cell(updated, reference.column);
+      if (JSON.stringify(persisted) !== JSON.stringify(remapped.value)) {
+        throw new Error(`Logical-reference audit mismatch: ${reference.table}.${reference.column}`);
+      }
+      for (const targetId of remapped.targetIds) rememberAuditTarget(reference.rule.referencedTable, targetId);
+      remappedReferences += remapped.remapped;
+      auditedReferences += remapped.remapped;
+      report[reference.table].updated++;
     }
     if (report.user_branches) {
       for (const grant of preservedBranchGrants) {
@@ -617,14 +912,80 @@ export async function restoreFullCompanyBackup(companyId: number, payload: FullC
     if (payload.companySettings) {
       const liveCompanyColumns = new Set(rows(await tx.execute(sql`SELECT column_name FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'companies'`)).map((row) => String(cell(row, "column_name"))));
-      const safe = Object.fromEntries(Object.entries(payload.companySettings).filter(([key]) =>
-        IDENT.test(key) && liveCompanyColumns.has(key) && !isSensitiveColumn(key) && !UNSAFE_COMPANY_SETTING.test(key)));
+      const safe = Object.fromEntries(Object.entries(payload.companySettings).filter(([key]) => {
+        const rule = resolveRestoreReferenceRule("companies", key, payload.companySettings!);
+        const registeredReference = !!rule && rule !== "unsupported-document";
+        return IDENT.test(key) && liveCompanyColumns.has(key) && !isSensitiveColumn(key)
+          && (!UNSAFE_COMPANY_SETTING.test(key) || registeredReference);
+      }));
+      for (const [column, sourceValue] of Object.entries(safe)) {
+        if (sourceValue == null) continue;
+        const rule = resolveRestoreReferenceRule("companies", column, payload.companySettings);
+        if (!rule || rule === "unsupported-document") continue;
+        const remapped = remapLogicalValue(rule, sourceValue, maps);
+        safe[column] = remapped.value;
+        for (const targetId of remapped.targetIds) rememberAuditTarget(rule.referencedTable, targetId);
+        remappedReferences += remapped.remapped;
+        auditedReferences += remapped.remapped;
+      }
       const columns = Object.keys(safe);
       if (columns.length) await tx.execute(sql`UPDATE "companies" SET ${sql.join(columns.map((column) =>
         sql`${sql.raw(ident(column))} = ${sql.param(
           restoreParameterValue(columnMeta.get(`companies.${column}`)?.dataType, safe[column]),
         )}`), sql`, `)} WHERE "id" = ${companyId}`);
     }
-    return report;
+    for (const [referencedTable, targetMap] of ownershipAuditIds) {
+      if (!targetMap.size) continue;
+      const table = actual[referencedTable];
+      if (!table?.primaryKey) throw new Error(`Cannot audit ownership for ${referencedTable}`);
+      const targetIds = [...targetMap.values()];
+      const companyFilter = table.columns.includes("company_id")
+        ? sql` AND ${sql.raw(ident("company_id"))} = ${companyId}`
+        : sql.empty();
+      const found = Number(cell(rows(await tx.execute(sql`
+        SELECT count(*)::int AS "count"
+        FROM ${sql.raw(ident(referencedTable))}
+        WHERE ${sql.raw(ident(table.primaryKey))} IN (${sql.join(targetIds.map((id) => sql`${id}`), sql`,`)})
+        ${companyFilter}
+      `))[0] ?? {}, "count") ?? 0);
+      if (found !== targetMap.size) {
+        const integrity: FullCompanyIntegrityReport = {
+          ...analysis.integrity,
+          ok: false,
+          phase: "completed",
+          issues: [{
+            severity: "error",
+            code: "missing_reference_row",
+            table: referencedTable,
+            column: table.primaryKey,
+            rowId: null,
+            sourceValue: targetIds,
+            referencedTable,
+            message: `فشل تدقيق ملكية المراجع المعاد ربطها في ${referencedTable}`,
+          }],
+          summary: {
+            ...analysis.integrity.summary,
+            remapped: remappedReferences,
+            audited: auditedReferences,
+          },
+        };
+        throw new FullCompanyIntegrityError(integrity);
+      }
+      auditedReferences += targetMap.size;
+    }
+    return {
+      report,
+      integrity: {
+        ...analysis.integrity,
+        ok: true,
+        phase: "completed",
+        checkedAt: new Date().toISOString(),
+        summary: {
+          ...analysis.integrity.summary,
+          remapped: remappedReferences,
+          audited: auditedReferences,
+        },
+      },
+    };
   });
 }

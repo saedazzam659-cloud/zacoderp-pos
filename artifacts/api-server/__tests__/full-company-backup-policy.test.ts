@@ -6,6 +6,11 @@ import {
   catalogsMatch, missingRequiredFullCompanyTables, REQUIRED_FULL_COMPANY_TABLES,
   restoreCatalogsCompatible, restoreParameterValue, restoredUsername, restoredUsernames,
 } from "../src/lib/fullCompanyBackup.js";
+import {
+  buildRestoreReferencePlan,
+  resolveRestoreReferenceRule,
+  restoreReferenceKey,
+} from "../src/lib/companyRestoreReferences.js";
 
 test("backup sensitive policy preserves business hashes and removes credentials", () => {
   assert.equal(isSensitiveColumn("invoice_hash"), false);
@@ -153,4 +158,88 @@ test("full-company export refuses catalogs missing core business domains", () =>
   delete complete.journal_entries;
   delete complete.employees;
   assert.deepEqual(missingRequiredFullCompanyTables(complete), ["journal_entries", "employees"]);
+});
+
+test("logical restore registry maps accounting, branch arrays, and company settings", () => {
+  const table = (name: string, columns: string[], foreignKeys: any[] = []): any => ({
+    name,
+    primaryKey: "id",
+    primaryKeys: ["id"],
+    columns: ["id", "company_id", ...columns],
+    foreignKeys,
+    classification: "tenant-root",
+  });
+  const tables = {
+    accounts: table("accounts", ["code"]),
+    branches: table("branches", ["code"]),
+    customers: table("customers", ["account_id"]),
+    cash_boxes: table("cash_boxes", ["branch_ids"]),
+  };
+  const payload: any = {
+    meta: { schemaVersion: 2, scope: "full_company", companyId: 7 },
+    manifest: { format: "full-company", tables, exclusions: [] },
+    counts: { accounts: 1, branches: 2, customers: 1, cash_boxes: 1 },
+    companySettings: { hr_salaries_expense_account_id: 101 },
+    data: {
+      accounts: [{ id: 101, company_id: 7, code: "5100" }],
+      branches: [{ id: 11, company_id: 7, code: "A" }, { id: 12, company_id: 7, code: "B" }],
+      customers: [{ id: 21, company_id: 7, account_id: 101 }],
+      cash_boxes: [{ id: 31, company_id: 7, branch_ids: [11, 12] }],
+    },
+  };
+  const plan = buildRestoreReferencePlan(payload, tables);
+  assert.equal(plan.issues.length, 0);
+  assert.equal(plan.references.length, 3);
+  assert.equal(plan.checked, 3);
+  assert.equal(resolveRestoreReferenceRule("companies", "pos_card_bank_account_id", {} as any)?.referencedTable, "bank_accounts");
+  assert.equal(restoreReferenceKey("101"), restoreReferenceKey(101));
+});
+
+test("logical restore registry rejects missing source-owned references", () => {
+  const tables: any = {
+    accounts: {
+      name: "accounts", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "company_id"], foreignKeys: [], classification: "tenant-root",
+    },
+    customers: {
+      name: "customers", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "company_id", "account_id"], foreignKeys: [], classification: "tenant-root",
+    },
+  };
+  const payload: any = {
+    meta: { schemaVersion: 2, scope: "full_company", companyId: 7 },
+    manifest: { format: "full-company", tables, exclusions: [] },
+    counts: { accounts: 0, customers: 1 },
+    companySettings: null,
+    data: { accounts: [], customers: [{ id: 21, company_id: 7, account_id: 999 }] },
+  };
+  const plan = buildRestoreReferencePlan(payload, tables);
+  assert.equal(plan.references.length, 0);
+  assert.equal(plan.issues[0]?.code, "missing_reference_row");
+  assert.match(plan.issues[0]?.message ?? "", /customers\.account_id/);
+});
+
+test("logical restore registry leaves physical foreign keys to the catalog engine", () => {
+  const tables: any = {
+    accounts: {
+      name: "accounts", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "company_id"], foreignKeys: [], classification: "tenant-root",
+    },
+    journal_entry_lines: {
+      name: "journal_entry_lines", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "account_id"],
+      foreignKeys: [{ column: "account_id", referencedTable: "accounts", referencedColumn: "id", nullable: false }],
+      classification: "dependent-child",
+    },
+  };
+  const payload: any = {
+    meta: { schemaVersion: 2, scope: "full_company", companyId: 7 },
+    manifest: { format: "full-company", tables, exclusions: [] },
+    counts: { accounts: 1, journal_entry_lines: 1 },
+    companySettings: null,
+    data: { accounts: [{ id: 101, company_id: 7 }], journal_entry_lines: [{ id: 1, account_id: 101 }] },
+  };
+  const plan = buildRestoreReferencePlan(payload, tables);
+  assert.equal(plan.references.length, 0);
+  assert.equal(plan.physicalForeignKeysSkipped, 1);
 });
