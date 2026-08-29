@@ -126,6 +126,23 @@ const EXACT_REFERENCE_TABLES: Record<string, { domain: RestoreReferenceDomain; t
   "surveillance_devices.parent_device_id": { domain: "document", table: "surveillance_devices" },
 };
 
+const ATTENDANCE_AUDIT_ENTITY_TABLES: Record<string, string> = {
+  shift: "attendance_shifts",
+  movement: "attendance_movements",
+  permission: "exit_permissions",
+  attendance: "employee_attendance",
+  day_lock: "attendance_day_locks",
+  payroll_transfer: "attendance_payroll_transfers",
+};
+
+const EMPLOYEE_HISTORY_REFERENCE_TABLES: Record<string, string> = {
+  evaluations: "employee_evaluations",
+  employee_evaluations: "employee_evaluations",
+  employee_salary_adjustments: "employee_salary_adjustments",
+  employee_transfers: "employee_transfers",
+  employee_terminations: "employee_terminations",
+};
+
 const IGNORED_IDENTIFIER_COLUMNS = new Set([
   "companies.home_domain_id",
   "companies.demo_parent_company_id",
@@ -186,7 +203,7 @@ function scalarRule(column: string): RestoreReferenceRule | null {
   if (/(?:^|_)tax_id$/.test(column)) {
     return { domain: "tax", referencedTable: "taxes", shape: "scalar" };
   }
-  if (/(?:^|_)journal_entry_id$/.test(column)) {
+  if (/(?:^|_)(?:journal_entry|journal)_id$/.test(column)) {
     return { domain: "journal_entry", referencedTable: "journal_entries", shape: "scalar" };
   }
   const extended: Array<[RegExp, RestoreReferenceDomain, string]> = [
@@ -239,6 +256,43 @@ export function resolveRestoreReferenceRule(
       payment_voucher: "payment_vouchers",
     };
     const referencedTable = sourceTables[String(row.source_type ?? "")];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "account_notes" && column === "party_id") {
+    const referencedTable = {
+      customer: "customers",
+      supplier: "suppliers",
+    }[String(row.party_type ?? "").trim().toLowerCase()];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if ((table === "receipt_vouchers" || table === "payment_vouchers") && column === "entity_id") {
+    const entityType = String(row.entity_type ?? "").trim().toLowerCase();
+    const referencedTable = {
+      customer: "customers",
+      supplier: "suppliers",
+    }[entityType];
+    // "other" is a free-text counterparty, not a reference to another table.
+    if (entityType === "other") return null;
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "attendance_audit" && column === "entity_id") {
+    const referencedTable = ATTENDANCE_AUDIT_ENTITY_TABLES[
+      String(row.entity ?? "").trim().toLowerCase()
+    ];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
+  if (table === "employee_history" && column === "ref_id") {
+    const referencedTable = EMPLOYEE_HISTORY_REFERENCE_TABLES[
+      String(row.ref_table ?? "").trim().toLowerCase()
+    ];
     return referencedTable
       ? { domain: "document", referencedTable, shape: "scalar" }
       : "unsupported-reference";

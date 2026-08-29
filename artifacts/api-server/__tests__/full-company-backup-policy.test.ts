@@ -195,7 +195,7 @@ test("logical restore registry maps accounting, branch arrays, and company setti
   assert.equal(restoreReferenceKey("101"), restoreReferenceKey(101));
 });
 
-test("logical restore registry rejects missing source-owned references", () => {
+test("logical restore registry marks missing source-owned references for live-column validation", () => {
   const tables: any = {
     accounts: {
       name: "accounts", primaryKey: "id", primaryKeys: ["id"],
@@ -214,9 +214,11 @@ test("logical restore registry rejects missing source-owned references", () => {
     data: { accounts: [], customers: [{ id: 21, company_id: 7, account_id: 999 }] },
   };
   const plan = buildRestoreReferencePlan(payload, tables);
-  assert.equal(plan.references.length, 0);
-  assert.equal(plan.issues[0]?.code, "missing_reference_row");
-  assert.match(plan.issues[0]?.message ?? "", /customers\.account_id/);
+  assert.equal(plan.references.length, 1);
+  assert.equal(plan.references[0]?.sourceMissing, true);
+  assert.equal(plan.references[0]?.table, "customers");
+  assert.equal(plan.references[0]?.column, "account_id");
+  assert.equal(plan.issues.length, 0);
 });
 
 test("logical restore registry leaves physical foreign keys to the catalog engine", () => {
@@ -285,4 +287,35 @@ test("logical restore registry rejects unknown numeric id columns instead of pre
   const plan = buildRestoreReferencePlan(payload, tables);
   assert.equal(plan.references.length, 0);
   assert.equal(plan.issues[0]?.code, "unsupported_reference");
+});
+
+test("legacy soft references used by backups are remapped by their discriminator", () => {
+  assert.equal(
+    resolveRestoreReferenceRule("account_notes", "party_id", { party_type: "customer", party_id: 4 })?.referencedTable,
+    "customers",
+  );
+  assert.equal(
+    resolveRestoreReferenceRule("payment_vouchers", "entity_id", { entity_type: "supplier", entity_id: 7 })?.referencedTable,
+    "suppliers",
+  );
+  assert.equal(
+    resolveRestoreReferenceRule("receipt_vouchers", "entity_id", { entity_type: "other", entity_id: 7 }),
+    null,
+  );
+  assert.equal(
+    resolveRestoreReferenceRule("attendance_audit", "entity_id", { entity: "movement", entity_id: 8 })?.referencedTable,
+    "attendance_movements",
+  );
+  assert.equal(
+    resolveRestoreReferenceRule("employee_history", "ref_id", { ref_table: "employee_terminations", ref_id: 9 })?.referencedTable,
+    "employee_terminations",
+  );
+  assert.equal(
+    resolveRestoreReferenceRule(
+      "employee_custody_settlements",
+      "journal_id",
+      { journal_id: 10 },
+    )?.referencedTable,
+    "journal_entries",
+  );
 });
