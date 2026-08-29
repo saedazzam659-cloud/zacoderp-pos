@@ -636,7 +636,13 @@ export default function AdvancedReportGrid<R>({
         <table
           ref={resize.tableRef}
           className="w-full table-fixed text-[12.5px] border-collapse min-w-[480px]"
-          style={{ width: Math.max(480, orderedColumns.reduce((sum, c) => sum + (layout.colWidths[c.key] ?? c.width ?? 110), 0)) }}
+          style={{
+            width: "100%",
+            minWidth: Math.max(480, orderedColumns.reduce(
+              (sum, c) => sum + Math.max(72, layout.colWidths[c.key] ?? c.width ?? 110),
+              0,
+            )),
+          }}
         >
           {/* Column widths via colgroup so resize/auto-fit can apply later. */}
           <colgroup>

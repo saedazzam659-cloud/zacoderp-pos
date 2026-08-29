@@ -561,9 +561,9 @@ export default function AccountStatement() {
               subtotals, conditional formatting rules, header/footer
               color themes, sticky header, page-size, and per-tenant
               persistence (slug "accountStatementGrid"). */}
-          <div className="print:hidden">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm print:hidden">
             <AdvancedReportGrid
-              slug="accountStatementGrid"
+              slug="accountStatementGridClassic"
               cid={cid}
               rowKey={(r: any, i) => r.lineId ?? i}
               rows={rows}
@@ -605,7 +605,7 @@ export default function AccountStatement() {
                 ),
               } : null}
               columns={[
-                { key: "docType",   label: "نوع الوثيقة", type: "text",
+                { key: "docType",   label: "نوع الوثيقة", type: "text", width: 132,
                   value: (r: any) => docTypeFor(r),
                   render: (r: any) => {
                     const tone = docTypeTone(r);
@@ -623,12 +623,12 @@ export default function AccountStatement() {
                     );
                   },
                 },
-                { key: "entryDate", label: t("accountingReports.fromDate"), type: "text",
-                  className: "font-mono tabular-nums text-slate-600",
+                { key: "entryDate", label: t("accountingReports.fromDate"), type: "text", width: 112,
+                  className: "font-mono tabular-nums text-slate-600 whitespace-nowrap",
                   value: (r: any) => r.entryDate,
                 },
-                { key: "docNumber", label: t("accountStatement.docNumber"), type: "text",
-                  className: "font-mono tabular-nums",
+                { key: "docNumber", label: t("accountStatement.docNumber"), type: "text", width: 155,
+                  className: "font-mono tabular-nums whitespace-nowrap",
                   value: (r: any) => r.docNumber ?? `JE-${r.entryId}`,
                   render: (r: any) => {
                     const href = sourceLinkFor(r);
@@ -646,13 +646,17 @@ export default function AccountStatement() {
                     ) : <span className="text-primary font-semibold">{label}</span>;
                   },
                 },
-                { key: "description", label: t("accountStatement.description"), type: "text",
+                { key: "description", label: t("accountStatement.description"), type: "text", width: 330,
                   className: "text-muted-foreground",
                   value: (r: any) => r.description ?? "",
-                  render: (r: any) => <span className="max-w-xs truncate inline-block align-middle">{r.description || "—"}</span>,
+                  render: (r: any) => (
+                    <span className="block whitespace-normal break-words leading-5" title={r.description || ""}>
+                      {r.description || "—"}
+                    </span>
+                  ),
                 },
                 ...(showCostCenterCol ? [{
-                  key: "costCenter", label: t("accountingReports.costCenter", { defaultValue: "مركز التكلفة" }) as string, type: "text" as const,
+                  key: "costCenter", label: t("accountingReports.costCenter", { defaultValue: "مركز التكلفة" }) as string, type: "text" as const, width: 180,
                   value: (r: any) => r.costCenterCode
                     ? `${r.costCenterCode} ${isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}`.trim()
                     : "",
@@ -669,21 +673,21 @@ export default function AccountStatement() {
                     </span>
                   ) : <span className="text-xs text-muted-foreground">—</span>,
                 }] : []),
-                { key: "debit", label: t("accountingReports.debit"), type: "num",
+                { key: "debit", label: t("accountingReports.debit"), type: "num", width: 132,
                   align: "end", totalable: true,
-                  className: "font-mono tabular-nums",
+                  className: "font-mono tabular-nums whitespace-nowrap",
                   value: (r: any) => r.debit ?? 0,
                   render: (r: any) => <span className="text-blue-700">{r.debit > 0 ? fmt(r.debit) : ""}</span>,
                 },
-                { key: "credit", label: t("accountingReports.credit"), type: "num",
+                { key: "credit", label: t("accountingReports.credit"), type: "num", width: 132,
                   align: "end", totalable: true,
-                  className: "font-mono tabular-nums",
+                  className: "font-mono tabular-nums whitespace-nowrap",
                   value: (r: any) => r.credit ?? 0,
                   render: (r: any) => <span className="text-rose-700">{r.credit > 0 ? fmt(r.credit) : ""}</span>,
                 },
-                { key: "balance", label: t("accountingReports.balance"), type: "num",
+                { key: "balance", label: t("accountingReports.balance"), type: "num", width: 148,
                   align: "end",
-                  className: "font-mono tabular-nums font-semibold",
+                  className: "font-mono tabular-nums font-semibold whitespace-nowrap",
                   value: (r: any) => r.balance ?? 0,
                   render: (r: any) => (
                     <span className={cn(r.balance >= 0 ? "text-primary" : "text-destructive")}>
