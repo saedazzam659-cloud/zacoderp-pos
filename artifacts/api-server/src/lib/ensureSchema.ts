@@ -187,6 +187,29 @@ const CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS = [
 // envelope and must never be materialized in an agent's independent database.
 const CENTRAL_ONLY_ZATCA_TRANSFER_TABLES = ["zatca_registration_transfers"] as const;
 
+// Older agent bundles emitted supplier_tax_number while the current shared
+// schema uses supplier_vat_number. Keep both additive columns during the
+// rolling-upgrade window so saving a purchase invoice cannot fail while an
+// agent is moving between those package generations.
+const JOURNAL_LINE_SUPPLIER_METADATA_DDL = [
+  `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_name TEXT`,
+  `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_tax_number TEXT`,
+  `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_vat_number TEXT`,
+  `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT`,
+  `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_invoice_date TEXT`,
+] as const;
+
+async function ensureJournalLineSupplierMetadata(options: { strict?: boolean } = {}): Promise<void> {
+  for (const stmt of JOURNAL_LINE_SUPPLIER_METADATA_DDL) {
+    try {
+      await execDDL(stmt);
+    } catch (err) {
+      logger.error({ err, stmt }, "ensureSchema: journal-line supplier metadata reconciliation failed");
+      if (options.strict) throw err;
+    }
+  }
+}
+
 // Boot-time DDL (ALTER TABLE ADD COLUMN / CREATE INDEX) must never hang forever
 // waiting on a relation lock held by another backend — most importantly the
 // PREVIOUS revision still serving traffic during an autoscale promote. A blocked
@@ -3428,6 +3451,11 @@ async function runHeal(options: {
   const strictSchema = options.strictSchema === true;
   const { tables, enums } = collectSchemaEntities();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
+
+  // Run this compatibility DDL before generic inspection. Purchase-invoice
+  // posting writes these JE-line fields during the same request that follows an
+  // agent package update, so a partially-upgraded agent must heal first.
+  await ensureJournalLineSupplierMetadata({ strict: strictSchema });
 
   // These two payroll tables have complete additive DDL here, unlike generic
   // schema entities. Create them before strict missing-table validation so an
