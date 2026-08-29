@@ -97,6 +97,7 @@ const DOCUMENT_TABLES: Record<string, string> = {
 
 const EXACT_REFERENCE_TABLES: Record<string, { domain: RestoreReferenceDomain; table: string }> = {
   "asset_custodies.asset_id": { domain: "document", table: "fixed_assets" },
+  "accounting_adjustments.parent_adjustment_id": { domain: "document", table: "accounting_adjustments" },
   "delivery_receipt_documents.invoice_id": { domain: "document", table: "sales_invoices" },
   "delivery_receipt_documents.party_id": { domain: "customer", table: "customers" },
   "employee_attendance.camera_in_id": { domain: "camera", table: "attendance_cameras" },
@@ -231,6 +232,16 @@ export function resolveRestoreReferenceRule(
   if (column === "id" || column === "company_id") return null;
   const exactKey = `${table}.${column}`;
   if (IGNORED_IDENTIFIER_COLUMNS.has(exactKey)) return null;
+  if (table === "accounting_adjustments" && column === "source_id") {
+    const sourceTables: Record<string, string> = {
+      purchase_invoice: "purchase_invoices",
+      payment_voucher: "payment_vouchers",
+    };
+    const referencedTable = sourceTables[String(row.source_type ?? "")];
+    return referencedTable
+      ? { domain: "document", referencedTable, shape: "scalar" }
+      : "unsupported-reference";
+  }
   const exact = EXACT_REFERENCE_TABLES[exactKey];
   if (exact) return { domain: exact.domain, referencedTable: exact.table, shape: "scalar" };
   if (column === "parent_id") {

@@ -576,6 +576,9 @@ async function analyzeRestore(
           ?.get(foreignKey.referencedColumn)
           ?.get(restoreReferenceKey(value)) ?? 0;
         if (count !== 1) {
+          if (name === "audit_log" && foreignKey.column === "user_id" && foreignKey.nullable && count === 0) {
+            continue;
+          }
           issues.push({
             severity: "error",
             code: "missing_physical_reference",
@@ -823,6 +826,7 @@ export async function restoreFullCompanyBackup(
         for (const fk of table.foreignKeys) if (values[fk.column] != null) {
           const mapped = mappedValue(maps.get(fk.referencedTable), values[fk.column]);
           if (mapped !== undefined) values[fk.column] = mapped;
+          else if (name === "audit_log" && fk.column === "user_id" && fk.nullable) values[fk.column] = null;
           else if (fk.nullable) { deferred.push({ table, pk: source[table.primaryKey ?? "id"], fk, source: values[fk.column] }); values[fk.column] = null; }
           else throw new Error(`Unresolved required FK ${name}.${fk.column}`);
         }
