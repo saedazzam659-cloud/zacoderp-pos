@@ -4008,36 +4008,48 @@ async function reconcileAgentDatabaseSchema(
   inst: typeof agentInstancesTable.$inferSelect,
 ): Promise<string> {
   if (!inst.dbUrlEnc) throw new Error("لم يتم إدخال رابط قاعدة البيانات بعد");
-  const url = decryptSecret(inst.dbUrlEnc);
-  if (!url) throw new Error("تعذّر فك رابط قاعدة البيانات");
-  const ctx = createExternalDb(url);
-  const lockClient = await ctx.pool.connect();
-  let locked = false;
-  try {
-    const lockResult = await lockClient.query<{ locked: boolean }>(
-      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
-      [AGENT_SCHEMA_UPGRADE_LOCK_NAME],
-    );
-    locked = lockResult.rows[0]?.locked === true;
-    if (!locked) throw new Error("توجد عملية تسوية مخطط أخرى ما زالت فعالة على قاعدة الوكيل");
+  return withAgentPool(inst.dbUrlEnc, async (pool) => {
+    const lockClient = await pool.connect();
+    let locked = false;
+    try {
+      const lockResult = await lockClient.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+        [AGENT_SCHEMA_UPGRADE_LOCK_NAME],
+      );
+      locked = lockResult.rows[0]?.locked === true;
+      if (!locked) throw new Error("توجد عملية تسوية مخطط أخرى ما زالت فعالة على قاعدة الوكيل");
 
-    await runWithExternalDb(ctx, async () => {
-      await runSchemaHealOnActiveDb();
-      await ensureAgentSchemaTable();
-      const versionCheck = await ensureAndCheckAgentSchemaVersion();
-      if (!versionCheck.compatible) throw new Error(versionCheck.error ?? "إصدار مخطط قاعدة الوكيل غير متوافق");
-      await assertAgentSupplierMetadataSchema(ctx.pool);
-      await ctx.pool.query("SELECT 1 FROM journal_entry_lines LIMIT 1");
-      await ctx.pool.query("SELECT 1 FROM payment_voucher_lines LIMIT 1");
-    });
-    return await computeDbFingerprint(ctx.pool);
-  } finally {
-    if (locked) {
-      await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [AGENT_SCHEMA_UPGRADE_LOCK_NAME]).catch(() => {});
+      const { runWithExternalDb } = await import("@workspace/db");
+      const { drizzle } = await import("drizzle-orm/node-postgres");
+      const schemaMod = await import("@workspace/db/schema");
+      const agentDrizzle = drizzle(pool as any, { schema: schemaMod as any });
+      const { runSchemaHealOnActiveDb } = await import("../lib/ensureSchema.js");
+      await runWithExternalDb(
+        { db: agentDrizzle as any, pool: pool as any },
+        () => runSchemaHealOnActiveDb(),
+      );
+
+      await assertAgentSupplierMetadataSchema(pool);
+      await pool.query("SELECT 1 FROM journal_entry_lines LIMIT 1");
+      await pool.query("SELECT 1 FROM payment_voucher_lines LIMIT 1");
+      const identity = await pool.query<{ installation_id: string; fingerprint: string }>(
+        "SELECT installation_id, fingerprint FROM zacod_installation WHERE id = 1",
+      );
+      const found = identity.rows[0];
+      if (!found || found.installation_id !== inst.installationId) {
+        throw new Error("هوية قاعدة الوكيل لا تطابق التركيب المسجل");
+      }
+      if (inst.dbFingerprint && found.fingerprint !== inst.dbFingerprint) {
+        throw new Error("بصمة قاعدة الوكيل لا تطابق البصمة المسجلة");
+      }
+      return found.fingerprint;
+    } finally {
+      if (locked) {
+        await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [AGENT_SCHEMA_UPGRADE_LOCK_NAME]).catch(() => {});
+      }
+      lockClient.release();
     }
-    lockClient.release();
-    await ctx.pool.end().catch(() => {});
-  }
+  });
 }
 
 async function resumeAgentServiceAfterSchemaUpgrade(

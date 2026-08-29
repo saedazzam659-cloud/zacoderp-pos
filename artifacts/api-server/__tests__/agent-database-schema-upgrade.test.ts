@@ -27,6 +27,14 @@ test("agent schema upgrade takes a custom-format backup before reconciliation", 
   assert.ok(reconcile > backup, "schema reconciliation must start only after backup succeeds");
   assert.match(reconcileWorker, /runSchemaHealOnActiveDb[\s\S]*assertAgentSupplierMetadataSchema/);
   assert.match(reconcileWorker, /pg_try_advisory_lock/);
+  assert.match(reconcileWorker, /await import\("@workspace\/db"\)/);
+  assert.match(reconcileWorker, /await import\("\.\.\/lib\/ensureSchema\.js"\)/);
+  assert.doesNotMatch(
+    reconcileWorker,
+    /\b(createExternalDb|ensureAgentSchemaTable|ensureAndCheckAgentSchemaVersion|computeDbFingerprint)\b/,
+    "upgrade reconciliation must not call helpers that are not defined in this module",
+  );
+  assert.match(reconcileWorker, /SELECT installation_id, fingerprint FROM zacod_installation/);
   assert.match(worker, /test -s "\$BACKUP_FILE"/);
   assert.match(worker, /DATABASE_URL missing from app\.env/);
   assert.match(worker, /remoteIdentity !== agentDatabaseIdentity\(inst\)/);
