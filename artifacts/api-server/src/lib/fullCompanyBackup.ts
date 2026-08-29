@@ -576,7 +576,11 @@ async function analyzeRestore(
           ?.get(foreignKey.referencedColumn)
           ?.get(restoreReferenceKey(value)) ?? 0;
         if (count !== 1) {
-          if (name === "audit_log" && foreignKey.column === "user_id" && foreignKey.nullable && count === 0) {
+          // Audit history may legitimately reference users deleted before the
+          // backup was created. Older agents also reported this FK as NOT NULL
+          // even when the current restore target allows NULL, so do not make
+          // compatibility depend on the source manifest's nullability flag.
+          if (name === "audit_log" && foreignKey.column === "user_id" && count === 0) {
             continue;
           }
           issues.push({
@@ -753,6 +757,17 @@ export async function restoreFullCompanyBackup(
       report[name] = { received: records.length, inserted: 0, updated: 0 }; maps.set(name, new Map());
       for (const sourceRecord of records) {
         let source = sourceRecord;
+        if (
+          name === "audit_log"
+          && source.user_id != null
+          && mappedValue(maps.get("users"), source.user_id) === undefined
+          && columnMeta.get("audit_log.user_id")?.nullable !== true
+        ) {
+          // On legacy targets where audit_log.user_id is truly NOT NULL, keep
+          // the business restore compatible by dropping only the orphaned
+          // historical audit row rather than rejecting the whole backup.
+          continue;
+        }
         if (PROTECTED_RESTORE_TABLES.has(name)) {
           if (!table.primaryKey) throw new Error("Users table must have a scalar primary key");
           const username = source.username;
@@ -826,7 +841,11 @@ export async function restoreFullCompanyBackup(
         for (const fk of table.foreignKeys) if (values[fk.column] != null) {
           const mapped = mappedValue(maps.get(fk.referencedTable), values[fk.column]);
           if (mapped !== undefined) values[fk.column] = mapped;
-          else if (name === "audit_log" && fk.column === "user_id" && fk.nullable) values[fk.column] = null;
+          else if (
+            name === "audit_log"
+            && fk.column === "user_id"
+            && columnMeta.get("audit_log.user_id")?.nullable === true
+          ) values[fk.column] = null;
           else if (fk.nullable) { deferred.push({ table, pk: source[table.primaryKey ?? "id"], fk, source: values[fk.column] }); values[fk.column] = null; }
           else throw new Error(`Unresolved required FK ${name}.${fk.column}`);
         }

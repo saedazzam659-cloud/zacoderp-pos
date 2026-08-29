@@ -18,3 +18,9 @@ Portable company backups must carry private object bytes with a per-file SHA-256
 **Why:** Database-only copies leave invoice/archive/image references pointing at missing or source-owned objects. Reusing those paths also couples tenant access and deletion lifecycles.
 
 **How to apply:** Deduplicate identical private object paths, bound and hash every file, reject unsafe package structure before upload, clean staged target objects if database restore fails, and preserve legacy JSON as data-only restore.
+
+Historical audit rows are compatibility data, not business-owned references. A missing audit user must not fail full-company preflight: set the user reference to `NULL` when the live target allows it, or omit only that orphaned audit row on legacy NOT NULL targets. Do not trust the source manifest's nullability flag for this decision.
+
+**Why:** Old agents can describe `audit_log.user_id` nullability differently from the live target, and audit history commonly outlives deleted users. Treating those rows like accounting references can reject an otherwise valid backup thousands of times.
+
+**How to apply:** Keep accounting/document references strict and remapped, but determine audit-user handling from the live target schema during restore.
