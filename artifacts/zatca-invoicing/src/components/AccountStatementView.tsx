@@ -281,17 +281,17 @@ export default function AccountStatementView({
         /* ── Grid columns (screen only). Order here is the DEFAULT; the
            user can reorder via the toolbar (persisted per company). ── */
         const allGridColumns: GridColumn<StatementLine>[] = [
-          { key: "date",        label: tr("colDate", "التاريخ"),  type: "text",
-            className: "font-mono tabular-nums text-slate-600",
+          { key: "date",        label: tr("colDate", "التاريخ"),  type: "text", width: 112,
+            className: "font-mono tabular-nums text-slate-600 whitespace-nowrap",
             value: r => r.date,
           },
-          { key: "docType",     label: tr("colDocType", "نوع الوثيقة"), type: "text",
+          { key: "docType",     label: tr("colDocType", "نوع الوثيقة"), type: "text", width: 155,
             className: "text-slate-700 font-medium",
             value: r => r.docType ?? "",
             render: r => r.docType || "—",
           },
-          { key: "docNumber",   label: tr("colDoc", "الرقم"),     type: "text",
-            className: "font-mono tabular-nums text-slate-600",
+          { key: "docNumber",   label: tr("colDoc", "الرقم"),     type: "text", width: 145,
+            className: "font-mono tabular-nums text-slate-600 whitespace-nowrap",
             value: r => r.docNumber ?? (r.id != null ? `#${r.id}` : ""),
             render: r => {
               const label = r.docNumber || (r.id != null ? `#${r.id}` : "");
@@ -308,8 +308,8 @@ export default function AccountStatementView({
               );
             },
           },
-          { key: "type",        label: tr("colJournalEntryNumber", "رقم القيد"), type: "text",
-            className: "font-mono tabular-nums text-slate-600",
+          { key: "type",        label: tr("colJournalEntryNumber", "رقم القيد"), type: "text", width: 145,
+            className: "font-mono tabular-nums text-slate-600 whitespace-nowrap",
             value: r => r.journalEntryNumber ?? (r.journalEntryId != null ? `#${r.journalEntryId}` : ""),
             render: r => {
               const label = r.journalEntryNumber || (r.journalEntryId != null ? `#${r.journalEntryId}` : "");
@@ -326,9 +326,9 @@ export default function AccountStatementView({
               );
             },
           },
-          { key: "debit",       label: tr("colDebit", "مدين"),    type: "num",
+          { key: "debit",       label: tr("colDebit", "مدين"),    type: "num", width: 132,
             align: "center", totalable: true,
-            className: "font-mono tabular-nums",
+            className: "font-mono tabular-nums whitespace-nowrap",
             value: r => r.debit,
             render: r => (
               <span className={r.debit ? "font-semibold text-sky-700" : "text-slate-400"}>
@@ -336,9 +336,9 @@ export default function AccountStatementView({
               </span>
             ),
           },
-          { key: "credit",      label: tr("colCredit", "دائن"),   type: "num",
+          { key: "credit",      label: tr("colCredit", "دائن"),   type: "num", width: 132,
             align: "center", totalable: true,
-            className: "font-mono tabular-nums",
+            className: "font-mono tabular-nums whitespace-nowrap",
             value: r => r.credit,
             render: r => (
               <span className={r.credit ? "font-semibold text-emerald-700" : "text-slate-400"}>
@@ -346,14 +346,14 @@ export default function AccountStatementView({
               </span>
             ),
           },
-          { key: "balance",     label: tr("colBalance", "الرصيد"), type: "num",
+          { key: "balance",     label: tr("colBalance", "الرصيد"), type: "num", width: 148,
             align: "center",
-            className: "font-mono tabular-nums font-bold text-slate-800",
+            className: "font-mono tabular-nums font-bold text-slate-800 whitespace-nowrap",
             value: r => r.balance,
             render: r => fmt(r.balance),
           },
-          { key: "description", label: tr("colDescription", "الشرح"), type: "text",
-            className: "text-slate-700 min-w-[260px]",
+          { key: "description", label: tr("colDescription", "الشرح"), type: "text", width: 330,
+            className: "text-slate-700 whitespace-normal break-words leading-5",
             value: r => r.description,
           },
         ];
@@ -384,9 +384,9 @@ export default function AccountStatementView({
         return (
           <div className="px-6 pb-6">
             {/* ── Interactive grid (screen only) ─────────────────── */}
-            <div className="print:hidden">
+            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm print:hidden">
               <AdvancedReportGrid
-                slug={`${mode}Statement`}
+                slug={`${mode}StatementClassic`}
                 cid={cid}
                 columns={gridColumns}
                 rowKey={(_r, i) => i}

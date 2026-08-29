@@ -259,8 +259,8 @@ export default function TrialBalance() {
   const numCol = (
     key: string, label: string, get: (r: any) => number, tone: "dr" | "cr",
   ): GridColumn<any> => ({
-    key, label, type: "num", align: "end", totalable: true,
-    className: "font-mono tabular-nums",
+    key, label, type: "num", align: "end", totalable: true, width: 136,
+    className: "font-mono tabular-nums whitespace-nowrap",
     value: (r) => get(r),
     render: (r) => {
       const v = get(r);
@@ -281,8 +281,8 @@ export default function TrialBalance() {
     },
   });
   const gridColumns: GridColumn<any>[] = [
-    { key: "code", label: t("accountingReports.code"), type: "text",
-      className: "font-mono text-xs",
+    { key: "code", label: t("accountingReports.code"), type: "text", width: 128,
+      className: "font-mono text-xs whitespace-nowrap",
       value: (r) => r.code,
       render: (r) => (
         <button
@@ -296,7 +296,7 @@ export default function TrialBalance() {
         </button>
       ),
     },
-    { key: "name", label: t("accountingReports.accountName"), type: "text",
+    { key: "name", label: t("accountingReports.accountName"), type: "text", width: 260,
       value: (r) => isRtl ? r.nameAr : (r.nameEn || r.nameAr),
       render: (r) => (
         <button
@@ -309,7 +309,7 @@ export default function TrialBalance() {
       ),
     },
     ...(visibleCols.type ? [{
-      key: "type", label: t("accountingReports.type"), type: "text" as const,
+      key: "type", label: t("accountingReports.type"), type: "text" as const, width: 125,
       value: (r: any) => TYPE_LABELS[r.accountType] ?? r.accountType,
       render: (r: any) => (
         <span className={cn(
@@ -457,9 +457,9 @@ export default function TrialBalance() {
               feature set as the Account Statement. Global search covers
               the account CODE and NAME; drill-down opens on the code/name
               cell. A static grouped table is kept below for print/PDF. */}
-          <div className="print:hidden">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm print:hidden">
             <AdvancedReportGrid
-              slug="trialBalanceGrid"
+              slug="trialBalanceGridClassic"
               cid={cid}
               rowKey={(r: any) => r.id}
               rows={rows}
