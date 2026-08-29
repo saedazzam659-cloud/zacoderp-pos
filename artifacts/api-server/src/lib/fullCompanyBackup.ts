@@ -200,7 +200,43 @@ export function sanitizeRow(row: Record<string, unknown>, tableName?: string): R
 }
 export function isExternalFileReference(column: string, value: unknown): boolean {
   if (typeof value !== "string" || !value.trim() || value.startsWith("data:")) return false;
-  return /(?:^|_)(?:attachment|file|image|photo|logo|signature|document|object|storage)(?:_|.*_)(?:path|url|key)$/i.test(column);
+  const explicitPointer = /(?:^|_)(?:attachment|file|image|photo|logo|signature|document|object|storage)(?:_|.*_)(?:path|url|key)$/i.test(column);
+  if (explicitPointer) return true;
+  const bareAssetColumn = /(?:^|_)(?:logo|signature|image|photo)(?:_|$)/i.test(column);
+  const storedPointer = /^(?:\/?objects\/|\/?private\/|\/storage\/|https?:\/\/)/i.test(value.trim());
+  return bareAssetColumn && storedPointer;
+}
+
+/** Keep historical ZATCA business documents while forcing a fresh target EGS
+ * identity. This is applied before both direct and portable transfers. */
+export function resetTransferredZatcaIdentity(payload: FullCompanyPayload): FullCompanyPayload {
+  const clone = JSON.parse(JSON.stringify(payload)) as FullCompanyPayload;
+  if (!clone.companySettings) return clone;
+  const reset = [
+    "serial_number",
+    "device_serial1",
+    "device_serial2",
+    "device_serial3",
+    "zatca_csid",
+    "zatca_pcsid",
+    "zatca_private_key",
+    "zatca_csr",
+    "zatca_csid_token",
+    "zatca_csid_secret",
+    "zatca_pcsid_token",
+    "zatca_pcsid_secret",
+    "zatca_compliance_request_id",
+    "zatca_transfer_id",
+    "zatca_transfer_target_binding",
+    "zatca_transfer_locked_at",
+    "zatca_transfer_completed_at",
+    "zatca_chain_seed_icv",
+    "zatca_chain_seed_pih",
+  ];
+  for (const key of reset) if (key in clone.companySettings) clone.companySettings[key] = null;
+  clone.companySettings.auto_send_zatca_after_post = false;
+  clone.companySettings.zatca_transfer_state = "active";
+  return clone;
 }
 export function isFullCompanyBackupPayload(value: unknown): value is FullCompanyPayload {
   const payload = value as Partial<FullCompanyPayload> | null;

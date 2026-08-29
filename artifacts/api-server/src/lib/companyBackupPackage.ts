@@ -11,6 +11,7 @@ import { eq, sql } from "drizzle-orm";
 import { getRoutedDb } from "./externalDbRouting";
 import {
   buildFullCompanyBackup,
+  resetTransferredZatcaIdentity,
   isExternalFileReference,
   isFullCompanyBackupPayload,
   preflightFullCompanyBackup,
@@ -285,8 +286,15 @@ async function replaceRoutedDocumentArchives(
   return archiveRows.length;
 }
 
-export async function buildPortableBackupPackage(companyId: number, exportedBy: string | null = null) {
-  const { payload } = await buildFullCompanyBackup(companyId, exportedBy);
+export async function buildPortableBackupPackage(
+  companyId: number,
+  exportedBy: string | null = null,
+  options: { sanitizeForCompanyTransfer?: boolean } = {},
+) {
+  const built = await buildFullCompanyBackup(companyId, exportedBy);
+  const payload = options.sanitizeForCompanyTransfer
+    ? resetTransferredZatcaIdentity(built.payload)
+    : built.payload;
   // document_archives may be platform-routed to a different database and is
   // therefore absent from the central transaction used by the core exporter.
   if (payload.manifest.tables.document_archives) {

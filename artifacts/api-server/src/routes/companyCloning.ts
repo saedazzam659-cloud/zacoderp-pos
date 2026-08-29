@@ -1,12 +1,21 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { db } from "@workspace/db";
+import { centralDb, db } from "@workspace/db";
 import {
   usersTable, companiesTable, companyTemplatesTable, companyCloneRunsTable,
 } from "@workspace/db";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { cloneCompany, recordCloneRun } from "../lib/cloneCompany.js";
 import { seedDefaultFiscalYear } from "../lib/seedDefaultFiscalYear.js";
+import {
+  listTransferCompanies,
+  parseTransferLocation,
+  preflightCompanyTransfer,
+  transferCompany,
+  transferLocationKey,
+} from "../lib/companyTransfer.js";
+import { writeTransferAuditSafely } from "../lib/companyTransferAudit.js";
+import { listInitializedAgents } from "../lib/agentScope.js";
 
 const router = Router();
 
@@ -129,6 +138,183 @@ router.get("/runs", requireSuperAdmin, async (_req, res) => {
   const rows = await db.select().from(companyCloneRunsTable)
     .orderBy(desc(companyCloneRunsTable.createdAt)).limit(50);
   res.json({ runs: rows });
+});
+
+router.get("/transfer/locations", requireSuperAdmin, async (_req, res) => {
+  const agents = await listInitializedAgents();
+  res.json({
+    locations: [
+      { key: "central", kind: "central", name: "المنصة المركزية", domain: null, online: true },
+      ...agents.map((agent) => ({
+        key: `agent:${agent.id}`,
+        kind: "agent",
+        agentId: agent.id,
+        name: agent.name,
+        domain: agent.domain,
+        online: !!agent.lastHeartbeatAt
+          && Date.now() - new Date(agent.lastHeartbeatAt).getTime() < 5 * 60_000,
+      })),
+    ],
+  });
+});
+
+router.get("/transfer/companies", requireSuperAdmin, async (req, res) => {
+  try {
+    const location = parseTransferLocation(req.query.location);
+    const companies = await listTransferCompanies(location);
+    res.json({ location: transferLocationKey(location), companies });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message ?? "تعذر جلب شركات الموقع" });
+  }
+});
+
+router.get("/transfer/runs", requireSuperAdmin, async (_req, res) => {
+  const runs = await centralDb.select().from(companyCloneRunsTable)
+    .where(sql`${companyCloneRunsTable.summary} @> '{"__transfer":1}'::jsonb`)
+    .orderBy(desc(companyCloneRunsTable.createdAt)).limit(50);
+  res.json({
+    runs: runs.map((run) => {
+      let details: Record<string, unknown> = {};
+      if (run.status === "success" && run.error) {
+        try { details = JSON.parse(run.error); } catch { details = {}; }
+      }
+      const summary = (run.summary ?? {}) as Record<string, unknown>;
+      return {
+        ...run,
+        sourceLocation: details.sourceLocation
+          ?? (Number(summary.__sourceAgentId) > 0 ? `agent:${summary.__sourceAgentId}` : "central"),
+        targetLocation: details.targetLocation
+          ?? (Number(summary.__targetAgentId) > 0 ? `agent:${summary.__targetAgentId}` : "central"),
+        sourceName: details.sourceName ?? null,
+        targetCompanyId: run.targetCompanyId,
+        companyCode: details.companyCode ?? null,
+        error: run.status === "failed" ? run.error : null,
+      };
+    }),
+  });
+});
+
+function validateTransferAdmin(value: any) {
+  const username = String(value?.username ?? "").trim();
+  const password = String(value?.password ?? "");
+  if (!username) throw new Error("اسم مستخدم مدير الشركة الهدف مطلوب");
+  if (password.length < 6) throw new Error("كلمة مرور المدير يجب ألا تقل عن 6 أحرف");
+  return {
+    username,
+    password,
+    nameAr: value?.nameAr ? String(value.nameAr).trim() : null,
+    nameEn: value?.nameEn ? String(value.nameEn).trim() : null,
+    email: value?.email ? String(value.email).trim() : null,
+  };
+}
+
+router.post("/transfer/preflight", requireSuperAdmin, async (req, res) => {
+  try {
+    const result = await preflightCompanyTransfer({
+      sourceLocation: parseTransferLocation(req.body?.sourceLocation),
+      targetLocation: parseTransferLocation(req.body?.targetLocation),
+      sourceCompanyId: Number(req.body?.sourceCompanyId),
+      exportedBy: (req as any).authUser?.username ?? null,
+      includeAttachments: req.body?.includeAttachments === true,
+    });
+    res.json({ ok: result.integrity.ok, ...result });
+  } catch (error: any) {
+    res.status(400).json({
+      error: error?.message ?? "تعذر فحص نقل الشركة",
+      ...(error?.integrity ? { integrity: error.integrity } : {}),
+    });
+  }
+});
+
+router.post("/transfer", requireSuperAdmin, async (req, res) => {
+  const performedByUserId = (req as any).authUser?.id ?? null;
+  const sourceCompanyId = Number(req.body?.sourceCompanyId);
+  let sourceLocation;
+  let targetLocation;
+  let sourceName = `#${sourceCompanyId}`;
+  let result;
+  try {
+    sourceLocation = parseTransferLocation(req.body?.sourceLocation);
+    targetLocation = parseTransferLocation(req.body?.targetLocation);
+    result = await transferCompany({
+      sourceLocation,
+      targetLocation,
+      sourceCompanyId,
+      exportedBy: (req as any).authUser?.username ?? null,
+      admin: validateTransferAdmin(req.body?.admin),
+      includeAttachments: req.body?.includeAttachments === true,
+    });
+    sourceName = result.sourceCompanyName;
+  } catch (error: any) {
+    const message = error?.message ?? "فشل نقل الشركة";
+    await centralDb.insert(companyCloneRunsTable).values({
+      sourceCompanyId: Number.isInteger(sourceCompanyId) && sourceCompanyId > 0 ? sourceCompanyId : 0,
+      targetCompanyId: null,
+      performedByUserId,
+      status: "failed",
+      summary: {
+        __transfer: 1,
+        __sourceAgentId: sourceLocation?.kind === "agent" ? sourceLocation.agentId : 0,
+        __targetAgentId: targetLocation?.kind === "agent" ? targetLocation.agentId : 0,
+      },
+      error: message,
+    } as any).catch(() => {});
+    res.status(400).json({ error: message, ...(error?.integrity ? { integrity: error.integrity } : {}) });
+    return;
+  }
+  const summary = {
+    __transfer: 1,
+    __sourceAgentId: sourceLocation.kind === "agent" ? sourceLocation.agentId : 0,
+    __targetAgentId: targetLocation.kind === "agent" ? targetLocation.agentId : 0,
+    __filesExcluded: result.excludedFileReferences,
+    __filesCopied: result.filesCopied,
+    __zatcaReconnect: 1,
+    ...result.counts,
+  };
+  if (result.warning) {
+    req.log?.warn?.({
+      sourceCompanyId,
+      targetCompanyId: result.companyId,
+      sourceLocation: transferLocationKey(sourceLocation),
+      targetLocation: transferLocationKey(targetLocation),
+      warning: result.warning,
+    }, "company transfer completed with cleanup warning");
+  }
+  const auditLogged = await writeTransferAuditSafely(async () => {
+    await centralDb.insert(companyCloneRunsTable).values({
+      sourceCompanyId,
+      targetCompanyId: result.companyId,
+      performedByUserId,
+      status: "success",
+      summary,
+      error: JSON.stringify({
+        sourceName,
+        sourceLocation: transferLocationKey(sourceLocation),
+        targetLocation: transferLocationKey(targetLocation),
+        companyCode: result.companyCode,
+        warning: result.warning ?? null,
+      }),
+    } as any);
+  }, (auditError) => {
+    req.log?.error?.({
+      err: auditError,
+      sourceCompanyId,
+      targetCompanyId: result.companyId,
+      sourceLocation: transferLocationKey(sourceLocation),
+      targetLocation: transferLocationKey(targetLocation),
+    }, "company transfer completed but central audit log insert failed");
+  });
+  res.status(201).json({
+    ok: true,
+    ...result,
+    auditLogged,
+    ...(auditLogged ? {} : {
+      warning: [
+        result.warning,
+        "اكتمل النقل بنجاح، لكن تعذّر حفظ سطر سجل العملية المركزي.",
+      ].filter(Boolean).join(" "),
+    }),
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
