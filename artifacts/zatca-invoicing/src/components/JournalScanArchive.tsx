@@ -245,11 +245,19 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
       body: JSON.stringify({ name: filename, size: blob.size, contentType }),
     });
     if (!urlRes.ok) throw new Error("تعذّر تجهيز رابط الرفع");
-    const { uploadURL, objectPath } = await urlRes.json();
+    const { uploadURL, objectPath, direct } = await urlRes.json();
     // 2) PUT the bytes straight to object storage
     const putRes = await fetch(uploadURL, {
       method: "PUT",
-      headers: { "Content-Type": contentType },
+      headers: {
+        "Content-Type": contentType,
+        ...(direct
+          ? {
+              Authorization: `Bearer ${token}`,
+              "X-Zacod-Upload-Size": String(blob.size),
+            }
+          : {}),
+      },
       body: blob,
     });
     if (!putRes.ok) throw new Error("تعذّر رفع الملف");

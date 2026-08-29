@@ -1,5 +1,7 @@
-import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { Router, raw, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { Readable } from "stream";
+import { once } from "node:events";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   ObjectStorageService, ObjectNotFoundError, canReadPrivateObjectPath,
@@ -39,6 +41,24 @@ router.post("/storage/uploads/request-url", extractAuth, requireAuthed, async (r
 
   try {
     const { name, size, contentType } = parsed.data;
+    if (size > 50 * 1024 * 1024) {
+      res.status(413).json({ error: "File exceeds 50 MB limit" });
+      return;
+    }
+
+    // External agents do not have Replit's signing sidecar. Keep the public
+    // /objects/... contract identical, but upload the bytes through this
+    // authenticated API into the agent's private filesystem.
+    if (objectStorageService.usesLocalPrivateStorage()) {
+      const objectId = randomUUID();
+      res.json({
+        uploadURL: `${req.baseUrl}/storage/uploads/direct/${objectId}`,
+        objectPath: `/objects/uploads/${objectId}`,
+        direct: true,
+        metadata: { name, size, contentType },
+      });
+      return;
+    }
 
     const uploadURL = await objectStorageService.getObjectEntityUploadURL();
     const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
@@ -53,6 +73,45 @@ router.post("/storage/uploads/request-url", extractAuth, requireAuthed, async (r
     res.status(500).json({ error: "Failed to generate upload URL" });
   }
 });
+
+router.put(
+  "/storage/uploads/direct/:id",
+  extractAuth,
+  requireAuthed,
+  raw({ type: () => true, limit: "50mb" }),
+  async (req: Request, res: Response) => {
+    if (!objectStorageService.usesLocalPrivateStorage()) {
+      res.status(404).json({ error: "Direct upload is available on local agents only" });
+      return;
+    }
+    const id = String(req.params.id ?? "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      res.status(400).json({ error: "Invalid upload id" });
+      return;
+    }
+    const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const expected = Number(req.headers["x-zacod-upload-size"]);
+    if (bytes.length === 0 || !Number.isSafeInteger(expected) || expected !== bytes.length) {
+      res.status(400).json({ error: "Upload size mismatch" });
+      return;
+    }
+    try {
+      const file = objectStorageService.getPrivateObjectFile(`uploads/${id}`);
+      const stream = file.createWriteStream({
+        metadata: {
+          contentType: req.headers["content-type"] || "application/octet-stream",
+          cacheControl: "private, no-store",
+        },
+      });
+      stream.end(bytes);
+      await once(stream, "finish");
+      res.status(201).json({ objectPath: `/objects/uploads/${id}` });
+    } catch (error) {
+      req.log.error({ err: error }, "Local-agent direct upload failed");
+      res.status(500).json({ error: "Failed to save uploaded file" });
+    }
+  },
+);
 
 /**
  * GET /storage/public-objects/*
