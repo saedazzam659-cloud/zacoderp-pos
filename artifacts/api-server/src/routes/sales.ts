@@ -23,6 +23,7 @@ import {
   posSessionsTable,
   itemBrandsTable,
   brandsTable,
+  accountsTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte, ilike, or } from "drizzle-orm";
@@ -325,6 +326,23 @@ export async function createJournalEntry(opts: {
     dx:         executor,
   });
   const jeDocNumber = seqDocNumber ?? (opts.docNumber ?? null);
+  const proposedAccountIds = [...new Set(cleanLines.map(line => line.accountId!).filter(Boolean))];
+  const ownedAccountRows = proposedAccountIds.length
+    ? await executor.select({ id: accountsTable.id }).from(accountsTable).where(and(
+        eq(accountsTable.companyId, opts.companyId),
+        inArray(accountsTable.id, proposedAccountIds),
+      ))
+    : [];
+  const ownedAccountIds = new Set(ownedAccountRows.map((row: { id: number }) => row.id));
+  const invalidAccountIds = proposedAccountIds.filter(id => !ownedAccountIds.has(id));
+  if (invalidAccountIds.length) {
+    throw Object.assign(
+      new Error(
+        `تعذّر ترحيل القيد: توجد حسابات محاسبية مستعادة لا تخص الشركة الحالية (${invalidAccountIds.join(", ")}). أعد تطبيق الربط المحاسبي الافتراضي ثم حاول مجددًا.`,
+      ),
+      { status: 400 },
+    );
+  }
   const [entry] = await executor.insert(journalEntriesTable).values({
     companyId: opts.companyId, branchId: opts.branchId ?? null,
     docNumber: jeDocNumber, entryDate: opts.date,
@@ -2685,10 +2703,47 @@ async function postSalesInvoiceHandler(
     timing?.mark("account-mappings");
     const pick = (role: string): number | null =>
       (mapPos ? mapPos("pos_invoice", role) : null) ?? mapSi("sales_invoice", role);
-    const salesAccId    = pickAccount(inv.salesAccountId,    pick("revenue"));
-    const cogsAccId     = pickAccount(inv.cogsAccountId,     pick("cogs"));
-    const taxAccId      = pickAccount(inv.taxAccountId,      pick("vat_output"));
-    const discountAccId = pickAccount(inv.discountAccountId, pick("discount"));
+    const restoredAccountCandidates = {
+      revenue: [inv.salesAccountId, pick("revenue")],
+      cogs: [inv.cogsAccountId, pick("cogs")],
+      vat_output: [inv.taxAccountId, pick("vat_output")],
+      discount: [inv.discountAccountId, pick("discount")],
+    } as const;
+    const candidateIds = [...new Set(
+      Object.values(restoredAccountCandidates)
+        .flat()
+        .filter((id): id is number => typeof id === "number" && Number.isInteger(id) && id > 0),
+    )];
+    const defaultCodes = {
+      revenue: "4101",
+      cogs: "5101",
+      vat_output: "21041",
+      discount: "5103",
+    } as const;
+    const candidateAccounts = await tx.select({
+      id: accountsTable.id,
+      code: accountsTable.code,
+    }).from(accountsTable).where(and(
+      eq(accountsTable.companyId, cid),
+      or(
+        inArray(accountsTable.id, candidateIds.length ? candidateIds : [-1]),
+        inArray(accountsTable.code, Object.values(defaultCodes)),
+      ),
+    ));
+    const ownedIds = new Set(candidateAccounts.map(account => account.id));
+    const defaultIdByCode = new Map(candidateAccounts.map(account => [account.code, account.id]));
+    const resolveRestoredAccount = (
+      role: keyof typeof restoredAccountCandidates,
+    ): number | null => {
+      const validCandidate = restoredAccountCandidates[role].find(
+        id => id != null && ownedIds.has(id),
+      );
+      return validCandidate ?? defaultIdByCode.get(defaultCodes[role]) ?? null;
+    };
+    const salesAccId    = resolveRestoredAccount("revenue");
+    const cogsAccId     = resolveRestoredAccount("cogs");
+    const taxAccId      = resolveRestoredAccount("vat_output");
+    const discountAccId = resolveRestoredAccount("discount");
     // Revenue / COGS / per-warehouse inventory accounts are NOT required for
     // GDN-sourced invoices — they post against Delivery Clearing instead.
     if (!gdnSourced) {
@@ -3081,6 +3136,13 @@ async function postSalesInvoiceHandler(
       .set({
         status: "posted",
         journalEntryId: journalId,
+        // Heal stale source-company account references left on a draft that
+        // was imported from another company. The IDs resolved above are
+        // guaranteed to belong to this company.
+        salesAccountId: salesAccId,
+        cogsAccountId: cogsAccId,
+        taxAccountId: taxAccId,
+        discountAccountId: discountAccId,
         postedById: req.authUser?.id ?? null,
         postedAt: new Date(),
         updatedAt: new Date(),
