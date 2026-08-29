@@ -25,7 +25,10 @@ test("agent schema upgrade takes a custom-format backup before reconciliation", 
 
   assert.ok(backup >= 0, "upgrade worker must create a pg_dump backup");
   assert.ok(reconcile > backup, "schema reconciliation must start only after backup succeeds");
-  assert.match(reconcileWorker, /runSchemaHealOnActiveDb[\s\S]*assertAgentSupplierMetadataSchema/);
+  assert.match(
+    reconcileWorker,
+    /runSchemaHealOnActiveDb[\s\S]*runAgentRequestSchemaHealOnActiveDb[\s\S]*assertAgentJournalLineSchema[\s\S]*assertAgentSupplierMetadataSchema/,
+  );
   assert.match(reconcileWorker, /pg_try_advisory_lock/);
   assert.match(reconcileWorker, /await import\("@workspace\/db"\)/);
   assert.match(reconcileWorker, /await import\("\.\.\/lib\/ensureSchema\.js"\)/);

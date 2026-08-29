@@ -1373,6 +1373,35 @@ const REQUIRED_AGENT_SUPPLIER_METADATA_COLUMNS = {
   ],
 } as const;
 
+const REQUIRED_AGENT_JOURNAL_LINE_COLUMNS = [
+  "id",
+  "entry_id",
+  "account_id",
+  "cost_center",
+  "debit",
+  "credit",
+  "description",
+  "supplier_name",
+  "supplier_vat_number",
+  "supplier_invoice_number",
+  "supplier_invoice_date",
+  "sort_order",
+] as const;
+
+async function assertAgentJournalLineSchema(pool: PgPoolType): Promise<void> {
+  const result = await pool.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'journal_entry_lines'`,
+  );
+  const present = new Set(result.rows.map(row => row.column_name));
+  const missing = REQUIRED_AGENT_JOURNAL_LINE_COLUMNS.filter(column => !present.has(column));
+  if (missing.length) {
+    throw new Error(`ترقية جدول قيود اليومية غير مكتملة؛ الأعمدة الناقصة: ${missing.join(", ")}`);
+  }
+}
+
 async function assertAgentSupplierMetadataSchema(pool: PgPoolType): Promise<void> {
   const result = await pool.query<{ table_name: string; column_name: string }>(
     `SELECT table_name, column_name
@@ -4023,12 +4052,23 @@ async function reconcileAgentDatabaseSchema(
       const { drizzle } = await import("drizzle-orm/node-postgres");
       const schemaMod = await import("@workspace/db/schema");
       const agentDrizzle = drizzle(pool as any, { schema: schemaMod as any });
-      const { runSchemaHealOnActiveDb } = await import("../lib/ensureSchema.js");
+      const {
+        runSchemaHealOnActiveDb,
+        runAgentRequestSchemaHealOnActiveDb,
+      } = await import("../lib/ensureSchema.js");
       await runWithExternalDb(
         { db: agentDrizzle as any, pool: pool as any },
-        () => runSchemaHealOnActiveDb(),
+        async () => {
+          await runSchemaHealOnActiveDb();
+          // The full legacy reconciliation is intentionally best-effort for
+          // some historical DDL. Follow it with the strict request-readiness
+          // pass so an omitted posting-critical column can never be reported
+          // as a successful manual upgrade.
+          await runAgentRequestSchemaHealOnActiveDb();
+        },
       );
 
+      await assertAgentJournalLineSchema(pool);
       await assertAgentSupplierMetadataSchema(pool);
       await pool.query("SELECT 1 FROM journal_entry_lines LIMIT 1");
       await pool.query("SELECT 1 FROM payment_voucher_lines LIMIT 1");

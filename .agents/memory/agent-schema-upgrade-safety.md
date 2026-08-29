@@ -13,4 +13,4 @@ The upgrade worker must reuse the same external-database routing and schema-heal
 
 **Why:** Bundling can succeed with unresolved free variables inside a deferred worker, so the defect appears only after a live upgrade starts.
 
-**How to apply:** Add a focused guard that rejects unknown helper references in the worker, and validate the installation ID and stored database fingerprint after reconciliation before resuming traffic.
+**How to apply:** Run the full heal, then the strict request-readiness heal; explicitly verify posting-critical columns plus installation ID and database fingerprint before resuming traffic. Add a focused guard against unknown worker helpers.
