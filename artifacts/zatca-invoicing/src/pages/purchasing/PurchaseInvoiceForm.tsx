@@ -8,6 +8,7 @@ import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
+import { renameArchivedKey } from "@/lib/localArchive";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useToast } from "@/hooks/use-toast";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
@@ -133,6 +134,7 @@ export default function PurchaseInvoiceForm() {
   const [matchNew]  = useRoute("/purchasing/invoices/new");
   const [matchEdit, params] = useRoute("/purchasing/invoices/:id");
   const isNew  = !!matchNew;
+  const newArchiveKeyRef = useRef(`PI-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   // /new matches the /:id route too (id="new") → Number("new")=NaN, and JSX
   // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
   const _rawId = matchEdit ? String((params as any).id ?? "") : "";
@@ -837,6 +839,18 @@ export default function PurchaseInvoiceForm() {
     },
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
+      if (isNew && saved?.docNumber) {
+        renameArchivedKey(newArchiveKeyRef.current, saved.docNumber);
+        fetch(`${API}/api/document-archives/rekey`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({
+            screenKey: "purchase_invoices",
+            oldDocKey: newArchiveKeyRef.current,
+            newDocKey: saved.docNumber,
+          }),
+        }).catch(() => {});
+      }
       toast({ title: autoPostingEnabled
         ? (isNew ? tr("createdAndPosted") : tr("savedAndPosted"))
         : (isNew ? tr("createdDraft") : tr("savedDraft"))
@@ -1211,7 +1225,7 @@ export default function PurchaseInvoiceForm() {
           </div>
         </div>
         <JournalScanArchive
-          jeKey={(existing as any)?.docNumber ?? (editId ? `PI-${editId}` : "PI-new-draft")}
+          jeKey={isNew ? newArchiveKeyRef.current : ((existing as any)?.docNumber ?? `PI-${editId}`)}
           screenKey="purchase_invoices"
           companyName={user?.company?.nameAr ?? null}
         />

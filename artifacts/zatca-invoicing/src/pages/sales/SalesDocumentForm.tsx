@@ -11,6 +11,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
+import { renameArchivedKey } from "@/lib/localArchive";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters, currencySymbol, fmt2 } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
@@ -254,6 +255,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [matchNew]            = useRoute(`${basePath}/new`);
   const [matchEdit, params]   = useRoute(`${basePath}/:id`);
   const isNew  = !!matchNew;
+  const newArchiveKeyRef = useRef(`SI-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   // /new matches the /:id route too (id="new") → Number("new")=NaN, and JSX
   // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
   const _rawId = matchEdit ? String((params as any).id ?? "") : "";
@@ -1468,6 +1470,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     },
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : isOrder ? "sales-orders" : "sales-quotations"] });
+      if (isInvoice && matchNew && saved?.docNumber) {
+        renameArchivedKey(newArchiveKeyRef.current, saved.docNumber);
+        fetch(`${API}/api/document-archives/rekey`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({
+            screenKey: "sales_invoices",
+            oldDocKey: newArchiveKeyRef.current,
+            newDocKey: saved.docNumber,
+          }),
+        }).catch(() => {});
+      }
       // Reflect what actually happened: invoices auto-post when the
       // company has auto-posting enabled, and they auto-print when the
       // per-doc-type print preference is on. Quotations and orders
@@ -3001,7 +3015,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         </div>
         {isInvoice && (
           <JournalScanArchive
-            jeKey={(existing as any)?.code ?? (editId ? `SI-${editId}` : "SI-new-draft")}
+            jeKey={matchNew ? newArchiveKeyRef.current : ((existing as any)?.docNumber ?? `SI-${editId}`)}
             screenKey="sales_invoices"
             companyName={user?.company?.nameAr ?? null}
           />

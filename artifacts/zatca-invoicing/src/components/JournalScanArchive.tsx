@@ -62,6 +62,8 @@ interface Props {
   /** Used to organise the on-disk folder hierarchy (local mode only). */
   companyName?: string | null;
   className?: string;
+  /** When viewing a generated JE, also show its source document's archive. */
+  sourceJournalEntryId?: number;
 }
 
 /** A cloud-archived file row as returned by /api/document-archives. */
@@ -74,6 +76,11 @@ interface CloudFile {
   pages?: number | null;
   uploadedByName?: string | null;
   createdAt: string;
+}
+
+interface SourceArchive {
+  source: { screenKey: string; docKey: string; label: string; mode: ArchiveMode } | null;
+  files: CloudFile[];
 }
 
 interface PendingPage {
@@ -119,7 +126,7 @@ function formatBytes(b: number): string {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export function JournalScanArchive({ jeKey, screenKey, companyName, className }: Props) {
+export function JournalScanArchive({ jeKey, screenKey, companyName, className, sourceJournalEntryId }: Props) {
   const { toast } = useToast();
   const { user, token } = useAuth();
   const supported = isFsAccessSupported();
@@ -142,6 +149,9 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
   const [pages, setPages] = useState<PendingPage[]>([]);
   const [archived, setArchived] = useState<ArchivedFileMeta[]>([]);
   const [cloudFiles, setCloudFiles] = useState<CloudFile[]>([]);
+  const [sourceArchive, setSourceArchive] = useState<SourceArchive["source"]>(null);
+  const [sourceCloudFiles, setSourceCloudFiles] = useState<CloudFile[]>([]);
+  const [sourceLocalFiles, setSourceLocalFiles] = useState<ArchivedFileMeta[]>([]);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<"upload" | "camera" | "scanner">("upload");
 
@@ -198,6 +208,30 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
       setCloudFiles(Array.isArray(data) ? data : []);
     } catch { /* offline — leave list as-is */ }
   }, [token, screenKey, jeKey]);
+
+  const fetchSourceArchive = useCallback(async () => {
+    if (!token || !sourceJournalEntryId) {
+      setSourceArchive(null);
+      setSourceCloudFiles([]);
+      setSourceLocalFiles([]);
+      return;
+    }
+    try {
+      const r = await fetch(
+        `${API}/api/document-archives/by-journal-entry/${sourceJournalEntryId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) return;
+      const data = await r.json() as SourceArchive;
+      setSourceArchive(data.source ?? null);
+      setSourceCloudFiles(Array.isArray(data.files) ? data.files : []);
+      setSourceLocalFiles(
+        data.source?.mode === "local" ? getArchivedFiles(data.source.docKey) : [],
+      );
+    } catch {
+      // Keep the entry form usable if archive lookup is temporarily offline.
+    }
+  }, [token, sourceJournalEntryId]);
 
   async function uploadToCloud(blob: Blob, filename: string, pageCount?: number) {
     if (!token) throw new Error("الجلسة منتهية");
@@ -271,9 +305,12 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
   }, [jeKey, archived.length, isCloud, cloudFiles.length]);
   // In cloud mode, fetch once on mount so the badge is accurate before opening.
   useEffect(() => { if (isCloud) fetchCloud(); }, [isCloud, fetchCloud]);
+  useEffect(() => { void fetchSourceArchive(); }, [fetchSourceArchive]);
   // Local mode: load the archived index on mount too, so the split-screen
   // panel can list files without the dialog ever being opened.
   useEffect(() => { if (!isCloud) setArchived(getArchivedFiles(jeKey)); }, [isCloud, jeKey]);
+  const sourceBadgeCount = sourceCloudFiles.length + sourceLocalFiles.length;
+  const totalBadgeCount = badgeCount + sourceBadgeCount;
 
   // New document key → new context: close the panel and re-arm the auto-open.
   useEffect(() => {
@@ -866,6 +903,51 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
           )
         )}
 
+        {sourceArchive && sourceBadgeCount > 0 && (
+          <div className="mt-4 space-y-2 border-t border-sky-200 bg-sky-50/40 rounded-lg p-3">
+            <Label className="text-sm font-semibold flex items-center gap-2 text-sky-900">
+              <Paperclip className="h-4 w-4 text-sky-700" />
+              مرفقات المستند المصدر — {sourceArchive.label} ({sourceBadgeCount})
+            </Label>
+            <p className="text-[10px] text-sky-700">
+              هذه نفس الملفات المرتبطة بالمستند المصدر، دون إنشاء نسخة أخرى.
+            </p>
+            <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
+              {sourceCloudFiles.map((f) => (
+                <div key={`source-cloud-${f.id}`} className="flex items-center gap-2 p-2 rounded-md border bg-white text-sm">
+                  {f.filename.toLowerCase().endsWith(".pdf")
+                    ? <FileText className="h-4 w-4 text-red-500 shrink-0" />
+                    : <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate font-mono text-xs">{f.filename}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {f.bytes != null && formatBytes(f.bytes)}
+                      {" · "}{new Date(f.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}
+                    </div>
+                  </div>
+                  <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0" title="فتح الملف" onClick={() => openCloud(f)}>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+              {sourceLocalFiles.map((f) => (
+                <div key={`source-local-${f.filename}-${f.savedAt}`} className="flex items-center gap-2 p-2 rounded-md border bg-white text-sm">
+                  {f.filename.toLowerCase().endsWith(".pdf")
+                    ? <FileText className="h-4 w-4 text-red-500 shrink-0" />
+                    : <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate font-mono text-xs">{f.filename}</div>
+                    <div className="text-[10px] text-muted-foreground">{formatBytes(f.bytes)}</div>
+                  </div>
+                  <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0" title="فتح الملف" onClick={() => openArchived(f)} disabled={f.viaDownload}>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => setOpen(false)}>إغلاق</Button>
         </DialogFooter>
@@ -873,7 +955,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
     </Dialog>
 
     {/* Split-view trigger — visible whenever archived files exist. */}
-    {badgeCount > 0 && (
+    {totalBadgeCount > 0 && (
       <Button
         type="button"
         variant="outline"
@@ -884,7 +966,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className }:
         data-testid="button-archive-split-view"
       >
         <PanelLeftOpen className="h-3.5 w-3.5 text-primary" />
-        المرفقات ({badgeCount})
+        المرفقات ({totalBadgeCount})
       </Button>
     )}
 

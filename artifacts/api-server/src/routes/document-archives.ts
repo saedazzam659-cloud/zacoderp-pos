@@ -9,8 +9,12 @@ import { getRoutedDb } from "../lib/externalDbRouting.js";
 // All document_archives ROW operations go through the platform storage
 // routing (may live on an external DB). Company policy reads stay central.
 const adb = () => getRoutedDb("document_archive");
-import { documentArchivesTable, companiesTable } from "@workspace/db";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import {
+  documentArchivesTable, companiesTable, journalEntriesTable,
+  salesInvoicesTable, purchaseInvoicesTable,
+  receiptVouchersTable, paymentVouchersTable,
+} from "@workspace/db";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage.js";
 import { sendEmail } from "../lib/email.js";
 
@@ -153,6 +157,90 @@ router.get("/", async (req: Request, res: Response) => {
     )
     .orderBy(desc(documentArchivesTable.createdAt));
   res.json(rows);
+});
+
+// GET /api/document-archives/by-journal-entry/:id
+// Resolve the business document that produced a journal entry and expose its
+// ORIGINAL archive rows. No file or archive record is copied: the journal view
+// simply reads the same canonical (screenKey, docKey) records.
+router.get("/by-journal-entry/:id", async (req: Request, res: Response) => {
+  const cid = guard(req, res); if (cid == null) return;
+  const journalEntryId = Number(req.params.id);
+  if (!Number.isInteger(journalEntryId) || journalEntryId <= 0) {
+    res.status(400).json({ error: "معرّف القيد غير صالح" });
+    return;
+  }
+
+  const [entry] = await db.select({
+    id: journalEntriesTable.id,
+    entryType: journalEntriesTable.entryType,
+  }).from(journalEntriesTable).where(and(
+    eq(journalEntriesTable.id, journalEntryId),
+    eq(journalEntriesTable.companyId, cid),
+    ...branchScopeSpread(req, journalEntriesTable.branchId, req.query.branchId),
+  )).limit(1);
+  if (!entry) {
+    res.status(404).json({ error: "القيد غير موجود" });
+    return;
+  }
+
+  let source: { screenKey: string; docKey: string; label: string } | null = null;
+  if (entry.entryType === "sales_invoice") {
+    const [row] = await db.select({ docKey: salesInvoicesTable.docNumber })
+      .from(salesInvoicesTable)
+      .where(and(
+        eq(salesInvoicesTable.companyId, cid),
+        eq(salesInvoicesTable.journalEntryId, journalEntryId),
+      )).limit(1);
+    if (row?.docKey) source = { screenKey: "sales_invoices", docKey: row.docKey, label: `فاتورة المبيعات ${row.docKey}` };
+  } else if (entry.entryType === "purchase_invoice") {
+    const [row] = await db.select({ docKey: purchaseInvoicesTable.docNumber })
+      .from(purchaseInvoicesTable)
+      .where(and(
+        eq(purchaseInvoicesTable.companyId, cid),
+        eq(purchaseInvoicesTable.journalEntryId, journalEntryId),
+      )).limit(1);
+    if (row?.docKey) source = { screenKey: "purchase_invoices", docKey: row.docKey, label: `فاتورة المشتريات ${row.docKey}` };
+  } else if (entry.entryType === "receipt" || entry.entryType === "receipt_voucher") {
+    const [row] = await db.select({ docKey: receiptVouchersTable.code })
+      .from(receiptVouchersTable)
+      .where(and(
+        eq(receiptVouchersTable.companyId, cid),
+        eq(receiptVouchersTable.journalEntryId, journalEntryId),
+      )).limit(1);
+    if (row?.docKey) source = { screenKey: "receipt_vouchers", docKey: row.docKey, label: `سند القبض ${row.docKey}` };
+  } else if (entry.entryType === "payment" || entry.entryType === "payment_voucher") {
+    const [row] = await db.select({ docKey: paymentVouchersTable.code })
+      .from(paymentVouchersTable)
+      .where(and(
+        eq(paymentVouchersTable.companyId, cid),
+        eq(paymentVouchersTable.journalEntryId, journalEntryId),
+      )).limit(1);
+    if (row?.docKey) source = { screenKey: "payment_vouchers", docKey: row.docKey, label: `سند الصرف ${row.docKey}` };
+  }
+
+  if (!source) {
+    res.json({ source: null, files: [] });
+    return;
+  }
+  const settings = await loadSettings(cid);
+  if (!userAllowed(req, settings)) {
+    res.status(403).json({ error: "ليست لديك صلاحية الوصول للأرشفة" });
+    return;
+  }
+  const mode = modeFor(settings, source.screenKey);
+  if (mode === "off") {
+    res.json({ source: null, files: [] });
+    return;
+  }
+  const files = mode === "cloud"
+    ? await (await adb()).select().from(documentArchivesTable).where(and(
+        eq(documentArchivesTable.companyId, cid),
+        eq(documentArchivesTable.screenKey, source.screenKey),
+        eq(documentArchivesTable.docKey, source.docKey),
+      )).orderBy(desc(documentArchivesTable.createdAt))
+    : [];
+  res.json({ source: { ...source, mode }, files });
 });
 
 // ─── Share links (WhatsApp etc.) ─────────────────────────────────────────────

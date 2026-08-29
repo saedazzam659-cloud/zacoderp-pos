@@ -14,6 +14,7 @@ import { AccountCombobox } from "@/components/AccountCombobox";
 import AccountBrowserDialog from "@/components/AccountBrowserDialog";
 import { JournalPartyPicker } from "@/components/JournalPartyPicker";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
+import { renameArchivedKey } from "@/lib/localArchive";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -170,6 +171,9 @@ export default function JournalEntryForm() {
 
   const [activeTab,    setActiveTab]    = useState("header");
   const [docNumber,    setDocNumber]    = useState("");
+  const [newArchiveKey, setNewArchiveKey] = useState(
+    () => `JE-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  );
   const [entryDate,    setEntryDate]    = useState(today());
   const [currency,     setCurrency]     = useState("SAR");
   const [exchangeRate, setExchangeRate] = useState("1");
@@ -1349,6 +1353,22 @@ export default function JournalEntryForm() {
       // Show the JUST-saved doc number prominently in the toast so the user
       // sees confirmation of what was just created/updated.
       const savedDoc = saved?.docNumber ?? docNumber;
+      if (isNew && savedDoc) {
+        renameArchivedKey(newArchiveKey, savedDoc);
+        fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/document-archives/rekey`, {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            screenKey: "journal_entries",
+            oldDocKey: newArchiveKey,
+            newDocKey: savedDoc,
+          }),
+        }).catch(() => {});
+        setNewArchiveKey(`JE-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+      }
       const wasPosted = saved?.status
         ? saved.status === "posted"
         : true; // legacy update paths return no status — assume posted
@@ -2384,9 +2404,10 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                     <div className="flex items-center gap-2">
                       {fp.isVisible("attachments") && (
                         <JournalScanArchive
-                          jeKey={docNumber || (editId ? `JE-${editId}` : `new-draft`)}
+                          jeKey={isNew ? newArchiveKey : (existing?.docNumber ?? `JE-${editId}`)}
                           screenKey="journal_entries"
                           companyName={user?.company?.nameAr ?? null}
+                          sourceJournalEntryId={!isNew && editId ? editId : undefined}
                         />
                       )}
                       {fp.isVisible("partyPicker") && !fp.isReadOnly("partyPicker") && (
