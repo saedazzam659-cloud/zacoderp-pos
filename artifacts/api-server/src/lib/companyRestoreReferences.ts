@@ -117,6 +117,7 @@ const EXACT_REFERENCE_TABLES: Record<string, { domain: RestoreReferenceDomain; t
   "maintenance_orders.field_ticket_id": { domain: "document", table: "field_service_tickets" },
   "payment_voucher_lines.deferred_adjustment_id": { domain: "document", table: "accounting_adjustments" },
   "payment_voucher_lines.op_ref_id": { domain: "document", table: "accounting_adjustments" },
+  "purchase_invoice_lines.deferred_adjustment_id": { domain: "document", table: "accounting_adjustments" },
   "payroll_runs.posted_journal_id": { domain: "journal_entry", table: "journal_entries" },
   "payroll_runs.payment_journal_id": { domain: "journal_entry", table: "journal_entries" },
   "production_downtime_events.production_order_id": { domain: "document", table: "production_orders" },

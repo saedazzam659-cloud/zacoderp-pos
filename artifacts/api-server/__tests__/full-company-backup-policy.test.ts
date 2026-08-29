@@ -318,4 +318,12 @@ test("legacy soft references used by backups are remapped by their discriminator
     )?.referencedTable,
     "journal_entries",
   );
+  assert.equal(
+    resolveRestoreReferenceRule(
+      "purchase_invoice_lines",
+      "deferred_adjustment_id",
+      { deferred_adjustment_id: 11 },
+    )?.referencedTable,
+    "accounting_adjustments",
+  );
 });

@@ -153,3 +153,4 @@
 - [KARM production role](karm-production-role.md) — KARM is the live full platform; central is development/staging. App-only updates migrate KARM’s existing DB in place and never restore the development DB.
 - [Agent schema upgrade safety](agent-schema-upgrade-safety.md) — backup and migration DB identities must match; stop agent traffic and hold a DB lock through reconcile, verification, and crash recovery.
 - [Cross-server company transfer](cross-server-company-transfer.md) — attachment transfers use the portable package on each storage-owning server over pinned SSH; post-restore cleanup failure is a warning, never a false transfer failure.
+- [Restore soft-reference coverage](restore-soft-reference-coverage.md) — strict backup preflight must cover discriminator-based and journal alias IDs as a complete set; never fix unsupported columns one screenshot at a time.
