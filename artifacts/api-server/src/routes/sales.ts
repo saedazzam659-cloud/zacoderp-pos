@@ -115,6 +115,17 @@ function salesInvoiceWriteError(error: any): { status: number; message: string }
   };
 }
 
+function salesReturnWriteError(error: any): { status: number; message: string } {
+  const classified = salesInvoiceWriteError(error);
+  return {
+    ...classified,
+    message: classified.message
+      .replaceAll("فاتورة المبيعات", "مرتجع المبيعات")
+      .replaceAll("الفاتورة", "المرتجع")
+      .replaceAll("فاتورة", "مرتجع"),
+  };
+}
+
 async function beginAgentInvoiceTiming(
   req: any,
   res: any,
@@ -3762,18 +3773,44 @@ router.post("/sales-returns", async (req, res) => {
     }
     let resolvedDocNumber: string | null;
     try {
-      const fromSeq = await nextSequenceForPayment(cid, "sales_return", pType, {
-        userId:   (req as any).authUser?.id ?? null,
+      const allocateReturnNumber = () => nextSequenceForPayment(cid, "sales_return", pType, {
+        userId: (req as any).authUser?.id ?? null,
         refTable: "sales_returns",
-        branchId: branchId ? Number(branchId) : null,
-        docDate:  returnDate,
+        branchId: resolvedBranchId,
+        docDate: returnDate,
       }, buyerIsForeign);
+      let fromSeq = await allocateReturnNumber();
+      for (let skipped = 0; fromSeq != null; skipped += 1) {
+        const duplicate = await db.select({ id: salesReturnsTable.id })
+          .from(salesReturnsTable)
+          .where(and(
+            eq(salesReturnsTable.companyId, cid),
+            eq(salesReturnsTable.docNumber, fromSeq),
+          ))
+          .limit(1);
+        if (!duplicate.length) break;
+        if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم مرتجع غير مستخدم بعد الاستعادة");
+        fromSeq = await allocateReturnNumber();
+      }
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
       res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم المرتجع" });
       return;
     }
-    const [ret] = await db.insert(salesReturnsTable).values({
+    const requestedReturnAccountIds = [
+      cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
+    ].map(Number).filter((id) => Number.isInteger(id) && id > 0);
+    const validReturnAccountIds = requestedReturnAccountIds.length
+      ? new Set((await db.select({ id: accountsTable.id }).from(accountsTable).where(and(
+          eq(accountsTable.companyId, cid),
+          inArray(accountsTable.id, [...new Set(requestedReturnAccountIds)]),
+        ))).map((row) => row.id))
+      : new Set<number>();
+    const validReturnAccount = (value: unknown): number | null => {
+      const id = Number(value);
+      return Number.isInteger(id) && validReturnAccountIds.has(id) ? id : null;
+    };
+    const returnValues: any = {
       companyId: cid, branchId: resolvedBranchId,
       docNumber: resolvedDocNumber, returnDate,
       customerId: resolvedCustomerId,
@@ -3794,14 +3831,34 @@ router.post("/sales-returns", async (req, res) => {
       // resolved by extractAuth from the trusted x-session-id header.
       sessionId: (req as any).manualSessionId ?? null,
       salesRepId:         resolvedRepId,
-      cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
-      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
-      salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
-      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
-      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      cogsAccountId:      validReturnAccount(cogsAccountId),
+      inventoryAccountId: validReturnAccount(inventoryAccountId),
+      salesAccountId:     validReturnAccount(salesAccountId),
+      taxAccountId:       validReturnAccount(taxAccountId),
+      discountAccountId:  validReturnAccount(discountAccountId),
       taxId:              taxId ? Number(taxId) : null,
       createdById: (req as any).authUser?.id ?? null,
-    }).returning();
+    };
+    let ret: typeof salesReturnsTable.$inferSelect;
+    try {
+      [ret] = await db.insert(salesReturnsTable).values(returnValues).returning();
+    } catch (insertError: any) {
+      const code = String(postgresErrorField(insertError, "code") ?? "");
+      const constraint = String(
+        postgresErrorField(insertError, "constraint_name")
+          ?? postgresErrorField(insertError, "constraint")
+          ?? "",
+      );
+      if (code !== "23505" || !constraint.includes("pkey")) throw insertError;
+      await db.execute(sql`
+        SELECT setval(
+          pg_get_serial_sequence('sales_returns', 'id'),
+          GREATEST(COALESCE((SELECT MAX(id) FROM sales_returns), 0) + 1, 1),
+          false
+        )
+      `);
+      [ret] = await db.insert(salesReturnsTable).values(returnValues).returning();
+    }
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(salesReturnLinesTable).values(
@@ -3823,7 +3880,11 @@ router.post("/sales-returns", async (req, res) => {
       );
     }
     res.status(201).json(ret);
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    logger.error({ err: e }, "sales return create failed");
+    const friendly = salesReturnWriteError(e);
+    res.status(friendly.status).json({ error: friendly.message });
+  }
 });
 
 router.put("/sales-returns/:id", async (req, res) => {

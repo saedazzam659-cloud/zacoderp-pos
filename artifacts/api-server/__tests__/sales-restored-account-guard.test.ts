@@ -56,3 +56,12 @@ test("sales creation unwraps database causes instead of returning the full SQL q
   assert.match(salesRoute, /salesInvoiceWriteError\(e\)/);
   assert.match(salesRoute, /sales invoice create failed/);
 });
+
+test("sales-return creation has the same post-restore protections", () => {
+  assert.match(salesRoute, /allocateReturnNumber/);
+  assert.match(salesRoute, /eq\(salesReturnsTable\.docNumber, fromSeq\)/);
+  assert.match(salesRoute, /validReturnAccountIds/);
+  assert.match(salesRoute, /pg_get_serial_sequence\('sales_returns', 'id'\)/);
+  assert.match(salesRoute, /salesReturnWriteError\(e\)/);
+  assert.match(salesRoute, /sales return create failed/);
+});
