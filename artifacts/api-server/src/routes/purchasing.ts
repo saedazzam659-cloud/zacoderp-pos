@@ -41,7 +41,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { normalizePeriodicity, parseCcSplit, installmentsBetween, runDueAdjustmentsForCompany } from "../lib/adjustmentPosting.js";
 import { logger } from "../lib/logger.js";
 import { isPrimaryKeyCollision, postgresErrorField, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
-import { itemNamesWithSupplierDescription, namedPartyDescription } from "../lib/journalLineDescriptions.js";
+import { itemNamesWithSupplierDescription, purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
 
 function purchasingWriteError(error: any, documentName: string): { status: number; message: string } {
   const code = String(postgresErrorField(error, "code") ?? "");
@@ -2061,7 +2061,13 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
       .from(suppliersTable)
       .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
     const postingSupplierName = postingSupplier?.nameAr ?? postingSupplier?.nameEn ?? "";
-    const supplierLineDesc = namedPartyDescription("المورد", postingSupplierName, desc);
+    const supplierLineDesc = purchaseSupplierDescription({
+      supplierName: postingSupplierName,
+      purchaseInvoiceNumber: inv.docNumber || inv.id,
+      supplierInvoiceNumber: inv.supplierInvoiceNumber,
+      supplierInvoiceDate: inv.supplierInvoiceDate,
+      fallback: desc,
+    });
     // SERVICE cost debits (به: حساب تكلفة الصنف الخدمي) — appended to both the
     // GRN and non-GRN debit sets. For GRN the clearing debit absorbs only the
     // GOODS slice (inventoryDebit − servicePortionTotal).

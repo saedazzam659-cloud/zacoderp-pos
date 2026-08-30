@@ -13,6 +13,7 @@ import {
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, lt, asc, inArray, notInArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
+import { purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
 
 // Entry types already aggregated via dedicated document tables — exclude when
 // reading direct JE postings to a supplier's AP account, otherwise we would
@@ -340,6 +341,8 @@ router.get("/supplier-statement", async (req, res) => {
     const [supRow] = await db.select({
         accountId: suppliersTable.accountId,
         includeInStatements: suppliersTable.includeInStatements,
+        nameAr: suppliersTable.nameAr,
+        nameEn: suppliersTable.nameEn,
       })
       .from(suppliersTable)
       .where(and(eq(suppliersTable.id, sid), eq(suppliersTable.companyId, cid)));
@@ -429,6 +432,7 @@ router.get("/supplier-statement", async (req, res) => {
       // of our internal docNumber, per user request — falling back to our
       // docNumber for legacy rows that have no supplier number recorded.
       supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
+      supplierInvoiceDate: purchaseInvoicesTable.supplierInvoiceDate,
       journalEntryId: purchaseInvoicesTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       total: purchaseInvoicesTable.totalAmount,
@@ -558,7 +562,15 @@ router.get("/supplier-statement", async (req, res) => {
       // header note when present, otherwise the item name(s) on the invoice.
       ...invs.flatMap(i => {
         const docNo = (i.supplierInvoiceNumber && String(i.supplierInvoiceNumber).trim()) ? String(i.supplierInvoiceNumber).trim() : i.docNumber;
-        const desc  = (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "—");
+        const sourceDesc = (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (invItemNames.get(i.id) ?? "");
+        const referenceDesc = purchaseSupplierDescription({
+          supplierName: supRow?.nameAr ?? supRow?.nameEn,
+          purchaseInvoiceNumber: i.docNumber,
+          supplierInvoiceNumber: i.supplierInvoiceNumber,
+          supplierInvoiceDate: i.supplierInvoiceDate,
+          fallback: "",
+        });
+        const desc = mergeDesc(sourceDesc, referenceDesc) || "—";
         const base  = { id: i.id, docNumber: docNo, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, date: i.date };
         const invoiceLine = { ...base, type: "invoice", debit: 0, credit: Number(i.total), description: desc, paymentType: i.paymentType ?? "credit" };
         if (i.paymentType === "cash" || i.paymentType === "bank") {
@@ -626,6 +638,8 @@ router.get("/supplier-statement-detailed", async (req, res) => {
     const [supRow] = await db.select({
         accountId: suppliersTable.accountId,
         includeInStatements: suppliersTable.includeInStatements,
+        nameAr: suppliersTable.nameAr,
+        nameEn: suppliersTable.nameEn,
       })
       .from(suppliersTable)
       .where(and(eq(suppliersTable.id, sid), eq(suppliersTable.companyId, cid)));
@@ -708,6 +722,8 @@ router.get("/supplier-statement-detailed", async (req, res) => {
     const invs = await db.select({
       id: purchaseInvoicesTable.id, date: purchaseInvoicesTable.invoiceDate,
       docNumber: purchaseInvoicesTable.docNumber, total: purchaseInvoicesTable.totalAmount,
+      supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
+      supplierInvoiceDate: purchaseInvoicesTable.supplierInvoiceDate,
       subtotal: purchaseInvoicesTable.subtotal, vatAmount: purchaseInvoicesTable.vatAmount,
       discountAmount: purchaseInvoicesTable.discountAmount,
       priceIncludesVat: purchaseInvoicesTable.priceIncludesVat,
@@ -868,8 +884,16 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber,
           debit: isCredit ? 0 : total,
           credit: total,
-          description: (i.notes && String(i.notes).trim()) ? String(i.notes).trim()
-                     : (itemNames || invDesc(i.paymentType)),
+          description: [
+            (i.notes && String(i.notes).trim()) ? String(i.notes).trim() : (itemNames || invDesc(i.paymentType)),
+            purchaseSupplierDescription({
+              supplierName: supRow?.nameAr ?? supRow?.nameEn,
+              purchaseInvoiceNumber: i.docNumber,
+              supplierInvoiceNumber: i.supplierInvoiceNumber,
+              supplierInvoiceDate: i.supplierInvoiceDate,
+              fallback: "",
+            }),
+          ].filter(Boolean).join(" — "),
           paymentType: i.paymentType,
           vatAmount: Number(i.vatAmount || 0),
           discountAmount: Number(i.discountAmount || 0),

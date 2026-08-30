@@ -78,6 +78,9 @@ the GL account label. Supplier/custody treasury lines name the beneficiary;
 receipt customer lines prefer the voucher's entered general description; sales
 revenue lines name the sold items; sales-output-VAT lines carry the invoice
 number from the JE header; project/service purchase lines carry item + supplier.
+Purchase-invoice supplier lines carry the internal purchase number, supplier
+invoice number, and supplier-invoice date; supplier/general statements rebuild
+the same references from the source invoice for historical rows.
 
 **Why:** repeating “bank”, “cash sales”, or “VAT output” adds no reconciliation
 value because the account column already says that, and it leaves tax statements

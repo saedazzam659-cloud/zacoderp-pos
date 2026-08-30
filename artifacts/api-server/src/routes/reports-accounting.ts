@@ -25,6 +25,7 @@ import { requirePermission } from "../middleware/permissions.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { employeeCustodyStatementDescription } from "../lib/accountStatementDescriptions.js";
+import { journalDisplayDate } from "../lib/journalLineDescriptions.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const router = Router();
@@ -782,7 +783,13 @@ router.get("/account-statement", async (req, res) => {
     // the source document instead of a placeholder.
     const pInvIds = Array.from(new Set(rows.map(r => r.purchaseInvoiceId).filter((x): x is number => !!x)));
     const sInvIds = Array.from(new Set(rows.map(r => r.salesInvoiceId).filter((x): x is number => !!x)));
-    const pInvInfo = new Map<number, { names: string; docNumber: string | null; party: string | null }>();
+    const pInvInfo = new Map<number, {
+      names: string;
+      docNumber: string | null;
+      supplierInvoiceNumber: string | null;
+      supplierInvoiceDate: string | null;
+      party: string | null;
+    }>();
     const sInvInfo = new Map<number, { names: string; docNumber: string | null; party: string | null }>();
 
     const dedupeNames = (names: string[]) => Array.from(new Set(names)).join("، ");
@@ -791,16 +798,20 @@ router.get("/account-statement", async (req, res) => {
       const hdrs = await db.select({
         id: purchaseInvoicesTable.id,
         docNumber: purchaseInvoicesTable.docNumber,
-        // Supplier's own invoice number — preferred in the statement "الشرح"
-        // over our internal docNumber (per user request), falling back to our
-        // docNumber for legacy rows with no supplier number recorded.
         supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
+        supplierInvoiceDate: purchaseInvoicesTable.supplierInvoiceDate,
         party: suppliersTable.nameAr,
       })
         .from(purchaseInvoicesTable)
         .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseInvoicesTable.supplierId))
         .where(and(eq(purchaseInvoicesTable.companyId, cid), inArray(purchaseInvoicesTable.id, pInvIds)));
-      for (const h of hdrs) pInvInfo.set(h.id, { names: "", docNumber: (h.supplierInvoiceNumber && String(h.supplierInvoiceNumber).trim()) ? String(h.supplierInvoiceNumber).trim() : h.docNumber, party: h.party ?? null });
+      for (const h of hdrs) pInvInfo.set(h.id, {
+        names: "",
+        docNumber: h.docNumber,
+        supplierInvoiceNumber: h.supplierInvoiceNumber,
+        supplierInvoiceDate: h.supplierInvoiceDate,
+        party: h.party ?? null,
+      });
       const liRows = await db.select({ invoiceId: purchaseInvoiceLinesTable.invoiceId, itemName: purchaseInvoiceLinesTable.itemName })
         .from(purchaseInvoiceLinesTable)
         .where(and(eq(purchaseInvoiceLinesTable.companyId, cid), inArray(purchaseInvoiceLinesTable.invoiceId, pInvIds)))
@@ -812,7 +823,13 @@ router.get("/account-statement", async (req, res) => {
         (grouped.get(r.invoiceId) ?? grouped.set(r.invoiceId, []).get(r.invoiceId)!).push(nm);
       }
       for (const [id, names] of grouped) {
-        const prev = pInvInfo.get(id) ?? { names: "", docNumber: null, party: null };
+        const prev = pInvInfo.get(id) ?? {
+          names: "",
+          docNumber: null,
+          supplierInvoiceNumber: null,
+          supplierInvoiceDate: null,
+          party: null,
+        };
         pInvInfo.set(id, { ...prev, names: dedupeNames(names) });
       }
     }
@@ -876,9 +893,21 @@ router.get("/account-statement", async (req, res) => {
       }
     }
 
-    const invoiceDescription = (info: { names: string; docNumber: string | null; party: string | null } | undefined): string | null => {
+    const invoiceDescription = (info: {
+      names: string;
+      docNumber: string | null;
+      party: string | null;
+      supplierInvoiceNumber?: string | null;
+      supplierInvoiceDate?: string | null;
+    } | undefined, partyLabel: "المورد" | "العميل"): string | null => {
       if (!info) return null;
-      const parts = [info.names, info.docNumber ?? "", info.party ?? ""]
+      const parts = [
+        info.names,
+        info.party ? `${partyLabel}: ${info.party}` : "",
+        info.docNumber ? `${partyLabel === "المورد" ? "فاتورة المشتريات" : "فاتورة المبيعات"}: ${info.docNumber}` : "",
+        info.supplierInvoiceNumber ? `فاتورة المورد: ${info.supplierInvoiceNumber}` : "",
+        info.supplierInvoiceDate ? `تاريخ فاتورة المورد: ${journalDisplayDate(info.supplierInvoiceDate)}` : "",
+      ]
         .map(s => s.trim())
         .filter(Boolean);
       return parts.length ? parts.join(" — ") : null;
@@ -956,9 +985,9 @@ router.get("/account-statement", async (req, res) => {
          : r.purchaseReturnId
         ? (pRetInfo.get(r.purchaseReturnId) ?? null)
         : r.purchaseInvoiceId
-        ? invoiceDescription(pInvInfo.get(r.purchaseInvoiceId))
+        ? invoiceDescription(pInvInfo.get(r.purchaseInvoiceId), "المورد")
         : r.salesInvoiceId
-        ? invoiceDescription(sInvInfo.get(r.salesInvoiceId))
+        ? invoiceDescription(sInvInfo.get(r.salesInvoiceId), "العميل")
         : voucherDesc ?? historicalSalesVatHeaderDesc;
       // Per-line supplier tax metadata (manual JE lines AND PV-origin VAT
       // lines): fold it into the الشرح so the tax account statement (كشف حساب

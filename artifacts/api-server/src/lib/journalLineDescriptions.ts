@@ -44,3 +44,29 @@ export function namedPartyDescription(
   const name = clean(partyName);
   return name ? `${label}: ${name}` : fallback;
 }
+
+export function journalDisplayDate(value: unknown): string {
+  const date = clean(value);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
+  return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : date;
+}
+
+export function purchaseSupplierDescription(input: {
+  supplierName: unknown;
+  purchaseInvoiceNumber: unknown;
+  supplierInvoiceNumber: unknown;
+  supplierInvoiceDate: unknown;
+  fallback: string;
+}): string {
+  const supplier = clean(input.supplierName);
+  const purchaseInvoiceNumber = clean(input.purchaseInvoiceNumber);
+  const supplierInvoiceNumber = clean(input.supplierInvoiceNumber);
+  const supplierInvoiceDate = journalDisplayDate(input.supplierInvoiceDate);
+  const parts = [
+    supplier ? `المورد: ${supplier}` : "",
+    purchaseInvoiceNumber ? `فاتورة المشتريات: ${purchaseInvoiceNumber}` : "",
+    supplierInvoiceNumber ? `فاتورة المورد: ${supplierInvoiceNumber}` : "",
+    supplierInvoiceDate ? `تاريخ فاتورة المورد: ${supplierInvoiceDate}` : "",
+  ].filter(Boolean);
+  return parts.join(" — ") || input.fallback;
+}
