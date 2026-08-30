@@ -27,6 +27,7 @@ import { PlatformLinksTopLevel } from "./platform-links/PlatformLinksManagement"
 import { LocalAgentLinks } from "./platform-links/LocalAgentLinks";
 import { ImportedAgentsList } from "./platform-links/ImportedAgentsList";
 import { ZatcaTransferAction } from "./ZatcaTransferWizard";
+import { AgentHandoffAction } from "./AgentHandoffWizard";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -475,6 +476,8 @@ export default function AgentServers() {
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["agent-instances"] });
     qc.invalidateQueries({ queryKey: ["agent-security-events"] });
+    qc.invalidateQueries({ queryKey: ["controller-links"] });
+    qc.invalidateQueries({ queryKey: ["imported-controller-links"] });
   };
 
   const saveMut = useMutation({
@@ -1384,6 +1387,7 @@ export default function AgentServers() {
                     </div>
                     <div className="flex items-center gap-2">
                       <ZatcaTransferAction agentId={a.id} agentName={a.name} agentDomain={a.domain} onComplete={invalidate} />
+                      <AgentHandoffAction agentId={a.id} agentName={a.name} agentDomain={a.domain} onComplete={invalidate} />
                       <Button variant="outline" size="sm" className="h-7 text-xs"
                         disabled={!a.dbUrlSet || pkgBusy === "prepare" || a.deployStatus === "deploying"}
                         onClick={() => prepareExternalPackage(a)} data-testid={`button-prepare-external-${a.id}`}>

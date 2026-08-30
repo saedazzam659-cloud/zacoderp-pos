@@ -205,6 +205,13 @@ export const agentControllerLinksTable = pgTable("agent_controller_links", {
   // Source-side only: encrypted so setup-kit/config resync can provision the
   // linked controller credential without retaining plaintext in the registry.
   controllerTokenEnc: text("controller_token_enc"),
+  // Platform-to-platform control plane credential, strictly separate from the
+  // agent-visible heartbeat controller token.
+  platformControlTokenVerifier: text("platform_control_token_verifier"),
+  platformControlTokenEnc: text("platform_control_token_enc"),
+  // Per-link Ed25519 source authority. Targets retain the public key only.
+  sourceSigningPublicKey: text("source_signing_public_key"),
+  sourceSigningPrivateKeyEnc: text("source_signing_private_key_enc"),
   licenseExpiresAt: timestamp("license_expires_at"),
   maxCompanies: integer("max_companies"),
   agentVersion: text("agent_version"),

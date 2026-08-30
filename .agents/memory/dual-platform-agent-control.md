@@ -7,10 +7,10 @@ A secondary management platform must authenticate the agent with a link-scoped c
 
 **Why:** The license is a reusable root credential for the original control plane. Sending it to another platform breaks isolation even if the exported link file itself is sanitized.
 
-**How to apply:** Store the source-side controller token encrypted only for shell configuration and the target-side verifier only. Heartbeats and release downloads choose credentials per controller origin.
+**How to apply:** The shell-visible controller token is limited to heartbeat/release authentication. Leadership transitions use a separate platform-only credential plus a per-link Ed25519 authorization signed by the source; neither secret may enter shell config or browser responses.
 
-Leadership state is totally ordered by `(controllerEpoch, activeControllerId)`. Equal epochs must use the same locale-independent string comparison in backend helpers and generated shell code.
+Agent heartbeats are telemetry-only and must never mutate `controllerEpoch` or `activeControllerId`. A transition is accepted only through direct controller-to-controller compare-and-swap for the exact next epoch and a source-signed authorization bound to that state.
 
-**Why:** Independent platforms can issue same-epoch switches concurrently. Locale-aware and code-unit comparisons disagree for mixed-case or punctuated IDs, causing permanent split-brain.
+**Why:** An agent shell holds its heartbeat credential and may be compromised; allowing its report to choose leadership bypasses the operator confirmation and permits split-brain or permanent epoch jumps.
 
-**How to apply:** Every importer, heartbeat reconciler, release gate, and shell updater must share the exact ordering rule; evaluate suspension only after selecting the final active controller.
+**How to apply:** Fence the currently active controller first so transitions may briefly have no active controller but never two. Treat ambiguous network or shell-sync outcomes as in-doubt, preserve a recognizable epoch state, and require read-back before idempotent repair.

@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, timingSafeEqual, verify } from "node:crypto";
 
 export const CONTROLLER_LINK_SCHEMA_VERSION = 1 as const;
 export const MAX_LINK_LIFETIME_MS = 15 * 60_000;
@@ -34,6 +34,7 @@ export type ControllerLinkPayload = {
   target: { platformId: string; origin: string };
   controllerEpoch: number;
   activeControllerId: string;
+  sourceSigningPublicKey: string;
 };
 
 export type ControllerLinkFile = {
@@ -120,6 +121,36 @@ export function deriveControllerToken(inviteSecret: string, linkId: string, targ
     .update(`zacod-controller-link-v1:${linkId}:${targetPlatformId}`, "utf8").digest("base64url");
 }
 
+export function derivePlatformControlToken(inviteSecret: string, linkId: string, targetPlatformId: string): string {
+  return createHmac("sha256", inviteSecret)
+    .update(`zacod-platform-control-v1:${linkId}:${targetPlatformId}`, "utf8").digest("base64url");
+}
+
+export type ControllerCommitAuthorization = {
+  linkId: string; installationId: string; expectedEpoch: number; expectedActiveControllerId: string;
+  requestedEpoch: number; requestedActiveControllerId: string; expiresAt: number;
+};
+function commitAuthorizationBytes(value: ControllerCommitAuthorization): Buffer {
+  return Buffer.from(canonical(value), "utf8");
+}
+export function createControllerSigningKeyPair(): { publicKey: string; privateKey: string } {
+  const pair = generateKeyPairSync("ed25519");
+  return {
+    publicKey: pair.publicKey.export({ type: "spki", format: "der" }).toString("base64"),
+    privateKey: pair.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"),
+  };
+}
+export function signControllerCommit(value: ControllerCommitAuthorization, privateKey: string): string {
+  const key = createPrivateKey({ key: Buffer.from(privateKey, "base64"), type: "pkcs8", format: "der" });
+  return sign(null, commitAuthorizationBytes(value), key).toString("base64url");
+}
+export function verifyControllerCommit(value: ControllerCommitAuthorization, signature: unknown, publicKey: string, now = Date.now()): void {
+  if (!Number.isSafeInteger(value.expiresAt) || value.expiresAt <= now || value.expiresAt > now + 60_000) throw new Error("controller_authorization_expired");
+  if (typeof signature !== "string" || !signature) throw new Error("controller_authorization_invalid");
+  const key = createPublicKey({ key: Buffer.from(publicKey, "base64"), type: "spki", format: "der" });
+  if (!verify(null, commitAuthorizationBytes(value), key, Buffer.from(signature, "base64url"))) throw new Error("controller_authorization_invalid");
+}
+
 export type ControllerState = { controllerEpoch: number; activeControllerId: string };
 export function compareControllerState(a: ControllerState, b: ControllerState, validIds: readonly string[]): number {
   const valid = (s: ControllerState) => Number.isSafeInteger(s.controllerEpoch) && s.controllerEpoch >= 0 && validIds.includes(s.activeControllerId);
@@ -169,14 +200,20 @@ export function verifyControllerLinkFile(
       payload.agent.extraDomains.some(d => !/^[a-z0-9.-]{3,253}$/.test(d)) ||
       !["active", "suspended"].includes(payload.agent?.status) ||
       !["central", "external"].includes(payload.agent?.packageSource) ||
-      ![payload.source.platformId, payload.target.platformId].includes(payload.activeControllerId)) {
+      ![payload.source.platformId, payload.target.platformId].includes(payload.activeControllerId) ||
+      typeof payload.sourceSigningPublicKey !== "string" || payload.sourceSigningPublicKey.length < 40) {
     throw new Error("invalid_link_metadata");
   }
   if (payload.agent.licenseExpiresAt !== null &&
       !Number.isFinite(Date.parse(payload.agent.licenseExpiresAt))) throw new Error("invalid_license_expiry");
   if (!/^[a-f0-9]{64}$/.test(payload.agent?.licenseVerifier ?? "")) throw new Error("invalid_license_verifier");
+  try {
+    const key = createPublicKey({ key: Buffer.from(payload.sourceSigningPublicKey, "base64"), type: "spki", format: "der" });
+    if (key.asymmetricKeyType !== "ed25519") throw new Error("wrong_key_type");
+  } catch { throw new Error("invalid_source_signing_public_key"); }
   const forbidden = canonical(payload).toLowerCase();
-  if (forbidden.includes("licensekey") || forbidden.includes("dburl") || forbidden.includes("invitesecret")) {
+  if (forbidden.includes("licensekey") || forbidden.includes("dburl") || forbidden.includes("invitesecret") ||
+      forbidden.includes("platformcontroltoken") || forbidden.includes("privatekey")) {
     throw new Error("secret_field_forbidden");
   }
   return file;

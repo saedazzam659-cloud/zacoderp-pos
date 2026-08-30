@@ -4,12 +4,16 @@ import {
   assertMonotonicEpoch,
   assertStoredInviteUsable,
   buildControllerLinkFile,
+  createControllerSigningKeyPair,
   createPlatformLinkInvite,
   deriveControllerToken,
+  derivePlatformControlToken,
   highestControllerState,
   licenseKeyVerifier,
   sha256Verifier,
   validateInvite,
+  signControllerCommit,
+  verifyControllerCommit,
   verifyControllerLinkFile,
 } from "../src/lib/agentControllerLinks.ts";
 import { controllerOriginsInOrder } from "../src/routes/localAgentUpdates.ts";
@@ -19,6 +23,7 @@ const source = { platformId: "platform:source-1234", origin: "https://source.exa
 
 function fixture(now = new Date("2026-01-01T00:00:00Z")) {
   const invite = createPlatformLinkInvite({ targetPlatformId: target.platformId, targetOrigin: target.origin, now });
+  const signing = createControllerSigningKeyPair();
   const payload = {
     schemaVersion: 1 as const,
     linkId: "81ab650b-f0ce-49cc-a9fe-fadf183a2cdd",
@@ -32,8 +37,9 @@ function fixture(now = new Date("2026-01-01T00:00:00Z")) {
       licenseVerifier: licenseKeyVerifier("ZC-RAW-LICENSE"),
     },
     source, target, controllerEpoch: 4, activeControllerId: source.platformId,
+    sourceSigningPublicKey: signing.publicKey,
   };
-  return { now, invite, file: buildControllerLinkFile(payload, invite.inviteSecret) };
+  return { now, invite, signing, file: buildControllerLinkFile(payload, invite.inviteSecret) };
 }
 
 test("invite is HTTPS-bound, short-lived, and stores a usable verifier", () => {
@@ -46,11 +52,14 @@ test("invite is HTTPS-bound, short-lived, and stores a usable verifier", () => {
 });
 
 test("portable file has no raw credentials or business DB location", () => {
-  const { file, invite } = fixture();
+  const { file, invite, signing } = fixture();
   const raw = JSON.stringify(file);
   assert.equal(raw.includes(invite.inviteSecret), false);
   assert.equal(raw.includes("ZC-RAW-LICENSE"), false);
   assert.equal(/licenseKey|dbUrl/i.test(raw), false);
+  assert.equal(raw.includes(signing.publicKey), true);
+  assert.equal(raw.includes(signing.privateKey), false);
+  assert.equal(/platformControlToken/i.test(raw), false);
 });
 
 test("expired and tampered links fail while a valid file verifies", () => {
@@ -112,6 +121,25 @@ test("link controller token is deterministic and distinct from the raw license",
   assert.match(token, /^[A-Za-z0-9_-]{43}$/);
   assert.notEqual(token, "ZC-RAW-LICENSE");
   assert.equal(token, deriveControllerToken("a".repeat(43), "81ab650b-f0ce-49cc-a9fe-fadf183a2cdd", target.platformId));
+});
+
+test("platform control credential is domain-separated from the agent token", () => {
+  const secret = "a".repeat(43);
+  const linkId = "81ab650b-f0ce-49cc-a9fe-fadf183a2cdd";
+  assert.notEqual(derivePlatformControlToken(secret, linkId, target.platformId), deriveControllerToken(secret, linkId, target.platformId));
+});
+
+test("Ed25519 commit authorization rejects tampering and expiry", () => {
+  const keys = createControllerSigningKeyPair();
+  const authorization = {
+    linkId: "81ab650b-f0ce-49cc-a9fe-fadf183a2cdd", installationId: "installation-123",
+    expectedEpoch: 4, expectedActiveControllerId: source.platformId,
+    requestedEpoch: 5, requestedActiveControllerId: target.platformId, expiresAt: 10_000,
+  };
+  const signature = signControllerCommit(authorization, keys.privateKey);
+  assert.doesNotThrow(() => verifyControllerCommit(authorization, signature, keys.publicKey, 9_000));
+  assert.throws(() => verifyControllerCommit({ ...authorization, requestedEpoch: 6 }, signature, keys.publicKey, 9_000), /invalid/);
+  assert.throws(() => verifyControllerCommit(authorization, signature, keys.publicKey, 10_000), /expired/);
 });
 
 test("same epoch leadership converges by platform ID total order", () => {
