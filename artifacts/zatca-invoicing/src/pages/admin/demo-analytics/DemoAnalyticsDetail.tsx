@@ -15,16 +15,21 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowRight, Activity, ShieldAlert, Target, Save, MousePointerClick
 } from "lucide-react";
+import { demoActionLabel, demoEventTypeLabel, demoModuleLabel, demoScreenLabel } from "@/lib/demoAnalyticsLabels";
 
-export default function DemoAnalyticsDetail() {
-  const [, params] = useRoute("/admin/demo-analytics/:id");
+export default function DemoAnalyticsDetail({ scope = "admin" }: { scope?: "admin" | "company" }) {
+  const isAdmin = scope === "admin";
+  const basePath = isAdmin ? "/admin/demo-analytics" : "/demo-analytics";
+  const [, params] = useRoute(isAdmin ? "/admin/demo-analytics/:id" : "/demo-analytics/:id");
   const profileId = params?.id ? parseInt(params.id) : 0;
   const { toast } = useToast();
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["demo-admin-profile", profileId],
-    queryFn: () => demoAnalyticsApi.getAdminProfile(profileId),
+    queryKey: ["demo-profile", scope, profileId],
+    queryFn: () => isAdmin
+      ? demoAnalyticsApi.getAdminProfile(profileId)
+      : demoAnalyticsApi.getCompanyProfile(profileId),
     enabled: !!profileId
   });
 
@@ -65,8 +70,8 @@ export default function DemoAnalyticsDetail() {
     mutationFn: (vars: any) => demoAnalyticsApi.updateLead(profileId, vars),
     onSuccess: () => {
       toast({ title: "تم حفظ بيانات المبيعات" });
-      qc.invalidateQueries({ queryKey: ["demo-admin-profile", profileId] });
-      qc.invalidateQueries({ queryKey: ["demo-admin-profiles"] });
+      qc.invalidateQueries({ queryKey: ["demo-profile", "admin", profileId] });
+      qc.invalidateQueries({ queryKey: ["demo-profiles", "admin"] });
     },
     onError: (error: any) => toast({ title: "تعذر حفظ بيانات المبيعات", description: error?.message, variant: "destructive" }),
   });
@@ -91,7 +96,7 @@ export default function DemoAnalyticsDetail() {
         subscriptionMessage: persisted.subscriptionMessage ?? "",
       });
       toast({ title: "تم تحديث سياسة الحساب التجريبي" });
-      qc.invalidateQueries({ queryKey: ["demo-admin-profile", profileId] });
+      qc.invalidateQueries({ queryKey: ["demo-profile", "admin", profileId] });
     },
     onError: (error: any) => toast({ title: "تعذر تحديث سياسة الحساب التجريبي", description: error?.message, variant: "destructive" }),
   });
@@ -132,7 +137,7 @@ export default function DemoAnalyticsDetail() {
     <div className="p-6 space-y-6 max-w-7xl mx-auto" dir="rtl">
       <div className="flex items-center gap-3 mb-2">
         <Button variant="outline" size="icon" asChild className="h-8 w-8 rounded-full">
-          <Link href="/admin/demo-analytics"><ArrowRight className="h-4 w-4" /></Link>
+           <Link href={basePath}><ArrowRight className="h-4 w-4" /></Link>
         </Button>
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -144,9 +149,9 @@ export default function DemoAnalyticsDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+       <div className={isAdmin ? "grid grid-cols-1 lg:grid-cols-3 gap-6" : "grid grid-cols-1 gap-6"}>
         
-        <div className="space-y-6">
+         {isAdmin && <div className="space-y-6">
           <Card>
             <CardHeader className="pb-3 border-b">
               <CardTitle className="text-lg flex items-center gap-2">
@@ -274,9 +279,9 @@ export default function DemoAnalyticsDetail() {
               </form>
             </CardContent>
           </Card>
-        </div>
+         </div>}
 
-        <div className="lg:col-span-2 space-y-6">
+         <div className={isAdmin ? "lg:col-span-2 space-y-6" : "space-y-6"}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="bg-primary/5 border-primary/20">
               <CardContent className="p-4 text-center">
@@ -375,16 +380,18 @@ export default function DemoAnalyticsDetail() {
                             ev.type === 'action' ? 'bg-amber-100 text-amber-700' :
                             ev.type === 'screen_view' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'
                           }`}>
-                            {ev.type === 'screen_view' ? 'زيارة' : ev.type === 'action' ? 'إجراء' : ev.type}
+                             {demoEventTypeLabel(ev.type)}
                           </span>
                         </td>
-                        <td className="p-3 text-xs font-mono" dir="ltr">
-                          <div className="truncate max-w-[200px]" title={ev.route || ev.moduleKey}>
-                            {ev.route || ev.screenKey || ev.moduleKey || "-"}
+                         <td className="p-3 text-xs">
+                           <div className="truncate max-w-[240px]">
+                             {ev.screenKey || ev.route
+                               ? demoScreenLabel(ev.screenKey, ev.route)
+                               : demoModuleLabel(ev.moduleKey)}
                           </div>
                         </td>
                         <td className="p-3 text-xs text-muted-foreground">
-                          {ev.actionKey ? `أكشن: ${ev.actionKey}` : ev.durationMs ? `مكث: ${formatDuration(ev.durationMs)}` : "-"}
+                           {ev.actionKey ? `الإجراء: ${demoActionLabel(ev.actionKey)}` : ev.durationMs ? `المدة: ${formatDuration(ev.durationMs)}` : "-"}
                         </td>
                       </tr>
                     ))}

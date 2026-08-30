@@ -2743,7 +2743,8 @@
       "multiLink": "ربط متعدد",
       "office": "أوفيس زاكود",
       "trainingRoom": "قاعة التدريب المباشر",
-      "deliveryDocs": "سندات الاستلام والتسليم"
+      "deliveryDocs": "سندات الاستلام والتسليم",
+      "demoAnalytics": "متابعة الديمو"
     },
     "actions": {
       "view": "عرض",
@@ -2773,6 +2774,7 @@
       "data_io": "استيراد وتصدير البيانات",
       "sequences": "مسلسل الحركات",
       "extensions": "الإضافات",
+      "demo_analytics": "متابعة مستخدمي الديمو",
       "office": "أوفيس زاكود (Word + Excel)",
       "delivery_receipt_docs": "سندات الاستلام والتسليم",
       "training_room": "قاعة التدريب المباشر",

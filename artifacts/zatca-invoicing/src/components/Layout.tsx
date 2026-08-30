@@ -209,9 +209,7 @@ const superAdminNav: NavDef[] = [
 // (POS Management) parent group rendered by PosNavGroup, so this list
 // stays empty (kept around for future business-level top-level NavItems).
 const companyBusinessNav: NavDef[] = [
-  // The four entries that used to live here (ابدأ هنا، المتجر الإلكتروني،
-  // سوق التكاملات، بوابة التكاملات) were moved under the "ربط متعدد"
-  // collapsible group per the user's request — see multiLinkSubNav below.
+  { nameKey: "nav.demoAnalytics", href: "/demo-analytics", icon: Activity, permKey: "demo_analytics" },
 ];
 
 // ── POS Management submenu ──────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { and, desc, eq, sql } from "drizzle-orm";
-import { centralDb, demoAgentBatchReceiptsTable, demoAnalyticsEventsTable, demoAnalyticsProfilesTable, demoAnalyticsSessionsTable } from "@workspace/db";
+import { and, desc, eq, or, sql } from "drizzle-orm";
+import { centralDb, companiesTable, db, demoAgentBatchReceiptsTable, demoAnalyticsEventsTable, demoAnalyticsProfilesTable, demoAnalyticsSessionsTable, usersTable } from "@workspace/db";
 import { actionsUsed, finalizeDemoAction, getPolicy, getProfile, normalizePhone, recordEvents, refreshInterest, reserveDemoAction, resolveDemoIdentity } from "../lib/demoAnalytics.js";
 
 const router = Router();
@@ -178,10 +178,37 @@ router.post("/agent/batch", async (req, res) => {
   }
   let accepted = 0;
   try {
+    // The proxy credential authenticates the AGENT, not arbitrary local IDs.
+    // agentDataSourceRouter has already placed `db` in this agent's datasource
+    // context, so validate every distinct company/user pair there in one batch
+    // before any central profile is created.
+    const requestedPairs = new Map<string, { companyId: number; userId: number }>();
+    for (const identity of incoming!) {
+      const companyId = Number(identity?.localCompanyId), userId = Number(identity?.localUserId);
+      if (Number.isInteger(companyId) && companyId > 0 && Number.isInteger(userId) && userId > 0) {
+        requestedPairs.set(`${companyId}:${userId}`, { companyId, userId });
+      }
+    }
+    const pairs = [...requestedPairs.values()];
+    const validRows = pairs.length ? await db.select({
+      companyId: usersTable.companyId,
+      userId: usersTable.id,
+      shadow: usersTable.isDemoShadow,
+      isolation: usersTable.demoDeviceIsolation,
+      workspace: companiesTable.isInternalDemoWorkspace,
+    }).from(usersTable)
+      .innerJoin(companiesTable, eq(companiesTable.id, usersTable.companyId))
+      .where(or(...pairs.map(({ companyId, userId }) =>
+        and(eq(usersTable.companyId, companyId), eq(usersTable.id, userId)),
+      ))) : [];
+    const validPairs = new Set(validRows
+      .filter(row => row.shadow || row.isolation || row.workspace)
+      .map(row => `${row.companyId}:${row.userId}`));
+
     for (let i = 0; i < events.length; i++) {
       const e = events[i]; const identity = incoming![i] as any;
       const companyId = Number(identity?.localCompanyId), userId = Number(identity?.localUserId);
-      if (!Number.isInteger(companyId) || !Number.isInteger(userId)) continue;
+      if (!validPairs.has(`${companyId}:${userId}`)) continue;
       const p = await getProfile({ sourceKind: "agent", sourceInstanceId, localCompanyId: companyId, localUserId: userId });
       accepted += await recordEvents(p!.id, [e]);
     }

@@ -109,6 +109,9 @@ export const MENU_ITEMS: MenuItem[] = [
   // trainees (view-only) with raise-hand + chat + attendance log. Default ON;
   // single key gates the sidebar group + every /api/training-room/* call.
   { key: "training_room",      label: "قاعة التدريب المباشر",       section: "قاعة التدريب المباشر" },
+
+  // متابعة الديمو المعزولة للشركات — لا تضاف إلى legacy default-on.
+  { key: "demo_analytics",     label: "متابعة الديمو",               section: "متابعة الديمو" },
 ];
 
 export const SECTIONS: string[] = Array.from(new Set(MENU_ITEMS.map(m => m.section)));
@@ -208,6 +211,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   // قاعة التدريب المباشر — permission key is the on/off switch, no separate
   // billable parent module.
   training_room:      null,
+  demo_analytics:     null,
 };
 
 // Resolve the unique set of high-level module keys implied by a list of
@@ -263,6 +267,12 @@ export interface ModuleGroupDef {
 export const screenKey = (path: string): string => `nav:${path}`;
 
 export const MODULE_GROUPS: ModuleGroupDef[] = [
+  {
+    key: "demoAnalytics", label: "متابعة الديمو", emoji: "📊", moduleKeys: ["demo_analytics"],
+    screens: [
+      { path: "/demo-analytics", label: "متابعة مستخدمي الديمو" },
+    ],
+  },
   {
     key: "dashboard", label: "لوحة التحكم والإعدادات", emoji: "🏠", moduleKeys: ["dashboard"],
     screens: [
@@ -726,4 +736,5 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "تتبع المواقع":          { bg: "bg-indigo-50",   text: "text-indigo-700",   border: "border-indigo-200" },
   "ربط متعدد":              { bg: "bg-cyan-50",     text: "text-cyan-700",     border: "border-cyan-200" },
   "معاملات الشركات الشقيقة": { bg: "bg-amber-50",    text: "text-amber-700",    border: "border-amber-200" },
+  "متابعة الديمو":          { bg: "bg-purple-50",   text: "text-purple-700",   border: "border-purple-200" },
 };

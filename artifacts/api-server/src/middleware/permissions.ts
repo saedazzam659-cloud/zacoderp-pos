@@ -155,6 +155,9 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // Mirror in frontend companyModuleGate.ts + Layout.tsx + MenuPermissions.tsx.
   training_room: "training_room",
   multi_link: "multi_link",
+  // متابعة الديمو للشركات — وحدة اختيارية مغلقة افتراضيًا. لا تستخدم
+  // مسارات السوبر أدمن؛ واجهات الشركة المنفصلة تطبق عزل المصدر + الشركة.
+  demo_analytics: "demo_analytics",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be
@@ -162,7 +165,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // SuperAdmin platform modules that must stay hidden until turned on. Keep in
 // sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
 // MenuPermissions.tsx.
-const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office"]);
+const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office", "demo_analytics"]);
 
 // FROZEN legacy baseline (snapshot 2026-08): gate keys that keep the old
 // "missing = allowed" fallback. Any gate key added to COMPANY_MODULE_GATE

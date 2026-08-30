@@ -568,6 +568,9 @@ const MARKETING_PATHS = new Set([
 ]);
 const isMarketingPath = (loc: string) => MARKETING_PATHS.has(loc) || loc.startsWith("/blog/");
 
+const CompanyDemoAnalyticsDashboard = () => <DemoAnalyticsDashboard scope="company" />;
+const CompanyDemoAnalyticsDetail = () => <DemoAnalyticsDetail scope="company" />;
+
 function AppRoutes() {
   const { isAuthenticated, loading, user, actingCompanyId } = useAuth() as any;
   const [location] = useLocation();
@@ -752,6 +755,8 @@ function AppRoutes() {
               {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
               {isSuperAdmin && <Route path="/admin/demo-analytics/:id" component={DemoAnalyticsDetail} />}
               {isSuperAdmin && <Route path="/admin/demo-analytics" component={DemoAnalyticsDashboard} />}
+              {!isSuperAdmin && <PermRoute path="/demo-analytics/:id" module="demo_analytics" component={CompanyDemoAnalyticsDetail} />}
+              {!isSuperAdmin && <PermRoute path="/demo-analytics" module="demo_analytics" component={CompanyDemoAnalyticsDashboard} />}
               {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
             {isSuperAdmin && <Route path="/admin/trainee-requests" component={TraineeRequests} />}
             {/* These four stay on rawIsSuperAdmin so the SA can switch

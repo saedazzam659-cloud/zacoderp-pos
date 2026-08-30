@@ -94,6 +94,24 @@ export const demoAnalyticsApi = {
     if (!res.ok) throw new Error("Failed to load profile");
     return res.json();
   },
+  // Company-scoped, read-only endpoints. The server derives both company and
+  // agent source from the authenticated request; no scope IDs are accepted.
+  getCompanyDashboard: async () => {
+    const res = await fetch(`${API_BASE}/api/company-demo-analytics/dashboard`, { headers: getHeaders() });
+    if (!res.ok) throw new Error("Failed to load company demo dashboard");
+    return res.json();
+  },
+  getCompanyProfiles: async (params: Record<string, string | number>) => {
+    const query = new URLSearchParams(params as any).toString();
+    const res = await fetch(`${API_BASE}/api/company-demo-analytics?${query}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error("Failed to load company demo profiles");
+    return res.json();
+  },
+  getCompanyProfile: async (id: number) => {
+    const res = await fetch(`${API_BASE}/api/company-demo-analytics/${id}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error("Failed to load company demo profile");
+    return res.json();
+  },
   updatePolicy: async (id: number, data: any) => {
     const res = await fetch(`${API_BASE}/api/admin/demo-analytics/${id}/policy`, {
       method: "PUT",

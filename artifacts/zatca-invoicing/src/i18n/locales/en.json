@@ -2740,7 +2740,8 @@
       "multiLink": "Multi-Link Gateway",
       "office": "Zacode Office",
       "trainingRoom": "Live Training Hall",
-      "deliveryDocs": "Goods Receipt / Delivery"
+      "deliveryDocs": "Goods Receipt / Delivery",
+      "demoAnalytics": "Demo Monitoring"
     },
     "actions": {
       "view": "View",
@@ -2770,6 +2771,7 @@
       "data_io": "Data Import / Export",
       "sequences": "Document Numbering (Sequences)",
       "extensions": "Extensions",
+      "demo_analytics": "Demo User Monitoring",
       "office": "Zacode Office (Word + Excel)",
       "delivery_receipt_docs": "Goods Receipt / Delivery Notes",
       "training_room": "Live Training Hall",

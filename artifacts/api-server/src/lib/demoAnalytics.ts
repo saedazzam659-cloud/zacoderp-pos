@@ -3,6 +3,29 @@ import { centralDb, db, companiesTable, demoActionLedgerTable, demoActionReserva
 import type { Request } from "express";
 
 export type DemoIdentity = { sourceKind: "central" | "agent"; sourceInstanceId: number | null; localCompanyId: number; localUserId: number };
+
+export type DemoViewerScope = Pick<DemoIdentity, "sourceKind" | "sourceInstanceId" | "localCompanyId">;
+
+/** Tenant viewers are always scoped from trusted request context, never query input. */
+export function demoViewerScopeFromRequest(req: Pick<Request, "authUser"> & { agentDomainHit?: { id?: number } | null }): DemoViewerScope | null {
+  const companyId = Number(req.authUser?.companyId);
+  if (!Number.isInteger(companyId) || companyId <= 0) return null;
+  const agentId = Number(req.agentDomainHit?.id);
+  if (Number.isInteger(agentId) && agentId > 0) {
+    return { sourceKind: "agent", sourceInstanceId: agentId, localCompanyId: companyId };
+  }
+  return { sourceKind: "central", sourceInstanceId: null, localCompanyId: companyId };
+}
+
+/** Pure ownership predicate used by tests and any non-SQL consumers. */
+export function demoProfileBelongsToViewerScope(
+  profile: Pick<DemoIdentity, "sourceKind" | "sourceInstanceId" | "localCompanyId">,
+  scope: DemoViewerScope,
+): boolean {
+  return profile.sourceKind === scope.sourceKind
+    && profile.sourceInstanceId === scope.sourceInstanceId
+    && profile.localCompanyId === scope.localCompanyId;
+}
 export const normalizePhone = (value: unknown): string | null => {
   const raw = String(value ?? "").trim().replace(/[^\d+]/g, "");
   const digits = raw.replace(/\D/g, "");

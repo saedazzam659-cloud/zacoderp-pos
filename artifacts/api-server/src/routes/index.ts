@@ -146,6 +146,7 @@ import { blockDisabledLocalSuperadmin } from "../lib/localAgentSuperadmin.js";
 import { extractAuth } from "../middleware/auth";
 import demoAnalyticsRouter from "./demo-analytics";
 import adminDemoAnalyticsRouter from "./admin-demo-analytics";
+import companyDemoAnalyticsRouter from "./company-demo-analytics";
 import { demoQuotaMiddleware } from "../middleware/demoQuota";
 
 const router: IRouter = Router();
@@ -193,6 +194,7 @@ router.use("/admin/seo", adminSeoRouter);
 router.use("/admin/ai-controls", adminAiControlsRouter);
 router.use("/admin/db-stats", adminDbStatsRouter);
 router.use("/admin/demo-analytics", adminDemoAnalyticsRouter);
+router.use("/company-demo-analytics", companyDemoAnalyticsRouter);
 router.use("/admin/gateway-clients", gatewayClientsRouter);
 router.use("/admin/domains", domainsRouter);
 router.use("/admin/external-databases", externalDatabasesRouter);

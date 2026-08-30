@@ -46,6 +46,7 @@ const G = {
   office:       "perms.groups.office",
   deliveryDocs: "perms.groups.deliveryDocs",
   trainingRoom: "perms.groups.trainingRoom",
+  demoAnalytics: "perms.groups.demoAnalytics",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -74,6 +75,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // قاعة التدريب المباشر — LiveKit training hall. `create`/`edit`/`delete`
   // gate session management (trainer side); `view` gates joining as trainee.
   { key: "training_room",        label: "perms.modules.training_room",        group: G.trainingRoom, actions: ["view", "create", "edit", "delete"] },
+  { key: "demo_analytics",       label: "perms.modules.demo_analytics",       group: G.demoAnalytics, actions: VO },
 
   { key: "customers",            label: "perms.modules.customers",            group: G.sales,      actions: VC },
   { key: "sales_quotations",     label: "perms.modules.sales_quotations",     group: G.sales,      actions: ALL },

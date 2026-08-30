@@ -17,6 +17,7 @@ import {
   ResponsiveContainer, BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
+import { demoActionLabel, demoModuleLabel, demoScreenLabel } from "@/lib/demoAnalyticsLabels";
 
 const interestMapping: Record<string, { label: string; color: string }> = {
   new_visitor: { label: "زائر جديد", color: "#94a3b8" }, // slate-400
@@ -49,7 +50,9 @@ const formatDuration = (ms: number) => {
   return `${hrs} س ${mins % 60} د`;
 };
 
-export default function DemoAnalyticsDashboard() {
+export default function DemoAnalyticsDashboard({ scope = "admin" }: { scope?: "admin" | "company" }) {
+  const isAdmin = scope === "admin";
+  const basePath = isAdmin ? "/admin/demo-analytics" : "/demo-analytics";
   const [filterState, setFilterState] = useState({
     phone: "",
     device: "all",
@@ -67,27 +70,29 @@ export default function DemoAnalyticsDashboard() {
   const [appliedFilters, setAppliedFilters] = useState(filterState);
 
   const { data: dashboard, isLoading: dashLoading } = useQuery({
-    queryKey: ["demo-admin-dashboard"],
-    queryFn: demoAnalyticsApi.getAdminDashboard,
+    queryKey: ["demo-dashboard", scope],
+    queryFn: isAdmin ? demoAnalyticsApi.getAdminDashboard : demoAnalyticsApi.getCompanyDashboard,
     refetchInterval: 60000
   });
 
   const { data: profilesData, isLoading: profilesLoading } = useQuery({
-    queryKey: ["demo-admin-profiles", appliedFilters],
+    queryKey: ["demo-profiles", scope, appliedFilters],
     queryFn: () => {
       const params: Record<string, string | number> = { limit: 100 };
       if (appliedFilters.phone) params.phone = appliedFilters.phone;
       if (appliedFilters.device !== "all") params.device = appliedFilters.device;
       if (appliedFilters.interest !== "all") params.interest = appliedFilters.interest;
-      if (appliedFilters.leadStatus !== "all") params.leadStatus = appliedFilters.leadStatus;
-      if (appliedFilters.source !== "all") params.source = appliedFilters.source;
+      if (isAdmin && appliedFilters.leadStatus !== "all") params.leadStatus = appliedFilters.leadStatus;
+      if (isAdmin && appliedFilters.source !== "all") params.source = appliedFilters.source;
       if (appliedFilters.from) params.from = appliedFilters.from;
       if (appliedFilters.to) params.to = appliedFilters.to;
       if (appliedFilters.module) params.module = appliedFilters.module;
       if (appliedFilters.screen) params.screen = appliedFilters.screen;
       if (appliedFilters.loginCount) params.loginCount = appliedFilters.loginCount;
       if (appliedFilters.duration) params.duration = Number(appliedFilters.duration) * 60_000;
-      return demoAnalyticsApi.getAdminProfiles(params);
+      return isAdmin
+        ? demoAnalyticsApi.getAdminProfiles(params)
+        : demoAnalyticsApi.getCompanyProfiles(params);
     },
     refetchInterval: 60000
   });
@@ -110,7 +115,7 @@ export default function DemoAnalyticsDashboard() {
     { key: "interestCategory", header: "الاهتمام" },
     { key: "interestScore", header: "نقاط الاهتمام" },
     { key: "leadStatus", header: "حالة العميل" }
-  ];
+  ].filter(col => isAdmin || (col.key !== "sourceKind" && col.key !== "leadStatus"));
   
   const exportRows = profiles.map((p: any) => ({
     id: p.id,
@@ -145,10 +150,12 @@ export default function DemoAnalyticsDashboard() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Target className="h-6 w-6 text-primary" />
-            تحليلات الحسابات التجريبية (Demo)
+            {isAdmin ? "تحليلات الحسابات التجريبية (Demo)" : "متابعة مستخدمي الديمو"}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            متابعة سلوك العملاء المحتملين وتحديد الحسابات ذات الجدية العالية
+            {isAdmin
+              ? "متابعة سلوك العملاء المحتملين وتحديد الحسابات ذات الجدية العالية"
+              : "عرض نشاط مستخدمي الديمو التابعين لشركتك فقط"}
           </p>
         </div>
       </div>
@@ -304,7 +311,7 @@ export default function DemoAnalyticsDashboard() {
                 <div className="space-y-3">
                   {(dashboard.topModules || []).map((m: any, i: number) => (
                     <div key={i} className="flex items-center justify-between text-sm" data-testid={`top-module-${m.key}`}>
-                      <span className="font-medium truncate pl-2">{m.key}</span>
+                      <span className="font-medium truncate pl-2">{demoModuleLabel(m.key)}</span>
                       <span className="text-muted-foreground shrink-0">{m.count} مرة</span>
                     </div>
                   ))}
@@ -326,7 +333,7 @@ export default function DemoAnalyticsDashboard() {
                 <div className="space-y-3">
                   {(dashboard.topScreens || []).map((m: any, i: number) => (
                     <div key={i} className="flex items-center justify-between text-sm" data-testid={`top-screen-${m.key}`}>
-                      <span className="font-medium truncate pl-2" dir="ltr">{m.key}</span>
+                      <span className="font-medium truncate pl-2">{demoScreenLabel(m.key)}</span>
                       <span className="text-muted-foreground shrink-0">{m.count} مرة</span>
                     </div>
                   ))}
@@ -348,7 +355,7 @@ export default function DemoAnalyticsDashboard() {
                 <div className="space-y-3">
                   {(dashboard.topActions || []).map((m: any, i: number) => (
                     <div key={i} className="flex items-center justify-between text-sm" data-testid={`top-action-${m.key}`}>
-                      <span className="font-medium truncate pl-2" dir="ltr">{m.key}</span>
+                      <span className="font-medium truncate pl-2">{demoActionLabel(m.key)}</span>
                       <span className="text-muted-foreground shrink-0">{m.count} مرة</span>
                     </div>
                   ))}
@@ -395,7 +402,7 @@ export default function DemoAnalyticsDashboard() {
                           {prospect.interestScore || 0}
                         </span>
                         <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/admin/demo-analytics/${prospect.id}`}>التفاصيل</Link>
+                           <Link href={`${basePath}/${prospect.id}`}>التفاصيل</Link>
                         </Button>
                       </div>
                     </div>
@@ -413,7 +420,7 @@ export default function DemoAnalyticsDashboard() {
       <Card>
         <CardHeader className="pb-4 border-b">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
-            <CardTitle className="text-lg">سجل العملاء المحتملين (Demo)</CardTitle>
+            <CardTitle className="text-lg">{isAdmin ? "سجل العملاء المحتملين (Demo)" : "سجل مستخدمي الديمو"}</CardTitle>
             <div className="flex items-center gap-2">
               <ExportButtons 
                 rows={exportRows}
@@ -455,7 +462,7 @@ export default function DemoAnalyticsDashboard() {
                 </SelectContent>
               </Select>
 
-              <Select value={filterState.leadStatus} onValueChange={(val) => setFilterState(f => ({ ...f, leadStatus: val }))}>
+               {isAdmin && <Select value={filterState.leadStatus} onValueChange={(val) => setFilterState(f => ({ ...f, leadStatus: val }))}>
                 <SelectTrigger className="h-9 text-sm" data-testid="filter-lead"><SelectValue placeholder="الحالة المبيعية" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">كل الحالات</SelectItem>
@@ -463,16 +470,16 @@ export default function DemoAnalyticsDashboard() {
                     <SelectItem key={k} value={k}>{v}</SelectItem>
                   ))}
                 </SelectContent>
-              </Select>
+               </Select>}
 
-              <Select value={filterState.source} onValueChange={(val) => setFilterState(f => ({ ...f, source: val }))}>
+               {isAdmin && <Select value={filterState.source} onValueChange={(val) => setFilterState(f => ({ ...f, source: val }))}>
                 <SelectTrigger className="h-9 text-sm" data-testid="filter-source"><SelectValue placeholder="المصدر" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">كل المصادر</SelectItem>
                    <SelectItem value="central">مباشر</SelectItem>
                   <SelectItem value="agent">وكيل</SelectItem>
                 </SelectContent>
-              </Select>
+               </Select>}
 
               <Input placeholder="اسم القسم" className="h-9 text-sm" value={filterState.module} onChange={(e) => setFilterState(f => ({ ...f, module: e.target.value }))} data-testid="filter-module" />
               <Input placeholder="اسم الشاشة" className="h-9 text-sm" value={filterState.screen} onChange={(e) => setFilterState(f => ({ ...f, screen: e.target.value }))} data-testid="filter-screen" />
@@ -498,27 +505,27 @@ export default function DemoAnalyticsDashboard() {
                   <th className="p-3 text-right">الاهتمام الرئيسي</th>
                   <th className="p-3 text-right">تسجيلات الدخول</th>
                   <th className="p-3 text-right">وقت الاستخدام</th>
-                  <th className="p-3 text-right">الحالة المبيعية</th>
+                   {isAdmin && <th className="p-3 text-right">الحالة المبيعية</th>}
                   <th className="p-3 text-center">إجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {profilesLoading ? (
-                  <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">جاري التحميل...</td></tr>
+                   <tr><td colSpan={isAdmin ? 7 : 6} className="p-6 text-center text-muted-foreground">جاري التحميل...</td></tr>
                 ) : profiles.length === 0 ? (
-                  <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">لا توجد حسابات مطابقة للبحث</td></tr>
+                   <tr><td colSpan={isAdmin ? 7 : 6} className="p-6 text-center text-muted-foreground">لا توجد حسابات مطابقة للبحث</td></tr>
                 ) : (
                   profiles.map((p: any, idx: number) => (
                     <tr key={p.id} className="hover:bg-muted/50 transition-colors" data-testid={`profile-row-${idx}`}>
                       <td className="p-3 font-mono text-left" dir="ltr">{p.phone || <span className="text-muted-foreground text-xs">لم يُدخل</span>}</td>
-                      <td className="p-3">
+                       {isAdmin && <td className="p-3">
                         <div className="flex items-center gap-2">
                           <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
                              <div className="h-full bg-primary" style={{ width: `${Math.min(100, p.interestScore || 0)}%` }} />
                           </div>
                           <span className="font-bold text-xs">{p.interestScore || 0}</span>
                         </div>
-                      </td>
+                       </td>}
                       <td className="p-3">
                         {p.interestCategory ? (
                           <span className="px-2 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: `${interestMapping[p.interestCategory]?.color}20`, color: interestMapping[p.interestCategory]?.color }}>
@@ -535,7 +542,7 @@ export default function DemoAnalyticsDashboard() {
                       </td>
                       <td className="p-3 text-center">
                         <Button variant="ghost" size="sm" asChild data-testid={`view-profile-${p.id}`}>
-                          <Link href={`/admin/demo-analytics/${p.id}`} className="text-primary hover:text-primary">
+                           <Link href={`${basePath}/${p.id}`} className="text-primary hover:text-primary">
                             التفاصيل <ChevronLeft className="h-4 w-4 mr-1" />
                           </Link>
                         </Button>
