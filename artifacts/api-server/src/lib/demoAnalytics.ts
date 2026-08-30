@@ -21,10 +21,11 @@ export function demoViewerScopeFromRequest(req: Pick<Request, "authUser"> & { ag
 export function demoProfileBelongsToViewerScope(
   profile: Pick<DemoIdentity, "sourceKind" | "sourceInstanceId" | "localCompanyId">,
   scope: DemoViewerScope,
+  ownedCompanyIds: readonly number[] = [scope.localCompanyId],
 ): boolean {
   return profile.sourceKind === scope.sourceKind
     && profile.sourceInstanceId === scope.sourceInstanceId
-    && profile.localCompanyId === scope.localCompanyId;
+    && ownedCompanyIds.includes(profile.localCompanyId);
 }
 
 /** Company demo monitoring is a manager-only capability, independent of RBAC grants. */

@@ -61,6 +61,22 @@ test("demo profile ownership requires source kind, source instance, and local co
   const scope = { sourceKind: "agent" as const, sourceInstanceId: 9, localCompanyId: 41 };
   assert.equal(demoProfileBelongsToViewerScope({ ...scope }, scope), true);
   assert.equal(demoProfileBelongsToViewerScope({ ...scope, localCompanyId: 42 }, scope), false);
+  assert.equal(
+    demoProfileBelongsToViewerScope(
+      { ...scope, localCompanyId: 142 },
+      scope,
+      [scope.localCompanyId, 142],
+    ),
+    true,
+  );
+  assert.equal(
+    demoProfileBelongsToViewerScope(
+      { ...scope, localCompanyId: 999 },
+      scope,
+      [scope.localCompanyId, 142],
+    ),
+    false,
+  );
   assert.equal(demoProfileBelongsToViewerScope({ ...scope, sourceInstanceId: 10 }, scope), false);
   assert.equal(demoProfileBelongsToViewerScope({ ...scope, sourceKind: "central", sourceInstanceId: null }, scope), false);
 });

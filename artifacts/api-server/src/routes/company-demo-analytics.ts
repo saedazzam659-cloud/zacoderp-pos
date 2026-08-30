@@ -1,7 +1,9 @@
 import { Router, type Request, type Response } from "express";
-import { and, desc, eq, gte, ilike, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import {
   centralDb,
+  companiesTable,
+  db,
   demoAnalyticsEventsTable,
   demoAnalyticsPoliciesTable,
   demoAnalyticsProfilesTable,
@@ -29,29 +31,49 @@ router.use((req, res, next) => {
   next();
 });
 
-function scopeCondition(scope: DemoViewerScope) {
+function scopeCondition(scope: DemoViewerScope, ownedCompanyIds: readonly number[]) {
   return and(
     eq(demoAnalyticsProfilesTable.sourceKind, scope.sourceKind),
     scope.sourceInstanceId == null
       ? isNull(demoAnalyticsProfilesTable.sourceInstanceId)
       : eq(demoAnalyticsProfilesTable.sourceInstanceId, scope.sourceInstanceId),
-    eq(demoAnalyticsProfilesTable.localCompanyId, scope.localCompanyId),
+    inArray(demoAnalyticsProfilesTable.localCompanyId, [...ownedCompanyIds]),
   );
 }
 
-function requireViewerScope(req: Request, res: Response): DemoViewerScope | null {
+async function requireViewerScope(
+  req: Request,
+  res: Response,
+): Promise<{ scope: DemoViewerScope; ownedCompanyIds: number[] } | null> {
   const scope = demoViewerScopeFromRequest(req as any);
   if (!scope) {
     res.status(403).json({ code: "DEMO_ANALYTICS_COMPANY_REQUIRED" });
     return null;
   }
-  return scope;
+  // Isolated demo logins run inside a hidden cloned company. The manager of
+  // the source company owns visibility of those child workspaces, but never
+  // of another company's demo workspaces. Resolve this relationship from the
+  // trusted local datasource rather than accepting company IDs from the UI.
+  const rows = await db.select({ id: companiesTable.id })
+    .from(companiesTable)
+    .where(or(
+      eq(companiesTable.id, scope.localCompanyId),
+      and(
+        eq(companiesTable.isInternalDemoWorkspace, true),
+        eq(companiesTable.demoParentCompanyId, scope.localCompanyId),
+      ),
+    ));
+  const ownedCompanyIds = rows.map((row) => row.id);
+  if (!ownedCompanyIds.includes(scope.localCompanyId)) {
+    ownedCompanyIds.unshift(scope.localCompanyId);
+  }
+  return { scope, ownedCompanyIds };
 }
 
 router.get("/dashboard", async (req, res): Promise<void> => {
-  const scope = requireViewerScope(req, res);
-  if (!scope) return;
-  const owned = scopeCondition(scope);
+  const viewer = await requireViewerScope(req, res);
+  if (!viewer) return;
+  const owned = scopeCondition(viewer.scope, viewer.ownedCompanyIds);
   const now = new Date();
   const [row, sessions, interest, devices, prospects, modules, screens, actions] = await Promise.all([
     centralDb.select({
@@ -126,10 +148,10 @@ router.get("/dashboard", async (req, res): Promise<void> => {
 });
 
 router.get("/", async (req, res): Promise<void> => {
-  const scope = requireViewerScope(req, res);
-  if (!scope) return;
+  const viewer = await requireViewerScope(req, res);
+  if (!viewer) return;
   const q: any = req.query;
-  const conditions: any[] = [scopeCondition(scope)];
+  const conditions: any[] = [scopeCondition(viewer.scope, viewer.ownedCompanyIds)];
   if (q.phone) conditions.push(ilike(demoAnalyticsProfilesTable.phone, `%${String(q.phone).slice(0, 32)}%`));
   if (q.device) conditions.push(eq(demoAnalyticsProfilesTable.device, String(q.device)));
   if (q.interest) conditions.push(eq(demoAnalyticsProfilesTable.interestCategory, String(q.interest)));
@@ -172,7 +194,7 @@ router.get("/", async (req, res): Promise<void> => {
       .from(demoAnalyticsEventsTable)
       .innerJoin(demoAnalyticsProfilesTable, eq(demoAnalyticsProfilesTable.id, demoAnalyticsEventsTable.profileId))
       .where(and(
-        scopeCondition(scope),
+        scopeCondition(viewer.scope, viewer.ownedCompanyIds),
         q.module ? eq(demoAnalyticsEventsTable.moduleKey, String(q.module)) : undefined,
         q.screen ? eq(demoAnalyticsEventsTable.screenKey, String(q.screen)) : undefined,
       ));
@@ -188,15 +210,18 @@ router.get("/", async (req, res): Promise<void> => {
 });
 
 router.get("/:id", async (req, res): Promise<void> => {
-  const scope = requireViewerScope(req, res);
-  if (!scope) return;
+  const viewer = await requireViewerScope(req, res);
+  if (!viewer) return;
   const id = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(404).json({ code: "DEMO_PROFILE_NOT_FOUND" });
     return;
   }
   const [profile] = await centralDb.select().from(demoAnalyticsProfilesTable)
-    .where(and(eq(demoAnalyticsProfilesTable.id, id), scopeCondition(scope)))
+    .where(and(
+      eq(demoAnalyticsProfilesTable.id, id),
+      scopeCondition(viewer.scope, viewer.ownedCompanyIds),
+    ))
     .limit(1);
   if (!profile) {
     // Deliberately return the same 404 for absent and cross-company IDs.
