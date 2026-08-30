@@ -40,3 +40,19 @@ test("credit sales repairs a restored customer ledger inside the posting transac
   assert.match(helper, /set\(\{ accountId: repairedAccountId/);
   assert.match(salesRoute, /getCustomerAccountId\(cid, inv\.customerId, tx\)/);
 });
+
+test("sales creation tolerates stale restored counters and account overrides", () => {
+  assert.match(salesRoute, /for \(let skipped = 0; fromSeq != null; skipped \+= 1\)/);
+  assert.match(salesRoute, /eq\(salesInvoicesTable\.docNumber, fromSeq\)/);
+  assert.match(salesRoute, /fromSeq = await allocateSequenceNumber\(\)/);
+  assert.match(salesRoute, /validAccountIds/);
+  assert.match(salesRoute, /eq\(accountsTable\.companyId, cid\)/);
+  assert.match(salesRoute, /pg_get_serial_sequence\('sales_invoices', 'id'\)/);
+});
+
+test("sales creation unwraps database causes instead of returning the full SQL query", () => {
+  assert.match(salesRoute, /postgresErrorField\(error, "code"\)/);
+  assert.match(salesRoute, /Failed query:/);
+  assert.match(salesRoute, /salesInvoiceWriteError\(e\)/);
+  assert.match(salesRoute, /sales invoice create failed/);
+});

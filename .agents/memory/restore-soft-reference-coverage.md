@@ -14,3 +14,5 @@ Historical rows may outlive their user. If a user reference is missing, synthesi
 **Why:** Work-session history used a required soft `user_id`; deleted users made valid backups fail, while NULL or row deletion would lose attribution.
 
 **How to apply:** Reuse the same archive identity across all references to that source user, keep it unable to log in, and preserve unknown non-user references as fail-closed.
+
+**Confirmed:** A legacy full-company import with deleted historical users completed successfully under this policy.

@@ -71,6 +71,50 @@ type AgentInvoiceTimingStart = {
   blockedReason: string | null;
 };
 
+function postgresErrorField(error: any, field: string): unknown {
+  let current = error;
+  for (let depth = 0; current && depth < 5; depth += 1, current = current.cause) {
+    if (current[field] != null) return current[field];
+  }
+  return undefined;
+}
+
+function salesInvoiceWriteError(error: any): { status: number; message: string } {
+  const code = String(postgresErrorField(error, "code") ?? "");
+  const constraint = String(
+    postgresErrorField(error, "constraint_name")
+      ?? postgresErrorField(error, "constraint")
+      ?? "",
+  );
+  const causeMessage = String(postgresErrorField(error?.cause, "message") ?? "");
+  const outerMessage = String(error?.message ?? "");
+  const safeOuterMessage = /^Failed query:/i.test(outerMessage) ? "" : outerMessage;
+  if (code === "23503") {
+    return {
+      status: 409,
+      message: `تعذر حفظ فاتورة المبيعات لأن أحد الارتباطات القديمة غير موجود بعد الاستعادة${constraint ? ` (${constraint})` : ""}. حدّث الصفحة وأعد اختيار العميل ثم حاول مجدداً.`,
+    };
+  }
+  if (code === "23505") {
+    return {
+      status: 409,
+      message: constraint.includes("pkey")
+        ? "تعذر حفظ الفاتورة بسبب تعارض رقم داخلي بعد الاستعادة. تمت محاولة إصلاح العداد؛ أعد المحاولة."
+        : "رقم فاتورة المبيعات مستخدم مسبقاً بعد الاستعادة. راجع إعدادات تسلسل فواتير المبيعات.",
+    };
+  }
+  if (code === "42703") {
+    return {
+      status: 503,
+      message: `مخطط قاعدة بيانات KARM غير مكتمل التحديث${causeMessage ? `: ${causeMessage}` : ""}`,
+    };
+  }
+  return {
+    status: Number(error?.status) || 500,
+    message: causeMessage || safeOuterMessage || "تعذر حفظ فاتورة المبيعات بسبب خطأ في قاعدة البيانات",
+  };
+}
+
 async function beginAgentInvoiceTiming(
   req: any,
   res: any,
@@ -1990,38 +2034,51 @@ router.post("/sales-invoices", async (req, res) => {
     // company configured one). The ZATCA ICV/PIH chain stays unified.
     let resolvedDocNumber: string | null;
     try {
-      // POS-screen sales (posSessionId present) number from a PER-STATION
-      // sequence, auto-created on first use. The ZATCA ICV/PIH chain stays
-      // unified and is untouched — only the human docNumber differs. When the
-      // POS session has no linked terminal (admin manual session) we fall
-      // through to the normal payment/foreign-split sales-invoice series.
-      let fromSeq: string | null = null;
-      if (posSessionId) {
-        fromSeq = await nextPosStationNumber(cid, Number(posSessionId), {
-          userId:   req.authUser?.id ?? null,
-          refTable: "sales_invoices",
-          docDate:  invoiceDate,
-        });
-      }
-      // Mobile-app sales (x-app-channel: mobile) prefer the dedicated
-      // "sales_invoice_mobile" series when the company configured one.
-      // Falls through to the normal payment/foreign split otherwise.
-      // The ZATCA ICV/PIH chain stays unified regardless of the channel.
-      if (fromSeq == null && String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile") {
-        fromSeq = await nextSequenceNumber(cid, "sales_invoice_mobile", {
-          userId:   req.authUser?.id ?? null,
-          refTable: "sales_invoices",
-          branchId: branchId ? Number(branchId) : null,
-          docDate:  invoiceDate,
-        });
-      }
-      if (fromSeq == null) {
-        fromSeq = await nextSequenceForPayment(cid, "sales_invoice", pType, {
-          userId:   req.authUser?.id ?? null,
-          refTable: "sales_invoices",
-          branchId: branchId ? Number(branchId) : null,
-          docDate:  invoiceDate,
-        }, buyerIsForeign);
+      const allocateSequenceNumber = async (): Promise<string | null> => {
+        // POS-screen sales (posSessionId present) number from a PER-STATION
+        // sequence, auto-created on first use. The ZATCA ICV/PIH chain stays
+        // unified and is untouched — only the human docNumber differs.
+        let allocated: string | null = null;
+        if (posSessionId) {
+          allocated = await nextPosStationNumber(cid, Number(posSessionId), {
+            userId: req.authUser?.id ?? null,
+            refTable: "sales_invoices",
+            docDate: invoiceDate,
+          });
+        }
+        if (allocated == null && String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile") {
+          allocated = await nextSequenceNumber(cid, "sales_invoice_mobile", {
+            userId: req.authUser?.id ?? null,
+            refTable: "sales_invoices",
+            branchId: branchId ? Number(branchId) : null,
+            docDate: invoiceDate,
+          });
+        }
+        if (allocated == null) {
+          allocated = await nextSequenceForPayment(cid, "sales_invoice", pType, {
+            userId: req.authUser?.id ?? null,
+            refTable: "sales_invoices",
+            branchId: branchId ? Number(branchId) : null,
+            docDate: invoiceDate,
+          }, buyerIsForeign);
+        }
+        return allocated;
+      };
+      let fromSeq = await allocateSequenceNumber();
+      // Imported companies may carry counters that lag behind their historical
+      // documents. Consume stale generated numbers until the first unused one;
+      // never make the operator repair an entire restored sequence by hand.
+      for (let skipped = 0; fromSeq != null; skipped += 1) {
+        const duplicate = await db.select({ id: salesInvoicesTable.id })
+          .from(salesInvoicesTable)
+          .where(and(
+            eq(salesInvoicesTable.companyId, cid),
+            eq(salesInvoicesTable.docNumber, fromSeq),
+          ))
+          .limit(1);
+        if (!duplicate.length) break;
+        if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم فاتورة غير مستخدم بعد الاستعادة");
+        fromSeq = await allocateSequenceNumber();
       }
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
@@ -2030,7 +2087,20 @@ router.post("/sales-invoices", async (req, res) => {
     }
     timing?.mark("sequence");
 
-    const [inv] = await db.insert(salesInvoicesTable).values({
+    const requestedAccountIds = [
+      cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
+    ].map(Number).filter((id) => Number.isInteger(id) && id > 0);
+    const validAccountIds = requestedAccountIds.length
+      ? new Set((await db.select({ id: accountsTable.id }).from(accountsTable).where(and(
+          eq(accountsTable.companyId, cid),
+          inArray(accountsTable.id, [...new Set(requestedAccountIds)]),
+        ))).map((row) => row.id))
+      : new Set<number>();
+    const validAccount = (value: unknown): number | null => {
+      const id = Number(value);
+      return Number.isInteger(id) && validAccountIds.has(id) ? id : null;
+    };
+    const invoiceValues: any = {
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: resolvedDocNumber, invoiceDate,
       customerId: customerId ? Number(customerId) : null,
@@ -2056,18 +2126,40 @@ router.post("/sales-invoices", async (req, res) => {
       // the user is operating without a manual session.
       sessionId: (req as any).manualSessionId ?? null,
       createdById:  req.authUser?.id ?? null,
-      cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
-      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
-      salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
-      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
-      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      cogsAccountId:      validAccount(cogsAccountId),
+      inventoryAccountId: validAccount(inventoryAccountId),
+      salesAccountId:     validAccount(salesAccountId),
+      taxAccountId:       validAccount(taxAccountId),
+      discountAccountId:  validAccount(discountAccountId),
       salesRepId:         repInfo.salesRepId,
       commissionPct:      repInfo.commissionPct,
       commissionAmount:   repInfo.commissionAmount,
       documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
       taxId:              taxId ? Number(taxId) : null,
-    }).returning();
+    };
+    let inv: typeof salesInvoicesTable.$inferSelect;
+    try {
+      [inv] = await db.insert(salesInvoicesTable).values(invoiceValues).returning();
+    } catch (insertError: any) {
+      const code = String(postgresErrorField(insertError, "code") ?? "");
+      const constraint = String(
+        postgresErrorField(insertError, "constraint_name")
+          ?? postgresErrorField(insertError, "constraint")
+          ?? "",
+      );
+      if (code !== "23505" || !constraint.includes("pkey")) throw insertError;
+      // Old SQL dumps can restore explicit IDs without advancing the serial
+      // sequence. Repair only this table's sequence, then retry once.
+      await db.execute(sql`
+        SELECT setval(
+          pg_get_serial_sequence('sales_invoices', 'id'),
+          GREATEST(COALESCE((SELECT MAX(id) FROM sales_invoices), 0) + 1, 1),
+          false
+        )
+      `);
+      [inv] = await db.insert(salesInvoicesTable).values(invoiceValues).returning();
+    }
     if (lines?.length) {
       await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, inv.id, cid, resolvedRate)));
     }
@@ -2143,7 +2235,9 @@ router.post("/sales-invoices", async (req, res) => {
     timing?.completeBusinessOutcome(201);
     res.status(201).json(inv);
   } catch (e: any) {
-    res.status(e?.status ?? 500).json({ error: e.message });
+    logger.error({ err: e }, "sales invoice create failed");
+    const friendly = salesInvoiceWriteError(e);
+    res.status(friendly.status).json({ error: friendly.message });
   } finally {
     timing?.completeBusinessOutcome(res.statusCode);
   }
