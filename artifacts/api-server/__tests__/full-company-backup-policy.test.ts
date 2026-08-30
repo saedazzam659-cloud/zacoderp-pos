@@ -5,6 +5,8 @@ import {
   topologicalTableOrder, isFullCompanyBackupPayload, isExternalFileReference,
   catalogsMatch, missingRequiredFullCompanyTables, REQUIRED_FULL_COMPANY_TABLES,
   restoreCatalogsCompatible, restoreParameterValue, restoredUsername, restoredUsernames,
+  archivedRestoreUsername,
+  canSynthesizeMissingRestoreReference,
 } from "../src/lib/fullCompanyBackup.js";
 import {
   buildRestoreReferencePlan,
@@ -80,6 +82,8 @@ test("restored users receive deterministic non-login identities", () => {
   assert.equal(restoredUsername("admin", 1, 23), "admin.restored.1.23");
   assert.ok(restoredUsername("x".repeat(200), 1, 23).length <= 120);
   assert.deepEqual(restoredUsernames("admin", 1, 23), ["admin", "admin.restored.1.23"]);
+  assert.equal(archivedRestoreUsername(7, 99), "archived-user.restored.7.99");
+  assert.equal(archivedRestoreUsername(7, 99), archivedRestoreUsername(7, 99));
 });
 
 test("only control/auth backup exclusions are excluded", () => {
@@ -220,6 +224,35 @@ test("logical restore registry marks missing source-owned references for live-co
   assert.equal(plan.references[0]?.table, "customers");
   assert.equal(plan.references[0]?.column, "account_id");
   assert.equal(plan.issues.length, 0);
+});
+
+test("missing required historical users are eligible for archived-user synthesis", () => {
+  const tables: any = {
+    users: {
+      name: "users", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "company_id", "username"], foreignKeys: [], classification: "protected-user",
+    },
+    work_sessions: {
+      name: "work_sessions", primaryKey: "id", primaryKeys: ["id"],
+      columns: ["id", "company_id", "user_id"], foreignKeys: [], classification: "tenant-root",
+    },
+  };
+  const payload: any = {
+    meta: { schemaVersion: 2, scope: "full_company", companyId: 7 },
+    manifest: { format: "full-company", tables, exclusions: [] },
+    counts: { users: 0, work_sessions: 1 },
+    companySettings: null,
+    data: {
+      users: [],
+      work_sessions: [{ id: 1, company_id: 7, user_id: 999 }],
+    },
+  };
+  const plan = buildRestoreReferencePlan(payload, tables);
+  assert.equal(plan.issues.length, 0);
+  assert.equal(plan.references.length, 1);
+  assert.equal(plan.references[0]?.sourceMissing, true);
+  assert.equal(plan.references[0]?.rule.referencedTable, "users");
+  assert.equal(canSynthesizeMissingRestoreReference(plan.references[0]!), true);
 });
 
 test("logical restore registry leaves physical foreign keys to the catalog engine", () => {

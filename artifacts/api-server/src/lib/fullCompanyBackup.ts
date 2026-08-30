@@ -162,6 +162,16 @@ export function restoredUsername(username: string, companyId: number, sourceId: 
 export function restoredUsernames(username: string, companyId: number, sourceId: unknown): [string, string] {
   return [username, restoredUsername(username, companyId, sourceId)];
 }
+export function archivedRestoreUsername(companyId: number, sourceId: unknown): string {
+  const id = String(sourceId).replace(/[^a-zA-Z0-9-]/g, "") || "unknown";
+  const suffix = `.restored.${companyId}.${id}`;
+  return `archived-user${suffix}`.slice(0, 120);
+}
+export function canSynthesizeMissingRestoreReference(
+  reference: PlannedRestoreReference,
+): boolean {
+  return reference.sourceMissing === true && reference.rule.referencedTable === "users";
+}
 export function isSensitiveColumn(column: string): boolean { return SENSITIVE.test(normalizedKey(column)); }
 export function restoreParameterValue(dataType: string | undefined, value: unknown): unknown {
   if ((dataType === "json" || dataType === "jsonb") && value !== null && value !== undefined) {
@@ -619,7 +629,11 @@ async function analyzeRestore(
           // backup was created. Older agents also reported this FK as NOT NULL
           // even when the current restore target allows NULL, so do not make
           // compatibility depend on the source manifest's nullability flag.
-          if (name === "audit_log" && foreignKey.column === "user_id" && count === 0) {
+          if (
+            count === 0
+            && (foreignKey.referencedTable === "users"
+              || (name === "audit_log" && foreignKey.column === "user_id"))
+          ) {
             continue;
           }
           if (
@@ -651,6 +665,7 @@ async function analyzeRestore(
   for (const reference of referencePlan.references) {
     if (
       reference.sourceMissing
+      && !canSynthesizeMissingRestoreReference(reference)
       && columnMeta.get(`${reference.table}.${reference.column}`)?.nullable !== true
     ) {
       issues.push({
@@ -805,6 +820,7 @@ export async function restoreFullCompanyBackup(
     }
     if (pending.length) throw new Error(`Cannot replace tenant data: ${pending.join(", ")}`);
     const maps = new Map<string, Map<unknown, unknown>>();
+    for (const name of Object.keys(tables)) maps.set(name, new Map());
     const restoreSourceIndexes = sourceReferenceIndexes(payload, tables);
     const deferred: Array<{ table: BackupTable; pk: unknown; fk: ForeignKey; source: unknown }> = [];
     const logicalDeferred: PlannedRestoreReference[] = [];
@@ -815,9 +831,75 @@ export async function restoreFullCompanyBackup(
       current.push(reference);
       logicalByRow.set(rowKey, current);
     }
+    // Historical business/audit rows can legitimately outlive the user who
+    // created them. Preserve those rows and their attribution by mapping every
+    // absent source user to a deterministic, disabled archive identity instead
+    // of rejecting the backup, nulling a required column, or assigning the
+    // action to an unrelated live user that happens to share the old numeric ID.
+    const usersTable = tables.users;
+    const liveUsersTable = actual.users;
+    if (usersTable?.primaryKey && liveUsersTable?.primaryKey) {
+      const sourceUserIds = new Set(
+        (payload.data.users ?? [])
+          .map((row) => row[usersTable.primaryKey!])
+          .filter((value) => value != null)
+          .map(restoreReferenceKey),
+      );
+      const missingUserIds = new Map<string, unknown>();
+      const rememberMissingUser = (value: unknown) => {
+        if (value == null || sourceUserIds.has(restoreReferenceKey(value))) return;
+        missingUserIds.set(restoreReferenceKey(value), value);
+      };
+      for (const reference of referencePlan.references) {
+        if (!canSynthesizeMissingRestoreReference(reference)) continue;
+        const values = reference.rule.shape === "array" ? reference.sourceValue : [reference.sourceValue];
+        if (Array.isArray(values)) for (const value of values) rememberMissingUser(value);
+      }
+      for (const [tableName, table] of Object.entries(tables)) {
+        for (const foreignKey of table.foreignKeys.filter((fk) => fk.referencedTable === "users")) {
+          for (const row of payload.data[tableName] ?? []) rememberMissingUser(row[foreignKey.column]);
+        }
+      }
+      for (const sourceUserId of missingUserIds.values()) {
+        const username = archivedRestoreUsername(companyId, sourceUserId);
+        let archived = rows(await tx.execute(sql`
+          SELECT "id" FROM "users"
+          WHERE "company_id" = ${companyId} AND "username" = ${username}
+          LIMIT 1
+        `))[0];
+        if (!archived) {
+          const archiveValues: Record<string, unknown> = {
+            username,
+            password_hash: "!backup-import-disabled!",
+            company_id: companyId,
+            role: "user",
+            email: null,
+            name_ar: "مستخدم أرشيفي محذوف",
+            name_en: "Archived deleted user",
+            is_active: false,
+            active: false,
+          };
+          const archiveColumns = Object.keys(archiveValues)
+            .filter((column) => liveUsersTable.columns.includes(column));
+          const inserted = rows(await tx.execute(sql`
+            INSERT INTO "users" (${sql.raw(archiveColumns.map(ident).join(","))})
+            VALUES (${sql.join(archiveColumns.map((column) => sql.param(archiveValues[column])), sql`,`)})
+            ON CONFLICT DO NOTHING
+            RETURNING "id"
+          `));
+          archived = inserted[0] ?? rows(await tx.execute(sql`
+            SELECT "id" FROM "users"
+            WHERE "company_id" = ${companyId} AND "username" = ${username}
+            LIMIT 1
+          `))[0];
+        }
+        if (!archived?.id) throw new Error(`Cannot create archived restore user for ${String(sourceUserId)}`);
+        rememberMappedValue(maps.get("users")!, sourceUserId, archived.id);
+      }
+    }
     for (const name of topologicalTableOrder(tables)) {
       const table = tables[name]; const records = Array.isArray(payload.data[name]) ? payload.data[name] : [];
-      report[name] = { received: records.length, inserted: 0, updated: 0 }; maps.set(name, new Map());
+      report[name] = { received: records.length, inserted: 0, updated: 0 };
       for (const sourceRecord of records) {
         let source = sourceRecord;
         const orphanedAuditUser = (
@@ -898,7 +980,13 @@ export async function restoreFullCompanyBackup(
           for (const reference of logicalByRow.get(rowKey) ?? []) {
             if (!(reference.column in values)) continue;
             if (reference.sourceMissing) {
-              if (columnMeta.get(`${name}.${reference.column}`)?.nullable === true) {
+              if (reference.rule.referencedTable === "users") {
+                const remapped = remapLogicalValue(reference.rule, reference.sourceValue, maps);
+                values[reference.column] = restoreParameterValue(
+                  columnMeta.get(`${name}.${reference.column}`)?.dataType,
+                  remapped.value,
+                );
+              } else if (columnMeta.get(`${name}.${reference.column}`)?.nullable === true) {
                 values[reference.column] = null;
               }
               continue;
