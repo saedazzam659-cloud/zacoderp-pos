@@ -21,6 +21,8 @@ import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { sumSettlementJEs, acquireSettlementLock, acquireSourceLock, sumVouchersForInvoice, sumConsumedFromSource, sumPartialLinksForInvoice, invoiceNetDueBase } from "../lib/invoiceSettlement.js";
 import { settlementLinksTable } from "@workspace/db";
+import { isPrimaryKeyCollision, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -792,10 +794,14 @@ router.post("/", async (req, res) => {
   // explicit code was supplied. If no sequence is configured for this tenant
   // the helper returns null and we fall back to the legacy RV-#### scheme so
   // existing companies keep working with no setup required.
-  let code: string;
-  if (d.code) {
-    code = String(d.code);
-  } else {
+  const codeExists = async (candidate: string) => {
+    const duplicate = await db.select({ id: receiptVouchersTable.id })
+      .from(receiptVouchersTable)
+      .where(and(eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.code, candidate)))
+      .limit(1);
+    return duplicate.length > 0;
+  };
+  const allocateReceiptCode = async (): Promise<string | null> => {
     // Mobile-app vouchers (x-app-channel: mobile) prefer the dedicated
     // "receipt_voucher_mobile" series when configured, else the normal split.
     let mobileSeq: string | null = null;
@@ -807,26 +813,45 @@ router.post("/", async (req, res) => {
         docDate:  d.date ?? null,
       });
     }
-    const seq = mobileSeq ?? await nextSequenceForPayment(cid, "receipt_voucher", d.paymentType || "cash", {
+    return mobileSeq ?? await nextSequenceForPayment(cid, "receipt_voucher", d.paymentType || "cash", {
       branchId: d.branchId ? parseInt(d.branchId) : null,
       userId:   (req as any).authUser?.id ?? null,
       refTable: "receipt_vouchers",
       docDate:  d.date ?? null,
     });
-    if (seq) {
-      code = seq;
-    } else {
+  };
+  let code = d.code ? String(d.code).trim() : "";
+  if (!code || await codeExists(code)) {
+    let seq = await allocateReceiptCode();
+    for (let skipped = 0; seq != null && await codeExists(seq); skipped += 1) {
+      if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم سند قبض غير مستخدم بعد الاستعادة");
+      seq = await allocateReceiptCode();
+    }
+    if (seq) code = seq;
+    else {
       const existing = await db.select({ id: receiptVouchersTable.id })
         .from(receiptVouchersTable).where(eq(receiptVouchersTable.companyId, cid));
-      code = `RV-${String(existing.length + 1).padStart(4, "0")}`;
+      let next = existing.length + 1;
+      do {
+        code = `RV-${String(next++).padStart(4, "0")}`;
+      } while (await codeExists(code) && next <= existing.length + 1001);
+      if (await codeExists(code)) throw new Error("تعذر الوصول إلى رقم سند قبض غير مستخدم بعد الاستعادة");
     }
+  }
+
+  let safeAccountId: number | null = null;
+  if (!lines && d.accountId) {
+    const requested = parseInt(d.accountId);
+    const [account] = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, requested), eq(accountsTable.companyId, cid)));
+    safeAccountId = account?.id ?? null;
   }
 
   // Settlement race guard: serialize per-invoice + RE-check the cap under a
   // transaction-scoped advisory lock. The pre-check above handles the common
   // case; this closes the concurrent-saves window (two requests both reading
   // the same "remaining" and jointly exceeding the invoice).
-  const [row] = await db.transaction(async (tx) => {
+  const insertReceipt = () => db.transaction(async (tx) => {
     if (salesInvoiceId) {
       await acquireSettlementLock(tx, cid, "sales", salesInvoiceId);
       await assertNoSalesOvercollection(
@@ -855,7 +880,7 @@ router.post("/", async (req, res) => {
     sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
     // Multi-line vouchers keep the header override null (lines carry the
     // allocation accounts); legacy single-account callers still honor it.
-    accountId:     lines ? null : (d.accountId ? parseInt(d.accountId) : null),
+    accountId:     safeAccountId,
     amount:        headerAmount,
     currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
     exchangeRate:  d.exchangeRate  || "1",
@@ -870,7 +895,27 @@ router.post("/", async (req, res) => {
     // resolved by extractAuth from the trusted x-session-id header.
     sessionId:     (req as any).manualSessionId ?? null,
     }).returning();
-  }).catch((e: any) => { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return [null as any]; });
+  });
+  let row: typeof receiptVouchersTable.$inferSelect | null = null;
+  try {
+    try {
+      [row] = await insertReceipt();
+    } catch (e: any) {
+      if (!isPrimaryKeyCollision(e)) throw e;
+      await db.execute(sql`
+          SELECT setval(
+            pg_get_serial_sequence('receipt_vouchers', 'id'),
+            GREATEST(COALESCE((SELECT MAX(id) FROM receipt_vouchers), 0) + 1, 1),
+            false
+          )
+        `);
+      [row] = await insertReceipt();
+    }
+  } catch (e: any) {
+    logger.error({ err: e }, "receipt voucher create failed");
+    res.status(e?.status ?? 400).json({ error: safeWriteErrorMessage(e, "تعذر حفظ سند القبض بسبب خطأ في قاعدة البيانات") });
+    return;
+  }
   if (!row) return;
   if (lines) await replaceReceiptLines(row.id, lines);
   res.status(201).json(row);

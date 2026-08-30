@@ -31,6 +31,8 @@ import {
   paymentVoucherLineAccounting,
 } from "../lib/paymentVoucherLineAccounting.js";
 import { settlementLinksTable } from "@workspace/db";
+import { isPrimaryKeyCollision, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -1097,28 +1099,49 @@ router.post("/", async (req, res) => {
   // Auto code — prefer the configured "payment_voucher" sequence when no
   // explicit code was supplied. Falls back to the legacy PV-#### scheme so
   // tenants without a configured sequence keep working untouched.
-  let code: string;
-  if (d.code) {
-    code = String(d.code);
-  } else {
-    const seq = await nextSequenceForPayment(cid, "payment_voucher", d.paymentType || "cash", {
+  const codeExists = async (candidate: string) => {
+    const duplicate = await db.select({ id: paymentVouchersTable.id })
+      .from(paymentVouchersTable)
+      .where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.code, candidate)))
+      .limit(1);
+    return duplicate.length > 0;
+  };
+  const allocatePaymentCode = () => nextSequenceForPayment(cid, "payment_voucher", d.paymentType || "cash", {
       branchId: d.branchId ? parseInt(d.branchId) : null,
       userId:   (req as any).authUser?.id ?? null,
       refTable: "payment_vouchers",
       docDate:  d.date ?? null,
     });
-    if (seq) {
-      code = seq;
-    } else {
+  let code = d.code ? String(d.code).trim() : "";
+  if (!code || await codeExists(code)) {
+    let seq = await allocatePaymentCode();
+    for (let skipped = 0; seq != null && await codeExists(seq); skipped += 1) {
+      if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم سند صرف غير مستخدم بعد الاستعادة");
+      seq = await allocatePaymentCode();
+    }
+    if (seq) code = seq;
+    else {
       const existing = await db.select({ id: paymentVouchersTable.id })
         .from(paymentVouchersTable).where(eq(paymentVouchersTable.companyId, cid));
-      code = `PV-${String(existing.length + 1).padStart(4, "0")}`;
+      let next = existing.length + 1;
+      do {
+        code = `PV-${String(next++).padStart(4, "0")}`;
+      } while (await codeExists(code) && next <= existing.length + 1001);
+      if (await codeExists(code)) throw new Error("تعذر الوصول إلى رقم سند صرف غير مستخدم بعد الاستعادة");
     }
+  }
+
+  let safeAccountId: number | null = null;
+  if (!lines && d.accountId) {
+    const requested = parseInt(d.accountId);
+    const [account] = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, requested), eq(accountsTable.companyId, cid)));
+    safeAccountId = account?.id ?? null;
   }
 
   // Settlement race guard: serialize per-invoice + RE-check the cap under a
   // transaction-scoped advisory lock (closes the concurrent-saves window).
-  const [row] = await db.transaction(async (tx) => {
+  const insertPayment = () => db.transaction(async (tx) => {
     if (purchaseInvoiceId) {
       // Lock EVERY distinct linked invoice (sorted → deadlock-free), not just
       // the first: multi-line vouchers can settle several invoices at once.
@@ -1148,7 +1171,7 @@ router.post("/", async (req, res) => {
     entityName:    d.entityName    ?? null,
     // Multi-line vouchers keep the header override null (lines carry the
     // allocation accounts); legacy single-account callers still honor it.
-    accountId:     lines ? null : (d.accountId ? parseInt(d.accountId) : null),
+    accountId:     safeAccountId,
     amount:        headerAmount,
     currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
     exchangeRate:  d.exchangeRate  || "1",
@@ -1163,7 +1186,27 @@ router.post("/", async (req, res) => {
     // resolved by extractAuth from the trusted x-session-id header.
     sessionId:     (req as any).manualSessionId ?? null,
     }).returning();
-  }).catch((e: any) => { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return [null as any]; });
+  });
+  let row: typeof paymentVouchersTable.$inferSelect | null = null;
+  try {
+    try {
+      [row] = await insertPayment();
+    } catch (e: any) {
+      if (!isPrimaryKeyCollision(e)) throw e;
+      await db.execute(sql`
+          SELECT setval(
+            pg_get_serial_sequence('payment_vouchers', 'id'),
+            GREATEST(COALESCE((SELECT MAX(id) FROM payment_vouchers), 0) + 1, 1),
+            false
+          )
+        `);
+      [row] = await insertPayment();
+    }
+  } catch (e: any) {
+    logger.error({ err: e }, "payment voucher create failed");
+    res.status(e?.status ?? 400).json({ error: safeWriteErrorMessage(e, "تعذر حفظ سند الصرف بسبب خطأ في قاعدة البيانات") });
+    return;
+  }
   if (!row) return;
   if (lines) await replacePaymentLines(row.id, lines);
   res.status(201).json(row);
