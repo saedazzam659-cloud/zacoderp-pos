@@ -9,6 +9,7 @@ import {
   type RestoreReferencePlan,
   type RestoreReferenceRule,
 } from "./companyRestoreReferences.js";
+import { reconcilePostgresSequences } from "./postgresSequenceReconciliation.js";
 
 /**
  * Tables deliberately outside a tenant backup.  They are central control-plane
@@ -1163,6 +1164,7 @@ export async function restoreFullCompanyBackup(
           restoreParameterValue(columnMeta.get(`companies.${column}`)?.dataType, safe[column]),
         )}`), sql`, `)} WHERE "id" = ${companyId}`);
     }
+    await reconcilePostgresSequences(tx, { tables: Object.keys(tables) });
     for (const [referencedTable, targetMap] of ownershipAuditIds) {
       if (!targetMap.size) continue;
       const table = actual[referencedTable];

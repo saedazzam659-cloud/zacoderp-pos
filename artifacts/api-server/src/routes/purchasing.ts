@@ -20,8 +20,11 @@ import {
   fixedAssetsTable,
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
   costCentersTable,
+  accountsTable,
+  unitsTable,
+  taxesTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, sql, inArray, notInArray } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, notInArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
@@ -36,6 +39,194 @@ import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { normalizePeriodicity, parseCcSplit, installmentsBetween, runDueAdjustmentsForCompany } from "../lib/adjustmentPosting.js";
+import { logger } from "../lib/logger.js";
+import { isPrimaryKeyCollision, postgresErrorField, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
+
+function purchasingWriteError(error: any, documentName: string): { status: number; message: string } {
+  const code = String(postgresErrorField(error, "code") ?? "");
+  const constraint = String(
+    postgresErrorField(error, "constraint_name")
+      ?? postgresErrorField(error, "constraint")
+      ?? "",
+  );
+  if (code === "23503") {
+    return {
+      status: 409,
+      message: `تعذر حفظ ${documentName} لأن أحد الارتباطات القديمة غير موجود بعد الاستعادة${constraint ? ` (${constraint})` : ""}. حدّث الصفحة وأعد اختيار البيانات ثم حاول مجدداً.`,
+    };
+  }
+  if (code === "23505") {
+    return {
+      status: 409,
+      message: constraint.includes("pkey")
+        ? `تعذر حفظ ${documentName} بسبب تعارض رقم داخلي بعد الاستعادة. تمت محاولة إصلاح العداد؛ أعد المحاولة.`
+        : `رقم ${documentName} مستخدم مسبقاً بعد الاستعادة. راجع إعدادات التسلسل.`,
+    };
+  }
+  if (code) {
+    return {
+      status: Number(error?.status) || 500,
+      message: `تعذر حفظ ${documentName} بسبب خطأ في قاعدة البيانات`,
+    };
+  }
+  return {
+    status: Number(error?.status) || 500,
+    message: safeWriteErrorMessage(error, `تعذر حفظ ${documentName} بسبب خطأ في قاعدة البيانات`),
+  };
+}
+
+async function insertPurchaseInvoiceWithSerialRepair(values: any, executor: any = db) {
+  try {
+    // Use a savepoint when called by a document transaction. PostgreSQL marks
+    // a transaction aborted after a duplicate-key error; catching it outside a
+    // savepoint would make the subsequent repair unusable.
+    return await executor.transaction(async (insertTx: any) => {
+      const [invoice] = await insertTx.insert(purchaseInvoicesTable).values(values).returning();
+      return invoice;
+    });
+  } catch (error: any) {
+    if (!isPrimaryKeyCollision(error)) throw error;
+    // A restored serial can be behind the rows restored with explicit IDs.
+    // Serialize repairers so a second concurrent writer cannot calculate the
+    // same MAX(id), reset the serial, and collide again after the first retry.
+    return executor.transaction(async (tx: any) => {
+      await tx.execute(sql`LOCK TABLE purchase_invoices IN EXCLUSIVE MODE`);
+      await tx.execute(sql.raw(`
+        DO $repair$
+        DECLARE
+          seq_name regclass := pg_get_serial_sequence('purchase_invoices', 'id');
+          next_id bigint;
+        BEGIN
+          EXECUTE format('ALTER SEQUENCE %s OWNED BY purchase_invoices.id', seq_name);
+          SELECT GREATEST(COALESCE(MAX(id), 0) + 1, 1) INTO next_id FROM purchase_invoices;
+          EXECUTE format('ALTER SEQUENCE %s RESTART WITH %s', seq_name, next_id);
+        END
+        $repair$
+      `));
+      const [invoice] = await tx.insert(purchaseInvoicesTable).values(values).returning();
+      return invoice;
+    });
+  }
+}
+
+async function insertPurchaseReturnWithSerialRepair(values: any, executor: any = db) {
+  try {
+    return await executor.transaction(async (insertTx: any) => {
+      const [purchaseReturn] = await insertTx.insert(purchaseReturnsTable).values(values).returning();
+      return purchaseReturn;
+    });
+  } catch (error: any) {
+    if (!isPrimaryKeyCollision(error)) throw error;
+    return executor.transaction(async (tx: any) => {
+      await tx.execute(sql`LOCK TABLE purchase_returns IN EXCLUSIVE MODE`);
+      await tx.execute(sql.raw(`
+        DO $repair$
+        DECLARE
+          seq_name regclass := pg_get_serial_sequence('purchase_returns', 'id');
+          next_id bigint;
+        BEGIN
+          EXECUTE format('ALTER SEQUENCE %s OWNED BY purchase_returns.id', seq_name);
+          SELECT GREATEST(COALESCE(MAX(id), 0) + 1, 1) INTO next_id FROM purchase_returns;
+          EXECUTE format('ALTER SEQUENCE %s RESTART WITH %s', seq_name, next_id);
+        END
+        $repair$
+      `));
+      const [purchaseReturn] = await tx.insert(purchaseReturnsTable).values(values).returning();
+      return purchaseReturn;
+    });
+  }
+}
+
+type PurchaseWriteReferences = {
+  supplierId?: unknown;
+  branchId?: unknown;
+  cashBoxId?: unknown;
+  bankAccountId?: unknown;
+  lcId?: unknown;
+  taxId?: unknown;
+  invoiceId?: unknown;
+  headerCostCenter?: unknown;
+  lines?: any[];
+};
+
+/**
+ * Validate every business reference persisted by purchase create/conversion.
+ * Header GL overrides are intentionally excluded: restored foreign-company
+ * overrides are normalized to null by the caller so normal posting mappings
+ * can heal them, matching the sales-create policy.
+ */
+async function assertPurchaseWriteReferences(
+  cid: number,
+  refs: PurchaseWriteReferences,
+  executor: any = db,
+): Promise<void> {
+  const lines = Array.isArray(refs.lines) ? refs.lines : [];
+  const integerIds = (label: string, values: unknown[]): number[] => {
+    const ids: number[] = [];
+    for (const value of values) {
+      if (value === null || value === undefined || value === "") continue;
+      const id = Number(value);
+      if (!Number.isInteger(id) || id <= 0) {
+        throw Object.assign(new Error(`مرجع ${label} غير صالح`), { status: 400 });
+      }
+      ids.push(id);
+    }
+    return [...new Set(ids)];
+  };
+  const specifications = [
+    { label: "المورد", table: suppliersTable, id: suppliersTable.id, companyId: suppliersTable.companyId, values: [refs.supplierId] },
+    { label: "الفرع", table: branchesTable, id: branchesTable.id, companyId: branchesTable.companyId, values: [refs.branchId] },
+    { label: "الخزنة", table: cashBoxesTable, id: cashBoxesTable.id, companyId: cashBoxesTable.companyId, values: [refs.cashBoxId] },
+    { label: "الحساب البنكي", table: bankAccountsTable, id: bankAccountsTable.id, companyId: bankAccountsTable.companyId, values: [refs.bankAccountId] },
+    { label: "الاعتماد المستندي", table: lettersOfCreditTable, id: lettersOfCreditTable.id, companyId: lettersOfCreditTable.companyId, values: [refs.lcId] },
+    { label: "الضريبة", table: taxesTable, id: taxesTable.id, companyId: taxesTable.companyId, values: [refs.taxId] },
+    { label: "فاتورة الشراء المرتبطة", table: purchaseInvoicesTable, id: purchaseInvoicesTable.id, companyId: purchaseInvoicesTable.companyId, values: [refs.invoiceId] },
+    { label: "الصنف", table: itemsTable, id: itemsTable.id, companyId: itemsTable.companyId, values: lines.map(line => line?.itemId) },
+    { label: "الوحدة", table: unitsTable, id: unitsTable.id, companyId: unitsTable.companyId, values: lines.map(line => line?.unitId) },
+    { label: "المستودع", table: warehousesTable, id: warehousesTable.id, companyId: warehousesTable.companyId, values: lines.map(line => line?.warehouseId) },
+    { label: "الحساب المحاسبي في السطر", table: accountsTable, id: accountsTable.id, companyId: accountsTable.companyId, values: lines.map(line => line?.accountId) },
+  ];
+  for (const specification of specifications) {
+    const ids = integerIds(specification.label, specification.values);
+    if (!ids.length) continue;
+    const owned = await executor.select({ id: specification.id })
+      .from(specification.table)
+      .where(and(
+        eq(specification.companyId, cid),
+        inArray(specification.id, ids),
+      ));
+    const ownedIds = new Set(owned.map((row: { id: number }) => Number(row.id)));
+    const invalid = ids.filter(id => !ownedIds.has(id));
+    if (invalid.length) {
+      throw Object.assign(
+        new Error(`مرجع ${specification.label} لا يخص الشركة الحالية أو غير موجود (${invalid.join(", ")})`),
+        { status: 400 },
+      );
+    }
+  }
+
+  const costCenterCodes = [
+    refs.headerCostCenter,
+    ...lines.map(line => line?.costCenter),
+  ].map(value => String(value ?? "").trim()).filter(Boolean);
+  const uniqueCodes = [...new Set(costCenterCodes)];
+  if (uniqueCodes.length) {
+    const owned = await executor.select({ code: costCentersTable.code })
+      .from(costCentersTable)
+      .where(and(
+        eq(costCentersTable.companyId, cid),
+        inArray(costCentersTable.code, uniqueCodes),
+      ));
+    const ownedCodes = new Set(owned.map((row: { code: string }) => row.code));
+    const invalid = uniqueCodes.filter(code => !ownedCodes.has(code));
+    if (invalid.length) {
+      throw Object.assign(
+        new Error(`مركز التكلفة لا يخص الشركة الحالية أو غير موجود (${invalid.join(", ")})`),
+        { status: 400 },
+      );
+    }
+  }
+}
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
@@ -382,10 +573,10 @@ router.delete("/supplier-groups/:id", async (req, res) => {
 // currency for comparison and posting. The historical rate is the one
 // stored on the LC/expense at create time — it does NOT re-translate
 // when the spot rate changes later.
-async function getBaseCurrencyCode(cid: number): Promise<string> {
-  const rows = await db.select().from(currenciesTable)
+async function getBaseCurrencyCode(cid: number, executor: any = db): Promise<string> {
+  const rows = await executor.select().from(currenciesTable)
     .where(eq(currenciesTable.companyId, cid));
-  return rows.find(c => c.isDefault)?.code ?? rows[0]?.code ?? "SAR";
+  return rows.find((c: any) => c.isDefault)?.code ?? rows[0]?.code ?? "SAR";
 }
 function enrichLcRow(lc: any, expenses: any[], baseCurrency: string) {
   const lcRate    = Number(lc.exchangeRate ?? "1") || 1;
@@ -1191,6 +1382,11 @@ router.post("/purchase-invoices", async (req, res) => {
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
+    await assertPurchaseWriteReferences(cid, {
+      supplierId, branchId, cashBoxId, bankAccountId, lcId, taxId,
+      headerCostCenter: costCenter,
+      lines,
+    });
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
       const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
@@ -1216,19 +1412,47 @@ router.post("/purchase-invoices", async (req, res) => {
     // configured do we honour a manually-typed docNumber.
     let resolvedDocNumber: string | null = null;
     try {
-      const fromSeq = await nextSequenceForPayment(cid, "purchase_invoice", pType, {
+      const allocateInvoiceNumber = () => nextSequenceForPayment(cid, "purchase_invoice", pType, {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "purchase_invoices",
         branchId: branchId ? Number(branchId) : null,
         docDate:  invoiceDate,
       });
+      let fromSeq = await allocateInvoiceNumber();
+      for (let skipped = 0; fromSeq != null; skipped += 1) {
+        const duplicate = await db.select({ id: purchaseInvoicesTable.id })
+          .from(purchaseInvoicesTable)
+          .where(and(
+            eq(purchaseInvoicesTable.companyId, cid),
+            eq(purchaseInvoicesTable.docNumber, fromSeq),
+          ))
+          .limit(1);
+        if (!duplicate.length) break;
+        if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم فاتورة شراء غير مستخدم بعد الاستعادة");
+        fromSeq = await allocateInvoiceNumber();
+      }
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
-      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
-      return;
+      throw Object.assign(
+        new Error(seqErr?.message ?? "تعذر توليد رقم الفاتورة"),
+        { status: 400 },
+      );
     }
 
-    const [inv] = await db.insert(purchaseInvoicesTable).values({
+    const requestedAccountIds = [
+      inventoryAccountId, taxAccountId, discountAccountId,
+    ].map(Number).filter((accountId) => Number.isInteger(accountId) && accountId > 0);
+    const validAccountIds = requestedAccountIds.length
+      ? new Set((await db.select({ id: accountsTable.id }).from(accountsTable).where(and(
+          eq(accountsTable.companyId, cid),
+          inArray(accountsTable.id, [...new Set(requestedAccountIds)]),
+        ))).map((row) => row.id))
+      : new Set<number>();
+    const validAccount = (value: unknown): number | null => {
+      const accountId = Number(value);
+      return Number.isInteger(accountId) && validAccountIds.has(accountId) ? accountId : null;
+    };
+    const inv = await insertPurchaseInvoiceWithSerialRepair({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null,
       supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
@@ -1245,14 +1469,14 @@ router.post("/purchase-invoices", async (req, res) => {
       totalExpensesLoaded: String(totalExpensesLoaded || "0"),
       totalAmount: String(totalAmount || "0"),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
-      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
-      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
-      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      inventoryAccountId: validAccount(inventoryAccountId),
+      taxAccountId:       validAccount(taxAccountId),
+      discountAccountId:  validAccount(discountAccountId),
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
       taxId:              taxId ? Number(taxId) : null,
       status: "draft", notes: notes || null,
       createdById: (req as any).authUser?.id ?? null,
-    }).returning();
+    });
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(purchaseInvoiceLinesTable).values(
@@ -1283,7 +1507,11 @@ router.post("/purchase-invoices", async (req, res) => {
       );
     }
     res.status(201).json(inv);
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    logger.error({ err: e }, "purchase invoice create failed");
+    const friendly = purchasingWriteError(e, "فاتورة الشراء");
+    res.status(friendly.status).json({ error: friendly.message });
+  }
 });
 
 router.put("/purchase-invoices/:id", async (req, res) => {
@@ -2623,21 +2851,37 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const [ord] = await db.select().from(purchaseOrdersTable)
-      .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)));
-    if (!ord) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
-    if (ord.status !== "confirmed") {
-      res.status(409).json({ error: "يجب تأكيد الأمر قبل تحويله إلى فاتورة" }); return;
-    }
-    if (ord.convertedInvoiceId) {
-      res.status(409).json({ error: "تم تحويل الأمر إلى فاتورة بالفعل" }); return;
-    }
-    const lines = await db.select().from(purchaseOrderLinesTable)
+    const conversion = await db.transaction(async (tx) => {
+      // Lock before reading status/link so concurrent conversion requests
+      // serialize on this source order. The invoice and its lines are then
+      // committed with the state transition, or all rolled back together.
+      await tx.execute(sql`
+        SELECT id
+        FROM purchase_orders
+        WHERE id = ${id} AND company_id = ${cid}
+        FOR UPDATE
+      `);
+      const [ord] = await tx.select().from(purchaseOrdersTable)
+        .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)));
+      if (!ord) throw Object.assign(new Error("أمر الشراء غير موجود"), { status: 404 });
+      if (ord.status !== "confirmed") {
+        throw Object.assign(new Error("يجب تأكيد الأمر قبل تحويله إلى فاتورة"), { status: 409 });
+      }
+      if (ord.convertedInvoiceId) {
+        throw Object.assign(new Error("تم تحويل الأمر إلى فاتورة بالفعل"), { status: 409 });
+      }
+      const lines = await tx.select().from(purchaseOrderLinesTable)
       .where(and(
         eq(purchaseOrderLinesTable.orderId, id),
         eq(purchaseOrderLinesTable.companyId, cid),
       ))
       .orderBy(asc(purchaseOrderLinesTable.id));
+      await assertPurchaseWriteReferences(cid, {
+        supplierId: ord.supplierId,
+        branchId: ord.branchId,
+        taxId: (ord as any).taxId,
+        lines,
+      }, tx);
 
     // Issue a NEW invoice docNumber from the purchase_invoice sequence
     // (independent counter — orders and invoices have separate sequences).
@@ -2649,13 +2893,31 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
 
     let invDocNumber: string | null = null;
     try {
-      invDocNumber = await nextSequenceForPayment(cid, "purchase_invoice", pType, {
+      const allocateInvoiceNumber = () => nextSequenceForPayment(cid, "purchase_invoice", pType, {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "purchase_invoices",
         branchId: ord.branchId ?? null,
         docDate:  ord.orderDate ?? null,
       });
-    } catch { invDocNumber = null; }
+      invDocNumber = await allocateInvoiceNumber();
+      for (let skipped = 0; invDocNumber != null; skipped += 1) {
+        const duplicate = await tx.select({ id: purchaseInvoicesTable.id })
+          .from(purchaseInvoicesTable)
+          .where(and(
+            eq(purchaseInvoicesTable.companyId, cid),
+            eq(purchaseInvoicesTable.docNumber, invDocNumber),
+          ))
+          .limit(1);
+        if (!duplicate.length) break;
+        if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم فاتورة شراء غير مستخدم بعد الاستعادة");
+        invDocNumber = await allocateInvoiceNumber();
+      }
+    } catch (seqErr: any) {
+      throw Object.assign(
+        new Error(seqErr?.message ?? "تعذر توليد رقم الفاتورة"),
+        { status: 400 },
+      );
+    }
 
     // Currency conversion: when the PO is in a foreign currency, materialise
     // the resulting purchase invoice in the company's BASE currency by
@@ -2663,7 +2925,7 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
     // resulting invoice carries currencyCode=base / exchangeRate=1 so all
     // downstream reports, JEs, and totals show base-currency values
     // (e.g. PO 100 USD × 3.75 ⇒ invoice subtotal 375 SAR).
-    const baseCurrency = await getBaseCurrencyCode(cid);
+    const baseCurrency = await getBaseCurrencyCode(cid, tx);
     const fxRate = Number(ord.exchangeRate ?? "1") || 1;
     const isForeign = !!ord.currencyCode && ord.currencyCode !== baseCurrency && fxRate !== 1;
     const conv = (v: any): string => {
@@ -2674,7 +2936,7 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
       return (n * fxRate).toFixed(4);
     };
 
-    const [inv] = await db.insert(purchaseInvoicesTable).values({
+    const inv = await insertPurchaseInvoiceWithSerialRepair({
       companyId: cid,
       branchId: ord.branchId ?? null,
       docNumber: invDocNumber,
@@ -2702,9 +2964,9 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
         : ord.notes,
       createdById: req.authUser?.id ?? null,
       taxId: (ord as any).taxId ?? null,
-    }).returning();
+    }, tx);
     if (lines.length) {
-      await db.insert(purchaseInvoiceLinesTable).values(
+      await tx.insert(purchaseInvoiceLinesTable).values(
         lines.map(l => ({
           invoiceId: inv.id, companyId: cid,
           itemId: l.itemId, itemName: l.itemName, itemCode: l.itemCode,
@@ -2724,12 +2986,27 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
       );
     }
 
-    await db.update(purchaseOrdersTable)
+    const updatedOrder = await tx.update(purchaseOrdersTable)
       .set({ status: "converted", convertedInvoiceId: inv.id, updatedAt: new Date() })
-      .where(eq(purchaseOrdersTable.id, id));
+      .where(and(
+        eq(purchaseOrdersTable.id, id),
+        eq(purchaseOrdersTable.companyId, cid),
+        eq(purchaseOrdersTable.status, "confirmed"),
+        isNull(purchaseOrdersTable.convertedInvoiceId),
+      ))
+      .returning({ id: purchaseOrdersTable.id });
+    if (!updatedOrder.length) {
+      throw Object.assign(new Error("تم تحويل الأمر إلى فاتورة بالفعل"), { status: 409 });
+    }
+    return { invoice: inv };
+    });
 
-    res.status(201).json({ orderId: id, invoiceId: inv.id, invoice: inv });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+    res.status(201).json({ orderId: id, invoiceId: conversion.invoice.id, invoice: conversion.invoice });
+  } catch (e: any) {
+    logger.error({ err: e }, "purchase order conversion failed");
+    const friendly = purchasingWriteError(e, "فاتورة الشراء المحوّلة");
+    res.status(friendly.status).json({ error: friendly.message });
+  }
 });
 
 router.delete("/purchase-orders/:id", async (req, res) => {
@@ -2821,6 +3098,10 @@ router.post("/purchase-returns", async (req, res) => {
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, taxId, postVariance } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    await assertPurchaseWriteReferences(cid, {
+      supplierId, branchId, cashBoxId, bankAccountId, taxId, invoiceId,
+      lines,
+    });
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
       const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
@@ -2842,18 +3123,44 @@ router.post("/purchase-returns", async (req, res) => {
     // can never persist the same number.
     let resolvedDocNumber: string | null;
     try {
-      const fromSeq = await nextSequenceForPayment(cid, "purchase_return", pType, {
+      const allocateReturnNumber = () => nextSequenceForPayment(cid, "purchase_return", pType, {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "purchase_returns",
         branchId: branchId ? Number(branchId) : null,
         docDate:  returnDate,
       });
+      let fromSeq = await allocateReturnNumber();
+      for (let skipped = 0; fromSeq != null; skipped += 1) {
+        const duplicate = await db.select({ id: purchaseReturnsTable.id })
+          .from(purchaseReturnsTable)
+          .where(and(
+            eq(purchaseReturnsTable.companyId, cid),
+            eq(purchaseReturnsTable.docNumber, fromSeq),
+          ))
+          .limit(1);
+        if (!duplicate.length) break;
+        if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم مرتجع شراء غير مستخدم بعد الاستعادة");
+        fromSeq = await allocateReturnNumber();
+      }
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
       res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم المرتجع" });
       return;
     }
-    const [ret] = await db.insert(purchaseReturnsTable).values({
+    const requestedReturnAccountIds = [
+      inventoryAccountId, taxAccountId, discountAccountId,
+    ].map(Number).filter((accountId) => Number.isInteger(accountId) && accountId > 0);
+    const validReturnAccountIds = requestedReturnAccountIds.length
+      ? new Set((await db.select({ id: accountsTable.id }).from(accountsTable).where(and(
+          eq(accountsTable.companyId, cid),
+          inArray(accountsTable.id, [...new Set(requestedReturnAccountIds)]),
+        ))).map((row) => row.id))
+      : new Set<number>();
+    const validReturnAccount = (value: unknown): number | null => {
+      const accountId = Number(value);
+      return Number.isInteger(accountId) && validReturnAccountIds.has(accountId) ? accountId : null;
+    };
+    const ret = await insertPurchaseReturnWithSerialRepair({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
       supplierId: supplierId ? Number(supplierId) : null,
@@ -2867,13 +3174,13 @@ router.post("/purchase-returns", async (req, res) => {
       vatAmount: String(vatAmount || "0"),
       discountAmount: String(discountAmount || "0"),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
-      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
-      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
-      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      inventoryAccountId: validReturnAccount(inventoryAccountId),
+      taxAccountId:       validReturnAccount(taxAccountId),
+      discountAccountId:  validReturnAccount(discountAccountId),
       taxId:              taxId ? Number(taxId) : null,
       postVariance: postVariance === true || postVariance === "true",
       status: "draft", notes: notes || null,
-    }).returning();
+    });
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(purchaseReturnLinesTable).values(
@@ -2897,7 +3204,11 @@ router.post("/purchase-returns", async (req, res) => {
       );
     }
     res.status(201).json(ret);
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    logger.error({ err: e }, "purchase return create failed");
+    const friendly = purchasingWriteError(e, "مرتجع الشراء");
+    res.status(friendly.status).json({ error: friendly.message });
+  }
 });
 
 router.put("/purchase-returns/:id", async (req, res) => {

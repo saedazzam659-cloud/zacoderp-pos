@@ -45,6 +45,8 @@ import {
   faDisposalsTable,
   journalEntriesTable,
   journalEntryLinesTable,
+  cashBoxesTable,
+  bankAccountsTable,
 } from "@workspace/db";
 
 import {
@@ -52,6 +54,7 @@ import {
   buildDepreciationRunJournal,
   buildDisposalJournal,
 } from "../src/lib/fa-journals.ts";
+import { assertCompanyAccount, resolveCashAccount, resolveCustodyAccount, resolveHrAccounts } from "../src/lib/hr-journals.ts";
 
 const TAG = `tt_fa_${randomBytes(4).toString("hex")}`;
 
@@ -309,5 +312,103 @@ test("disposal: status follows autoPostFaDisposal toggle (false → draft)", asy
     assert.equal(hdr.status, "draft");
   } finally {
     await db.update(companiesTable).set({ autoPostFaDisposal: true }).where(eq(companiesTable.id, cid));
+  }
+});
+
+test("FA journals reject a restored account mapping owned by another company", async () => {
+  const [otherCompany] = await db.insert(companiesTable).values({
+    nameAr: `شركة أجنبية ${TAG}`, nameEn: `Foreign ${TAG}`,
+    vatNumber: `310000000000${TAG.slice(-3)}`, crNumber: `FCR_${TAG}`,
+    city: "Riyadh", street: "Test St", buildingNumber: "2", postalCode: "12345",
+  }).returning();
+  insertedCompanyIds.push(otherCompany.id);
+  const [foreignAccount] = await db.insert(accountsTable).values({
+    companyId: otherCompany.id, code: `${TAG}_FOREIGN_FA`, nameAr: "حساب شركة أخرى",
+    accountType: "asset" as any, isPosting: true, level: 4,
+  }).returning();
+  insertedAccountIds.push(foreignAccount.id);
+  const [asset] = await db.insert(fixedAssetsTable).values({
+    companyId: cid, code: `${TAG}_FOREIGN_AST`, nameAr: "أصل بحساب مستعاد خاطئ",
+    purchaseValue: "100", scrapValue: "0", accumulatedDepreciation: "0",
+    bookValue: "100", lifeYears: 5, depreciationMethod: "straight_line" as any,
+    purchaseDate: "2024-06-01",
+  }).returning();
+  insertedAssetIds.push(asset.id);
+
+  await db.update(companiesTable)
+    .set({ faAssetCostAccountId: foreignAccount.id })
+    .where(eq(companiesTable.id, cid));
+  try {
+    await assert.rejects(
+      buildAcquisitionJournal(cid, asset.id),
+      /حساب تكلفة الأصل غير موجود أو لا يتبع الشركة الحالية/,
+    );
+  } finally {
+    await db.update(companiesTable)
+      .set({ faAssetCostAccountId: acctCost })
+      .where(eq(companiesTable.id, cid));
+  }
+});
+
+test("HR account resolution replaces a foreign restored mapping with this company's code", async () => {
+  const otherCompanyId = insertedCompanyIds.find(id => id !== cid);
+  assert.ok(otherCompanyId);
+  const [foreignAccount] = await db.select({ id: accountsTable.id }).from(accountsTable)
+    .where(eq(accountsTable.companyId, otherCompanyId!));
+  assert.ok(foreignAccount);
+  const [localFallback] = await db.insert(accountsTable).values({
+    companyId: cid, code: "5201", nameAr: "مصروف رواتب محلي",
+    accountType: "expense" as any, isPosting: true, level: 4,
+  }).returning();
+  insertedAccountIds.push(localFallback.id);
+
+  await db.update(companiesTable)
+    .set({ hrSalariesExpenseAccountId: foreignAccount.id })
+    .where(eq(companiesTable.id, cid));
+  try {
+    const resolved = await resolveHrAccounts(cid, true);
+    assert.equal(resolved.salariesExpense, localFallback.id);
+    const [company] = await db.select({
+      accountId: companiesTable.hrSalariesExpenseAccountId,
+    }).from(companiesTable).where(eq(companiesTable.id, cid));
+    assert.equal(company.accountId, localFallback.id);
+  } finally {
+    await db.update(companiesTable)
+      .set({ hrSalariesExpenseAccountId: null })
+      .where(eq(companiesTable.id, cid));
+  }
+});
+
+test("HR rejects foreign restored cash, bank, custody, and settlement-account links", async () => {
+  const [otherCompany] = await db.insert(companiesTable).values({
+    nameAr: `شركة HR أجنبية ${TAG}`, nameEn: `Foreign HR ${TAG}`,
+    vatNumber: `320000000000${TAG.slice(-3)}`, crNumber: `HRCR_${TAG}`,
+    city: "Riyadh", street: "Test St", buildingNumber: "3", postalCode: "12345",
+  }).returning();
+  const [foreignAccount] = await db.insert(accountsTable).values({
+    companyId: otherCompany.id, code: `${TAG}_FOREIGN_HR`, nameAr: "حساب HR أجنبي",
+    accountType: "expense" as any, isPosting: true, level: 4,
+  }).returning();
+  const [cashBox] = await db.insert(cashBoxesTable).values({
+    companyId: cid, code: `${TAG}_CASH`, nameAr: "صندوق برابط أجنبي", accountId: foreignAccount.id,
+  }).returning();
+  const [bank] = await db.insert(bankAccountsTable).values({
+    companyId: cid, code: `${TAG}_BANK`, nameAr: "بنك برابط أجنبي", accountId: foreignAccount.id,
+  }).returning();
+  await db.update(companiesTable).set({ hrEmployeeCustodyAccountId: acctCost }).where(eq(companiesTable.id, cid));
+  try {
+    await assert.rejects(resolveCashAccount(cid, { cashBoxId: cashBox.id }), /الصندوق المختار غير موجود أو لا يتبع الشركة الحالية/);
+    await assert.rejects(resolveCashAccount(cid, { bankAccountId: bank.id }), /البنك المختار غير موجود أو لا يتبع الشركة الحالية/);
+    assert.equal(await resolveCustodyAccount(cid, foreignAccount.id, db), acctCost, "foreign custody link must use the safe company fallback");
+    await assert.rejects(
+      assertCompanyAccount(cid, foreignAccount.id, "حساب مصروف التسوية", db),
+      /حساب مصروف التسوية غير موجود أو لا يتبع الشركة الحالية/,
+    );
+  } finally {
+    await db.update(companiesTable).set({ hrEmployeeCustodyAccountId: null }).where(eq(companiesTable.id, cid));
+    await db.delete(cashBoxesTable).where(eq(cashBoxesTable.id, cashBox.id));
+    await db.delete(bankAccountsTable).where(eq(bankAccountsTable.id, bank.id));
+    await db.delete(accountsTable).where(eq(accountsTable.id, foreignAccount.id));
+    await db.delete(companiesTable).where(eq(companiesTable.id, otherCompany.id));
   }
 });

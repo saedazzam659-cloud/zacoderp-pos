@@ -5,6 +5,7 @@ import { PgTable, PgEnumColumn } from "drizzle-orm/pg-core";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { PgEnum } from "drizzle-orm/pg-core";
 import { logger } from "./logger";
+import { reconcilePostgresSequences } from "./postgresSequenceReconciliation.js";
 
 let healPromise: Promise<void> | null = null;
 type SchemaReconciliationState =
@@ -3583,10 +3584,15 @@ export function ensureSchemaUpToDate(): Promise<void> {
  * point at the agent's PostgreSQL. Never touches the boot-time single-flight
  * promise (which is bound to the central DB).
  */
-export function runSchemaHealOnActiveDb(): Promise<void> {
-  return runHeal({
+export async function runSchemaHealOnActiveDb(): Promise<void> {
+  await runHeal({
     optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts", ...CENTRAL_ONLY_ZATCA_TRANSFER_TABLES],
     excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
+  });
+  // Sequence reconciliation takes table locks while comparing MAX(id) with an
+  // owned sequence. Keep all of those locks in one external-agent transaction.
+  await db.transaction(async (tx) => {
+    await reconcilePostgresSequences(tx);
   });
 }
 

@@ -14,3 +14,9 @@ The upgrade worker must reuse the same external-database routing and schema-heal
 **Why:** Bundling can succeed with unresolved free variables inside a deferred worker, so the defect appears only after a live upgrade starts.
 
 **How to apply:** Run the full heal, then the strict request-readiness heal; explicitly verify posting-critical columns plus installation ID and database fingerprint before resuming traffic. Add a focused guard against unknown worker helpers.
+
+Sequence reconciliation after restore or upgrade must coordinate with the sequence relation itself; a data-table lock plus `setval` is not sufficient because `nextval` does not use the table lock. Block table writers, take a transaction-held `ALTER SEQUENCE` lock, inspect the table/sequence state, and restart only when the stored maximum is ahead. Keep empty and already-ahead sequences unchanged.
+
+**Why:** A concurrent allocator can obtain a stale value between `MAX(id)` and `setval`, then collide after the table lock releases; `setval` can also move a live sequence backward.
+
+**How to apply:** Run reconciliation only inside the restore transaction or the traffic-fenced full external-agent upgrade transaction. Cover both SERIAL and IDENTITY sequences and prove with two connections that direct `nextval` blocks until repair commits.

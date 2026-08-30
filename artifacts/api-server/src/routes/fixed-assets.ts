@@ -11,7 +11,8 @@ import {
   faDepreciationRunsTable, faDisposalsTable,
   journalEntriesTable, journalEntryLinesTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
-  companiesTable, accountsTable,
+  companiesTable, accountsTable, costCentersTable, suppliersTable,
+  cashBoxesTable, bankAccountsTable,
 } from "@workspace/db";
 import { and, desc, eq, isNull, isNotNull, inArray, notInArray } from "drizzle-orm";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -76,6 +77,24 @@ async function assertOwn(res: any, table: any, id: number, cid: number, label: s
   if (!ok) { res.status(404).json({ error: `${label} غير موجود` }); return false; }
   return true;
 }
+async function validateOwnedReferences(
+  res: any,
+  cid: number,
+  refs: Array<{ value: any; table: any; label: string }>,
+): Promise<boolean> {
+  for (const ref of refs) {
+    // These are the same clear-values the existing persistence code converts
+    // to null; do not turn a legitimate unlink operation into a validation
+    // error.
+    if (ref.value === undefined || ref.value === null || ref.value === "" || ref.value === 0 || ref.value === false) continue;
+    const id = Number(ref.value);
+    if (!Number.isInteger(id) || id <= 0 || !await ownsRow(ref.table, id, cid)) {
+      res.status(400).json({ error: `${ref.label} غير موجود أو لا يتبع الشركة الحالية` });
+      return false;
+    }
+  }
+  return true;
+}
 async function nextCode(cid: number, table: any, prefix: string): Promise<string> {
   const rows = await db.select({ v: table.code }).from(table).where(eq(table.companyId, cid));
   let max = 0;
@@ -109,6 +128,11 @@ router.post("/categories", async (req, res) => {
     const b = req.body ?? {};
     const nameAr = String(b.nameAr ?? "").trim();
     if (!nameAr) { res.status(400).json({ error: "اسم الفئة مطلوب" }); return; }
+    if (!await validateOwnedReferences(res, cid, [
+      { value: b.costAccountId, table: accountsTable, label: "حساب تكلفة الأصل" },
+      { value: b.accumDepreciationAccountId, table: accountsTable, label: "حساب مجمع الإهلاك" },
+      { value: b.depreciationExpenseAccountId, table: accountsTable, label: "حساب مصروف الإهلاك" },
+    ])) return;
     const code = String(b.code ?? "").trim() || await nextCode(cid, faCategoriesTable, "FAC");
     const method = (DEP_METHODS as readonly string[]).includes(b.defaultDepreciationMethod) ? b.defaultDepreciationMethod : "straight_line";
     const scrapType = b.defaultScrapType === "value" ? "value" : "percent";
@@ -134,6 +158,11 @@ router.put("/categories/:id", async (req, res) => {
     const id = Number(req.params.id);
     if (!await assertOwn(res, faCategoriesTable, id, cid, "الفئة")) return;
     const b = req.body ?? {};
+    if (!await validateOwnedReferences(res, cid, [
+      { value: b.costAccountId, table: accountsTable, label: "حساب تكلفة الأصل" },
+      { value: b.accumDepreciationAccountId, table: accountsTable, label: "حساب مجمع الإهلاك" },
+      { value: b.depreciationExpenseAccountId, table: accountsTable, label: "حساب مصروف الإهلاك" },
+    ])) return;
     const patch: any = {};
     for (const k of ["code","nameAr","nameEn"]) if (b[k] !== undefined) patch[k] = b[k] || null;
     if (b.defaultLifeYears !== undefined) patch.defaultLifeYears = Number(b.defaultLifeYears || 5);
@@ -376,6 +405,13 @@ router.post("/assets", async (req, res) => {
     if (insuranceDateError) { res.status(400).json({ error: insuranceDateError }); return; }
     const nameAr = String(b.nameAr ?? "").trim();
     if (!nameAr) { res.status(400).json({ error: "اسم الأصل مطلوب" }); return; }
+    if (!await validateOwnedReferences(res, cid, [
+      { value: b.categoryId, table: faCategoriesTable, label: "فئة الأصل" },
+      { value: b.costCenterId, table: costCentersTable, label: "مركز التكلفة" },
+      { value: b.supplierId, table: suppliersTable, label: "المورد" },
+      { value: b.cashBoxId, table: cashBoxesTable, label: "الصندوق" },
+      { value: b.bankAccountId, table: bankAccountsTable, label: "الحساب البنكي" },
+    ])) return;
     const code = String(b.code ?? "").trim() || await nextSequenceOrFallback(
       cid,
       "fixed_asset",
@@ -541,6 +577,13 @@ router.put("/assets/:id", async (req, res) => {
     const id = Number(req.params.id);
     if (!await assertOwn(res, fixedAssetsTable, id, cid, "الأصل")) return;
     const b = req.body ?? {};
+    if (!await validateOwnedReferences(res, cid, [
+      { value: b.categoryId, table: faCategoriesTable, label: "فئة الأصل" },
+      { value: b.costCenterId, table: costCentersTable, label: "مركز التكلفة" },
+      { value: b.supplierId, table: suppliersTable, label: "المورد" },
+      { value: b.cashBoxId, table: cashBoxesTable, label: "الصندوق" },
+      { value: b.bankAccountId, table: bankAccountsTable, label: "الحساب البنكي" },
+    ])) return;
     const [currentInsurance] = await db.select({
       insuranceStart: fixedAssetsTable.insuranceStart,
       insuranceEnd: fixedAssetsTable.insuranceEnd,

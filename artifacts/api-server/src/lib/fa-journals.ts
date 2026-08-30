@@ -36,6 +36,7 @@ import {
   faDisposalsTable,
   journalEntriesTable,
   journalEntryLinesTable,
+  accountsTable,
   suppliersTable,
   branchesTable,
 } from "@workspace/db";
@@ -45,6 +46,21 @@ import { assertWritableForDate } from "./periodGuard.js";
 import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
 
 type DbOrTx = typeof db;
+
+async function assertCompanyAccounts(
+  cid: number,
+  accounts: Array<{ id: number | null | undefined; label: string }>,
+  dx: DbOrTx,
+): Promise<void> {
+  for (const account of accounts) {
+    if (!account.id) continue;
+    const [owned] = await dx.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, account.id), eq(accountsTable.companyId, cid)));
+    if (!owned) {
+      throw new Error(`${account.label} غير موجود أو لا يتبع الشركة الحالية`);
+    }
+  }
+}
 
 // Fixed-asset JEs (acquisition / depreciation / disposal) draw their human
 // number from the company-wide "journal_entry" sequence. That counter is keyed
@@ -175,6 +191,10 @@ export async function buildAcquisitionJournal(
     crAccountId = accounts.acquisitionClearing;
     crLabel     = "حساب وسيط اقتناء أصول ثابتة";
   }
+  await assertCompanyAccounts(cid, [
+    { id: accounts.assetCost, label: "حساب تكلفة الأصل" },
+    { id: crAccountId, label: "الحساب الدائن لقيد الاقتناء" },
+  ], dx);
 
   const acqDate = a.purchaseDate || new Date().toISOString().slice(0, 10);
   const acqW = await assertWritableForDate(cid, acqDate);
@@ -239,6 +259,10 @@ export async function buildDepreciationRunJournal(
   if (!accounts.depreciationExpense || !accounts.accumDepreciation) {
     throw new Error("حسابات مصروف الإهلاك أو مجمع الإهلاك غير مربوطة في الإعدادات");
   }
+  await assertCompanyAccounts(cid, [
+    { id: accounts.depreciationExpense, label: "حساب مصروف الإهلاك" },
+    { id: accounts.accumDepreciation, label: "حساب مجمع الإهلاك" },
+  ], dx);
 
   const period = `${String(run.periodMonth).padStart(2, "0")}/${run.periodYear}`;
   // Use last day of the period as the entry date so the JE falls inside the
@@ -343,6 +367,13 @@ export async function buildDisposalJournal(
       proceedsLine = { accountId: accounts.acquisitionClearing, label: "حساب وسيط اقتناء/استبعاد أصول" };
     }
   }
+  await assertCompanyAccounts(cid, [
+    { id: cost > 0 ? accounts.assetCost : null, label: "حساب تكلفة الأصل" },
+    { id: accum > 0 ? accounts.accumDepreciation : null, label: "حساب مجمع الإهلاك" },
+    { id: gain > 0 ? accounts.disposalGain : null, label: "حساب أرباح بيع الأصول" },
+    { id: gain < 0 ? accounts.disposalLoss : null, label: "حساب خسائر بيع الأصول" },
+    { id: proceedsLine?.accountId, label: "حساب متحصلات الاستبعاد" },
+  ], dx);
 
   const typeLabel = d.type === "sale" ? "بيع" : d.type === "scrap" ? "تخريد"
                    : d.type === "full_depreciation" ? "إهلاك كامل" : "شطب";

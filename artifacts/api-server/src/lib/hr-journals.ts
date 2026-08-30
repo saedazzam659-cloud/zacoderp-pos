@@ -14,7 +14,7 @@ import {
   employeeCustodiesTable,
   employeeCustodySettlementsTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { assertWritableForDate } from "./periodGuard.js";
 import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
@@ -38,6 +38,18 @@ const HR_ACCOUNT_CODES = {
 } as const;
 
 export type HrAccountKey = keyof typeof HR_ACCOUNT_CODES;
+const HR_ACCOUNT_COLUMNS: Record<HrAccountKey, string> = {
+  salariesExpense: "hrSalariesExpenseAccountId",
+  allowancesExpense: "hrAllowancesExpenseAccountId",
+  gosiExpense: "hrGosiExpenseAccountId",
+  eosExpense: "hrEosExpenseAccountId",
+  salariesPayable: "hrSalariesPayableAccountId",
+  gosiPayable: "hrGosiPayableAccountId",
+  otherDeductions: "hrOtherDeductionsAccountId",
+  employeeLoans: "hrEmployeeLoansAccountId",
+  employeeCustody: "hrEmployeeCustodyAccountId",
+  eosProvision: "hrEosProvisionAccountId",
+};
 
 export interface HrAccountMap {
   salariesExpense:   number | null;
@@ -59,6 +71,20 @@ async function findAccountByCode(cid: number, code: string, dx: DbOrTx = db): Pr
     .from(accountsTable)
     .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.code, code), eq(accountsTable.isPosting, true)));
   return a?.id ?? null;
+}
+
+/** Ensures a ledger account can never cross a company boundary in a JE. */
+export async function assertCompanyAccount(
+  cid: number,
+  accountId: number | null | undefined,
+  label: string,
+  dx: DbOrTx = db,
+): Promise<number> {
+  if (!accountId) throw new Error(`${label} غير مرتبط بحساب محاسبي`);
+  const [account] = await dx.select({ id: accountsTable.id }).from(accountsTable)
+    .where(and(eq(accountsTable.id, accountId), eq(accountsTable.companyId, cid)));
+  if (!account) throw new Error(`${label} غير موجود أو لا يتبع الشركة الحالية`);
+  return account.id;
 }
 
 /**
@@ -91,23 +117,27 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
     "salariesExpense","allowancesExpense","gosiExpense","eosExpense",
     "salariesPayable","gosiPayable","otherDeductions","employeeLoans","employeeCustody","eosProvision",
   ];
+  // Restores can leave company mapping columns pointing at account IDs from a
+  // different tenant. Treat those mappings as missing so code discovery below
+  // can only select an account scoped to this company.
+  const storedIds = [...new Set(keys.map(k => map[k]).filter((id): id is number => id != null))];
+  if (storedIds.length) {
+    const owned = await dx.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, storedIds)));
+    const ownedIds = new Set(owned.map(a => a.id));
+    for (const k of keys) {
+      if (map[k] != null && !ownedIds.has(map[k]!)) {
+        map[k] = null;
+        updates[HR_ACCOUNT_COLUMNS[k]] = null;
+      }
+    }
+  }
   for (const k of keys) {
     if (!map[k]) {
       const id = await findAccountByCode(cid, HR_ACCOUNT_CODES[k], dx);
       if (id) {
         map[k] = id;
-        const col =
-          k === "salariesExpense"   ? "hrSalariesExpenseAccountId" :
-          k === "allowancesExpense" ? "hrAllowancesExpenseAccountId" :
-          k === "gosiExpense"       ? "hrGosiExpenseAccountId" :
-          k === "eosExpense"        ? "hrEosExpenseAccountId" :
-          k === "salariesPayable"   ? "hrSalariesPayableAccountId" :
-          k === "gosiPayable"       ? "hrGosiPayableAccountId" :
-          k === "otherDeductions"   ? "hrOtherDeductionsAccountId" :
-          k === "employeeLoans"     ? "hrEmployeeLoansAccountId" :
-          k === "employeeCustody"   ? "hrEmployeeCustodyAccountId" :
-                                       "hrEosProvisionAccountId";
-        updates[col] = id;
+        updates[HR_ACCOUNT_COLUMNS[k]] = id;
       }
     }
   }
@@ -135,9 +165,9 @@ export async function resolveCashAccount(
   if (opts.bankAccountId) {
     const [b] = await dx.select().from(bankAccountsTable)
       .where(and(eq(bankAccountsTable.id, opts.bankAccountId), eq(bankAccountsTable.companyId, cid)));
-    if (!b?.accountId) throw new Error("البنك المختار غير مرتبط بحساب محاسبي");
+    const accountId = await assertCompanyAccount(cid, b?.accountId, "البنك المختار", dx);
     return {
-      accountId: b.accountId,
+      accountId,
       label: `بنك ${b.nameAr ?? b.nameEn ?? ""}`.trim(),
       branchId: b.branchId ?? b.branchIds?.[0] ?? null,
     };
@@ -145,9 +175,9 @@ export async function resolveCashAccount(
   if (opts.cashBoxId) {
     const [c] = await dx.select().from(cashBoxesTable)
       .where(and(eq(cashBoxesTable.id, opts.cashBoxId), eq(cashBoxesTable.companyId, cid)));
-    if (!c?.accountId) throw new Error("الصندوق المختار غير مرتبط بحساب محاسبي");
+    const accountId = await assertCompanyAccount(cid, c?.accountId, "الصندوق المختار", dx);
     return {
-      accountId: c.accountId,
+      accountId,
       label: `صندوق ${c.nameAr ?? c.nameEn ?? ""}`.trim(),
       branchId: c.branchId ?? null,
     };
@@ -460,11 +490,15 @@ export async function buildEosPaymentJournal(
 // Resolves the custody receivable account for a custody row: the row's own
 // custody_account_id wins, else the company custody mapping (11082 → fallback
 // 11081). Throws when nothing resolves so postings never silently misfire.
-async function resolveCustodyAccount(cid: number, custodyAccountId: number | null, dx: DbOrTx): Promise<number> {
-  if (custodyAccountId) return custodyAccountId;
+export async function resolveCustodyAccount(cid: number, custodyAccountId: number | null, dx: DbOrTx): Promise<number> {
+  if (custodyAccountId) {
+    const [account] = await dx.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, custodyAccountId), eq(accountsTable.companyId, cid)));
+    if (account) return account.id;
+  }
   const accounts = await resolveHrAccounts(cid, true, dx);
   if (!accounts.employeeCustody) throw new Error("حساب عُهد الموظفين (11082) غير مربوط في إعدادات الموارد البشرية");
-  return accounts.employeeCustody;
+  return assertCompanyAccount(cid, accounts.employeeCustody, "حساب عُهد الموظفين", dx);
 }
 
 /** صرف عهدة — DR employee custody / CR cash|bank. */
@@ -549,6 +583,7 @@ export async function buildCustodySettlementJournal(
   if (!cust) throw new Error("العهدة غير موجودة");
   const [emp] = await dx.select().from(employeesTable).where(eq(employeesTable.id, cust.employeeId));
   const custodyAccountId = await resolveCustodyAccount(cid, cust.custodyAccountId, dx);
+  const expenseAccountId = await assertCompanyAccount(cid, stl.expenseAccountId, "حساب مصروف التسوية", dx);
 
   const baseDesc = `تسوية عهدة — ${stl.description || "مصروف"}`;
   const desc = stl.invoiceNumber ? `${baseDesc} (فاتورة ${stl.invoiceNumber})` : baseDesc;
@@ -571,7 +606,7 @@ export async function buildCustodySettlementJournal(
   }).returning();
 
   await dx.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: stl.expenseAccountId, debit: fix(amount), credit: "0.00",
+    { entryId: entry.id, accountId: expenseAccountId, debit: fix(amount), credit: "0.00",
       description: desc, sortOrder: 0 },
     { entryId: entry.id, accountId: custodyAccountId,     debit: "0.00",      credit: fix(amount),
       description: `إقفال من عهدة الموظف ${emp?.nameAr ?? ""}`.trim(), sortOrder: 1 },
