@@ -23,6 +23,7 @@ import { sumSettlementJEs, acquireSettlementLock, acquireSourceLock, sumVouchers
 import { settlementLinksTable } from "@workspace/db";
 import { isPrimaryKeyCollision, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
 import { logger } from "../lib/logger.js";
+import { firstJournalDescription } from "../lib/journalLineDescriptions.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -100,7 +101,7 @@ async function buildReceiptJournal(cid: number, v: any, req: any): Promise<numbe
       if (net <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
       const lineCc = (l.costCenter ? String(l.costCenter).trim() || null : null) ?? cc;
       acctIds.add(lineAcct);
-      jeLines.push({ accountId: lineAcct, debit: "0.00", credit: net.toFixed(2), description: l.description || desc, sortOrder: so++, costCenter: lineCc });
+      jeLines.push({ accountId: lineAcct, debit: "0.00", credit: net.toFixed(2), description: firstJournalDescription(v.description, l.description, desc), sortOrder: so++, costCenter: lineCc });
       total += net;
     }
     if (total <= 0) throw new Error("إجمالي السند يجب أن يكون أكبر من صفر");
@@ -129,7 +130,7 @@ async function buildReceiptJournal(cid: number, v: any, req: any): Promise<numbe
     acctIds.add(crAccountId);
     total = amount;
     jeLines.push({ accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc });
-    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc });
+    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: firstJournalDescription(v.description, desc), sortOrder: 1, costCenter: cc });
   }
 
   // Guard against dangling account links: a customer/cashbox/bank/line may

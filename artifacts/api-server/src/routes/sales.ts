@@ -43,6 +43,7 @@ import {
 } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber, nextSequenceForPayment, nextPosStationNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
+import { itemNamesDescription } from "../lib/journalLineDescriptions.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { assertInvoiceEditKeepsSettlementsCovered } from "../lib/invoiceSettlement.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
@@ -2978,6 +2979,10 @@ async function postSalesInvoiceHandler(
       serviceRevenueTotal = Math.round(Object.values(serviceRevenueByAccount).reduce((s, v) => s + v, 0) * 100) / 100;
     }
     const mainRevenueAmt = Math.round((grossSubtotalAmt - serviceRevenueTotal) * 100) / 100;
+    const soldItemsDescription = itemNamesDescription(
+      lines.map((line) => line.itemName),
+      "إيراد المبيعات",
+    );
 
     // ── OPTIONAL per-line cost-center split (Odoo-style analytic distribution) ──
     // Group each NON-service line's gross revenue (qty × unitPrice, pre-discount,
@@ -3011,7 +3016,7 @@ async function postSalesInvoiceHandler(
           // No usable per-line breakdown (or a single bucket) → one line, as before.
           const onlyCc = ccKeys.length === 1 ? ccKeys[0] : "";
           mainRevenueLines.push({
-            accountId: salesAccId, credit: mainRevenueAmt, description: "إيراد المبيعات",
+            accountId: salesAccId, credit: mainRevenueAmt, description: soldItemsDescription,
             ...(onlyCc ? { costCenter: onlyCc } : {}),
           });
         } else {
@@ -3028,7 +3033,7 @@ async function postSalesInvoiceHandler(
               return;
             }
             mainRevenueLines.push({
-              accountId: salesAccId, credit: portion, description: "إيراد المبيعات",
+              accountId: salesAccId, credit: portion, description: soldItemsDescription,
               ...(cc ? { costCenter: cc } : {}),
             });
           });
@@ -3112,7 +3117,7 @@ async function postSalesInvoiceHandler(
             // Dr Customer/Cash/Bank @ total (AR pass-through for cash/bank)
             ...partyDebitLines,
             // Cr VAT Output (still booked separately — operator can claim it)
-            { accountId: taxAccId,               credit: vatAmt,                               description: "ضريبة القيمة المضافة (مخرجات)", costCenter: null },
+            { accountId: taxAccId,               credit: vatAmt,                               description: journalDescription, costCenter: null },
             // Cr Delivery Clearing (replaces revenue + inventory credits)
             { accountId: deliveryClearingAccId!, credit: totalAmt - vatAmt,                    description: "تسوية وسيط تسليم البضاعة" },
           ]
@@ -3135,12 +3140,12 @@ async function postSalesInvoiceHandler(
                 return {
                   accountId: Number(accStr),
                   credit: amt,
-                  description: "إيراد صنف خدمي",
+                  description: soldItemsDescription,
                   // Per-line cost center wins; empty → header fallback downstream.
                   ...(cc ? { costCenter: cc } : {}),
                 };
               }),
-            { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)", costCenter: null },
+            { accountId: taxAccId,       credit: vatAmt,      description: journalDescription, costCenter: null },
             // Inventory: one credit line per warehouse using its own GL account
             ...Object.entries(cogsByWarehouse)
               .filter(([, amt]) => amt > 0)

@@ -33,6 +33,7 @@ import {
 import { settlementLinksTable } from "@workspace/db";
 import { isPrimaryKeyCollision, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
 import { logger } from "../lib/logger.js";
+import { namedPartyDescription } from "../lib/journalLineDescriptions.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -63,7 +64,6 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
 
   // ─── CR side: cash/bank account that paid the money ─────────────
   let crAccountId: number | null = null;
-  let crLabel = "";
   if (v.paymentType === "bank" && v.bankAccountId) {
     // Tenant-scoped lookup: never resolve a bank account that belongs
     // to another company even if the caller knows the ID.
@@ -71,13 +71,11 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
       .where(and(eq(bankAccountsTable.id, v.bankAccountId), eq(bankAccountsTable.companyId, cid)));
     if (!b) throw new Error("الحساب البنكي غير موجود في هذه الشركة");
     crAccountId = pickAccount(b.accountId ?? null, lookup("supplier_settlement", "bank"));
-    crLabel = `بنك ${b.nameAr ?? ""}`.trim();
   } else if (v.cashBoxId) {
     const [c] = await db.select().from(cashBoxesTable)
       .where(and(eq(cashBoxesTable.id, v.cashBoxId), eq(cashBoxesTable.companyId, cid)));
     if (!c) throw new Error("الخزنة غير موجودة في هذه الشركة");
     crAccountId = pickAccount(c.accountId ?? null, lookup("supplier_settlement", "cash"));
-    crLabel = `صندوق ${c.nameAr ?? ""}`.trim();
   }
   if (!crAccountId) {
     throw new Error("لا يوجد حساب محاسبي للخزنة/البنك — اربط الخزنة بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية الموردين»");
@@ -85,6 +83,14 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
 
   const desc = `سند صرف ${v.code}${v.description ? " - " + v.description : ""}`;
   const cc = v.costCenter ? String(v.costCenter).trim() || null : null;
+  let supplierName = String(v.entityName ?? "").trim();
+  if (!supplierName && v.entityId) {
+    const [supplier] = await db.select({ nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+      .from(suppliersTable)
+      .where(and(eq(suppliersTable.id, v.entityId), eq(suppliersTable.companyId, cid)));
+    supplierName = String(supplier?.nameAr ?? supplier?.nameEn ?? "").trim();
+  }
+  const supplierDesc = namedPartyDescription("المورد", supplierName, desc);
 
   // Multi-allocation model: one treasury CR side + many DR allocation lines,
   // each optionally carrying its own input-VAT DR line. When no lines exist
@@ -155,31 +161,27 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
     }
     if (total <= 0) throw new Error("إجمالي السند يجب أن يكون أكبر من صفر");
     // ─── CR side: single treasury line for the grand total ────────────
-    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: total.toFixed(2), description: crLabel || desc, sortOrder: so++, costCenter: cc });
+    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: total.toFixed(2), description: supplierDesc, sortOrder: so++, costCenter: cc });
   } else {
     // ─── Legacy fallback: single supplier-payable DR / treasury CR ────
     if (amount <= 0) throw new Error("المبلغ يجب أن يكون أكبر من صفر");
     let drAccountId: number | null = v.accountId ?? null;   // legacy override
-    let drLabel = "";
     if (!drAccountId) {
       if (v.entityId) {
         const [s] = await db.select().from(suppliersTable)
           .where(and(eq(suppliersTable.id, v.entityId), eq(suppliersTable.companyId, cid)));
         drAccountId = pickAccount(s?.accountId ?? null, lookup("supplier_settlement", "payable"));
-        drLabel = `مورّد ${s?.nameAr ?? ""}`.trim();
       } else {
         drAccountId = lookup("supplier_settlement", "payable");
       }
-    } else {
-      drLabel = v.entityName || "حساب الطرف الآخر";
     }
     if (!drAccountId) {
       throw new Error("لا يوجد حساب محاسبي للمورد — اربط المورد بحساب أو حدّد الحساب الافتراضي في «ربط القيود المحاسبية ← تسوية الموردين»");
     }
     acctIds.add(drAccountId);
     total = amount;
-    jeLines.push({ accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc });
-    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc });
+    jeLines.push({ accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: supplierDesc, sortOrder: 0, costCenter: cc });
+    jeLines.push({ accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: supplierDesc, sortOrder: 1, costCenter: cc });
   }
 
   // Guard against dangling account links: a supplier/cashbox/bank/line may

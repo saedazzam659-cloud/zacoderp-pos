@@ -41,6 +41,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { normalizePeriodicity, parseCcSplit, installmentsBetween, runDueAdjustmentsForCompany } from "../lib/adjustmentPosting.js";
 import { logger } from "../lib/logger.js";
 import { isPrimaryKeyCollision, postgresErrorField, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
+import { itemNamesWithSupplierDescription, namedPartyDescription } from "../lib/journalLineDescriptions.js";
 
 function purchasingWriteError(error: any, documentName: string): { status: number; message: string } {
   const code = String(postgresErrorField(error, "code") ?? "");
@@ -1835,6 +1836,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
     // center survives service/category aggregation too; "" cc ⇒ header fallback.
     const accCcKey = (accountId: number, line: any) => `${accountId}|${((line as any).costCenter ?? "").toString().trim()}`;
     const serviceCostByAccount: Record<string, number> = {}; // SERVICE: cost → item.costAccountId (keyed acc|cc)
+    const serviceItemNamesByAccount: Record<string, string[]> = {};
     const serviceMissing: string[] = [];                     // SERVICE lines lacking a cost account
     let serviceCostTotal = 0;
     // فئات الأصناف routing buckets:
@@ -1842,8 +1844,10 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
     //   groupInvByAccount     — inventory categories: debit the CATEGORY account
     //                           (stock movement still happens per warehouse)
     const groupNoStockByAccount: Record<string, number> = {}; // keyed acc|cc
+    const groupNoStockItemNamesByAccount: Record<string, string[]> = {};
     let groupNoStockTotal = 0;
     const groupInvByAccount: Record<string, number> = {};     // keyed acc|cc
+    const groupInvItemNamesByAccount: Record<string, string[]> = {};
     let groupInvTotal = 0;
     const costRefreshItemIds = new Set<number>();
     for (const line of lines) {
@@ -1856,6 +1860,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
         if (cost <= 0) continue;
         const gk = accCcKey(r.accountId, line);
         groupNoStockByAccount[gk] = (groupNoStockByAccount[gk] ?? 0) + cost;
+        (groupNoStockItemNamesByAccount[gk] ??= []).push(line.itemName ?? `صنف #${line.itemId}`);
         groupNoStockTotal += cost;
         continue;
       }
@@ -1869,6 +1874,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
         if (!acc) { serviceMissing.push(line.itemName ?? `صنف #${line.itemId}`); continue; }
         const sk = accCcKey(acc, line);
         serviceCostByAccount[sk] = (serviceCostByAccount[sk] ?? 0) + svcCost;
+        (serviceItemNamesByAccount[sk] ??= []).push(line.itemName ?? `صنف #${line.itemId}`);
         serviceCostTotal += svcCost;
         continue;
       }
@@ -1887,6 +1893,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
       if (invRouting && invRouting.type === "inventory") {
         const ik = accCcKey(invRouting.accountId, line);
         groupInvByAccount[ik] = (groupInvByAccount[ik] ?? 0) + cost;
+        (groupInvItemNamesByAccount[ik] ??= []).push(line.itemName ?? `صنف #${line.itemId}`);
         groupInvTotal += cost;
       } else {
         inventoryByWarehouse[whCcKey(line)] = (inventoryByWarehouse[whCcKey(line)] ?? 0) + cost;
@@ -2050,6 +2057,11 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
                               + Object.values(groupInvDebitByAccount).reduce((s, v) => s + v, 0);
 
     const desc = `قيد فاتورة مشتريات رقم ${inv.docNumber || inv.id}`;
+    const [postingSupplier] = await db.select({ nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+      .from(suppliersTable)
+      .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
+    const postingSupplierName = postingSupplier?.nameAr ?? postingSupplier?.nameEn ?? "";
+    const supplierLineDesc = namedPartyDescription("المورد", postingSupplierName, desc);
     // SERVICE cost debits (به: حساب تكلفة الصنف الخدمي) — appended to both the
     // GRN and non-GRN debit sets. For GRN the clearing debit absorbs only the
     // GOODS slice (inventoryDebit − servicePortionTotal).
@@ -2066,7 +2078,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
         return {
           accountId,
           debit: amt,
-          description: "تكلفة صنف خدمي",
+          description: itemNamesWithSupplierDescription(serviceItemNamesByAccount[key] ?? [], postingSupplierName, "تكلفة صنف خدمي"),
           ...(cc ? { costCenter: cc } : {}),
         };
       });
@@ -2080,7 +2092,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
           return {
             accountId,
             debit: amt,
-            description: "توجيه فئة الصنف (أصل/مصروف)",
+            description: itemNamesWithSupplierDescription(groupNoStockItemNamesByAccount[key] ?? [], postingSupplierName, "توجيه فئة الصنف (أصل/مصروف)"),
             ...(cc ? { costCenter: cc } : {}),
           };
         }),
@@ -2091,7 +2103,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
           return {
             accountId,
             debit: amt,
-            description: "قيمة البضاعة — حساب فئة الصنف",
+            description: itemNamesWithSupplierDescription(groupInvItemNamesByAccount[key] ?? [], postingSupplierName, "قيمة البضاعة — حساب فئة الصنف"),
             ...(cc ? { costCenter: cc } : {}),
           };
         }),
@@ -2183,8 +2195,8 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
       const supplierApAccId = await getSupplierAccountId(cid, inv.supplierId);
       if (supplierApAccId) {
         creditLines.push(
-          { accountId: supplierApAccId, credit: totalAmount, description: "مستحقات المورد" },
-          { accountId: supplierApAccId, debit:  totalAmount, description: inv.paymentType === "cash" ? "سداد نقدي للمورد" : "سداد بنكي للمورد" } as JLine,
+          { accountId: supplierApAccId, credit: totalAmount, description: supplierLineDesc },
+          { accountId: supplierApAccId, debit:  totalAmount, description: supplierLineDesc } as JLine,
           { accountId: counterpartyAccountId, credit: totalAmount, description: inv.paymentType === "cash" ? "صرف نقدي" : desc },
           { accountId: discountAccId, credit: discountAmount, description: "خصم مكتسب" },
         );
@@ -2196,7 +2208,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
       }
     } else {
       creditLines.push(
-        { accountId: counterpartyAccountId,  credit: totalAmount,    description: "مستحقات المورد" },
+        { accountId: counterpartyAccountId,  credit: totalAmount,    description: supplierLineDesc },
         { accountId: discountAccId,          credit: discountAmount, description: "خصم مكتسب" },
       );
     }

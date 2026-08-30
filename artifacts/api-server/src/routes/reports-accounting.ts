@@ -599,6 +599,7 @@ router.get("/account-statement", async (req, res) => {
         docNumber:   journalEntriesTable.docNumber,
         entryDate:   journalEntriesTable.entryDate,
         description: sql<string>`COALESCE(${journalEntryLinesTable.description}, ${journalEntriesTable.description}, '')`,
+        entryDescription: journalEntriesTable.description,
         debit:       journalEntryLinesTable.debit,
         credit:      journalEntryLinesTable.credit,
         // Per-line supplier tax metadata (manual JE / adjustment lines). When
@@ -935,6 +936,21 @@ router.get("/account-statement", async (req, res) => {
          purpose: r.employeeCustodyPurpose,
          settlementDescription: r.employeeCustodySettlementDescription,
        });
+       // Historical sales VAT lines often stored only a generic tax label while
+       // the JE header carried the invoice number. Prefer that general/header
+       // description when no source-invoice link is available, so old VAT
+       // statements gain the invoice reference without reposting.
+       const lineDesc = (r.description ?? "").trim();
+       const entryDesc = (r.entryDescription ?? "").trim();
+       const historicalSalesVatHeaderDesc =
+         (
+           String(r.entryType ?? "").startsWith("sales") ||
+           r.entryType === "pos_sale"
+         ) &&
+         /ضريبة القيمة المضافة|ضريبة.*مبيعات/.test(lineDesc) &&
+         entryDesc
+           ? entryDesc
+           : null;
        const srcDesc = custodyDesc
          ? custodyDesc
          : r.purchaseReturnId
@@ -943,7 +959,7 @@ router.get("/account-statement", async (req, res) => {
         ? invoiceDescription(pInvInfo.get(r.purchaseInvoiceId))
         : r.salesInvoiceId
         ? invoiceDescription(sInvInfo.get(r.salesInvoiceId))
-        : voucherDesc;
+        : voucherDesc ?? historicalSalesVatHeaderDesc;
       // Per-line supplier tax metadata (manual JE lines AND PV-origin VAT
       // lines): fold it into the الشرح so the tax account statement (كشف حساب
       // الضريبة) discloses the supplier/invoice behind each VAT movement.

@@ -560,7 +560,7 @@ export async function buildCustodyDisbursementJournal(
     { entryId: entry.id, accountId: custodyAccountId, debit: fix(amount), credit: "0.00",
       description: desc, sortOrder: 0 },
     { entryId: entry.id, accountId: cash.accountId,   debit: "0.00",      credit: fix(amount),
-      description: cash.label, sortOrder: 1 },
+      description: desc, sortOrder: 1 },
   ]);
   return entry.id;
 }

@@ -40,8 +40,8 @@ manual JEs and "—" for invoices with no header note — useless for reconcilia
     `"سند قبض/صرف — <entityName>"` (الطرف الثاني) only when all three are empty.
     The per-line piece is BLANKED when it is a system label — empty, equal to the
     header, or `startsWith` `"سند صرف"`/`"سند قبض"` (the auto expense-line fallback)
-    or `"بنك "`/`"صندوق "` (the treasury `crLabel`) — because the JE builder
-    (`payment-vouchers.ts`, never edited) writes those, and they would be noise.
+    or legacy `"بنك "`/`"صندوق "` treasury labels — because old journal rows may
+    still contain those and they would be noise.
     Same unconditional-per-account-line caveat as invoices (fires on every account
     the voucher JE touches — treasury side AND counter-party/expense side).
     Precedence: invoice override wins, then this voucher merge, then raw GL text.
@@ -70,3 +70,19 @@ text, not header-only. `mergeDesc` = join non-empty deduped pieces with `" — "
 Batch item-name loading (`inArray` invoice ids, `companyId`-scoped, `orderBy id`,
 dedupe via Set) — never per-row. The frontend (AccountStatementView / export
 buttons) consumes `line.description` verbatim, so this is a backend-only change.
+
+## Generated journal-line descriptions
+
+**Rule:** generated JE lines must describe the source business fact, not repeat
+the GL account label. Supplier/custody treasury lines name the beneficiary;
+receipt customer lines prefer the voucher's entered general description; sales
+revenue lines name the sold items; sales-output-VAT lines carry the invoice
+number from the JE header; project/service purchase lines carry item + supplier.
+
+**Why:** repeating “bank”, “cash sales”, or “VAT output” adds no reconciliation
+value because the account column already says that, and it leaves tax statements
+without the invoice reference users need.
+
+**How to apply:** write source-driven text when the JE is created so journal
+views, general account statements, exports, and printing all inherit it. Keep
+statement-side source overrides for historical rows created before this rule.
