@@ -209,7 +209,7 @@ const superAdminNav: NavDef[] = [
 // (POS Management) parent group rendered by PosNavGroup, so this list
 // stays empty (kept around for future business-level top-level NavItems).
 const companyBusinessNav: NavDef[] = [
-  { nameKey: "nav.demoAnalytics", href: "/demo-analytics", icon: Activity, permKey: "demo_analytics" },
+  { nameKey: "nav.demoAnalytics", href: "/demo-analytics", icon: Activity, permKey: "demo_analytics", requireAdmin: true },
 ];
 
 // ── POS Management submenu ──────────────────────────────────────────────

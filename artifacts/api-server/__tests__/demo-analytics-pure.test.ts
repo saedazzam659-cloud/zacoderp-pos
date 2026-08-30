@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { interestCategoryForScore, normalizePhone } from "../src/lib/demoAnalytics.ts";
+import {
+  canViewCompanyDemoAnalytics,
+  demoProfileBelongsToViewerScope,
+  demoViewerScopeFromRequest,
+  interestCategoryForScore,
+  normalizePhone,
+} from "../src/lib/demoAnalytics.ts";
 import { cleanDemoEvents } from "../src/routes/demo-analytics.ts";
 import { isDemoQuotaWrite } from "../src/middleware/demoQuota.ts";
 
@@ -41,4 +47,28 @@ test("quota classifier preserves browsing and excluded control routes", () => {
 });
 test("interest funnel has five stable categories", () => {
   assert.deepEqual([0, 10, 30, 50, 70].map(interestCategoryForScore), ["new_visitor", "casual", "interested", "very_interested", "strong_candidate"]);
+});
+
+test("company demo viewer scope is derived from session and agent request context", () => {
+  const central = demoViewerScopeFromRequest({ authUser: { companyId: 41 } } as any);
+  const agent = demoViewerScopeFromRequest({ authUser: { companyId: 41 }, agentDomainHit: { id: 9 } } as any);
+  assert.deepEqual(central, { sourceKind: "central", sourceInstanceId: null, localCompanyId: 41 });
+  assert.deepEqual(agent, { sourceKind: "agent", sourceInstanceId: 9, localCompanyId: 41 });
+  assert.equal(demoViewerScopeFromRequest({ authUser: {} } as any), null);
+});
+
+test("demo profile ownership requires source kind, source instance, and local company", () => {
+  const scope = { sourceKind: "agent" as const, sourceInstanceId: 9, localCompanyId: 41 };
+  assert.equal(demoProfileBelongsToViewerScope({ ...scope }, scope), true);
+  assert.equal(demoProfileBelongsToViewerScope({ ...scope, localCompanyId: 42 }, scope), false);
+  assert.equal(demoProfileBelongsToViewerScope({ ...scope, sourceInstanceId: 10 }, scope), false);
+  assert.equal(demoProfileBelongsToViewerScope({ ...scope, sourceKind: "central", sourceInstanceId: null }, scope), false);
+});
+
+test("company demo monitoring is visible only to the company manager", () => {
+  assert.equal(canViewCompanyDemoAnalytics({ role: "admin" }), true);
+  assert.equal(canViewCompanyDemoAnalytics({ role: "user" }), false);
+  assert.equal(canViewCompanyDemoAnalytics({ role: "trainee" }), false);
+  assert.equal(canViewCompanyDemoAnalytics({ role: "superadmin" }), false);
+  assert.equal(canViewCompanyDemoAnalytics(null), false);
 });

@@ -10,6 +10,7 @@ import {
 import { requirePermission } from "../middleware/permissions.js";
 import {
   actionsUsed,
+  canViewCompanyDemoAnalytics,
   demoViewerScopeFromRequest,
   type DemoViewerScope,
 } from "../lib/demoAnalytics.js";
@@ -17,6 +18,16 @@ import {
 const router = Router();
 
 router.use(requirePermission("demo_analytics", "view"));
+router.use((req, res, next) => {
+  // Company monitoring is intentionally a manager-only screen. A regular
+  // user — including the demo user being observed — is rejected even if an
+  // accidental per-user RBAC grant exists.
+  if (!canViewCompanyDemoAnalytics((req as any).authUser)) {
+    res.status(403).json({ code: "DEMO_ANALYTICS_MANAGER_REQUIRED" });
+    return;
+  }
+  next();
+});
 
 function scopeCondition(scope: DemoViewerScope) {
   return and(

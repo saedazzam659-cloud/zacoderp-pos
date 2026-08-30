@@ -26,6 +26,11 @@ export function demoProfileBelongsToViewerScope(
     && profile.sourceInstanceId === scope.sourceInstanceId
     && profile.localCompanyId === scope.localCompanyId;
 }
+
+/** Company demo monitoring is a manager-only capability, independent of RBAC grants. */
+export function canViewCompanyDemoAnalytics(authUser: { role?: string } | null | undefined): boolean {
+  return authUser?.role === "admin";
+}
 export const normalizePhone = (value: unknown): string | null => {
   const raw = String(value ?? "").trim().replace(/[^\d+]/g, "");
   const digits = raw.replace(/\D/g, "");

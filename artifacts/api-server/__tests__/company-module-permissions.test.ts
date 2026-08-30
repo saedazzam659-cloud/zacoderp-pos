@@ -45,3 +45,16 @@ test("enabled purchasing module and supplier view grant allow supplier notes", (
 
   assert.equal(canAccessModule(user, "supplier_notes", "view"), true);
 });
+
+test("demo analytics is default-off and needs an explicit company enablement", () => {
+  const user = userWith(
+    {},
+    { demo_analytics: { view: true } },
+  );
+  assert.equal(companyAllowsModule(user, "demo_analytics"), false);
+  assert.equal(canAccessModule(user, "demo_analytics", "view"), false);
+
+  user.companyMenuPermissions.demo_analytics = true;
+  assert.equal(companyAllowsModule(user, "demo_analytics"), true);
+  assert.equal(canAccessModule(user, "demo_analytics", "view"), true);
+});
