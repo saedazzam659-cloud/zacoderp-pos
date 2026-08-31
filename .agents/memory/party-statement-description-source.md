@@ -22,9 +22,9 @@ manual JEs and "—" for invoices with no header note — useless for reconcilia
 **How to apply (per statement):**
 - **Supplier** (`purchases-analytics.ts` `/supplier-statement` + `-detailed`): has
   direct-JE rows → apply the manual-JE line-description rule AND the invoice rule.
-- **Customer** (`sales-analytics.ts` `/customer-statement` + `-detailed`): has NO
-  direct-JE rows (only invoice/return/receipt) → only invoice rows need item-name
-  loading; returns/receipts keep the typed-note-or-"—" rule.
+- **Customer** (`sales-analytics.ts` `/customer-statement` + `-detailed`): direct
+  JE rows follow the same line-description-first rule as suppliers; invoice rows
+  still need item-name loading, and returns/receipts keep their existing rules.
 - **General accounts** (`reports-accounting.ts` `/account-statement`): the row
   description is the GL *line* text. For rows whose JE links a sales/purchase
   invoice (`salesInvoiceId`/`purchaseInvoiceId` already left-joined), OVERRIDE with

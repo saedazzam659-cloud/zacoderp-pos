@@ -2,8 +2,8 @@ import { Router } from "express";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { db } from "@workspace/db";
-import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable, accountsTable } from "@workspace/db";
-import { and, asc, eq, sql, gte, lte } from "drizzle-orm";
+import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable, accountsTable, journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
+import { and, asc, eq, sql, gte, lte, inArray, notInArray } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -48,9 +48,14 @@ router.get("/balances", async (req, res) => {
 
     // Display-only customers must NOT contribute to the balances aggregation
     // (matches the /aging + /customer-statement filters elsewhere).
-    const displayOnlyRows = await db.select({ id: customersTable.id }).from(customersTable)
-      .where(and(eq(customersTable.companyId, companyId), eq(customersTable.includeInStatements, false)));
-    const displayOnlyIds = new Set(displayOnlyRows.map(r => r.id));
+    const customerRows = await db.select({
+      id: customersTable.id,
+      accountId: customersTable.accountId,
+      includeInStatements: customersTable.includeInStatements,
+    }).from(customersTable).where(eq(customersTable.companyId, companyId));
+    const displayOnlyIds = new Set(
+      customerRows.filter(r => r.includeInStatements === false).map(r => r.id),
+    );
 
     const invs = await db
       .select({
@@ -102,12 +107,55 @@ router.get("/balances", async (req, res) => {
       ))
       .groupBy(receiptVouchersTable.entityId);
 
+    // Direct posted JEs on a uniquely-owned customer account affect that
+    // customer's balance. Generated invoice/return/receipt JEs are excluded
+    // because their source documents were already aggregated above.
+    const accountCounts = new Map<number, number>();
+    for (const customer of customerRows) {
+      if (customer.accountId) {
+        accountCounts.set(customer.accountId, (accountCounts.get(customer.accountId) ?? 0) + 1);
+      }
+    }
+    const accountOwner = new Map<number, number>();
+    for (const customer of customerRows) {
+      if (customer.accountId && accountCounts.get(customer.accountId) === 1) {
+        accountOwner.set(customer.accountId, customer.id);
+      }
+    }
+    const accountIds = [...accountOwner.keys()];
+    const jeRows = accountIds.length
+      ? await db.select({
+          accountId: journalEntryLinesTable.accountId,
+          net: sql<string>`coalesce(sum(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,
+        }).from(journalEntryLinesTable)
+          .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+          .where(and(
+            eq(journalEntriesTable.companyId, companyId),
+            eq(journalEntriesTable.status, "posted"),
+            inArray(journalEntryLinesTable.accountId, accountIds),
+            notInArray(journalEntriesTable.entryType, [
+              "sales_invoice", "sales_return", "receipt", "customer_settlement",
+            ]),
+            ...(from ? [gte(journalEntriesTable.entryDate, from)] : []),
+            ...(to ? [lte(journalEntriesTable.entryDate, to)] : []),
+            ...branchScopeSpread(req, journalEntriesTable.branchId, bid),
+          ))
+          .groupBy(journalEntryLinesTable.accountId)
+      : [];
+
     const map: Record<number, number> = {};
     const allowed = (id: number | null) =>
       id != null && !displayOnlyIds.has(id) && allowedCustomerIds.has(id);
     for (const r of invs)  if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) + Number(r.total);
     for (const r of rets)  if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) - Number(r.total);
     for (const r of recvs) if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) - Number(r.total);
+    for (const row of jeRows) {
+      if (row.accountId == null) continue;
+      const customerId = accountOwner.get(row.accountId);
+      if (customerId != null && allowed(customerId)) {
+        map[customerId] = (map[customerId] ?? 0) + Number(row.net);
+      }
+    }
 
     res.json(Object.entries(map).map(([id, balance]) => ({ customerId: Number(id), balance })));
   } catch (e: any) { res.status(500).json({ error: e.message }); }

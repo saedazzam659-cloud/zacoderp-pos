@@ -67,6 +67,7 @@ export default function CustomerStatementDetailed() {
     invoice: tr("typeInvoice"),
     return:  tr("typeReturn"),
     receipt: tr("typeReceipt"),
+    journal: "قيد يومية",
   };
 
   // Tiny inline badge that flags the source document's payment method

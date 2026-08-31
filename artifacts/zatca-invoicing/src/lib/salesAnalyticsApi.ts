@@ -68,9 +68,9 @@ export type SalesByPeriodRow = {
 };
 
 export type CustomerStatementLine = {
-  id: number;
+  id: number | null;
   date: string;
-  type: "invoice" | "return" | "receipt";
+  type: "invoice" | "invoice_receipt" | "return" | "return_refund" | "receipt" | "journal";
   docNumber: string | null;
   journalEntryId: number | null;
   journalEntryNumber: string | null;
@@ -193,7 +193,7 @@ export type CustomerStatementDetailedReceiptMeta = {
 export type CustomerStatementDetailedRow = {
   id: number;
   date: string;
-  type: "invoice" | "return" | "receipt";
+  type: "invoice" | "return" | "receipt" | "journal";
   docNumber: string | null;
   debit: number;
   credit: number;

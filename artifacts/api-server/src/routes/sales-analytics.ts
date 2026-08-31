@@ -11,11 +11,11 @@ import {
   bankAccountsTable,
   stockLedgerTable,
   itemsTable,
-  journalEntriesTable,
+  journalEntriesTable, journalEntryLinesTable,
   receiptVoucherLinesTable,
   settlementLinksTable,
 } from "@workspace/db";
-import { and, eq, sql, gte, lte, asc, desc, inArray, isNull } from "drizzle-orm";
+import { and, eq, sql, gte, lte, lt, asc, desc, inArray, notInArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
@@ -84,6 +84,67 @@ function getBid(req: any): number | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+// These sources are already represented by their own document rows in the
+// customer statement. Excluding their generated JEs prevents double counting.
+const CUSTOMER_DOC_ENTRY_TYPES = [
+  "sales_invoice", "sales_return", "receipt", "customer_settlement",
+] as const;
+
+async function customerAccountShared(cid: number, accountId: number): Promise<boolean> {
+  const [row] = await db.select({ n: sql<number>`count(*)::int` })
+    .from(customersTable)
+    .where(and(eq(customersTable.companyId, cid), eq(customersTable.accountId, accountId)));
+  return (row?.n ?? 0) > 1;
+}
+
+async function fetchCustomerDirectJeLines(
+  cid: number,
+  accountId: number | null | undefined,
+  fromDate?: string,
+  toDate?: string,
+  branchScope: any[] = [],
+): Promise<{ id: number; date: string; docNumber: string | null; description: string | null;
+              debit: number; credit: number; entryType: string }[]> {
+  if (!accountId || await customerAccountShared(cid, accountId)) return [];
+  const conds: any[] = [
+    eq(journalEntriesTable.companyId, cid),
+    eq(journalEntriesTable.status, "posted"),
+    eq(journalEntryLinesTable.accountId, accountId),
+    notInArray(journalEntriesTable.entryType, [...CUSTOMER_DOC_ENTRY_TYPES]),
+    ...branchScope,
+  ];
+  if (fromDate) conds.push(gte(journalEntriesTable.entryDate, fromDate));
+  if (toDate) conds.push(lte(journalEntriesTable.entryDate, toDate));
+  const rows = await db.select({
+    id: journalEntriesTable.id,
+    date: journalEntriesTable.entryDate,
+    docNumber: journalEntriesTable.docNumber,
+    entryDescription: journalEntriesTable.description,
+    lineDescription: journalEntryLinesTable.description,
+    debit: journalEntryLinesTable.debit,
+    credit: journalEntryLinesTable.credit,
+    entryType: journalEntriesTable.entryType,
+  }).from(journalEntryLinesTable)
+    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+    .where(and(...conds));
+  return rows.map(row => ({
+    id: row.id,
+    date: row.date,
+    docNumber: row.docNumber,
+    description: row.lineDescription?.trim() || row.entryDescription?.trim() || null,
+    debit: Number(row.debit || 0),
+    credit: Number(row.credit || 0),
+    entryType: row.entryType,
+  }));
+}
+
+function customerJeLineLabel(entryType: string): string {
+  if (entryType === "trial_balance_adjustment") return "تسوية رصيد افتتاحي";
+  if (entryType === "opening") return "رصيد افتتاحي";
+  if (entryType === "general") return "قيد يومية يدوي";
+  return "قيد يومية";
 }
 
 function getRid(req: any): number | undefined {
@@ -420,7 +481,10 @@ router.get("/customer-statement", async (req, res) => {
     // If this customer is flagged "display only" we hide their balance from
     // the statement view (the underlying JEs still exist and roll up into the
     // AR control account in the trial balance / GL).
-    const [custMeta] = await db.select({ includeInStatements: customersTable.includeInStatements })
+    const [custMeta] = await db.select({
+      includeInStatements: customersTable.includeInStatements,
+      accountId: customersTable.accountId,
+    })
       .from(customersTable)
       .where(and(eq(customersTable.id, ccid), eq(customersTable.companyId, cid)));
     if (custMeta && custMeta.includeInStatements === false) {
@@ -464,7 +528,24 @@ router.get("/customer-statement", async (req, res) => {
       const supplementalRec = await customerInvoiceLinkedVoucherTotals(
         cid as number, req, bid, [sql`${receiptVouchersTable.date} < ${date}`],
       );
-      return Number(inv.s) - Number(ret.s) - Number(rec.s) - (supplementalRec.get(ccid) ?? 0);
+      let jeNet = 0;
+      if (custMeta?.accountId && !(await customerAccountShared(cid as number, custMeta.accountId))) {
+        const [je] = await db.select({
+          s: sql<string>`coalesce(sum(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,
+        }).from(journalEntryLinesTable)
+          .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+          .where(and(
+            eq(journalEntriesTable.companyId, cid as number),
+            eq(journalEntriesTable.status, "posted"),
+            eq(journalEntryLinesTable.accountId, custMeta.accountId),
+            notInArray(journalEntriesTable.entryType, [...CUSTOMER_DOC_ENTRY_TYPES]),
+            lt(journalEntriesTable.entryDate, date),
+            ...branchScopeSpread(req, journalEntriesTable.branchId, bid),
+          ));
+        jeNet = Number(je.s);
+      }
+      return Number(inv.s) - Number(ret.s) - Number(rec.s)
+        - (supplementalRec.get(ccid) ?? 0) + jeNet;
     }
 
     const opening = await sumPriorTo(from);
@@ -568,6 +649,10 @@ router.get("/customer-statement", async (req, res) => {
       ...(from ? [gte(receiptVouchersTable.date, from)] : []),
       ...(to ? [lte(receiptVouchersTable.date, to)] : []),
     ])).filter(r => r.customerId === ccid);
+    const jeLines = await fetchCustomerDirectJeLines(
+      cid, custMeta?.accountId, from, to,
+      branchScopeSpread(req, journalEntriesTable.branchId, bid),
+    );
 
     // Compose the "البيان"/"الشرح" description: show ONLY the user-typed
     // note from the source document. The generic label (e.g. "فاتورة مبيعات
@@ -598,7 +683,7 @@ router.get("/customer-statement", async (req, res) => {
     // but the field is emitted data-driven for forward-safety.
     const voucherChannel = (cashBoxId: number | null, bankAccountId: number | null): "cashbox" | "bank" | null =>
       cashBoxId != null ? "cashbox" : (bankAccountId != null ? "bank" : null);
-    type Line = { id: number; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string; paymentType?: string | null; channel?: "cashbox" | "bank" | null };
+    type Line = { id: number | null; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string; paymentType?: string | null; channel?: "cashbox" | "bank" | null };
     const lines: Line[] = [
       // Invoice "الشرح" loads from the sales invoice: the user-typed header
       // note when present, otherwise the item name(s) on the invoice.
@@ -634,7 +719,13 @@ router.get("/customer-statement", async (req, res) => {
       }),
       ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
       ...supplementalRecs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: r.allocatedAmount, description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
-    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || a.id - b.id);
+      ...jeLines.map(j => ({
+        id: null, date: j.date, type: "journal", docNumber: null,
+        journalEntryId: j.id, journalEntryNumber: j.docNumber,
+        debit: j.debit, credit: j.credit,
+        description: j.description || customerJeLineLabel(j.entryType),
+      })),
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || (a.id ?? 0) - (b.id ?? 0));
 
     res.json({ opening, lines });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -661,7 +752,10 @@ router.get("/customer-statement-detailed", async (req, res) => {
     }
 
     // Display-only customer — short-circuit (matches /customer-statement).
-    const [custMeta] = await db.select({ includeInStatements: customersTable.includeInStatements })
+    const [custMeta] = await db.select({
+      includeInStatements: customersTable.includeInStatements,
+      accountId: customersTable.accountId,
+    })
       .from(customersTable)
       .where(and(eq(customersTable.id, ccid), eq(customersTable.companyId, cid)));
     if (custMeta && custMeta.includeInStatements === false) {
@@ -706,7 +800,24 @@ router.get("/customer-statement-detailed", async (req, res) => {
       const supplementalRec = await customerInvoiceLinkedVoucherTotals(
         cid as number, req, bid, [sql`${receiptVouchersTable.date} < ${date}`],
       );
-      return Number(inv.s) - Number(ret.s) - Number(rec.s) - (supplementalRec.get(ccid) ?? 0);
+      let jeNet = 0;
+      if (custMeta?.accountId && !(await customerAccountShared(cid as number, custMeta.accountId))) {
+        const [je] = await db.select({
+          s: sql<string>`coalesce(sum(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,
+        }).from(journalEntryLinesTable)
+          .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+          .where(and(
+            eq(journalEntriesTable.companyId, cid as number),
+            eq(journalEntriesTable.status, "posted"),
+            eq(journalEntryLinesTable.accountId, custMeta.accountId),
+            notInArray(journalEntriesTable.entryType, [...CUSTOMER_DOC_ENTRY_TYPES]),
+            lt(journalEntriesTable.entryDate, date),
+            ...branchScopeSpread(req, journalEntriesTable.branchId, bid),
+          ));
+        jeNet = Number(je.s);
+      }
+      return Number(inv.s) - Number(ret.s) - Number(rec.s)
+        - (supplementalRec.get(ccid) ?? 0) + jeNet;
     }
     const opening = await sumPriorTo(from);
 
@@ -939,6 +1050,17 @@ router.get("/customer-statement-detailed", async (req, res) => {
           refNumber: r.refNumber,
           description: r.description,
         },
+      })),
+      ...(await fetchCustomerDirectJeLines(
+        cid, custMeta?.accountId, from, to,
+        branchScopeSpread(req, journalEntriesTable.branchId, bid),
+      )).map(j => ({
+        id: j.id, date: j.date, type: "journal", docNumber: j.docNumber,
+        journalEntryId: j.id, journalEntryNumber: j.docNumber,
+        debit: j.debit, credit: j.credit,
+        description: j.description || customerJeLineLabel(j.entryType),
+        paymentType: null,
+        meta: { entryType: j.entryType, description: j.description },
       })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || a.id - b.id);
 
@@ -2501,7 +2623,7 @@ router.get("/customer-balances", async (req, res) => {
 
     const custs = await db.select({
       id: customersTable.id, nameAr: customersTable.nameAr, nameEn: customersTable.nameEn,
-      phone: customersTable.phone,
+      phone: customersTable.phone, accountId: customersTable.accountId,
       includeInStatements: customersTable.includeInStatements,
     }).from(customersTable).where(eq(customersTable.companyId, cid));
 
@@ -2539,6 +2661,36 @@ router.get("/customer-balances", async (req, res) => {
     ]);
     const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(cid, req, bid, dr(receiptVouchersTable.date));
 
+    const accountCounts = new Map<number, number>();
+    for (const customer of custs) {
+      if (customer.accountId) {
+        accountCounts.set(customer.accountId, (accountCounts.get(customer.accountId) ?? 0) + 1);
+      }
+    }
+    const soleAccountIds = [...accountCounts.entries()]
+      .filter(([, count]) => count === 1)
+      .map(([accountId]) => accountId);
+    const jeByAccount = new Map<number, number>();
+    if (soleAccountIds.length) {
+      const jeRows = await db.select({
+        accountId: journalEntryLinesTable.accountId,
+        net: sql<string>`coalesce(sum(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,
+      }).from(journalEntryLinesTable)
+        .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+        .where(and(
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+          inArray(journalEntryLinesTable.accountId, soleAccountIds),
+          notInArray(journalEntriesTable.entryType, [...CUSTOMER_DOC_ENTRY_TYPES]),
+          ...dr(journalEntriesTable.entryDate),
+          ...branchScopeSpread(req, journalEntriesTable.branchId, bid),
+        ))
+        .groupBy(journalEntryLinesTable.accountId);
+      for (const row of jeRows) {
+        if (row.accountId) jeByAccount.set(row.accountId, Number(row.net));
+      }
+    }
+
     const invBy = new Map(invRows.map(r => [r.ccid, Number(r.s)]));
     const retBy = new Map(retRows.map(r => [r.ccid, Number(r.s)]));
     const recBy = new Map(recRows.map(r => [r.ccid, Number(r.s)]));
@@ -2547,7 +2699,9 @@ router.get("/customer-balances", async (req, res) => {
       .filter(c => c.includeInStatements !== false)
       .map(c => ({
         customerId: c.id, nameAr: c.nameAr, nameEn: c.nameEn, phone: c.phone,
-        balance: (invBy.get(c.id) ?? 0) - (retBy.get(c.id) ?? 0) - (recBy.get(c.id) ?? 0) - (supplementalRecBy.get(c.id) ?? 0),
+        balance: (invBy.get(c.id) ?? 0) - (retBy.get(c.id) ?? 0)
+          - (recBy.get(c.id) ?? 0) - (supplementalRecBy.get(c.id) ?? 0)
+          + (c.accountId ? (jeByAccount.get(c.accountId) ?? 0) : 0),
       }));
     res.json(out);
   } catch (e) {

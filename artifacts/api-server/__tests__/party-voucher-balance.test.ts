@@ -176,10 +176,35 @@ test("both customer statement routes include ranged rows and prior-date opening 
     assert.match(route, /lte\(receiptVouchersTable\.date, to\)/);
     assert.match(route, /customerId === ccid/);
     assert.match(route, /credit: r\.allocatedAmount/);
+    assert.match(route, /fetchCustomerDirectJeLines\(/);
+    assert.match(route, /type: "journal"/);
+    assert.match(route, /CUSTOMER_DOC_ENTRY_TYPES/);
   }
   assert.match(statement, /voucherDesc\(r\.description, r\.notes\)/);
   assert.match(detailed, /journalEntryNumber: r\.journalEntryNumber/);
   assert.match(detailed, /meta:\s*\{[\s\S]*cashBoxName:[\s\S]*bankAccountName:[\s\S]*refNumber:[\s\S]*description:/);
+});
+
+test("customer balances include direct JEs only for uniquely-owned customer accounts", async () => {
+  const analytics = await readFile(new URL("../src/routes/sales-analytics.ts", import.meta.url), "utf8");
+  const analyticsStart = analytics.indexOf('router.get("/customer-balances"');
+  const analyticsRoute = analytics.slice(
+    analyticsStart,
+    analytics.indexOf('router.get("/invoice-payment-status"', analyticsStart),
+  );
+  assert.match(analyticsRoute, /accountId: customersTable\.accountId/);
+  assert.match(analyticsRoute, /accountCounts/);
+  assert.match(analyticsRoute, /journalEntryLinesTable\.debit} - \$\{journalEntryLinesTable\.credit/);
+  assert.match(analyticsRoute, /notInArray\(journalEntriesTable\.entryType, \[\.\.\.CUSTOMER_DOC_ENTRY_TYPES\]\)/);
+  assert.match(analyticsRoute, /branchScopeSpread\(req, journalEntriesTable\.branchId, bid\)/);
+
+  const customers = await readFile(new URL("../src/routes/customers.ts", import.meta.url), "utf8");
+  const listStart = customers.indexOf('router.get("/balances"');
+  const listRoute = customers.slice(listStart, customers.indexOf("// ═", listStart));
+  assert.match(listRoute, /accountOwner/);
+  assert.match(listRoute, /journalEntryLinesTable\.debit} - \$\{journalEntryLinesTable\.credit/);
+  assert.match(listRoute, /notInArray\(journalEntriesTable\.entryType/);
+  assert.match(listRoute, /branchScopeSpread\(req, journalEntriesTable\.branchId, bid\)/);
 });
 
 test("customer row loader uses voucher scope and posted credit invoice eligibility", async () => {
