@@ -20,6 +20,7 @@ import { FileText, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { sourceDocumentUrl } from "@/lib/sourceDocumentLinks";
 
 // Map a journal-entry row coming back from /account-statement to the URL of
 // the document that produced it. Documents with a dedicated detail page
@@ -142,11 +143,9 @@ function sourceLinkFor(row: any): string | null {
 
     // ── list-page targets (no detail screen exists for these modules) ───
     case "sales_return":
-      if (row.salesReturnId)             return `/sales/returns`;
-      break;
+      return sourceDocumentUrl("sales_return", row.salesReturnId);
     case "purchase_return":
-      if (row.purchaseReturnId)          return `/purchasing/returns`;
-      break;
+      return sourceDocumentUrl("purchase_return", row.purchaseReturnId);
     case "contracting_outgoing_bill":
     case "contracting_incoming_bill":
       if (row.contractingProgressBillId) return `/contracting/bills`;

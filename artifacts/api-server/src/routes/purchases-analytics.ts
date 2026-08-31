@@ -11,9 +11,10 @@ import {
   paymentVoucherLinesTable,
   settlementLinksTable,
 } from "@workspace/db";
-import { and, eq, sql, gte, lte, lt, asc, inArray, notInArray } from "drizzle-orm";
+import { and, eq, sql, gte, lte, lt, asc, inArray, notInArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 import { purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
+import { supplementalInvoiceLinkedVoucherTotals } from "../lib/partyVoucherBalance.js";
 
 // Entry types already aggregated via dedicated document tables — exclude when
 // reading direct JE postings to a supplier's AP account, otherwise we would
@@ -113,6 +114,44 @@ function getBid(req: any): number | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Adds only entityId-null legacy voucher allocations to the original totals. */
+async function supplierInvoiceLinkedVoucherTotals(cid: number, req: any, bid: number | undefined, dateConds: any[]) {
+  const vouchers = await db.select({
+    id: paymentVouchersTable.id, amount: paymentVouchersTable.amount,
+  }).from(paymentVouchersTable).where(and(
+    eq(paymentVouchersTable.companyId, cid),
+    eq(paymentVouchersTable.status, "posted"),
+    isNull(paymentVouchersTable.entityId),
+    ...dateConds,
+    ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
+  ));
+  const ids = vouchers.map(v => v.id);
+  if (!ids.length) return new Map<number, number>();
+  const invoiceScope = [
+    eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted"),
+    eq(purchaseInvoicesTable.paymentType, "credit"), sql`${purchaseInvoicesTable.lcId} IS NULL`,
+  ];
+  const [lines, headers, settlements] = await Promise.all([
+    db.select({ id: paymentVoucherLinesTable.id, voucherId: paymentVoucherLinesTable.voucherId,
+      partyId: purchaseInvoicesTable.supplierId,
+      amount: sql<string>`${paymentVoucherLinesTable.amount} + coalesce(${paymentVoucherLinesTable.taxAmount}, 0)` })
+      .from(paymentVoucherLinesTable)
+      .innerJoin(purchaseInvoicesTable, eq(paymentVoucherLinesTable.purchaseInvoiceId, purchaseInvoicesTable.id))
+      .where(and(inArray(paymentVoucherLinesTable.voucherId, ids), ...invoiceScope)),
+    db.select({ voucherId: paymentVouchersTable.id, partyId: purchaseInvoicesTable.supplierId })
+      .from(paymentVouchersTable)
+      .innerJoin(purchaseInvoicesTable, eq(paymentVouchersTable.purchaseInvoiceId, purchaseInvoicesTable.id))
+      .where(and(inArray(paymentVouchersTable.id, ids), ...invoiceScope)),
+    db.select({ id: settlementLinksTable.id, voucherId: settlementLinksTable.sourceId,
+      partyId: purchaseInvoicesTable.supplierId, amount: settlementLinksTable.amount })
+      .from(settlementLinksTable)
+      .innerJoin(purchaseInvoicesTable, eq(settlementLinksTable.purchaseInvoiceId, purchaseInvoicesTable.id))
+      .where(and(eq(settlementLinksTable.companyId, cid), eq(settlementLinksTable.sourceType, "payment_voucher"),
+        inArray(settlementLinksTable.sourceId, ids), ...invoiceScope)),
+  ]);
+  return supplementalInvoiceLinkedVoucherTotals(vouchers, lines, settlements, headers);
 }
 
 /**
@@ -1007,10 +1046,12 @@ router.get("/aging", async (req, res) => {
         ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
       ))
       .groupBy(paymentVouchersTable.entityId);
+    const supplementalPayBy = await supplierInvoiceLinkedVoucherTotals(cid, req, bid, [lte(paymentVouchersTable.date, asOf)]);
 
     const debitBySupplier: Record<number, number> = {};
     for (const r of retAgg) if (r.supplierId) debitBySupplier[r.supplierId] = (debitBySupplier[r.supplierId] ?? 0) + Number(r.total);
     for (const r of payAgg) if (r.supplierId) debitBySupplier[r.supplierId] = (debitBySupplier[r.supplierId] ?? 0) + Number(r.total);
+    for (const [supplierId, total] of supplementalPayBy) debitBySupplier[supplierId] = (debitBySupplier[supplierId] ?? 0) + total;
 
     const invBySupplier: Record<number, { date: string; total: number }[]> = {};
     for (const i of invs) {
@@ -1157,6 +1198,7 @@ router.get("/supplier-balances", async (req, res) => {
         ))
         .groupBy(paymentVouchersTable.entityId),
     ]);
+    const supplementalPayBy = await supplierInvoiceLinkedVoucherTotals(cid, req, bid, dr(paymentVouchersTable.date));
 
     // Direct JE lines per UNSHARED supplier AP account (same exclusion list
     // as the statement's fetchSupplierDirectJeLines).
@@ -1190,7 +1232,7 @@ router.get("/supplier-balances", async (req, res) => {
       .filter(s => s.includeInStatements !== false)
       .map(s => ({
         supplierId: s.id, nameAr: s.nameAr, nameEn: s.nameEn, phone: s.phone,
-        balance: (invBy.get(s.id) ?? 0) - (retBy.get(s.id) ?? 0) - (payBy.get(s.id) ?? 0)
+        balance: (invBy.get(s.id) ?? 0) - (retBy.get(s.id) ?? 0) - (payBy.get(s.id) ?? 0) - (supplementalPayBy.get(s.id) ?? 0)
                + (s.accountId ? (jeByAcct.get(s.accountId) ?? 0) : 0),
       }));
     res.json(out);

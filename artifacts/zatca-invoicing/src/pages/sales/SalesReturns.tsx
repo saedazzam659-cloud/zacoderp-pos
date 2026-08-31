@@ -597,10 +597,48 @@ export default function SalesReturns() {
           }))
         : (useTabbedLayout ? [] : [newLine()]));
       setShowForm(true);
+      return true;
     } catch (e: any) {
       toast({ title: e.message, variant: "destructive" });
+      return false;
     }
   }
+
+  // Accounting source links use edit + view only. Do not let them interfere
+  // with the independent fromInvoice/full/newDraft URL lifecycle below. Keep
+  // the link until the existing edit loader has successfully opened it.
+  const sourceReturnNavigationConsumed = useRef(false);
+  const sourceReturnNavigationInFlight = useRef(false);
+  const editReturnRef = useRef(editReturn);
+  editReturnRef.current = editReturn;
+  useEffect(() => {
+    if (sourceReturnNavigationConsumed.current || sourceReturnNavigationInFlight.current || !user || !token) return;
+    const url = new URL(window.location.href);
+    const editId = url.searchParams.get("edit");
+    const returnId = Number(editId);
+    if (
+      url.searchParams.get("view") !== "1"
+      || !/^[1-9]\d*$/.test(editId ?? "")
+      || !Number.isSafeInteger(returnId)
+    ) return;
+
+    sourceReturnNavigationInFlight.current = true;
+    void (async () => {
+      try {
+        if (await editReturnRef.current(returnId, true)) {
+          sourceReturnNavigationConsumed.current = true;
+          url.searchParams.delete("edit");
+          url.searchParams.delete("view");
+          window.history.replaceState(window.history.state, "", url.toString());
+          return;
+        }
+      } finally {
+        if (!sourceReturnNavigationConsumed.current) {
+          sourceReturnNavigationInFlight.current = false;
+        }
+      }
+    })();
+  }, [user, token]);
 
   async function duplicateReturn(id: number) {
     try {

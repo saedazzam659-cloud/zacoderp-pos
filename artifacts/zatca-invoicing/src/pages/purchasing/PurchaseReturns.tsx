@@ -414,7 +414,10 @@ export default function PurchaseReturns() {
   async function startEdit(retId: number, asView = false) {
     try {
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${retId}`, { headers: authH });
-      if (!res.ok) { toast({ title: tr("toasts.loadFail"), variant: "destructive" }); return; }
+      if (!res.ok) {
+        toast({ title: tr("toasts.loadFail"), variant: "destructive" });
+        return false;
+      }
       const full = await res.json();
       setViewMode(asView);
       setActiveTab(asView ? "details" : "basic");
@@ -459,10 +462,48 @@ export default function PurchaseReturns() {
         costCenter:  l.costCenter ?? "",
       })) : (useTabbedLayout ? [] : [newLine()]));
       setShowForm(true);
+      return true;
     } catch (e: any) {
       toast({ title: e.message || tr("toasts.loadError"), variant: "destructive" });
+      return false;
     }
   }
+
+  // Accounting source links carry only these two navigation parameters. Wait
+  // for auth (the detail request's prerequisite), then consume the link only
+  // after the existing edit loader has successfully opened the document.
+  const sourceReturnNavigationConsumed = useRef(false);
+  const sourceReturnNavigationInFlight = useRef(false);
+  const startEditRef = useRef(startEdit);
+  startEditRef.current = startEdit;
+  useEffect(() => {
+    if (sourceReturnNavigationConsumed.current || sourceReturnNavigationInFlight.current || !user || !token) return;
+    const url = new URL(window.location.href);
+    const editId = url.searchParams.get("edit");
+    const returnId = Number(editId);
+    if (
+      url.searchParams.get("view") !== "1"
+      || !/^[1-9]\d*$/.test(editId ?? "")
+      || !Number.isSafeInteger(returnId)
+    ) return;
+
+    sourceReturnNavigationInFlight.current = true;
+    void (async () => {
+      try {
+        if (await startEditRef.current(returnId, true)) {
+          sourceReturnNavigationConsumed.current = true;
+          url.searchParams.delete("edit");
+          url.searchParams.delete("view");
+          window.history.replaceState(window.history.state, "", url.toString());
+          return;
+        }
+      } finally {
+        if (!sourceReturnNavigationConsumed.current) {
+          sourceReturnNavigationInFlight.current = false;
+        }
+      }
+    })();
+  }, [user, token]);
 
   async function duplicateReturn(retId: number) {
     try {

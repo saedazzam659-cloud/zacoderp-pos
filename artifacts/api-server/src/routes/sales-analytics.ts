@@ -15,11 +15,12 @@ import {
   receiptVoucherLinesTable,
   settlementLinksTable,
 } from "@workspace/db";
-import { and, eq, sql, gte, lte, asc, desc, inArray } from "drizzle-orm";
+import { and, eq, sql, gte, lte, asc, desc, inArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { supplementalInvoiceLinkedVoucherTotals } from "../lib/partyVoucherBalance.js";
 
 const router = Router();
   // ─────────────────────────────────────────────────────────────────────────
@@ -87,6 +88,41 @@ function getRid(req: any): number | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Adds only entityId-null legacy receipt allocations to original totals. */
+async function customerInvoiceLinkedVoucherTotals(cid: number, req: any, bid: number | undefined, dateConds: any[]) {
+  const vouchers = await db.select({
+    id: receiptVouchersTable.id, amount: receiptVouchersTable.amount,
+  }).from(receiptVouchersTable).where(and(
+    eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted"),
+    isNull(receiptVouchersTable.entityId),
+    ...dateConds, ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
+  ));
+  const ids = vouchers.map(v => v.id);
+  if (!ids.length) return new Map<number, number>();
+  const invoiceScope = [
+    eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
+    eq(salesInvoicesTable.paymentType, "credit"),
+  ];
+  const [lines, headers, settlements] = await Promise.all([
+    db.select({ id: receiptVoucherLinesTable.id, voucherId: receiptVoucherLinesTable.voucherId,
+      partyId: salesInvoicesTable.customerId, amount: receiptVoucherLinesTable.amount })
+      .from(receiptVoucherLinesTable)
+      .innerJoin(salesInvoicesTable, eq(receiptVoucherLinesTable.salesInvoiceId, salesInvoicesTable.id))
+      .where(and(inArray(receiptVoucherLinesTable.voucherId, ids), ...invoiceScope)),
+    db.select({ voucherId: receiptVouchersTable.id, partyId: salesInvoicesTable.customerId })
+      .from(receiptVouchersTable)
+      .innerJoin(salesInvoicesTable, eq(receiptVouchersTable.salesInvoiceId, salesInvoicesTable.id))
+      .where(and(inArray(receiptVouchersTable.id, ids), ...invoiceScope)),
+    db.select({ id: settlementLinksTable.id, voucherId: settlementLinksTable.sourceId,
+      partyId: salesInvoicesTable.customerId, amount: settlementLinksTable.amount })
+      .from(settlementLinksTable)
+      .innerJoin(salesInvoicesTable, eq(settlementLinksTable.salesInvoiceId, salesInvoicesTable.id))
+      .where(and(eq(settlementLinksTable.companyId, cid), eq(settlementLinksTable.sourceType, "receipt_voucher"),
+        inArray(settlementLinksTable.sourceId, ids), ...invoiceScope)),
+  ]);
+  return supplementalInvoiceLinkedVoucherTotals(vouchers, lines, settlements, headers);
 }
 
 /**
@@ -868,10 +904,12 @@ router.get("/aging", async (req, res) => {
         ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
       .groupBy(receiptVouchersTable.entityId);
+    const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(cid, req, bid, [lte(receiptVouchersTable.date, asOf)]);
 
     const creditByCustomer: Record<number, number> = {};
     for (const r of retAgg) if (r.customerId) creditByCustomer[r.customerId] = (creditByCustomer[r.customerId] ?? 0) + Number(r.total);
     for (const r of recAgg) if (r.customerId) creditByCustomer[r.customerId] = (creditByCustomer[r.customerId] ?? 0) + Number(r.total);
+    for (const [customerId, total] of supplementalRecBy) creditByCustomer[customerId] = (creditByCustomer[customerId] ?? 0) + total;
 
     // Group invoices by customer
     const invByCustomer: Record<number, { date: string; total: number }[]> = {};
@@ -2392,6 +2430,7 @@ router.get("/customer-balances", async (req, res) => {
         ))
         .groupBy(receiptVouchersTable.entityId),
     ]);
+    const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(cid, req, bid, dr(receiptVouchersTable.date));
 
     const invBy = new Map(invRows.map(r => [r.ccid, Number(r.s)]));
     const retBy = new Map(retRows.map(r => [r.ccid, Number(r.s)]));
@@ -2401,7 +2440,7 @@ router.get("/customer-balances", async (req, res) => {
       .filter(c => c.includeInStatements !== false)
       .map(c => ({
         customerId: c.id, nameAr: c.nameAr, nameEn: c.nameEn, phone: c.phone,
-        balance: (invBy.get(c.id) ?? 0) - (retBy.get(c.id) ?? 0) - (recBy.get(c.id) ?? 0),
+        balance: (invBy.get(c.id) ?? 0) - (retBy.get(c.id) ?? 0) - (recBy.get(c.id) ?? 0) - (supplementalRecBy.get(c.id) ?? 0),
       }));
     res.json(out);
   } catch (e) {

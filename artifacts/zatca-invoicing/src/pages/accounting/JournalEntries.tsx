@@ -55,6 +55,7 @@ import {
 } from "@/lib/docRowTone";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { sourceDocumentUrl } from "@/lib/sourceDocumentLinks";
 
 // Maps a journal-entry's `entryType` + resolved `sourceId` to the route of the
 // source document that produced it. For sourced entry types we ALWAYS return a
@@ -63,28 +64,6 @@ import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 // the source module's list page so the user still lands on the right place
 // instead of the journal-entry edit modal. Returns null only for genuinely
 // manual / general entries that have no source to drill into.
-function sourceUrlFor(entryType: string | null | undefined, sourceId: number | null | undefined): string | null {
-  const t = entryType ?? "";
-  switch (t) {
-    case "sales_invoice":       return sourceId ? `/sales/invoices/${sourceId}` : "/sales/invoices";
-    case "sales_return":        return "/sales/returns";
-    case "customer_settlement": return "/sales/settlements";
-    case "purchase_invoice":    return sourceId ? `/purchasing/invoices/${sourceId}` : "/purchasing/invoices";
-    case "purchase_return":     return "/purchasing/returns";
-    case "supplier_settlement": return "/purchasing/settlements";
-    case "receipt":
-    case "receipt_voucher":     return "/cash/receipt-vouchers";
-    case "payment":
-    case "payment_voucher":     return "/cash/payment-vouchers";
-    case "stock_transfer":      return "/inventory/transfers";
-    case "stock_adjustment":    return "/inventory/adjustments";
-    case "payroll_run":         return "/hr/payroll";
-    case "employee_loan":       return "/hr/loans";
-    case "eos_payment":         return "/hr/end-of-service";
-    default:                    return null;
-  }
-}
-
 type ColType = "text" | "num" | "none";
 interface ColDef {
   key: string;
@@ -1672,7 +1651,7 @@ ${wrapWithLetterhead(letterhead, sections)}
                   const absIdx = (safePage - 1) * serverLimit + idx;
                   const st = STATUS_MAP[entry.status] ?? STATUS_MAP.posted;
                   const docLabel = entry.docNumber ?? `QYD-${String(entry.id).padStart(4, "0")}`;
-                  const sourceUrl = sourceUrlFor(entry.entryType, entry.sourceId);
+                  const sourceUrl = sourceDocumentUrl(entry.entryType, entry.sourceId);
                   const rid = Number(entry.id);
                   const isSel = layout.isSelected(rid);
                   const renderCell = (col: ColDef) => {
@@ -1781,7 +1760,7 @@ ${wrapWithLetterhead(letterhead, sections)}
                                   <Eye className="h-3.5 w-3.5" />
                                 </Button>
                               )}
-                              {entry.status === "posted" && !sourceUrlFor(entry.entryType, null) && (
+                              {entry.status === "posted" && !sourceDocumentUrl(entry.entryType, null) && (
                                 <Button
                                   variant="ghost" size="icon"
                                   className="h-6 w-6 text-amber-600 hover:bg-amber-50 hover:text-amber-700"
