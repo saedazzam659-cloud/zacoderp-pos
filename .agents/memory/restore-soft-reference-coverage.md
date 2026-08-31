@@ -16,3 +16,9 @@ Historical rows may outlive their user. If a user reference is missing, synthesi
 **How to apply:** Reuse the same archive identity across all references to that source user, keep it unable to log in, and preserve unknown non-user references as fail-closed.
 
 **Confirmed:** A legacy full-company import with deleted historical users completed successfully under this policy.
+
+JE-number reservations are a narrow exception to required missing soft references: preserve and remap them while their source document exists, but drop only an orphan reservation row when that source is absent. Never retain its raw source ID across servers.
+
+**Why:** Reservations are temporary unpost→repost state. An orphan cannot be consumed legitimately, while preserving its source ID can collide with an unrelated future target row and rejecting it blocks an otherwise valid company backup.
+
+**How to apply:** Keep every other missing required business reference fail-closed; this exception belongs only to `je_number_reservations.source_id`.

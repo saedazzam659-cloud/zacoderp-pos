@@ -6,7 +6,7 @@ import {
   catalogsMatch, missingRequiredFullCompanyTables, REQUIRED_FULL_COMPANY_TABLES,
   restoreCatalogsCompatible, restoreParameterValue, restoredUsername, restoredUsernames,
   archivedRestoreUsername,
-  canSynthesizeMissingRestoreReference,
+  canDropMissingRestoreReferenceOwner, canSynthesizeMissingRestoreReference,
 } from "../src/lib/fullCompanyBackup.js";
 import {
   buildRestoreReferencePlan,
@@ -253,6 +253,23 @@ test("missing required historical users are eligible for archived-user synthesis
   assert.equal(plan.references[0]?.sourceMissing, true);
   assert.equal(plan.references[0]?.rule.referencedTable, "users");
   assert.equal(canSynthesizeMissingRestoreReference(plan.references[0]!), true);
+});
+
+test("orphan JE-number reservations are dropped instead of retaining unsafe source ids", () => {
+  const orphanReservation = {
+    table: "je_number_reservations",
+    column: "source_id",
+    rowId: 91,
+    sourceValue: 404,
+    sourceMissing: true,
+    rule: { domain: "document", referencedTable: "purchase_invoices", shape: "scalar" },
+  } as const;
+  assert.equal(canDropMissingRestoreReferenceOwner(orphanReservation), true);
+  assert.equal(canDropMissingRestoreReferenceOwner({ ...orphanReservation, sourceMissing: false }), false);
+  assert.equal(canDropMissingRestoreReferenceOwner({
+    ...orphanReservation,
+    table: "settlement_links",
+  }), false);
 });
 
 test("logical restore registry leaves physical foreign keys to the catalog engine", () => {

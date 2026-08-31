@@ -173,6 +173,21 @@ export function canSynthesizeMissingRestoreReference(
 ): boolean {
   return reference.sourceMissing === true && reference.rule.referencedTable === "users";
 }
+
+/**
+ * A JE-number reservation is useful only while its source document still
+ * exists and may be reposted. Historical orphan reservations can remain after
+ * a source document is deleted; carrying their raw source IDs to another
+ * server would risk matching an unrelated future row, so drop only that
+ * orphan owner row during restore.
+ */
+export function canDropMissingRestoreReferenceOwner(
+  reference: PlannedRestoreReference,
+): boolean {
+  return reference.sourceMissing === true
+    && reference.table === "je_number_reservations"
+    && reference.column === "source_id";
+}
 export function isSensitiveColumn(column: string): boolean { return SENSITIVE.test(normalizedKey(column)); }
 export function restoreParameterValue(dataType: string | undefined, value: unknown): unknown {
   if ((dataType === "json" || dataType === "jsonb") && value !== null && value !== undefined) {
@@ -664,6 +679,19 @@ async function analyzeRestore(
     : { references: [], issues: [], checked: 0, physicalForeignKeysSkipped: 0 };
   issues.push(...referencePlan.issues);
   for (const reference of referencePlan.references) {
+    if (canDropMissingRestoreReferenceOwner(reference)) {
+      issues.push({
+        severity: "warning",
+        code: "missing_reference_row",
+        table: reference.table,
+        column: reference.column,
+        rowId: reference.rowId,
+        sourceValue: reference.sourceValue,
+        referencedTable: reference.rule.referencedTable,
+        message: "سيتم تجاهل حجز رقم قيد قديم لأن المستند المصدر لم يعد موجودًا في النسخة",
+      });
+      continue;
+    }
     if (
       reference.sourceMissing
       && !canSynthesizeMissingRestoreReference(reference)
@@ -978,7 +1006,11 @@ export async function restoreFullCompanyBackup(
         }
         if (table.primaryKey) {
           const rowKey = `${name}\0${restoreReferenceKey(source[table.primaryKey])}`;
-          for (const reference of logicalByRow.get(rowKey) ?? []) {
+          const rowReferences = logicalByRow.get(rowKey) ?? [];
+          if (rowReferences.some(canDropMissingRestoreReferenceOwner)) {
+            continue;
+          }
+          for (const reference of rowReferences) {
             if (!(reference.column in values)) continue;
             if (reference.sourceMissing) {
               if (reference.rule.referencedTable === "users") {
