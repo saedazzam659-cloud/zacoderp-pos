@@ -20,7 +20,10 @@ import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, push
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { supplementalInvoiceLinkedVoucherTotals } from "../lib/partyVoucherBalance.js";
+import {
+  supplementalInvoiceLinkedVoucherRowAllocations,
+  supplementalInvoiceLinkedVoucherTotals,
+} from "../lib/partyVoucherBalance.js";
 
 const router = Router();
   // ─────────────────────────────────────────────────────────────────────────
@@ -123,6 +126,75 @@ async function customerInvoiceLinkedVoucherTotals(cid: number, req: any, bid: nu
         inArray(settlementLinksTable.sourceId, ids), ...invoiceScope)),
   ]);
   return supplementalInvoiceLinkedVoucherTotals(vouchers, lines, settlements, headers);
+}
+
+/** Row-level counterpart of customerInvoiceLinkedVoucherTotals. Voucher date
+ * and branch determine report scope; linked invoices only establish the
+ * customer and must be posted credit invoices in the same tenant. */
+async function customerInvoiceLinkedVoucherRows(cid: number, req: any, bid: number | undefined, dateConds: any[]) {
+  const vouchers = await db.select({
+    id: receiptVouchersTable.id,
+    amount: receiptVouchersTable.amount,
+    date: receiptVouchersTable.date,
+    docNumber: receiptVouchersTable.code,
+    journalEntryId: receiptVouchersTable.journalEntryId,
+    journalEntryNumber: journalEntriesTable.docNumber,
+    paymentType: receiptVouchersTable.paymentType,
+    cashBoxId: receiptVouchersTable.cashBoxId,
+    bankAccountId: receiptVouchersTable.bankAccountId,
+    refNumber: receiptVouchersTable.refNumber,
+    description: receiptVouchersTable.description,
+    notes: receiptVouchersTable.notes,
+  }).from(receiptVouchersTable)
+    .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, receiptVouchersTable.journalEntryId))
+    .where(and(
+      eq(receiptVouchersTable.companyId, cid),
+      eq(receiptVouchersTable.status, "posted"),
+      isNull(receiptVouchersTable.entityId),
+      ...dateConds,
+      ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
+    ));
+  const ids = vouchers.map(v => v.id);
+  if (!ids.length) return [];
+  const invoiceScope = [
+    eq(salesInvoicesTable.companyId, cid),
+    eq(salesInvoicesTable.status, "posted"),
+    eq(salesInvoicesTable.paymentType, "credit"),
+  ];
+  const [lines, headers, settlements] = await Promise.all([
+    db.select({
+      id: receiptVoucherLinesTable.id,
+      voucherId: receiptVoucherLinesTable.voucherId,
+      partyId: salesInvoicesTable.customerId,
+      amount: receiptVoucherLinesTable.amount,
+    }).from(receiptVoucherLinesTable)
+      .innerJoin(salesInvoicesTable, eq(receiptVoucherLinesTable.salesInvoiceId, salesInvoicesTable.id))
+      .where(and(inArray(receiptVoucherLinesTable.voucherId, ids), ...invoiceScope)),
+    db.select({ voucherId: receiptVouchersTable.id, partyId: salesInvoicesTable.customerId })
+      .from(receiptVouchersTable)
+      .innerJoin(salesInvoicesTable, eq(receiptVouchersTable.salesInvoiceId, salesInvoicesTable.id))
+      .where(and(inArray(receiptVouchersTable.id, ids), ...invoiceScope)),
+    db.select({
+      id: settlementLinksTable.id,
+      voucherId: settlementLinksTable.sourceId,
+      partyId: salesInvoicesTable.customerId,
+      amount: settlementLinksTable.amount,
+    }).from(settlementLinksTable)
+      .innerJoin(salesInvoicesTable, eq(settlementLinksTable.salesInvoiceId, salesInvoicesTable.id))
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "receipt_voucher"),
+        inArray(settlementLinksTable.sourceId, ids),
+        ...invoiceScope,
+      )),
+  ]);
+  const voucherById = new Map(vouchers.map(v => [v.id, v]));
+  return supplementalInvoiceLinkedVoucherRowAllocations(vouchers, lines, settlements, headers)
+    .map(allocation => ({
+      ...voucherById.get(allocation.voucherId)!,
+      allocatedAmount: allocation.amount,
+      customerId: allocation.partyId,
+    }));
 }
 
 /**
@@ -389,7 +461,10 @@ router.get("/customer-statement", async (req, res) => {
           sql`${receiptVouchersTable.date} < ${date}`,
           ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
         ));
-      return Number(inv.s) - Number(ret.s) - Number(rec.s);
+      const supplementalRec = await customerInvoiceLinkedVoucherTotals(
+        cid as number, req, bid, [sql`${receiptVouchersTable.date} < ${date}`],
+      );
+      return Number(inv.s) - Number(ret.s) - Number(rec.s) - (supplementalRec.get(ccid) ?? 0);
     }
 
     const opening = await sumPriorTo(from);
@@ -489,6 +564,10 @@ router.get("/customer-statement", async (req, res) => {
     }).from(receiptVouchersTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, receiptVouchersTable.journalEntryId))
       .where(and(...recConds));
+    const supplementalRecs = (await customerInvoiceLinkedVoucherRows(cid, req, bid, [
+      ...(from ? [gte(receiptVouchersTable.date, from)] : []),
+      ...(to ? [lte(receiptVouchersTable.date, to)] : []),
+    ])).filter(r => r.customerId === ccid);
 
     // Compose the "البيان"/"الشرح" description: show ONLY the user-typed
     // note from the source document. The generic label (e.g. "فاتورة مبيعات
@@ -554,7 +633,8 @@ router.get("/customer-statement", async (req, res) => {
         return [returnLine];
       }),
       ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
-    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
+      ...supplementalRecs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: r.allocatedAmount, description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || a.id - b.id);
 
     res.json({ opening, lines });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -623,7 +703,10 @@ router.get("/customer-statement-detailed", async (req, res) => {
           sql`${receiptVouchersTable.date} < ${date}`,
           ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
         ));
-      return Number(inv.s) - Number(ret.s) - Number(rec.s);
+      const supplementalRec = await customerInvoiceLinkedVoucherTotals(
+        cid as number, req, bid, [sql`${receiptVouchersTable.date} < ${date}`],
+      );
+      return Number(inv.s) - Number(ret.s) - Number(rec.s) - (supplementalRec.get(ccid) ?? 0);
     }
     const opening = await sumPriorTo(from);
 
@@ -677,12 +760,20 @@ router.get("/customer-statement-detailed", async (req, res) => {
     const recs = await db.select({
       id: receiptVouchersTable.id, date: receiptVouchersTable.date,
       docNumber: receiptVouchersTable.code, amount: receiptVouchersTable.amount,
+      journalEntryId: receiptVouchersTable.journalEntryId,
+      journalEntryNumber: journalEntriesTable.docNumber,
       paymentType: receiptVouchersTable.paymentType,
       cashBoxId: receiptVouchersTable.cashBoxId,
       bankAccountId: receiptVouchersTable.bankAccountId,
       refNumber: receiptVouchersTable.refNumber,
       description: receiptVouchersTable.description,
-    }).from(receiptVouchersTable).where(and(...recConds));
+    }).from(receiptVouchersTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, receiptVouchersTable.journalEntryId))
+      .where(and(...recConds));
+    const supplementalRecs = (await customerInvoiceLinkedVoucherRows(cid, req, bid, [
+      ...(from ? [gte(receiptVouchersTable.date, from)] : []),
+      ...(to ? [lte(receiptVouchersTable.date, to)] : []),
+    ])).filter(r => r.customerId === ccid);
 
     // Batch-load child rows for invoices and returns.
     const invIds = invs.map(i => i.id);
@@ -719,8 +810,9 @@ router.get("/customer-statement-detailed", async (req, res) => {
       : [];
 
     // Cash boxes / bank accounts referenced by receipts (for friendly names).
-    const cbIds  = Array.from(new Set(recs.map(r => r.cashBoxId).filter((x): x is number => !!x)));
-    const baIds  = Array.from(new Set(recs.map(r => r.bankAccountId).filter((x): x is number => !!x)));
+    const allRecs = [...recs, ...supplementalRecs];
+    const cbIds  = Array.from(new Set(allRecs.map(r => r.cashBoxId).filter((x): x is number => !!x)));
+    const baIds  = Array.from(new Set(allRecs.map(r => r.bankAccountId).filter((x): x is number => !!x)));
     // cash_boxes / bank_accounts store names in name_ar / name_en (no plain `name`).
     // Prefer Arabic, fall back to English so legacy rows always render.
     const cbRows = cbIds.length
@@ -774,6 +866,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
 
     type DetailedLine = {
       id: number; date: string; type: string; docNumber: string | null;
+      journalEntryId?: number | null; journalEntryNumber?: string | null;
       debit: number; credit: number; description: string;
       paymentType?: string | null;
       // Embedded drilldown payload (lines for invoice/return, meta for receipt).
@@ -823,6 +916,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
       }),
       ...recs.map(r => ({
         id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber,
+        journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber,
         debit: 0, credit: Number(r.amount), description: "سند قبض",
         paymentType: r.paymentType,
         meta: {
@@ -833,7 +927,20 @@ router.get("/customer-statement-detailed", async (req, res) => {
           description: r.description,
         },
       })),
-    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
+      ...supplementalRecs.map(r => ({
+        id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber,
+        journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber,
+        debit: 0, credit: r.allocatedAmount, description: "سند قبض",
+        paymentType: r.paymentType,
+        meta: {
+          paymentType: r.paymentType,
+          cashBoxName: r.cashBoxId ? (cbName.get(r.cashBoxId) ?? null) : null,
+          bankAccountName: r.bankAccountId ? (baName.get(r.bankAccountId) ?? null) : null,
+          refNumber: r.refNumber,
+          description: r.description,
+        },
+      })),
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || a.id - b.id);
 
     res.json({ opening, lines });
   } catch (e: any) { res.status(500).json({ error: e.message }); }

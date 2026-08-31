@@ -14,7 +14,10 @@ import {
 import { and, eq, sql, gte, lte, lt, asc, inArray, notInArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 import { purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
-import { supplementalInvoiceLinkedVoucherTotals } from "../lib/partyVoucherBalance.js";
+import {
+  supplementalInvoiceLinkedVoucherRowAllocations,
+  supplementalInvoiceLinkedVoucherTotals,
+} from "../lib/partyVoucherBalance.js";
 
 // Entry types already aggregated via dedicated document tables — exclude when
 // reading direct JE postings to a supplier's AP account, otherwise we would
@@ -152,6 +155,72 @@ async function supplierInvoiceLinkedVoucherTotals(cid: number, req: any, bid: nu
         inArray(settlementLinksTable.sourceId, ids), ...invoiceScope)),
   ]);
   return supplementalInvoiceLinkedVoucherTotals(vouchers, lines, settlements, headers);
+}
+
+/** Row-level counterpart of supplierInvoiceLinkedVoucherTotals. The SQL scope
+ * is deliberately identical; only voucher display fields are additionally
+ * selected. Allocation normalization is shared with every aggregate caller. */
+async function supplierInvoiceLinkedVoucherRows(cid: number, req: any, bid: number | undefined, dateConds: any[]) {
+  const vouchers = await db.select({
+    id: paymentVouchersTable.id,
+    amount: paymentVouchersTable.amount,
+    date: paymentVouchersTable.date,
+    docNumber: paymentVouchersTable.code,
+    journalEntryId: paymentVouchersTable.journalEntryId,
+    journalEntryNumber: journalEntriesTable.docNumber,
+    paymentType: paymentVouchersTable.paymentType,
+    cashBoxId: paymentVouchersTable.cashBoxId,
+    bankAccountId: paymentVouchersTable.bankAccountId,
+    refNumber: paymentVouchersTable.refNumber,
+    description: paymentVouchersTable.description,
+    notes: paymentVouchersTable.notes,
+  }).from(paymentVouchersTable)
+    .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId))
+    .where(and(
+      eq(paymentVouchersTable.companyId, cid),
+      eq(paymentVouchersTable.status, "posted"),
+      isNull(paymentVouchersTable.entityId),
+      ...dateConds,
+      ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
+    ));
+  const ids = vouchers.map(v => v.id);
+  if (!ids.length) return [];
+  const invoiceScope = [
+    eq(purchaseInvoicesTable.companyId, cid),
+    eq(purchaseInvoicesTable.status, "posted"),
+    eq(purchaseInvoicesTable.paymentType, "credit"),
+    sql`${purchaseInvoicesTable.lcId} IS NULL`,
+  ];
+  const [lines, headers, settlements] = await Promise.all([
+    db.select({
+      id: paymentVoucherLinesTable.id,
+      voucherId: paymentVoucherLinesTable.voucherId,
+      partyId: purchaseInvoicesTable.supplierId,
+      amount: sql<string>`${paymentVoucherLinesTable.amount} + coalesce(${paymentVoucherLinesTable.taxAmount}, 0)`,
+    }).from(paymentVoucherLinesTable)
+      .innerJoin(purchaseInvoicesTable, eq(paymentVoucherLinesTable.purchaseInvoiceId, purchaseInvoicesTable.id))
+      .where(and(inArray(paymentVoucherLinesTable.voucherId, ids), ...invoiceScope)),
+    db.select({ voucherId: paymentVouchersTable.id, partyId: purchaseInvoicesTable.supplierId })
+      .from(paymentVouchersTable)
+      .innerJoin(purchaseInvoicesTable, eq(paymentVouchersTable.purchaseInvoiceId, purchaseInvoicesTable.id))
+      .where(and(inArray(paymentVouchersTable.id, ids), ...invoiceScope)),
+    db.select({
+      id: settlementLinksTable.id,
+      voucherId: settlementLinksTable.sourceId,
+      partyId: purchaseInvoicesTable.supplierId,
+      amount: settlementLinksTable.amount,
+    }).from(settlementLinksTable)
+      .innerJoin(purchaseInvoicesTable, eq(settlementLinksTable.purchaseInvoiceId, purchaseInvoicesTable.id))
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "payment_voucher"),
+        inArray(settlementLinksTable.sourceId, ids),
+        ...invoiceScope,
+      )),
+  ]);
+  const voucherById = new Map(vouchers.map(v => [v.id, v]));
+  return supplementalInvoiceLinkedVoucherRowAllocations(vouchers, lines, settlements, headers)
+    .map(allocation => ({ ...voucherById.get(allocation.voucherId)!, allocatedAmount: allocation.amount, supplierId: allocation.partyId }));
 }
 
 /**
@@ -443,7 +512,10 @@ router.get("/supplier-statement", async (req, res) => {
           ));
         jeNet = Number(je.s);
       }
-      return Number(inv.s) - Number(ret.s) - Number(pay.s) + jeNet;
+      const supplementalPay = await supplierInvoiceLinkedVoucherTotals(
+        cid as number, req, bid, [lt(paymentVouchersTable.date, date)],
+      );
+      return Number(inv.s) - Number(ret.s) - Number(pay.s) - (supplementalPay.get(sid) ?? 0) + jeNet;
     }
 
     const opening = await sumPriorTo(from);
@@ -554,6 +626,10 @@ router.get("/supplier-statement", async (req, res) => {
     }).from(paymentVouchersTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId))
       .where(and(...payConds));
+    const supplementalPays = (await supplierInvoiceLinkedVoucherRows(cid, req, bid, [
+      ...(from ? [gte(paymentVouchersTable.date, from)] : []),
+      ...(to ? [lte(paymentVouchersTable.date, to)] : []),
+    ])).filter(p => p.supplierId === sid);
 
     // Direct JE rows (fixed-asset credit, manual JEs, …) within range.
     const jeLines = await fetchSupplierDirectJeLines(
@@ -640,6 +716,7 @@ router.get("/supplier-statement", async (req, res) => {
         return [returnLine];
       }),
       ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: voucherDesc(p.description, p.notes), channel: voucherChannel(p.cashBoxId, p.bankAccountId) })),
+      ...supplementalPays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: p.allocatedAmount, credit: 0, description: voucherDesc(p.description, p.notes), channel: voucherChannel(p.cashBoxId, p.bankAccountId) })),
       // Manual / direct JE rows: show the actual journal-line text the user
       // wrote (resolved in fetchSupplierDirectJeLines), falling back to a
       // type-specific label only when the entry carries no description.
@@ -649,7 +726,7 @@ router.get("/supplier-statement", async (req, res) => {
         debit: j.debit, credit: j.credit,
         description: (j.description && j.description.trim()) ? j.description.trim() : jeLineLabel(j.entryType, null),
       })),
-    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || (a.id ?? 0) - (b.id ?? 0));
 
     res.json({ opening, lines });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -739,7 +816,10 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           ));
         jeNet = Number(je.s);
       }
-      return Number(inv.s) - Number(ret.s) - Number(pay.s) + jeNet;
+      const supplementalPay = await supplierInvoiceLinkedVoucherTotals(
+        cid as number, req, bid, [lt(paymentVouchersTable.date, date)],
+      );
+      return Number(inv.s) - Number(ret.s) - Number(pay.s) - (supplementalPay.get(sid) ?? 0) + jeNet;
     }
     const opening = await sumPriorTo(from);
 
@@ -798,12 +878,20 @@ router.get("/supplier-statement-detailed", async (req, res) => {
     const pays = await db.select({
       id: paymentVouchersTable.id, date: paymentVouchersTable.date,
       docNumber: paymentVouchersTable.code, amount: paymentVouchersTable.amount,
+      journalEntryId: paymentVouchersTable.journalEntryId,
+      journalEntryNumber: journalEntriesTable.docNumber,
       paymentType: paymentVouchersTable.paymentType,
       cashBoxId: paymentVouchersTable.cashBoxId,
       bankAccountId: paymentVouchersTable.bankAccountId,
       refNumber: paymentVouchersTable.refNumber,
       description: paymentVouchersTable.description,
-    }).from(paymentVouchersTable).where(and(...payConds));
+    }).from(paymentVouchersTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId))
+      .where(and(...payConds));
+    const supplementalPays = (await supplierInvoiceLinkedVoucherRows(cid, req, bid, [
+      ...(from ? [gte(paymentVouchersTable.date, from)] : []),
+      ...(to ? [lte(paymentVouchersTable.date, to)] : []),
+    ])).filter(p => p.supplierId === sid);
 
     const invIds = invs.map(i => i.id);
     const retIds = rets.map(r => r.id);
@@ -838,8 +926,9 @@ router.get("/supplier-statement-detailed", async (req, res) => {
         .where(inArray(purchaseReturnLinesTable.returnId, retIds))
       : [];
 
-    const cbIds  = Array.from(new Set(pays.map(p => p.cashBoxId).filter((x): x is number => !!x)));
-    const baIds  = Array.from(new Set(pays.map(p => p.bankAccountId).filter((x): x is number => !!x)));
+    const allPays = [...pays, ...supplementalPays];
+    const cbIds  = Array.from(new Set(allPays.map(p => p.cashBoxId).filter((x): x is number => !!x)));
+    const baIds  = Array.from(new Set(allPays.map(p => p.bankAccountId).filter((x): x is number => !!x)));
     // cash_boxes / bank_accounts store names in name_ar / name_en (no plain `name`).
     // Prefer Arabic, fall back to English so legacy rows always render.
     const cbRows = cbIds.length
@@ -895,6 +984,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
     // while the user still sees the full transaction with line drilldown.
     type DetailedLine = {
       id: number; date: string; type: string; docNumber: string | null;
+      journalEntryId?: number | null; journalEntryNumber?: string | null;
       debit: number; credit: number; description: string;
       paymentType?: string | null;
       lines?: any[]; meta?: any;
@@ -955,7 +1045,21 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       }),
       ...pays.map(p => ({
         id: p.id, date: p.date, type: "payment", docNumber: p.docNumber,
+        journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber,
         debit: Number(p.amount), credit: 0, description: "سند صرف",
+        paymentType: p.paymentType,
+        meta: {
+          paymentType: p.paymentType,
+          cashBoxName: p.cashBoxId ? (cbName.get(p.cashBoxId) ?? null) : null,
+          bankAccountName: p.bankAccountId ? (baName.get(p.bankAccountId) ?? null) : null,
+          refNumber: p.refNumber,
+          description: p.description,
+        },
+      })),
+      ...supplementalPays.map(p => ({
+        id: p.id, date: p.date, type: "payment", docNumber: p.docNumber,
+        journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber,
+        debit: p.allocatedAmount, credit: 0, description: "سند صرف",
         paymentType: p.paymentType,
         meta: {
           paymentType: p.paymentType,
@@ -975,7 +1079,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
         paymentType: null,
         meta: { entryType: j.entryType, description: j.description },
       })),
-    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || a.id - b.id);
 
     res.json({ opening, lines });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
