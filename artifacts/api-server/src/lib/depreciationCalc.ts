@@ -200,6 +200,48 @@ export interface ScheduleRow {
   cumulative: number;  // accumulated depreciation after this month (2dp)
 }
 
+export interface ScheduleRunIdentity {
+  id: number;
+  periodYear: number;
+  periodMonth: number;
+  status: string;
+}
+
+export type ScheduleRowWithRun = ScheduleRow & {
+  posted: boolean;
+  runId: number | null;
+  runStatus: string | null;
+};
+
+/**
+ * Add persisted run identity to calculated schedule months without modifying
+ * any depreciation values. A posted run wins defensively if legacy duplicate
+ * rows exist, preserving the schedule's existing "any posted run" semantics.
+ */
+export function overlayScheduleRuns(
+  schedule: ScheduleRow[],
+  runs: ScheduleRunIdentity[],
+): ScheduleRowWithRun[] {
+  const runsByPeriod = new Map<string, ScheduleRunIdentity>();
+  for (const run of runs) {
+    const key = `${run.periodYear}-${run.periodMonth}`;
+    const current = runsByPeriod.get(key);
+    if (!current || (current.status !== "posted" && run.status === "posted")) {
+      runsByPeriod.set(key, run);
+    }
+  }
+
+  return schedule.map((row) => {
+    const run = runsByPeriod.get(`${row.year}-${row.month}`);
+    return {
+      ...row,
+      posted: run?.status === "posted",
+      runId: run?.id ?? null,
+      runStatus: run?.status ?? null,
+    };
+  });
+}
+
 // Full month-by-month depreciation schedule across the asset's life.
 // Rounding remainder is folded into the final charged month so the
 // cumulative total lands exactly on the depreciable base.

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { CheckCircle2, Clock, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { CheckCircle2, Clock, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft, Loader2, RotateCcw } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const NUM = "en-US";
@@ -14,6 +15,7 @@ const MONTHS_AR = [
 type ScheduleRow = {
   year?: number; month?: number; days?: number;
   amount?: number; cumulative?: number; posted?: boolean;
+  runId?: number | null; runStatus?: string | null;
 };
 type ScheduleResp = {
   schedule: ScheduleRow[]; totalMonths: number; totalDepreciation: number;
@@ -41,6 +43,8 @@ const fmt = (n?: number) => Number(n || 0).toLocaleString(NUM, { minimumFraction
 
 export default function DepreciationScheduleTimeline(props: TimelineProps) {
   const { token } = useAuth() as any;
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const headers = { Authorization: `Bearer ${token}` };
 
   const body: Record<string, unknown> = props.assetId
@@ -79,6 +83,39 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
 
   const rows = data?.schedule ?? [];
   const showPosted = !props.projection;
+  const showActions = showPosted && !!props.assetId;
+
+  const unpostMutation = useMutation({
+    mutationFn: async (runId: number) => {
+      const response = await fetch(`${API}/api/fixed-assets/depreciation/${runId}/unpost`, {
+        method: "POST",
+        headers,
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "فشل إلغاء الترحيل");
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["fa/dep-schedule"] });
+      queryClient.invalidateQueries({ queryKey: ["fa/dep-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["fa/assets"] });
+      toast({ title: "تم إلغاء الترحيل" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "تعذّر إلغاء الترحيل",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const confirmUnpost = (runId: number) => {
+    if (window.confirm("هل أنت متأكد من إلغاء ترحيل إهلاك هذا الشهر؟")) {
+      unpostMutation.mutate(runId);
+    }
+  };
 
   const [pageSize, setPageSize] = useState<number>(10);
   const [page, setPage] = useState<number>(1);
@@ -169,6 +206,9 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
                   {showPosted && (
                     <th className="px-3 py-2 text-center font-semibold border-b border-slate-200">الحالة</th>
                   )}
+                  {showActions && (
+                    <th className="px-3 py-2 text-center font-semibold border-b border-slate-200">الإجراءات</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -204,6 +244,28 @@ export default function DepreciationScheduleTimeline(props: TimelineProps) {
                             <span className="inline-flex items-center gap-1 text-amber-600 font-semibold">
                               <Clock className="h-3.5 w-3.5" /> لم تُرحَّل بعد
                             </span>
+                          )}
+                        </td>
+                      )}
+                      {showActions && (
+                        <td className="px-3 py-1.5 text-center border-b border-slate-100 whitespace-nowrap">
+                          {r.runStatus === "posted" && r.runId != null && (
+                            <button
+                              type="button"
+                              data-testid={`depreciation-schedule-unpost-${r.runId}`}
+                              onClick={() => confirmUnpost(r.runId!)}
+                              disabled={unpostMutation.isPending && unpostMutation.variables === r.runId}
+                              className="inline-flex h-7 items-center gap-1 rounded-md border border-amber-300 bg-white px-2 font-semibold text-amber-700 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {unpostMutation.isPending && unpostMutation.variables === r.runId ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              )}
+                              {unpostMutation.isPending && unpostMutation.variables === r.runId
+                                ? "جاري الإلغاء…"
+                                : "إلغاء الترحيل"}
+                            </button>
                           )}
                         </td>
                       )}

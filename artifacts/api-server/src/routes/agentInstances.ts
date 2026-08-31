@@ -51,6 +51,7 @@ import {
   stripAgentReleaseCredentialsFromUrl,
   buildCustomAgentReleaseUrl,
 } from "../lib/agentReleasePolicy.js";
+import { agentOwnsHost, resolvedAgentBranding } from "../lib/agentPublicBranding.js";
 import {
   EXTERNAL_PACKAGE_KINDS,
   type ExternalPackageEntry,
@@ -211,6 +212,7 @@ async function logAgentEvent(agentId: number | null, eventType: string, detail: 
 type AgentHostHit = {
   id: number; domain: string; status: string; dbStatus: string; dbUrlEnc: string | null;
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
+  contactPhone: string | null;
   proxyToken: string | null; // decrypted per-agent proxy secret (null = not issued)
   accelerationMode: InvoiceAccelerationMode; // snapshotted per request
   // Trial start boundary — the invoiceAccelerationUpdatedAt value when mode=trial.
@@ -263,18 +265,19 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
       domain: agentInstancesTable.domain, extraDomains: agentInstancesTable.extraDomains,
       dbStatus: agentInstancesTable.dbStatus, dbUrlEnc: agentInstancesTable.dbUrlEnc,
       brandName: agentInstancesTable.brandName, brandLogoUrl: agentInstancesTable.brandLogoUrl,
-      brandColor: agentInstancesTable.brandColor, proxySecretEnc: agentInstancesTable.proxySecretEnc,
+      brandColor: agentInstancesTable.brandColor, contactPhone: agentInstancesTable.contactPhone,
+      proxySecretEnc: agentInstancesTable.proxySecretEnc,
       invoiceAccelerationMode: agentInstancesTable.invoiceAccelerationMode,
       invoiceAccelerationUpdatedAt: agentInstancesTable.invoiceAccelerationUpdatedAt,
       invoiceAccelerationGeneration: agentInstancesTable.invoiceAccelerationGeneration,
     }).from(agentInstancesTable);
     for (const r of rows) {
-      const extras = Array.isArray(r.extraDomains) ? (r.extraDomains as string[]) : [];
-      if (r.domain === host || extras.includes(host)) {
+      if (agentOwnsHost(host, r)) {
         const mode = (r.invoiceAccelerationMode ?? "off") as InvoiceAccelerationMode;
         hit = {
           id: r.id, domain: r.domain, status: r.status, dbStatus: r.dbStatus, dbUrlEnc: r.dbUrlEnc,
           brandName: r.brandName, brandLogoUrl: r.brandLogoUrl, brandColor: r.brandColor,
+           contactPhone: r.contactPhone,
           proxyToken: r.proxySecretEnc ? decryptSecret(r.proxySecretEnc) : null,
           accelerationMode: mode,
           trialStartAt: mode === "trial" ? (r.invoiceAccelerationUpdatedAt ?? null) : null,
@@ -6216,15 +6219,9 @@ agentPublicRouter.get("/branding", async (req, res) => {
     res.json({ isAgentDomain: false, localSuperadminEnabled: true, localSuperadminScreens: [...LOCAL_SUPERADMIN_SCREEN_IDS] });
     return;
   }
-  res.json({
-    isAgentDomain: true,
-    // Requests served by the central control plane never expose a local SA
-    // panel, even if the registered full edition will expose one after install.
-    localSuperadminEnabled: false,
-    localSuperadminScreens: [],
-    suspended: hit.status !== "active",
-    brandName: hit.brandName, brandLogoUrl: hit.brandLogoUrl, brandColor: hit.brandColor,
-  });
+  // Explicit allow-list: contact phone is public for the resolved agent, while
+  // database/proxy/server credentials remain private.
+  res.json(resolvedAgentBranding(hit));
 });
 
 // GET /api/branding/manifest?host=... — PWA manifest rebranded per agent

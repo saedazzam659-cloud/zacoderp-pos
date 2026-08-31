@@ -8,6 +8,7 @@ Rule: a `fa_depreciation` JE is owned by its `fa_depreciation_runs` row. Any JE-
 - JE PUT/DELETE → 403 while a run references the JE.
 - JE `/post` → 409 ONLY for a run-linked draft with `postedAt != null` (legacy-broken, stale amounts); a `postedAt == null` draft is a LEGITIMATE auto-post-OFF JE and must stay postable (plain flip).
 - Schedule tab `postedSet` must filter runs by `status='posted'`.
+- A schedule-row unpost action must carry the persisted run ID/status for that exact asset+year+month and call the depreciation-run unpost endpoint. Never infer a run ID from the schedule index or call generic JE unpost; only posted runs expose the action.
 - Asset PUT runs `healDraftLinkedRuns` (run posted + JE draft + postedAt NOT NULL, newest-first, best-effort) before catch-up.
 
 **Why:** the old bare flip left run='posted' + asset accum applied → schedule kept showing "تم ترحيلها" and asset edits never reached the stale draft JEs. Repost (`repostDepreciationRun`) recomputes day-based from CURRENT asset state, so amounts self-heal only via the FA unpost→repost flow.

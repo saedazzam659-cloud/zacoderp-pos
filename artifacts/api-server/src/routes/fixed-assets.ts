@@ -25,7 +25,7 @@ import {
   buildDisposalJournal,
 } from "../lib/fa-journals.js";
 import { postDepreciationForCompany, unpostDepreciationRun, repostDepreciationRun, postDepreciationCatchUpForAsset } from "../lib/depreciationPosting.js";
-import { computePeriodDepreciation, buildSchedule } from "../lib/depreciationCalc.js";
+import { computePeriodDepreciation, buildSchedule, overlayScheduleRuns } from "../lib/depreciationCalc.js";
 
 const isValidIsoDate = (value: unknown) => {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\d$/.test(value)) return false;
@@ -904,27 +904,23 @@ router.post("/depreciation/schedule", async (req, res) => {
 
     const schedule = buildSchedule(input);
 
-    // Overlay real posted status when working against a saved asset.
-    const postedSet = new Set<string>();
+    // Overlay persisted run identity/status when working against a saved
+    // asset. The calculated schedule itself remains untouched.
+    let runs: Array<{ id: number; periodMonth: number; periodYear: number; status: string }> = [];
     if (assetId != null) {
-      const runs = await db.select({
+      runs = await db.select({
+        id:          faDepreciationRunsTable.id,
         periodMonth: faDepreciationRunsTable.periodMonth,
         periodYear:  faDepreciationRunsTable.periodYear,
+        status:      faDepreciationRunsTable.status,
       }).from(faDepreciationRunsTable)
         .where(and(
           eq(faDepreciationRunsTable.companyId, cid),
           eq(faDepreciationRunsTable.assetId, assetId),
-          // Only truly POSTED runs count — an unposted run row must show as
-          // "غير مرحلة" in the schedule tab, not "تم ترحيلها".
-          eq(faDepreciationRunsTable.status, "posted"),
         ));
-      for (const r of runs) postedSet.add(`${r.periodYear}-${r.periodMonth}`);
     }
 
-    const rows = schedule.map(s => ({
-      ...s,
-      posted: postedSet.has(`${s.year}-${s.month}`),
-    }));
+    const rows = overlayScheduleRuns(schedule, runs);
     const totalDepreciation = rows.reduce((sum, r) => sum + r.amount, 0);
     res.json({ schedule: rows, totalMonths: rows.length, totalDepreciation: Number(totalDepreciation.toFixed(2)) });
   } catch (e: any) { res.status(500).json({ error: e.message }); }

@@ -7,6 +7,10 @@ import {
   WA_HREF,
   TEL_HREF,
 } from "@/components/SaudiContactCta";
+import {
+  resolveWhatsAppContact,
+  type WhatsAppContact,
+} from "@/lib/whatsappContact";
 
 // ─── WhatsAppFloat ────────────────────────────────────────────────────
 // Persistent floating "Chat on WhatsApp" button shown to *unauthenticated*
@@ -37,17 +41,23 @@ const DISMISS_KEY = "whatsapp_float_dismissed";
 export default function WhatsAppFloat() {
   const { isAuthenticated } = useAuth();
   const [open, setOpen] = useState(false);
-  // Agent (white-label reseller) domains must never show the Zacode
-  // WhatsApp/phone CTA — it's the upstream vendor's contact line, not the
-  // reseller's. Default HIDDEN until the branding probe confirms the host
-  // is NOT an agent domain, so reseller pages never flash the bubble.
-  const [showOnHost, setShowOnHost] = useState(false);
+  // Default hidden prevents the central number flashing on agent domains
+  // before the public branding lookup resolves.
+  const [contact, setContact] = useState<WhatsAppContact | null>(null);
   useEffect(() => {
     let alive = true;
+    const central: WhatsAppContact = {
+      digits: PHONE_INTL.replace(/^\+/, ""),
+      international: PHONE_INTL,
+      display: PHONE_DISPLAY,
+      waHref: WA_HREF,
+      telHref: TEL_HREF,
+      isAgent: false,
+    };
     fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/branding?host=${encodeURIComponent(window.location.hostname)}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (alive && !j?.isAgentDomain) setShowOnHost(true); })
-      .catch(() => { /* fail closed on agent-unknown: keep hidden */ });
+      .then((j) => { if (alive) setContact(resolveWhatsAppContact(j, central)); })
+      .catch(() => { /* fail closed when the host cannot be resolved */ });
     return () => { alive = false; };
   }, []);
   const [dismissed, setDismissed] = useState<boolean>(() => {
@@ -86,6 +96,7 @@ export default function WhatsAppFloat() {
   // an external WhatsApp shortcut — it would also overlap their sidebar.
   if (isAuthenticated) return null;
   if (dismissed) return null;
+  if (!contact) return null;
 
   return (
     <>
@@ -104,7 +115,9 @@ export default function WhatsAppFloat() {
             <div className="flex-1">
               <div className="font-bold text-base mb-0.5">تحتاج مساعدة؟</div>
               <div className="text-xs opacity-90 leading-relaxed">
-                فريق زاكود جاهز للرد على استفساراتك حول الباقات والتركيب وZATCA.
+                {contact.isAgent
+                  ? "فريق الدعم جاهز للرد على استفساراتك."
+                  : "فريق زاكود جاهز للرد على استفساراتك حول الباقات والتركيب وZATCA."}
               </div>
             </div>
             <button
@@ -119,9 +132,10 @@ export default function WhatsAppFloat() {
           </div>
           <div className="p-3 space-y-2">
             <a
-              href={WA_HREF}
+              href={contact.waHref}
               target="_blank"
               rel="noopener noreferrer"
+              aria-label={`راسلنا على واتساب على الرقم ${contact.display}`}
               data-testid="whatsapp-float-cta"
               className="flex items-center gap-3 rounded-xl bg-[#25D366] hover:bg-[#1faa54] text-white font-bold px-4 py-3 shadow transition-all"
             >
@@ -129,12 +143,13 @@ export default function WhatsAppFloat() {
               <span className="flex-1 text-sm leading-tight">
                 راسلنا على واتساب
                 <bdi dir="ltr" className="block text-[11px] font-normal opacity-90">
-                  {PHONE_DISPLAY}
+                  {contact.display}
                 </bdi>
               </span>
             </a>
             <a
-              href={TEL_HREF}
+              href={contact.telHref}
+              aria-label={`اتصل بنا على الرقم ${contact.display}`}
               data-testid="whatsapp-float-tel"
               className="flex items-center gap-3 rounded-xl border-2 border-emerald-600 bg-white hover:bg-emerald-50 text-emerald-800 font-bold px-4 py-3 transition-all"
             >
@@ -142,7 +157,7 @@ export default function WhatsAppFloat() {
               <span className="flex-1 text-sm leading-tight">
                 اتصل بنا
                 <bdi dir="ltr" className="block text-[11px] font-normal opacity-80">
-                  {PHONE_DISPLAY}
+                  {contact.display}
                 </bdi>
               </span>
             </a>
@@ -165,7 +180,7 @@ export default function WhatsAppFloat() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={`تواصل معنا على واتساب — ${PHONE_DISPLAY}`}
+        aria-label={`تواصل معنا على واتساب — ${contact.display}`}
         aria-expanded={open}
         data-testid="whatsapp-float-bubble"
         className="fixed bottom-6 start-4 z-[55] group"

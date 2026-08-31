@@ -20,6 +20,7 @@ Rule: on registered agent domains (agent_instances.brand_name), the static index
 - JSON-LD `<script type="application/ld+json">` blocks are DROPPED on agent domains — HTML-escaped replacements corrupt the JSON, and Zacode org schema is wrong for the brand anyway.
 - The prod platform wrapper serves existing static files first; only non-file paths (/login etc.) are guaranteed to reach express — verify "/" behavior on a real agent domain after publish.
 - On the central monorepo deployment, branded HTML must be read from the root web artifact before any API-bundle `dist/public` snapshot. Otherwise the branded index can reference a hash absent from the static artifact; the missing module falls through to `index.html` (`text/html`) and produces a white screen.
+- The public floating WhatsApp contact is also host-owned: central domains keep the central number; a resolved agent domain uses only that agent instance's public contact phone. Missing/invalid agent phone means no button—never leak or fall back to the central number on an agent brand.
 
 **Why:** the API release may carry its own frontend snapshot for external-agent installation, but central production serves `/assets/*` from the separately built web artifact.
 
