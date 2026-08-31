@@ -7,6 +7,68 @@ type EmployeeCustodyStatementSource = {
   settlementDescription?: string | null;
 };
 
+export type PartyDocumentStatementSourceKind =
+  | "purchase_invoice"
+  | "sales_invoice"
+  | "purchase_return"
+  | "sales_return";
+
+type PartyDocumentStatementDescriptionInput = {
+  entryType?: string | null;
+  sourceKind?: PartyDocumentStatementSourceKind | null;
+  paymentType?: string | null;
+  debit?: number | string | null;
+  credit?: number | string | null;
+  isLinkedPartyAccount: boolean;
+  existingSourceDescription: string | null | undefined;
+};
+
+/**
+ * Separates the two AP/AR pass-through legs of an immediately paid document
+ * for display in the account statement only. The source/party checks are
+ * intentionally inputs so this helper cannot infer identity from an account
+ * type and accidentally relabel a control, tax, cash, or manual-JE line.
+ */
+export function partyDocumentStatementDescription(
+  input: PartyDocumentStatementDescriptionInput,
+): string | null | undefined {
+  const {
+    entryType,
+    sourceKind,
+    paymentType,
+    isLinkedPartyAccount,
+    existingSourceDescription,
+  } = input;
+
+  if (
+    !sourceKind ||
+    entryType !== sourceKind ||
+    (paymentType !== "cash" && paymentType !== "bank") ||
+    !isLinkedPartyAccount
+  ) {
+    return existingSourceDescription;
+  }
+
+  const debit = Number(input.debit ?? 0);
+  const credit = Number(input.credit ?? 0);
+  const method = paymentType === "cash" ? "نقدي" : "بنكي";
+
+  if (sourceKind === "purchase_invoice" && debit > 0) {
+    return `سداد فاتورة مشتريات - ${method}`;
+  }
+  if (sourceKind === "sales_invoice" && credit > 0) {
+    return `تحصيل فاتورة مبيعات - ${method}`;
+  }
+  if (sourceKind === "purchase_return" && credit > 0) {
+    return `استرداد مرتجع مشتريات - ${method}`;
+  }
+  if (sourceKind === "sales_return" && debit > 0) {
+    return `رد قيمة مرتجع مبيعات - ${method}`;
+  }
+
+  return existingSourceDescription;
+}
+
 /**
  * Builds the source-aware description for HR monetary custody entries.
  * Keeping this separate from the SQL route makes the display contract easy to

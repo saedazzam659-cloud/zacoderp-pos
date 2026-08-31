@@ -24,7 +24,11 @@ import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } fro
 import { requirePermission } from "../middleware/permissions.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
-import { employeeCustodyStatementDescription } from "../lib/accountStatementDescriptions.js";
+import {
+  employeeCustodyStatementDescription,
+  partyDocumentStatementDescription,
+  type PartyDocumentStatementSourceKind,
+} from "../lib/accountStatementDescriptions.js";
 import { journalDisplayDate } from "../lib/journalLineDescriptions.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -789,8 +793,16 @@ router.get("/account-statement", async (req, res) => {
       supplierInvoiceNumber: string | null;
       supplierInvoiceDate: string | null;
       party: string | null;
+      paymentType: string | null;
+      partyAccountId: number | null;
     }>();
-    const sInvInfo = new Map<number, { names: string; docNumber: string | null; party: string | null }>();
+    const sInvInfo = new Map<number, {
+      names: string;
+      docNumber: string | null;
+      party: string | null;
+      paymentType: string | null;
+      partyAccountId: number | null;
+    }>();
 
     const dedupeNames = (names: string[]) => Array.from(new Set(names)).join("، ");
 
@@ -801,9 +813,14 @@ router.get("/account-statement", async (req, res) => {
         supplierInvoiceNumber: purchaseInvoicesTable.supplierInvoiceNumber,
         supplierInvoiceDate: purchaseInvoicesTable.supplierInvoiceDate,
         party: suppliersTable.nameAr,
+        paymentType: purchaseInvoicesTable.paymentType,
+        partyAccountId: suppliersTable.accountId,
       })
         .from(purchaseInvoicesTable)
-        .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseInvoicesTable.supplierId))
+        .leftJoin(suppliersTable, and(
+          eq(suppliersTable.id, purchaseInvoicesTable.supplierId),
+          eq(suppliersTable.companyId, cid),
+        ))
         .where(and(eq(purchaseInvoicesTable.companyId, cid), inArray(purchaseInvoicesTable.id, pInvIds)));
       for (const h of hdrs) pInvInfo.set(h.id, {
         names: "",
@@ -811,6 +828,8 @@ router.get("/account-statement", async (req, res) => {
         supplierInvoiceNumber: h.supplierInvoiceNumber,
         supplierInvoiceDate: h.supplierInvoiceDate,
         party: h.party ?? null,
+        paymentType: h.paymentType,
+        partyAccountId: h.partyAccountId,
       });
       const liRows = await db.select({ invoiceId: purchaseInvoiceLinesTable.invoiceId, itemName: purchaseInvoiceLinesTable.itemName })
         .from(purchaseInvoiceLinesTable)
@@ -829,6 +848,8 @@ router.get("/account-statement", async (req, res) => {
           supplierInvoiceNumber: null,
           supplierInvoiceDate: null,
           party: null,
+          paymentType: null,
+          partyAccountId: null,
         };
         pInvInfo.set(id, { ...prev, names: dedupeNames(names) });
       }
@@ -839,11 +860,22 @@ router.get("/account-statement", async (req, res) => {
         id: salesInvoicesTable.id,
         docNumber: salesInvoicesTable.docNumber,
         party: customersTable.nameAr,
+        paymentType: salesInvoicesTable.paymentType,
+        partyAccountId: customersTable.accountId,
       })
         .from(salesInvoicesTable)
-        .leftJoin(customersTable, eq(customersTable.id, salesInvoicesTable.customerId))
+        .leftJoin(customersTable, and(
+          eq(customersTable.id, salesInvoicesTable.customerId),
+          eq(customersTable.companyId, cid),
+        ))
         .where(and(eq(salesInvoicesTable.companyId, cid), inArray(salesInvoicesTable.id, sInvIds)));
-      for (const h of hdrs) sInvInfo.set(h.id, { names: "", docNumber: h.docNumber, party: h.party ?? null });
+      for (const h of hdrs) sInvInfo.set(h.id, {
+        names: "",
+        docNumber: h.docNumber,
+        party: h.party ?? null,
+        paymentType: h.paymentType,
+        partyAccountId: h.partyAccountId,
+      });
       const liRows = await db.select({ invoiceId: salesInvoiceLinesTable.invoiceId, itemName: salesInvoiceLinesTable.itemName })
         .from(salesInvoiceLinesTable)
         .where(and(eq(salesInvoiceLinesTable.companyId, cid), inArray(salesInvoiceLinesTable.invoiceId, sInvIds)))
@@ -855,7 +887,13 @@ router.get("/account-statement", async (req, res) => {
         (grouped.get(r.invoiceId) ?? grouped.set(r.invoiceId, []).get(r.invoiceId)!).push(nm);
       }
       for (const [id, names] of grouped) {
-        const prev = sInvInfo.get(id) ?? { names: "", docNumber: null, party: null };
+        const prev = sInvInfo.get(id) ?? {
+          names: "",
+          docNumber: null,
+          party: null,
+          paymentType: null,
+          partyAccountId: null,
+        };
         sInvInfo.set(id, { ...prev, names: dedupeNames(names) });
       }
     }
@@ -864,7 +902,11 @@ router.get("/account-statement", async (req, res) => {
     // (supplier name + supplier invoice number) so even legacy JE lines that
     // stored the generic "تخفيض رصيد المورد" read correctly in the statement.
     const pRetIds = Array.from(new Set(rows.map(r => r.purchaseReturnId).filter((x): x is number => !!x)));
-    const pRetInfo = new Map<number, string>();
+    const pRetInfo = new Map<number, {
+      description: string;
+      paymentType: string | null;
+      partyAccountId: number | null;
+    }>();
     if (pRetIds.length) {
       const hdrs = await db.select({
         id: purchaseReturnsTable.id,
@@ -873,6 +915,8 @@ router.get("/account-statement", async (req, res) => {
         notes: purchaseReturnsTable.notes,
         party: suppliersTable.nameAr,
         partyEn: suppliersTable.nameEn,
+        paymentType: purchaseReturnsTable.paymentType,
+        partyAccountId: suppliersTable.accountId,
       })
         .from(purchaseReturnsTable)
         .leftJoin(suppliersTable, and(
@@ -889,7 +933,33 @@ router.get("/account-statement", async (req, res) => {
           invNo ? `فاتورة المورد رقم ${invNo}` : "",
           (h.notes ?? "").trim(),
         ].filter(Boolean);
-        pRetInfo.set(h.id, parts.join(" — "));
+        pRetInfo.set(h.id, {
+          description: parts.join(" — "),
+          paymentType: h.paymentType,
+          partyAccountId: h.partyAccountId,
+        });
+      }
+    }
+
+    const sRetIds = Array.from(new Set(rows.map(r => r.salesReturnId).filter((x): x is number => !!x)));
+    const sRetInfo = new Map<number, { paymentType: string | null; partyAccountId: number | null }>();
+    if (sRetIds.length) {
+      const hdrs = await db.select({
+        id: salesReturnsTable.id,
+        paymentType: salesReturnsTable.paymentType,
+        partyAccountId: customersTable.accountId,
+      })
+        .from(salesReturnsTable)
+        .leftJoin(customersTable, and(
+          eq(customersTable.id, salesReturnsTable.customerId),
+          eq(customersTable.companyId, cid),
+        ))
+        .where(and(eq(salesReturnsTable.companyId, cid), inArray(salesReturnsTable.id, sRetIds)));
+      for (const h of hdrs) {
+        sRetInfo.set(h.id, {
+          paymentType: h.paymentType,
+          partyAccountId: h.partyAccountId,
+        });
       }
     }
 
@@ -983,7 +1053,7 @@ router.get("/account-statement", async (req, res) => {
        const srcDesc = custodyDesc
          ? custodyDesc
          : r.purchaseReturnId
-        ? (pRetInfo.get(r.purchaseReturnId) ?? null)
+         ? (pRetInfo.get(r.purchaseReturnId)?.description ?? null)
         : r.purchaseInvoiceId
         ? invoiceDescription(pInvInfo.get(r.purchaseInvoiceId), "المورد")
         : r.salesInvoiceId
@@ -1009,7 +1079,30 @@ router.get("/account-statement", async (req, res) => {
       const finalDesc = supplierSuffix
         ? (baseDesc ? `${baseDesc} — ${supplierSuffix}` : supplierSuffix)
         : baseDesc;
-      return { ...r, description: finalDesc, debit: d, credit: c, balance: runningBalance };
+      const sourceKind: PartyDocumentStatementSourceKind | null =
+        r.purchaseReturnId ? "purchase_return"
+        : r.purchaseInvoiceId ? "purchase_invoice"
+        : r.salesInvoiceId ? "sales_invoice"
+        : r.salesReturnId ? "sales_return"
+        : null;
+      const sourceInfo =
+        sourceKind === "purchase_return" ? pRetInfo.get(r.purchaseReturnId!)
+        : sourceKind === "purchase_invoice" ? pInvInfo.get(r.purchaseInvoiceId!)
+        : sourceKind === "sales_invoice" ? sInvInfo.get(r.salesInvoiceId!)
+        : sourceKind === "sales_return" ? sRetInfo.get(r.salesReturnId!)
+        : undefined;
+      const displayDescription = partyDocumentStatementDescription({
+        entryType: r.entryType,
+        sourceKind,
+        paymentType: sourceInfo?.paymentType,
+        debit: d,
+        credit: c,
+        isLinkedPartyAccount:
+          sourceInfo?.partyAccountId != null &&
+          sourceInfo.partyAccountId === Number(accountId),
+        existingSourceDescription: finalDesc,
+      });
+      return { ...r, description: displayDescription, debit: d, credit: c, balance: runningBalance };
     });
 
     res.json({ previousBalance, previousDebit, previousCredit, rows: withBalance });

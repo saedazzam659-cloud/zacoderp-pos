@@ -50,6 +50,13 @@ manual JEs and "—" for invoices with no header note — useless for reconcilia
     line with movement type + employee name + custody purpose; settlement rows
     may append their own settlement description. Keep this source-driven so
     legacy JEs also improve without reposting.
+  - **Cash/bank AP/AR pass-through rows:** source enrichment must not make both
+    party-account legs look identical. Keep the item/source description on the
+    document-recognition leg, but label the opposing party-account leg as invoice
+    payment/collection or return refund with the cash/bank method. Require an exact
+    source type, payment type, and linked party account match; never relabel treasury,
+    tax, inventory, or credit-document lines. This is display-only—the paired GL
+    lines and amounts remain unchanged.
 
 **Voucher merge (the durable rule):** voucher statement rows show the FULL typed
 text, not header-only. `mergeDesc` = join non-empty deduped pieces with `" — "`:
