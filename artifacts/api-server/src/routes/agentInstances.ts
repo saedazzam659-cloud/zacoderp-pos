@@ -103,7 +103,7 @@ import {
   assertZatcaSubmissionAllowed, chooseZatcaChain, credentialFingerprint, decryptTransferEnvelope,
   encryptTransferEnvelope, normalizeVat, resolveZatcaChain, transferBinding,
   withZatcaChainLock, mayCompleteExpiredTransfer, hasActivatedTransferBinding,
-  completionChainAllowed, type ZatcaTransferEnvelope,
+  completionChainAllowed, mayReplaceTargetCredentials, type ZatcaTransferEnvelope,
 } from "../lib/zatcaRegistrationTransfer.js";
 import { sanitizeSchemaDumpForExternalAgent } from "../lib/agentExternalSchema.js";
 import {
@@ -603,6 +603,7 @@ function publicPackageMap(meta: ExternalPackageMap): Record<ExternalPackageKind,
 const zatcaTransferInput = z.object({
   sourceCompanyId: z.number().int().positive(),
   targetCompanyId: z.number().int().positive(),
+  replaceTargetCredentials: z.boolean().optional().default(false),
 });
 const transferCredentialFields = [
   "zatcaPrivateKey", "zatcaCsr", "zatcaCsid", "zatcaPcsid",
@@ -646,7 +647,7 @@ async function inspectTransferTarget(agentId: number, targetCompanyId: number) {
   if (!company) throw Object.assign(new Error("شركة الهدف غير موجودة"), { httpStatus: 404 });
   return { agent, ctx, company };
 }
-async function transferPreflight(agentId: number, sourceCompanyId: number, targetCompanyId: number) {
+async function transferPreflight(agentId: number, sourceCompanyId: number, targetCompanyId: number, replaceTargetCredentials = false) {
   const [source] = await db.select().from(companiesTable).where(eq(companiesTable.id, sourceCompanyId));
   if (!source) throw Object.assign(new Error("شركة المصدر غير موجودة"), { httpStatus: 404 });
   await assertZatcaSubmissionAllowed(sourceCompanyId);
@@ -663,10 +664,28 @@ async function transferPreflight(agentId: number, sourceCompanyId: number, targe
   // is present in the application schema (the optional integration queue is
   // unrelated), so there is no additional queued-send state to inspect.
   const targetCredentials = companyTransferCredentials(target.company);
-  const sameCredentials = !Object.keys(targetCredentials).length || credentialFingerprint(targetCredentials) === credentialFingerprint(companyTransferCredentials(source));
-  if (!sameCredentials) throw Object.assign(new Error("شركة الهدف لديها تسجيل ZATCA مختلف"), { httpStatus: 409 });
+  const sourceCredentialFingerprint = credentialFingerprint(companyTransferCredentials(source));
+  const targetCredentialFingerprint = Object.keys(targetCredentials).length ? credentialFingerprint(targetCredentials) : null;
+  const sameCredentials = !targetCredentialFingerprint || targetCredentialFingerprint === sourceCredentialFingerprint;
+  const replacementAllowed = mayReplaceTargetCredentials(
+    targetCredentialFingerprint,
+    sourceCredentialFingerprint,
+    targetState,
+    sourceChain,
+    replaceTargetCredentials,
+  );
+  if (!replacementAllowed) {
+    const message = replaceTargetCredentials
+      ? "لا يمكن استبدال تسجيل الهدف لأن سلسلة ZATCA لديه لا تطابق المصدر"
+      : "شركة الهدف لديها تسجيل ZATCA مختلف؛ فعّل خيار استبدال التسجيل غير المستخدم بعد التأكد أنها لم ترسل فواتير";
+    throw Object.assign(new Error(message), { httpStatus: 409 });
+  }
   if (targetState.maxIcv !== 0 && (targetState.maxIcv !== sourceChain.maxIcv || targetState.previousInvoiceHash !== sourceChain.previousInvoiceHash)) throw Object.assign(new Error("سلسلة ZATCA للهدف لا تطابق المصدر"), { httpStatus: 409 });
-  return { source, target, sourceChain, sameCredentials };
+  return {
+    source, target, sourceChain, sameCredentials,
+    replaceTargetCredentials: !sameCredentials,
+    targetCredentialFingerprint,
+  };
 }
 
 function packageMapSigned(agentId: number, meta: ExternalPackageMap, requireAll: boolean): boolean {
@@ -750,16 +769,22 @@ router.get("/:agentId/zatca-transfer/:transferId", async (req, res) => {
 router.post("/:agentId/zatca-transfer/preflight", async (req, res) => {
   try {
     const input = zatcaTransferInput.parse(req.body);
-    const r = await transferPreflight(Number(req.params.agentId), input.sourceCompanyId, input.targetCompanyId);
+    const r = await transferPreflight(Number(req.params.agentId), input.sourceCompanyId, input.targetCompanyId, input.replaceTargetCredentials);
     await logAgentEvent(r.target.agent.id, "zatca_transfer_preflight", { sourceCompanyId: input.sourceCompanyId, targetCompanyId: input.targetCompanyId }, req);
-    res.json({ ok: true, sourceCredentialsSet: true, targetCredentialsSameOrEmpty: r.sameCredentials, chainReady: true });
+    res.json({
+      ok: true,
+      sourceCredentialsSet: true,
+      targetCredentialsSameOrEmpty: r.sameCredentials,
+      targetCredentialsWillBeReplaced: r.replaceTargetCredentials,
+      chainReady: true,
+    });
   } catch (e: any) { res.status(e?.httpStatus ?? 422).json({ ok: false, error: e?.message ?? "فشل الفحص المسبق" }); }
 });
 router.post("/:agentId/zatca-transfer/prepare", async (req, res) => {
   try {
     const input = zatcaTransferInput.parse(req.body); const actor = (req as any).authUser?.id ?? null;
     const result = await withZatcaChainLock(input.sourceCompanyId, async () => {
-      const r = await transferPreflight(Number(req.params.agentId), input.sourceCompanyId, input.targetCompanyId);
+      const r = await transferPreflight(Number(req.params.agentId), input.sourceCompanyId, input.targetCompanyId, input.replaceTargetCredentials);
       const id = randomUUID(); const expiresAt = new Date(Date.now() + 10 * 60_000);
       const targetRef = { agentId: r.target.agent.id, installationId: r.target.agent.installationId, dbFingerprint: r.target.agent.dbFingerprint!, companyId: input.targetCompanyId };
       const envelope: ZatcaTransferEnvelope = {
@@ -776,10 +801,17 @@ router.post("/:agentId/zatca-transfer/prepare", async (req, res) => {
         const fresh = await inspectTransferTarget(r.target.agent.id, input.targetCompanyId);
         const freshCredentials = companyTransferCredentials(fresh.company);
         const freshChain = await targetChain(fresh.ctx, input.targetCompanyId);
+        const freshCredentialFingerprint = Object.keys(freshCredentials).length ? credentialFingerprint(freshCredentials) : null;
         if ((fresh.company.zatcaTransferState ?? "active") !== "active" ||
             normalizeVat(fresh.company.vatNumber) !== envelope.vatNumber ||
             (fresh.company.zatcaEnvironment ?? "") !== envelope.environment ||
-            (Object.keys(freshCredentials).length && credentialFingerprint(freshCredentials) !== credentialFingerprint(envelope.credentials)) ||
+            !mayReplaceTargetCredentials(
+              freshCredentialFingerprint,
+              credentialFingerprint(envelope.credentials),
+              freshChain,
+              { maxIcv: envelope.chain.icv, previousInvoiceHash: envelope.chain.pih },
+              r.replaceTargetCredentials,
+            ) ||
             (freshChain.maxIcv !== 0 && (freshChain.maxIcv !== envelope.chain.icv || freshChain.previousInvoiceHash !== envelope.chain.pih))) {
           throw Object.assign(new Error("تغيّرت هوية أو بيانات أو سلسلة شركة الهدف"), { httpStatus: 409 });
         }
@@ -793,7 +825,19 @@ router.post("/:agentId/zatca-transfer/prepare", async (req, res) => {
         try {
           await db.transaction(async tx => {
             await tx.update(companiesTable).set({ zatcaTransferState: "frozen", zatcaTransferId: id, zatcaTransferTargetBinding: binding, zatcaTransferLockedAt: new Date() }).where(eq(companiesTable.id, input.sourceCompanyId));
-            await tx.insert(zatcaRegistrationTransfersTable).values({ id, sourceCompanyId: input.sourceCompanyId, targetAgentId: r.target.agent.id, targetCompanyId: input.targetCompanyId, targetInstallationId: targetRef.installationId, targetDbFingerprint: targetRef.dbFingerprint, state: "prepared", payloadEnc, payloadHash: credentialFingerprint(envelope.credentials), targetBinding: binding, chainSnapshot: { source: envelope.chain, target: freshChain }, expiresAt, createdByUserId: actor, auditMeta: { preparedBy: actor } });
+            await tx.insert(zatcaRegistrationTransfersTable).values({
+              id, sourceCompanyId: input.sourceCompanyId, targetAgentId: r.target.agent.id,
+              targetCompanyId: input.targetCompanyId, targetInstallationId: targetRef.installationId,
+              targetDbFingerprint: targetRef.dbFingerprint, state: "prepared", payloadEnc,
+              payloadHash: credentialFingerprint(envelope.credentials), targetBinding: binding,
+              chainSnapshot: {
+                source: envelope.chain,
+                target: freshChain,
+                targetCredentialFingerprint: freshCredentialFingerprint,
+              },
+              expiresAt, createdByUserId: actor,
+              auditMeta: { preparedBy: actor, replaceTargetCredentials: r.replaceTargetCredentials },
+            });
           });
         } catch (centralError) {
           try {
@@ -830,12 +874,26 @@ router.post("/:agentId/zatca-transfer/complete", async (req, res) => {
       const targetAlreadyActive = hasActivatedTransferBinding(target.company, transfer.id, transfer.targetBinding);
       if (!mayCompleteExpiredTransfer(transfer.expiresAt, targetAlreadyActive)) throw Object.assign(new Error("طلب النقل منتهٍ"), { httpStatus: 409 });
       const envelope = decryptTransferEnvelope(JSON.parse(transfer.payloadEnc || "{}"), targetRef, new Date(), targetAlreadyActive);
+      const snapshots = transfer.chainSnapshot as any;
+      const hasTargetCredentialSnapshot = Object.prototype.hasOwnProperty.call(snapshots ?? {}, "targetCredentialFingerprint");
+      const targetCredentialFingerprintSnapshot = hasTargetCredentialSnapshot ? snapshots.targetCredentialFingerprint : null;
       const [source] = await tx.select().from(companiesTable).where(eq(companiesTable.id, transfer.sourceCompanyId));
       if (!source || source.zatcaTransferState !== "frozen" || source.zatcaTransferId !== transfer.id ||
           source.zatcaTransferTargetBinding !== transfer.targetBinding) throw Object.assign(new Error("حالة المصدر لا تسمح بإكمال النقل"), { httpStatus: 409 });
       const existing = companyTransferCredentials(target.company);
-      if (Object.keys(existing).length && credentialFingerprint(existing) !== credentialFingerprint(envelope.credentials)) throw Object.assign(new Error("شركة الهدف لديها تسجيل مختلف"), { httpStatus: 409 });
       const existingChain = await targetChain(target.ctx, transfer.targetCompanyId);
+      const replacementConfirmed = (transfer.auditMeta as any)?.replaceTargetCredentials === true;
+      const existingFingerprint = Object.keys(existing).length ? credentialFingerprint(existing) : null;
+      if (!targetAlreadyActive && hasTargetCredentialSnapshot && existingFingerprint !== targetCredentialFingerprintSnapshot) {
+        throw Object.assign(new Error("بيانات تسجيل شركة الهدف تغيّرت بعد تجهيز النقل"), { httpStatus: 409 });
+      }
+      if (!mayReplaceTargetCredentials(
+        existingFingerprint,
+        credentialFingerprint(envelope.credentials),
+        existingChain,
+        { maxIcv: envelope.chain.icv, previousInvoiceHash: envelope.chain.pih },
+        replacementConfirmed,
+      )) throw Object.assign(new Error("شركة الهدف لديها تسجيل مختلف ولا يمكن استبداله بأمان"), { httpStatus: 409 });
       if (!targetAlreadyActive && existingChain.maxIcv &&
           (existingChain.maxIcv !== envelope.chain.icv || existingChain.previousInvoiceHash !== envelope.chain.pih)) {
         throw Object.assign(new Error("سلسلة شركة الهدف تغيّرت"), { httpStatus: 409 });
@@ -851,11 +909,18 @@ router.post("/:agentId/zatca-transfer/complete", async (req, res) => {
         }
         const recoveringCommittedActivation = hasActivatedTransferBinding(boundTarget, transfer.id, transfer.targetBinding);
         const lockedCredentials = companyTransferCredentials(boundTarget);
-        if ((recoveringCommittedActivation || Object.keys(lockedCredentials).length > 0) &&
-            credentialFingerprint(lockedCredentials) !== credentialFingerprint(envelope.credentials)) {
-          throw Object.assign(new Error("بيانات تسجيل شركة الهدف تغيّرت"), { httpStatus: 409 });
-        }
         const current = await targetChain(target.ctx, transfer.targetCompanyId);
+        const lockedFingerprint = Object.keys(lockedCredentials).length ? credentialFingerprint(lockedCredentials) : null;
+        if (!recoveringCommittedActivation && hasTargetCredentialSnapshot && lockedFingerprint !== targetCredentialFingerprintSnapshot) {
+          throw Object.assign(new Error("بيانات تسجيل شركة الهدف تغيّرت بعد تجهيز النقل"), { httpStatus: 409 });
+        }
+        if (!mayReplaceTargetCredentials(
+          lockedFingerprint,
+          credentialFingerprint(envelope.credentials),
+          current,
+          { maxIcv: envelope.chain.icv, previousInvoiceHash: envelope.chain.pih },
+          replacementConfirmed && !recoveringCommittedActivation,
+        )) throw Object.assign(new Error("بيانات تسجيل شركة الهدف تغيّرت"), { httpStatus: 409 });
         if (!recoveringCommittedActivation) {
           const emptyTargetChain = current.maxIcv === 0;
           if (!emptyTargetChain && !completionChainAllowed(boundTarget, transfer.id, transfer.targetBinding, current, envelope.chain)) {
@@ -900,17 +965,23 @@ router.post("/:agentId/zatca-transfer/cancel", async (req, res) => {
       }
       const snapshots = transfer.chainSnapshot as any;
       const targetSnapshot = snapshots?.target ?? snapshots;
+      const hasTargetCredentialSnapshot = Object.prototype.hasOwnProperty.call(snapshots ?? {}, "targetCredentialFingerprint");
+      const targetCredentialFingerprintSnapshot = hasTargetCredentialSnapshot ? snapshots.targetCredentialFingerprint : null;
       const targetRef = { agentId: transfer.targetAgentId, installationId: transfer.targetInstallationId, dbFingerprint: transfer.targetDbFingerprint, companyId: transfer.targetCompanyId };
       const envelope = decryptTransferEnvelope(JSON.parse(transfer.payloadEnc || "{}"), targetRef, new Date(), true);
       await withZatcaChainLock(transfer.targetCompanyId, async () => {
         const fresh = await inspectTransferTarget(transfer.targetAgentId, transfer.targetCompanyId);
         const chain = await targetChain(fresh.ctx, transfer.targetCompanyId);
         const currentCredentials = companyTransferCredentials(fresh.company);
+        const currentCredentialFingerprint = Object.keys(currentCredentials).length ? credentialFingerprint(currentCredentials) : null;
+        const credentialsChanged = hasTargetCredentialSnapshot
+          ? currentCredentialFingerprint !== targetCredentialFingerprintSnapshot
+          : currentCredentialFingerprint !== null &&
+            currentCredentialFingerprint !== credentialFingerprint(envelope.credentials);
         if (fresh.company.zatcaTransferState !== "frozen" ||
             fresh.company.zatcaTransferId !== transfer.id ||
             fresh.company.zatcaTransferTargetBinding !== transfer.targetBinding ||
-            (Object.keys(currentCredentials).length > 0 &&
-              credentialFingerprint(currentCredentials) !== credentialFingerprint(envelope.credentials)) ||
+            credentialsChanged ||
             chain.maxIcv !== Number(targetSnapshot.maxIcv ?? targetSnapshot.icv) ||
             chain.previousInvoiceHash !== (targetSnapshot.previousInvoiceHash ?? targetSnapshot.pih)) {
           throw Object.assign(new Error("تغيّر ارتباط أو سلسلة الهدف؛ أبقي الطرفان مغلقين للحماية"), { httpStatus: 409 });

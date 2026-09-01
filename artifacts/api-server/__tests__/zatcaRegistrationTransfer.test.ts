@@ -5,6 +5,7 @@ import {
   decryptTransferEnvelope, encryptTransferEnvelope, transferGateError,
   validateTransferEnvelope, chooseZatcaChain, hasFrozenTransferBinding,
   mayCompleteExpiredTransfer, hasActivatedTransferBinding, completionChainAllowed,
+  mayReplaceTargetCredentials,
 } from "../src/lib/zatcaRegistrationTransfer.js";
 
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || "test-session-secret-at-least-sixteen";
@@ -44,6 +45,21 @@ test("prepare requires exact frozen bindings on both parties and expiry only per
   const activated = { zatcaTransferState: "active", zatcaTransferId: "t1", zatcaTransferTargetBinding: "b1" };
   assert.equal(completionChainAllowed(activated, "t1", "b1", { maxIcv: 15, previousInvoiceHash: "advanced" }, { icv: 12, pih: "snapshot" }), true);
   assert.equal(completionChainAllowed({ ...activated, zatcaTransferState: "frozen" }, "t1", "b1", { maxIcv: 15, previousInvoiceHash: "advanced" }, { icv: 12, pih: "snapshot" }), false);
+});
+test("target credentials are replaced only with explicit confirmation and a safe chain", () => {
+  const source = { maxIcv: 12, previousInvoiceHash: "source-hash" };
+  assert.equal(mayReplaceTargetCredentials(null, "source-fp", source, source, false), true);
+  assert.equal(mayReplaceTargetCredentials("source-fp", "source-fp", source, source, false), true);
+  assert.equal(mayReplaceTargetCredentials("other-fp", "source-fp", { maxIcv: 0, previousInvoiceHash: "genesis" }, source, false), false);
+  assert.equal(mayReplaceTargetCredentials("other-fp", "source-fp", { maxIcv: 0, previousInvoiceHash: "genesis" }, source, true), true);
+  assert.equal(mayReplaceTargetCredentials("other-fp", "source-fp", source, source, true), true);
+  assert.equal(mayReplaceTargetCredentials(
+    "other-fp",
+    "source-fp",
+    { maxIcv: 11, previousInvoiceHash: "different" },
+    source,
+    true,
+  ), false);
 });
 test("all company onboarding and compliance posts are lock-and-gate protected", () => {
   const source = readFileSync(new URL("../src/routes/zatca.ts", import.meta.url), "utf8");

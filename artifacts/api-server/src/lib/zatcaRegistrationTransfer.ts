@@ -27,6 +27,20 @@ export const transferBinding = (target: ZatcaTransferEnvelope["target"]) =>
   createHash("sha256").update(`${target.agentId}:${target.installationId}:${target.dbFingerprint}:${target.companyId}`).digest("hex");
 export const credentialFingerprint = (credentials: Record<string, string>) =>
   createHash("sha256").update(JSON.stringify(Object.keys(credentials).sort().map(k => [k, credentials[k]]))).digest("hex");
+export type ZatcaChainHead = { maxIcv: number; previousInvoiceHash: string };
+export function mayReplaceTargetCredentials(
+  targetCredentialFingerprint: string | null,
+  sourceCredentialFingerprint: string,
+  targetChain: ZatcaChainHead,
+  sourceChain: ZatcaChainHead,
+  explicitlyConfirmed: boolean,
+): boolean {
+  if (!targetCredentialFingerprint || targetCredentialFingerprint === sourceCredentialFingerprint) return true;
+  if (!explicitlyConfirmed) return false;
+  return targetChain.maxIcv === 0 ||
+    (targetChain.maxIcv === sourceChain.maxIcv &&
+      targetChain.previousInvoiceHash === sourceChain.previousInvoiceHash);
+}
 export function validateTransferEnvelope(value: unknown, target?: ZatcaTransferEnvelope["target"], now = new Date(), allowExpired = false): ZatcaTransferEnvelope {
   const e = value as ZatcaTransferEnvelope;
   if (!e || e.version !== 1 || !Number.isInteger(e.sourceCompanyId) || !normalizeVat(e.vatNumber || "") ||

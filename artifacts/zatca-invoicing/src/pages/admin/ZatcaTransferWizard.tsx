@@ -32,6 +32,7 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   
   const [confirmed, setConfirmed] = useState(false);
+  const [replaceTargetCredentials, setReplaceTargetCredentials] = useState(false);
   const [typedConfirmation, setTypedConfirmation] = useState("");
 
   const { data: companies, isLoading: loadingCompanies } = useQuery({
@@ -47,7 +48,11 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
   const preflightMut = useMutation({
     mutationFn: async () => {
       const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/zatca-transfer/preflight`, {
-        method: "POST", headers, body: JSON.stringify({ sourceCompanyId: Number(sourceId), targetCompanyId: Number(targetId) })
+        method: "POST", headers, body: JSON.stringify({
+          sourceCompanyId: Number(sourceId),
+          targetCompanyId: Number(targetId),
+          replaceTargetCredentials,
+        })
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.error || "فشل الفحص المسبق");
@@ -60,7 +65,11 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
   const prepareMut = useMutation({
     mutationFn: async () => {
       const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/zatca-transfer/prepare`, {
-        method: "POST", headers, body: JSON.stringify({ sourceCompanyId: Number(sourceId), targetCompanyId: Number(targetId) })
+        method: "POST", headers, body: JSON.stringify({
+          sourceCompanyId: Number(sourceId),
+          targetCompanyId: Number(targetId),
+          replaceTargetCredentials,
+        })
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.error || "فشل التجهيز");
@@ -106,6 +115,7 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
       setTransferId(null);
       setStep("select");
       setConfirmed(false);
+      setReplaceTargetCredentials(false);
     },
     onError: (e: any) => toast({ title: "فشل الإلغاء", description: e.message, variant: "destructive" })
   });
@@ -127,6 +137,7 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
         setTargetId("");
         setTransferId(null);
         setConfirmed(false);
+        setReplaceTargetCredentials(false);
         setTypedConfirmation("");
         preflightMut.reset();
       }, 200);
@@ -183,7 +194,10 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
                         <Building2 className="h-4 w-4 text-slate-500" />
                         الشركة المصدر (المركزي)
                       </label>
-                      <Select value={sourceId} onValueChange={setSourceId}>
+                      <Select value={sourceId} onValueChange={(value) => {
+                        setSourceId(value);
+                        setReplaceTargetCredentials(false);
+                      }}>
                         <SelectTrigger className="h-9 text-xs" data-testid="select-source">
                           <SelectValue placeholder="اختر الشركة المركزية..." />
                         </SelectTrigger>
@@ -233,7 +247,10 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
                         <Server className="h-4 w-4 text-indigo-500" />
                         الشركة الهدف (الوكيل)
                       </label>
-                      <Select value={targetId} onValueChange={setTargetId}>
+                      <Select value={targetId} onValueChange={(value) => {
+                        setTargetId(value);
+                        setReplaceTargetCredentials(false);
+                      }}>
                         <SelectTrigger className="h-9 text-xs" data-testid="select-target">
                           <SelectValue placeholder="اختر الشركة في الوكيل..." />
                         </SelectTrigger>
@@ -249,7 +266,7 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
                         </SelectContent>
                       </Select>
                       {targetComp && (
-                        <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-md text-xs space-y-1.5">
+                        <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-md text-xs space-y-2">
                           <div className="flex justify-between pb-1 mb-1 border-b border-indigo-100/50">
                             <span className="text-muted-foreground">الوكيل (النطاق):</span>
                             <span className="font-semibold text-indigo-700">{agentName} — {agentDomain}</span>
@@ -274,6 +291,19 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
                               <span className="text-slate-600">فارغة</span>
                             )}
                           </div>
+                          {targetComp.credentialsSet && (
+                            <label className="flex items-start gap-2 border-t border-amber-200 pt-2 mt-2 cursor-pointer text-amber-900">
+                              <Checkbox
+                                checked={replaceTargetCredentials}
+                                onCheckedChange={(checked) => setReplaceTargetCredentials(!!checked)}
+                                data-testid="checkbox-replace-target-zatca"
+                                className="mt-0.5"
+                              />
+                              <span className="leading-relaxed">
+                                أؤكد أن هذه النسخة لم ترسل فواتير إلى زاتكا، وأوافق على استبدال تسجيلها الموجود عند إكمال النقل.
+                              </span>
+                            </label>
+                          )}
                         </div>
                       )}
                     </div>
@@ -292,7 +322,11 @@ export function ZatcaTransferAction({ agentId, agentName, agentDomain, onComplet
                     <ul className="list-disc list-inside ms-4 space-y-1">
                       <li>تطابق الرقم الضريبي: <span className="font-bold">{sourceComp?.vatNumber}</span></li>
                       <li>تطابق البيئة: <span className="font-bold">{sourceComp?.environment}</span></li>
-                      <li>بيانات اعتماد الهدف: <span className="font-bold">{preflightMut.data?.targetCredentialsSameOrEmpty ? "فارغة أو مطابقة للمصدر" : "غير مطابقة"}</span></li>
+                      <li>بيانات اعتماد الهدف: <span className="font-bold">
+                        {preflightMut.data?.targetCredentialsWillBeReplaced
+                          ? "مختلفة — ستُستبدل عند الإكمال"
+                          : "فارغة أو مطابقة للمصدر"}
+                      </span></li>
                     </ul>
                   </AlertDescription>
                 </Alert>
