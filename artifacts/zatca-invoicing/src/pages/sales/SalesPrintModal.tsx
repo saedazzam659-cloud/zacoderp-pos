@@ -2036,6 +2036,11 @@ function template14(d: PrintData): string {
   const custStreet = (customer as any)?.street ?? (doc as any)?.buyerStreet ?? null;
   const custPostal = (customer as any)?.postalCode ?? (doc as any)?.buyerPostalCode ?? null;
   const custCity   = (customer as any)?.city ?? (doc as any)?.buyerCity ?? null;
+  const custDistrict = (customer as any)?.district ?? (doc as any)?.buyerDistrict ?? null;
+  const custAddress = [custCity, custDistrict, bldgNo]
+    .map(value => String(value ?? "").trim())
+    .filter(Boolean)
+    .join(" - ");
   const custCountryName = getWorldCountryName(custCountryCode, isEn ? "en" : "ar");
   const quotationOptions = getQuotationPrintOptions(company);
   const quotationAddress = isQuot ? quotationCustomerAddressText(d, lang) : "";
@@ -2345,7 +2350,7 @@ function template14(d: PrintData): string {
             ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
           ${(acctCode && t14ShowAcct) ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
           ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
-          ${bldgNo ? `<div class="row"><b>${L.customerAddress}</b><span class="mono">${bldgNo}</span></div>` : ""}
+          ${custAddress ? `<div class="row"><b>${L.customerAddress}</b><span>${escapePrintHtml(custAddress)}</span></div>` : ""}
         `}
       </div>
     </div>`;
@@ -2506,7 +2511,12 @@ function template15(d: PrintData): string {
   const quotationOptions = getQuotationPrintOptions(company);
   const custAddr = isQuot
     ? (quotationCustomerAddressText(d, printLanguage) || "—")
-    : ([customer?.city, customer?.district, customer?.street].filter(Boolean).join(" - ")
+    : ([customer?.city ?? (doc as any)?.buyerCity,
+        customer?.district ?? (doc as any)?.buyerDistrict,
+        customer?.buildingNumber ?? (doc as any)?.buyerBuildingNumber]
+      .map(value => String(value ?? "").trim())
+      .filter(Boolean)
+      .join(" - ")
       || customer?.address || "—");
   const quotationCurrencyName = isQuot
     ? resolveQuotationCurrencyName(company, d.currency ?? (doc as any)?.currency, printLanguage)
