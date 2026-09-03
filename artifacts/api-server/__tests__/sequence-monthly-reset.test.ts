@@ -259,7 +259,7 @@ test("journal numbering self-heals a stale restored counter from existing journa
     currentNumber:    1,
     padLength:        4,
     isActive:         true,
-    monthlyReset:     true,
+    monthlyReset:     false,
     transactionTypes: ["journal_entry"],
   }).returning();
   insertedSequenceIds.push(seq.id);
@@ -277,22 +277,22 @@ test("journal numbering self-heals a stale restored counter from existing journa
   }).returning();
   insertedJournalEntryIds.push(historical.id);
 
-  // Simulate the exact post-restore failure shown in production: the business
-  // rows reached 2576, but a missing/restored counter already emitted 0001 and
-  // now incorrectly says the next number is 2.
+  // Simulate the exact post-restore failure shown in production: monthly reset
+  // is OFF and the business rows reached 2576, but the restored continuous
+  // counter already emitted 0001 and now incorrectly says next = 2.
   await db.insert(sequenceCountersTable).values({
     sequenceId:    seq.id,
     branchId:      branchAId,
-    period:        "2026-08",
+    period:        "",
     currentNumber: 2,
-    lastPeriod:    "2026-08",
+    lastPeriod:    null,
   });
 
   const next = await nextSequenceNumber(testCompanyId, "journal_entry", {
     branchId: branchAId,
-    docDate: "2026-08-25T12:00:00",
+    docDate: "2026-09-03T12:00:00",
     refTable: "journal_entries",
   });
-  assert.equal(next, "QYD/08/2577",
+  assert.equal(next, "QYD/09/2577",
     "a stale restored counter must continue above the highest real JE number");
 });

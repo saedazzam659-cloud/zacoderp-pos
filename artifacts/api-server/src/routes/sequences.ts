@@ -10,7 +10,14 @@ import {
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requireAdminRole, audit } from "../middleware/permissions.js";
-import { subTypeFor, foreignSubTypeFor, resolveSequencePeriodMatch, periodMatchWhereSql, periodMatchRankSql } from "../lib/sequences.js";
+import {
+  subTypeFor,
+  foreignSubTypeFor,
+  resolveSequencePeriodMatch,
+  periodMatchWhereSql,
+  periodMatchRankSql,
+  journalEntrySequenceHighWater,
+} from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -226,11 +233,31 @@ router.get("/peek/:txType", async (req: any, res) => {
       previewNumber = anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number);
     }
 
+    // Journal entries have one continuous numeric suffix across all months and
+    // all source documents. `{MM}` changes only the displayed month segment.
+    // This also makes the read-only form preview self-heal after restoring a
+    // backup whose sequence counters/logs lag behind the real journal rows.
+    const effectivePrefix = prefixOverride != null ? prefixOverride : (seq.prefix ?? "");
+    const journalHighWater = qType === "journal_entry"
+      ? await journalEntrySequenceHighWater(
+          db,
+          cid as number,
+          branchKey,
+          prefixOverride != null ? null : effectivePrefix,
+        )
+      : null;
+    if (journalHighWater != null) {
+      previewNumber = Math.max(previewNumber, journalHighWater.number + 1);
+    }
+
     const exhausted = previewNumber > seq.end_number;
     return {
       number: exhausted ? null : fmt(
-        prefixOverride != null ? prefixOverride : seq.prefix,
-        previewNumber, seq.pad_length, seq.month_pattern, effectiveDate,
+        effectivePrefix,
+        previewNumber,
+        Math.max(seq.pad_length ?? 0, journalHighWater?.digitWidth ?? 0),
+        seq.month_pattern,
+        effectiveDate,
       ),
       hasSequence: true,
       sequenceCode: seq.code,

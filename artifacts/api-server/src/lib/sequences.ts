@@ -238,22 +238,31 @@ async function maxIssuedForPeriod(
 }
 
 /** Highest journal-entry number that already exists in the business table for
- *  this rendered prefix and branch. Sequence logs/counters can be absent or
- *  stale after restoring an older backup, while the actual journal rows remain
- *  authoritative evidence that those numbers were already used.
+ *  this sequence prefix and branch. The month segment is deliberately excluded
+ *  from the prefix match: journal entries use one continuous numeric suffix
+ *  across months and source documents, while `{MM}` only changes the displayed
+ *  month segment (QYD/08/2576 → QYD/09/2577).
+ *
+ *  Sequence logs/counters can be absent or stale after restoring an older
+ *  backup, while the actual journal rows remain authoritative evidence that
+ *  those numbers were already used.
  *
  *  Keep this branch-scoped so a genuinely new branch retains its independent
- *  numbering stream. `branchKey = 0` maps to legacy/company-wide NULL rows. */
-async function maxExistingJournalEntryForPeriod(
+ *  numbering stream. `branchKey = 0` maps to legacy/company-wide NULL rows.
+ *  `sequencePrefix = null` is used by unified source-prefix mode, where every
+ *  JE prefix shares the same numeric counter. */
+export async function journalEntrySequenceHighWater(
   exec: { execute: (q: any) => Promise<{ rows?: Array<{ mx: number | null; digit_width: number | null }> }> },
   companyId: number,
   branchKey: number,
-  renderedPrefix: string,
+  sequencePrefix: string | null,
 ): Promise<{ number: number; digitWidth: number } | null> {
-  const like = `${escapeLike(renderedPrefix)}%`;
   const branchWhere = branchKey > 0
     ? sql`branch_id = ${branchKey}`
     : sql`branch_id IS NULL`;
+  const prefixWhere = sequencePrefix != null
+    ? sql`AND doc_number LIKE ${`${escapeLike(sequencePrefix)}%`} ESCAPE '\\'`
+    : sql``;
   const r = await exec.execute(sql`
     SELECT trailing_digits::int AS mx, LENGTH(trailing_digits) AS digit_width
     FROM (
@@ -261,7 +270,7 @@ async function maxExistingJournalEntryForPeriod(
       FROM journal_entries
       WHERE company_id = ${companyId}
         AND ${branchWhere}
-        AND doc_number LIKE ${like} ESCAPE '\\'
+        ${prefixWhere}
     ) existing_numbers
     WHERE trailing_digits IS NOT NULL
     ORDER BY trailing_digits::int DESC, LENGTH(trailing_digits) DESC
@@ -366,7 +375,12 @@ export async function nextSequenceNumber(
     const effectivePrefix = ctx.prefixOverride != null ? ctx.prefixOverride : (seq.prefix ?? "");
     const renderedPrefix = `${effectivePrefix}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
     const journalEntryHighWater = ctx.refTable === "journal_entries"
-      ? await maxExistingJournalEntryForPeriod(tx, companyId, branchKey, renderedPrefix)
+      ? await journalEntrySequenceHighWater(
+          tx,
+          companyId,
+          branchKey,
+          ctx.prefixOverride != null ? null : effectivePrefix,
+        )
       : null;
 
     // Look up (or create) the per-(branch, period) counter row, locking it so
