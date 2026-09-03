@@ -248,6 +248,14 @@ test("out-of-order month entry keeps each month's counter independent (no reset,
 });
 
 test("journal numbering self-heals a stale restored counter from existing journal rows", async () => {
+  const [issuingBranch] = await db.insert(branchesTable).values({
+    companyId: testCompanyId,
+    code: `BRB_${TEST_TAG}`,
+    nameAr: "فرع الإصدار",
+    nameEn: "Issuing Branch",
+  }).returning();
+  insertedBranchIds.push(issuingBranch.id);
+
   const [seq] = await db.insert(sequencesTable).values({
     companyId:        testCompanyId,
     code:             `${TEST_TAG}_RESTORED_JE`,
@@ -282,17 +290,17 @@ test("journal numbering self-heals a stale restored counter from existing journa
   // counter already emitted 0001 and now incorrectly says next = 2.
   await db.insert(sequenceCountersTable).values({
     sequenceId:    seq.id,
-    branchId:      branchAId,
+    branchId:      issuingBranch.id,
     period:        "",
-    currentNumber: 2,
+    currentNumber: 2485,
     lastPeriod:    null,
   });
 
   const next = await nextSequenceNumber(testCompanyId, "journal_entry", {
-    branchId: branchAId,
+    branchId: issuingBranch.id,
     docDate: "2026-09-03T12:00:00",
     refTable: "journal_entries",
   });
   assert.equal(next, "QYD/09/2577",
-    "a stale restored counter must continue above the highest real JE number");
+    "every branch must continue above the company's highest real JE number");
 });

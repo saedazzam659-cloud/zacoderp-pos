@@ -247,19 +247,16 @@ async function maxIssuedForPeriod(
  *  backup, while the actual journal rows remain authoritative evidence that
  *  those numbers were already used.
  *
- *  Keep this branch-scoped so a genuinely new branch retains its independent
- *  numbering stream. `branchKey = 0` maps to legacy/company-wide NULL rows.
+ *  Journal numbering is company-wide across every branch and every source
+ *  document shown in the journal screen. The sequence master lock serializes
+ *  cross-branch issuance, so two branches cannot both claim the same suffix.
  *  `sequencePrefix = null` is used by unified source-prefix mode, where every
  *  JE prefix shares the same numeric counter. */
 export async function journalEntrySequenceHighWater(
   exec: { execute: (q: any) => Promise<{ rows?: Array<{ mx: number | null; digit_width: number | null }> }> },
   companyId: number,
-  branchKey: number,
   sequencePrefix: string | null,
 ): Promise<{ number: number; digitWidth: number } | null> {
-  const branchWhere = branchKey > 0
-    ? sql`branch_id = ${branchKey}`
-    : sql`branch_id IS NULL`;
   const prefixWhere = sequencePrefix != null
     ? sql`AND doc_number LIKE ${`${escapeLike(sequencePrefix)}%`} ESCAPE '\\'`
     : sql``;
@@ -269,7 +266,6 @@ export async function journalEntrySequenceHighWater(
       SELECT (regexp_match(doc_number, '(\\d+)$'))[1] AS trailing_digits
       FROM journal_entries
       WHERE company_id = ${companyId}
-        AND ${branchWhere}
         ${prefixWhere}
     ) existing_numbers
     WHERE trailing_digits IS NOT NULL
@@ -378,7 +374,6 @@ export async function nextSequenceNumber(
       ? await journalEntrySequenceHighWater(
           tx,
           companyId,
-          branchKey,
           ctx.prefixOverride != null ? null : effectivePrefix,
         )
       : null;

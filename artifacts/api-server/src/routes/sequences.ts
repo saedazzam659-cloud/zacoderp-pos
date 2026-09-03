@@ -242,7 +242,6 @@ router.get("/peek/:txType", async (req: any, res) => {
       ? await journalEntrySequenceHighWater(
           db,
           cid as number,
-          branchKey,
           prefixOverride != null ? null : effectivePrefix,
         )
       : null;
