@@ -6,7 +6,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   Plus, Building2, ExternalLink, ShieldCheck, AlertCircle,
   CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
-  BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2, LogIn, Pencil
+  BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2, LogIn, Pencil,
+  ListOrdered
 } from "lucide-react";
 import ExportButtons from "@/components/ExportButtons";
 import { Button } from "@/components/ui/button";
@@ -66,6 +67,12 @@ export default function Companies() {
   const [editTarget, setEditTarget]     = useState<{ id: number; name: string; agent?: number } | null>(null);
   const [editName, setEditName]         = useState("");
   const [renaming, setRenaming]         = useState(false);
+  const [sequenceTarget, setSequenceTarget] = useState<{ id: number; name: string; agent?: number } | null>(null);
+  const [sequenceSummary, setSequenceSummary] = useState<any>(null);
+  const [currentJournalNumber, setCurrentJournalNumber] = useState("");
+  const [replacementJournalNumber, setReplacementJournalNumber] = useState("");
+  const [sequenceLoading, setSequenceLoading] = useState(false);
+  const [sequenceSaving, setSequenceSaving] = useState(false);
   const { token } = useAuth() as any;
 
   // Rename (SuperAdmin): PUT /api/companies/:id — agent companies route into
@@ -125,6 +132,62 @@ export default function Companies() {
       return;
     }
     deleteCompany.mutate({ id: deleteTarget.id }, { onSuccess, onError });
+  };
+
+  const openSequenceControl = async (company: any) => {
+    const target = {
+      id: Number(company.id),
+      name: String(company.nameAr ?? ""),
+      agent: company.agentInstanceId ? Number(company.agentInstanceId) : undefined,
+    };
+    setSequenceTarget(target);
+    setSequenceSummary(null);
+    setCurrentJournalNumber("");
+    setReplacementJournalNumber("");
+    setSequenceLoading(true);
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const qs = target.agent ? `?agent=${target.agent}` : "";
+      const r = await fetch(`${BASE}/api/admin/companies/${target.id}/journal-sequence-control${qs}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error || "تعذر تحميل التسلسل");
+      setSequenceSummary(body);
+    } catch (e: any) {
+      toast({ title: "تعذر تحميل التسلسل", description: e?.message ?? "حاول مرة أخرى.", variant: "destructive" });
+      setSequenceTarget(null);
+    } finally {
+      setSequenceLoading(false);
+    }
+  };
+
+  const confirmSequenceRepair = async () => {
+    if (!sequenceTarget || !currentJournalNumber.trim() || !replacementJournalNumber.trim() || sequenceSaving) return;
+    setSequenceSaving(true);
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const qs = sequenceTarget.agent ? `?agent=${sequenceTarget.agent}` : "";
+      const r = await fetch(`${BASE}/api/admin/companies/${sequenceTarget.id}/journal-sequence-control${qs}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentDocNumber: currentJournalNumber.trim(),
+          newDocNumber: replacementJournalNumber.trim(),
+        }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error || "تعذر تعديل رقم القيد");
+      toast({
+        title: "تم تصحيح تسلسل القيد",
+        description: `تغيّر ${body.oldDocNumber} إلى ${body.newDocNumber}، والتسلسل العددي القادم ${body.nextNumericSuffix}.`,
+      });
+      setSequenceTarget(null);
+    } catch (e: any) {
+      toast({ title: "لم يتم تعديل التسلسل", description: e?.message ?? "حاول مرة أخرى.", variant: "destructive" });
+    } finally {
+      setSequenceSaving(false);
+    }
   };
 
   // Stats
@@ -495,6 +558,15 @@ export default function Companies() {
                       {isSuperAdmin && (
                         <Button
                           size="sm" variant="outline" className="gap-1.5 h-8"
+                          onClick={() => openSequenceControl(company)}
+                          data-testid={`button-journal-sequence-${company.id}`}
+                        >
+                          <ListOrdered className="h-3.5 w-3.5" />تصحيح تسلسل القيود
+                        </Button>
+                      )}
+                      {isSuperAdmin && (
+                        <Button
+                          size="sm" variant="outline" className="gap-1.5 h-8"
                           onClick={() => { setEditTarget({ id: company.id, name: company.nameAr, agent: company.agentInstanceId ?? undefined }); setEditName(company.nameAr ?? ""); }}
                           data-testid={`button-rename-company-${company.id}`}
                         >
@@ -586,6 +658,76 @@ export default function Companies() {
             >
               <Pencil className="h-4 w-4" />
               {renaming ? "جاري الحفظ..." : "حفظ الاسم"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Journal sequence repair (SuperAdmin) ── */}
+      <AlertDialog open={!!sequenceTarget} onOpenChange={open => !open && !sequenceSaving && setSequenceTarget(null)}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <ListOrdered className="h-5 w-5 text-primary" />تصحيح تسلسل القيود
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-right">
+              شركة <strong className="text-foreground">"{sequenceTarget?.name}"</strong>. تعدّل هذه الأداة رقم قيد واحد موجود،
+              ثم تجعل كل القيود الجديدة تكمل بعده دون تغيير البادئة أو منطق الشهر.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {sequenceLoading ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">جاري قراءة أعلى تسلسل فعلي...</div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">أعلى رقم فعلي حالي</span>
+                  <strong className="font-mono" dir="ltr">{sequenceSummary?.highestEntry?.docNumber ?? "لا يوجد"}</strong>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">اللاحقة المطلوبة للبديل</span>
+                  <strong className="font-mono" dir="ltr">{sequenceSummary?.requiredReplacementSuffix ?? 1}</strong>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">رقم القيد الخاطئ الحالي</label>
+                <Input
+                  value={currentJournalNumber}
+                  onChange={e => setCurrentJournalNumber(e.target.value)}
+                  placeholder="مثال: QYD/08/0001"
+                  dir="ltr"
+                  className="text-left font-mono"
+                  data-testid="input-current-journal-number"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">رقم القيد الصحيح البديل</label>
+                <Input
+                  value={replacementJournalNumber}
+                  onChange={e => setReplacementJournalNumber(e.target.value)}
+                  placeholder={`مثال: QYD/08/${sequenceSummary?.requiredReplacementSuffix ?? 1}`}
+                  dir="ltr"
+                  className="text-left font-mono"
+                  data-testid="input-replacement-journal-number"
+                />
+                <p className="text-xs text-muted-foreground">
+                  يجب أن ينتهي الرقم باللاحقة التالية مباشرة. لن تتغير أي مبالغ أو حسابات أو حالة ترحيل.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <AlertDialogCancel disabled={sequenceSaving}>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={e => { e.preventDefault(); confirmSequenceRepair(); }}
+              disabled={sequenceLoading || sequenceSaving || !currentJournalNumber.trim() || !replacementJournalNumber.trim()}
+              className="gap-2"
+              data-testid="button-confirm-journal-sequence"
+            >
+              <ListOrdered className="h-4 w-4" />
+              {sequenceSaving ? "جاري التصحيح..." : "تصحيح الرقم والمتابعة بعده"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

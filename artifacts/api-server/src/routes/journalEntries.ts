@@ -20,7 +20,11 @@ import { eq, and, or, desc, asc, sql, inArray, notInArray, gte, lte, ilike } fro
 import { extractAuth, resolveCompanyId, intersectBranchRequest, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
-import { nextSequenceNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
+import {
+  ensureJournalNumberClaimsTable,
+  nextSequenceNumber,
+  reserveJeNumberFromEntry,
+} from "../lib/sequences.js";
 import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodGuard.js";
 import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAudit.js";
 import { describeDevice } from "../lib/deviceFingerprint.js";
@@ -1363,6 +1367,7 @@ router.post("/", async (req, res) => {
       // concurrent gap-fill saves of the same number can never both win.
       if (gapFill) {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, 1001)`);
+        await ensureJournalNumberClaimsTable(tx);
         const dupTx = await tx.select({ id: journalEntriesTable.id })
           .from(journalEntriesTable)
           .where(and(
@@ -1372,6 +1377,17 @@ router.post("/", async (req, res) => {
           .limit(1);
         if (dupTx.length > 0) {
           const err: any = new Error(`رقم القيد ${gapFillNumber} مستخدم بالفعل`);
+          err.gapFillDup = true;
+          throw err;
+        }
+        const claimed = await tx.execute<{ doc_number: string }>(sql`
+          INSERT INTO journal_number_claims (company_id, doc_number, ref_table, ref_id)
+          VALUES (${cid}, ${gapFillNumber!}, 'journal_entries', 'gap_fill')
+          ON CONFLICT (company_id, doc_number) DO NOTHING
+          RETURNING doc_number
+        `);
+        if (!claimed.rows?.[0]) {
+          const err: any = new Error(`رقم القيد ${gapFillNumber} مستخدم أو محجوز بالفعل`);
           err.gapFillDup = true;
           throw err;
         }

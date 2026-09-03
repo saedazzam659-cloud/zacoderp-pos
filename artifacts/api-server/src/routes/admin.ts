@@ -61,6 +61,7 @@ import {
   revokeDemoDevice,
 } from "../lib/demoDeviceIsolation.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { ensureJournalNumberClaimsTable } from "../lib/sequences.js";
 
 const router = Router();
   // ─────────────────────────────────────────────────────────────────────────
@@ -1532,6 +1533,274 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
   ]);
 
   res.json({ company, subscription: subscription ?? null, users, counts: { invoices: invoiceCount, customers: customerCount, suppliers: supplierCount } });
+  });
+});
+
+// GET /api/admin/companies/:id/journal-sequence-control
+// SuperAdmin-only summary used by the Companies screen. This is intentionally
+// separate from the tenant sequence-settings routes: it operates on the real
+// journal rows in the selected central/agent database and never changes the
+// prefix/month configuration.
+router.get("/companies/:id/journal-sequence-control", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const companyId = Number(req.params.id);
+    if (!Number.isInteger(companyId) || companyId <= 0) {
+      res.status(400).json({ error: "معرّف الشركة غير صحيح" });
+      return;
+    }
+
+    const [company] = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr })
+      .from(companiesTable)
+      .where(eq(companiesTable.id, companyId))
+      .limit(1);
+    if (!company) {
+      res.status(404).json({ error: "الشركة غير موجودة" });
+      return;
+    }
+
+    await ensureJournalNumberClaimsTable(db);
+    const sequenceState = await db.execute<{ active_count: number }>(sql`
+      SELECT COUNT(DISTINCT s.id)::int AS active_count
+      FROM sequences s
+      WHERE s.company_id = ${companyId}
+        AND s.is_active = TRUE
+        AND s.transaction_types ? 'journal_entry'
+    `);
+    const activeCount = Number(sequenceState.rows?.[0]?.active_count ?? 0);
+
+    const rows = await db.execute<{
+      id: number;
+      doc_number: string;
+      entry_date: string;
+      entry_type: string;
+      numeric_suffix: number;
+      digit_width: number;
+    }>(sql`
+      SELECT id, doc_number, entry_date, entry_type,
+             ((regexp_match(doc_number, '(\\d+)$'))[1])::int AS numeric_suffix,
+             LENGTH((regexp_match(doc_number, '(\\d+)$'))[1])::int AS digit_width
+      FROM journal_entries
+      WHERE company_id = ${companyId}
+        AND doc_number ~ '\\d+$'
+      ORDER BY ((regexp_match(doc_number, '(\\d+)$'))[1])::int DESC,
+               LENGTH((regexp_match(doc_number, '(\\d+)$'))[1]) DESC,
+               id DESC
+      LIMIT 1
+    `);
+    const highest = rows.rows?.[0] ?? null;
+    const actualSuffix = highest ? Number(highest.numeric_suffix) : 0;
+    const requiredReplacementSuffix = actualSuffix + 1;
+    res.json({
+      company,
+      hasActiveJournalSequence: activeCount > 0,
+      highestEntry: highest ? {
+        id: Number(highest.id),
+        docNumber: highest.doc_number,
+        entryDate: highest.entry_date,
+        entryType: highest.entry_type,
+        numericSuffix: Number(highest.numeric_suffix),
+        digitWidth: Number(highest.digit_width),
+      } : null,
+      requiredReplacementSuffix,
+    });
+  });
+});
+
+// PUT /api/admin/companies/:id/journal-sequence-control
+// Repairs ONE existing journal number (for example QYD/08/0001 ->
+// QYD/08/2577), then advances every journal counter beyond the replacement.
+// It does not renumber any other row or alter sequence prefix/month settings.
+router.put("/companies/:id/journal-sequence-control", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const companyId = Number(req.params.id);
+    const currentDocNumber = String(req.body?.currentDocNumber ?? "").trim();
+    const newDocNumber = String(req.body?.newDocNumber ?? "").trim();
+    if (!Number.isInteger(companyId) || companyId <= 0 || !currentDocNumber || !newDocNumber) {
+      res.status(400).json({ error: "رقم القيد الحالي والرقم الجديد مطلوبان" });
+      return;
+    }
+
+    const newMatch = newDocNumber.match(/(\d+)$/);
+    if (!newMatch) {
+      res.status(400).json({ error: "يجب أن ينتهي رقم القيد الجديد برقم تسلسلي" });
+      return;
+    }
+    const newSuffix = Number(newMatch[1]);
+    if (!Number.isSafeInteger(newSuffix) || newSuffix <= 0) {
+      res.status(400).json({ error: "التسلسل الجديد غير صحيح" });
+      return;
+    }
+
+    try {
+      const result = await db.transaction(async (tx) => {
+        await ensureJournalNumberClaimsTable(tx);
+        const companyRows = await tx.execute<{ id: number }>(sql`
+          SELECT id FROM companies WHERE id = ${companyId} LIMIT 1
+        `);
+        if (!companyRows.rows?.[0]) {
+          const error: any = new Error("الشركة غير موجودة");
+          error.status = 404;
+          throw error;
+        }
+
+        // Number issuance locks the active sequence master before reading the
+        // journal high-water. Lock every active JE master in deterministic
+        // order so this repair cannot race a document posting.
+        const activeSequenceRows = await tx.execute<{ id: number }>(sql`
+          SELECT id
+          FROM sequences
+          WHERE company_id = ${companyId}
+            AND is_active = TRUE
+            AND transaction_types ? 'journal_entry'
+          ORDER BY id
+          FOR UPDATE
+        `);
+        if ((activeSequenceRows.rows?.length ?? 0) === 0) {
+          const error: any = new Error("لا يوجد تسلسل قيود نشط لهذه الشركة؛ فعّله أولًا");
+          error.status = 409;
+          throw error;
+        }
+
+        const highestRows = await tx.execute<{
+          doc_number: string;
+          numeric_suffix: number;
+        }>(sql`
+          SELECT doc_number,
+                 ((regexp_match(doc_number, '(\\d+)$'))[1])::int AS numeric_suffix
+          FROM journal_entries
+          WHERE company_id = ${companyId}
+            AND doc_number ~ '\\d+$'
+          ORDER BY ((regexp_match(doc_number, '(\\d+)$'))[1])::int DESC,
+                   LENGTH((regexp_match(doc_number, '(\\d+)$'))[1]) DESC,
+                   id DESC
+          LIMIT 1
+        `);
+        const highest = highestRows.rows?.[0] ?? null;
+        const requiredSuffix = (highest ? Number(highest.numeric_suffix) : 0) + 1;
+        if (newSuffix !== requiredSuffix) {
+          const error: any = new Error(
+            `التسلسل المطلوب يجب أن يكون ${requiredSuffix} لأنه الرقم التالي بعد ${highest?.doc_number ?? "بداية التسلسل"}`,
+          );
+          error.status = 409;
+          throw error;
+        }
+
+        const targetRows = await tx.execute<{
+          id: number;
+          doc_number: string;
+          entry_date: string;
+          entry_type: string;
+        }>(sql`
+          SELECT id, doc_number, entry_date, entry_type
+          FROM journal_entries
+          WHERE company_id = ${companyId}
+            AND doc_number = ${currentDocNumber}
+          ORDER BY id
+          FOR UPDATE
+        `);
+        if ((targetRows.rows?.length ?? 0) === 0) {
+          const error: any = new Error("لم يتم العثور على القيد المطلوب داخل هذه الشركة");
+          error.status = 404;
+          throw error;
+        }
+        if ((targetRows.rows?.length ?? 0) > 1) {
+          const error: any = new Error("يوجد أكثر من قيد بهذا الرقم؛ يجب معالجة التكرار أولًا");
+          error.status = 409;
+          throw error;
+        }
+        const target = targetRows.rows![0]!;
+
+        const duplicateRows = await tx.execute<{ id: number }>(sql`
+          SELECT id
+          FROM journal_entries
+          WHERE company_id = ${companyId}
+            AND doc_number = ${newDocNumber}
+            AND id <> ${target.id}
+          LIMIT 1
+          FOR UPDATE
+        `);
+        if (duplicateRows.rows?.[0]) {
+          const error: any = new Error("رقم القيد الجديد مستخدم بالفعل");
+          error.status = 409;
+          throw error;
+        }
+
+        // Claim the replacement before changing the JE. New JE allocation uses
+        // the same unique registry, so an in-flight document can neither take
+        // this number after our check nor hide a number already claimed before
+        // its journal row is inserted.
+        const claimed = await tx.execute<{ doc_number: string }>(sql`
+          INSERT INTO journal_number_claims (company_id, doc_number, ref_table, ref_id)
+          VALUES (${companyId}, ${newDocNumber}, 'journal_entries', ${String(target.id)})
+          ON CONFLICT (company_id, doc_number) DO NOTHING
+          RETURNING doc_number
+        `);
+        if (!claimed.rows?.[0]) {
+          const error: any = new Error("هذا الرقم محجوز لقيد جارٍ إنشاؤه؛ أعد المحاولة بعد اكتمال المستند");
+          error.status = 409;
+          throw error;
+        }
+
+        await tx.execute(sql`
+          UPDATE journal_entries
+          SET doc_number = ${newDocNumber}, updated_at = NOW()
+          WHERE id = ${target.id} AND company_id = ${companyId}
+        `);
+
+        // Keep every restored branch/period counter above the repaired real
+        // high-water. The normal issuance helper will still re-check the actual
+        // journal rows, so this is synchronization rather than new logic.
+        await tx.execute(sql`
+          UPDATE sequence_counters sc
+          SET current_number = GREATEST(sc.current_number, ${newSuffix + 1}),
+              updated_at = NOW()
+          FROM sequences s
+          WHERE sc.sequence_id = s.id
+            AND s.company_id = ${companyId}
+            AND s.transaction_types ? 'journal_entry'
+        `);
+        await tx.execute(sql`
+          UPDATE sequences
+          SET current_number = GREATEST(current_number, ${newSuffix + 1}),
+              updated_at = NOW()
+          WHERE company_id = ${companyId}
+            AND transaction_types ? 'journal_entry'
+        `);
+
+        return {
+          entryId: Number(target.id),
+          oldDocNumber: target.doc_number,
+          newDocNumber,
+          nextNumericSuffix: newSuffix + 1,
+        };
+      });
+
+      await writeAudit({
+        userId: req.adminUser?.id ?? null,
+        username: req.adminUser?.username ?? null,
+        role: req.adminUser?.role ?? null,
+        companyId,
+        module: "journal_entries",
+        action: "superadmin_sequence_repair",
+        method: req.method,
+        path: req.originalUrl,
+        entityType: "journal_entry",
+        entityId: String(result.entryId),
+        statusCode: 200,
+        metadata: {
+          oldDocNumber: result.oldDocNumber,
+          newDocNumber: result.newDocNumber,
+          nextNumericSuffix: result.nextNumericSuffix,
+        },
+      });
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(Number(e?.status) || 500).json({
+        error: Number(e?.status) ? String(e.message) : "تعذر تعديل تسلسل القيد",
+      });
+    }
   });
 });
 

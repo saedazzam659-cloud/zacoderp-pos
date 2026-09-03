@@ -103,6 +103,25 @@ function format(prefix: string, n: number, padLength: number, monthPattern: stri
   return `${prefix ?? ""}${month}${padded}`;
 }
 
+/** Permanent, additive uniqueness registry for newly allocated JE numbers.
+ * Kept separate from journal_entries because legacy databases may already
+ * contain duplicate historical doc_number values and cannot safely receive a
+ * unique index without a dedicated cleanup operation. */
+export async function ensureJournalNumberClaimsTable(
+  exec: { execute: (q: any) => Promise<any> },
+): Promise<void> {
+  await exec.execute(sql`
+    CREATE TABLE IF NOT EXISTS journal_number_claims (
+      company_id integer NOT NULL,
+      doc_number text NOT NULL,
+      ref_table text,
+      ref_id text,
+      created_at timestamptz NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (company_id, doc_number)
+    )
+  `);
+}
+
 /** Resolve the date to feed into the `{MM}/{YY}/{YYYY}` substitution.
  *  When the company opted into "document" date AND the caller supplied
  *  a usable `docDate`, that date wins. Otherwise we use today.  Invalid
@@ -257,6 +276,7 @@ export async function journalEntrySequenceHighWater(
   companyId: number,
   sequencePrefix: string | null,
 ): Promise<{ number: number; digitWidth: number } | null> {
+  await ensureJournalNumberClaimsTable(exec);
   const prefixWhere = sequencePrefix != null
     ? sql`AND doc_number LIKE ${`${escapeLike(sequencePrefix)}%`} ESCAPE '\\'`
     : sql``;
@@ -264,9 +284,16 @@ export async function journalEntrySequenceHighWater(
     SELECT trailing_digits::int AS mx, LENGTH(trailing_digits) AS digit_width
     FROM (
       SELECT (regexp_match(doc_number, '(\\d+)$'))[1] AS trailing_digits
-      FROM journal_entries
-      WHERE company_id = ${companyId}
-        ${prefixWhere}
+      FROM (
+        SELECT doc_number
+        FROM journal_entries
+        WHERE company_id = ${companyId}
+        UNION ALL
+        SELECT doc_number
+        FROM journal_number_claims
+        WHERE company_id = ${companyId}
+      ) issued_or_claimed
+      WHERE TRUE ${prefixWhere}
     ) existing_numbers
     WHERE trailing_digits IS NOT NULL
     ORDER BY trailing_digits::int DESC, LENGTH(trailing_digits) DESC
@@ -374,7 +401,10 @@ export async function nextSequenceNumber(
       ? await journalEntrySequenceHighWater(
           tx,
           companyId,
-          ctx.prefixOverride != null ? null : effectivePrefix,
+          // Every journal source shares one company-wide numeric suffix. The
+          // displayed prefix may differ by source/month, but it must never
+          // create an independent numeric stream.
+          null,
         )
       : null;
 
@@ -473,6 +503,19 @@ export async function nextSequenceNumber(
       seq.month_pattern,
       effectiveDate,
     );
+
+    if (ctx.refTable === "journal_entries") {
+      await ensureJournalNumberClaimsTable(tx);
+      const claimed = await tx.execute<{ doc_number: string }>(sql`
+        INSERT INTO journal_number_claims (company_id, doc_number, ref_table, ref_id)
+        VALUES (${companyId}, ${generated}, ${ctx.refTable ?? null}, ${ctx.refId != null ? String(ctx.refId) : null})
+        ON CONFLICT (company_id, doc_number) DO NOTHING
+        RETURNING doc_number
+      `);
+      if (!claimed.rows?.[0]) {
+        throw new Error(`رقم القيد ${generated} محجوز بالفعل؛ أعد المحاولة`);
+      }
+    }
 
     // 4. Bump the per-(branch, period) counter only. Master sequences row is
     //    NEVER written to during issuance (per spec).
