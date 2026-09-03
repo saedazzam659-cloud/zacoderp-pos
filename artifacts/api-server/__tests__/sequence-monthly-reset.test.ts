@@ -40,7 +40,7 @@ import {
   journalEntriesTable,
 } from "@workspace/db";
 
-import { nextSequenceNumber } from "../src/lib/sequences.ts";
+import { nextJeSubSequence, nextSequenceNumber } from "../src/lib/sequences.ts";
 
 const TEST_TAG = `tt_seq_mreset_${randomBytes(4).toString("hex")}`;
 
@@ -296,10 +296,11 @@ test("journal numbering self-heals a stale restored counter from existing journa
     lastPeriod:    null,
   });
 
-  const next = await nextSequenceNumber(testCompanyId, "journal_entry", {
+  // Source-document callers use nextJeSubSequence and historically did not all
+  // pass refTable themselves. The helper must centrally apply JE reconciliation.
+  const next = await nextJeSubSequence(testCompanyId, "fa_depreciation", {
     branchId: issuingBranch.id,
     docDate: "2026-09-03T12:00:00",
-    refTable: "journal_entries",
   });
   assert.equal(next, "QYD/09/2577",
     "every branch must continue above the company's highest real JE number");

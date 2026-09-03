@@ -641,6 +641,12 @@ export async function nextJeSubSequence(
   subType: string | null | undefined,
   ctx: NextSequenceCtx = {},
 ): Promise<string | null> {
+  // Every caller of this helper is creating a journal entry, regardless of
+  // whether the source is a purchase invoice, fixed asset, payroll, adjustment,
+  // voucher, or another module. Set this centrally so no source path can omit
+  // the journal high-water reconciliation and fall back to a stale counter.
+  const jeCtx: NextSequenceCtx = { ...ctx, refTable: "journal_entries" };
+
   // ── "الطريقة العالمية" — unified JE counter with per-source prefixes ──
   // When the active "journal_entry" sequence has apply_source_prefixes=true,
   // EVERY auto-generated JE draws from that ONE shared counter (monthly reset
@@ -648,12 +654,12 @@ export async function nextJeSubSequence(
   // from the screen's bound sub-type sequence (falling back to the JE
   // sequence's own prefix). The sub-type sequence's own counter is NOT
   // consumed in this mode.
-  const unified = await unifiedJePrefixMode(companyId, ctx.docDate);
+  const unified = await unifiedJePrefixMode(companyId, jeCtx.docDate);
   if (unified) {
     let prefixOverride: string | null = null;
-    if (subType) prefixOverride = await activeSequencePrefix(companyId, subType, ctx.docDate);
+    if (subType) prefixOverride = await activeSequencePrefix(companyId, subType, jeCtx.docDate);
     return await nextSequenceNumber(companyId, "journal_entry", {
-      ...ctx,
+      ...jeCtx,
       prefixOverride: prefixOverride ?? undefined,
     });
   }
@@ -662,7 +668,7 @@ export async function nextJeSubSequence(
   // unified "journal_entry" series with its own prefix. This lets a company
   // pre-configure screen codes today and flip them on later (e.g. from the
   // start of a new fiscal year) without changing live JE numbers.
-  return await nextSequenceNumber(companyId, "journal_entry", ctx);
+  return await nextSequenceNumber(companyId, "journal_entry", jeCtx);
 }
 
 /** Normalize an optional document date to "YYYY-MM-DD" (today when absent). */
