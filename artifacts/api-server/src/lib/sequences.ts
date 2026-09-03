@@ -237,6 +237,44 @@ async function maxIssuedForPeriod(
   return r.rows?.[0]?.mx ?? null;
 }
 
+/** Highest journal-entry number that already exists in the business table for
+ *  this rendered prefix and branch. Sequence logs/counters can be absent or
+ *  stale after restoring an older backup, while the actual journal rows remain
+ *  authoritative evidence that those numbers were already used.
+ *
+ *  Keep this branch-scoped so a genuinely new branch retains its independent
+ *  numbering stream. `branchKey = 0` maps to legacy/company-wide NULL rows. */
+async function maxExistingJournalEntryForPeriod(
+  exec: { execute: (q: any) => Promise<{ rows?: Array<{ mx: number | null; digit_width: number | null }> }> },
+  companyId: number,
+  branchKey: number,
+  renderedPrefix: string,
+): Promise<{ number: number; digitWidth: number } | null> {
+  const like = `${escapeLike(renderedPrefix)}%`;
+  const branchWhere = branchKey > 0
+    ? sql`branch_id = ${branchKey}`
+    : sql`branch_id IS NULL`;
+  const r = await exec.execute(sql`
+    SELECT trailing_digits::int AS mx, LENGTH(trailing_digits) AS digit_width
+    FROM (
+      SELECT (regexp_match(doc_number, '(\\d+)$'))[1] AS trailing_digits
+      FROM journal_entries
+      WHERE company_id = ${companyId}
+        AND ${branchWhere}
+        AND doc_number LIKE ${like} ESCAPE '\\'
+    ) existing_numbers
+    WHERE trailing_digits IS NOT NULL
+    ORDER BY trailing_digits::int DESC, LENGTH(trailing_digits) DESC
+    LIMIT 1
+  `);
+  const row = r.rows?.[0];
+  if (row?.mx == null) return null;
+  return {
+    number: Number(row.mx),
+    digitWidth: Math.max(0, Number(row.digit_width) || 0),
+  };
+}
+
 /**
  * Generate the next business document number for the given transaction type
  * scoped to `ctx.branchId`. Each (sequence, branch) pair has its own counter.
@@ -325,6 +363,11 @@ export async function nextSequenceNumber(
     const monthlyReset  = seq.monthly_reset === true;
     const currentPeriod = periodKey(effectiveDate);          // "YYYY-MM"
     const counterPeriod = monthlyReset ? currentPeriod : ""; // bucket key
+    const effectivePrefix = ctx.prefixOverride != null ? ctx.prefixOverride : (seq.prefix ?? "");
+    const renderedPrefix = `${effectivePrefix}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+    const journalEntryHighWater = ctx.refTable === "journal_entries"
+      ? await maxExistingJournalEntryForPeriod(tx, companyId, branchKey, renderedPrefix)
+      : null;
 
     // Look up (or create) the per-(branch, period) counter row, locking it so
     // two concurrent issuances on the SAME bucket serialize.
@@ -340,9 +383,12 @@ export async function nextSequenceNumber(
 
     const existingCounter = counterRows.rows?.[0];
     if (existingCounter) {
-      // Hot path: the bucket already exists — just issue its running number.
+      // Hot path: normally issue the counter's running number. Journal entries
+      // additionally self-heal a stale restored counter from the real rows.
       counterId    = existingCounter.id;
-      issuedNumber = existingCounter.current_number;
+      issuedNumber = journalEntryHighWater != null
+        ? Math.max(existingCounter.current_number, journalEntryHighWater.number + 1)
+        : existingCounter.current_number;
     } else {
       // First issuance into this bucket — compute the seed.
       let seed: number;
@@ -352,10 +398,9 @@ export async function nextSequenceNumber(
         // being adopted on a monthly_reset toggle (see below).
         seed = seq.start_number;
 
-        const effPrefixForSeed = ctx.prefixOverride != null ? ctx.prefixOverride : (seq.prefix ?? "");
-        const renderedPrefix = `${effPrefixForSeed}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
         const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix);
         if (logMax != null) seed = Math.max(seed, logMax + 1);
+        if (journalEntryHighWater != null) seed = Math.max(seed, journalEntryHighWater.number + 1);
 
         // Legacy adoption: a sequence that ran WITHOUT monthly reset has a
         // single "" row. The first issuance after the toggle is turned ON must
@@ -393,6 +438,7 @@ export async function nextSequenceNumber(
         seed = hasAnyCounter
           ? seq.start_number
           : Math.max(seq.start_number, seq.current_number);
+        if (journalEntryHighWater != null) seed = Math.max(seed, journalEntryHighWater.number + 1);
       }
 
       const inserted = await tx.execute<{ id: number; current_number: number }>(sql`
@@ -412,8 +458,11 @@ export async function nextSequenceNumber(
     }
 
     const generated = format(
-      ctx.prefixOverride != null ? ctx.prefixOverride : (seq.prefix ?? ""),
-      issuedNumber, seq.pad_length ?? 0, seq.month_pattern, effectiveDate,
+      effectivePrefix,
+      issuedNumber,
+      Math.max(seq.pad_length ?? 0, journalEntryHighWater?.digitWidth ?? 0),
+      seq.month_pattern,
+      effectiveDate,
     );
 
     // 4. Bump the per-(branch, period) counter only. Master sequences row is

@@ -37,6 +37,7 @@ import {
   sequencesTable,
   sequenceLogsTable,
   sequenceCountersTable,
+  journalEntriesTable,
 } from "@workspace/db";
 
 import { nextSequenceNumber } from "../src/lib/sequences.ts";
@@ -52,6 +53,7 @@ let toggleSeqId: number;    // monthly_reset = true, used for the NULL-period te
 const insertedCompanyIds:  number[] = [];
 const insertedBranchIds:   number[] = [];
 const insertedSequenceIds: number[] = [];
+const insertedJournalEntryIds: number[] = [];
 
 before(async () => {
   const [company] = await db.insert(companiesTable).values({
@@ -136,6 +138,9 @@ before(async () => {
 });
 
 after(async () => {
+  if (insertedJournalEntryIds.length) {
+    await db.delete(journalEntriesTable).where(inArray(journalEntriesTable.id, insertedJournalEntryIds));
+  }
   if (insertedSequenceIds.length) {
     await db.delete(sequenceCountersTable).where(inArray(sequenceCountersTable.sequenceId, insertedSequenceIds));
     await db.delete(sequenceLogsTable).where(inArray(sequenceLogsTable.sequenceId, insertedSequenceIds));
@@ -240,4 +245,54 @@ test("out-of-order month entry keeps each month's counter independent (no reset,
   assert.equal(await issue(MAY), "OO-05-0003");
   // Re-touching April once more proves it never collided with May's numbers.
   assert.equal(await issue(APR), "OO-04-0003");
+});
+
+test("journal numbering self-heals a stale restored counter from existing journal rows", async () => {
+  const [seq] = await db.insert(sequencesTable).values({
+    companyId:        testCompanyId,
+    code:             `${TEST_TAG}_RESTORED_JE`,
+    nameAr:           `مسلسل قيود مستعاد ${TEST_TAG}`,
+    prefix:           "قيد/",
+    monthPattern:     "{MM}/",
+    startNumber:      1,
+    endNumber:        99999,
+    currentNumber:    1,
+    padLength:        4,
+    isActive:         true,
+    monthlyReset:     true,
+    transactionTypes: ["journal_entry"],
+  }).returning();
+  insertedSequenceIds.push(seq.id);
+
+  const [historical] = await db.insert(journalEntriesTable).values({
+    companyId:   testCompanyId,
+    branchId:    branchAId,
+    docNumber:   "قيد/08/02571",
+    entryDate:   "2026-08-20",
+    currency:    "SAR",
+    exchangeRate:"1",
+    description: "قيد مستعاد من النسخة الاحتياطية",
+    entryType:   "general",
+    status:      "posted",
+  }).returning();
+  insertedJournalEntryIds.push(historical.id);
+
+  // Simulate the exact post-restore failure shown in production: the business
+  // rows reached 02571, but a missing/restored counter already emitted 0001 and
+  // now incorrectly says the next number is 2.
+  await db.insert(sequenceCountersTable).values({
+    sequenceId:    seq.id,
+    branchId:      branchAId,
+    period:        "2026-08",
+    currentNumber: 2,
+    lastPeriod:    "2026-08",
+  });
+
+  const next = await nextSequenceNumber(testCompanyId, "journal_entry", {
+    branchId: branchAId,
+    docDate: "2026-08-25T12:00:00",
+    refTable: "journal_entries",
+  });
+  assert.equal(next, "قيد/08/02572",
+    "a stale restored counter must continue above the highest real JE number");
 });
