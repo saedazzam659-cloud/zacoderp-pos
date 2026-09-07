@@ -23,7 +23,7 @@ try { $listener.Start() } catch {
 }
 Write-Host "Zacode Scan Agent listening on http://127.0.0.1:$port"
 $JPEG = '{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}'
-$VERSION = '1.0.1'
+$VERSION = '1.0.2'
 
 # ── Origin allow-list ─────────────────────────────────────────────────────
 # Only the Zacode ERP web app (and its dev previews) may drive the scanner.
@@ -31,6 +31,7 @@ $VERSION = '1.0.1'
 # browser blocks it from reading anything.
 $ALLOWED_ORIGIN_PATTERNS = @(
   '^https://([a-z0-9-]+\.)*zacoderp\.com$',
+  '^https://([a-z0-9-]+\.)*karmcore\.com$',
   '^https://[a-z0-9-]+([.-][a-z0-9-]+)*\.(replit\.dev|replit\.app|repl\.co)$',
   '^https?://localhost(:\d+)?$',
   '^https?://127\.0\.0\.1(:\d+)?$'
