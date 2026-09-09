@@ -961,7 +961,14 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         // currentNumber on master is now a display-only seed for new branch
         // counters; we still forbid lowering it below any branch's high
         // water mark to prevent surprise reuse on a freshly-created branch.
-        if (Number(merged.currentNumber) <= highWaterMark) {
+        // Saving an unrelated field (most importantly isActive=false) sends
+        // the master's old display seed back from the form. That value may be
+        // below a branch counter even though the user did not change it.
+        // Apply the raise-only guard only when currentNumber actually changes.
+        if (
+          Number(merged.currentNumber) !== Number(existing.currentNumber)
+          && Number(merged.currentNumber) <= highWaterMark
+        ) {
           return { status: 409, body: { error: "لا يمكن تخفيض الرقم الحالي لمسلسل مُستخدم — قد يؤدي إلى تكرار أرقام صادرة سابقاً" } };
         }
         if (Number(merged.endNumber) < highWaterMark) {
