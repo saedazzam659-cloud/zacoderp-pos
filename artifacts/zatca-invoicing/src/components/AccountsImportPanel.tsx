@@ -161,7 +161,7 @@ function parseFile(file: File): Promise<CoaRow[]> {
 
 export default function AccountsImportPanel() {
     const gate = useDemoActionGate();
-  const { token } = useAuth();
+  const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -205,9 +205,16 @@ export default function AccountsImportPanel() {
 
   const importMut = useMutation({
     mutationFn: async () => {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      };
+      if (user?.role === "superadmin" && actingCompanyId) {
+        headers["x-acting-company-id"] = String(actingCompanyId);
+      }
       const res = await fetch(`${API}/api/accounts/bulk-import`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ accounts: parsed, mode }),
       });
       const json = await res.json();

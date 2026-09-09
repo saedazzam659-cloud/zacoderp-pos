@@ -155,3 +155,4 @@
 - [Cross-server company transfer](cross-server-company-transfer.md) — attachment transfers use the portable package on each storage-owning server over pinned SSH; post-restore cleanup failure is a warning, never a false transfer failure.
 - [Restore soft-reference coverage](restore-soft-reference-coverage.md) — strict backup preflight must cover discriminator-based and journal alias IDs as a complete set; never fix unsupported columns one screenshot at a time.
 - [SuperAdmin JE sequence repair](superadmin-je-sequence-repair.md) — repair one bad existing JE only to actual high-water+1; all future JE allocations and gap-fill share a permanent unique number claim.
+- [SuperAdmin acting-company isolation](superadmin-acting-company-isolation.md) — tenant screens must key caches and direct fetches by acting company; APIs fail closed, never fall back to all tenants.

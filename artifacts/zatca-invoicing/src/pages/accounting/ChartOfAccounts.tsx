@@ -36,12 +36,12 @@ const EMPTY: any = {
 };
 
 export default function ChartOfAccounts() {
-  const { user, token } = useAuth() as any;
+  const { user, token, actingCompanyId } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const cid = user?.role === "superadmin" ? actingCompanyId : user?.company?.id;
   const [, navigate] = useLocation();
 
   /* ── Drill into account statement (same UX as Trial Balance) ──────────
@@ -166,27 +166,35 @@ export default function ChartOfAccounts() {
     try { localStorage.setItem("coa.viewMode", v); } catch { /* ignore */ }
   }
 
-  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  if (user?.role === "superadmin" && actingCompanyId) {
+    headers["x-acting-company-id"] = String(actingCompanyId);
+  }
 
   const { data: accounts = [], isLoading } = useQuery<any[]>({
     queryKey: ["accounts", cid],
     queryFn: async () => {
       const url = cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      return res.json();
+      const res = await fetch(url, { headers });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || "تعذّر تحميل شجرة الحسابات");
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
     },
-    enabled: !!user,
+    enabled: !!user && !!cid,
   });
 
   const { data: costCenters = [] } = useQuery<any[]>({
     queryKey: ["cost-centers", cid],
     queryFn: async () => {
       const url = cid ? `${API}/api/cost-centers?companyId=${cid}` : `${API}/api/cost-centers`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(url, { headers });
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!user,
+    enabled: !!user && !!cid,
   });
 
   const { data: balanceRows = [] } = useQuery<any[]>({
@@ -195,11 +203,11 @@ export default function ChartOfAccounts() {
       const url = cid
         ? `${API}/api/accounting-reports/trial-balance?companyId=${cid}`
         : `${API}/api/accounting-reports/trial-balance`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(url, { headers });
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!user,
+    enabled: !!user && !!cid,
   });
 
   const leafBalanceMap = new Map<number, number>();

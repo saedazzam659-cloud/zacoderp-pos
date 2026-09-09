@@ -1,6 +1,12 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { accountsTable, journalEntryLinesTable, suppliersTable, customersTable } from "@workspace/db";
+import {
+  accountsTable,
+  costCentersTable,
+  journalEntryLinesTable,
+  suppliersTable,
+  customersTable,
+} from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -18,6 +24,42 @@ function guard(req: any, res: any): number | null {
 }
 function getCompanyId(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+}
+
+async function validateAccountRelationships(
+  cid: number,
+  parentIdRaw: unknown,
+  costCenterIdRaw: unknown,
+  currentAccountId?: number,
+): Promise<{ parentId: number | null; costCenterId: number | null }> {
+  const parentId = parentIdRaw ? Number(parentIdRaw) : null;
+  const costCenterId = costCenterIdRaw ? Number(costCenterIdRaw) : null;
+
+  if (parentId !== null && (!Number.isInteger(parentId) || parentId <= 0 || parentId === currentAccountId)) {
+    throw Object.assign(new Error("الحساب الأب غير صالح"), { statusCode: 400 });
+  }
+  if (costCenterId !== null && (!Number.isInteger(costCenterId) || costCenterId <= 0)) {
+    throw Object.assign(new Error("مركز التكلفة غير صالح"), { statusCode: 400 });
+  }
+
+  const [parentRows, costCenterRows] = await Promise.all([
+    parentId === null
+      ? Promise.resolve([])
+      : db.select({ id: accountsTable.id }).from(accountsTable)
+          .where(and(eq(accountsTable.id, parentId), eq(accountsTable.companyId, cid))).limit(1),
+    costCenterId === null
+      ? Promise.resolve([])
+      : db.select({ id: costCentersTable.id }).from(costCentersTable)
+          .where(and(eq(costCentersTable.id, costCenterId), eq(costCentersTable.companyId, cid))).limit(1),
+  ]);
+
+  if (parentId !== null && parentRows.length === 0) {
+    throw Object.assign(new Error("الحساب الأب لا يتبع الشركة الحالية"), { statusCode: 400 });
+  }
+  if (costCenterId !== null && costCenterRows.length === 0) {
+    throw Object.assign(new Error("مركز التكلفة لا يتبع الشركة الحالية"), { statusCode: 400 });
+  }
+  return { parentId, costCenterId };
 }
 
 // ─── BULK IMPORT ──────────────────────────────────────────────────────────────
@@ -137,9 +179,10 @@ router.post("/bulk-import", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const cid = getCompanyId(req);
-    const rows = cid
-      ? await db.select().from(accountsTable).where(eq(accountsTable.companyId, cid)).orderBy(asc(accountsTable.code))
-      : await db.select().from(accountsTable).orderBy(asc(accountsTable.code));
+    if (!cid) { res.status(401).json({ error: "يجب تحديد الشركة لعرض شجرة الحسابات" }); return; }
+    const rows = await db.select().from(accountsTable)
+      .where(eq(accountsTable.companyId, cid))
+      .orderBy(asc(accountsTable.code));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -148,10 +191,10 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const cid = getCompanyId(req);
+    if (!cid) { res.status(401).json({ error: "يجب تحديد الشركة لعرض الحساب" }); return; }
     const id  = Number(req.params.id);
-    const [row] = cid
-      ? await db.select().from(accountsTable).where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid)))
-      : await db.select().from(accountsTable).where(eq(accountsTable.id, id));
+    const [row] = await db.select().from(accountsTable)
+      .where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid)));
     if (!row) { res.status(404).json({ error: "الحساب غير موجود" }); return; }
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -165,16 +208,17 @@ router.post("/", async (req, res) => {
     if (!code || !nameAr || !accountType) {
       res.status(400).json({ error: "كود الحساب واسمه ونوعه مطلوبة" }); return;
     }
+    const relationships = await validateAccountRelationships(cid, parentId, costCenterId);
     const [row] = await db.insert(accountsTable).values({
       companyId: cid, code, nameAr, nameEn: nameEn || null,
-      accountType, parentId: parentId || null,
+      accountType, parentId: relationships.parentId,
       reportDirection: req.body.reportDirection || null,
       level: level ?? 1, isPosting: isPosting ?? true, isActive: isActive ?? true,
-      costCenterId: costCenterId ? Number(costCenterId) : null,
+      costCenterId: relationships.costCenterId,
       notes: notes || null,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e.statusCode || 500).json({ error: e.message }); }
 });
 
 // ─── UPDATE ───────────────────────────────────────────────────────────────────
@@ -183,17 +227,18 @@ router.put("/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
     const { code, nameAr, nameEn, accountType, parentId, level, isPosting, isActive, notes, costCenterId } = req.body;
+    const relationships = await validateAccountRelationships(cid, parentId, costCenterId, id);
     const [row] = await db.update(accountsTable).set({
       code, nameAr, nameEn: nameEn || null, accountType,
-      parentId: parentId || null, level: level ?? 1,
+      parentId: relationships.parentId, level: level ?? 1,
       reportDirection: req.body.reportDirection || null,
       isPosting: isPosting ?? true, isActive: isActive ?? true,
-      costCenterId: costCenterId ? Number(costCenterId) : null,
+      costCenterId: relationships.costCenterId,
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid))).returning();
     if (!row) { res.status(404).json({ error: "الحساب غير موجود" }); return; }
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e.statusCode || 500).json({ error: e.message }); }
 });
 
 // ─── DELETE ───────────────────────────────────────────────────────────────────
