@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
 import {
   db,
   companiesTable,
@@ -32,8 +32,12 @@ import {
   companyCloneRunsTable,
   customersTable,
   suppliersTable,
+  employeesTable,
+  salesRepsTable,
+  sisterCompaniesTable,
 } from "@workspace/db";
 import { ensureCustomerLedger, ensureSupplierLedger } from "./entityAccounts.js";
+import { companyTemplateExcludedAccountIds } from "./companyTemplate.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -368,7 +372,34 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     // ── 9. Accounts (two-pass parentId; costCenterId via ccMap) ─────────────
     const accountMap = new Map<number, number>();
     const accounts = await tx.select().from(accountsTable).where(eq(accountsTable.companyId, sourceId));
-    for (const a of accounts) {
+    const [
+      customerAccountRows,
+      supplierAccountRows,
+      employeeAccountRows,
+      salesRepAccountRows,
+      sisterCompanyAccountRows,
+    ] = await Promise.all([
+      tx.select({ accountId: customersTable.accountId }).from(customersTable)
+        .where(and(eq(customersTable.companyId, sourceId), isNotNull(customersTable.accountId))),
+      tx.select({ accountId: suppliersTable.accountId }).from(suppliersTable)
+        .where(and(eq(suppliersTable.companyId, sourceId), isNotNull(suppliersTable.accountId))),
+      tx.select({ accountId: employeesTable.payableAccountId }).from(employeesTable)
+        .where(and(eq(employeesTable.companyId, sourceId), isNotNull(employeesTable.payableAccountId))),
+      tx.select({ accountId: salesRepsTable.accountId }).from(salesRepsTable)
+        .where(and(eq(salesRepsTable.companyId, sourceId), isNotNull(salesRepsTable.accountId))),
+      tx.select({ accountId: sisterCompaniesTable.accountId }).from(sisterCompaniesTable)
+        .where(and(eq(sisterCompaniesTable.companyId, sourceId), isNotNull(sisterCompaniesTable.accountId))),
+    ]);
+    const linkedPartyAccountIds = [
+      ...customerAccountRows,
+      ...supplierAccountRows,
+      ...employeeAccountRows,
+      ...salesRepAccountRows,
+      ...sisterCompanyAccountRows,
+    ].flatMap((row) => row.accountId == null ? [] : [row.accountId]);
+    const excludedAccountIds = companyTemplateExcludedAccountIds(accounts, linkedPartyAccountIds);
+    const setupAccounts = accounts.filter((account) => !excludedAccountIds.has(account.id));
+    for (const a of setupAccounts) {
       const { id: srcId, createdAt, updatedAt, companyId, parentId, costCenterId, ...rest } = a;
       const [ins] = await tx.insert(accountsTable).values({
         ...rest,
@@ -378,23 +409,29 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       } as typeof accountsTable.$inferInsert).returning({ id: accountsTable.id });
       accountMap.set(srcId, ins.id);
     }
-    for (const a of accounts) {
+    for (const a of setupAccounts) {
       if (!isInt(a.parentId)) continue;
       const newId = accountMap.get(a.id);
       const newParent = accountMap.get(a.parentId);
       if (newId == null || newParent == null) continue;
       await tx.update(accountsTable).set({ parentId: newParent }).where(eq(accountsTable.id, newId));
     }
-    bump("accounts", accounts.length);
+    bump("accounts", setupAccounts.length);
 
     // ── 10. Accounting mappings (posting config) ────────────────────────────
     const mappings = await tx.select().from(accountingMappingsTable).where(eq(accountingMappingsTable.companyId, sourceId));
+    let mappingCount = 0;
     for (const m of mappings) {
       const { id: srcId, createdAt, updatedAt, companyId, accountId, ...rest } = m;
+      const remappedAccountId = remap(accountMap, accountId);
+      // A source mapping aimed at a personal ledger is not setup and must not
+      // survive as a locked NULL mapping in the new tenant.
+      if (accountId != null && remappedAccountId == null) continue;
       await tx.insert(accountingMappingsTable)
-        .values({ ...rest, companyId: newCompanyId, accountId: remap(accountMap, accountId) } as typeof accountingMappingsTable.$inferInsert);
+        .values({ ...rest, companyId: newCompanyId, accountId: remappedAccountId } as typeof accountingMappingsTable.$inferInsert);
+      mappingCount++;
     }
-    bump("accounting_mappings", mappings.length);
+    bump("accounting_mappings", mappingCount);
 
     // Internal phone demos inherit all accounting setup but never source party
     // master data. Give each fresh workspace its own usable customer/supplier

@@ -51,6 +51,102 @@ import { seedDefaultChartOfAccounts } from "./seedDefaultChartOfAccounts.js";
  */
 export const TEMPLATE_COMPANY_ID = Number(process.env.TEMPLATE_COMPANY_ID ?? 10);
 
+type TemplateAccountShape = {
+  id: number;
+  parentId: number | null;
+  code: string;
+  nameAr: string | null;
+  isPosting: boolean;
+};
+
+/**
+ * Build the exclusion set shared by ordinary template seeding and the
+ * full setup-clone flow. New tenants keep the canonical control accounts,
+ * but never inherit source-tenant party/person ledgers.
+ */
+export function companyTemplateExcludedAccountIds<T extends TemplateAccountShape>(
+  accounts: T[],
+  directlyLinkedPartyIds: Iterable<number>,
+): Set<number> {
+  const childrenByParent = new Map<number, T[]>();
+  const byCode = new Map(accounts.map((a) => [a.code, a]));
+  const protectedRootIds = new Set(
+    ["11081", "11082"].flatMap((code) => {
+      const row = byCode.get(code);
+      return row ? [row.id] : [];
+    }),
+  );
+  const excluded = new Set(
+    [...directlyLinkedPartyIds].filter((id) => !protectedRootIds.has(id)),
+  );
+  for (const a of accounts) {
+    if (a.parentId == null) continue;
+    const arr = childrenByParent.get(a.parentId) ?? [];
+    arr.push(a);
+    childrenByParent.set(a.parentId, arr);
+  }
+  const hasChildren = new Set(childrenByParent.keys());
+
+  // If one party ledger is linked under a container, its posting-leaf
+  // siblings are party ledgers too (including orphaned/deleted entity cards).
+  const knownPartyContainerCodes = new Set([
+    "1103", "1130", "121",
+    "2101", "21011", "21012", "2110", "211",
+  ]);
+  const partyParents = new Set<number>();
+  for (const a of accounts) {
+    if (!excluded.has(a.id) || a.parentId == null) continue;
+    const parent = accounts.find((candidate) => candidate.id === a.parentId);
+    if (parent && knownPartyContainerCodes.has(parent.code)) partyParents.add(a.parentId);
+  }
+  for (const parentId of partyParents) {
+    for (const child of childrenByParent.get(parentId) ?? []) {
+      if (child.isPosting && !hasChildren.has(child.id)) excluded.add(child.id);
+    }
+  }
+
+  // Employee loans/custody are canonical control accounts, but any descendants
+  // are employee-specific ledgers and must be recreated only when needed.
+  const dynamicControlCodes = ["11081", "11082"];
+  for (const code of dynamicControlCodes) {
+    const root = byCode.get(code);
+    if (!root) continue;
+    const stack = [...(childrenByParent.get(root.id) ?? [])];
+    while (stack.length) {
+      const row = stack.pop()!;
+      excluded.add(row.id);
+      stack.push(...(childrenByParent.get(row.id) ?? []));
+    }
+  }
+
+  // Defense for old templates that contain orphaned personal ledgers with no
+  // surviving entity link or standard control-account parent.
+  const personalLeafPatterns = [
+    /جاري\s+الشريك/u,
+    /^(?:سلفة|سلفه|عهدة|عهده|مساهم)\s+/u,
+  ];
+  for (const a of accounts) {
+    if (!a.isPosting || hasChildren.has(a.id)) continue;
+    if (personalLeafPatterns.some((pattern) => pattern.test(a.nameAr ?? ""))) {
+      excluded.add(a.id);
+    }
+  }
+
+  // Exclusion is recursive: a child can never survive without its excluded
+  // parent, even when a malformed legacy tree marks the child non-posting.
+  const stack = [...excluded];
+  while (stack.length) {
+    const parentId = stack.pop()!;
+    for (const child of childrenByParent.get(parentId) ?? []) {
+      if (excluded.has(child.id)) continue;
+      excluded.add(child.id);
+      stack.push(child.id);
+    }
+  }
+  for (const protectedId of protectedRootIds) excluded.delete(protectedId);
+  return excluded;
+}
+
 /** Clone display/print settings from the template company. */
 async function cloneDisplaySettings(companyId: number, templateId: number): Promise<boolean> {
   const [tpl] = await centralDb.select({
@@ -159,44 +255,13 @@ async function templatePartyAccountIds(templateId: number): Promise<Set<number>>
  * old→new parent-id mapping (same pattern as seedDefaultChartOfAccounts).
  */
 async function cloneChartOfAccounts(companyId: number, templateId: number): Promise<number> {
-  const excluded = await templatePartyAccountIds(templateId);
+  const directlyLinkedPartyIds = await templatePartyAccountIds(templateId);
   const tplAccounts = await centralDb.select().from(accountsTable)
     .where(eq(accountsTable.companyId, templateId))
     .orderBy(asc(accountsTable.level), asc(accountsTable.code));
   if (tplAccounts.length === 0) return 0;
 
-  // Party-CONTAINER rule: if a parent has at least one referenced party
-  // child (e.g. العملاء / الموردين groups), then EVERY posting-leaf child of
-  // that parent is treated as a party sub-account too — this also catches
-  // orphaned party accounts whose entity card was deleted or never linked,
-  // so template-tenant party names cannot leak into new tenants.
-  const childrenByParent = new Map<number, typeof tplAccounts>();
-  for (const a of tplAccounts) {
-    if (a.parentId == null) continue;
-    const arr = childrenByParent.get(a.parentId) ?? [];
-    arr.push(a);
-    childrenByParent.set(a.parentId, arr);
-  }
-  const hasChildren = new Set(childrenByParent.keys());
-  const partyParents = new Set<number>();
-  for (const a of tplAccounts) {
-    if (excluded.has(a.id) && a.parentId != null) partyParents.add(a.parentId);
-  }
-  for (const pid of partyParents) {
-    for (const child of childrenByParent.get(pid) ?? []) {
-      if (child.isPosting && !hasChildren.has(child.id)) excluded.add(child.id);
-    }
-  }
-
-  // Named-person rule: partner current accounts (جاري الشريك …) carry a
-  // person/company name but are not referenced by any entity table, so the
-  // container rule above cannot see them. Exclude any posting leaf whose
-  // Arabic name matches a known personal-subaccount pattern.
-  const PARTY_NAME_PATTERNS = [/جاري\s+الشريك/];
-  for (const a of tplAccounts) {
-    if (!a.isPosting || hasChildren.has(a.id)) continue;
-    if (PARTY_NAME_PATTERNS.some(p => p.test(a.nameAr ?? ""))) excluded.add(a.id);
-  }
+  const excluded = companyTemplateExcludedAccountIds(tplAccounts, directlyLinkedPartyIds);
 
   return db.transaction(async (tx) => {
     const existing = await tx.select({ id: accountsTable.id })
