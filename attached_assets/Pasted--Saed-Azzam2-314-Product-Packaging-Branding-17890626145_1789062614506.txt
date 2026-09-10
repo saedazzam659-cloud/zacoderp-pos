@@ -1,0 +1,5916 @@
+[٩/‏٩ ٧:٤٦ م] Saed Azzam2: الإضافات الجديدة إلى المواصفات السابقة
+
+314. Product Packaging & Branding Cost Architecture
+
+يجب إضافة طبقة مستقلة لتكاليف التغليف والهوية التجارية المرتبطة بالمنتج، مع عدم افتراض أن جميع أنواع التغليف لها نفس المعالجة.
+
+314.1 Individual / Primary Packaging
+
+أمثلة:
+
+- العلبة الخارجية.
+- الكيس الفردي.
+- العبوة الأساسية.
+- الملصقات Labels.
+- Barcode.
+- QR Code.
+- User Manual.
+- Warranty Card.
+- تعليمات الاستخدام.
+
+المعالجة الافتراضية:
+إذا كانت هذه العناصر جزءًا من المنتج عند خروجه من المصنع، يتم تصنيفها كـ Direct Packaging Material وتدخل في Manufacturing Cost.
+
+ويجب ربطها بـ:
+
+- Product.
+- BOM.
+- Manufacturing Order.
+- Batch/Lot.
+- Quantity.
+- Unit Cost.
+- Warehouse.
+- Supplier.
+- Packaging Type.
+
+---
+
+315. Protective Packaging
+
+يدعم النظام:
+
+- Foam.
+- Bubble Wrap.
+- Plastic Bags.
+- Moisture-resistant Bags.
+- Thermal Bags.
+- Protective Inserts.
+- Cushioning Materials.
+- Shock Protection.
+
+ويتم تحديد المعالجة حسب الاستخدام:
+
+إذا كانت جزءًا من المنتج/التعبئة الأساسية:
+→ Direct Packaging Material.
+
+إذا كانت فقط لحماية المنتج أثناء النقل:
+→ Distribution / Shipping Cost أو Selling & Distribution Expense حسب إعداد الشركة.
+
+إذا كانت حماية مطلوبة كجزء من العملية الصناعية:
+→ Manufacturing Cost / Manufacturing Overhead حسب طبيعتها.
+
+لا يتم تحميل تكلفة النقل والتغليف اللوجستي على المنتج مرتين.
+
+---
+
+316. Packaging Classification Master
+
+يجب أن يحتوي النظام على تصنيف للتغليف:
+
+1. Primary Packaging
+2. Secondary Packaging
+3. Shipping Packaging
+4. Protective Packaging
+5. Promotional Packaging
+
+مع إعداد:
+
+- Include in Manufacturing Cost.
+- Include in Product Cost.
+- Include in Economic Cost.
+- Selling/Distribution Cost.
+- Cost Center.
+- Factory.
+- Production Area.
+
+ويجب أن يكون التصنيف قابلًا للتعديل دون تغيير تاريخ الأوامر السابقة.
+
+---
+
+317. Branding Materials
+
+يدعم النظام تكاليف:
+
+- Printed Labels.
+- Product Logo Printing.
+- Brand Packaging.
+- Manuals.
+- Warranty Cards.
+- Product Inserts.
+- Promotional Inserts.
+
+ويحدد النظام هل التكلفة:
+
+- Direct Product Cost.
+- Manufacturing Overhead.
+- Marketing Expense.
+
+قاعدة مهمة:
+إذا كانت العلامة أو الطباعة جزءًا إلزاميًا من المنتج قبل البيع → يمكن اعتبارها Product/Manufacturing Cost.
+
+أما المواد الدعائية أو التسويقية → SG&A / Marketing وليست Manufacturing Cost.
+
+---
+
+318. Certifications & Compliance Cost Architecture
+
+إضافة طبقة Certifications / Compliance / Product Testing.
+
+تشمل:
+
+- Product Certifications.
+- ISO-related production certification costs.
+- Regulatory Certifications.
+- Food/Drug regulatory approvals.
+- Quality Marks.
+- Safety Certifications.
+- Product Conformity Certificates.
+- External Laboratory Certifications.
+- Regulatory Testing.
+
+---
+
+319. Certification Cost Treatment
+
+لا يتم تحميل قيمة الشهادة بالكامل تلقائيًا على أمر تصنيع واحد.
+
+يجب أن يستطيع النظام تحديد:
+
+- Certification.
+- Product.
+- Product Family.
+- Factory.
+- Production Line.
+- Valid From.
+- Valid To.
+- Certification Cost.
+- Expected Production Quantity.
+- Allocation Method.
+- Cost Center.
+- Include in Product Cost.
+
+مثال:
+
+شهادة تكلفتها 12,000 ريال، ومتوقع إنتاج 12,000 وحدة خلال فترة صلاحيتها.
+
+يمكن حساب:
+
+Certification Cost per Unit = 12,000 ÷ 12,000 = 1 ريال
+
+وتدخل حسب سياسة الشركة ضمن Product Cost / Manufacturing Overhead.
+
+---
+
+320. Certification Allocation
+
+يجب دعم توزيع تكلفة الشهادات باستخدام Unified Allocation Engine.
+
+طرق التوزيع الممكنة:
+
+- Production Quantity.
+- Machine Hours.
+- Labor Hours.
+- Direct Cost.
+- Revenue.
+- Product Quantity.
+- Product Family.
+- Fixed Amount.
+- Percentage.
+- Period-based allocation.
+
+مع الاحتفاظ بمصدر التكلفة.
+
+---
+
+321. External Laboratory / Batch Testing
+
+اختبارات العينات الخارجية المعتمدة يجب أن تدعم:
+
+- Manufacturing Order.
+- Batch/Lot.
+- Product.
+- Sample Quantity.
+- Test Type.
+- Laboratory.
+- Test Date.
+- Certification.
+- Cost.
+- Result.
+- Cost Center.
+
+إذا كان الاختبار خاصًا بدفعة محددة ويمكن تتبعه مباشرة:
+
+→ Direct/Batched Product Cost حسب السياسة.
+
+أما الاختبارات العامة:
+
+→ Quality Manufacturing Overhead.
+
+ولا يتم إنشاء نظام Quality Testing جديد إذا كان النظام الحالي يحتوي على Quality Engine.
+
+---
+
+322. Royalties & Intellectual Property Cost
+
+إضافة طبقة Royalties / Intellectual Property.
+
+تشمل:
+
+- Patent Royalty.
+- Licensed Technology.
+- Licensed Design.
+- Brand License.
+- Per-Unit Royalty.
+- Embedded Software License.
+- Firmware License.
+- Technology License.
+
+---
+
+323. Per-Unit Royalty
+
+إذا كان هناك رسم يتم دفعه عن كل وحدة منتجة:
+
+مثال:
+
+Royalty = 5 ريال / Unit
+
+Production = 1,000
+
+Royalty Cost = 5,000 ريال.
+
+يتم تحميلها على Manufacturing/Product Cost إذا كانت مرتبطة مباشرة بحق إنتاج المنتج.
+
+يجب دعم:
+
+- Fixed per Unit.
+- Percentage of Sales.
+- Percentage of Manufacturing Cost.
+- Tiered Royalty.
+- Minimum Royalty.
+- Maximum Royalty.
+- Effective Date.
+- Expiry Date.
+
+---
+
+324. Royalty Contract
+
+يجب إنشاء/استخدام كيان مشترك للعقود والترخيص إذا كان موجودًا.
+
+بياناته:
+
+- License Owner.
+- Agreement.
+- Product.
+- Technology.
+- Rate.
+- Currency.
+- Calculation Method.
+- Start Date.
+- End Date.
+- Minimum Quantity.
+- Minimum Royalty.
+- Maximum Royalty.
+- Cost Center.
+- Accounting Treatment.
+- Manufacturing Treatment.
+
+ويجب ألا ينشئ Wizard نظام عقود مكررًا إذا كان موجودًا.
+
+---
+
+325. Embedded Software / Firmware Cost
+
+إذا كان المنتج يحتوي على:
+
+- Firmware.
+- Embedded Software.
+- Licensed Driver.
+- Embedded Operating System.
+- CNC Embedded Software.
+
+فيجب تحديد طبيعة التكلفة.
+
+إذا كانت تكلفة مرتبطة مباشرة بكل وحدة:
+
+→ Direct Product/Manufacturing Cost.
+
+إذا كانت رخصة للمصنع أو الماكينة:
+
+→ Manufacturing Overhead / Machine Operating Cost.
+
+إذا كانت رخصة هندسية للتطوير:
+
+→ R&D / Engineering.
+
+إذا كانت رخصة ERP للشركة:
+
+→ Administrative / Operating Expense.
+
+وهذا يتبع Cost Treatment Engine وليس قاعدة ثابتة واحدة.
+
+---
+
+326. Warranty & After-Sales Cost Architecture
+
+إضافة طبقة مستقلة:
+
+Warranty / After-Sales Cost
+
+وتشمل:
+
+- Warranty Provision.
+- Warranty Claims.
+- Repairs.
+- Replacement Parts.
+- Replacement Products.
+- Technician Labor.
+- Shipping.
+- Reverse Shipping.
+- Customer Returns.
+- Complaint Handling.
+
+---
+
+327. Warranty Provision ≠ Actual Warranty Cost
+
+هذه نقطة محاسبية مهمة جدًا.
+
+يجب فصل:
+
+Warranty Provision
+
+تقدير/مخصص متوقع لتكاليف الضمان.
+
+Actual Warranty Cost
+
+التكلفة الفعلية عند حدوث:
+
+- Repair.
+- Replacement.
+- Parts.
+- Labor.
+- Shipping.
+
+حتى لا يتم تحميل التكلفة مرتين.
+
+النظام يجب أن يحتفظ بعلاقة:
+
+Product → Sales → Manufacturing Order → Warranty → Actual Cost
+
+---
+
+328. Warranty Provision Calculation
+
+يدعم:
+
+- Percentage of Sales.
+- Percentage of Manufacturing Cost.
+- Fixed Amount per Unit.
+- Historical Failure Rate.
+- Product-specific Rate.
+- Warranty Period.
+- Expected Claims.
+
+مثال:
+
+Manufacturing Cost = 100 ريال
+
+Warranty Rate = 2%
+
+Expected Warranty Cost = 2 ريال.
+
+لكن يجب تحديد هل هذا:
+
+- Financial Provision.
+- Management Cost.
+- Analytical Expected Cost.
+
+حسب Accounting Policy.
+
+---
+
+329. Warranty Treatment
+
+الافتراضي:
+
+Warranty Provision / External Failure Cost لا يدخل تلقائيًا في Manufacturing Cost الحالي.
+
+يتم عرضه في:
+
+- Product Profitability.
+- Expected Economic Cost.
+- Quality / COPQ.
+- After-Sales Cost.
+
+أما Actual Warranty Costs فتُسجل من خلال النظام المالي/المصروفات/Quality/Warranty حسب مصدر التكلفة.
+
+ولا يجوز إنشاء قيد محاسبي مكرر من Wizard إذا كان Accounting Engine يعالج المخصص أو المصروف.
+
+---
+
+330. Customer Returns & Warranty Integration
+
+عند وجود Return:
+
+يجب محاولة الربط مع:
+
+- Sales Invoice.
+- Customer.
+- Product.
+- Batch/Lot.
+- Serial Number.
+- Manufacturing Order.
+- Warranty Contract.
+- Original Production Date.
+- Original Cost.
+- Failure Reason.
+
+وبذلك يستطيع النظام معرفة:
+
+أي مصنع → أي أمر تصنيع → أي Batch → أي منتج → أي عميل → ما تكلفة الفشل.
+
+---
+
+331. Direct Sales Commission
+
+العمولة المباشرة على كل وحدة مباعة يجب أن تدعم:
+
+- Fixed Amount per Unit.
+- Percentage of Sales.
+- Percentage of Gross Margin.
+- Sales Representative.
+- Distributor.
+- Channel.
+- Customer.
+- Product.
+- Quantity.
+
+مثال:
+
+Commission = 10 ريال لكل وحدة.
+
+1000 وحدة مباعة:
+
+Commission = 10,000 ريال.
+
+---
+
+332. Sales Commission Treatment
+
+Sales Commission ليست Manufacturing Cost افتراضيًا.
+
+يتم تصنيفها:
+
+→ SG&A / Selling Expense.
+
+وتظهر في:
+
+Revenue
+− Manufacturing Cost
+= Gross Manufacturing Margin
+− Sales Commission / SG&A
+= Operating Profit
+
+إلا إذا كانت هناك قاعدة محاسبية محددة تجعل المعالجة مختلفة، وفي هذه الحالة يستخدم النظام Accounting Policy.
+
+---
+
+333. Complete Product Economic Cost Journey
+
+يجب أن يستطيع النظام عرض رحلة تكلفة المنتج بالكامل:
+
+المرحلة 1 — Raw Materials
+
+- Direct Materials.
+- Packaging Materials.
+- Components.
+
+المرحلة 2 — Production
+
+- Direct Labor.
+- Machine Usage.
+- Depreciation.
+- Electricity.
+- Gas.
+- Oil.
+- Maintenance.
+
+المرحلة 3 — Production Preparation
+
+- Setup.
+- Changeover.
+- Tooling.
+- Calibration.
+
+المرحلة 4 — Quality
+
+- Prevention.
+- Appraisal.
+- Testing.
+- Inspection.
+- First-Off.
+- Normal Scrap.
+- Rework.
+- Internal Failure.
+
+المرحلة 5 — Manufacturing Overhead
+
+- Factory Rent.
+- General Electricity.
+- Security.
+- Cleaning.
+- Supervision.
+- EHS.
+- Factory Insurance.
+- Factory Technology.
+- Production Certifications.
+
+المرحلة 6 — Packaging
+
+- Primary Packaging.
+- Secondary Packaging.
+- Protective Packaging.
+- Product Labels.
+- Manuals.
+- Warranty Cards.
+
+المرحلة 7 — Intellectual Property
+
+- Royalty.
+- Licensed Technology.
+- Embedded Software/Firmware.
+
+المرحلة 8 — Logistics / Holding
+
+- Landed Cost.
+- Storage.
+- Inventory Insurance.
+- Spoilage.
+- Obsolescence.
+- Opportunity Cost.
+
+المرحلة 9 — Selling
+
+- Sales Commission.
+- Marketing.
+- Distribution.
+- Customer Delivery.
+
+المرحلة 10 — After-Sales
+
+- Warranty.
+- Returns.
+- Repairs.
+- Replacement.
+- Reverse Shipping.
+
+المرحلة 11 — Administration
+
+- Accounting.
+- Management.
+- ERP.
+- Office.
+- General Corporate Costs.
+
+المرحلة 12 — Financing
+
+- Interest.
+- Financing Charges.
+
+---
+
+334. Product Cost Layers – Final
+
+النظام لا يعرض رقم تكلفة واحد فقط، وإنما يستطيع عرض:
+
+Financial Manufacturing Cost
+
+التكلفة الصناعية التي تدخل وفق السياسة المحاسبية.
+
+Management Manufacturing Cost
+
+التكلفة الصناعية للإدارة والتحليل.
+
+Operating Cost
+
+Manufacturing + Selling + Administrative + Operating Costs.
+
+Economic Cost
+
+Operating Cost + Opportunity Cost + Inventory Holding Economic Cost + Management Costs.
+
+Financing Impact
+
+Financing Charges.
+
+وبالتالي يمكن للمستخدم معرفة:
+
+كم كلفني تصنيع المنتج؟
+
+ثم:
+
+كم كلفني تشغيل وبيع المنتج؟
+
+ثم:
+
+ما التكلفة الاقتصادية الحقيقية للمنتج؟
+
+ثم:
+
+ما أثر التمويل؟
+
+---
+
+335. Cost Treatment Decision Engine
+
+كل تكلفة جديدة تدخل النظام يجب أن تمر عبر نفس المحرك:
+
+Cost Treatment Engine
+
+ويحدد:
+
+1. Cost Name.
+2. Cost Category.
+3. Cost Type.
+4. Direct / Indirect.
+5. Fixed / Variable / Semi-Variable / Step.
+6. Normal / Abnormal.
+7. Manufacturing / Operating / SG&A / Financing / R&D / Analytical.
+8. Source.
+9. Accounting Treatment.
+10. Manufacturing Treatment.
+11. Allocation Method.
+12. Cost Pool.
+13. Cost Driver.
+14. Product.
+15. Manufacturing Order.
+16. Batch/Lot.
+17. Factory.
+18. Department.
+19. Cost Center.
+20. Production Area.
+21. Include in Product Cost.
+22. Include in Economic Cost.
+23. Effective Date.
+24. Active.
+
+---
+
+336. No Double Counting – New Rules
+
+يجب إضافة قواعد منع التكرار التالية:
+
+Packaging
+
+إذا كانت العبوة موجودة في BOM وتم تحميلها كـ Direct Material:
+
+لا يتم تحميلها مرة أخرى كـ Packaging Overhead.
+
+Certification
+
+إذا تم توزيع شهادة على المنتج من Cost Pool:
+
+لا يتم تحميل نفس فاتورة الشهادة مرة ثانية على Manufacturing Order.
+
+Royalty
+
+إذا تم احتساب Royalty per Unit:
+
+لا يتم تحميل نفس التكلفة مرة أخرى من Expense Allocation.
+
+Warranty
+
+إذا تم تسجيل Actual Warranty Cost:
+
+لا يتم إضافة نفس التكلفة مرة أخرى باعتبارها Warranty Provision.
+
+Sales Commission
+
+لا تدخل Manufacturing Cost ثم تتم إضافتها مرة أخرى إلى SG&A.
+
+Embedded Software
+
+إذا كانت التكلفة ضمن Machine Rate:
+
+لا تتم إضافتها مرة أخرى كـ Technology Overhead.
+
+---
+
+337. Cost Source Traceability
+
+عند الضغط على أي تكلفة داخل Manufacturing Order يجب معرفة:
+
+من أين جاءت؟
+
+مثال:
+
+Product Cost
+→ Packaging
+→ Printed Box
+→ Purchase Invoice
+→ Supplier
+→ Cost Pool
+→ Allocation Rule
+→ Manufacturing Order
+→ Product.
+
+أو:
+
+Product Cost
+→ Royalty
+→ License Agreement
+→ Royalty Rate
+→ Quantity Produced
+→ Manufacturing Order.
+
+أو:
+
+Product Cost
+→ Certification
+→ Certificate
+→ Allocation Period
+→ Allocation Rule
+→ Product.
+
+---
+
+338. Cost Snapshot Extension
+
+عند تنفيذ Manufacturing Order يجب حفظ Snapshot لكل:
+
+- Material Rate.
+- Labor Rate.
+- Machine Rate.
+- Depreciation Rate.
+- Electricity Rate.
+- Maintenance Rate.
+- Overhead Rate.
+- Quality Rate.
+- Packaging Rate.
+- Certification Rate.
+- Royalty Rate.
+- Other Applied Costs.
+
+وبالتالي:
+
+تغيير السعر أو النسبة مستقبلًا لا يغير تكلفة أوامر التصنيع القديمة.
+
+---
+
+339. Product Profitability – Final View
+
+يجب أن يستطيع النظام عرض:
+
+المستوى| القيمة
+Sales Revenue| X
+Direct Manufacturing Cost| X
+Manufacturing Overhead| X
+Quality Cost| X
+Packaging| X
+Certification| X
+Royalty| X
+Manufacturing Cost| X
+Storage/Holding| X
+Operating Cost| X
+Sales Commission| X
+SG&A| X
+Economic Cost| X
+Financing Cost| X
+Net Result| X
+
+مع إمكانية فتح كل رقم للوصول إلى تفاصيله ومصدره.
+
+---
+
+340. Final Rule – Product Cost Is a Lifecycle
+
+النظام يجب ألا ينظر إلى تكلفة المنتج باعتبارها:
+
+Materials + Labor فقط.
+
+بل باعتبارها رحلة كاملة:
+
+Design → R&D → Certification → Materials → Production → Machine → Labor → Quality → Waste → Rework → Overhead → Packaging → IP/Royalty → Storage → Selling → Warranty → Financing
+
+مع الفصل الصارم بين:
+
+Manufacturing Cost
+
+و
+
+Operating Cost
+
+و
+
+Economic Cost
+
+و
+
+Financing Cost
+
+و
+
+Abnormal Loss
+
+و
+
+Analytical Cost
+
+---
+
+341. Final Architecture After All Additions
+
+الهيكل النهائي يجب أن يكون:
+
+ERP
+↓
+Advanced Manufacturing
++
+Manufacturing Wizard
+↓
+One Manufacturing Core
+↓
+One Costing Architecture
+↓
+One Cost Treatment Engine
+↓
+One Allocation Engine
+↓
+Cost Pools + Cost Drivers
+↓
+Cost Snapshot
+↓
+Audit Trail
+
+مع التكامل مع:
+
+- Inventory Engine.
+- Accounting Engine.
+- Fixed Assets Engine.
+- HR/Labor.
+- Quality Engine.
+- EHS.
+- R&D.
+- Procurement.
+- Sales.
+- Warranty/After-Sales.
+- Contracts/Licensing.
+- Product/BOM.
+- Warehouse.
+- Cost Centers.
+
+---
+
+342. Absolute Zero Duplication Rule
+
+ممنوع إنشاء:
+
+- Packaging Engine جديد إذا كان Inventory/BOM يدعمه.
+- Quality Engine جديد.
+- Warranty Engine جديد إذا كان موجودًا.
+- Contract/License Engine جديد.
+- Royalty Engine جديد إذا كان يمكن بناؤه على Cost Treatment Engine.
+- Accounting Engine جديد.
+- Inventory Engine جديد.
+- Depreciation Engine جديد.
+- Allocation Engine جديد.
+- Cost Engine جديد داخل Wizard.
+
+Reuse → Extend → Shared Service → Create only if absolutely necessary.
+
+---
+
+343. Final Master Principle
+
+النظام النهائي يجب أن يحقق:
+
+One ERP
+One Manufacturing Core
+One Inventory Engine
+One Accounting Engine
+One Fixed Assets Engine
+One HR/Labor Source
+One Quality Architecture
+One Costing Architecture
+One Cost Treatment Engine
+One Allocation Engine
+One Cost Snapshot
+One Audit Trail
+Zero Duplication
+
+وكل تكلفة لها:
+
+Source → Classification → Treatment → Allocation → Product/Order → Snapshot → Audit Trail
+
+ولا توجد أي تكلفة يتم تحميلها تلقائيًا لمجرد أنها مرتبطة بالمنتج؛ بل يقرر النظام طبيعتها الصناعية أو التشغيلية أو الإدارية أو التمويلية أو التحليلية وفق إعدادات Cost Treatment Engine والسياسة المحاسبية.
+[٩/‏٩ ٧:٤٨ م] Saed Azzam2: Manufacturing Wizard & Manufacturing Cost Model
+
+MASTER SPECIFICATION – الإصدار المحدث الكامل للتنفيذ بالـAI
+
+«قاعدة الإصدار: هذه الوثيقة امتداد مباشر للمواصفات السابقة.
+لا يتم حذف أو اختصار أو استبدال أي متطلب سابق.
+الإضافات التالية تبدأ بعد المواصفات السابقة وتوسع Costing Architecture لتشمل Quality وInventory Capital وEHS وR&D وTechnology مع الفصل المحاسبي الصحيح بينها.»
+
+---
+
+القسم التاسع والسبعون: Cost of Quality – COQ
+
+214. Cost of Quality Architecture
+
+يجب إضافة Cost of Quality – COQ إلى نظام التكلفة.
+
+لكن يجب عدم اعتبار كل COQ تلقائيًا تكلفة تصنيع مباشرة.
+
+يجب تصنيفها حسب:
+
+- Prevention
+- Appraisal
+- Internal Failure
+- External Failure
+
+مع تحديد:
+
+Cost Treatment
+
+هل تدخل:
+
+- Manufacturing Cost
+- Manufacturing Overhead
+- Quality Expense
+- SG&A
+- Abnormal Loss
+- Analytical Cost Only
+
+---
+
+215. Prevention Costs
+
+تكاليف الوقاية التي تهدف لمنع حدوث العيوب.
+
+أمثلة:
+
+- Training
+- Worker Training
+- Quality Training
+- Calibration
+- Preventive Quality Maintenance
+- Operating Procedure Updates
+- Quality Process Improvement
+- Quality Standards Implementation
+
+---
+
+216. Prevention Cost Classification
+
+إذا كانت الوقاية مرتبطة مباشرة بالمصنع والإنتاج:
+
+يمكن تحميلها على:
+
+Manufacturing Overhead
+
+أما إذا كانت إدارية أو مؤسسية عامة:
+
+يمكن تسجيلها:
+
+Operating / Administrative Expense
+
+ويجب تحديد ذلك حسب:
+
+- Factory
+- Department
+- Cost Center
+- Production Area
+
+---
+
+217. Training Cost
+
+تدريب العاملين يجب أن يدعم التصنيف حسب:
+
+- Production Training
+- Quality Training
+- Administrative Training
+- General Corporate Training
+
+تدريب عامل إنتاج متعلق بخط الإنتاج يمكن تحميله كـManufacturing Overhead وفق سياسة الشركة.
+
+أما التدريب الإداري العام فلا يدخل تلقائيًا في تكلفة المنتج.
+
+---
+
+218. Calibration Cost
+
+تكاليف معايرة أجهزة القياس والجودة:
+
+إذا كانت مرتبطة بالإنتاج:
+
+Manufacturing Overhead / Quality Overhead
+
+ويجب ربطها بـ:
+
+- Factory
+- Production Area
+- Machine
+- Quality Department
+- Cost Center
+
+---
+
+219. Quality Protocols
+
+تكلفة تحديث:
+
+- SOP
+- Quality Procedures
+- Inspection Procedures
+- Manufacturing Protocols
+
+يتم تصنيفها حسب طبيعتها.
+
+ولا يتم تحميلها تلقائيًا على كل منتج.
+
+---
+
+القسم الثمانون: Appraisal Costs
+
+220. Appraisal Costs
+
+تكاليف الفحص والتقييم.
+
+أمثلة:
+
+- QC Salaries
+- Laboratory Testing
+- Inspection
+- Quality Sampling
+- Testing Equipment Usage
+- Destructive Testing
+- Inspection Materials
+
+---
+
+221. QC Labor
+
+أجور فنيي مراقبة الجودة:
+
+إذا كانت مرتبطة بالإنتاج:
+
+يمكن اعتبارها:
+
+Manufacturing Quality Overhead
+
+ويتم توزيعها حسب:
+
+- Inspection Hours
+- Production Quantity
+- Machine Hours
+- Labor Hours
+- Production Area
+- Cost Center
+
+حسب طبيعة النشاط.
+
+---
+
+222. Laboratory Costs
+
+تكاليف المعامل والاختبارات:
+
+- Lab Materials
+- Test Kits
+- External Testing
+- Internal Laboratory
+- Sample Testing
+
+يمكن تحميلها على المنتج/الأمر إذا كانت مباشرة ويمكن تتبعها.
+
+وإلا:
+
+Quality Manufacturing Overhead
+
+---
+
+223. Destructive Testing
+
+المواد أو القطع المستهلكة أثناء الفحص التدميري يجب تسجيلها بشكل مستقل.
+
+البيانات:
+
+- Product
+- Sample Quantity
+- Material Cost
+- Test Type
+- Test Date
+- Quality Department
+- Manufacturing Order
+- Cost Center
+
+ويتم تحديد هل التكلفة:
+
+Direct Quality Cost
+
+أو:
+
+Quality Overhead
+
+حسب إمكانية التتبع.
+
+---
+
+القسم الحادي والثمانون: Internal Failure Costs
+
+224. Internal Failure
+
+تكاليف العيوب المكتشفة قبل خروج المنتج من المصنع.
+
+أمثلة:
+
+- Rejected Products
+- Scrap
+- Rework
+- Re-inspection
+- Additional Materials
+- Additional Labor
+- Additional Machine Time
+
+---
+
+225. Internal Failure Integration
+
+يجب ربط Internal Failure مباشرة مع:
+
+Waste + Rework + Quality
+
+بدون إنشاء نظام مستقل مكرر.
+
+---
+
+226. Rework Integration
+
+إذا كان Rework Engine موجودًا:
+
+Reuse Existing Rework Engine
+
+ويتم تصنيف تكلفة Rework ضمن:
+
+Internal Failure Cost
+
+مع إمكانية إدخالها في Manufacturing Cost حسب سياسة الشركة.
+
+---
+
+227. Scrap / Rejected Product
+
+يتم تسجيل:
+
+- Expected Scrap
+- Actual Scrap
+- Normal Scrap
+- Abnormal Scrap
+- Scrap Quantity
+- Scrap Cost
+- Reason
+- Manufacturing Order
+
+---
+
+228. Normal vs Abnormal Quality Failure
+
+Normal Failure
+
+يمكن أن يدخل ضمن تكلفة التصنيع وفق السياسة.
+
+Abnormal Failure
+
+يجب أن يكون قابلاً للفصل عن تكلفة المنتج الطبيعية، ويمكن تسجيله كـ:
+
+Abnormal Loss / Quality Loss
+
+بدل تحميله تلقائيًا على المنتجات السليمة.
+
+---
+
+القسم الثاني والثمانون: External Failure Costs
+
+229. External Failure
+
+العيوب التي تظهر بعد خروج المنتج للعميل.
+
+أمثلة:
+
+- Customer Returns
+- Warranty Claims
+- Reverse Shipping
+- Customer Complaint Handling
+- Replacement
+- External Repair
+
+---
+
+230. External Failure Classification
+
+External Failure لا يدخل تلقائيًا في Manufacturing Cost.
+
+عادة يتم تصنيفه كـ:
+
+Quality / Warranty / Selling / Operating Expense
+
+حسب طبيعة العملية والسياسة المحاسبية.
+
+---
+
+231. Customer Returns Integration
+
+يتم ربط المرتجعات مع:
+
+- Sales
+- Inventory
+- Quality
+- Warranty
+- Customer
+- Original Manufacturing Order إن أمكن
+
+حتى يمكن معرفة:
+
+أي Manufacturing Batch أو Order تسبب في المشكلة.
+
+---
+
+232. Warranty Cost
+
+دعم:
+
+- Warranty Claims
+- Replacement Cost
+- Repair Cost
+- Labor
+- Parts
+- Shipping
+- Return Shipping
+
+ويتم تحليلها كـ:
+
+External Failure Cost
+
+ولا تحمل تلقائيًا على Manufacturing Cost الحالي.
+
+---
+
+القسم الثالث والثمانون: COQ Dashboard
+
+233. Cost of Quality Dashboard
+
+يجب إضافة تحليل:
+
+- Prevention Cost
+- Appraisal Cost
+- Internal Failure Cost
+- External Failure Cost
+- Total COQ
+- COQ %
+- COQ per Unit
+- COQ per Manufacturing Order
+- COQ per Product
+- COQ per Factory
+
+---
+
+234. COQ Ratio
+
+يمكن حساب:
+
+COQ % = Total Quality Cost ÷ Revenue
+
+أو حسب إعداد التقرير:
+
+COQ % = Total Quality Cost ÷ Manufacturing Cost
+
+مع عدم فرض طريقة واحدة إذا كانت الشركة تحتاج تعريفًا مختلفًا.
+
+---
+
+235. Quality Cost Traceability
+
+يجب معرفة:
+
+- المنتج
+- أمر التصنيع
+- Batch/Lot
+- المرحلة
+- المصنع
+- Cost Center
+- نوع تكلفة الجودة
+- القيمة
+- سبب التكلفة
+
+---
+
+القسم الرابع والثمانون: Inventory & Capital Costs
+
+236. Inventory Capital Cost Layer
+
+إضافة طبقة تحليلية لتكلفة رأس المال والمخزون.
+
+لكن:
+
+ليست كل هذه التكاليف تدخل تلقائيًا في Inventory Valuation أو Manufacturing Cost.
+
+يجب فصل:
+
+Accounting Cost
+
+عن:
+
+Management / Analytical Cost
+
+---
+
+237. Opportunity Cost of Capital
+
+دعم:
+
+Opportunity Cost
+
+لرأس المال المجمد في:
+
+- Raw Materials
+- WIP
+- Finished Goods
+- Slow Moving Inventory
+
+---
+
+238. Opportunity Cost Treatment
+
+Opportunity Cost يجب أن يكون:
+
+Analytical / Management Cost
+
+بشكل افتراضي.
+
+لا يتم إنشاء قيد محاسبي وهمي.
+
+ولا يتم تعديل قيمة المخزون المحاسبية تلقائيًا.
+
+ويمكن تفعيل:
+
+Include in Management Product Cost
+
+إذا أرادت الشركة حساب Economic Cost.
+
+---
+
+239. Capital Rate
+
+إعداد:
+
+- Capital Rate %
+- Period
+- Inventory Value
+- Holding Period
+- Product
+- Warehouse
+- Factory
+
+مثال:
+
+Inventory Value = 100,000
+
+Annual Capital Rate = 12%
+
+ويحسب النظام التكلفة الاقتصادية لفترة الاحتفاظ.
+
+---
+
+240. WIP Capital Cost
+
+يمكن تحليل تكلفة رأس المال المرتبطة بـ:
+
+Work in Progress
+
+حسب:
+
+- WIP Value
+- Days in WIP
+- Capital Rate
+
+لكنها تبقى افتراضيًا:
+
+Analytical Cost
+
+ولا تدخل تلقائيًا في Financial Inventory Valuation.
+
+---
+
+القسم الخامس والثمانون: Spoilage & Obsolescence
+
+241. Inventory Spoilage
+
+دعم:
+
+- Expired Materials
+- Damaged Materials
+- Expired Finished Goods
+- Storage Damage
+- Temperature Damage
+
+---
+
+242. Obsolescence
+
+دعم:
+
+- Obsolete Raw Materials
+- Obsolete Components
+- Obsolete Finished Goods
+- Slow Moving Inventory
+
+---
+
+243. Spoilage Classification
+
+يتم التمييز بين:
+
+Normal Production Waste
+
+و:
+
+Storage Spoilage
+
+و:
+
+Abnormal Loss
+
+حتى لا يتم خلط تكلفة التصنيع مع خسائر التخزين.
+
+---
+
+244. Inventory Aging
+
+إضافة تحليل:
+
+- Age
+- Days in Stock
+- Expiry Date
+- Remaining Shelf Life
+- Slow Moving
+- Obsolete
+
+---
+
+245. Expiry Cost
+
+تكلفة المواد المنتهية الصلاحية يمكن ربطها بـ:
+
+- Warehouse
+- Batch
+- Lot
+- Product
+- Supplier
+- Storage Period
+
+وتسجيلها كخسارة مستقلة أو ضمن سياسة التكلفة المحددة.
+
+---
+
+القسم السادس والثمانون: Insurance
+
+246. Insurance Cost
+
+دعم:
+
+- Inventory Insurance
+- Factory Insurance
+- Machine Insurance
+- Building Insurance
+- Fire Insurance
+- Theft Insurance
+
+---
+
+247. Insurance Allocation
+
+Insurance لا يدخل كله في Manufacturing Cost.
+
+يتم تحديد مصدره:
+
+Factory / Production Insurance
+
+→ Manufacturing Overhead
+
+Inventory Insurance
+
+→ Inventory-related Cost / Applicable Allocation
+
+Office Insurance
+
+→ Administrative
+
+General Corporate Insurance
+
+→ Operating Expense
+
+---
+
+248. Insurance Allocation Methods
+
+يمكن استخدام:
+
+- Asset Value
+- Inventory Value
+- Factory Area
+- Machine Value
+- Production Quantity
+- Machine Hours
+- Fixed Amount
+- Percentage
+
+مع استخدام Allocation Engine الحالي.
+
+---
+
+القسم السابع والثمانون: EHS – Environment, Health & Safety
+
+249. EHS Cost Architecture
+
+إضافة طبقة:
+
+EHS Costs
+
+Environment
+
+Health
+
+Safety
+
+---
+
+250. Hazardous Waste Disposal
+
+يشمل:
+
+- Hazardous Waste
+- Chemical Waste
+- Safe Disposal
+- Waste Transportation
+- Treatment
+- Environmental Compliance
+
+---
+
+251. Hazardous Waste Classification
+
+إذا كان التخلص من النفايات نتيجة طبيعية لعملية التصنيع:
+
+يمكن تصنيفه:
+
+Manufacturing Overhead / Environmental Manufacturing Cost
+
+أما إذا كان ناتجًا عن حادث أو مخالفة غير طبيعية:
+
+يمكن تصنيفه:
+
+Abnormal Loss / Compliance Expense
+
+ولا يدخل تلقائيًا في تكلفة المنتج الطبيعي.
+
+---
+
+252. PPE
+
+دعم:
+
+- Safety Shoes
+- Gloves
+- Masks
+- Goggles
+- Helmets
+- Protective Clothing
+- Other PPE
+
+---
+
+253. PPE Classification
+
+إذا كانت PPE مرتبطة مباشرة بعمال الإنتاج:
+
+يمكن تحميلها:
+
+Manufacturing Overhead
+
+إذا كانت عامة على الشركة:
+
+Operating / Administrative
+
+ويتم تحديد ذلك حسب:
+
+- Factory
+- Department
+- Employee Group
+- Cost Center
+
+---
+
+254. EHS Compliance
+
+دعم:
+
+- Safety Inspection
+- Environmental Inspection
+- Regulatory Testing
+- Certifications
+- Compliance Training
+- Safety Equipment
+- Environmental Monitoring
+
+---
+
+255. EHS Allocation
+
+يمكن توزيع EHS Cost حسب:
+
+- Factory
+- Production Area
+- Employee
+- Machine
+- Machine Hours
+- Labor Hours
+- Production Quantity
+- Fixed Amount
+- Cost Center
+
+---
+
+القسم الثامن والثمانون: R&D
+
+256. R&D Cost Architecture
+
+دعم:
+
+Research & Development
+
+ويشمل:
+
+- Product Development
+- Prototype
+- Samples
+- Testing
+- New Product Development
+- Design
+- Engineering
+- Experimental Production
+
+---
+
+257. Prototype Cost
+
+دعم تسجيل:
+
+- Prototype Materials
+- Labor
+- Machine Hours
+- Testing
+- Engineering
+- Quality Testing
+
+---
+
+258. R&D Classification
+
+يجب عدم تحميل R&D تلقائيًا على Manufacturing Cost.
+
+الافتراضي:
+
+R&D / Operating Expense
+
+ويمكن التعامل معه بشكل منفصل حسب السياسات المحاسبية والقواعد المطبقة على الشركة.
+
+---
+
+259. R&D Product Link
+
+يمكن ربط R&D بـ:
+
+- Product
+- Product Version
+- Prototype
+- Project
+- BOM
+- Manufacturing Order
+- Engineering Change
+
+---
+
+260. Development vs Production
+
+يجب الفصل بين:
+
+Development Manufacturing
+
+و:
+
+Commercial Production
+
+حتى لا يتم تضخيم تكلفة الإنتاج التجاري بتكاليف تطوير المنتج.
+
+---
+
+القسم التاسع والثمانون: Technology Costs
+
+261. Software Licenses
+
+دعم:
+
+- ERP License
+- CAD
+- CAM
+- CNC Software
+- Manufacturing Software
+- Design Software
+- Monitoring Software
+
+---
+
+262. Technology Classification
+
+لا يتم تحميل كل Software Cost على Manufacturing.
+
+مثال:
+
+Factory CNC Software
+
+→ Manufacturing / Production Overhead
+
+Corporate ERP License
+
+→ Administrative / Operating
+
+Engineering CAD
+
+→ R&D / Engineering
+
+---
+
+263. Technology Allocation
+
+يمكن توزيع Software Cost حسب:
+
+- Users
+- Machines
+- Factory
+- Department
+- Production Area
+- Usage
+- Fixed Amount
+- Percentage
+
+---
+
+264. Technology Cost Period
+
+كل License يحتوي:
+
+- Start Date
+- End Date
+- Monthly Cost
+- Annual Cost
+- Department
+- Factory
+- Cost Center
+- Include in Product Cost
+
+---
+
+القسم التسعون: Comprehensive Cost Classification
+
+265. Final Cost Classification Matrix
+
+Cost| Default Classification
+Direct Material| Manufacturing Cost
+Direct Labor| Manufacturing Cost
+Machine Depreciation| Manufacturing Cost
+Machine Electricity| Machine Cost
+Machine Oil| Machine Operating Cost
+Machine Maintenance| Machine Cost
+Machine Setup| Setup Cost
+Factory Rent| Manufacturing Overhead
+Factory General Electricity| Manufacturing Overhead
+Factory Security| Manufacturing Overhead
+Factory Cleaning| Manufacturing Overhead
+Production Quality QC| Quality Manufacturing Overhead
+Production Calibration| Quality Manufacturing Overhead
+Lab Testing| Quality Cost / Manufacturing Overhead
+Destructive Testing| Quality Cost
+Normal Scrap| Manufacturing Cost حسب السياسة
+Abnormal Scrap| Abnormal Loss
+Rework| Internal Failure / Manufacturing Cost حسب السياسة
+Warranty| External Failure / Operating
+Customer Return Handling| External Failure / Operating
+Reverse Shipping| External Failure / Selling/Operating
+Factory PPE| Manufacturing Overhead
+Hazardous Waste Disposal| Manufacturing/EHS Overhead حسب طبيعة التكلفة
+Factory Insurance| Manufacturing Overhead
+Inventory Insurance| Inventory-related Cost
+Office Insurance| Administrative
+Inventory Spoilage| Inventory Loss
+Inventory Obsolescence| Inventory Loss
+Opportunity Cost| Analytical Cost افتراضيًا
+WIP Capital Cost| Analytical Cost افتراضيًا
+R&D| R&D / Operating
+Prototype| R&D
+Factory CNC License| Manufacturing Overhead
+Corporate ERP License| Administrative
+Engineering CAD| R&D / Engineering
+Sales Commission| SG&A
+Advertising| SG&A
+Accountant Salary| Administrative
+Loan Interest| Financing
+
+---
+
+القسم الحادي والتسعون: Product Full Economic Cost
+
+266. Multi-Layer Product Cost
+
+يجب عدم إجبار النظام على رقم تكلفة واحد فقط.
+
+يجب أن يستطيع النظام عرض عدة مستويات:
+
+Financial Manufacturing Cost
+
+التكلفة المحاسبية/التصنيعية المعتمدة.
+
+Management Manufacturing Cost
+
+التكلفة التصنيعية + التكاليف الإدارية التي تختار الشركة تحميلها تحليليًا.
+
+Economic Cost
+
+يمكن أن تشمل:
+
+- Opportunity Cost
+- Inventory Holding Cost
+- Capital Cost
+
+إذا تم تفعيلها.
+
+---
+
+267. Cost Layer Display
+
+مثال:
+
+Manufacturing Cost
+
+920
+
+Operating Cost
+
+980
+
+Economic Cost
+
+1,010
+
+وبالتالي يستطيع المدير معرفة الفرق بين:
+
+التكلفة المحاسبية
+
+والتكلفة التشغيلية
+
+والتكلفة الاقتصادية.
+
+---
+
+القسم الثاني والتسعون: Cost Treatment Engine
+
+268. Cost Treatment
+
+كل Cost Component يجب أن يحتوي على:
+
+- Cost Category
+- Cost Type
+- Cost Behavior
+- Cost Source
+- Accounting Treatment
+- Manufacturing Treatment
+- Allocation Method
+- Include in Product Cost
+- Include in Economic Cost
+- Period
+- Factory
+- Cost Center
+- Production Area
+- Active
+
+---
+
+269. Cost Behavior
+
+دعم تصنيف:
+
+- Fixed
+- Variable
+- Semi-Variable
+- Step Cost
+
+مثال:
+
+Factory Rent
+
+→ Fixed
+
+Electricity
+
+→ Variable / Semi-Variable حسب الإعداد
+
+---
+
+270. Cost Source
+
+كل تكلفة يجب أن يكون لها مصدر:
+
+- Accounting
+- Fixed Assets
+- HR
+- Inventory
+- Purchase
+- Expense
+- Quality
+- EHS
+- R&D
+- Manual Allocation
+- Existing Cost Engine
+
+---
+
+القسم الثالث والتسعون: Cost Allocation Engine
+
+271. Unified Allocation Engine
+
+كل التكاليف الجديدة تستخدم:
+
+Existing Allocation Engine
+
+إذا كان موجودًا.
+
+وإذا لم يكن موجودًا:
+
+يتم إنشاء:
+
+Shared Allocation Service
+
+وليس Allocation Engine خاصًا بالWizard.
+
+---
+
+272. Allocation Bases
+
+يدعم كل ما سبق:
+
+- Machine Hours
+- Labor Hours
+- Production Quantity
+- Direct Labor Cost
+- Machine Usage
+- Percentage
+- Fixed Amount
+- Square Footage
+- Area × Time
+- Cost Center
+- Department
+- Production Area
+- Asset Value
+- Inventory Value
+- Users
+- Usage
+
+---
+
+القسم الرابع والتسعون: Cost Pool
+
+273. Cost Pool
+
+يجب دعم تجميع المصروفات في:
+
+Cost Pool
+
+مثال:
+
+Factory Electricity Pool
+
+يحتوي على:
+
+- Electricity Expense
+- Related Charges
+
+ثم يتم توزيع Pool على:
+
+- Production Areas
+- Machines
+- Orders
+- Products
+
+---
+
+274. Quality Cost Pool
+
+مثال:
+
+Quality Department Cost Pool
+
+يشمل:
+
+- QC Salaries
+- Lab
+- Calibration
+- Testing
+
+ثم يتم توزيعه حسب:
+
+Inspection Hours
+
+أو:
+
+Production Quantity
+
+أو قاعدة أخرى.
+
+---
+
+275. EHS Cost Pool
+
+يمكن إنشاء:
+
+EHS Cost Pool
+
+ثم توزيعه على المصانع أو خطوط الإنتاج.
+
+---
+
+القسم الخامس والتسعون: Cost Driver
+
+276. Cost Driver
+
+كل Allocation يجب أن يكون له:
+
+Cost Driver
+
+مثال:
+
+Factory Rent
+
+→ Machine Hours
+
+QC
+
+→ Inspection Hours
+
+Warehouse Insurance
+
+→ Inventory Value
+
+Factory Cleaning
+
+→ Area
+
+EHS
+
+→ Production Quantity / Factory
+
+---
+
+277. Driver Traceability
+
+التقرير يجب أن يوضح:
+
+Cost Pool
+
+→ Cost Driver
+
+→ Allocation Rule
+
+→ Applied Cost
+
+→ Manufacturing Orders
+
+---
+
+القسم السادس والتسعون: No Double Counting Extended
+
+278. COQ Double Counting
+
+إذا كانت Rework Cost محسوبة بالفعل داخل Manufacturing Order:
+
+لا تتم إضافتها مرة أخرى من COQ.
+
+---
+
+279. Insurance Double Counting
+
+إذا كانت Insurance داخلة بالفعل في Machine Rate:
+
+لا تحمل مرة أخرى كـFactory Overhead.
+
+---
+
+280. Software Double Counting
+
+إذا كان Machine Software داخل Machine Operating Rate:
+
+لا يحمل مرة ثانية ضمن Technology Overhead.
+
+---
+
+281. PPE Double Counting
+
+إذا تم تحميل PPE على Employee Cost Rate:
+
+لا يحمل مرة أخرى كـEHS Overhead بنفس التكلفة.
+
+---
+
+القسم السابع والتسعون: Quality Feedback Loop
+
+282. Quality → Manufacturing Feedback
+
+يجب أن يستطيع النظام تحليل:
+
+Quality Failure
+
+→ Manufacturing Order
+
+→ Stage
+
+→ Machine
+
+→ Employee
+
+→ Material
+
+→ Batch
+
+→ Supplier
+
+---
+
+283. Quality Root Cause
+
+عند تكرار العيوب يمكن تحليل:
+
+- Product
+- Machine
+- Employee
+- Material
+- Supplier
+- Stage
+- Shift
+- Factory
+- Batch
+
+---
+
+284. Cost of Poor Quality
+
+إظهار:
+
+Cost of Poor Quality – COPQ
+
+ويشمل حسب إعداد الشركة:
+
+- Internal Failure
+- External Failure
+- Scrap
+- Rework
+- Returns
+- Warranty
+- Failure Handling
+
+---
+
+القسم الثامن والتسعون: Inventory Capital Analytics
+
+285. Inventory Holding Analysis
+
+تحليل:
+
+- Inventory Value
+- Holding Days
+- Capital Rate
+- Opportunity Cost
+- Storage Cost
+- Insurance
+- Spoilage
+- Obsolescence
+
+---
+
+286. Total Inventory Cost
+
+يمكن عرض:
+
+Total Inventory Economic Cost
+
+بشكل تحليلي:
+
+Inventory Holding
+
++ 
+
+Capital Opportunity Cost
+
++ 
+
+Storage
+
++ 
+
+Insurance
+
++ 
+
+Spoilage
+
++ 
+
+Obsolescence
+
+---
+
+القسم التاسع والتسعون: Comprehensive Product Cost
+
+287. Final Product Cost Structure
+
+النظام يستطيع عرض:
+
+DIRECT MANUFACTURING
+├── Direct Materials
+├── Direct Labor
+└── Direct Machine Cost
+
+MANUFACTURING CONVERSION
+├── Machine Usage
+├── Depreciation
+├── Electricity
+├── Gas
+├── Oil
+├── Maintenance
+├── Setup
+└── Rework
+
+QUALITY
+├── Prevention
+├── Appraisal
+├── Internal Failure
+└── External Failure
+
+MANUFACTURING OVERHEAD
+├── Factory Rent
+├── General Electricity
+├── Security
+├── Cleaning
+├── Supervision
+├── EHS
+├── Factory Insurance
+└── Other Factory Costs
+
+INVENTORY / HOLDING
+├── Storage
+├── Insurance
+├── Spoilage
+├── Obsolescence
+└── Capital Opportunity Cost
+
+R&D / TECHNOLOGY
+├── R&D
+├── Prototype
+├── CAD/CAM
+└── Production Software
+
+OPERATING / SG&A
+├── Sales
+├── Marketing
+├── Administration
+└── General Corporate Costs
+
+FINANCING
+└── Interest / Financing Charges
+
+---
+
+القسم المائة: Final Cost Treatment Rule
+
+288. Mandatory Classification Rule
+
+لا يتم إدخال أي تكلفة إلى Manufacturing Cost لمجرد أنها مرتبطة بالشركة.
+
+يجب تحديد:
+
+1. هل التكلفة مباشرة؟
+2. هل هي صناعية؟
+3. هل هي غير مباشرة؟
+4. هل هي طبيعية أم غير طبيعية؟
+5. هل يمكن تتبعها لأمر تصنيع؟
+6. هل هي Overhead؟
+7. هل هي SG&A؟
+8. هل هي Financing؟
+9. هل هي R&D؟
+10. هل هي Analytical/Economic Cost فقط؟
+
+---
+
+289. Financial vs Management Cost
+
+النظام يجب أن يفرق بوضوح بين:
+
+Financial Cost
+
+و
+
+Management Cost
+
+و
+
+Economic Cost
+
+حتى لا يتم تضخيم المخزون أو COGS بسبب تكاليف تحليلية غير محاسبية.
+
+---
+
+290. Final Cost Layers
+
+الهيكل النهائي:
+
+Layer 1 – Direct Manufacturing Cost
+
+Materials + Labor + Direct Machine
+
+Layer 2 – Manufacturing Conversion Cost
+
+Machine + Setup + Quality + Rework
+
+Layer 3 – Manufacturing Overhead
+
+Factory indirect costs
+
+Layer 4 – Inventory / Holding Cost
+
+Storage + Insurance + Spoilage + Obsolescence
+
+Layer 5 – Operating Cost
+
+SG&A + Administrative
+
+Layer 6 – Economic Cost
+
+Opportunity Cost + Capital Cost
+
+Layer 7 – Financing
+
+Interest + Financing Charges
+
+---
+
+291. Product Cost Query
+
+عند الضغط:
+
+Why is Product Cost X?
+
+يظهر:
+
+- Financial Manufacturing Cost
+- Manufacturing Overhead
+- Quality Cost
+- Storage Cost
+- Operating Cost
+- Economic Cost
+- Financing Impact
+
+مع مصدر كل رقم.
+
+---
+
+292. Historical Cost Protection
+
+كل طبقة تكلفة تدخل في Manufacturing Order يجب حفظها في:
+
+Cost Snapshot
+
+حتى لا تتغير التكلفة التاريخية بعد تغيير:
+
+- Rates
+- Allocation
+- Rent
+- Insurance
+- Labor
+- Machine Cost
+- Quality Rate
+- Overhead
+- Capital Rate
+
+---
+
+293. Period Closing
+
+عند إغلاق الفترة:
+
+يتم تثبيت:
+
+- Actual Cost
+- Applied Cost
+- Overhead Variance
+- Quality Cost
+- Inventory Cost
+- Variance Treatment
+
+ولا يتم تغيير الفترة القديمة إلا من خلال صلاحيات وإجراءات تصحيح رسمية.
+
+---
+
+294. Auditability
+
+كل Cost Allocation يجب أن يكون قابلًا للتتبع:
+
+Accounting Source
+
+→
+
+Cost Pool
+
+→
+
+Cost Driver
+
+→
+
+Allocation Rule
+
+→
+
+Manufacturing Order
+
+→
+
+Product
+
+---
+
+295. Final Testing Additions
+
+يجب إضافة اختبارات:
+
+COQ
+
+- Prevention
+- Appraisal
+- Internal Failure
+- External Failure
+
+Inventory
+
+- Spoilage
+- Obsolescence
+- Insurance
+- Capital Cost
+
+EHS
+
+- PPE
+- Hazardous Waste
+- Compliance
+
+R&D
+
+- Prototype
+- Development
+- Engineering
+
+Technology
+
+- Factory Software
+- Corporate Software
+- CAD/CAM
+- CNC
+
+Cost Classification
+
+اختبار أن كل بند يدخل الطبقة الصحيحة.
+
+---
+
+296. Acceptance Criteria – Additional
+
+لا يعتبر الإصدار مكتملًا إذا لم يحقق:
+
+- COQ Architecture
+- Prevention Cost
+- Appraisal Cost
+- Internal Failure
+- External Failure
+- COPQ
+- Quality Traceability
+- Inventory Capital Analytics
+- Opportunity Cost
+- WIP Capital Cost
+- Spoilage
+- Obsolescence
+- Insurance Allocation
+- EHS Costs
+- PPE
+- Hazardous Waste
+- R&D
+- Prototype Cost
+- Technology Cost
+- Software License Allocation
+- Cost Pool
+- Cost Driver
+- Unified Allocation
+- Financial vs Management vs Economic Cost
+- No Double Counting
+- Historical Cost Snapshot
+
+---
+
+القسم المائة وواحد: MASTER COSTING ARCHITECTURE
+
+297. Final Architecture
+
+                         ERP
+                          │
+                ┌─────────┴─────────┐
+                │                   │
+       Advanced Manufacturing   Manufacturing Wizard
+                │                   │
+                └─────────┬─────────┘
+                          │
+                 Manufacturing Core
+                          │
+       ┌──────────────────┼──────────────────┐
+       │                  │                  │
+   Inventory            Costing          Accounting
+       │                  │                  │
+       │          ┌───────┴───────┐          │
+       │          │               │          │
+       │      Cost Pools      Cost Drivers  │
+       │          │               │          │
+       │          └───────┬───────┘          │
+       │                  │                  │
+       │           Allocation Engine         │
+       │                  │                  │
+       └──────────────────┼──────────────────┘
+                          │
+      ┌───────────┬───────┼────────┬───────────┐
+      │           │       │        │           │
+ Fixed Assets    HR      Quality   EHS        R&D
+      │           │       │        │           │
+ Depreciation   Labor    COQ      Safety    Development
+
+---
+
+القسم المائة واثنان: MASTER COST MODEL
+
+298. Manufacturing Cost
+
+Direct Materials
++ Direct Labor
++ Direct Machine Cost
++ Machine Operating Cost
++ Setup / Changeover
++ Normal Waste
++ First-Off
++ Rework
++ Applicable Quality Cost
++ Manufacturing Overhead
++ Packaging
++ Applicable Logistics
++ Applicable Storage
+= Manufacturing Cost
+
+---
+
+299. Operating Cost
+
+Manufacturing Cost
++ SG&A
++ Administrative
++ Applicable Operating Costs
+= Operating Cost
+
+---
+
+300. Economic Cost
+
+Operating Cost
++ Opportunity Cost of Capital
++ Inventory Holding Economic Cost
++ Other Management Costs
+= Economic Cost
+
+---
+
+301. Financing Impact
+
+Economic / Operating Result
+- Financing Cost
+= Net Economic Result
+
+---
+
+القسم المائة وثلاثة: FINAL GOLDEN RULES
+
+302. Never Automatically Include Everything
+
+ليس كل مصروف يدخل Manufacturing Cost.
+
+---
+
+303. Every Cost Has a Treatment
+
+كل تكلفة يجب أن يكون لها:
+
+Classification + Source + Driver + Allocation + Treatment
+
+---
+
+304. Quality Is Not One Cost
+
+COQ يجب أن يبقى مقسمًا إلى:
+
+- Prevention
+- Appraisal
+- Internal Failure
+- External Failure
+
+---
+
+305. Abnormal Costs Must Be Visible
+
+الخسائر غير الطبيعية لا يتم إخفاؤها داخل تكلفة المنتج الطبيعي.
+
+---
+
+306. Opportunity Cost Is Analytical by Default
+
+لا يتم إنشاء قيد محاسبي وهمي.
+
+---
+
+307. R&D Is Separate by Default
+
+تكاليف التطوير لا تدخل تلقائيًا في تكلفة الإنتاج التجاري.
+
+---
+
+308. EHS Is Traceable
+
+تكاليف البيئة والسلامة يمكن تحميلها حسب المصنع/القسم/الإنتاج عند الحاجة.
+
+---
+
+309. Technology Must Be Classified
+
+Software المصنع يختلف عن Software الإدارة.
+
+---
+
+310. Inventory Holding Is Separate
+
+تكلفة الاحتفاظ بالمخزون لا تختلط تلقائيًا بتكلفة التصنيع.
+
+---
+
+311. One Allocation Engine
+
+كل Cost Allocation يستخدم Engine واحدًا مشتركًا.
+
+---
+
+312. One Cost Snapshot
+
+كل أمر تصنيع يحتفظ بالأسعار والمعدلات والقواعد المستخدمة وقت التنفيذ.
+
+---
+
+313. One Source of Truth
+
+لا توجد نسخ مختلفة للتكلفة في:
+
+- Wizard
+- Advanced Manufacturing
+- Inventory
+- Accounting
+
+بل:
+
+One Costing Architecture
+
+---
+
+FINAL MASTER PRINCIPLE
+
+ONE ERP
+   │
+   ├── ONE Manufacturing Core
+   │
+   ├── ONE Inventory Engine
+   │
+   ├── ONE Accounting Engine
+   │
+   ├── ONE Fixed Assets Engine
+   │
+   ├── ONE HR/Labor Source
+   │
+   ├── ONE Costing Architecture
+   │
+   ├── ONE Allocation Engine
+   │
+   ├── ONE Cost Snapshot
+   │
+   ├── ONE Audit Trail
+   │
+   └── ZERO DUPLICATION
+
+والـCosting Architecture أصبحت قادرة على تحليل:
+
+Direct Cost
+
+→ Manufacturing Conversion
+
+→ Manufacturing Overhead
+
+→ Quality / COQ
+
+→ Inventory / Holding
+
+→ EHS
+
+→ R&D / Technology
+
+→ SG&A
+
+→ Financing
+
+مع الفصل بين:
+
+Financial Cost
+
+Management Cost
+
+Economic Cost
+
+بحيث يستطيع النظام إعطاء تكلفة دقيقة وقابلة للتفسير، بدون تضخيم تكلفة المنتج أو تكرار أي مصروف.
+[٩/‏٩ ٧:٤٩ م] Saed Azzam2: Manufacturing Wizard & Manufacturing Cost Model
+
+المواصفات النهائية الشاملة الكاملة للتنفيذ بالـAI
+
+الإصدار: Master Specification
+
+قاعدة مهمة: لا حذف – لا اختصار – لا تكرار – لا إنشاء محركات موازية
+
+---
+
+القسم الأول: الهدف العام
+
+1. الهدف
+
+إنشاء Manufacturing Wizard – تصنيع ويزرد كواجهة تصنيع سهلة وسريعة للشركات الصغيرة والمتوسطة، تعمل فوق Manufacturing Core/Engine الحالي، وتستفيد من جميع إمكانيات النظام الحالية دون إنشاء نظام تصنيع منفصل.
+
+الهدف أن يستطيع المستخدم تنفيذ عملية تصنيع كاملة من خلال Wizard بسيط، مع الاحتفاظ بكل قوة Manufacturing Engine الحالي.
+
+---
+
+2. One Manufacturing Core
+
+يجب أن يكون هناك:
+
+Manufacturing Core واحد فقط.
+
+الـAdvanced Manufacturing والـManufacturing Wizard كلاهما يستخدمان نفس الـCore.
+
+---
+
+3. One Costing Architecture
+
+يجب أن يكون هناك:
+
+Costing Architecture واحدة فقط.
+
+جميع طرق حساب التكلفة تستخدم نفس البنية المركزية.
+
+ممنوع إنشاء Cost Engine خاص بالـWizard.
+
+---
+
+4. Zero Duplication
+
+ممنوع إنشاء:
+
+- شاشة موجودة بالفعل.
+- API موجود بالفعل.
+- Service موجود بالفعل.
+- Entity موجود بالفعل.
+- Table موجود بالفعل.
+- Manufacturing Engine جديد.
+- Inventory Engine جديد.
+- Accounting Engine جديد.
+- Depreciation Engine جديد.
+- Cost Engine جديد.
+- Reversal Engine جديد.
+
+---
+
+5. Search Existing Before Create
+
+قبل إنشاء أي شيء:
+
+Search Existing → Reuse → Extend → Create Only If Absolutely Necessary
+
+---
+
+القسم الثاني: فحص المشروع قبل البرمجة
+
+6. Mandatory Codebase Inspection
+
+يجب على AI فحص المشروع الحالي قبل كتابة الكود.
+
+---
+
+7. فحص Manufacturing
+
+البحث عن:
+
+- Manufacturing
+- Manufacturing Orders
+- BOM
+- Production
+- Production Stages
+- Work Orders
+- Operations
+- Routing
+- Waste
+- By-products
+- Rework
+- Quality
+- Production Capacity
+- Machine Scheduling
+
+---
+
+8. فحص Inventory
+
+البحث عن:
+
+- Products
+- Items
+- Warehouses
+- Stock
+- Inventory Transactions
+- Units
+- Unit Conversion
+- Batch
+- Lot
+- Serial
+- Stock Consumption
+- Finished Goods
+
+---
+
+9. فحص Accounting
+
+البحث عن:
+
+- Chart of Accounts
+- Journal Entries
+- Accounts Payable
+- Accounts Receivable
+- Inventory Accounts
+- WIP
+- Finished Goods
+- COGS
+- Expenses
+- Cost Centers
+- Fiscal Periods
+
+---
+
+10. فحص Fixed Assets
+
+البحث عن:
+
+- Assets
+- Asset Cards
+- Depreciation
+- Depreciation Schedule
+- Asset Cost
+- Book Value
+- Depreciation Journal
+- Asset Categories
+
+---
+
+11. فحص HR
+
+البحث عن:
+
+- Employees
+- Labor
+- Payroll
+- Hourly Cost
+- Attendance
+- Overtime
+- Shift
+- Labor Rates
+
+---
+
+12. فحص Costing
+
+البحث عن:
+
+- Cost Engine
+- Cost Calculation
+- Standard Cost
+- Actual Cost
+- Average Cost
+- Cost Allocation
+- Overhead
+- Landed Cost
+- Variance
+
+---
+
+13. فحص Shared Components
+
+إعادة استخدام:
+
+- Tables
+- Forms
+- Modals
+- Cards
+- Tabs
+- Stepper
+- Dropdowns
+- Search
+- Filters
+- Pagination
+- Validation
+- Notifications
+- Loading
+- Empty States
+- Error States
+- Permission Components
+
+---
+
+القسم الثالث: Module Activation
+
+14. Module Name
+
+Manufacturing Wizard – تصنيع ويزرد
+
+Module Key:
+
+"MANUFACTURING_WIZARD"
+
+---
+
+15. Independent Module Activation
+
+الوحدة مستقلة من حيث:
+
+- Activation
+- Menu
+- Permissions
+- User Access
+- Configuration
+
+لكنها تعتمد على الـCore والخدمات المشتركة.
+
+---
+
+16. Super Admin Activation
+
+Super Admin يستطيع تفعيل/تعطيل الوحدة لكل Company.
+
+إذا كانت غير مفعلة:
+
+لا تظهر لأي مستخدم.
+
+---
+
+17. Backend Protection
+
+عدم ظهور القائمة وحده غير كافٍ.
+
+يجب أن تمنع Backend APIs الوصول إلى الوحدة إذا لم تكن مفعلة للشركة.
+
+---
+
+القسم الرابع: Permissions
+
+18. User Permissions
+
+الصلاحيات:
+
+- View
+- Create
+- Edit
+- Execute
+- Cancel
+- Reverse
+- Delete
+- Templates
+- Quick Manufacturing
+- Manufacture Again
+- Pause
+- Resume
+- View Costs
+- View Waste
+- View Labor
+- View Machines
+- View Reports
+- Manage Overhead
+- Manage Cost Settings
+
+---
+
+19. Frontend + Backend Permissions
+
+يجب تطبيق الصلاحيات في:
+
+Frontend + Backend
+
+ولا تعتمد الحماية على إخفاء الأزرار فقط.
+
+---
+
+20. Company Isolation
+
+كل Query وAPI يجب أن يتحقق من:
+
+- Company
+- Branch
+- Warehouse
+- User
+- Permission
+- Module Activation
+
+ولا يمكن لشركة الوصول إلى بيانات شركة أخرى.
+
+---
+
+القسم الخامس: Wizard Flow
+
+21. Wizard Steps
+
+Step 1
+
+Product
+
+Step 2
+
+Materials
+
+Step 3
+
+Manufacturing Stages
+
+Step 4
+
+Costs & Equipment
+
+Step 5
+
+Review
+
+Step 6
+
+Execute
+
+---
+
+القسم السادس: Product
+
+22. Product Data
+
+Step 1 يحتوي على:
+
+- Product
+- Quantity
+- Unit
+- Warehouse
+- Manufacturing Date
+- Manufacturing Template
+
+---
+
+23. Product Validation
+
+يتم التحقق من:
+
+- Product Active
+- Valid Unit
+- Valid Warehouse
+- Valid Quantity
+- BOM availability حسب الحالة.
+
+---
+
+القسم السابع: Materials
+
+24. Automatic BOM Loading
+
+يتم تحميل BOM الموجود تلقائيًا.
+
+لا يتم إنشاء BOM جديد داخل Wizard.
+
+---
+
+25. Bakery Example
+
+المواد:
+
+- Flour
+- Water
+- Sugar
+- Yeast
+- Salt
+- Oil
+- Bread Improver
+- Extra Materials
+- Packaging
+
+---
+
+26. Existing Inventory Rules
+
+يجب استخدام:
+
+- Existing BOM
+- Existing Unit Conversion
+- Existing Inventory Rules
+- Existing Rounding Rules
+- Existing Stock Rules
+
+---
+
+القسم الثامن: Manufacturing Stages
+
+27. Stage Definition
+
+كل مرحلة تحتوي اختياريًا على:
+
+- Stage Name
+- Order
+- Duration
+- Input Quantity
+- Output Quantity
+- Waste
+- Waste Reason
+- Employee
+- Labor Hours
+- Labor Cost
+- Machine
+- Machine Hours
+- Machine Cost
+- Extra Materials
+- Notes
+
+---
+
+28. Bakery Stages
+
+مثال:
+
+1. Dough
+2. Freezer In
+3. Freezer Out
+4. First Fermentation
+5. Shaping
+6. Second Fermentation
+7. Oven In
+8. Oven Out
+9. Cooling
+10. Packaging
+
+---
+
+29. Optional Worker
+
+Worker اختياري.
+
+إذا لم يتم تحديد Worker:
+
+Labor Cost = 0
+
+إلا إذا كان هناك Standard Labor Policy موجودة بالنظام.
+
+---
+
+القسم التاسع: Waste
+
+30. Stage-Level Waste
+
+الهدر يتم تسجيله على مستوى المرحلة.
+
+مثال:
+
+Input = 1000
+
+Output = 995
+
+Waste = 5
+
+---
+
+31. Waste Types
+
+Normal Waste
+
+الهدر الطبيعي المتوقع.
+
+Abnormal Waste
+
+الهدر غير الطبيعي.
+
+---
+
+32. Waste Data
+
+يتم حفظ:
+
+- Expected Waste
+- Actual Waste
+- Waste Quantity
+- Waste %
+- Waste Reason
+- Waste Cost
+- Waste Type
+
+---
+
+33. Abnormal Waste Policy
+
+إعداد:
+
+Include Abnormal Waste in Product Cost
+
+Yes / No
+
+حسب السياسة المحاسبية.
+
+---
+
+القسم العاشر: Manufacturing Cost
+
+34. Manufacturing Cost Formula
+
+Manufacturing Cost:
+
+Direct Materials
+
++ 
+
+Direct Labor
+
++ 
+
+Machine Usage
+
++ 
+
+Machine Operating Cost
+
++ 
+
+Setup / Changeover
+
++ 
+
+Normal Waste
+
++ 
+
+First-Off / Quality
+
++ 
+
+Rework
+
++ 
+
+Manufacturing Overhead
+
++ 
+
+Applicable Logistics / Landed Cost
+
++ 
+
+Applicable Storage Cost
+
++ 
+
+Packaging
+
+---
+
+القسم الحادي عشر: Direct Materials
+
+35. Direct Material Cost
+
+المواد التي تدخل مباشرة في المنتج.
+
+مثال:
+
+- Flour
+- Sugar
+- Oil in recipe
+- Yeast
+- Packaging classified as direct material
+
+---
+
+36. Material Cost Snapshot
+
+وقت التنفيذ يتم حفظ سعر المادة المستخدم في الحساب.
+
+تغيير السعر مستقبلًا لا يغير أوامر التصنيع القديمة.
+
+---
+
+القسم الثاني عشر: Direct Labor
+
+37. Labor Cost
+
+يتم حساب:
+
+- Employee
+- Labor Hours
+- Hourly Rate
+- Overtime
+- Labor Cost
+
+---
+
+38. Existing HR Integration
+
+إذا كان HR/Payroll يحتوي على معدل تكلفة العامل:
+
+يتم استخدامه.
+
+ممنوع إنشاء Payroll Engine جديد.
+
+---
+
+القسم الثالث عشر: Machines
+
+39. Machine Cost
+
+Machine Cost يمكن أن يشمل:
+
+- Depreciation
+- Electricity
+- Gas
+- Oil
+- Lubricants
+- Maintenance
+- Operating Consumables
+- Setup
+- Tooling
+- Calibration
+
+---
+
+40. Existing Machine Cost Service
+
+إذا كان النظام يحتوي Machine Cost Rate أو Cost Service:
+
+Reuse It
+
+إذا لم يوجد، يتم إنشاء Shared Machine Cost/Usage Service فقط إذا كان ضروريًا.
+
+لا يتم إنشاء Depreciation Engine جديد.
+
+---
+
+القسم الرابع عشر: Fixed Assets Integration
+
+41. Machine Source
+
+الماكينات المستخدمة في التصنيع يتم اختيارها من:
+
+Existing Fixed Assets
+
+إذا كانت مسجلة كأصول.
+
+---
+
+42. Asset Card Manufacturing Setting
+
+إضافة اختيار داخل Asset Card:
+
+يستخدم في التصنيع
+
+"UsedInManufacturing"
+
+---
+
+43. Depreciation Allocation Method
+
+الخيارات:
+
+- حسب ساعات التشغيل
+- حسب كمية الإنتاج
+- تكلفة ثابتة لكل ساعة
+- عدم التحميل على التصنيع
+
+---
+
+44. Approved Operating Hours
+
+إذا كانت الطريقة:
+
+حسب ساعات التشغيل
+
+يجب تحديد:
+
+Approved Operating Hours
+
+شهريًا.
+
+ممنوع أن يخمن النظام:
+
+- 200
+- 250
+- 720
+
+أو أي رقم آخر.
+
+---
+
+45. Machine Depreciation Example
+
+Depreciation:
+
+1000 SAR/month
+
+Approved Hours:
+
+250
+
+Depreciation Cost/Hour:
+
+1000 ÷ 250 = 4 SAR
+
+Machine Usage:
+
+6 hours
+
+Manufacturing Depreciation:
+
+6 × 4 = 24 SAR
+
+---
+
+46. Accounting Depreciation Separation
+
+Fixed Assets مسؤول عن:
+
+- Depreciation Schedule
+- Monthly Depreciation
+- Book Value
+- Depreciation Journal
+
+Manufacturing مسؤول عن:
+
+- Machine Usage
+- Machine Hours
+- Allocated Manufacturing Machine Cost
+
+---
+
+47. No Duplicate Depreciation Entry
+
+Manufacturing Wizard لا ينشئ قيد إهلاك جديد.
+
+---
+
+القسم الخامس عشر: Production Capacity
+
+48. Capacity Management
+
+دعم:
+
+- Machine Capacity
+- Labor Capacity
+- Production Capacity
+- Factory Capacity
+
+---
+
+49. Capacity Example
+
+Expected Machine Hours:
+
+1000/month
+
+Expected Labor Hours:
+
+2000/month
+
+Expected Production:
+
+50,000 units/month
+
+---
+
+50. Capacity Must Be Configurable
+
+الطاقة الإنتاجية يتم تعريفها حسب:
+
+- Factory
+- Machine
+- Department
+- Production Area
+- Period
+
+---
+
+القسم السادس عشر: Manufacturing Overhead
+
+51. Manufacturing Overhead Definition
+
+يشمل التكاليف الصناعية غير المباشرة.
+
+مثل:
+
+- Factory Rent
+- Factory Electricity
+- Factory Water
+- Factory Gas
+- Security
+- Cleaning
+- Supervision
+- General Maintenance
+- Lighting
+- Ventilation
+- Safety
+- Production Administration
+- Factory Services
+
+---
+
+52. Factory Rent
+
+Factory Rent يعتبر:
+
+Fixed Manufacturing Overhead
+
+إذا كان متعلقًا بالإنتاج.
+
+---
+
+القسم السابع عشر: Predetermined Overhead Rate
+
+53. Predetermined Overhead Rate
+
+يجب دعم:
+
+معدل التحميل التقديري
+
+بدل توزيع التكلفة بشكل عشوائي.
+
+---
+
+54. Overhead Configuration
+
+لكل تكلفة:
+
+- Cost Name
+- Category
+- Amount
+- Period
+- Factory
+- Cost Center
+- Department
+- Production Area
+- Allocation Method
+- Allocation Base
+- Expected Capacity
+- Predetermined Rate
+- Include in Product Cost
+- Active
+
+---
+
+55. Machine Hours Overhead
+
+مثال:
+
+Factory Rent:
+
+10,000/month
+
+Expected Machine Hours:
+
+1,000
+
+Rate:
+
+10/hour
+
+Order:
+
+50 hours
+
+Applied Rent:
+
+500
+
+---
+
+القسم الثامن عشر: Allocation Bases
+
+56. Supported Allocation Bases
+
+النظام يدعم:
+
+- Machine Hours
+- Direct Labor Hours
+- Production Quantity
+- Direct Labor Cost
+- Machine Usage
+- Percentage
+- Fixed Amount
+- Square Footage
+- Cost Center
+- Department
+- Production Area
+
+ويتم استخدام الموجود حاليًا إن كان Allocation Engine موجودًا.
+
+---
+
+57. Machine Hours Method
+
+مناسب للمصانع التي تعتمد على الماكينات.
+
+---
+
+58. Direct Labor Hours Method
+
+مناسب للمصانع كثيفة العمالة.
+
+---
+
+59. Production Quantity Method
+
+التوزيع حسب عدد الوحدات المنتجة.
+
+---
+
+60. Direct Labor Cost Method
+
+التوزيع حسب قيمة العمالة المباشرة.
+
+---
+
+61. Percentage Method
+
+التوزيع كنسبة مئوية حسب إعداد التكلفة.
+
+---
+
+62. Fixed Amount Method
+
+تحميل مبلغ ثابت وفق السياسة المحددة.
+
+---
+
+القسم التاسع عشر: Square Footage
+
+63. Area Allocation
+
+التوزيع حسب المساحة.
+
+مثال:
+
+Factory Rent:
+
+10,000
+
+Factory Area:
+
+1,000 m²
+
+Cost/m²:
+
+10
+
+---
+
+64. Area × Time Allocation
+
+يمكن استخدام:
+
+Square Meter × Time
+
+مثال:
+
+Order uses:
+
+100 m²
+
+for:
+
+5 days
+
+ويتم حساب نصيب الأمر حسب المساحة والزمن.
+
+---
+
+القسم العشرون: Factory / Cost Center
+
+65. Cost Structure
+
+كل تكلفة يمكن ربطها بـ:
+
+- Factory
+- Cost Center
+- Department
+- Production Area
+
+---
+
+66. Factory Isolation
+
+تكلفة Factory 1 لا تحمل على Factory 2.
+
+---
+
+67. Production Area
+
+مثال:
+
+Factory 1
+
+→ Bakery
+
+→ Dough Area
+
+→ Oven Area
+
+→ Packaging Area
+
+---
+
+القسم الحادي والعشرون: Actual vs Applied Overhead
+
+68. Actual Overhead
+
+التكلفة الفعلية التي حدثت خلال الفترة.
+
+---
+
+69. Applied Overhead
+
+التكلفة التي تم تحميلها فعليًا على أوامر التصنيع.
+
+---
+
+70. Overhead Variance
+
+Formula:
+
+Overhead Variance = Actual Overhead − Applied Overhead
+
+---
+
+71. Under-Applied Overhead
+
+إذا:
+
+Actual > Applied
+
+فإن:
+
+Under-Applied Overhead
+
+---
+
+72. Over-Applied Overhead
+
+إذا:
+
+Applied > Actual
+
+فإن:
+
+Over-Applied Overhead
+
+---
+
+73. Variance Report
+
+يعرض:
+
+- Actual
+- Applied
+- Variance
+- Variance %
+- Factory
+- Cost Center
+- Period
+- Category
+- Reason
+
+---
+
+القسم الثاني والعشرون: Overhead Variance Treatment
+
+74. Variance Treatment
+
+إعداد:
+
+Overhead Variance Treatment
+
+الخيارات:
+
+- Close to COGS
+- Allocate to WIP
+- Allocate to Finished Goods
+- Allocate between WIP / FG / COGS
+- Keep as Variance Account
+
+لا يتم الإغلاق تلقائيًا بدون إعداد واضح.
+
+---
+
+القسم الثالث والعشرون: Setup / Changeover
+
+75. Setup Time
+
+يتم فصل:
+
+Setup Time
+
+عن:
+
+Production Time
+
+---
+
+76. Setup Cost
+
+قد يشمل:
+
+- Machine Setup
+- Worker Time
+- Electricity
+- Gas
+- Consumables
+- Tooling
+- Mold
+- Calibration
+
+---
+
+77. Setup Variance
+
+Standard Setup Time
+
+مقابل:
+
+Actual Setup Time
+
+ويحسب:
+
+- Time Variance
+- Cost Variance
+
+---
+
+القسم الرابع والعشرون: First-Off Inspection
+
+78. First-Off
+
+دعم:
+
+- Initial Sample
+- Calibration Material
+- Testing
+- Quality Approval
+- First-Off Units
+
+إذا لم تكن الوحدات صالحة للبيع:
+
+لا تدخل في Good Saleable Quantity.
+
+---
+
+القسم الخامس والعشرون: Rework
+
+79. Rework
+
+إذا كان Rework Engine موجودًا:
+
+Reuse Existing Rework Engine
+
+---
+
+80. Rework Cost
+
+يشمل:
+
+- Labor
+- Machine
+- Materials
+- Time
+- Additional Waste
+
+---
+
+القسم السادس والعشرون: Packaging
+
+81. Primary Packaging
+
+يعتبر Direct Material إذا كان يدخل مباشرة في المنتج.
+
+---
+
+82. Secondary Packaging
+
+مثل:
+
+- Cartons
+- Pallets
+- Strapping
+- Shipping Boxes
+
+ويصنف حسب Master Data.
+
+---
+
+83. Shipping Packaging
+
+يتم تحديد هل يدخل في Manufacturing Cost أو Shipping/SG&A حسب الإعداد.
+
+---
+
+القسم السابع والعشرون: Logistics
+
+84. Landed Cost
+
+يشمل:
+
+- Freight
+- Unloading
+- Receiving
+- Handling
+- Inbound Logistics
+
+إذا كان Landed Cost موجودًا:
+
+Reuse Existing Landed Cost Engine
+
+---
+
+القسم الثامن والعشرون: Storage
+
+85. Storage / Holding Cost
+
+دعم:
+
+- Warehouse Rent
+- Refrigeration
+- Cooling
+- Ventilation
+- Special Storage
+- Handling
+
+مع:
+
+Include in Product Cost
+
+Yes / No
+
+---
+
+القسم التاسع والعشرون: SG&A
+
+86. Selling / Administrative Costs
+
+لا تدخل تلقائيًا في Manufacturing Cost.
+
+تشمل:
+
+Selling
+
+- Sales Commission
+- Marketing
+- Advertising
+- Customer Delivery
+
+Administrative
+
+- Accounting Salaries
+- Management Salaries
+- Legal
+- Office Expenses
+- ERP Subscription
+- Administrative Rent
+- Administrative Security
+- Administrative Cleaning
+
+---
+
+القسم الثلاثون: Financing
+
+87. Financing Costs
+
+منفصلة عن Manufacturing Cost:
+
+- Loan Interest
+- Working Capital Financing
+- Financing Charges
+
+---
+
+القسم الحادي والثلاثون: Cost Layers
+
+88. Manufacturing Cost Layer
+
+Manufacturing Cost =
+
+Direct Materials
+
++ Direct Labor
+
++ Machine Usage
+
++ Machine Operating Cost
+
++ Setup
+
++ Normal Waste
+
++ First-Off
+
++ Rework
+
++ Packaging
+
++ Manufacturing Overhead
+
++ Applicable Logistics
+
++ Applicable Storage
+
+---
+
+89. Operating Cost
+
+Manufacturing Cost
+
++ 
+
+SG&A / Operating Expenses
+
+---
+
+90. Profitability
+
+Revenue
+
+− Manufacturing Cost
+
+=
+
+Gross Manufacturing Margin
+
+ثم:
+
+Gross Margin
+
+− SG&A
+
+=
+
+Operating Profit
+
+ثم:
+
+Operating Profit
+
+− Financing Cost
+
+=
+
+Net Profit Before Tax
+
+وفق النموذج المحاسبي الحالي.
+
+---
+
+القسم الثاني والثلاثون: Cost Traceability
+
+91. Full Cost Traceability
+
+كل Manufacturing Order يعرض:
+
+- Materials
+- Labor
+- Machine
+- Depreciation
+- Electricity
+- Gas
+- Oil
+- Maintenance
+- Setup
+- First-Off
+- Waste
+- Rework
+- Packaging
+- Overhead
+- Logistics
+- Storage
+- Total
+
+---
+
+القسم الثالث والثلاثون: Cost Snapshot
+
+92. Cost Snapshot
+
+وقت التنفيذ يتم حفظ:
+
+- Material Rate
+- Labor Rate
+- Machine Rate
+- Depreciation Rate
+- Electricity Rate
+- Gas Rate
+- Oil Rate
+- Maintenance Rate
+- Setup Rate
+- Overhead Rate
+- Allocation Base
+- Expected Capacity
+- Actual Usage
+
+---
+
+93. Historical Cost Protection
+
+إذا تغيرت الأسعار أو الإعدادات مستقبلًا:
+
+لا يتم إعادة حساب أوامر التصنيع القديمة.
+
+---
+
+القسم الرابع والثلاثون: Double Counting
+
+94. Double Counting Prevention
+
+النظام يمنع تكرار:
+
+- Depreciation
+- Electricity
+- Maintenance
+- Packaging
+- Setup
+- Overhead
+- Machine Costs
+
+---
+
+95. Double Counting Validation
+
+إذا تم اكتشاف:
+
+Electricity included in Machine Rate
+
+ثم تم تحميل نفس الكهرباء مرة أخرى كـOverhead:
+
+يظهر:
+
+Potential Double Counting
+
+إذا كان التكرار مؤكدًا:
+
+يمنع التنفيذ.
+
+---
+
+القسم الخامس والثلاثون: Standard vs Actual
+
+96. Standard Cost
+
+لكل أمر يمكن مقارنة التكلفة القياسية بالتكلفة الفعلية.
+
+---
+
+97. Actual Cost
+
+يتم تسجيل التكلفة الفعلية عند التنفيذ.
+
+---
+
+98. Cost Variance
+
+Variance حسب:
+
+- Material
+- Labor
+- Machine
+- Waste
+- Setup
+- Overhead
+- Total
+
+---
+
+القسم السادس والثلاثون: Waste Variance
+
+99. Waste Variance
+
+Expected Waste
+
+مقابل:
+
+Actual Waste
+
+يعرض:
+
+- Expected Qty
+- Actual Qty
+- Variance Qty
+- Variance %
+- Variance Cost
+
+---
+
+القسم السابع والثلاثون: Capacity Variance
+
+100. Capacity Variance
+
+يقارن:
+
+Expected Capacity
+
+مقابل:
+
+Actual Usage / Production.
+
+ويساعد في تفسير فروق التحميل، خصوصًا التكاليف الثابتة مثل الإيجار.
+
+---
+
+القسم الثامن والثلاثون: Overhead Rate Variance
+
+101. Overhead Rate Variance
+
+يتم تحليل الفرق الناتج عن:
+
+- تغير التكلفة الفعلية.
+- تغير الطاقة.
+- تغير معدل التحميل.
+- انخفاض الإنتاج.
+- زيادة ساعات التشغيل.
+
+---
+
+القسم التاسع والثلاثون: Batch Costing
+
+102. Batch Cost
+
+Batch Cost:
+
+Materials
+
++ Labor
+
++ Machine
+
++ Setup
+
++ First-Off
+
++ Waste
+
++ Rework
+
++ Overhead
+
++ Packaging
+
++ Applicable Logistics
+
+---
+
+103. Unit Cost
+
+Unit Cost = Batch Cost ÷ Good Quantity
+
+---
+
+القسم الأربعون: Manufacturing Templates
+
+104. Save as Template
+
+يمكن حفظ:
+
+- Product
+- BOM
+- Materials
+- Stages
+- Machines
+- Labor
+- Waste
+- Setup
+- Costs
+- Overhead
+- Packaging
+
+كـ:
+
+Manufacturing Template
+
+---
+
+105. Template Is Configuration
+
+القالب:
+
+Configuration وليس Transaction.
+
+---
+
+106. Template Editing
+
+يمكن:
+
+- Edit
+- Copy
+- Deactivate
+- Delete
+
+وتؤثر التعديلات على العمليات المستقبلية فقط.
+
+لا تغير أوامر التصنيع القديمة.
+
+---
+
+القسم الحادي والأربعون: Quick Manufacturing
+
+107. Quick Manufacturing
+
+اختيار:
+
+- Template
+- Quantity
+- Warehouse
+- Date
+
+ثم:
+
+Review
+
+→ Execute
+
+---
+
+القسم الثاني والأربعون: Manufacture Again
+
+108. Manufacture Again
+
+من Manufacturing Order:
+
+Manufacture Again
+
+---
+
+109. Configuration Copied
+
+يتم نسخ:
+
+- Product
+- BOM
+- Materials
+- Stages
+- Stage Order
+- Machines
+- Machine Settings
+- Waste Settings
+- Standard Costs
+- Packaging
+- Manufacturing Configuration
+
+---
+
+110. Transaction Data Not Copied
+
+لا يتم نسخ:
+
+- Order Number
+- Date
+- Actual Quantity
+- Actual Consumption
+- Actual Waste
+- Previous Accounting Entries
+- Previous Results
+- Transaction IDs
+
+والعامل السابق لا ينسخ إذا كان يجب تسجيل العامل الفعلي الجديد.
+
+---
+
+111. Golden Rule
+
+Copy Configuration, Not Transaction
+
+---
+
+القسم الثالث والأربعون: Quantity Scaling
+
+112. Automatic Scaling
+
+إذا كان Template:
+
+1000 Units
+
+والمستخدم يريد:
+
+5000 Units
+
+يتم Scaling تلقائيًا.
+
+---
+
+113. Scaling Rules
+
+باستخدام:
+
+- BOM
+- Unit Conversion
+- Rounding
+- Waste Rules
+- Existing Manufacturing Rules
+
+---
+
+القسم الرابع والأربعون: Lifecycle
+
+114. Manufacturing States
+
+الحالات:
+
+- Draft
+- In Progress
+- Paused
+- Completed
+- Cancelled
+- Reversed
+
+---
+
+القسم الخامس والأربعون: Draft
+
+115. Draft
+
+Draft لا يؤثر على:
+
+- Inventory
+- Accounting
+- Final Costing
+
+حتى التنفيذ.
+
+---
+
+القسم السادس والأربعون: Pause / Resume
+
+116. Pause
+
+يحفظ:
+
+- Current Stage
+- Current Quantity
+- Waste
+- Labor
+- Machine Hours
+- Accumulated Cost
+
+---
+
+117. Resume
+
+يستكمل من نفس المرحلة.
+
+ولا يبدأ من البداية.
+
+---
+
+القسم السابع والأربعون: Cancel
+
+118. Cancel Draft
+
+إذا لم تحدث حركة فعلية:
+
+يمكن الإلغاء.
+
+---
+
+119. Cancel Executed Order
+
+إذا حدث:
+
+- Consumption
+- Production
+- Waste
+- Cost
+- Accounting
+
+لا يتم Delete.
+
+يتم استخدام Cancellation/Reversal الموجود.
+
+---
+
+القسم الثامن والأربعون: Reverse
+
+120. Reverse Manufacturing
+
+لأمر مكتمل:
+
+Reverse Manufacturing Order
+
+---
+
+121. Reverse Through Core
+
+يستخدم Manufacturing Core الحالي لعكس:
+
+- Material Consumption
+- Production
+- Waste
+- Manufacturing Cost
+- Accounting Movements
+
+---
+
+122. Audit Preservation
+
+لا يتم حذف الأمر الأصلي.
+
+يتم الاحتفاظ:
+
+- Original Order
+- Reversal
+- Audit Trail
+
+---
+
+القسم التاسع والأربعون: Transaction Safety
+
+123. Atomic Execution
+
+عملية التنفيذ يجب أن تكون Transactional.
+
+---
+
+124. Rollback
+
+إذا فشل:
+
+- Inventory
+- Manufacturing
+- Costing
+- Accounting
+- Waste
+- Labor
+- Machine
+
+يتم:
+
+Rollback كامل
+
+ولا تترك العملية بيانات نصف مكتملة.
+
+---
+
+القسم الخمسون: Accounting Separation
+
+125. Accounting Expense ≠ Manufacturing Cost
+
+المصروف المحاسبي لا يعني تلقائيًا أنه يدخل بالكامل في تكلفة المنتج.
+
+---
+
+126. Factory Electricity Example
+
+يتم تسجيل الكهرباء محاسبيًا كالمعتاد.
+
+ثم يتم تحديد الجزء الإنتاجي منها من خلال Cost Allocation.
+
+ولا يتم إنشاء قيد محاسبي إضافي لمجرد تحميل التكلفة على الإنتاج.
+
+---
+
+القسم الحادي والخمسون: Cost Center Architecture
+
+127. Cost Centers
+
+التكلفة يمكن ربطها بـ:
+
+- Factory
+- Cost Center
+- Department
+- Production Area
+
+---
+
+128. Factory Classification
+
+مثال:
+
+Factory Rent
+
+→ Manufacturing Overhead
+
+Office Rent
+
+→ Administrative Expense
+
+---
+
+القسم الثاني والخمسون: Cost Audit
+
+129. Why Product Cost?
+
+يجب أن يستطيع المستخدم معرفة:
+
+لماذا تكلفة المنتج = X؟
+
+---
+
+130. Cost Breakdown
+
+مثال:
+
+Materials = 500
+
+Labor = 100
+
+Machine = 150
+
+Overhead = 100
+
+Packaging = 40
+
+Other = 30
+
+Total = 920
+
+---
+
+القسم الثالث والخمسون: Dashboard
+
+131. Existing Dashboard
+
+يجب استخدام Dashboard Components الحالية.
+
+---
+
+132. Dashboard Metrics
+
+يعرض:
+
+- Production Today
+- Manufacturing Orders
+- Quantity Produced
+- Waste
+- Material Cost
+- Labor Cost
+- Machine Cost
+- Setup Cost
+- Manufacturing Overhead
+- Total Manufacturing Cost
+- Unit Cost
+- Standard Cost
+- Actual Cost
+- Variance
+- Margin
+
+---
+
+القسم الرابع والخمسون: Reports
+
+133. Reuse Existing Reports
+
+لا يتم إنشاء تقارير مكررة.
+
+إعادة استخدام:
+
+- Manufacturing Reports
+- Accounting Reports
+- Inventory Reports
+- Fixed Assets Reports
+- Costing Reports
+- Expense Reports
+
+---
+
+134. New Filters Only
+
+إذا احتاج Wizard تقارير إضافية:
+
+يتم إضافة Filters أو Views للتقارير الحالية قبل إنشاء Report جديد.
+
+---
+
+القسم الخامس والخمسون: Advanced Manufacturing
+
+135. Compatibility
+
+Advanced Manufacturing وWizard يعملان معًا.
+
+---
+
+136. Both Enabled
+
+إذا:
+
+Advanced Manufacturing = ON
+
+Wizard = ON
+
+كلاهما يعمل.
+
+---
+
+137. Wizard Only
+
+إذا:
+
+Advanced Manufacturing = OFF
+
+Wizard = ON
+
+يعمل Wizard باستخدام Core والخدمات المطلوبة.
+
+---
+
+138. Both Disabled
+
+إذا:
+
+Advanced Manufacturing = OFF
+
+Wizard = OFF
+
+لا تظهر وظائف التصنيع.
+
+---
+
+القسم السادس والخمسون: Advanced Features
+
+139. Existing Advanced Features
+
+إذا كانت موجودة:
+
+- Batch / Lot
+- Quality
+- Rework
+- Alternative Materials
+- By-products
+- Production Capacity
+- Machine Scheduling
+- Machine Conflict
+- Machine Downtime
+- Barcode / QR
+- Mobile Manufacturing
+
+يتم استدعاؤها من الـExisting Engines.
+
+---
+
+140. No Parallel Engines
+
+ممنوع إعادة بناء هذه الوظائف داخل Wizard.
+
+---
+
+القسم السابع والخمسون: Database
+
+141. Database Inspection First
+
+يجب فحص Schema الحالية.
+
+---
+
+142. Reuse Existing Tables
+
+إذا كانت البيانات يمكن تخزينها في Tables حالية:
+
+Reuse
+
+---
+
+143. Wizard Tables Only If Necessary
+
+يمكن إنشاء فقط ما هو ضروري، مثل:
+
+- ManufacturingWizardTemplates
+- TemplateStages
+- TemplateMaterials
+- WizardDrafts
+- TemplateCosts
+
+لكن بعد التأكد أن النظام الحالي لا يستطيع دعمها.
+
+---
+
+القسم الثامن والخمسون: APIs
+
+144. API Reuse
+
+قبل إنشاء API:
+
+Search Existing
+
+→ Reuse
+
+→ Extend
+
+→ Create Only If Necessary
+
+---
+
+القسم التاسع والخمسون: Execution Pipeline
+
+145. Execution Flow
+
+Wizard
+   ↓
+Validation
+   ↓
+Existing Manufacturing Service
+   ↓
+Manufacturing Order
+   ↓
+BOM
+   ↓
+Material Consumption
+   ↓
+Stages
+   ↓
+Waste
+   ↓
+Labor
+   ↓
+Machine Usage
+   ↓
+Machine Cost
+   ↓
+Manufacturing Overhead
+   ↓
+Finished Product
+   ↓
+Inventory
+   ↓
+Costing
+   ↓
+Accounting
+
+---
+
+القسم الستون: Fixed Asset Historical Protection
+
+146. Historical Machine Cost
+
+إذا تغير:
+
+- Depreciation
+- Machine Rate
+- Approved Hours
+- Electricity Rate
+- Maintenance Rate
+
+لا تتغير أوامر التصنيع القديمة.
+
+---
+
+القسم الحادي والستون: Cost Period
+
+147. Period-Specific Costing
+
+معدل التكلفة مرتبط بـ:
+
+- Period
+- Factory
+- Cost Center
+- Production Area
+
+---
+
+القسم الثاني والستون: Overhead Capacity
+
+148. Expected Capacity
+
+كل Predetermined Rate يجب أن يعتمد على:
+
+Expected Cost ÷ Expected Allocation Base
+
+---
+
+149. Rate Formula
+
+مثال:
+
+Factory Rent = 10,000
+
+Expected Machine Hours = 1,000
+
+Rate:
+
+10/hour
+
+---
+
+القسم الثالث والستون: Low Production Scenario
+
+150. Low Production
+
+إذا انخفض الإنتاج:
+
+قد يصبح:
+
+Actual Overhead > Applied Overhead
+
+ويظهر:
+
+Under-Applied Overhead
+
+بدل زيادة تكلفة كل أمر تصنيع بشكل عشوائي.
+
+---
+
+القسم الرابع والستون: High Production Scenario
+
+151. High Production
+
+إذا أصبح:
+
+Applied Overhead > Actual Overhead
+
+يظهر:
+
+Over-Applied Overhead
+
+ويتم التعامل معه حسب سياسة Variance.
+
+---
+
+القسم الخامس والستون: Variance Analysis
+
+152. Variance Sources
+
+تحليل الفروق حسب:
+
+- Rate Variance
+- Capacity Variance
+- Volume Variance
+- Usage Variance
+- Efficiency Variance
+- Actual Cost Variance
+
+إذا كانت البنية الحالية تدعم هذه الأنواع يتم إعادة استخدامها.
+
+---
+
+القسم السادس والستون: Cost Classification
+
+153. Direct Material
+
+Flour
+
+→ Direct Material
+
+---
+
+154. Recipe Oil
+
+Oil داخل الوصفة:
+
+→ Direct Material
+
+---
+
+155. Machine Lubrication Oil
+
+زيت تشحيم الماكينة:
+
+→ Machine Operating Cost
+
+---
+
+156. Machine Depreciation
+
+→ Machine Cost
+
+---
+
+157. Machine Electricity
+
+إذا كانت مرتبطة مباشرة بالتشغيل:
+
+→ Machine Cost
+
+---
+
+158. Factory General Electricity
+
+→ Manufacturing Overhead
+
+---
+
+159. Factory Rent
+
+→ Manufacturing Overhead
+
+---
+
+160. Factory Security
+
+→ Manufacturing Overhead
+
+---
+
+161. Factory Cleaning
+
+→ Manufacturing Overhead
+
+---
+
+162. Sales Commission
+
+→ SG&A
+
+---
+
+163. Advertising
+
+→ SG&A
+
+---
+
+164. Accountant Salary
+
+→ Administrative
+
+---
+
+165. ERP Subscription
+
+→ Administrative / Operating
+
+---
+
+166. Loan Interest
+
+→ Financing Cost
+
+---
+
+القسم السابع والستون: No Double Counting Rules
+
+167. Electricity
+
+إذا كانت ضمن Machine Rate:
+
+لا تحمل مرة أخرى بنفس الأساس كـOverhead.
+
+---
+
+168. Depreciation
+
+لا تدخل من Fixed Assets ثم تدخل مرة ثانية كـMachine Depreciation يدويًا.
+
+---
+
+169. Maintenance
+
+إذا تم تضمينها في Machine Rate:
+
+لا يتم تحميلها مرة ثانية بنفس الأساس.
+
+---
+
+170. Packaging
+
+إذا كانت محسوبة في BOM:
+
+لا يتم إضافتها مرة ثانية كـPackaging Overhead.
+
+---
+
+171. Setup
+
+إذا كانت داخل Machine Rate:
+
+لا تتم إضافتها مرة أخرى كـSetup Cost.
+
+---
+
+القسم الثامن والستون: Manufacturing Order Cost Snapshot
+
+172. Immutable Cost Snapshot
+
+بعد التنفيذ يتم تثبيت التكلفة المستخدمة للأمر.
+
+---
+
+173. Cost Snapshot Audit
+
+يتم معرفة:
+
+- Rate Used
+- Source
+- Allocation Rule
+- Capacity
+- Usage
+- Applied Amount
+- Actual Amount
+
+---
+
+القسم التاسع والستون: Product Profitability
+
+174. Product Profitability
+
+لكل منتج:
+
+- Selling Price
+- Unit Manufacturing Cost
+- Gross Margin
+- Gross Margin %
+- Optional SG&A Allocation
+- Operating Margin
+- Financing Impact
+- Net Margin
+
+---
+
+القسم السبعون: Full Cost Example
+
+175. Bakery Cost Example
+
+Product:
+
+Bread
+
+Quantity:
+
+1000
+
+Direct Materials:
+
+500
+
+Direct Labor:
+
+100
+
+Machine Depreciation:
+
+80
+
+Machine Electricity:
+
+50
+
+Machine Oil:
+
+20
+
+Maintenance Allocation:
+
+30
+
+Factory Rent Allocation:
+
+70
+
+Security:
+
+15
+
+Cleaning:
+
+10
+
+General Electricity:
+
+25
+
+Other Factory Overhead:
+
+20
+
+Total:
+
+920
+
+---
+
+176. Unit Cost
+
+Good Quantity:
+
+1000
+
+Total Cost:
+
+920
+
+Unit Manufacturing Cost:
+
+0.92
+
+---
+
+القسم الحادي والسبعون: Audit Trail
+
+177. Audit Trail
+
+كل عملية تسجل:
+
+- User
+- Date
+- Time
+- Action
+- Old Value
+- New Value
+- Manufacturing Order
+- Template
+- Cost Changes
+- Status Changes
+- Pause
+- Resume
+- Cancel
+- Reverse
+
+---
+
+القسم الثاني والسبعون: UI / UX
+
+178. Native ERP Design
+
+Wizard يجب أن يطابق النظام الحالي في:
+
+- Layout
+- Sidebar
+- Topbar
+- Colors
+- Fonts
+- Buttons
+- Forms
+- Tables
+- Cards
+- Modals
+- Tabs
+- Stepper
+- Dropdowns
+- Search
+- Filters
+- Pagination
+- Validation
+- Loading
+- Notifications
+- Empty States
+- RTL
+- Dark Mode
+- Light Mode
+
+---
+
+179. No New Design System
+
+ممنوع إنشاء Design System جديد.
+
+يجب استخدام الموجود.
+
+---
+
+القسم الثالث والسبعون: Performance
+
+180. Fast Execution
+
+Wizard يجب أن يكون خفيفًا وسريعًا.
+
+---
+
+181. Avoid Duplicate Queries
+
+استخدام:
+
+- Existing APIs
+- Existing Caching
+- Existing Services
+- Existing Query Optimization
+
+بدون إعادة جلب نفس البيانات عدة مرات.
+
+---
+
+القسم الرابع والسبعون: Error Handling
+
+182. Validation Errors
+
+كل Step يظهر الأخطاء بوضوح.
+
+---
+
+183. Execution Error
+
+إذا فشل التنفيذ:
+
+- إظهار السبب.
+- Rollback.
+- عدم إنشاء بيانات جزئية.
+- تسجيل الخطأ في Audit/Logs.
+
+---
+
+القسم الخامس والسبعون: Testing
+
+184. Functional Testing
+
+اختبار:
+
+- Create
+- Edit
+- Execute
+- Pause
+- Resume
+- Cancel
+- Reverse
+- Manufacture Again
+- Templates
+- Quick Manufacturing
+
+---
+
+185. Cost Testing
+
+اختبار:
+
+- Material
+- Labor
+- Machine
+- Depreciation
+- Electricity
+- Gas
+- Oil
+- Maintenance
+- Setup
+- Waste
+- Rework
+- Packaging
+- Overhead
+- Logistics
+- Storage
+
+---
+
+186. Accounting Testing
+
+اختبار:
+
+- Inventory
+- WIP
+- Finished Goods
+- COGS
+- Variance
+- Accounting Entries
+
+---
+
+187. Permission Testing
+
+اختبار:
+
+- Module Activation
+- User Permission
+- Direct API Access
+- Unauthorized Actions
+
+---
+
+188. Company Isolation Testing
+
+التأكد من عدم تسرب بيانات:
+
+Company A
+
+إلى:
+
+Company B
+
+---
+
+189. Rollback Testing
+
+اختبار فشل كل مرحلة والتأكد من Rollback كامل.
+
+---
+
+190. Double Counting Testing
+
+اختبار جميع حالات:
+
+- Depreciation duplication
+- Electricity duplication
+- Maintenance duplication
+- Packaging duplication
+- Setup duplication
+- Overhead duplication
+
+---
+
+القسم السادس والسبعون: Acceptance Criteria
+
+191. Final Acceptance
+
+لا يعتبر المشروع مكتملًا إلا إذا تحقق:
+
+1. Zero Duplicate Screens
+2. Zero Duplicate Engines
+3. Existing Manufacturing Engine reused
+4. Existing Inventory reused
+5. Existing Accounting reused
+6. Existing Fixed Assets reused
+7. Existing Depreciation reused
+8. Existing Costing reused
+9. Existing Allocation Engine reused if available
+10. Full Cost Traceability
+11. Cost Snapshot
+12. Historical Cost Protection
+13. Standard vs Actual
+14. Waste Variance
+15. Setup Variance
+16. Actual vs Applied Overhead
+17. Under-Applied Overhead
+18. Over-Applied Overhead
+19. Predetermined Overhead Rate
+20. Production Capacity
+21. Multiple Allocation Bases
+22. Machine Hours Allocation
+23. Labor Hours Allocation
+24. Production Quantity Allocation
+25. Direct Labor Cost Allocation
+26. Square Footage Allocation
+27. Area × Time Allocation
+28. Cost Center Allocation
+29. Factory Allocation
+30. Production Area Allocation
+31. Capacity Variance
+32. Overhead Rate Variance
+33. Double Counting Prevention
+34. SG&A Separation
+35. Financing Separation
+36. Transaction Rollback
+37. Audit Trail
+38. Company Isolation
+39. Frontend Permissions
+40. Backend Permissions
+41. Advanced Manufacturing Compatibility
+42. Manufacturing Templates
+43. Quick Manufacturing
+44. Manufacture Again
+45. Pause / Resume
+46. Cancel
+47. Reverse
+48. Fixed Asset Machine Integration
+49. No Duplicate Depreciation Entry
+50. Historical Orders Never Recalculate
+51. Native ERP UI/UX
+52. Factory-specific Costing
+53. Period-specific Rates
+54. Cost Audit
+55. Product Profitability
+56. Batch Costing
+57. Normal / Abnormal Waste
+58. Rework
+59. First-Off Inspection
+60. Setup / Changeover
+61. Packaging Classification
+62. Logistics / Landed Cost
+63. Storage Cost
+64. Cost Center / Department / Production Area
+65. Actual vs Applied Overhead Analysis
+
+---
+
+القسم السابع والسبعون: Final Architecture
+
+                         ERP PLATFORM
+                              │
+                ┌─────────────┴─────────────┐
+                │                           │
+       Advanced Manufacturing       Manufacturing Wizard
+                │                           │
+                └─────────────┬─────────────┘
+                              │
+                    Manufacturing Core
+                              │
+          ┌───────────────────┼───────────────────┐
+          │                   │                   │
+      Inventory            Costing            Accounting
+          │                   │                   │
+          │             Cost Allocation         │
+          │                   │                   │
+          │          Manufacturing Overhead      │
+          │                   │                   │
+          └──────────── Shared Services ─────────┘
+                              │
+               ┌──────────────┴──────────────┐
+               │                             │
+          Fixed Assets                      HR
+               │                             │
+          Depreciation                    Labor Cost
+
+---
+
+القسم الثامن والسبعون: Final Engineering Principles
+
+192. One Manufacturing Core
+
+Manufacturing Engine واحد.
+
+---
+
+193. One Costing Architecture
+
+Costing Architecture واحدة.
+
+---
+
+194. Shared Services
+
+كل الوحدات تستخدم الخدمات المشتركة.
+
+---
+
+195. Advanced Manufacturing + Wizard
+
+واجهتان مختلفتان فوق نفس الـCore.
+
+---
+
+196. Zero Duplication
+
+لا تكرار في:
+
+- Screens
+- APIs
+- Services
+- Entities
+- Tables
+- Engines
+
+---
+
+197. Full Cost Traceability
+
+كل جنيه في تكلفة المنتج يجب أن يكون قابلًا للتتبع.
+
+---
+
+198. No Double Counting
+
+أي تكلفة لا يتم تحميلها مرتين.
+
+---
+
+199. Cost Snapshot
+
+تكلفة أمر التصنيع تثبت وقت التنفيذ.
+
+---
+
+200. Configuration, Not Transaction
+
+Templates تحفظ الإعدادات، وليس المعاملات السابقة.
+
+---
+
+201. Copy Configuration, Not Transaction
+
+Manufacture Again ينسخ الإعداد وليس العملية السابقة.
+
+---
+
+202. Reuse Before Create
+
+البحث عن الموجود قبل إنشاء أي شيء.
+
+---
+
+203. Accounting Expense ≠ Manufacturing Cost
+
+ليس كل مصروف محاسبي يدخل تكلفة المنتج.
+
+---
+
+204. Manufacturing Cost ≠ Operating Cost
+
+تكلفة التصنيع منفصلة عن SG&A.
+
+---
+
+205. Operating Cost ≠ Financing Cost
+
+تكلفة التشغيل منفصلة عن التمويل.
+
+---
+
+206. Actual ≠ Applied
+
+التكلفة الفعلية منفصلة عن التكلفة المحملة.
+
+---
+
+207. Expected Capacity ≠ Actual Capacity
+
+الطاقة المتوقعة تستخدم في Predetermined Rate، بينما الفعلية تستخدم في تحليل Variance.
+
+---
+
+208. Historical Orders Are Immutable
+
+تغيير إعدادات التكلفة مستقبلًا لا يغير تكلفة العمليات القديمة.
+
+---
+
+209. Fixed Assets Own Depreciation
+
+Fixed Assets مسؤول عن الإهلاك المحاسبي.
+
+---
+
+210. Manufacturing Owns Machine Usage
+
+Manufacturing مسؤول عن ساعات الاستخدام وتحميل تكلفة الماكينة.
+
+---
+
+211. Overhead Is Allocated, Not Duplicated
+
+التكاليف الصناعية غير المباشرة يتم توزيعها باستخدام Allocation Rules واضحة.
+
+---
+
+212. Variance Must Be Visible
+
+أي فرق بين Actual وApplied يجب أن يكون ظاهرًا وقابلًا للتحليل.
+
+---
+
+213. User Must Understand Product Cost
+
+النظام يجب أن يجيب بوضوح:
+
+Why is Product Cost X?
+
+---
+
+الخلاصة التنفيذية النهائية
+
+المطلوب من AI عند تنفيذ المشروع:
+
+لا يبدأ بالبرمجة مباشرة.
+
+أولًا:
+
+Analyze Existing System
+
+ثم:
+
+Identify Existing Engines / APIs / Screens / Tables
+
+ثم:
+
+Build Manufacturing Wizard on Top of Existing Core
+
+ثم:
+
+Integrate Existing Inventory + Accounting + HR + Fixed Assets + Costing
+
+ثم:
+
+Implement Complete Manufacturing Cost Architecture
+
+ثم:
+
+Implement Predetermined Overhead + Capacity + Allocation + Actual vs Applied + Variance
+
+ثم:
+
+Implement Templates + Quick Manufacturing + Manufacture Again
+
+ثم:
+
+Implement Pause / Resume / Cancel / Reverse
+
+ثم:
+
+Implement Cost Snapshot + Audit + Double Counting Protection
+
+ثم:
+
+Run Full Integration / Security / Accounting / Costing Tests
+
+---
+
+MASTER RULE
+
+«لا تحذف أي وظيفة موجودة في النظام.
+
+لا تبنِ نظامًا موازيًا.
+
+لا تنشئ Engine جديدًا إذا كان الموجود يمكن إعادة استخدامه.
+
+لا تنشئ شاشة جديدة إذا كانت الشاشة الحالية يمكن تطويرها أو إعادة استخدامها.
+
+لا تغير تاريخ أو تكلفة أمر تصنيع سابق بسبب تغيير إعدادات مستقبلية.
+
+لا تسمح بتكرار أي تكلفة.
+
+لا تجعل كل مصروف محاسبي Manufacturing Cost تلقائيًا.
+
+كل تكلفة يجب أن يكون لها مصدر وطريقة تحميل وقابلية للتتبع.
+
+كل Allocation يجب أن يكون قابلًا للتفسير والمراجعة.
+
+Manufacturing Wizard هو واجهة مبسطة فوق Manufacturing Core، وليس Manufacturing System ثاني.»
+
+FINAL ARCHITECTURE PRINCIPLE
+
+ONE ERP
+
+→ ONE Manufacturing Core
+
+→ ONE Costing Architecture
+
+→ ONE Inventory Engine
+
+→ ONE Accounting Engine
+
+→ ONE Fixed Assets / Depreciation Engine
+
+→ ONE Shared Allocation Architecture
+
+→ Advanced Manufacturing + Manufacturing Wizard
+
+→ ZERO DUPLICATION
+
+→ FULL COST TRACEABILITY
+
+→ NO DOUBLE COUNTING
+
+→ HISTORICAL COST SNAPSHOT
+
+→ AUDITABLE MANUFACTURING
+
+→ SCALABLE COST ACCOUNTING
+[١٠/‏٩ ٨:٢٤ م] Saed Azzam2: استكمال وتطوير موديل التصنيع الحالي مع الالتزام التام بعدم تكرار أو إعادة إنشاء أي وظيفة موجودة بالفعل.
+
+قبل تنفيذ أي نقطة:
+
+1. افحص الكود وقاعدة البيانات والشاشات الحالية للتأكد هل الميزة موجودة بالفعل.
+2. إذا كانت الميزة موجودة وتعمل بشكل صحيح، لا تقم بإنشائها مرة أخرى ولا تعدلها إلا إذا كان هناك نقص واضح في وظائفها.
+3. إذا كانت الميزة موجودة جزئيًا، قم باستكمال الجزء الناقص فقط مع الحفاظ على الوظائف الحالية.
+4. لا تقم بتغيير أو حذف أي دورة عمل أو بيانات أو شاشة تعمل حاليًا.
+5. حافظ على الربط الحالي بين التصنيع والمخزون والحسابات والتكلفة.
+6. قبل أي تعديل جوهري، افحص تأثيره على الوحدات الأخرى وتأكد من عدم حدوث تعارض أو تكرار في القيود أو حركات المخزون.
+
+المزايا المطلوب فحص وجودها واستكمال الناقص منها فقط:
+
+- BOM متعددة المستويات.
+- مراكز العمل Work Centers.
+- تخطيط وجدولة الإنتاج.
+- Shop Floor وتنفيذ مراحل الإنتاج.
+- تكلفة العمالة ووقت التشغيل ومراكز العمل.
+- نظام الجودة ونقاط الفحص.
+- مؤشرات OEE وكفاءة الإنتاج.
+- الصيانة المرتبطة بالآلات ومراكز العمل.
+- PLM وإصدارات BOM واعتماد التعديلات.
+- التصنيع لدى الغير Subcontracting.
+- Lot/Serial Traceability.
+- Barcode في عمليات التصنيع.
+- تقارير تكلفة وإنتاجية وانحرافات التصنيع.
+- تحليل التكلفة المعيارية مقابل التكلفة الفعلية.
+- تحليل الهالك والاستهلاك.
+- ربحية المنتجات.
+
+مع الحفاظ على الـWizard الحالي ومراحل التصنيع الديناميكية، وعدم استبدال التصميم الحالي إذا كان يحقق الوظيفة المطلوبة.
+
+الهدف هو تطوير موديل التصنيع الحالي إلى مستوى احترافي منافس للأنظمة العالمية، وليس إعادة بناء ما تم تنفيذه.
+
+قاعدة أساسية:
+"افحص أولًا → حدد الموجود → حدد الناقص → نفذ الناقص فقط → اختبر عدم وجود تكرار أو تعارض."
+
+بعد الانتهاء، أنشئ تقريرًا يوضح:
+
+- المزايا الموجودة بالفعل.
+- المزايا التي تم استكمالها.
+- المزايا التي تمت إضافتها.
+- المزايا التي لم تكن بحاجة إلى تعديل.
+- الاختبارات التي تم تنفيذها للتأكد من سلامة النظام.
+[١٠/‏٩ ٨:٢٦ م] Saed Azzam2: تطوير ربط سلس بين موديل الأمن والمراقبة وباقي موديلات ZACOD ERP، مع جعل موديل المراقبة اختياريًا ولا يؤثر على النظام إذا لم يتم تفعيله.
+
+أولًا:
+عند تفعيل موديل الأمن والمراقبة من إعدادات الشركة، يظهر معالج إعداد Wizard بسيط لإكمال الربط تلقائيًا.
+
+يشمل المعالج:
+
+- إضافة جهاز/سيرفر المراقبة.
+- إضافة الكاميرات واكتشاف الكاميرات المتاحة تلقائيًا عند إمكانية ذلك.
+- تحديد اسم وموقع كل كاميرا.
+- ربط الكاميرا بالفرع أو المخزن أو المصنع أو نقطة البيع أو المدخل.
+- تحديد نوع الكاميرا والبروتوكول المستخدم مثل RTSP/ONVIF عند توفره.
+- اختبار الاتصال بالكاميرا قبل الحفظ.
+- إظهار حالة الاتصال Online/Offline.
+- إمكانية إعادة الاتصال تلقائيًا عند انقطاع الاتصال.
+
+ثانيًا:
+إتاحة ربط الكاميرات بموديلات ZACOD المختلفة، مثل:
+
+- المخازن.
+- التصنيع.
+- نقاط البيع.
+- الموارد البشرية.
+- الفروع.
+- المداخل والمخارج.
+- مناطق التحميل والاستلام.
+- مناطق الإنتاج.
+
+ثالثًا:
+إنشاء نظام Events موحد يسمح بتسجيل الأحداث المهمة وربطها بالكاميرا والوقت والموقع والموظف أو العملية عند توفر البيانات.
+
+أمثلة:
+
+- دخول أو خروج من منطقة محددة.
+- حركة غير معتادة.
+- فتح منطقة أو باب مراقب.
+- توقف أو انقطاع كاميرا.
+- أحداث مرتبطة بالإنتاج أو المخزن.
+- أحداث مرتبطة بنقطة البيع عند الحاجة.
+
+رابعًا:
+ربط أحداث المراقبة بالعمليات داخل ERP بحيث يمكن للمستخدم من داخل العملية نفسها الوصول إلى التسجيل أو الحدث المرتبط بها، عند توفر التسجيل والصلاحيات.
+
+مثال:
+أمر تصنيع رقم 10025 → المرحلة الثالثة → وقت التنفيذ → الكاميرا المرتبطة بالمكان → عرض الحدث/التسجيل المرتبط.
+
+خامسًا:
+إنشاء شاشة Dashboard للأمن والمراقبة تعرض:
+
+- جميع الكاميرات.
+- حالة الاتصال.
+- آخر الأحداث.
+- التنبيهات.
+- تسجيلات الأحداث المرتبطة بالعمليات.
+- الأجهزة المتوقفة.
+- سجل الأحداث حسب التاريخ والفرع والموقع.
+
+سادسًا:
+إضافة نظام صلاحيات دقيق:
+
+- من يستطيع مشاهدة الكاميرات.
+- من يستطيع مشاهدة التسجيلات.
+- من يستطيع تحميل التسجيلات.
+- من يستطيع حذف التسجيلات.
+- من يستطيع إدارة الأجهزة والكاميرات.
+- تسجيل جميع عمليات المشاهدة والتعديل والحذف في Audit Log.
+
+سابعًا:
+عدم تخزين الفيديو داخل قاعدة بيانات ERP إلا إذا كان ذلك ضروريًا؛ يفضل الاعتماد على جهاز/سيرفر NVR أو نظام تخزين مخصص، وتخزين بيانات الربط والأحداث والمرجع الزمني داخل ZACOD.
+
+ثامنًا:
+تصميم التكامل بطريقة Modular بحيث يمكن إضافة أنواع وأجهزة كاميرات مختلفة مستقبلًا بدون تعديل جوهري في النظام الأساسي.
+
+تاسعًا:
+إذا لم يتم تفعيل موديل الأمن والمراقبة، يجب ألا تظهر وظائفه للمستخدم وألا تؤثر على أداء أو تشغيل باقي موديلات ZACOD.
+
+قاعدة أساسية:
+افحص الوظائف الموجودة أولًا، ولا تنشئ أي وظيفة مكررة. إذا كانت خاصية موجودة في النظام، استخدمها ووسعها فقط عند الحاجة.
+
+الهدف:
+جعل تفعيل نظام الأمن والمراقبة في ZACOD عملية بسيطة وسريعة، بحيث يستطيع العميل إضافة الكاميرات وربطها بمواقع وعمليات ERP من خلال Wizard واحد، مع الحفاظ على سهولة الاستخدام والأمان والأداء.
