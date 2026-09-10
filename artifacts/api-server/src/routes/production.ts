@@ -16,6 +16,7 @@ import {
   warehousesTable,
   itemsTable,
   stockBalanceTable,
+  stockLedgerTable,
   accountsTable,
   journalEntriesTable,
   journalEntryLinesTable,
@@ -52,6 +53,10 @@ import {
   fixedAssetsTable,
   accountingAdjustmentRunsTable,
   accountingAdjustmentsTable,
+  salesInvoicesTable,
+  salesInvoiceLinesTable,
+  salesReturnsTable,
+  salesReturnLinesTable,
   type ProductionOrderStatus,
   type ProductionStageStatus,
 } from "@workspace/db";
@@ -107,6 +112,10 @@ async function createJournalEntry(opts: {
   costCenter?: string | null;
   // Audit-trail fields injected by callers via `fullAuditFor(req)`.
   audit?: Record<string, unknown>;
+  // Reversals must retain the posting state of the journal they reverse.
+  // Re-resolving the tenant's current auto-post preference can otherwise
+  // leave stock reversed while the accounting reversal remains a draft.
+  status?: string;
   lines: JLine[];
   dx?: any;
 }): Promise<number> {
@@ -152,7 +161,7 @@ async function createJournalEntry(opts: {
   // auto-post OFF — otherwise a draft JE would look "posted" in the audit
   // dialog. Callers may pass `audit: { req }` for live wiring or a pre-
   // baked object for legacy paths; both are honoured.
-  const jeStatus = await resolvePostingStatus(opts.companyId, "production");
+  const jeStatus = opts.status ?? await resolvePostingStatus(opts.companyId, "production");
   const auditFields = opts.audit?.req
     ? fullAuditFor(opts.audit.req as any, jeStatus)
     : (opts.audit ?? {});
@@ -624,7 +633,7 @@ router.get("/cost-sources", async (req, res) => {
     }).from(productionCostAllocationsTable)
       .innerJoin(productionOrdersTable, eq(productionCostAllocationsTable.orderId, productionOrdersTable.id))
       .where(and(eq(productionCostAllocationsTable.companyId, cid),
-        ne(productionOrdersTable.status, "cancelled")))
+        sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`))
       .groupBy(productionCostAllocationsTable.sourceType, productionCostAllocationsTable.sourceRecordId);
     const used = new Map(allocated.map((x: any) => [`${x.sourceType}:${x.sourceRecordId}`, num(x.amount)]));
     res.json(sources.map((s) => ({ ...s, allocatedAmount: used.get(`${s.sourceType}:${s.sourceRecordId}`) ?? 0,
@@ -1088,6 +1097,374 @@ router.get("/orders/:id/cost-drilldown", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Operational certificate / royalty / warranty lifecycle attached to the
+// existing manufacturing order. Recognised amounts can only come from an
+// immutable production_cost_allocation snapshot. Terms and lifecycle state do
+// not post journals, so the owning source module remains the single booker.
+const COMMERCIAL_LIFECYCLE_TYPES = new Set(["certificate", "royalty", "warranty"]);
+const COMMERCIAL_LIFECYCLE_STATUSES = new Set([
+  "draft", "active", "expired", "suspended", "settled", "cancelled",
+]);
+const COMMERCIAL_LIFECYCLE_TRANSITIONS: Record<string, string[]> = {
+  draft: ["active", "cancelled"],
+  active: ["suspended", "expired", "settled", "cancelled"],
+  suspended: ["active", "expired", "cancelled"],
+  expired: [],
+  settled: [],
+  cancelled: [],
+};
+
+function lifecycleRows(meta: unknown): any[] {
+  const rows = (meta && typeof meta === "object" ? (meta as any).commercialLifecycle : null);
+  return Array.isArray(rows) ? rows.filter((x) => x && typeof x === "object") : [];
+}
+
+router.get("/orders/:id/commercial-lifecycle", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [order] = await db.select().from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, id), eq(productionOrdersTable.companyId, cid),
+    )).limit(1);
+    if (!order || !rowInScope(req, order.branchId))
+      return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const records = lifecycleRows(order.meta);
+    const allocationIds = records.map((x) => Number(x.sourceAllocationId))
+      .filter((x) => Number.isInteger(x) && x > 0);
+    const allocations = allocationIds.length ? await db.select().from(productionCostAllocationsTable)
+      .where(and(eq(productionCostAllocationsTable.companyId, cid),
+        eq(productionCostAllocationsTable.orderId, id),
+        inArray(productionCostAllocationsTable.id, allocationIds))) : [];
+    const allocationById = new Map(allocations.map((x) => [x.id, x]));
+    res.json({
+      records: records.map((record) => {
+        const source = allocationById.get(Number(record.sourceAllocationId)) ?? null;
+        return {
+          ...record,
+          recognisedAmount: source ? (order.status === "reversed" ? 0 : num(source.allocatedAmount)) : null,
+          originalAllocatedAmount: source ? num(source.allocatedAmount) : null,
+          recognitionStatus: order.status === "reversed" ? "reversed_with_order" : "current",
+          source: source ? {
+            allocationId: source.id,
+            sourceType: source.sourceType,
+            sourceRecordId: source.sourceRecordId,
+            periodStart: source.periodStart,
+            periodEnd: source.periodEnd,
+            snapshotMeta: source.snapshotMeta,
+          } : null,
+        };
+      }),
+      accountingRule: "source_allocation_only_no_duplicate_posting",
+    });
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
+
+router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    if (!canAccessModule(req.authUser, "production", "post"))
+      return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
+    const orderId = Number(req.params.id);
+    const body = req.body ?? {};
+    const type = String(body.type ?? "");
+    const status = String(body.status ?? "draft");
+    if (!COMMERCIAL_LIFECYCLE_TYPES.has(type) || !COMMERCIAL_LIFECYCLE_STATUSES.has(status))
+      return void res.status(400).json({ error: "نوع أو حالة دورة الحياة غير صحيحة" });
+    if (!["draft", "active"].includes(status))
+      return void res.status(400).json({ error: "السجل الجديد يجب أن يبدأ كمسودة أو نشط" });
+    const name = String(body.name ?? "").trim();
+    if (!name) return void res.status(400).json({ error: "الاسم/العقد مطلوب" });
+    const sourceAllocationId = body.sourceAllocationId ? Number(body.sourceAllocationId) : null;
+    const salesReturnId = body.salesReturnId ? Number(body.salesReturnId) : null;
+    const allowedMethods = type === "royalty"
+      ? ["per_unit", "sales_percentage", "manufacturing_cost_percentage", "tiered"]
+      : type === "warranty"
+        ? ["actual_claim", "provision", "fixed_per_unit", "sales_percentage"]
+        : ["period", "quantity", "batch_test"];
+    const calculationMethod = String(body.calculationMethod ?? allowedMethods[0]);
+    if (!allowedMethods.includes(calculationMethod))
+      return void res.status(400).json({ error: "طريقة الحساب غير صحيحة" });
+    const effectiveFrom = body.effectiveFrom ? String(body.effectiveFrom) : null;
+    const effectiveTo = body.effectiveTo ? String(body.effectiveTo) : null;
+    if (effectiveFrom && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom))
+      return void res.status(400).json({ error: "تاريخ البداية غير صحيح" });
+    if (effectiveTo && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveTo))
+      return void res.status(400).json({ error: "تاريخ النهاية غير صحيح" });
+    if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom)
+      return void res.status(400).json({ error: "تاريخ النهاية يسبق البداية" });
+    for (const [key, label] of [["rate", "المعدل"], ["minimumAmount", "الحد الأدنى"], ["maximumAmount", "الحد الأقصى"]] as const) {
+      if (body[key] != null && (!Number.isFinite(Number(body[key])) || Number(body[key]) < 0))
+        return void res.status(400).json({ error: `${label} يجب أن يكون رقماً غير سالب` });
+    }
+    if (body.minimumAmount != null && body.maximumAmount != null &&
+        Number(body.maximumAmount) < Number(body.minimumAmount))
+      return void res.status(400).json({ error: "الحد الأقصى أقل من الحد الأدنى" });
+    if (type === "warranty" && calculationMethod === "actual_claim" && !salesReturnId)
+      return void res.status(400).json({ error: "المطالبة الفعلية تتطلب ربط مرتجع بيع مُرحّل" });
+    if (type === "warranty" && calculationMethod === "actual_claim" && !sourceAllocationId)
+      return void res.status(400).json({ error: "المطالبة الفعلية تتطلب لقطة تكلفة ضمان مُرحّلة من المصدر" });
+    const rate = body.rate == null ? null : Number(body.rate);
+    if (type === "royalty" && status === "active" && !(rate != null && rate > 0))
+      return void res.status(400).json({ error: "تفعيل عقد Royalty يتطلب معدلاً موجباً" });
+    if ((calculationMethod === "sales_percentage" || calculationMethod === "manufacturing_cost_percentage") &&
+        rate != null && rate > 100)
+      return void res.status(400).json({ error: "معدل النسبة لا يمكن أن يتجاوز 100%" });
+    if (status === "active") {
+      const today = new Date().toISOString().slice(0, 10);
+      if (effectiveFrom && effectiveFrom > today)
+        return void res.status(400).json({ error: "لا يمكن تفعيل سجل قبل تاريخ سريانه" });
+      if (effectiveTo && effectiveTo < today)
+        return void res.status(400).json({ error: "لا يمكن تفعيل سجل منتهي الصلاحية" });
+    }
+
+    const record = await db.transaction(async (tx) => {
+      const locked = await tx.execute(sql`
+        select id, branch_id, product_item_id, status, meta
+        from production_orders
+        where id = ${orderId} and company_id = ${cid}
+        for update
+      `);
+      const order: any = locked.rows[0];
+      if (!order || !rowInScope(req, order.branch_id))
+        throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+      if (order.status === "cancelled")
+        throw Object.assign(new Error("لا يمكن تعديل دورة حياة أمر ملغى"), { status: 409 });
+
+      let allocation: any = null;
+      if (sourceAllocationId) {
+        [allocation] = await tx.select().from(productionCostAllocationsTable).where(and(
+          eq(productionCostAllocationsTable.id, sourceAllocationId),
+          eq(productionCostAllocationsTable.companyId, cid),
+          eq(productionCostAllocationsTable.orderId, orderId),
+        )).limit(1);
+        if (!allocation)
+          throw Object.assign(new Error("لقطة مصدر التكلفة غير موجودة لهذا الأمر"), { status: 400 });
+        const treatment = String((allocation.snapshotMeta as any)?.costTreatment ?? "");
+        if (treatment !== type && !(type === "certificate" && treatment === "certification"))
+          throw Object.assign(new Error("تصنيف لقطة المصدر لا يطابق نوع السجل"), { status: 400 });
+      }
+      if (salesReturnId) {
+        if (type !== "warranty")
+          throw Object.assign(new Error("ربط مرتجع البيع متاح للضمان فقط"), { status: 400 });
+        const [returnLine] = await tx.select({ id: salesReturnsTable.id })
+          .from(salesReturnsTable)
+          .innerJoin(salesReturnLinesTable, and(
+            eq(salesReturnLinesTable.returnId, salesReturnsTable.id),
+            eq(salesReturnLinesTable.companyId, cid),
+          ))
+          .where(and(eq(salesReturnsTable.id, salesReturnId),
+            eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
+            eq(salesReturnLinesTable.itemId, Number(order.product_item_id))))
+          .limit(1);
+        if (!returnLine)
+          throw Object.assign(new Error("المرتجع المُرحّل لا يحتوي منتج أمر التصنيع"), { status: 400 });
+      }
+      if (status !== "draft" && !sourceAllocationId && calculationMethod !== "provision")
+        throw Object.assign(new Error("التفعيل المالي يتطلب لقطة تكلفة مُرحّلة من المصدر"), { status: 400 });
+
+      const rows = lifecycleRows(order.meta);
+      if (sourceAllocationId && rows.some((x) => Number(x.sourceAllocationId) === sourceAllocationId))
+        throw Object.assign(new Error("لقطة المصدر مرتبطة بالفعل بسجل دورة حياة آخر في هذا الأمر"), { status: 409 });
+      if (salesReturnId && rows.some((x) => Number(x.salesReturnId) === salesReturnId))
+        throw Object.assign(new Error("مرتجع البيع مرتبط بالفعل بمطالبة ضمان أخرى في هذا الأمر"), { status: 409 });
+      const now = new Date().toISOString();
+      const next = {
+        id: randomBytes(12).toString("hex"),
+        type, name: name.slice(0, 250), status, calculationMethod,
+        rate: body.rate == null ? null : num(body.rate),
+        minimumAmount: body.minimumAmount == null ? null : num(body.minimumAmount),
+        maximumAmount: body.maximumAmount == null ? null : num(body.maximumAmount),
+        effectiveFrom, effectiveTo, sourceAllocationId, salesReturnId,
+        notes: body.notes ? String(body.notes).slice(0, 2000) : null,
+        createdAt: now, updatedAt: now, createdBy: req.authUser!.id,
+      };
+      const meta = { ...(order.meta ?? {}), commercialLifecycle: [...rows, next] };
+      await tx.update(productionOrdersTable).set({ meta, updatedAt: new Date() }).where(and(
+        eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid),
+      ));
+      await writeEvent(cid, orderId, `${type}_lifecycle_created`, {
+        lifecycleId: next.id, status, sourceAllocationId, salesReturnId,
+        recognisedAmount: allocation ? num(allocation.allocatedAmount) : null,
+      }, req.authUser!.id, false, tx);
+      return next;
+    });
+    res.status(201).json(record);
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
+
+router.patch("/orders/:id/commercial-lifecycle/:lifecycleId", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    if (!canAccessModule(req.authUser, "production", "post"))
+      return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
+    const orderId = Number(req.params.id);
+    const lifecycleId = String(req.params.lifecycleId);
+    const status = String(req.body?.status ?? "");
+    if (!COMMERCIAL_LIFECYCLE_STATUSES.has(status))
+      return void res.status(400).json({ error: "حالة دورة الحياة غير صحيحة" });
+    const updated = await db.transaction(async (tx) => {
+      const locked = await tx.execute(sql`
+        select id, branch_id, status, meta from production_orders
+        where id = ${orderId} and company_id = ${cid} for update
+      `);
+      const order: any = locked.rows[0];
+      if (!order || !rowInScope(req, order.branch_id))
+        throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+      if (order.status === "cancelled")
+        throw Object.assign(new Error("لا يمكن تعديل دورة حياة أمر ملغى"), { status: 409 });
+      const rows = lifecycleRows(order.meta);
+      const index = rows.findIndex((x) => x.id === lifecycleId);
+      if (index < 0) throw Object.assign(new Error("سجل دورة الحياة غير موجود"), { status: 404 });
+      const current = rows[index];
+      if (!(COMMERCIAL_LIFECYCLE_TRANSITIONS[String(current.status)] ?? []).includes(status))
+        throw Object.assign(new Error(`لا يمكن نقل دورة الحياة من ${current.status} إلى ${status}`), { status: 409 });
+      if (status === "active" && !current.sourceAllocationId && current.calculationMethod !== "provision")
+        throw Object.assign(new Error("التفعيل المالي يتطلب لقطة تكلفة مُرحّلة من المصدر"), { status: 400 });
+      if (status === "active") {
+        const today = new Date().toISOString().slice(0, 10);
+        if (current.effectiveFrom && current.effectiveFrom > today)
+          throw Object.assign(new Error("لا يمكن التفعيل قبل تاريخ السريان"), { status: 400 });
+        if (current.effectiveTo && current.effectiveTo < today)
+          throw Object.assign(new Error("لا يمكن تفعيل سجل منتهي الصلاحية"), { status: 400 });
+        if (current.type === "royalty" && !(num(current.rate) > 0))
+          throw Object.assign(new Error("تفعيل عقد Royalty يتطلب معدلاً موجباً"), { status: 400 });
+      }
+      const next = { ...current, status, updatedAt: new Date().toISOString(), updatedBy: req.authUser!.id };
+      rows[index] = next;
+      await tx.update(productionOrdersTable).set({
+        meta: { ...(order.meta ?? {}), commercialLifecycle: rows }, updatedAt: new Date(),
+      }).where(and(eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid)));
+      await writeEvent(cid, orderId, `${current.type}_lifecycle_status_changed`,
+        { lifecycleId, from: current.status, to: status }, req.authUser!.id, false, tx);
+      return next;
+    });
+    res.json(updated);
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
+
+// Aggregate manufacturing reports. Sales are deliberately attributed only at
+// product + period level because sales lines do not currently carry production
+// order/batch ids. This prevents fabricated order-level profitability.
+router.get("/reports/costs", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const from = typeof req.query.from === "string" ? req.query.from : "0001-01-01";
+    const to = typeof req.query.to === "string" ? req.query.to : "9999-12-31";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from)
+      return void res.status(400).json({ error: "نطاق التاريخ غير صحيح" });
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId,
+      req.query.branchId ? Number(req.query.branchId) : undefined);
+    if (branchResult.deny) return void res.json({ orders: [], sources: [], products: [] });
+    const orderWhere = and(eq(productionOrdersTable.companyId, cid),
+      sql`coalesce(${productionOrdersTable.actualEndAt}::date, ${productionOrdersTable.plannedStartDate}) between ${from} and ${to}`,
+      branchResult.cond);
+    const [orders, sources, products] = await Promise.all([
+      db.select({
+        status: productionOrdersTable.status,
+        orders: sql<number>`count(*)::int`,
+        planned: sql<string>`coalesce(sum(${productionOrdersTable.estimatedCost}),0)`,
+        actual: sql<string>`coalesce(sum(${productionOrdersTable.actualCost}),0)`,
+      }).from(productionOrdersTable).where(orderWhere).groupBy(productionOrdersTable.status),
+      db.select({
+        sourceType: productionCostAllocationsTable.sourceType,
+        treatment: sql<string>`coalesce(${productionCostAllocationsTable.snapshotMeta}->>'costTreatment','unclassified')`,
+        amount: sql<string>`coalesce(sum(${productionCostAllocationsTable.allocatedAmount}),0)`,
+        allocations: sql<number>`count(*)::int`,
+      }).from(productionCostAllocationsTable)
+        .innerJoin(productionOrdersTable, and(
+          eq(productionOrdersTable.id, productionCostAllocationsTable.orderId),
+          eq(productionOrdersTable.companyId, cid)))
+        .where(and(
+          orderWhere,
+          eq(productionCostAllocationsTable.companyId, cid),
+          sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
+        ))
+        .groupBy(productionCostAllocationsTable.sourceType,
+          sql`${productionCostAllocationsTable.snapshotMeta}->>'costTreatment'`),
+      db.select({
+        productItemId: productionOrdersTable.productItemId,
+        productName: itemsTable.nameAr,
+        producedQty: sql<string>`coalesce(sum(${productionOrdersTable.producedQty}),0)`,
+        standardCost: sql<string>`coalesce(sum(${productionOrdersTable.estimatedCost}),0)`,
+        actualCost: sql<string>`coalesce(sum(${productionOrdersTable.actualCost}),0)`,
+      }).from(productionOrdersTable)
+        .leftJoin(itemsTable, and(eq(itemsTable.id, productionOrdersTable.productItemId),
+          eq(itemsTable.companyId, cid)))
+        .where(and(orderWhere, sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`))
+        .groupBy(productionOrdersTable.productItemId, itemsTable.nameAr),
+    ]);
+    res.json({
+      orders: orders.map((x) => ({ ...x, variance: num(x.actual) - num(x.planned) })),
+      sources, products: products.map((x) => ({ ...x,
+        variance: num(x.actualCost) - num(x.standardCost),
+        actualUnitCost: num(x.producedQty) > 0 ? num(x.actualCost) / num(x.producedQty) : null })),
+      scope: { from, to, branchScoped: Boolean(branchResult.cond) },
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/reports/realized-product-profitability", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const from = typeof req.query.from === "string" ? req.query.from : "0001-01-01";
+    const to = typeof req.query.to === "string" ? req.query.to : "9999-12-31";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from)
+      return void res.status(400).json({ error: "نطاق التاريخ غير صحيح" });
+    const requestedBranch = req.query.branchId ? Number(req.query.branchId) : undefined;
+    const salesBranch = effectiveBranchCondition(req, salesInvoicesTable.branchId, requestedBranch);
+    const returnsBranch = effectiveBranchCondition(req, salesReturnsTable.branchId, requestedBranch);
+    if (salesBranch.deny || returnsBranch.deny) return void res.json({ products: [] });
+    const [sales, returns] = await Promise.all([
+      db.select({
+        itemId: salesInvoiceLinesTable.itemId,
+        quantity: sql<string>`coalesce(sum(${salesInvoiceLinesTable.qty}),0)`,
+        revenue: sql<string>`coalesce(sum(${salesInvoiceLinesTable.lineTotal} * ${salesInvoicesTable.exchangeRate}),0)`,
+      }).from(salesInvoiceLinesTable).innerJoin(salesInvoicesTable, and(
+        eq(salesInvoicesTable.id, salesInvoiceLinesTable.invoiceId),
+        eq(salesInvoicesTable.companyId, cid)))
+        .where(and(eq(salesInvoiceLinesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
+          sql`${salesInvoicesTable.invoiceDate} between ${from} and ${to}`, salesBranch.cond))
+        .groupBy(salesInvoiceLinesTable.itemId),
+      db.select({
+        itemId: salesReturnLinesTable.itemId,
+        quantity: sql<string>`coalesce(sum(${salesReturnLinesTable.qty}),0)`,
+        revenue: sql<string>`coalesce(sum(${salesReturnLinesTable.lineTotal} * ${salesReturnsTable.exchangeRate}),0)`,
+      }).from(salesReturnLinesTable).innerJoin(salesReturnsTable, and(
+        eq(salesReturnsTable.id, salesReturnLinesTable.returnId),
+        eq(salesReturnsTable.companyId, cid)))
+        .where(and(eq(salesReturnLinesTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
+          sql`${salesReturnsTable.returnDate} between ${from} and ${to}`, returnsBranch.cond))
+        .groupBy(salesReturnLinesTable.itemId),
+    ]);
+    const returnByItem = new Map(returns.map((x) => [x.itemId, x]));
+    const itemIds = [...new Set([...sales, ...returns].map((x) => x.itemId)
+      .filter((x): x is number => Number.isInteger(x) && Number(x) > 0))];
+    const names = itemIds.length ? await db.select({ id: itemsTable.id, name: itemsTable.nameAr })
+      .from(itemsTable).where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds))) : [];
+    const nameById = new Map(names.map((x) => [x.id, x.name]));
+    const saleByItem = new Map(sales.map((x) => [x.itemId, x]));
+    const products = itemIds.map((itemId) => {
+      const sold = saleByItem.get(itemId);
+      const returned = returnByItem.get(itemId);
+      return {
+        itemId, productName: nameById.get(itemId) ?? null,
+        postedSalesQty: num(sold?.quantity), postedReturnQty: num(returned?.quantity),
+        netSoldQty: num(sold?.quantity) - num(returned?.quantity),
+        postedSalesRevenue: num(sold?.revenue), postedReturnRevenue: num(returned?.revenue),
+        realizedNetRevenue: num(sold?.revenue) - num(returned?.revenue),
+        operatingCost: null, financingCost: null, grossMargin: null,
+        marginStatus: "unavailable_without_sales_line_batch_or_production_order_cost_link",
+      };
+    });
+    res.json({
+      products,
+      basis: "posted_sales_and_posted_returns_base_currency_product_period",
+      attribution: "product_period_only_not_production_order",
+      separation: { operating: "not_attributed", financing: "not_attributed" },
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/orders/:id", async (req, res) => {
   try {
     const cid = guard(req, res);
@@ -1294,7 +1671,7 @@ router.post("/orders/wizard", async (req, res) => {
             eq(productionCostAllocationsTable.companyId, cid),
             eq(productionCostAllocationsTable.sourceType, source.sourceType),
             eq(productionCostAllocationsTable.sourceRecordId, source.sourceRecordId),
-            ne(productionOrdersTable.status, "cancelled"),
+            sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
           ));
         try { assertAllocationCapacity(source.sourceAmount, num(used?.amount), amount); }
         catch { throw Object.assign(new Error(`تجاوز توزيع المصدر المتاح: ${source.label}`), { status: 409 }); }
@@ -2048,7 +2425,7 @@ router.post("/orders/:id/status", async (req, res) => {
              eq(productionCostAllocationsTable.companyId, cid),
              eq(productionCostAllocationsTable.sourceType, frozen.sourceType),
              eq(productionCostAllocationsTable.sourceRecordId, frozen.sourceRecordId),
-             ne(productionOrdersTable.status, "cancelled"),
+              sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
            ));
          if (sourceAmountCents(capacity?.amount) > frozenSourceAmount + 0.005) {
            res.status(409).json({ error: "تعذر التنفيذ: تجاوزت توزيعات أحد المصادر سعته المُرحّلة." });
@@ -2505,7 +2882,235 @@ router.post("/orders/:id/status", async (req, res) => {
       if (!order.actualEndAt) updates.actualEndAt = new Date();
     }
 
-    // ─── 3) CANCELLATION — auto-reverse the issue if already posted ────────
+    // ─── 3) COMPLETED REVERSAL — exact stock/GL reversal with dependency guard
+    // Original snapshots and journal ids remain immutable on the order. New
+    // reversal journal ids are appended to meta and the terminal status is
+    // `reversed`, never recycled to draft/cancelled.
+    if ((target as string) === "reversed" && order.status === "completed") {
+      if (!canAccessModule(req.authUser, "production", "post")) {
+        res.status(403).json({ error: "عكس أمر مكتمل يتطلب صلاحية ترحيل التصنيع" });
+        return;
+      }
+      if (!order.issueJournalEntryId || !order.receiptJournalEntryId ||
+          !order.productItemId || !order.finishedWarehouseId || !order.rawWarehouseId ||
+          !order.wipAccountId || !order.finishedGoodsAccountId || !order.rawInventoryAccountId) {
+        res.status(409).json({ error: "لا يمكن العكس: روابط المخزون أو القيود الأصلية غير مكتملة" });
+        return;
+      }
+      if (!order.batchNumber) {
+        res.status(409).json({
+          error: "لا يمكن عكس أمر مكتمل بلا رقم تشغيلة؛ لا يمكن إثبات أن المخزون الناتج لم يُبع أو يُستهلك",
+        });
+        return;
+      }
+      const originalJournals = await tx.select({
+        id: journalEntriesTable.id,
+        status: journalEntriesTable.status,
+      }).from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.companyId, cid),
+        inArray(journalEntriesTable.id, [
+          order.issueJournalEntryId,
+          order.receiptJournalEntryId,
+        ]),
+      ));
+      const originalJournalById = new Map(originalJournals.map((entry) => [entry.id, entry]));
+      const originalIssueJournal = originalJournalById.get(order.issueJournalEntryId);
+      const originalReceiptJournal = originalJournalById.get(order.receiptJournalEntryId);
+      if (!originalIssueJournal || !originalReceiptJournal) {
+        res.status(409).json({ error: "لا يمكن العكس: أحد القيود الأصلية لا يتبع هذه الشركة أو لم يعد موجوداً" });
+        return;
+      }
+      const originalJournalLines = await tx.select({
+        entryId: journalEntryLinesTable.entryId,
+        accountId: journalEntryLinesTable.accountId,
+        debit: journalEntryLinesTable.debit,
+        credit: journalEntryLinesTable.credit,
+        description: journalEntryLinesTable.description,
+        costCenter: journalEntryLinesTable.costCenter,
+      }).from(journalEntryLinesTable).where(inArray(
+        journalEntryLinesTable.entryId,
+        [order.issueJournalEntryId, order.receiptJournalEntryId],
+      ));
+      const exactReversalLines = (entryId: number, label: string): JLine[] =>
+        originalJournalLines.filter((line) => line.entryId === entryId).map((line) => ({
+          accountId: line.accountId,
+          debit: num(line.credit),
+          credit: num(line.debit),
+          description: `${label}: ${line.description ?? order.orderNumber}`,
+          costCenter: line.costCenter,
+        }));
+      const receiptReversalLines = exactReversalLines(
+        order.receiptJournalEntryId, "عكس قيد الاستلام الأصلي",
+      );
+      const issueReversalLines = exactReversalLines(
+        order.issueJournalEntryId, "عكس قيد الصرف الأصلي",
+      );
+      if (receiptReversalLines.length < 2 || issueReversalLines.length < 2) {
+        res.status(409).json({ error: "لا يمكن العكس: سطور أحد القيود الأصلية غير مكتملة" });
+        return;
+      }
+      const producedQty = num(order.producedQty);
+      const totalCost = num(order.actualCost);
+      const totalOut = producedQty + num(order.wasteQty);
+      if (!(producedQty > 0) || !(totalCost > 0) || !(totalOut > 0)) {
+        res.status(409).json({ error: "لا يمكن العكس: لقطة كمية/تكلفة الإكمال غير صالحة" });
+        return;
+      }
+      const fgCost = totalCost * producedQty / totalOut;
+      const wasteCost = totalCost - fgCost;
+      const fgUnitCost = fgCost / producedQty;
+      const wasteAcct = order.wasteAccountId ?? order.varianceAccountId ?? null;
+      if (wasteCost > 0.005 && !wasteAcct) {
+        res.status(409).json({ error: "لا يمكن العكس: حساب الهالك الأصلي غير متاح" });
+        return;
+      }
+      await lockStockBalances([{
+        companyId: cid, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+      }], tx);
+      const receiptSnapshot = await tx.execute(sql`
+        select id, created_at
+        from stock_ledger
+        where company_id = ${cid}
+          and item_id = ${order.productItemId}
+          and warehouse_id = ${order.finishedWarehouseId}
+          and ref_id = ${id}
+          and ref_type = 'production_order'
+          and tx_type = 'production_receipt'
+          and batch_number = ${order.batchNumber}
+        order by id asc
+        limit 1
+      `);
+      const originalReceipt: any = receiptSnapshot.rows[0];
+      if (!originalReceipt) {
+        res.status(409).json({ error: "لا يمكن العكس: حركة استلام التشغيلة الأصلية غير موجودة" });
+        return;
+      }
+      const downstream = await tx.execute(sql`
+        select id, tx_type, ref_type, ref_id
+        from stock_ledger
+        where company_id = ${cid}
+          and item_id = ${order.productItemId}
+          and warehouse_id = ${order.finishedWarehouseId}
+          and batch_number = ${order.batchNumber}
+          and qty < 0
+          and id > ${Number(originalReceipt.id)}
+          and ref_type is distinct from 'production_order_reversal'
+        order by id asc
+        limit 1
+      `);
+      if (downstream.rows[0]) {
+        res.status(409).json({
+          error: "لا يمكن العكس: توجد حركة صرف/بيع/استهلاك لاحقة على تشغيلة المنتج",
+        });
+        return;
+      }
+      const batchRows = await readBatchRemaining(
+        cid, order.productItemId, order.finishedWarehouseId, "fifo", tx,
+      );
+      const batchRemaining = batchRows
+        .filter((x) => x.batchNumber === order.batchNumber)
+        .reduce((sum, x) => sum + x.remaining, 0);
+      if (batchRemaining + 0.0001 < producedQty) {
+        res.status(409).json({
+          error: `لا يمكن العكس: المتبقي من التشغيلة ${batchRemaining} أقل من إنتاج الأمر ${producedQty}؛ توجد حركة لاحقة أو استهلاك`,
+        });
+        return;
+      }
+      const finishedBalance = await getBalance(
+        cid, order.productItemId, order.finishedWarehouseId, tx,
+      );
+      if (finishedBalance + 0.0001 < producedQty) {
+        res.status(409).json({
+          error: `لا يمكن العكس: رصيد المنتج في المخزن ${finishedBalance} أقل من إنتاج الأمر ${producedQty}`,
+        });
+        return;
+      }
+      const writable = await assertWritableForDate(cid, todayIso);
+      if (!writable.ok) {
+        res.status(423).json({ error: writable.reason }); return;
+      }
+
+      // Restore the exact raw issue snapshot from stock ledger, not current BOM
+      // quantities or current average costs.
+      const rawIssueRows = await tx.select({
+        itemId: stockLedgerTable.itemId,
+        warehouseId: stockLedgerTable.warehouseId,
+        qty: stockLedgerTable.qty,
+        costPrice: stockLedgerTable.costPrice,
+        totalCost: stockLedgerTable.totalCost,
+        batchNumber: stockLedgerTable.batchNumber,
+        expiryDate: stockLedgerTable.expiryDate,
+      }).from(stockLedgerTable).where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refId, id),
+        eq(stockLedgerTable.refType, "production_order"),
+        eq(stockLedgerTable.txType, "production_issue"),
+        sql`${stockLedgerTable.qty} < 0`,
+      ));
+      if (!rawIssueRows.length) {
+        res.status(409).json({ error: "لا يمكن العكس: لقطة صرف الخامات الأصلية غير موجودة" });
+        return;
+      }
+      await lockStockBalances(rawIssueRows.map((line) => ({
+        companyId: cid, itemId: line.itemId, warehouseId: line.warehouseId,
+      })), tx);
+
+      await upsertBalance(cid, order.productItemId, order.finishedWarehouseId,
+        -producedQty, fgUnitCost, tx);
+      const fgBalance = await getBalance(cid, order.productItemId, order.finishedWarehouseId, tx);
+      await addStockLedgerEntry({
+        companyId: cid, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+        txDate: todayIso, txType: "production_issue", qty: String(-producedQty),
+        costPrice: String(fgUnitCost.toFixed(4)), totalCost: String((-fgCost).toFixed(2)),
+        balanceQty: String(fgBalance), refId: id, refType: "production_order_reversal",
+        batchNumber: order.batchNumber, expiryDate: order.fgExpiryDate,
+        notes: `عكس بضاعة تامة لأمر إنتاج ${order.orderNumber}`,
+      }, tx);
+      for (const line of rawIssueRows) {
+        const qty = Math.abs(num(line.qty));
+        const cost = num(line.costPrice);
+        await upsertBalance(cid, line.itemId, line.warehouseId, qty, cost, tx);
+        const balance = await getBalance(cid, line.itemId, line.warehouseId, tx);
+        await addStockLedgerEntry({
+          companyId: cid, itemId: line.itemId, warehouseId: line.warehouseId,
+          txDate: todayIso, txType: "production_receipt", qty: String(qty),
+          costPrice: String(cost.toFixed(4)),
+          totalCost: String(Math.abs(num(line.totalCost)).toFixed(2)),
+          balanceQty: String(balance), refId: id, refType: "production_order_reversal",
+          batchNumber: line.batchNumber, expiryDate: line.expiryDate,
+          notes: `إعادة خامات من عكس أمر إنتاج ${order.orderNumber}`,
+        }, tx);
+      }
+
+      const receiptReversalJournalId = await createJournalEntry({
+        companyId: cid, audit: { req }, branchId: order.branchId, date: todayIso,
+        docNumber: `${order.orderNumber}-RCP-REV`, entryType: "production_receipt_reversal",
+        status: originalReceiptJournal.status,
+        costCenter: order.costCenter ?? null,
+        description: `عكس إقفال إنتاج مكتمل ${order.orderNumber}`,
+        lines: receiptReversalLines, dx: tx,
+      });
+      const issueReversalJournalId = await createJournalEntry({
+        companyId: cid, audit: { req }, branchId: order.branchId, date: todayIso,
+        docNumber: `${order.orderNumber}-ISS-REV`, entryType: "production_issue_reversal",
+        status: originalIssueJournal.status,
+        costCenter: order.costCenter ?? null,
+        description: `عكس صرف وتكلفة أمر إنتاج مكتمل ${order.orderNumber}`,
+        lines: issueReversalLines, dx: tx,
+      });
+      updates.meta = {
+        ...((order.meta as Record<string, unknown>) ?? {}),
+        reversal: {
+          reversedAt: new Date().toISOString(), reversedBy: req.authUser!.id,
+          originalIssueJournalEntryId: order.issueJournalEntryId,
+          originalReceiptJournalEntryId: order.receiptJournalEntryId,
+          issueReversalJournalId, receiptReversalJournalId,
+          producedQty, fgCost, rawIssueLedgerRows: rawIssueRows.length,
+        },
+      };
+    }
+
+    // ─── 4) CANCELLATION — auto-reverse the issue if already posted ────────
     // Only reverses when there's an issue JE but NO receipt JE. If a receipt
     // already posted, cancellation is a no-op for accounting (the user would
     // need a separate manual reversing entry — completed orders can't be

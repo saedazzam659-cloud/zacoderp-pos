@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   Calculator, Package, Wrench, Factory, AlertTriangle,
-  DollarSign, Layers, Settings,
+  DollarSign, Layers, Settings, Download, RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { DateField } from "@/components/ui/date-field";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { downloadBlob } from "@/lib/dataIoApi";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -47,6 +50,14 @@ export default function CostRollup() {
   const [productId, setProductId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<CostRollup | null>(null);
+  const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom] = useState(`${today.slice(0, 8)}01`);
+  const [to, setTo] = useState(today);
+  const [branchId, setBranchId] = useState("");
+  const [branches, setBranches] = useState<any[]>([]);
+  const [aggregate, setAggregate] = useState<any>(null);
+  const [profitability, setProfitability] = useState<any>(null);
+  const [reportLoading, setReportLoading] = useState(false);
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token}`,
@@ -62,6 +73,15 @@ export default function CostRollup() {
         setItems(Array.isArray(d) ? d : d?.items ?? []);
       }
     })();
+  }, [token, headers]);
+
+  useEffect(() => {
+    if (!token) return;
+    void fetch(`${API}/api/branches`, { headers }).then(async (r) => {
+      if (!r.ok) return [];
+      const j=await r.json();
+      return Array.isArray(j) ? j : (j.rows??j.data??[]);
+    }).then(setBranches).catch(()=>setBranches([]));
   }, [token, headers]);
 
   const run = useCallback(async () => {
@@ -85,6 +105,45 @@ export default function CostRollup() {
     }
   }, [productId, headers, toast]);
 
+  const reportQuery = useMemo(() => {
+    const p=new URLSearchParams({ from, to });
+    if(branchId) p.set("branchId",branchId);
+    return p.toString();
+  }, [from,to,branchId]);
+
+  const loadReports = useCallback(async () => {
+    setReportLoading(true);
+    try {
+      const [costs,sales]=await Promise.all([
+        fetch(`${API}/api/production/reports/costs?${reportQuery}`,{headers}),
+        fetch(`${API}/api/production/reports/realized-product-profitability?${reportQuery}`,{headers}),
+      ]);
+      const cj=await costs.json(); const sj=await sales.json();
+      if(!costs.ok) throw new Error(cj.error||"تعذر تحميل تقرير التكلفة");
+      if(!sales.ok) throw new Error(sj.error||"تعذر تحميل المبيعات المحققة");
+      setAggregate(cj); setProfitability(sj);
+    } catch(e:any) {
+      toast({title:"تعذر تحميل تقارير التصنيع",description:e.message,variant:"destructive"});
+    } finally { setReportLoading(false); }
+  },[headers,reportQuery,toast]);
+
+  useEffect(()=>{ if(token) void loadReports(); },[token,loadReports]);
+
+  function exportCsv(kind:"costs"|"sales") {
+    const quote=(v:unknown)=>`"${String(v??"").replaceAll('"','""')}"`;
+    let rows: unknown[][];
+    if(kind==="costs") {
+      rows=[["Product ID","Product","Produced Qty","Standard Cost","Actual Cost","Variance","Actual Unit Cost"],
+        ...(aggregate?.products??[]).map((x:any)=>[x.productItemId,x.productName,x.producedQty,x.standardCost,x.actualCost,x.variance,x.actualUnitCost])];
+    } else {
+      rows=[["Product ID","Product","Posted Sales Qty","Posted Return Qty","Net Sold Qty","Posted Sales Revenue","Posted Return Revenue","Realized Net Revenue","Gross Margin","Operating Cost","Financing Cost","Attribution"],
+        ...(profitability?.products??[]).map((x:any)=>[x.itemId,x.productName,x.postedSalesQty,x.postedReturnQty,x.netSoldQty,x.postedSalesRevenue,x.postedReturnRevenue,x.realizedNetRevenue,"UNAVAILABLE","UNAVAILABLE","UNAVAILABLE",x.marginStatus])];
+    }
+    const csv="\uFEFF"+rows.map(r=>r.map(quote).join(",")).join("\r\n");
+    downloadBlob(new Blob([csv],{type:"text/csv;charset=utf-8"}),
+      `manufacturing-${kind}-${from}-${to}${branchId?`-branch-${branchId}`:""}.csv`);
+  }
+
   const missingCost = data?.materials.some((m) => m.unitCost === 0);
   const missingDuration = data?.stages.some((s) => s.source === "none");
 
@@ -100,6 +159,13 @@ export default function CostRollup() {
         </div>
       </div>
 
+      <Tabs defaultValue="standard" className="space-y-4">
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="standard">التكلفة المعيارية</TabsTrigger>
+          <TabsTrigger value="actual">التكلفة والانحراف والمصادر</TabsTrigger>
+          <TabsTrigger value="sales">المبيعات المحققة والربحية</TabsTrigger>
+        </TabsList>
+        <TabsContent value="standard" className="space-y-4">
       <Card>
         <CardContent className="p-3">
           <div className="flex items-end gap-3 flex-wrap">
@@ -342,6 +408,57 @@ export default function CostRollup() {
           </Card>
         </>
       )}
+        </TabsContent>
+        <TabsContent value="actual" className="space-y-4">
+          <ReportFilters from={from} to={to} branchId={branchId} branches={branches}
+            onFrom={setFrom} onTo={setTo} onBranch={setBranchId}
+            onRefresh={loadReports} loading={reportLoading} onExport={()=>exportCsv("costs")}/>
+          <div className="grid md:grid-cols-3 gap-3">
+            {(aggregate?.orders??[]).map((row:any)=><Card key={row.status}><CardContent className="p-3">
+              <div className="text-xs text-slate-500">{row.status} — {row.orders} أمر</div>
+              <div className="font-mono font-bold">{fmtMoney(Number(row.actual))}</div>
+              <div className="text-xs">معياري {fmtMoney(Number(row.planned))} • انحراف {fmtMoney(Number(row.variance))}</div>
+            </CardContent></Card>)}
+          </div>
+          <Card><CardHeader><CardTitle className="text-base">تكلفة المنتجات الفعلية والانحراف</CardTitle></CardHeader>
+            <CardContent className="p-0"><ReportTable headers={["المنتج","الكمية المنتجة","المعياري","الفعلي","الانحراف","تكلفة الوحدة"]}
+              rows={(aggregate?.products??[]).map((x:any)=>[x.productName??`#${x.productItemId}`,x.producedQty,x.standardCost,x.actualCost,x.variance,x.actualUnitCost])}/></CardContent></Card>
+          <Card><CardHeader><CardTitle className="text-base">مصادر التكلفة وتوجيهها</CardTitle></CardHeader>
+            <CardContent className="p-0"><ReportTable headers={["نوع المصدر","المعالجة","عدد اللقطات","المبلغ"]}
+              rows={(aggregate?.sources??[]).map((x:any)=>[x.sourceType,x.treatment,x.allocations,x.amount])}/></CardContent></Card>
+        </TabsContent>
+        <TabsContent value="sales" className="space-y-4">
+          <ReportFilters from={from} to={to} branchId={branchId} branches={branches}
+            onFrom={setFrom} onTo={setTo} onBranch={setBranchId}
+            onRefresh={loadReports} loading={reportLoading} onExport={()=>exportCsv("sales")}/>
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            الإيراد أدناه محقق من فواتير البيع والمرتجعات المُرحّلة فقط وعلى مستوى المنتج والفترة.
+            هامش الربح وتكاليف التشغيل والتمويل غير متاحة بأمان لأن سطور البيع لا تحفظ رابط التشغيلة/أمر الإنتاج؛ لن ينسب النظام تكلفة مختلقة.
+          </div>
+          <Card><CardHeader><CardTitle className="text-base">المبيعات والمرتجعات المحققة</CardTitle></CardHeader>
+            <CardContent className="p-0"><ReportTable headers={["المنتج","مباع","مرتجع","صافي الكمية","إيراد البيع","إيراد المرتجع","صافي الإيراد","الربحية"]}
+              rows={(profitability?.products??[]).map((x:any)=>[x.productName??`#${x.itemId}`,x.postedSalesQty,x.postedReturnQty,x.netSoldQty,x.postedSalesRevenue,x.postedReturnRevenue,x.realizedNetRevenue,"غير متاحة — ينقص رابط تكلفة التشغيلة"])}/></CardContent></Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
+}
+
+function ReportFilters(props:any) {
+  return <Card><CardContent className="p-3 flex flex-wrap gap-3 items-end">
+    <div><Label>من</Label><DateField value={props.from} onChange={(e)=>props.onFrom(e.target.value)}/></div>
+    <div><Label>إلى</Label><DateField value={props.to} onChange={(e)=>props.onTo(e.target.value)}/></div>
+    <div className="min-w-56"><Label>الفرع</Label><SearchCombobox value={props.branchId} onValueChange={props.onBranch}
+      items={[{value:"",label:"كل الفروع المسموحة"},...props.branches.map((b:any)=>({value:String(b.id),label:b.nameAr||b.nameEn||`#${b.id}`}))]}/></div>
+    <Button variant="outline" onClick={props.onRefresh} disabled={props.loading}><RefreshCw className={`h-4 w-4 me-1 ${props.loading?"animate-spin":""}`}/>تحديث</Button>
+    <Button variant="outline" onClick={props.onExport}><Download className="h-4 w-4 me-1"/>CSV</Button>
+  </CardContent></Card>;
+}
+
+function ReportTable({headers,rows}:{headers:string[];rows:unknown[][]}) {
+  return <div className="overflow-x-auto"><table className="w-full text-sm">
+    <thead className="bg-slate-100"><tr>{headers.map(h=><th key={h} className="p-2 text-start">{h}</th>)}</tr></thead>
+    <tbody>{rows.length===0?<tr><td colSpan={headers.length} className="p-6 text-center text-slate-500">لا توجد بيانات ضمن النطاق.</td></tr>:
+      rows.map((r,i)=><tr key={i} className="border-t">{r.map((v,j)=><td key={j} className="p-2">{v==null?"—":typeof v==="number"?v.toLocaleString("en-US",{maximumFractionDigits:2}):String(v)}</td>)}</tr>)}</tbody>
+  </table></div>;
 }

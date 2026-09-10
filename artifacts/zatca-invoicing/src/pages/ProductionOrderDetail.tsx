@@ -137,8 +137,11 @@ const TRANSITIONS: Record<string, { to: string; labelKey: string; icon: any; ton
     { to: "in_production", labelKey: "production.rework", icon: PlayCircle, tone: "bg-amber-600 hover:bg-amber-700" },
     { to: "cancelled", labelKey: "production.cancel", icon: Ban, tone: "bg-red-600 hover:bg-red-700" },
   ],
-  completed: [],
+  completed: [
+    { to: "reversed", labelKey: "production.reverseCompleted", icon: Ban, tone: "bg-orange-600 hover:bg-orange-700" },
+  ],
   cancelled: [],
+  reversed: [],
 };
 
 const STATUS_TONES: Record<string, string> = {
@@ -149,6 +152,11 @@ const STATUS_TONES: Record<string, string> = {
   quality_check: "bg-violet-100 text-violet-700",
   completed: "bg-emerald-100 text-emerald-700",
   cancelled: "bg-red-100 text-red-700",
+  reversed: "bg-orange-100 text-orange-800",
+};
+const LIFECYCLE_NEXT: Record<string,string[]> = {
+  draft:["active","cancelled"], active:["suspended","expired","settled","cancelled"],
+  suspended:["active","expired","cancelled"], expired:[], settled:[], cancelled:[],
 };
 
 export default function ProductionOrderDetail() {
@@ -173,6 +181,13 @@ export default function ProductionOrderDetail() {
   const [completion, setCompletion] = useState({ producedQty: "", wasteQty: "", fgExpiryDate: "" });
   const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
   const [costDrilldown, setCostDrilldown] = useState<any>(null);
+  const [commercialLifecycle, setCommercialLifecycle] = useState<any[]>([]);
+  const [savingLifecycle, setSavingLifecycle] = useState(false);
+  const [lifecycleForm, setLifecycleForm] = useState({
+    type: "certificate", name: "", status: "draft", calculationMethod: "period",
+    effectiveFrom: "", effectiveTo: "", sourceAllocationId: "", salesReturnId: "",
+    rate: "", minimumAmount: "", maximumAmount: "", notes: "",
+  });
   const [itemForm, setItemForm] = useState({
     kind: "raw" as Item["kind"],
     description: "",
@@ -209,9 +224,10 @@ export default function ProductionOrderDetail() {
     setLoading(true);
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const [r, costResponse] = await Promise.all([
+      const [r, costResponse, lifecycleResponse] = await Promise.all([
         fetch(`${API}/api/production/orders/${orderId}`, { headers }),
         fetch(`${API}/api/production/orders/${orderId}/cost-drilldown`, { headers }),
+        fetch(`${API}/api/production/orders/${orderId}/commercial-lifecycle`, { headers }),
       ]);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
@@ -220,6 +236,10 @@ export default function ProductionOrderDetail() {
       setEvents(j.events ?? []);
       setWasteRecords(j.wasteRecords ?? []);
       if (costResponse.ok) setCostDrilldown(await costResponse.json());
+      if (lifecycleResponse.ok) {
+        const lifecycle = await lifecycleResponse.json();
+        setCommercialLifecycle(lifecycle.records ?? []);
+      }
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
     } finally {
@@ -265,6 +285,7 @@ export default function ProductionOrderDetail() {
   }, [order?.status]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function transitionTo(target: string, extra: Record<string, unknown> = {}) {
+    if (target === "reversed" && !confirm("سيتم عكس مخزون المنتج والخامات والقيود في معاملة واحدة. لن ينجح العكس إذا تحركت التشغيلة. هل تريد المتابعة؟")) return;
     setTransitioning(true);
     try {
       const r = await fetch(`${API}/api/production/orders/${orderId}/status`, {
@@ -346,6 +367,67 @@ export default function ProductionOrderDetail() {
       void load();
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
+    }
+  }
+
+  function lifecycleMethods(type: string) {
+    if (type === "royalty") return [
+      ["per_unit", "لكل وحدة"], ["sales_percentage", "نسبة من المبيعات"],
+      ["manufacturing_cost_percentage", "نسبة من تكلفة التصنيع"], ["tiered", "شرائح"],
+    ];
+    if (type === "warranty") return [
+      ["actual_claim", "مطالبة فعلية"], ["provision", "مخصص/تقدير فقط"],
+      ["fixed_per_unit", "مبلغ لكل وحدة"], ["sales_percentage", "نسبة من المبيعات"],
+    ];
+    return [["period", "حسب الفترة"], ["quantity", "حسب الكمية"], ["batch_test", "اختبار دفعة"]];
+  }
+
+  async function addLifecycle(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingLifecycle(true);
+    try {
+      const payload = {
+        ...lifecycleForm,
+        sourceAllocationId: lifecycleForm.sourceAllocationId ? Number(lifecycleForm.sourceAllocationId) : null,
+        salesReturnId: lifecycleForm.salesReturnId ? Number(lifecycleForm.salesReturnId) : null,
+        rate: lifecycleForm.rate === "" ? null : Number(lifecycleForm.rate),
+        minimumAmount: lifecycleForm.minimumAmount === "" ? null : Number(lifecycleForm.minimumAmount),
+        maximumAmount: lifecycleForm.maximumAmount === "" ? null : Number(lifecycleForm.maximumAmount),
+      };
+      const r = await fetch(`${API}/api/production/orders/${orderId}/commercial-lifecycle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setLifecycleForm({
+        type: "certificate", name: "", status: "draft", calculationMethod: "period",
+        effectiveFrom: "", effectiveTo: "", sourceAllocationId: "", salesReturnId: "",
+        rate: "", minimumAmount: "", maximumAmount: "", notes: "",
+      });
+      toast({ title: "تم حفظ سجل دورة الحياة دون إنشاء قيد مكرر" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر حفظ دورة الحياة", description: e.message, variant: "destructive" });
+    } finally {
+      setSavingLifecycle(false);
+    }
+  }
+
+  async function changeLifecycleStatus(lifecycleId: string, status: string) {
+    try {
+      const r = await fetch(`${API}/api/production/orders/${orderId}/commercial-lifecycle/${lifecycleId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      toast({ title: "تم تحديث حالة دورة الحياة" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر تحديث الحالة", description: e.message, variant: "destructive" });
     }
   }
 
@@ -542,6 +624,9 @@ export default function ProductionOrderDetail() {
               </TabsTrigger>
               <TabsTrigger value="cost-analysis" data-testid="tab-cost-analysis">
                 <Calculator className="h-4 w-4 me-1" /> لماذا هذه التكلفة؟
+              </TabsTrigger>
+              <TabsTrigger value="commercial-lifecycle" data-testid="tab-commercial-lifecycle">
+                <ClipboardCheck className="h-4 w-4 me-1" /> الشهادات / Royalty / الضمان
               </TabsTrigger>
             </TabsList>
             <TabsContent value="items" className="space-y-3">
@@ -768,6 +853,81 @@ export default function ProductionOrderDetail() {
                   هامش المحاكاة ليس إيراداً محققاً؛ يعتمد لقطة سعر الصنف وقت إنشاء الأمر، ولا يتغير بتعديل السعر لاحقاً.
                 </div>
               </>}
+            </TabsContent>
+            <TabsContent value="commercial-lifecycle" className="space-y-4">
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+                هذه دورة تشغيلية داخل أمر الإنتاج نفسه. المبلغ المعترف به لا يُدخل يدوياً:
+                يجب ربطه بلقطة توزيع من مستند مُرحّل، ويبقى القيد مملوكاً لوحدة المصدر.
+                مخصص الضمان التحليلي منفصل دائماً عن تكلفة المطالبة الفعلية.
+              </div>
+              <form onSubmit={addLifecycle} className="rounded-lg border bg-white dark:bg-slate-900 p-4 space-y-3">
+                <div className="grid md:grid-cols-4 gap-3">
+                  <div><Label>النوع</Label><select className="w-full border rounded-md p-2" value={lifecycleForm.type}
+                    onChange={(e) => {
+                      const type=e.target.value;
+                      setLifecycleForm({...lifecycleForm,type,calculationMethod:lifecycleMethods(type)[0][0]});
+                    }}>
+                    <option value="certificate">شهادة / اعتماد</option>
+                    <option value="royalty">Royalty / ترخيص</option>
+                    <option value="warranty">ضمان / ما بعد البيع</option>
+                  </select></div>
+                  <div className="md:col-span-2"><Label>اسم الشهادة / العقد / المطالبة *</Label>
+                    <Input required value={lifecycleForm.name} onChange={e=>setLifecycleForm({...lifecycleForm,name:e.target.value})}/></div>
+                  <div><Label>الحالة</Label><select className="w-full border rounded-md p-2" value={lifecycleForm.status}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,status:e.target.value})}>
+                    <option value="draft">مسودة</option><option value="active">نشط</option>
+                  </select></div>
+                  <div><Label>طريقة الحساب</Label><select className="w-full border rounded-md p-2"
+                    value={lifecycleForm.calculationMethod}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,calculationMethod:e.target.value})}>
+                    {lifecycleMethods(lifecycleForm.type).map(([value,label])=><option key={value} value={value}>{label}</option>)}
+                  </select></div>
+                  <div><Label>من</Label><Input type="date" value={lifecycleForm.effectiveFrom}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,effectiveFrom:e.target.value})}/></div>
+                  <div><Label>إلى</Label><Input type="date" value={lifecycleForm.effectiveTo}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,effectiveTo:e.target.value})}/></div>
+                  <div><Label>لقطة مصدر التكلفة</Label><select className="w-full border rounded-md p-2"
+                    value={lifecycleForm.sourceAllocationId}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,sourceAllocationId:e.target.value})}>
+                    <option value="">بدون مبلغ مُرحّل</option>
+                    {(costDrilldown?.trace?.allocations??[]).map((a:any)=><option key={a.id} value={a.id}>
+                      #{a.id} — {a.sourceType} — {Number(a.allocatedAmount).toLocaleString("en-US")}
+                    </option>)}
+                  </select></div>
+                  <div><Label>المعدل</Label><Input type="number" step="0.0001" min="0" value={lifecycleForm.rate}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,rate:e.target.value})}/></div>
+                  <div><Label>حد أدنى</Label><Input type="number" step="0.01" min="0" value={lifecycleForm.minimumAmount}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,minimumAmount:e.target.value})}/></div>
+                  <div><Label>حد أقصى</Label><Input type="number" step="0.01" min="0" value={lifecycleForm.maximumAmount}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,maximumAmount:e.target.value})}/></div>
+                  {lifecycleForm.type==="warranty" && <div><Label>رقم مرتجع بيع مُرحّل</Label>
+                    <Input type="number" min="1" value={lifecycleForm.salesReturnId}
+                      onChange={e=>setLifecycleForm({...lifecycleForm,salesReturnId:e.target.value})}/></div>}
+                  <div className="md:col-span-4"><Label>ملاحظات</Label><Input value={lifecycleForm.notes}
+                    onChange={e=>setLifecycleForm({...lifecycleForm,notes:e.target.value})}/></div>
+                </div>
+                <div className="flex justify-end"><Button disabled={savingLifecycle || order.status==="cancelled"}>
+                  {savingLifecycle?"جارٍ الحفظ...":"إضافة دورة حياة"}
+                </Button></div>
+              </form>
+              <div className="rounded-lg border bg-white dark:bg-slate-900 divide-y">
+                {commercialLifecycle.length===0 && <div className="p-6 text-center text-slate-500">لا توجد سجلات تشغيلية بعد.</div>}
+                {commercialLifecycle.map((row:any)=><div key={row.id} className="p-3 grid md:grid-cols-[1fr_auto_auto] gap-3 items-center">
+                  <div><b>{row.name}</b><p className="text-xs text-slate-500">
+                    {row.type} • {row.calculationMethod} • المصدر:
+                    {row.source ? ` ${row.source.sourceType} #${row.source.sourceRecordId}` : " غير مرتبط"}
+                    {row.salesReturnId ? ` • مرتجع #${row.salesReturnId}` : ""}
+                  </p></div>
+                  <div className="font-mono text-end">{row.recognisedAmount==null?"تحليلي بلا مبلغ":Number(row.recognisedAmount).toLocaleString("en-US")}</div>
+                  <select className="border rounded-md p-2 text-xs" value={row.status}
+                    onChange={e=>void changeLifecycleStatus(row.id,e.target.value)}
+                    disabled={order.status==="cancelled" || (LIFECYCLE_NEXT[row.status]??[]).length===0}>
+                    {[row.status,...(LIFECYCLE_NEXT[row.status]??[])].map(status=><option key={status} value={status}>
+                      {({draft:"مسودة",active:"نشط",suspended:"موقوف",expired:"منتهي",settled:"مسوّى",cancelled:"ملغى"} as any)[status]??status}
+                    </option>)}
+                  </select>
+                </div>)}
+              </div>
             </TabsContent>
           </Tabs>
         </div>

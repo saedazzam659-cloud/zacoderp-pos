@@ -29,6 +29,7 @@ const STATUSES = [
   "quality_check",
   "completed",
   "cancelled",
+  "reversed",
 ] as const;
 
 type Order = {
@@ -50,6 +51,7 @@ const STATUS_TONES: Record<string, string> = {
   quality_check: "bg-violet-100 text-violet-700",
   completed: "bg-emerald-100 text-emerald-700",
   cancelled: "bg-red-100 text-red-700",
+  reversed: "bg-orange-100 text-orange-800",
 };
 
 export default function ProductionOrders() {
@@ -593,6 +595,7 @@ export default function ProductionOrders() {
               { kind: "quality_check", count: list.filter((x: any) => x.status === "quality_check").length },
               { kind: "completed",     count: list.filter((x: any) => x.status === "completed" || x.status === "closed").length },
               { kind: "cancelled",     count: list.filter((x: any) => x.status === "cancelled").length },
+               { kind: "reversed", count: list.filter((x: any) => x.status === "reversed").length },
             ];
             return <DocColorLegend items={items} />;
           })()}

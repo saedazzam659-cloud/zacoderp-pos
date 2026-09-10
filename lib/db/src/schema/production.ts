@@ -697,6 +697,7 @@ export const PRODUCTION_ORDER_STATUSES = [
   "quality_check",
   "completed",
   "cancelled",
+  "reversed",
 ] as const;
 export type ProductionOrderStatus =
   (typeof PRODUCTION_ORDER_STATUSES)[number];
@@ -710,8 +711,9 @@ export const PRODUCTION_STATUS_TRANSITIONS: Record<
   in_production: ["paused", "quality_check", "cancelled"],
   paused: ["in_production", "cancelled"],
   quality_check: ["completed", "in_production", "cancelled"],
-  completed: [],
+  completed: ["reversed"],
   cancelled: [],
+  reversed: [],
 };
 
 // ─── PHASE B — Quality Control ───────────────────────────────────────────

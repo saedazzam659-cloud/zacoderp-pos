@@ -19,3 +19,7 @@ Templates and manufacture-again must copy configuration only, never stock result
 Financial cost variance must exclude analytical layers. Any margin based on a frozen item price is simulated, not realized sales profitability.
 
 **Why:** Mixing operating/economic treatments into manufacturing standard costs double-counts allocations and misstates variance.
+
+Completed-order reversal must invert the original journal lines and preserve their posting state, not recompute from present settings or order totals. Require finished-batch provenance and reject later outbound consumption.
+
+**Why:** Rounding, subsequent configuration changes and consumed output can otherwise produce incorrect reversals or negative stock.
