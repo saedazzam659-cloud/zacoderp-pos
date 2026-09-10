@@ -670,6 +670,20 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     sql: `ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS wizard_request_id TEXT;
           CREATE UNIQUE INDEX IF NOT EXISTS prod_orders_wizard_request_uniq
             ON production_orders(company_id, wizard_request_id) WHERE wizard_request_id IS NOT NULL;` },
+  { label: "production wizard templates",
+    sql: `CREATE TABLE IF NOT EXISTS production_wizard_templates (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+      name TEXT NOT NULL,
+      configuration JSONB NOT NULL DEFAULT '{}'::jsonb,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS prod_wizard_templates_company_idx
+      ON production_wizard_templates(company_id, is_active);` },
   { label: "manufacturing source eligibility configuration",
     sql: `ALTER TABLE payroll_runs
             ADD COLUMN IF NOT EXISTS manufacturing_eligible BOOLEAN NOT NULL DEFAULT FALSE,

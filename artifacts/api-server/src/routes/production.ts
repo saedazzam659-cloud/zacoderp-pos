@@ -12,6 +12,7 @@ import {
   productionResourcesTable,
   productionEventsTable,
   productionCostAllocationsTable,
+  productionWizardTemplatesTable,
   warehousesTable,
   itemsTable,
   stockBalanceTable,
@@ -63,7 +64,7 @@ import {
   intersectBranchRequest,
   effectiveBranchCondition,
 } from "../middleware/auth.js";
-import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
+import { requireModulePermission, moduleAudit, canAccessModule } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import {
   upsertBalance,
@@ -382,6 +383,7 @@ function wizardPayloadHash(body: any): string {
     ? body.allocations.map((x: any) => ({
         sourceType: String(x?.sourceType ?? ""),
         sourceRecordId: Number(x?.sourceRecordId) || 0,
+        treatment: String(x?.treatment ?? ""),
       })).sort((a: any, b: any) =>
         `${a.sourceType}:${a.sourceRecordId}`.localeCompare(`${b.sourceType}:${b.sourceRecordId}`))
     : [];
@@ -400,8 +402,69 @@ function wizardPayloadHash(body: any): string {
     plannedHours: Number(body?.plannedHours) || 0,
     costPeriod: String(body?.costPeriod ?? ""),
     allocations,
+    costPolicy: sanitizeCostPolicy(body?.costPolicy),
+    templateId: Number(body?.templateId) || null,
+    sourceOrderId: Number(body?.sourceOrderId) || null,
   };
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function sourceAmountCents(value: unknown): number {
+  return Number(num(value).toFixed(2));
+}
+
+async function assertOrderNotPaused(cid: number, orderId: number): Promise<void> {
+  const [row] = await db.select({ status: productionOrdersTable.status })
+    .from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.companyId, cid), eq(productionOrdersTable.id, orderId),
+    )).limit(1);
+  if (row?.status === "paused")
+    throw Object.assign(new Error("الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل بياناته"), { status: 409 });
+}
+
+const COST_TREATMENTS = new Set([
+  "direct_material", "direct_packaging", "manufacturing_overhead",
+  "quality_prevention", "quality_appraisal", "internal_failure",
+  "abnormal_loss", "certification", "royalty", "warranty",
+  "operating", "economic", "sga",
+]);
+
+function sanitizeCostPolicy(value: unknown): Record<string, unknown> {
+  const v = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const packaging = ["primary", "secondary", "shipping", "protective", "promotional"]
+    .includes(String(v.packaging)) ? String(v.packaging) : "primary";
+  const quality = ["prevention", "appraisal", "internal_failure", "external_failure"]
+    .includes(String(v.quality)) ? String(v.quality) : "appraisal";
+  const policy = {
+    packaging,
+    quality,
+    wasteTreatment: v.wasteTreatment === "abnormal_loss" ? "abnormal_loss" : "normal_manufacturing",
+    reworkTreatment: v.reworkTreatment === "abnormal_loss" ? "abnormal_loss" : "internal_failure",
+    certificationLayer: v.certificationLayer === "economic" ? "economic" : "manufacturing",
+    royaltyLayer: ["manufacturing", "operating", "economic"].includes(String(v.royaltyLayer))
+      ? String(v.royaltyLayer) : "economic",
+    warrantyLayer: v.warrantyLayer === "manufacturing" ? "manufacturing" : "operating",
+  };
+  return policy;
+}
+
+function sanitizeWizardConfiguration(value: unknown): Record<string, unknown> {
+  const v = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const n = (key: string) => {
+    const x = Number(v[key]);
+    return Number.isInteger(x) && x > 0 ? x : null;
+  };
+  return {
+    title: typeof v.title === "string" ? v.title.trim().slice(0, 250) : "",
+    productItemId: n("productItemId"),
+    unitCode: typeof v.unitCode === "string" ? v.unitCode.slice(0, 20) : "PCE",
+    rawWarehouseId: n("rawWarehouseId"),
+    finishedWarehouseId: n("finishedWarehouseId"),
+    workCenterId: n("workCenterId"),
+    plannedHoursPerUnit: Math.max(0, num(v.plannedHoursPerUnit)),
+    notes: typeof v.notes === "string" ? v.notes.slice(0, 2000) : null,
+    costPolicy: sanitizeCostPolicy(v.costPolicy),
+  };
 }
 
 type CostSource = {
@@ -423,6 +486,7 @@ function sourceReclassificationLines(
     const meta = frozen.snapshotMeta && typeof frozen.snapshotMeta === "object"
       ? frozen.snapshotMeta as Record<string, unknown>
       : {};
+    if (meta.includeInManufacturing === false) continue;
     const accounts = Array.isArray(meta.reclassificationAccounts)
       ? meta.reclassificationAccounts as WeightedAccount[]
       : [];
@@ -544,7 +608,7 @@ async function loadPostedCostSources(
       label: `مصروف مقدم — ${r.name}`, periodStart: start, periodEnd: end, basis: "posted_amortization",
       sourceAmount: num(r.amount), meta: sourceMeta(r, { adjustmentId: r.adjustmentId, manufacturingEligible: true,
         allocationMethod: r.method, approvedProductionQuantity: r.approvedQty }) })),
-  ];
+  ].map((source) => ({ ...source, sourceAmount: sourceAmountCents(source.sourceAmount) }));
 }
 
 router.get("/cost-sources", async (req, res) => {
@@ -864,6 +928,166 @@ router.get("/orders/pending-approval", async (req, res) => {
   }
 });
 
+// Wizard templates contain configuration only. Source allocations, quantities,
+// dates, document numbers and accounting results are intentionally excluded.
+router.get("/wizard-templates", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const branchCond = branchScopeFilter(req, productionWizardTemplatesTable.branchId);
+    const conditions: any[] = [
+      eq(productionWizardTemplatesTable.companyId, cid),
+      eq(productionWizardTemplatesTable.isActive, true),
+    ];
+    if (branchCond) conditions.push(branchCond);
+    res.json(await db.select().from(productionWizardTemplatesTable)
+      .where(and(...conditions)).orderBy(desc(productionWizardTemplatesTable.updatedAt)));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/wizard-templates", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const name = String(req.body?.name ?? "").trim();
+    if (!name) return void res.status(400).json({ error: "اسم القالب مطلوب" });
+    const bid = intersectBranchRequest(req, req.body?.branchId ?? null);
+    if (bid === "deny") return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const configuration = sanitizeWizardConfiguration(req.body?.configuration);
+    if (!configuration.productItemId) return void res.status(400).json({ error: "منتج القالب مطلوب" });
+    await validateItem(cid, Number(configuration.productItemId));
+    const warehouseIds = ["rawWarehouseId", "finishedWarehouseId"]
+      .map((key) => Number(configuration[key]))
+      .filter((x) => Number.isInteger(x) && x > 0);
+    for (const warehouseId of warehouseIds) await validateWarehouse(cid, warehouseId);
+    if (warehouseIds.length) {
+      const warehouseRows = await db.select({ id: warehousesTable.id, branchId: warehousesTable.branchId })
+        .from(warehousesTable).where(and(eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, warehouseIds)));
+      const templateBranch = typeof bid === "number" ? bid : null;
+      if (warehouseRows.some((w) => !rowInScope(req, w.branchId)) ||
+          (templateBranch != null && warehouseRows.some((w) => w.branchId != null && w.branchId !== templateBranch)) ||
+          new Set(warehouseRows.map((w) => w.branchId).filter((x) => x != null)).size > 1) {
+        return void res.status(403).json({ error: "يجب أن تكون مخازن القالب ضمن نفس الفرع المسموح" });
+      }
+    }
+    if (configuration.workCenterId) await loadWorkCenter(cid, Number(configuration.workCenterId));
+    const [row] = await db.insert(productionWizardTemplatesTable).values({
+      companyId: cid, branchId: typeof bid === "number" ? bid : null,
+      name: name.slice(0, 250), configuration, createdBy: req.authUser!.id,
+    }).returning();
+    await writeEvent(cid, null, "wizard_template_created", { templateId: row.id, name: row.name }, req.authUser!.id);
+    res.status(201).json(row);
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
+
+router.delete("/wizard-templates/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [existing] = await db.select().from(productionWizardTemplatesTable).where(and(
+      eq(productionWizardTemplatesTable.id, id), eq(productionWizardTemplatesTable.companyId, cid),
+    )).limit(1);
+    if (!existing || !rowInScope(req, existing.branchId))
+      return void res.status(404).json({ error: "القالب غير موجود" });
+    await db.update(productionWizardTemplatesTable).set({ isActive: false, updatedAt: new Date() })
+      .where(and(eq(productionWizardTemplatesTable.id, id), eq(productionWizardTemplatesTable.companyId, cid)));
+    await writeEvent(cid, null, "wizard_template_archived", { templateId: id }, req.authUser!.id);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/orders/:id/manufacture-again", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [order] = await db.select().from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, id), eq(productionOrdersTable.companyId, cid),
+    )).limit(1);
+    if (!order || !rowInScope(req, order.branchId))
+      return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    res.json({
+      sourceOrderId: order.id,
+      configuration: sanitizeWizardConfiguration({
+        title: order.title, productItemId: order.productItemId, unitCode: order.unitCode,
+        rawWarehouseId: order.rawWarehouseId, finishedWarehouseId: order.finishedWarehouseId,
+        workCenterId: order.workCenterId,
+        plannedHoursPerUnit: num(order.plannedQty) > 0 ? num(order.plannedHours) / num(order.plannedQty) : 0,
+        notes: order.notes, costPolicy: (order.meta as any)?.costPolicy,
+      }),
+      copied: "configuration_only",
+      excluded: ["orderNumber", "actualQuantities", "journals", "stockMovements", "actualWaste", "sourceAllocations"],
+      allocations: [],
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/orders/:id/cost-drilldown", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [order] = await db.select().from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, id), eq(productionOrdersTable.companyId, cid),
+    )).limit(1);
+    if (!order || !rowInScope(req, order.branchId))
+      return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const [lines, stages, allocations, waste, checks, product] = await Promise.all([
+      db.select().from(productionOrderItemsTable).where(eq(productionOrderItemsTable.orderId, id)),
+      db.select().from(productionOrderStagesTable).where(eq(productionOrderStagesTable.orderId, id)),
+      db.select().from(productionCostAllocationsTable).where(and(
+        eq(productionCostAllocationsTable.companyId, cid), eq(productionCostAllocationsTable.orderId, id))),
+      db.select().from(productionWasteRecordsTable).where(and(
+        eq(productionWasteRecordsTable.companyId, cid), eq(productionWasteRecordsTable.orderId, id))),
+      db.select().from(productionQualityChecksTable).where(and(
+        eq(productionQualityChecksTable.companyId, cid), eq(productionQualityChecksTable.orderId, id))),
+      order.productItemId ? db.select({ id: itemsTable.id, nameAr: itemsTable.nameAr })
+        .from(itemsTable).where(and(eq(itemsTable.companyId, cid), eq(itemsTable.id, order.productItemId))).limit(1) : [],
+    ]);
+    const material = lines.reduce((s, x) => s + num(x.totalCost), 0);
+    const analytical = allocations.filter((x) => (x.snapshotMeta as any)?.includeInManufacturing === false);
+    const treatmentAmount = (names: string[]) => analytical
+      .filter((x) => names.includes(String((x.snapshotMeta as any)?.costTreatment)))
+      .reduce((s, x) => s + num(x.allocatedAmount), 0);
+    const operatingAdd = treatmentAmount(["operating", "warranty", "sga"]);
+    const economicAdd = analytical.reduce((s, x) => s + num(x.allocatedAmount), 0);
+    // Zero is a real posted/draft value, not a signal to silently recompute.
+    const actual = order.actualCost == null
+      ? material + num(order.laborCost) + num(order.overheadCost)
+      : num(order.actualCost);
+    const standard = order.estimatedCost == null ? 0 : num(order.estimatedCost);
+    const produced = num(order.producedQty) > 0 ? num(order.producedQty) : num(order.plannedQty);
+    const salePriceSnapshot = (order.meta as any)?.salePriceSnapshot;
+    const snapshotUnitSalePrice = salePriceSnapshot == null ? null : num(salePriceSnapshot);
+    const selling = snapshotUnitSalePrice == null ? null : snapshotUnitSalePrice * produced;
+    res.json({
+      order: { id: order.id, orderNumber: order.orderNumber, status: order.status,
+        product: product[0] ?? null, producedQty: produced },
+      layers: {
+        financialManufacturing: actual, managementManufacturing: actual,
+        operating: actual + operatingAdd,
+        economic: actual + economicAdd,
+      },
+      totals: { standard, actual, variance: actual - standard,
+        variancePct: standard ? ((actual - standard) / standard) * 100 : null,
+        unitCost: produced ? actual / produced : null, simulatedSalesValue: selling,
+        simulatedGrossManufacturingMargin: selling == null ? null : selling - actual,
+        marginBasis: snapshotUnitSalePrice == null ? "unavailable_for_legacy_order" : "creation_sale_price_snapshot",
+        snapshotUnitSalePrice },
+      trace: {
+        materials: lines.map((x) => ({ id: x.id, itemId: x.itemId, description: x.description,
+          amount: num(x.totalCost), source: "production_order_item", meta: x.meta })),
+        labor: { amount: num(order.laborCost), source: allocations.filter((x) =>
+          x.sourceType === "payroll" && (x.snapshotMeta as any)?.includeInManufacturing !== false) },
+        overhead: { amount: num(order.overheadCost), source: allocations.filter((x) =>
+          x.sourceType !== "payroll" && (x.snapshotMeta as any)?.includeInManufacturing !== false) },
+        analyticalSources: analytical,
+        stages: stages.map((x) => ({ id: x.id, name: x.nameAr, standard: num(x.expectedCost), status: x.status })),
+        waste: waste.map((x) => ({ id: x.id, reason: x.reason, amount: num(x.costImpact), qty: num(x.qty) })),
+        quality: { checks: checks.length, failed: checks.filter((x) => x.result === "fail").length },
+        allocations,
+      },
+      costPolicy: sanitizeCostPolicy((order.meta as any)?.costPolicy),
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/orders/:id", async (req, res) => {
   try {
     const cid = guard(req, res);
@@ -978,11 +1202,38 @@ router.post("/orders/wizard", async (req, res) => {
     }
     if (branchId == null && warehouseBranches.length) branchId = warehouseBranches[0];
     const wc = b.workCenterId ? await loadWorkCenter(cid, Number(b.workCenterId)) : null;
+    let validatedTemplateId: number | null = null;
+    if (b.templateId != null && b.templateId !== "") {
+      const templateId = Number(b.templateId);
+      const [template] = await db.select().from(productionWizardTemplatesTable).where(and(
+        eq(productionWizardTemplatesTable.id, templateId),
+        eq(productionWizardTemplatesTable.companyId, cid),
+        eq(productionWizardTemplatesTable.isActive, true),
+      )).limit(1);
+      if (!template || !rowInScope(req, template.branchId) ||
+          (branchId != null && template.branchId != null && template.branchId !== branchId))
+        return void res.status(400).json({ error: "قالب التصنيع غير نشط أو خارج نطاق الشركة/الفرع" });
+      validatedTemplateId = template.id;
+    }
+    let validatedSourceOrderId: number | null = null;
+    if (b.sourceOrderId != null && b.sourceOrderId !== "") {
+      const sourceOrderId = Number(b.sourceOrderId);
+      const [sourceOrder] = await db.select({ id: productionOrdersTable.id, branchId: productionOrdersTable.branchId })
+        .from(productionOrdersTable).where(and(
+          eq(productionOrdersTable.id, sourceOrderId), eq(productionOrdersTable.companyId, cid),
+        )).limit(1);
+      if (!sourceOrder || !rowInScope(req, sourceOrder.branchId) ||
+          (branchId != null && sourceOrder.branchId != null && sourceOrder.branchId !== branchId))
+        return void res.status(400).json({ error: "أمر المصدر خارج نطاق الشركة/الفرع" });
+      validatedSourceOrderId = sourceOrder.id;
+    }
     const [mfg] = await db.select().from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     const plannedHours = num(b.plannedHours);
     const period = String(b.costPeriod || String(b.plannedStartDate || "").slice(0, 7));
     const requested: any[] = Array.isArray(b.allocations) ? b.allocations : [];
+    if (requested.length && !canAccessModule(req.authUser, "production", "post"))
+      return void res.status(403).json({ error: "لا تملك صلاحية تصنيف وترحيل مصادر تكلفة التصنيع" });
     const orderNumber = await nextSequenceNumber(cid, "production_order", {
       userId: req.authUser!.id, refTable: "production_orders", branchId,
       docDate: b.plannedStartDate || undefined,
@@ -1047,12 +1298,21 @@ router.post("/orders/wizard", async (req, res) => {
           ));
         try { assertAllocationCapacity(source.sourceAmount, num(used?.amount), amount); }
         catch { throw Object.assign(new Error(`تجاوز توزيع المصدر المتاح: ${source.label}`), { status: 409 }); }
-        if (source.sourceType === "payroll") payrollCost += amount;
-        else indirectCost += amount;
+        const treatment = COST_TREATMENTS.has(String(a.treatment))
+          ? String(a.treatment) : "manufacturing_overhead";
+        const policy = sanitizeCostPolicy(b.costPolicy);
+        const includeInManufacturing = !["economic", "operating", "sga", "warranty"].includes(treatment) &&
+          !(treatment === "royalty" && policy.royaltyLayer !== "manufacturing") &&
+          !(treatment === "certification" && policy.certificationLayer !== "manufacturing");
+        if (includeInManufacturing) {
+          if (source.sourceType === "payroll") payrollCost += amount;
+          else indirectCost += amount;
+        }
         snapshots.push({ companyId: cid, sourceType: source.sourceType, sourceRecordId: source.sourceRecordId,
           periodStart: source.periodStart, periodEnd: source.periodEnd, basis: source.basis,
           sourceAmount: String(source.sourceAmount.toFixed(2)), sharePct: String(sharePct),
           allocatedAmount: String(amount.toFixed(2)), snapshotMeta: { ...source.meta, label: source.label,
+            costTreatment: treatment, includeInManufacturing,
             formulaMethod: method,
             formulaNumerator: source.sourceType === "prepaid_amortization" ? plannedQty : plannedHours,
             formulaDenominator: denominator },
@@ -1065,6 +1325,8 @@ router.post("/orders/wizard", async (req, res) => {
       const bomLines = tmpl ? await tx.select().from(bomTemplateLinesTable)
         .where(eq(bomTemplateLinesTable.templateId, tmpl.id)) : [];
       if (!tmpl || !bomLines.length) throw Object.assign(new Error("لا يوجد قالب مكونات نشط للمنتج المختار"), { status: 400 });
+      const [productSnapshot] = await tx.select({ salePrice: itemsTable.salePrice })
+        .from(itemsTable).where(and(eq(itemsTable.companyId, cid), eq(itemsTable.id, productItemId))).limit(1);
       const scale = plannedQty / Math.max(num(tmpl.outputQty, 1), 0.000001);
       let rawCost = 0;
       const itemRows: any[] = [];
@@ -1105,6 +1367,10 @@ router.post("/orders/wizard", async (req, res) => {
         wasteAccountId: await validateAccount(cid, mfg?.defaultWasteAccountId ?? null),
         notes: b.notes || null,
         meta: { wizardVersion: 1, wizardRequestHash: requestHash, costPeriod: period,
+          costPolicy: sanitizeCostPolicy(b.costPolicy),
+          templateId: validatedTemplateId,
+          sourceOrderId: validatedSourceOrderId,
+          salePriceSnapshot: productSnapshot?.salePrice == null ? null : sourceAmountCents(productSnapshot.salePrice),
           duplicateCostGuard: "source_snapshot_precedes_rate" },
         createdBy: req.authUser!.id,
       }).returning();
@@ -1125,6 +1391,7 @@ router.post("/orders/wizard", async (req, res) => {
       })));
       await tx.insert(productionEventsTable).values({ companyId: cid, orderId: order.id,
         eventType: "wizard_created", payload: { bomTemplateId: tmpl.id, materialLines: itemRows.length,
+          creationMode: validatedTemplateId ? "quick_manufacturing" : (validatedSourceOrderId ? "manufacture_again" : "wizard"),
           routingId: routing?.id ?? null, stages: stages.length, allocations: snapshots.length },
         userId: req.authUser!.id });
       return { ...order, bomLoaded: itemRows.length, routingLoaded: stages.length,
@@ -1471,6 +1738,7 @@ router.patch("/orders/:id", async (req, res) => {
         status: productionOrdersTable.status,
         workCenterId: productionOrdersTable.workCenterId,
         plannedHours: productionOrdersTable.plannedHours,
+        meta: productionOrdersTable.meta,
       })
       .from(productionOrdersTable)
       .where(
@@ -1485,6 +1753,10 @@ router.patch("/orders/:id", async (req, res) => {
     }
     if (!rowInScope(req, existingOrder.branchId)) {
       res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+      return;
+    }
+    if (existingOrder.status === "paused") {
+      res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل بياناته" });
       return;
     }
     // HIGH fix #3 — validate resourceId ownership on update too
@@ -1541,7 +1813,7 @@ router.patch("/orders/:id", async (req, res) => {
     // user must cancel (which auto-reverses the issue) and re-do the cycle.
     const lockedAfterIssue =
       existingOrder &&
-      ["in_production", "quality_check", "completed"].includes(
+      ["in_production", "paused", "quality_check", "completed"].includes(
         (existingOrder as any).status ?? "",
       );
     if (b.rawWarehouseId !== undefined && !lockedAfterIssue)
@@ -1584,7 +1856,11 @@ router.patch("/orders/:id", async (req, res) => {
     if (b.wasteAccountId !== undefined)
       updates.wasteAccountId = await validateAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : null);
     if (b.notes !== undefined) updates.notes = b.notes || null;
-    if (b.meta !== undefined && typeof b.meta === "object") updates.meta = b.meta;
+    if (b.meta !== undefined && typeof b.meta === "object") {
+      if ((existingOrder.meta as any)?.wizardVersion)
+        return void res.status(409).json({ error: "لقطة إعدادات وتكلفة أمر الوزرد غير قابلة للتعديل" });
+      updates.meta = b.meta;
+    }
 
     // ─── PHASE B — work center + hours (locked after issue) ─────────────
     // عند تغيير مركز العمل أو الساعات، نعيد حساب laborCost / overheadCost
@@ -1733,7 +2009,7 @@ router.post("/orders/:id/status", async (req, res) => {
     }
 
     // ─── 1) ISSUE — entering "in_production" ────────────────────────────────
-    if (target === "in_production" && order.status !== "in_production") {
+    if (target === "in_production" && order.status !== "paused" && order.status !== "in_production") {
       // GUARD: idempotency — if an issue JE was already posted (e.g. concurrent
       // requests both passed the status check), refuse to post again.
       // Without this, a double-click could decrement stock + post JE twice.
@@ -1757,10 +2033,27 @@ router.post("/orders/:id/status", async (req, res) => {
           sourceCache.set(period, new Map(current.map((s) => [`${s.sourceType}:${s.sourceRecordId}`, s])));
         }
         const current = sourceCache.get(period)!.get(`${frozen.sourceType}:${frozen.sourceRecordId}`);
-        if (!current || Math.abs(current.sourceAmount - num(frozen.sourceAmount)) > 0.005) {
+         const frozenSourceAmount = sourceAmountCents(frozen.sourceAmount);
+         if (!current || Math.abs(sourceAmountCents(current.sourceAmount) - frozenSourceAmount) > 0.005) {
           res.status(409).json({ error: "تعذر التنفيذ: أحد مصادر التكلفة أُلغي ترحيله أو تغير. أنشئ أمراً جديداً بلقطة تكلفة حديثة." });
           return;
         }
+         const sourceKey = `${frozen.sourceType}:${frozen.sourceRecordId}`;
+         await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${sourceKey}))`);
+         const [capacity] = await tx.select({
+           amount: sql<string>`coalesce(sum(${productionCostAllocationsTable.allocatedAmount}), 0)`,
+         }).from(productionCostAllocationsTable)
+           .innerJoin(productionOrdersTable, eq(productionCostAllocationsTable.orderId, productionOrdersTable.id))
+           .where(and(
+             eq(productionCostAllocationsTable.companyId, cid),
+             eq(productionCostAllocationsTable.sourceType, frozen.sourceType),
+             eq(productionCostAllocationsTable.sourceRecordId, frozen.sourceRecordId),
+             ne(productionOrdersTable.status, "cancelled"),
+           ));
+         if (sourceAmountCents(capacity?.amount) > frozenSourceAmount + 0.005) {
+           res.status(409).json({ error: "تعذر التنفيذ: تجاوزت توزيعات أحد المصادر سعته المُرحّلة." });
+           return;
+         }
       }
       // a) Required setup
       if (!order.rawWarehouseId) {
@@ -1778,8 +2071,9 @@ router.post("/orders/:id/status", async (req, res) => {
       }
       const labor = Number(order.laborCost ?? 0);
       const overhead = Number(order.overheadCost ?? 0);
-      const payrollSnapshots = frozenCosts.filter((x) => x.sourceType === "payroll");
-      const indirectSnapshots = frozenCosts.filter((x) => x.sourceType !== "payroll");
+       const manufacturingSnapshots = frozenCosts.filter((x) => (x.snapshotMeta as any)?.includeInManufacturing !== false);
+       const payrollSnapshots = manufacturingSnapshots.filter((x) => x.sourceType === "payroll");
+       const indirectSnapshots = manufacturingSnapshots.filter((x) => x.sourceType !== "payroll");
       const frozenLabor = payrollSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
       const frozenOverhead = indirectSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
       if ((payrollSnapshots.length && Math.abs(frozenLabor - labor) > 0.005) ||
@@ -2367,6 +2661,7 @@ router.post("/orders/:id/items", async (req, res) => {
       .select({
         id: productionOrdersTable.id,
         branchId: productionOrdersTable.branchId,
+        status: productionOrdersTable.status,
       })
       .from(productionOrdersTable)
       .where(
@@ -2382,6 +2677,10 @@ router.post("/orders/:id/items", async (req, res) => {
     // HIGH fix #2 — branch scope check before adding line
     if (!rowInScope(req, order.branchId)) {
       res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+      return;
+    }
+    if (order.status === "paused") {
+      res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل المواد" });
       return;
     }
     const b = req.body ?? {};
@@ -2437,6 +2736,7 @@ router.delete("/orders/:id/items/:lineId", async (req, res) => {
         id: productionOrderItemsTable.id,
         orderId: productionOrderItemsTable.orderId,
         branchId: productionOrdersTable.branchId,
+        status: productionOrdersTable.status,
       })
       .from(productionOrderItemsTable)
       .innerJoin(
@@ -2456,6 +2756,10 @@ router.delete("/orders/:id/items/:lineId", async (req, res) => {
     }
     if (!rowInScope(req, line.branchId)) {
       res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+      return;
+    }
+    if (line.status === "paused") {
+      res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل المواد" });
       return;
     }
     await db
@@ -3612,6 +3916,7 @@ router.post("/orders/:id/stages/seed", async (req, res) => {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
     const { cid, order } = ctx;
+    if (order.status === "paused") return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل المراحل" });
     const existing = await db
       .select({ id: productionOrderStagesTable.id })
       .from(productionOrderStagesTable)
@@ -3714,6 +4019,7 @@ router.post("/orders/:id/stages/:stageId/start", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
+    if (ctx.order.status === "paused") return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل بدء المرحلة" });
     const stageId = Number(req.params.stageId);
     const [stage] = await db
       .select()
@@ -3783,6 +4089,7 @@ router.post("/orders/:id/stages/:stageId/complete", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
+    if (ctx.order.status === "paused") return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل إكمال المرحلة" });
     const stageId = Number(req.params.stageId);
     const b = req.body ?? {};
     const [stage] = await db
@@ -3860,6 +4167,7 @@ router.patch("/orders/:id/stages/:stageId", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
+    if (ctx.order.status === "paused") return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل المرحلة" });
     const stageId = Number(req.params.stageId);
     const b = req.body ?? {};
     const updates: Record<string, unknown> = {};
@@ -4813,7 +5121,7 @@ router.post("/quality-checks", async (req, res) => {
     // Round-9 waste analytics. Mirrors the pattern used elsewhere in this
     // file (e.g. PATCH /orders, POST /orders/:id/waste-records).
     const [ord] = await db
-      .select({ id: productionOrdersTable.id, branchId: productionOrdersTable.branchId })
+      .select({ id: productionOrdersTable.id, branchId: productionOrdersTable.branchId, status: productionOrdersTable.status })
       .from(productionOrdersTable)
       .where(
         and(
@@ -4828,6 +5136,10 @@ router.post("/quality-checks", async (req, res) => {
     }
     if (!rowInScope(req, ord.branchId)) {
       res.status(403).json({ error: "أمر الإنتاج خارج نطاق الفرع المسموح" });
+      return;
+    }
+    if (ord.status === "paused") {
+      res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تسجيل فحص الجودة" });
       return;
     }
     let stageId: number | null = null;
@@ -4987,6 +5299,7 @@ router.patch("/quality-checks/:id", async (req, res) => {
       .select({
         qc: productionQualityChecksTable,
         orderBranchId: productionOrdersTable.branchId,
+        orderStatus: productionOrdersTable.status,
       })
       .from(productionQualityChecksTable)
       .innerJoin(
@@ -5008,6 +5321,8 @@ router.patch("/quality-checks/:id", async (req, res) => {
       res.status(403).json({ error: "الفحص خارج نطاق الفرع المسموح" });
       return;
     }
+    if (existingRow.orderStatus === "paused")
+      return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل فحص الجودة" });
     const existing = existingRow.qc;
     const b = req.body ?? {};
     const patch: Record<string, unknown> = {};
@@ -5062,6 +5377,7 @@ router.delete("/quality-checks/:id", async (req, res) => {
       .select({
         qcId: productionQualityChecksTable.id,
         orderBranchId: productionOrdersTable.branchId,
+        orderStatus: productionOrdersTable.status,
       })
       .from(productionQualityChecksTable)
       .innerJoin(
@@ -5083,6 +5399,8 @@ router.delete("/quality-checks/:id", async (req, res) => {
       res.status(403).json({ error: "الفحص خارج نطاق الفرع المسموح" });
       return;
     }
+    if (existingRow.orderStatus === "paused")
+      return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل حذف فحص الجودة" });
     await db
       .delete(productionQualityChecksTable)
       .where(
@@ -5111,6 +5429,7 @@ router.post("/quality-checks/:id/reopen-stage", async (req, res) => {
       .select({
         qc: productionQualityChecksTable,
         orderBranchId: productionOrdersTable.branchId,
+        orderStatus: productionOrdersTable.status,
       })
       .from(productionQualityChecksTable)
       .innerJoin(
@@ -5132,6 +5451,8 @@ router.post("/quality-checks/:id/reopen-stage", async (req, res) => {
       res.status(403).json({ error: "الفحص خارج نطاق الفرع المسموح" });
       return;
     }
+    if (row.orderStatus === "paused")
+      return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل إعادة فتح المرحلة" });
     const qc = row.qc;
     if (qc.result !== "fail") {
       res
@@ -5250,6 +5571,7 @@ router.post("/orders/:id/waste-records", async (req, res) => {
     const orderId = Number(req.params.id);
     const scope = await assertOrderInScope(req, cid, orderId);
     if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
+    await assertOrderNotPaused(cid, orderId);
     const b = req.body ?? {};
     const wasteType = String(b.wasteType ?? "").trim();
     if (!(PRODUCTION_WASTE_TYPES as readonly string[]).includes(wasteType)) {
@@ -5310,7 +5632,7 @@ router.post("/orders/:id/waste-records", async (req, res) => {
       .returning();
     res.status(201).json(row);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -5322,6 +5644,7 @@ router.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
     const id = Number(req.params.id);
     const scope = await assertOrderInScope(req, cid, orderId);
     if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
+    await assertOrderNotPaused(cid, orderId);
     const result = await db
       .delete(productionWasteRecordsTable)
       .where(
@@ -5338,7 +5661,7 @@ router.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
     }
     res.json({ ok: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status ?? 500).json({ error: e.message });
   }
 });
 

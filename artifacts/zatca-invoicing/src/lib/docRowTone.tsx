@@ -143,6 +143,13 @@ export const TX_TONES: Record<string, StatusTone> = {
     label: "قيد التصنيع",
     hint: "أمر تصنيع جارٍ تنفيذه على خط الإنتاج",
   },
+  paused: {
+    tone: "bg-slate-50/70 hover:bg-slate-100/80",
+    bar: "border-s-[3px] border-s-slate-500",
+    chipCls: "border-slate-300 bg-slate-100 text-slate-700",
+    label: "متوقف مؤقتاً",
+    hint: "أمر التصنيع متوقف مؤقتاً ولا يقبل تسجيل تنفيذ حتى الاستئناف",
+  },
   quality_check: {
     tone: "bg-violet-50/60 hover:bg-violet-100/70",
     bar: "border-s-[3px] border-s-violet-400",

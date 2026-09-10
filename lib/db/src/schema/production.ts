@@ -288,6 +288,28 @@ export const productionCostAllocationsTable = pgTable(
 
 export type ProductionCostAllocation = typeof productionCostAllocationsTable.$inferSelect;
 
+// Reusable wizard configuration only. It deliberately stores no transaction
+// numbers, actual quantities, journals, stock movements or source allocations.
+export const productionWizardTemplatesTable = pgTable(
+  "production_wizard_templates",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branchesTable.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    configuration: jsonb("configuration").$type<Record<string, unknown>>().notNull().default({}),
+    isActive: boolean("is_active").notNull().default(true),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompany: index("prod_wizard_templates_company_idx").on(t.companyId, t.isActive),
+  }),
+);
+
+export type ProductionWizardTemplate = typeof productionWizardTemplatesTable.$inferSelect;
+
 // ─────────────────────────────────────────────────────────────────────────
 // Zod insert/select schemas
 // ─────────────────────────────────────────────────────────────────────────
@@ -671,6 +693,7 @@ export const PRODUCTION_ORDER_STATUSES = [
   "draft",
   "approved",
   "in_production",
+  "paused",
   "quality_check",
   "completed",
   "cancelled",
@@ -684,7 +707,8 @@ export const PRODUCTION_STATUS_TRANSITIONS: Record<
 > = {
   draft: ["approved", "cancelled"],
   approved: ["in_production", "cancelled"],
-  in_production: ["quality_check", "cancelled"],
+  in_production: ["paused", "quality_check", "cancelled"],
+  paused: ["in_production", "cancelled"],
   quality_check: ["completed", "in_production", "cancelled"],
   completed: [],
   cancelled: [],

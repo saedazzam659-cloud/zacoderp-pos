@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { Link, useLocation } from "wouter";
-import { Plus, Search, Factory, ArrowRight, X, ClipboardList, Boxes, Route, Cog, Calculator, CheckCircle2 } from "lucide-react";
+import { Plus, Search, Factory, ArrowRight, X, ClipboardList, Boxes, Route, Cog, Calculator, CheckCircle2, Save, Repeat2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +25,7 @@ const STATUSES = [
   "draft",
   "approved",
   "in_production",
+  "paused",
   "quality_check",
   "completed",
   "cancelled",
@@ -45,6 +46,7 @@ const STATUS_TONES: Record<string, string> = {
   draft: "bg-slate-100 text-slate-700",
   approved: "bg-blue-100 text-blue-700",
   in_production: "bg-amber-100 text-amber-800",
+  paused: "bg-slate-200 text-slate-800",
   quality_check: "bg-violet-100 text-violet-700",
   completed: "bg-emerald-100 text-emerald-700",
   cancelled: "bg-red-100 text-red-700",
@@ -52,7 +54,7 @@ const STATUS_TONES: Record<string, string> = {
 
 export default function ProductionOrders() {
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, user } = useAuth() as any;
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
@@ -79,7 +81,18 @@ export default function ProductionOrders() {
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [workCenters, setWorkCenters] = useState<any[]>([]);
   const [costSources, setCostSources] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [sourceOrderId, setSourceOrderId] = useState<number | null>(null);
+  const [costPolicy, setCostPolicy] = useState({
+    packaging:"primary", quality:"appraisal", wasteTreatment:"normal_manufacturing",
+    reworkTreatment:"internal_failure", certificationLayer:"manufacturing",
+    royaltyLayer:"economic", warrantyLayer:"operating",
+  });
   const [allocations, setAllocations] = useState<Record<string,string>>({});
+  const [sourceTreatments, setSourceTreatments] = useState<Record<string,string>>({});
+  const canClassifySources = user?.role === "admin" || user?.role === "superadmin" ||
+    user?.permissions?.production?.post === true;
   const derivedSourceAmount = (s:any) => {
     const method=s.meta?.allocationMethod || s.basis;
     if (s.sourceType==="prepaid_amortization")
@@ -135,9 +148,18 @@ export default function ProductionOrders() {
       plannedStartDate:new Date().toISOString().slice(0,10), plannedEndDate:"",
       rawWarehouseId:"", finishedWarehouseId:"", workCenterId:"", plannedHours:"",
       costPeriod:new Date().toISOString().slice(0,7) });
-    setAllocations({}); setWizardTab("basic");
+    setAllocations({}); setSourceTreatments({}); setWizardTab("basic"); setSelectedTemplateId(""); setSourceOrderId(null);
     wizardRequestIdRef.current = crypto.randomUUID();
     requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
+  function openNewPanel() {
+    wizardRequestIdRef.current = crypto.randomUUID();
+    setSelectedTemplateId("");
+    setSourceOrderId(null);
+    setAllocations({});
+    setSourceTreatments({});
+    setOpenCreate(true);
   }
 
   useEffect(() => {
@@ -160,8 +182,10 @@ export default function ProductionOrders() {
       fetch(`${API}/api/inventory/warehouses`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.ok?r.json():[]),
       fetch(`${API}/api/production/work-centers`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.ok?r.json():[]),
       fetch(`${API}/api/production/manufacturing-settings`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.ok?r.json():null),
-    ]).then(([w,c,s]) => {
+      fetch(`${API}/api/production/wizard-templates`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.ok?r.json():[]),
+    ]).then(([w,c,s,ts]) => {
       setWarehouses(Array.isArray(w)?w:(w.rows??[])); setWorkCenters(Array.isArray(c)?c:(c.rows??[]));
+      setTemplates(Array.isArray(ts)?ts:[]);
       if (s) setForm(f=>({...f,rawWarehouseId:f.rawWarehouseId||String(s.defaultRawWarehouseId||""),
         finishedWarehouseId:f.finishedWarehouseId||String(s.defaultFinishedWarehouseId||"")}));
     });
@@ -261,9 +285,13 @@ export default function ProductionOrders() {
           workCenterId: Number(form.workCenterId) || null,
           plannedHours: Number(form.plannedHours) || 0,
           costPeriod: form.costPeriod,
+          templateId: selectedTemplateId ? Number(selectedTemplateId) : null,
+          sourceOrderId,
+          costPolicy,
           allocations: costSources.flatMap((s:any)=>{
             const selected=allocations[`${s.sourceType}:${s.sourceRecordId}`]==="1";
-            return selected?[{sourceType:s.sourceType,sourceRecordId:s.sourceRecordId}]:[];
+            return selected?[{sourceType:s.sourceType,sourceRecordId:s.sourceRecordId,
+              treatment:sourceTreatments[`${s.sourceType}:${s.sourceRecordId}`]||"manufacturing_overhead"}]:[];
           }),
         }),
       });
@@ -289,6 +317,7 @@ export default function ProductionOrders() {
         }
       }
       toast({ title: `✓ ${t("production.saved")}` });
+      wizardRequestIdRef.current = crypto.randomUUID();
       setOpenCreate(false);
       setAllocations({});
       navigate(`/production/orders/${j.id}`);
@@ -297,6 +326,47 @@ export default function ProductionOrders() {
     } finally {
       setCreating(false);
     }
+  }
+
+  function applyConfiguration(configuration:any, templateId = "", fromOrder:number|null = null) {
+    const c=configuration??{};
+    setForm(f=>({...f,title:c.title||f.title,productItemId:c.productItemId||"",
+      unitCode:c.unitCode||"PCE",rawWarehouseId:c.rawWarehouseId?String(c.rawWarehouseId):"",
+      finishedWarehouseId:c.finishedWarehouseId?String(c.finishedWarehouseId):"",
+      workCenterId:c.workCenterId?String(c.workCenterId):"",
+      plannedHours:c.plannedHoursPerUnit&&Number(f.plannedQty)>0
+        ?String(Number(c.plannedHoursPerUnit)*Number(f.plannedQty)):"",notes:c.notes||""}));
+    if(c.costPolicy) setCostPolicy(p=>({...p,...c.costPolicy}));
+    setAllocations({}); setSourceTreatments({}); setSelectedTemplateId(templateId); setSourceOrderId(fromOrder);
+    wizardRequestIdRef.current = crypto.randomUUID();
+    setOpenCreate(true); setWizardTab("basic");
+  }
+
+  async function manufactureAgain(id:number) {
+    try {
+      const r=await fetch(`${API}/api/production/orders/${id}/manufacture-again`,{headers:{Authorization:`Bearer ${token}`}});
+      const j=await r.json(); if(!r.ok) throw new Error(j.error);
+      applyConfiguration(j.configuration,"",id);
+      toast({title:"تم نسخ الإعدادات فقط",description:"لم تُنسخ أرقام أو نتائج أو قيود أو توزيعات مصادر."});
+    } catch(e:any) { toast({title:"تعذر التصنيع مرة أخرى",description:e.message,variant:"destructive"}); }
+  }
+
+  async function saveTemplate() {
+    if(!form.productItemId) { toast({title:"اختر المنتج أولاً",variant:"destructive"}); return; }
+    const name=window.prompt("اسم قالب التصنيع",form.title||"قالب تصنيع");
+    if(!name) return;
+    try {
+      const qty=Number(form.plannedQty)||0;
+      const r=await fetch(`${API}/api/production/wizard-templates`,{method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+        body:JSON.stringify({name,configuration:{title:form.title,productItemId:Number(form.productItemId),
+          unitCode:form.unitCode,rawWarehouseId:Number(form.rawWarehouseId)||null,
+          finishedWarehouseId:Number(form.finishedWarehouseId)||null,workCenterId:Number(form.workCenterId)||null,
+          plannedHoursPerUnit:qty>0?Number(form.plannedHours||0)/qty:0,notes:form.notes,costPolicy}})});
+      const j=await r.json(); if(!r.ok) throw new Error(j.error);
+      setTemplates(ts=>[j,...ts]); setSelectedTemplateId(String(j.id));
+      toast({title:"تم حفظ قالب الإعدادات"});
+    } catch(e:any){toast({title:"تعذر حفظ القالب",description:e.message,variant:"destructive"});}
   }
 
   const list = useMemo(() => rows ?? [], [rows]);
@@ -316,7 +386,7 @@ export default function ProductionOrders() {
         <Button
           ref={triggerRef}
           data-testid="btn-new-order"
-          onClick={() => (openCreate ? closePanel() : setOpenCreate(true))}
+          onClick={() => (openCreate ? closePanel() : openNewPanel())}
           variant={openCreate ? "outline" : "default"}
           aria-expanded={openCreate}
           aria-controls="panel-new-order"
@@ -352,6 +422,22 @@ export default function ProductionOrders() {
             </Button>
           </div>
           <form onSubmit={handleCreate} className="p-4 space-y-4">
+            <div className="grid md:grid-cols-[1fr_auto] gap-2 items-end rounded-lg border bg-white/80 p-3">
+              <div>
+                <Label>قالب التصنيع السريع</Label>
+                <SearchCombobox value={selectedTemplateId} placeholder="اختياري — اختر قالباً"
+                  items={[{value:"",label:"بدون قالب"},...templates.map(x=>({value:String(x.id),label:x.name}))]}
+                  onValueChange={v=>{
+                    const template=templates.find(x=>String(x.id)===v);
+                    if(template) applyConfiguration(template.configuration,v,null);
+                    else setSelectedTemplateId("");
+                  }}/>
+              </div>
+              <div className="text-xs text-slate-500">
+                {sourceOrderId?`تصنيع مرة أخرى من الأمر #${sourceOrderId} — إعدادات فقط`:
+                  selectedTemplateId?"تصنيع سريع: أكمل الكمية والتاريخ ثم راجع ونفّذ":"يمكن حفظ الإعدادات كقالب دون بيانات الحركة"}
+              </div>
+            </div>
             <div className="grid grid-cols-3 lg:grid-cols-6 gap-1 rounded-xl bg-white/80 border p-1">
               {([
                 ["basic","البيانات",ClipboardList],["materials","المواد",Boxes],["routing","المراحل",Route],
@@ -404,11 +490,52 @@ export default function ProductionOrders() {
                 <p className="text-xs text-slate-500 pb-2">تظهر فقط تكاليف مُرحّلة فعلياً من الرواتب، الإهلاك، والمصروفات المقدمة.</p></div>
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">اختر المصدر فقط؛ يحسب الخادم الحصة من ساعات/كمية الأمر والمقام أو المعدل المعتمد في شاشة المصدر، ويحفظ جميع عناصر المعادلة في لقطة غير قابلة للتعديل.</div>
               <div className="divide-y border rounded-lg">{costSources.length===0?<div className="p-6 text-center text-slate-500">لا توجد مصادر مُرحّلة لهذه الفترة.</div>:costSources.map((s:any)=>{
-                const key=`${s.sourceType}:${s.sourceRecordId}`; return <div key={key} className="p-3 grid grid-cols-[1fr_110px_120px] gap-3 items-center">
+                const key=`${s.sourceType}:${s.sourceRecordId}`; return <div key={key} className="p-3 grid md:grid-cols-[1fr_100px_190px_110px] gap-3 items-center">
                   <div><b className="text-sm">{s.label}</b><p className="text-xs text-slate-500">المتاح {Number(s.availableAmount).toLocaleString()} • {s.meta?.allocationMethod||s.basis}</p></div>
-                  <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={allocations[key]==="1"} onChange={e=>setAllocations({...allocations,[key]:e.target.checked?"1":""})}/> اختيار</label>
+                   <label className="flex gap-2 items-center text-sm"><input type="checkbox" disabled={!canClassifySources} checked={allocations[key]==="1"} onChange={e=>setAllocations({...allocations,[key]:e.target.checked?"1":""})}/> اختيار</label>
+                   <select className="border rounded-md p-2 text-xs" value={sourceTreatments[key]||"manufacturing_overhead"}
+                     disabled={!canClassifySources}
+                     onChange={e=>setSourceTreatments({...sourceTreatments,[key]:e.target.value})}>
+                     <option value="manufacturing_overhead">تكلفة صناعية غير مباشرة</option>
+                     <option value="quality_prevention">جودة — وقاية</option>
+                     <option value="quality_appraisal">جودة — فحص</option>
+                     <option value="internal_failure">إعادة تشغيل / فشل داخلي</option>
+                     <option value="abnormal_loss">خسارة غير طبيعية</option>
+                     <option value="certification">شهادة / اعتماد</option>
+                     <option value="royalty">Royalty</option>
+                     <option value="warranty">ضمان</option>
+                     <option value="economic">اقتصادية فقط</option>
+                   </select>
                   <div className="text-end font-mono text-sm">{Number.isFinite(derivedSourceAmount(s))?derivedSourceAmount(s).toFixed(2):"—"}</div>
                 </div>})}</div>
+              {!canClassifySources && <p className="text-xs text-amber-700">عرض المصادر متاح، لكن اختيارها وتصنيفها يتطلب صلاحية ترحيل التصنيع.</p>}
+              <div className="rounded-lg border p-3 space-y-3">
+                <h3 className="font-bold text-sm">سياسات المعالجة المتقدمة</h3>
+                <p className="text-xs text-slate-500">هذه تصنيفات تكلفة وتحليل فقط؛ لا تنشئ قيوداً جديدة. التغليف المباشر يبقى مادة BOM، والجودة والهالك وإعادة التشغيل تستخدم سجلات المحرك الحالي، والمصادر المُرحّلة تبقى مملوكة لوحداتها الأصلية.</p>
+                <div className="grid md:grid-cols-4 gap-2 text-sm">
+                  <div><Label>التغليف</Label><select className="w-full border rounded-md p-2" value={costPolicy.packaging} onChange={e=>setCostPolicy({...costPolicy,packaging:e.target.value})}>
+                    <option value="primary">أولي / مباشر</option><option value="secondary">ثانوي</option><option value="protective">وقائي</option><option value="shipping">شحن</option><option value="promotional">ترويجي</option>
+                  </select></div>
+                  <div><Label>الجودة COQ</Label><select className="w-full border rounded-md p-2" value={costPolicy.quality} onChange={e=>setCostPolicy({...costPolicy,quality:e.target.value})}>
+                    <option value="prevention">وقاية</option><option value="appraisal">فحص وتقييم</option><option value="internal_failure">فشل داخلي</option><option value="external_failure">فشل خارجي</option>
+                  </select></div>
+                  <div><Label>الهالك</Label><select className="w-full border rounded-md p-2" value={costPolicy.wasteTreatment} onChange={e=>setCostPolicy({...costPolicy,wasteTreatment:e.target.value})}>
+                    <option value="normal_manufacturing">طبيعي — تصنيع</option><option value="abnormal_loss">غير طبيعي — خسارة</option>
+                  </select></div>
+                  <div><Label>إعادة التشغيل</Label><select className="w-full border rounded-md p-2" value={costPolicy.reworkTreatment} onChange={e=>setCostPolicy({...costPolicy,reworkTreatment:e.target.value})}>
+                    <option value="internal_failure">فشل داخلي</option><option value="abnormal_loss">خسارة غير طبيعية</option>
+                  </select></div>
+                  <div><Label>الشهادات</Label><select className="w-full border rounded-md p-2" value={costPolicy.certificationLayer} onChange={e=>setCostPolicy({...costPolicy,certificationLayer:e.target.value})}>
+                    <option value="manufacturing">تكلفة تصنيع</option><option value="economic">تكلفة اقتصادية</option>
+                  </select></div>
+                  <div><Label>Royalty</Label><select className="w-full border rounded-md p-2" value={costPolicy.royaltyLayer} onChange={e=>setCostPolicy({...costPolicy,royaltyLayer:e.target.value})}>
+                    <option value="manufacturing">تصنيع</option><option value="operating">تشغيلية</option><option value="economic">اقتصادية</option>
+                  </select></div>
+                  <div><Label>الضمان</Label><select className="w-full border rounded-md p-2" value={costPolicy.warrantyLayer} onChange={e=>setCostPolicy({...costPolicy,warrantyLayer:e.target.value})}>
+                    <option value="operating">تشغيلية / فشل خارجي</option><option value="manufacturing">تصنيع حسب السياسة</option>
+                  </select></div>
+                </div>
+              </div>
             </div>}
 
             {wizardTab==="review" && <div className="grid md:grid-cols-3 gap-3">
@@ -421,6 +548,7 @@ export default function ProductionOrders() {
             <div className="flex items-center justify-between gap-2 pt-2 border-t">
               <Button type="button" variant="outline" onClick={closePanel}>{t("common.cancel")}</Button>
               <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={saveTemplate}><Save className="h-4 w-4 me-1"/>حفظ كقالب</Button>
                 <Button type="submit" variant="outline" disabled={creating} data-mode="draft">حفظ كمسودة</Button>
                 <Button type="submit" disabled={creating} data-mode="execute" data-testid="btn-create-order">{creating?t("common.loading"):"حفظ وتنفيذ"}</Button>
               </div>
@@ -461,6 +589,7 @@ export default function ProductionOrders() {
               { kind: "draft",         count: list.filter((x: any) => x.status === "draft").length },
               { kind: "approved",      count: list.filter((x: any) => x.status === "approved").length },
               { kind: "in_production", count: list.filter((x: any) => x.status === "in_production").length },
+               { kind: "paused", count: list.filter((x: any) => x.status === "paused").length },
               { kind: "quality_check", count: list.filter((x: any) => x.status === "quality_check").length },
               { kind: "completed",     count: list.filter((x: any) => x.status === "completed" || x.status === "closed").length },
               { kind: "cancelled",     count: list.filter((x: any) => x.status === "cancelled").length },
@@ -506,7 +635,7 @@ export default function ProductionOrders() {
           </div>
 
           {/* Mobile FAB */}
-          <button onClick={() => setOpenCreate(true)} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label={t("production.newOrder")}>
+          <button onClick={openNewPanel} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label={t("production.newOrder")}>
             <span className="absolute inset-0 rounded-full bg-orange-400/40 animate-ping" />
             <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-orange-500 to-orange-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
               <Plus className="h-7 w-7" />
@@ -550,11 +679,16 @@ export default function ProductionOrders() {
                     <td className="p-3 text-end">{Number(o.plannedQty).toLocaleString("en-US")} <span className="text-xs text-slate-400">{o.unitCode}</span></td>
                     <td className="p-3 text-end">{Number(o.producedQty).toLocaleString("en-US")}</td>
                     <td className="p-3 text-end">
+                      <div className="flex justify-end gap-1">
+                      <Button size="sm" variant="ghost" onClick={()=>void manufactureAgain(o.id)} title="تصنيع مرة أخرى — نسخ الإعدادات فقط">
+                        <Repeat2 className="h-4 w-4"/>
+                      </Button>
                       <Link href={`/production/orders/${o.id}`}>
                         <Button size="sm" variant="ghost" data-testid={`btn-open-${o.id}`}>
                           <ArrowRight className="h-4 w-4" />
                         </Button>
                       </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, Plus, Trash2, Activity, ListChecks, Sparkles,
   CheckCircle2, PlayCircle, ClipboardCheck, Flag, Ban, X,
-  QrCode, AlertTriangle, Printer,
+  QrCode, AlertTriangle, Printer, PauseCircle, Calculator,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
@@ -124,7 +124,12 @@ const TRANSITIONS: Record<string, { to: string; labelKey: string; icon: any; ton
     { to: "cancelled", labelKey: "production.cancel", icon: Ban, tone: "bg-red-600 hover:bg-red-700" },
   ],
   in_production: [
+    { to: "paused", labelKey: "production.pause", icon: PauseCircle, tone: "bg-slate-600 hover:bg-slate-700" },
     { to: "quality_check", labelKey: "production.sendToQa", icon: ClipboardCheck, tone: "bg-violet-600 hover:bg-violet-700" },
+    { to: "cancelled", labelKey: "production.cancel", icon: Ban, tone: "bg-red-600 hover:bg-red-700" },
+  ],
+  paused: [
+    { to: "in_production", labelKey: "production.resume", icon: PlayCircle, tone: "bg-amber-600 hover:bg-amber-700" },
     { to: "cancelled", labelKey: "production.cancel", icon: Ban, tone: "bg-red-600 hover:bg-red-700" },
   ],
   quality_check: [
@@ -140,6 +145,7 @@ const STATUS_TONES: Record<string, string> = {
   draft: "bg-slate-100 text-slate-700",
   approved: "bg-blue-100 text-blue-700",
   in_production: "bg-amber-100 text-amber-800",
+  paused: "bg-slate-200 text-slate-800",
   quality_check: "bg-violet-100 text-violet-700",
   completed: "bg-emerald-100 text-emerald-700",
   cancelled: "bg-red-100 text-red-700",
@@ -166,6 +172,7 @@ export default function ProductionOrderDetail() {
   const [savingWip, setSavingWip] = useState(false);
   const [completion, setCompletion] = useState({ producedQty: "", wasteQty: "", fgExpiryDate: "" });
   const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
+  const [costDrilldown, setCostDrilldown] = useState<any>(null);
   const [itemForm, setItemForm] = useState({
     kind: "raw" as Item["kind"],
     description: "",
@@ -201,15 +208,18 @@ export default function ProductionOrderDetail() {
     if (!token) return;
     setLoading(true);
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const headers = { Authorization: `Bearer ${token}` };
+      const [r, costResponse] = await Promise.all([
+        fetch(`${API}/api/production/orders/${orderId}`, { headers }),
+        fetch(`${API}/api/production/orders/${orderId}/cost-drilldown`, { headers }),
+      ]);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       setOrder(j.order);
       setItems(j.items ?? []);
       setEvents(j.events ?? []);
       setWasteRecords(j.wasteRecords ?? []);
+      if (costResponse.ok) setCostDrilldown(await costResponse.json());
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
     } finally {
@@ -530,6 +540,9 @@ export default function ProductionOrderDetail() {
                   </span>
                 )}
               </TabsTrigger>
+              <TabsTrigger value="cost-analysis" data-testid="tab-cost-analysis">
+                <Calculator className="h-4 w-4 me-1" /> لماذا هذه التكلفة؟
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="items" className="space-y-3">
               <div className="flex justify-end">
@@ -541,6 +554,7 @@ export default function ProductionOrderDetail() {
                   variant={openItem ? "outline" : "default"}
                   aria-expanded={openItem}
                   aria-controls="panel-add-item"
+                  disabled={order.status === "paused"}
                 >
                   {openItem ? <X className="h-4 w-4 me-1" /> : <Plus className="h-4 w-4 me-1" />}
                   {openItem ? t("common.cancel") : t("production.addItem")}
@@ -670,6 +684,7 @@ export default function ProductionOrderDetail() {
                           <Button
                             size="sm" variant="ghost"
                             onClick={() => deleteItem(it.id)}
+                            disabled={order.status === "paused"}
                             data-testid={`btn-del-item-${it.id}`}
                           >
                             <Trash2 className="h-4 w-4 text-red-600" />
@@ -724,8 +739,35 @@ export default function ProductionOrderDetail() {
                 records={wasteRecords}
                 onReload={load}
                 workCenters={workCenters}
-                disabled={order.status === "draft" || order.status === "cancelled"}
+                disabled={order.status === "draft" || order.status === "paused" || order.status === "cancelled"}
               />
+            </TabsContent>
+            <TabsContent value="cost-analysis" className="space-y-3">
+              {!costDrilldown ? <div className="p-8 text-center text-slate-500">لا تتوفر بيانات تحليل التكلفة.</div> : <>
+                <div className="grid md:grid-cols-4 gap-2">
+                  <StatCard label="التكلفة الفعلية" value={costDrilldown.totals.actual}/>
+                  <StatCard label="التكلفة القياسية" value={costDrilldown.totals.standard}/>
+                  <StatCard label="الانحراف" value={costDrilldown.totals.variance}/>
+                  <StatCard label="هامش محاكاة بسعر البيع المثبّت عند الإنشاء" value={costDrilldown.totals.simulatedGrossManufacturingMargin}/>
+                </div>
+                <div className="rounded-lg border bg-white dark:bg-slate-900 divide-y text-sm">
+                  <DrillRow label="المواد والتغليف من BOM" value={costDrilldown.trace.materials.reduce((s:number,x:any)=>s+Number(x.amount),0)}
+                    detail={`${costDrilldown.trace.materials.length} سطر — كل سطر مرتبط بصنف المصدر`}/>
+                  <DrillRow label="العمالة" value={costDrilldown.trace.labor.amount}
+                    detail={`${costDrilldown.trace.labor.source.length} لقطة رواتب مُرحّلة`}/>
+                  <DrillRow label="التكاليف غير المباشرة / الشهادات" value={costDrilldown.trace.overhead.amount}
+                    detail={`${costDrilldown.trace.overhead.source.length} لقطة مصدر غير قابلة للتعديل`}/>
+                  <DrillRow label="الهالك" value={costDrilldown.trace.waste.reduce((s:number,x:any)=>s+Number(x.amount),0)}
+                    detail={`${costDrilldown.trace.waste.length} سجل تفصيلي`}/>
+                  <DrillRow label="الجودة وإعادة التشغيل" value={0}
+                    detail={`${costDrilldown.trace.quality.checks} فحص، ${costDrilldown.trace.quality.failed} فاشل — بلا قيد مكرر`}/>
+                </div>
+                <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3 text-xs">
+                  التتبع: مستند المصدر ← لقطة التوزيع ← المرحلة ← أمر التصنيع ← المنتج.
+                  Royalty والضمان والتكلفة الاقتصادية تظهر كطبقات تحليل وفق السياسة ولا تُرحّل محاسبياً بلا مستند مصدر.
+                  هامش المحاكاة ليس إيراداً محققاً؛ يعتمد لقطة سعر الصنف وقت إنشاء الأمر، ولا يتغير بتعديل السعر لاحقاً.
+                </div>
+              </>}
             </TabsContent>
           </Tabs>
         </div>
@@ -751,6 +793,20 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+function StatCard({ label, value }: { label: string; value: unknown }) {
+  return <div className="rounded-lg border bg-white dark:bg-slate-900 p-3">
+    <div className="text-xs text-slate-500">{label}</div>
+    <div className="font-mono font-bold mt-1">{value == null ? "—" : Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })}</div>
+  </div>;
+}
+
+function DrillRow({ label, value, detail }: { label: string; value: unknown; detail: string }) {
+  return <div className="p-3 flex items-center justify-between gap-3">
+    <div><b>{label}</b><p className="text-xs text-slate-500">{detail}</p></div>
+    <span className="font-mono font-semibold">{Number(value ?? 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>
+  </div>;
+}
+
 // ─── WIP setup panel ────────────────────────────────────────────────────────
 // Lets the user pick the raw + finished warehouses, the 7 GL accounts that
 // drive the issue/receipt JEs, and the labor/overhead amounts. Everything
@@ -767,7 +823,7 @@ function WipSetupPanel({
   saving: boolean;
   onSave: (patch: Record<string, unknown>) => void;
 }) {
-  const locked = ["in_production", "quality_check", "completed"].includes(order.status);
+  const locked = ["in_production", "paused", "quality_check", "completed"].includes(order.status);
   // Item Usage Control (Phase ب): the finished-good product picker honours the
   // per-item "finished_goods" routing rules (hidden/readonly/requires_*).
   const fgUsageModes = useScreenItemModes("finished_goods");

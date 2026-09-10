@@ -11,3 +11,11 @@ Allocated posted costs must reclassify the original expense debit accounts into 
 **Why:** Already-posted source costs otherwise get counted twice or leave the wrong expense accounts overstated.
 
 **How to apply:** Preserve source/configuration snapshots, capacity caps and cancellation release together. Every production status write, stock movement, journal and number claim must share the same transaction; propagate the executor through helper calls.
+
+Templates and manufacture-again must copy configuration only, never stock results or source allocations. Paused orders must reject operational edits and resume without issuing stock again.
+
+**Why:** Reusing transactions as templates or re-entering the issue path on resume silently duplicates consumption.
+
+Financial cost variance must exclude analytical layers. Any margin based on a frozen item price is simulated, not realized sales profitability.
+
+**Why:** Mixing operating/economic treatments into manufacturing standard costs double-counts allocations and misstates variance.
