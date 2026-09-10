@@ -24,7 +24,7 @@
 import { eq } from "drizzle-orm";
 import { db, companiesTable } from "@workspace/db";
 import { canPostDoc } from "./postingRights";
-import { getContextAuthUser } from "./requestContext";
+import { getContextAuthUser, getContextModuleKey } from "./requestContext";
 
 /**
  * Document categories that produce a journal entry. Add a new entry here
@@ -74,12 +74,21 @@ export async function resolvePostingStatus(
    * user-level restriction. Admin/superadmin always bypass.
    */
   authUser?: unknown,
+  /**
+   * Optional posting-rights key when the same accounting document is exposed
+   * through a different logical module (the compact facade uses the
+   * production journal path but has its own user-rights key).
+   */
+  rightsDocType?: string,
 ): Promise<"posted" | "draft"> {
   // Per-user posting rights: explicit param wins, else the per-request
   // AsyncLocalStorage context (set by extractAuth). System/scheduler paths
   // have neither → no user-level restriction.
   const effectiveUser = authUser ?? getContextAuthUser();
-  if (effectiveUser && !canPostDoc(effectiveUser as any, docType)) return "draft";
+  const contextRightsKey =
+    rightsDocType ??
+    (getContextModuleKey() === "simple_manufacturing" ? "simple_manufacturing" : docType);
+  if (effectiveUser && !canPostDoc(effectiveUser as any, contextRightsKey)) return "draft";
   const [c] = await db
     .select({
       master:        companiesTable.autoPostingEnabled,

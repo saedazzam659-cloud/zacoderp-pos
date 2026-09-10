@@ -42,7 +42,9 @@ const EXTRA_KEYS = MENU_ITEMS.map(m => m.key).filter(k => !GROUPED_MODULE_KEYS.h
 // Modules LOCKED by default — absent ⇒ OFF (must be explicitly enabled by a
 // SuperAdmin). Keep in sync with MODULE_GATE_DEFAULT_OFF in companyModuleGate.ts
 // and permissions.ts (backend).
-const DEFAULT_OFF_KEYS = new Set<string>(["office", "demo_analytics"]);
+const DEFAULT_OFF_KEYS = new Set<string>([
+  "office", "demo_analytics", "simple_manufacturing",
+]);
 
 // Default for a key ABSENT from the saved JSON: legacy-baseline keys stay
 // enabled (old behavior); keys added to the catalog AFTER the 2026-08

@@ -24,10 +24,13 @@ import {
   unitsTable,
   taxesTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, sql, inArray, notInArray, isNull } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
+import { eq, and, asc, desc, sql, inArray, notInArray, isNull, or } from "drizzle-orm";
+import {
+  extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread,
+  multiBranchScopeSpread, effectiveBranchCondition,
+} from "../middleware/auth.js";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
-import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
+import { pathRbac, requireAdminRole, requirePermission } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, refreshItemCost } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
@@ -432,7 +435,7 @@ router.use(pathRbac([
   ["/purchase-invoices",      "purchase_invoices"],
   ["/purchase-orders",        "purchase_invoices"],
   ["/purchase-returns",       "purchase_returns"],
-  ["/supplier-settlements",   "purchase_invoices"],
+  ["/supplier-settlements",   "supplier_settlements"],
   ["/letters-of-credit",      "purchase_invoices"],
   ["/supplier-groups",        "suppliers"],
 ]));
@@ -444,6 +447,16 @@ function guard(req: any, res: any): number | null {
 }
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+}
+
+async function settlementSupplierInScope(req: any, cid: number, supplierId: number | null): Promise<boolean> {
+  if (supplierId == null) return true;
+  const [supplier] = await db.select({ branchId: suppliersTable.branchId }).from(suppliersTable).where(and(
+    eq(suppliersTable.id, supplierId),
+    eq(suppliersTable.companyId, cid),
+  )).limit(1);
+  if (!supplier) return false;
+  return !("deny" in effectiveBranchCondition(req, suppliersTable.branchId, supplier.branchId));
 }
 
 // Cleanup any orphan stock movements / vouchers / journal entries tied to a draft document
@@ -3903,42 +3916,124 @@ router.delete("/purchase-returns/:id", async (req, res) => {
 // ═══════════════════════════════════════════════
 // SUPPLIER SETTLEMENTS
 // ═══════════════════════════════════════════════
-router.get("/supplier-settlements", async (req, res) => {
+router.get("/supplier-settlements", requirePermission("supplier_settlements", "view"), async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const supplierScope = effectiveBranchCondition(req, suppliersTable.branchId, req.query.branchId);
+    if ("deny" in supplierScope) {
+      res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" }); return;
+    }
+    const supplierIds = supplierScope.cond
+      ? (await db.select({ id: suppliersTable.id }).from(suppliersTable).where(and(
+          eq(suppliersTable.companyId, cid),
+          or(isNull(suppliersTable.branchId), supplierScope.cond),
+        ))).map((row) => row.id)
+      : null;
+    const conditions: any[] = [eq(supplierSettlementsTable.companyId, cid)];
+    if (supplierIds) {
+      conditions.push(or(
+        isNull(supplierSettlementsTable.supplierId),
+        supplierIds.length ? inArray(supplierSettlementsTable.supplierId, supplierIds) : sql`false`,
+      ));
+    }
     const rows = await db.select().from(supplierSettlementsTable)
-      .where(eq(supplierSettlementsTable.companyId, cid))
+      .where(and(...conditions))
       .orderBy(desc(supplierSettlementsTable.settlementDate));
     res.json(rows);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.post("/supplier-settlements", async (req, res) => {
+router.post("/supplier-settlements", requirePermission("supplier_settlements", "create"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, settlementDate, supplierId, paymentMethod, accountId,
-            amount, currencyCode, exchangeRate, notes } = req.body;
+            amount, currencyCode, exchangeRate, notes, sourceType,
+            sourceRecordId, sourceKey } = req.body;
     if (!settlementDate || !amount) {
       res.status(400).json({ error: "التاريخ والمبلغ مطلوبان" }); return;
     }
-    const [row] = await db.insert(supplierSettlementsTable).values({
+    const normalizedSupplierId = supplierId == null || supplierId === "" ? null : Number(supplierId);
+    if (normalizedSupplierId != null && (!Number.isInteger(normalizedSupplierId) || normalizedSupplierId <= 0)) {
+      res.status(400).json({ error: "المورد غير صحيح" }); return;
+    }
+    const rawSourceKey = sourceKey == null || sourceKey === "" ? "" : String(sourceKey).trim();
+    if (rawSourceKey.length > 240) {
+      res.status(400).json({ error: "مفتاح مصدر التسوية طويل جداً" }); return;
+    }
+    const normalizedSourceKey = rawSourceKey || null;
+    if (sourceKey != null && !normalizedSourceKey) {
+      res.status(400).json({ error: "مفتاح مصدر التسوية غير صحيح" }); return;
+    }
+    const normalizedSourceRecordId = sourceRecordId == null || sourceRecordId === ""
+      ? null : Number(sourceRecordId);
+    if (normalizedSourceRecordId != null &&
+        (!Number.isInteger(normalizedSourceRecordId) || normalizedSourceRecordId <= 0)) {
+      res.status(400).json({ error: "مرجع مصدر التسوية غير صحيح" }); return;
+    }
+    if (normalizedSupplierId != null) {
+      const [supplier] = await db.select({ id: suppliersTable.id, branchId: suppliersTable.branchId })
+        .from(suppliersTable)
+        .where(and(
+          eq(suppliersTable.id, normalizedSupplierId),
+          eq(suppliersTable.companyId, cid),
+        )).limit(1);
+      if (!supplier) {
+        res.status(400).json({ error: "المورد غير موجود في هذه الشركة" }); return;
+      }
+      const scope = effectiveBranchCondition(req, suppliersTable.branchId, supplier.branchId);
+      if ("deny" in scope) {
+        res.status(403).json({ error: "لا يمكنك العمل على فرع المورد" }); return;
+      }
+    }
+    const values = {
       companyId: cid, docNumber: docNumber || null, settlementDate,
-      supplierId: supplierId ? Number(supplierId) : null,
+      supplierId: normalizedSupplierId,
       paymentMethod: paymentMethod || "bank",
       accountId: accountId ? Number(accountId) : null,
       amount: String(amount), currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       status: "draft", notes: notes || null,
-    }).returning();
-    res.status(201).json(row);
+      sourceType: sourceType ? String(sourceType) : null,
+      sourceRecordId: normalizedSourceRecordId,
+      sourceKey: normalizedSourceKey,
+    };
+    try {
+      const [row] = await db.insert(supplierSettlementsTable).values(values).returning();
+      res.status(201).json(row);
+    } catch (e: any) {
+      // Generated payable drafts are retried by lifecycle actions and workers.
+      // A unique company/source key makes the retry idempotent; return the
+      // original row instead of surfacing a duplicate-key error.
+      if (normalizedSourceKey && String(e?.code ?? "") === "23505") {
+        const [existing] = await db.select().from(supplierSettlementsTable).where(and(
+          eq(supplierSettlementsTable.companyId, cid),
+          eq(supplierSettlementsTable.sourceKey, normalizedSourceKey),
+        )).limit(1);
+        if (existing) {
+          res.status(200).json({ ...existing, idempotentReplay: true });
+          return;
+        }
+      }
+      throw e;
+    }
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/supplier-settlements/:id/post", requirePostRight("purchase"), async (req, res) => {
+router.patch("/supplier-settlements/:id/post",
+  requirePermission("supplier_settlements", "post"),
+  requirePostRight("purchase"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    const [existing] = await db.select({ supplierId: supplierSettlementsTable.supplierId })
+      .from(supplierSettlementsTable).where(and(
+        eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid),
+      )).limit(1);
+    if (!existing) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+    if (!(await settlementSupplierInScope(req, cid, existing.supplierId))) {
+      res.status(403).json({ error: "لا يمكنك العمل على فرع المورد" }); return;
+    }
     const [row] = await db.update(supplierSettlementsTable)
       .set({ status: "posted", updatedAt: new Date() })
       .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
@@ -3951,10 +4046,20 @@ router.patch("/supplier-settlements/:id/post", requirePostRight("purchase"), asy
 // Mirrors the unpost flow on purchase-invoices / purchase-returns: admin-only,
 // flips status back to draft so the user can edit or delete the row.
 // Without this the DELETE guard above would be a dead-end for posted rows.
-router.patch("/supplier-settlements/:id/unpost", requireUnpostRight("purchase"), async (req, res) => {
+router.patch("/supplier-settlements/:id/unpost",
+  requirePermission("supplier_settlements", "unpost"),
+  requireUnpostRight("purchase"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    const [existing] = await db.select({ supplierId: supplierSettlementsTable.supplierId })
+      .from(supplierSettlementsTable).where(and(
+        eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid),
+      )).limit(1);
+    if (!existing) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+    if (!(await settlementSupplierInScope(req, cid, existing.supplierId))) {
+      res.status(403).json({ error: "لا يمكنك العمل على فرع المورد" }); return;
+    }
     const [row] = await db.update(supplierSettlementsTable)
       .set({ status: "draft", updatedAt: new Date() })
       .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
@@ -3964,17 +4069,23 @@ router.patch("/supplier-settlements/:id/unpost", requireUnpostRight("purchase"),
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.delete("/supplier-settlements/:id", async (req, res) => {
+router.delete("/supplier-settlements/:id", requirePermission("supplier_settlements", "delete"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     // Posted-status guard — same rule as every other financial doc:
     // a posted settlement cannot be deleted. The user must unpost it
     // first so the audit trail and ledger stay consistent.
-    const [existing] = await db.select({ status: supplierSettlementsTable.status })
+    const [existing] = await db.select({
+      status: supplierSettlementsTable.status,
+      supplierId: supplierSettlementsTable.supplierId,
+    })
       .from(supplierSettlementsTable)
       .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+    if (!(await settlementSupplierInScope(req, cid, existing.supplierId))) {
+      res.status(403).json({ error: "لا يمكنك العمل على فرع المورد" }); return;
+    }
     if (existing.status === "posted") {
       res.status(400).json({ error: "لا يمكن حذف تسوية مُرحَّلة. قم بإلغاء الترحيل أولاً ثم احذفها." });
       return;

@@ -58,6 +58,9 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "contracting",
   // ── الإنتاج والتصنيع ──
   "production",
+  // Compact manufacturing facade; deliberately default-OFF and separate from
+  // the advanced production module.
+  "simple_manufacturing",
   // ── إدارة الصيانة ──
   // Backend gate key for the Maintenance ERP (assets, technicians, work
   // orders, spare parts). Mirrors the `maintenance` entry in the web
@@ -127,4 +130,26 @@ export function filterCanonicalKeys(input: readonly unknown[]): string[] {
     out.push(k);
   }
   return out;
+}
+
+/**
+ * Normalize a persisted company menu-permission payload at write boundaries.
+ * Legacy tenants may legitimately omit newly introduced keys; locked modules
+ * must nevertheless be materialized as explicit false values so a copy,
+ * PATCH, or seed path cannot accidentally fall back to the old "missing =
+ * allowed" behaviour.
+ */
+export function normalizeCompanyMenuPermissions(value: unknown): string {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try { parsed = JSON.parse(value); } catch { parsed = {}; }
+  }
+  const source = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+  const out: Record<string, unknown> = { ...source };
+  for (const key of ["simple_manufacturing"]) {
+    out[key] = source[key] === true;
+  }
+  return JSON.stringify(out);
 }

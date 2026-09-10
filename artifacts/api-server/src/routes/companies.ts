@@ -13,6 +13,7 @@ import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js"
 import { encryptSecret, testCompanySender } from "../lib/email.js";
 import { propagateDemoWorkspaceMenuPermissions } from "../lib/demoDeviceIsolation.js";
 import { emitSessionRefreshMany } from "../lib/sessionEvents.js";
+import { normalizeCompanyMenuPermissions } from "../lib/menuPermissionCatalog.js";
 
 const router = Router();
 
@@ -924,17 +925,18 @@ router.patch("/:id/menu-permissions", async (req, res) => {
     res.status(400).json({ error: "menuPermissions يجب أن يكون JSON صالح" });
     return;
   }
+  const normalizedMenuPermissions = normalizeCompanyMenuPermissions(menuPermissions);
   // `?agent=<id>`: module grants for an AGENT-DB company (SuperAdmin only).
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
     const [company] = await db.update(companiesTable).set({
-      menuPermissions,
+      menuPermissions: normalizedMenuPermissions,
       updatedAt: new Date(),
     }).where(eq(companiesTable.id, id)).returning();
     if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
     const demoWorkspaceCompanyIds = await propagateDemoWorkspaceMenuPermissions(
       id,
-      menuPermissions,
+      normalizedMenuPermissions,
     );
     emitSessionRefreshMany([id, ...demoWorkspaceCompanyIds], "permissions_changed", {
       op: "company-menu-permissions-update",

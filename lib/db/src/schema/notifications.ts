@@ -1,7 +1,8 @@
-import { pgTable, serial, text, integer, boolean, timestamp, primaryKey, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, primaryKey, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import { usersTable } from "./users";
+import { branchesTable } from "./branches";
 
 // In-app notifications. A notification can be addressed to a specific user
 // (userId set) or to all users of a company (userId NULL → "broadcast").
@@ -15,6 +16,10 @@ export const notificationsTable = pgTable("notifications", {
   severity:     text("severity").notNull().default("info"), // info | low | medium | high
   category:     text("category").notNull().default("general"), // e.g. "ai_diagnostic"
   sourceKey:    text("source_key"),                      // e.g. "unbalanced_journals"
+  // Optional delivery scope. NULL keeps backward-compatible company-wide
+  // visibility; a module key and/or branch narrows the recipient set.
+  moduleKey:    text("module_key"),
+  branchId:     integer("branch_id").references(() => branchesTable.id, { onDelete: "set null" }),
   isRead:       boolean("is_read").notNull().default(false),
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
@@ -28,6 +33,8 @@ export const notificationsTable = pgTable("notifications", {
   uxNotifSourceKey: uniqueIndex("ux_notifications_company_source_key")
     .on(t.companyId, t.sourceKey)
     .where(sql`${t.sourceKey} IS NOT NULL`),
+  moduleBranchIdx: index("notifications_company_module_branch_idx")
+    .on(t.companyId, t.moduleKey, t.branchId),
 }));
 
 export type Notification = typeof notificationsTable.$inferSelect;

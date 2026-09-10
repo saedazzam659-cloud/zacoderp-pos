@@ -147,9 +147,13 @@ export async function runSecurityNotificationRules(
           body,
           severity: notifSev,
           category: "security_event",
-          sourceKey: `security_event:${event.id}`,
+           // The notification table is company/source-key unique. Include
+           // the recipient so one event can be delivered to several users.
+           sourceKey: `security_event:${event.id}:user:${uid}`,
+           moduleKey: "security_events",
+           branchId: event.branchId,
           createdByUserId: actingUserId,
-        })));
+         }))).onConflictDoNothing();
       } else {
         // broadcast — userId NULL means "every user in the company".
         await db.insert(notificationsTable).values({
@@ -160,8 +164,10 @@ export async function runSecurityNotificationRules(
           severity: notifSev,
           category: "security_event",
           sourceKey: `security_event:${event.id}`,
+           moduleKey: "security_events",
+           branchId: event.branchId,
           createdByUserId: actingUserId,
-        });
+         }).onConflictDoNothing();
       }
     }
   } catch (e) {

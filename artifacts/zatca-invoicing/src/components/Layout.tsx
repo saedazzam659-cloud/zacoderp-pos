@@ -283,6 +283,16 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionTraceability", href: "/production/traceability",   icon: GitBranch,     permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
+const SIMPLE_MANUFACTURING_GROUP_PERMS = ["simple_manufacturing"];
+const simpleManufacturingSubNav: NavDef[] = [
+  {
+    nameKey: "nav.simpleManufacturing",
+    href: "/simple-manufacturing",
+    icon: Factory,
+    permKey: "simple_manufacturing",
+    exact: true,
+  },
+];
 // Occupational Safety & Health (OSH / ISO 45001) — per-screen permission keys
 // (safety_dashboard / safety_risk / safety_incidents). All three roll up to the
 // single `safety` company-module toggle (see companyModuleGate.ts) but are
@@ -1772,6 +1782,36 @@ function ProductionNavGroup({
   );
 }
 
+// Compact manufacturing is a separate top-level group on purpose. It remains
+// reachable when advanced production is disabled without exposing any of its
+// screens or APIs.
+function SimpleManufacturingNavGroup({
+  location, onNavigate,
+}: { location: string; onNavigate: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, SIMPLE_MANUFACTURING_GROUP_PERMS)) return null;
+  return (
+    <div className="space-y-0.5">
+      <HubGroupButton
+        hubHref="/simple-manufacturing"
+        icon={Factory}
+        label={t("nav.simpleManufacturingGroup", { defaultValue: "التصنيع المبسط" })}
+        isOn={location === "/simple-manufacturing"}
+        open
+        onToggle={() => undefined}
+        onNavigate={onNavigate}
+      />
+      <div className="mt-0.5 space-y-0.5 relative">
+        <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+        {simpleManufacturingSubNav.map(item => (
+          <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── SafetyNavGroup ──────────────────────────────────────────────────────────
 // Collapsible "السلامة والصحة المهنية" group — mirrors ProductionNavGroup,
 // gated by a single `safety` permission key.
@@ -2483,6 +2523,11 @@ function TopNavBar(props: any) {
       node: close => <ProductionNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
+      key: "simpleManufacturing",
+      label: t("nav.simpleManufacturingGroup", { defaultValue: "التصنيع المبسط" }),
+      node: close => <SimpleManufacturingNavGroup location={location} onNavigate={nav(close)} />,
+    },
+    {
       key: "safety",
       label: t("nav.safetyGroup", { defaultValue: "السلامة" }),
       node: close => <SafetyNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
@@ -3014,6 +3059,10 @@ function SidebarInner({
               </div>
             )}
 
+            {isGroupAllowed(menuPerms, "simpleManufacturing", isSuperAdmin, user) && (
+              <SimpleManufacturingNavGroup location={location} onNavigate={onNavigate} />
+            )}
+
             {isGroupAllowed(menuPerms, "safety", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <SafetyNavGroup
@@ -3405,6 +3454,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...posSubNav.map(i => ({ ...i, parent: "/pos-management" })),
     ...hrSubNav,
     ...productionSubNav,
+    ...simpleManufacturingSubNav,
     ...contractingSubNav,
     ...maintenanceSubNav,
     ...installmentsSubNav,
@@ -3778,7 +3828,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "sister" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "simpleManufacturing" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
     | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring" | "extensions" | "office" | "deliveryDocs";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -3913,6 +3963,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/inventory")) target = "inventory";
     else if (location.startsWith("/office")) target = "office";
     else if (location.startsWith("/production")) target = "production";
+    else if (location.startsWith("/simple-manufacturing")) target = "simpleManufacturing";
     else if (location.startsWith("/safety")) target = "safety";
     else if (location.startsWith("/contracting")) target = "contracting";
     else if (location.startsWith("/maintenance")) target = "maintenance";
@@ -3960,6 +4011,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         cash:       setCashOpen,
         hr:         setHrOpen,
         production:  setProductionOpen,
+        // The compact group is always open; keep a no-op setter so it
+        // participates in the same accordion target type without sharing
+        // advanced production state.
+        simpleManufacturing: (() => undefined) as React.Dispatch<React.SetStateAction<boolean>>,
         safety:      setSafetyOpen,
         contracting: setContractingOpen,
         maintenance: setMaintenanceOpen,

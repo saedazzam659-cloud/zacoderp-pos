@@ -47,6 +47,9 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "contracting",        label: "إدارة المقاولات",            section: "إدارة المقاولات" },
 
   { key: "production",         label: "الإنتاج والتصنيع",           section: "الإنتاج والتصنيع" },
+  // Compact single-screen manufacturing facade. New module keys are
+  // intentionally absent from LEGACY_DEFAULT_ON_MENU_KEYS (default OFF).
+  { key: "simple_manufacturing", label: "التصنيع المبسط",             section: "الإنتاج والتصنيع" },
 
   { key: "safety",             label: "السلامة والصحة المهنية",      section: "السلامة والصحة المهنية" },
 
@@ -181,6 +184,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   hr_module:          "hr",
   contracting:        "contracting",
   production:         "production",
+  simple_manufacturing: null,
   safety:             null,            // OSH module — toggle is the on/off switch, no separate billable module
   safety_dashboard:   null,            // OSH per-screen key — rolls up to the `safety` toggle
   safety_risk:        null,            // OSH per-screen key — rolls up to the `safety` toggle

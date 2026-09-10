@@ -73,6 +73,8 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   // Operations modules
   contracting: "contracting",
   production: "production",
+  // Compact manufacturing facade. It is not an alias for `production`.
+  simple_manufacturing: "simple_manufacturing",
   // Occupational Safety & Health (OSH / ISO 45001) — standalone gate. Mirror
   // of the backend COMPANY_MODULE_GATE; keep both maps in sync. The three
   // per-screen permission keys all roll up to the single `safety` company
@@ -137,7 +139,9 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse
 // of the normal default-on). Keep in sync with permissions.ts (backend) and
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
-const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office", "demo_analytics"]);
+const MODULE_GATE_DEFAULT_OFF = new Set<string>([
+  "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
+]);
 
 // FROZEN legacy baseline of gate keys that keep the old "missing = allowed"
 // default (snapshot 2026-08). Any gate key added AFTER this snapshot defaults

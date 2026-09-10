@@ -134,7 +134,11 @@ export default function CostRollup() {
     let rows: unknown[][];
     if(kind==="costs") {
       rows=[["Product ID","Product","Produced Qty","Standard Cost","Actual Cost","Variance","Actual Unit Cost"],
-        ...(aggregate?.products??[]).map((x:any)=>[x.productItemId,x.productName,x.producedQty,x.standardCost,x.actualCost,x.variance,x.actualUnitCost])];
+        ...(aggregate?.products??[]).map((x:any)=>[x.productItemId,x.productName,x.producedQty,x.standardCost,x.actualCost,x.variance,x.actualUnitCost]),
+        [],
+        ["General overhead source reconciliation","","","","","",""],
+        ["Source Type","Source Record ID","Actual Source Amount","Applied Amount","Under Applied","Over Applied","Variance"],
+        ...(aggregate?.overhead?.rows??[]).map((x:any)=>[x.sourceType,x.sourceRecordId,x.actualAmount,x.appliedAmount,x.underAppliedAmount,x.overAppliedAmount,x.variance])];
     } else {
       rows=[["Product ID","Product","Posted Sales Qty","Posted Return Qty","Net Sold Qty","Posted Sales Revenue","Posted Return Revenue","Realized Net Revenue","Gross Margin","Operating Cost","Financing Cost","Attribution"],
         ...(profitability?.products??[]).map((x:any)=>[x.itemId,x.productName,x.postedSalesQty,x.postedReturnQty,x.netSoldQty,x.postedSalesRevenue,x.postedReturnRevenue,x.realizedNetRevenue,"UNAVAILABLE","UNAVAILABLE","UNAVAILABLE",x.marginStatus])];
@@ -426,6 +430,29 @@ export default function CostRollup() {
           <Card><CardHeader><CardTitle className="text-base">مصادر التكلفة وتوجيهها</CardTitle></CardHeader>
             <CardContent className="p-0"><ReportTable headers={["نوع المصدر","المعالجة","عدد اللقطات","المبلغ"]}
               rows={(aggregate?.sources??[]).map((x:any)=>[x.sourceType,x.treatment,x.allocations,x.amount])}/></CardContent></Card>
+           <Card><CardHeader><CardTitle className="text-base">تسوية المصروفات الصناعية العامة: الفعلي مقابل المطبق</CardTitle></CardHeader>
+             <CardContent className="space-y-3">
+               <div className="text-xs text-slate-500">
+                 الفعلي يُحتسب مرة واحدة لكل مصدر مرحّل، والمطبق هو مجموع لقطات التوزيع غير القابلة للتعديل. هذا تقرير تجميعي ولا ينسب تكلفة أو هامشاً لسطر بيع.
+               </div>
+               <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
+                 {[
+                   ["الفعلي", aggregate?.overhead?.totals?.actualAmount],
+                   ["المطبق", aggregate?.overhead?.totals?.appliedAmount],
+                   ["الانحراف", aggregate?.overhead?.totals?.variance],
+                   ["دون تطبيق", aggregate?.overhead?.totals?.underAppliedAmount],
+                   ["تطبيق زائد", aggregate?.overhead?.totals?.overAppliedAmount],
+                 ].map(([label, value]) => <div key={String(label)} className="rounded border p-2">
+                   <div className="text-[11px] text-slate-500">{label}</div>
+                   <div className="font-mono font-bold">{fmtMoney(Number(value ?? 0))}</div>
+                 </div>)}
+               </div>
+               <ReportTable headers={["نوع المصدر","مرجع المصدر","الفعلي","المطبق","دون تطبيق","تطبيق زائد","الانحراف"]}
+                 rows={(aggregate?.overhead?.rows??[]).map((x:any)=>[
+                   x.sourceType, x.sourceReference, x.actualAmount, x.appliedAmount,
+                   x.underAppliedAmount, x.overAppliedAmount, x.variance,
+                 ])}/>
+             </CardContent></Card>
         </TabsContent>
         <TabsContent value="sales" className="space-y-4">
           <ReportFilters from={from} to={to} branchId={branchId} branches={branches}

@@ -83,6 +83,7 @@ import adminIndustriesRouter from "./adminIndustries";
 import adminDataCopyRouter from "./admin-data-copy";
 import companyCloningRouter from "./companyCloning";
 import productionRouter from "./production";
+import simpleManufacturingRouter from "./simple-manufacturing";
 import safetyRouter from "./safety";
 import faceAttendanceRouter from "./faceAttendance";
 import fieldServiceRouter from "./fieldService";
@@ -272,6 +273,9 @@ router.use("/bank-reconciliation", bankReconciliationRouter);
 router.use("/ai",                 aiRouter);
 router.use("/ocr",                ocrRouter);
 router.use("/production",         productionRouter);
+// Separate compact manufacturing facade. It has its own default-OFF company
+// gate and never exposes the advanced production router when that gate is off.
+router.use("/simple-manufacturing", simpleManufacturingRouter);
 router.use("/safety",             safetyRouter);
 router.use("/users",              usersRouter);
 router.use("/work-sessions",      workSessionsRouter);

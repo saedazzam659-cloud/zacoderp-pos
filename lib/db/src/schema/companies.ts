@@ -214,7 +214,8 @@ export const companiesTable = pgTable("companies", {
   // Per-type HR expiry-alert lead times (days). Absent key ⇒ default 90.
   hrAlertThresholds: jsonb("hr_alert_thresholds").$type<{
     iqama?: number; contract?: number; passport?: number; workPermit?: number;
-    medicalInsurance?: number; vehicleInsurance?: number;
+     medicalInsurance?: number; vehicleInsurance?: number;
+     manufacturingCertificate?: number; manufacturingCertificateExpiry?: number;
   }>(),
   // ─── Fixed Assets (IAS 16) account mapping (company-wide defaults) ─────
   // The fa-journals helper falls back to these when the asset's category

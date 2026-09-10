@@ -14,6 +14,7 @@ import { and, eq, desc, sql, gte, lte, inArray, isNull, or, ne } from "drizzle-o
 import { GetDashboardSummaryQueryParams, GetRecentInvoicesQueryParams, GetMonthlyStatsQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { notificationScopeWhere } from "../lib/notificationScope.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -393,6 +394,7 @@ router.get("/overview", async (req: any, res) => {
                 eq(notificationsTable.userId, userId),
                 isNull(notificationsTable.userId),
               ),
+               notificationScopeWhere(req.authUser),
             ))
         : Promise.resolve([{ count: "0" }]),
     ]);

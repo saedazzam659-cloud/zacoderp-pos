@@ -4508,6 +4508,7 @@ router.post("/alerts/notify", async (req, res) => {
     itemId: itemsTable.id, code: itemsTable.code,
     nameAr: itemsTable.nameAr, nameEn: itemsTable.nameEn,
     reorderLevel: itemsTable.reorderLevel,
+     branchId: warehousesTable.branchId,
     totalQty: sql<string>`coalesce(sum(${stockBalanceTable.qty}), 0)`,
   })
     .from(itemsTable)
@@ -4515,23 +4516,38 @@ router.post("/alerts/notify", async (req, res) => {
       eq(stockBalanceTable.itemId, itemsTable.id),
       eq(stockBalanceTable.companyId, cid),
     ))
+    .leftJoin(warehousesTable, and(
+      eq(warehousesTable.id, stockBalanceTable.warehouseId),
+      eq(warehousesTable.companyId, cid),
+    ))
     .where(and(
       eq(itemsTable.companyId, cid),
       eq(itemsTable.status, "active"),
       sql`coalesce(${itemsTable.reorderLevel}, 0) > 0`,
+       ...(warehouseBranchScope(req) ? [warehouseBranchScope(req)] : []),
     ))
-    .groupBy(itemsTable.id, itemsTable.code, itemsTable.nameAr, itemsTable.nameEn, itemsTable.reorderLevel);
+     .groupBy(itemsTable.id, itemsTable.code, itemsTable.nameAr, itemsTable.nameEn, itemsTable.reorderLevel, warehousesTable.branchId);
 
   const today = new Date().toISOString().slice(0, 10);
   let created = 0;
   let skippedAlreadyNotified = 0;
+  // Backfill scope metadata on alerts produced before module/branch columns
+  // existed. Their historical aggregate cannot be assigned to one branch,
+  // so they remain company-wide but are still gated by inventory permission.
+  await db.update(notificationsTable).set({ moduleKey: "inventory_reports" })
+    .where(and(
+      eq(notificationsTable.companyId, cid),
+      eq(notificationsTable.category, "inventory_alert"),
+      isNull(notificationsTable.moduleKey),
+    ));
 
   for (const r of rows) {
     const totalQty = Number(r.totalQty);
     const reorder  = Number(r.reorderLevel ?? 0);
     if (totalQty > reorder) continue;
 
-    const sourceKey = `low_stock_item_${r.itemId}_${today}`;
+    const branchSuffix = r.branchId == null ? "shared" : String(r.branchId);
+    const sourceKey = `low_stock_item_${r.itemId}_${branchSuffix}_${today}`;
     // Strict idempotency: rely on the partial unique index
     // ux_notifications_company_source_key (companyId, sourceKey)
     // WHERE sourceKey IS NOT NULL combined with ON CONFLICT DO NOTHING.
@@ -4546,6 +4562,8 @@ router.post("/alerts/notify", async (req, res) => {
       severity:  "medium",
       category:  "inventory_alert",
       sourceKey,
+      moduleKey: "inventory_reports",
+      branchId: r.branchId ?? null,
       createdByUserId: req.authUser?.id ?? null,
     })
       // PostgreSQL requires the ON CONFLICT predicate to match the partial

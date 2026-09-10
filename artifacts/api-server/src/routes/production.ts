@@ -6,6 +6,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
+import { getContextModuleKey, setContextModuleKey } from "../lib/requestContext.js";
 import {
   productionOrdersTable,
   productionOrderItemsTable,
@@ -57,6 +58,8 @@ import {
   salesInvoiceLinesTable,
   salesReturnsTable,
   salesReturnLinesTable,
+  suppliersTable,
+  supplierSettlementsTable,
   type ProductionOrderStatus,
   type ProductionStageStatus,
 } from "@workspace/db";
@@ -69,7 +72,13 @@ import {
   intersectBranchRequest,
   effectiveBranchCondition,
 } from "../middleware/auth.js";
-import { requireModulePermission, moduleAudit, canAccessModule } from "../middleware/permissions.js";
+import {
+  requireModulePermission,
+  requirePermission,
+  moduleAudit,
+  canAccessModule,
+} from "../middleware/permissions.js";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import {
   upsertBalance,
@@ -161,7 +170,12 @@ async function createJournalEntry(opts: {
   // auto-post OFF — otherwise a draft JE would look "posted" in the audit
   // dialog. Callers may pass `audit: { req }` for live wiring or a pre-
   // baked object for legacy paths; both are honoured.
-  const jeStatus = opts.status ?? await resolvePostingStatus(opts.companyId, "production");
+  const jeStatus = opts.status ?? await resolvePostingStatus(
+    opts.companyId,
+    "production",
+    undefined,
+    getContextModuleKey() === "simple_manufacturing" ? "simple_manufacturing" : undefined,
+  );
   const auditFields = opts.audit?.req
     ? fullAuditFor(opts.audit.req as any, jeStatus)
     : (opts.audit ?? {});
@@ -292,6 +306,10 @@ async function validateItem(cid: number, id: number | null | undefined) {
 }
 
 const router = Router();
+// Lifecycle actions are also exposed by the compact manufacturing facade.
+// This narrow router is mounted by both facades; it must never include the
+// rest of the advanced production routes.
+export const commercialLifecycleRouter = Router();
   // ─────────────────────────────────────────────────────────────────────────
   // Gemini-first transparent redirect (see notes in routes/ai.ts).
   // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
@@ -334,11 +352,16 @@ const router = Router();
   }
   
 router.use(extractAuth);
+router.use((_req, _res, next) => {
+  setContextModuleKey("production");
+  next();
+});
 // HIGH-severity fix #1 — module-level RBAC gate so users without the
 // "production" permission cannot bypass the UI by hitting these endpoints
 // directly. Pairs with the PermRoute `module="production"` gate on the FE.
 router.use(requireModulePermission("production"));
 router.use(moduleAudit("production"));
+router.use(commercialLifecycleRouter);
 
 // Helper: validates that a branch row belongs to the user's allowed scope.
 // Returns true when the row's branchId is permitted, false otherwise.
@@ -1114,12 +1137,99 @@ const COMMERCIAL_LIFECYCLE_TRANSITIONS: Record<string, string[]> = {
   cancelled: [],
 };
 
+function lifecycleModuleKey(): "production" | "simple_manufacturing" {
+  return getContextModuleKey() === "simple_manufacturing"
+    ? "simple_manufacturing"
+    : "production";
+}
+
+commercialLifecycleRouter.use((req, res, next) => {
+  const action: "view" | "post" | "unpost" =
+    req.method === "GET"
+      ? "view"
+      : req.method === "PATCH" && /^(cancelled|reversed)$/i.test(String((req as any).body?.status ?? ""))
+        ? "unpost"
+        : "post";
+  if (!canAccessModule(req.authUser, lifecycleModuleKey(), action)) {
+    res.status(403).json({ error: "ليس لديك صلاحية لهذا الإجراء التشغيلي" });
+    return;
+  }
+  next();
+});
+
 function lifecycleRows(meta: unknown): any[] {
   const rows = (meta && typeof meta === "object" ? (meta as any).commercialLifecycle : null);
   return Array.isArray(rows) ? rows.filter((x) => x && typeof x === "object") : [];
 }
 
-router.get("/orders/:id/commercial-lifecycle", async (req, res) => {
+const WARRANTY_CLAIM_DETAIL_KINDS = new Set(["parts", "labor", "shipping"]);
+
+function lifecycleSourceAllocationIds(record: any): number[] {
+  const ids = new Set<number>();
+  const primary = Number(record?.sourceAllocationId);
+  if (Number.isInteger(primary) && primary > 0) ids.add(primary);
+  if (Array.isArray(record?.claimDetails)) {
+    for (const detail of record.claimDetails) {
+      const id = Number(detail?.sourceAllocationId);
+      if (Number.isInteger(id) && id > 0) ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
+function normalizeWarrantyClaimDetails(value: unknown): Array<{
+  kind: "parts" | "labor" | "shipping";
+  description: string;
+  sourceAllocationId: number;
+}> {
+  if (!Array.isArray(value)) return [];
+  const sourceIds = new Set<number>();
+  return value.map((detail: any, index) => {
+    const kind = String(detail?.kind ?? "");
+    const sourceAllocationId = Number(detail?.sourceAllocationId);
+    if (!WARRANTY_CLAIM_DETAIL_KINDS.has(kind)) {
+      throw Object.assign(
+        new Error(`نوع تفصيل الضمان غير صحيح في السطر ${index + 1}`),
+        { status: 400 },
+      );
+    }
+    if (!Number.isInteger(sourceAllocationId) || sourceAllocationId <= 0) {
+      throw Object.assign(
+        new Error(`مرجع مصدر التكلفة مطلوب في تفصيل الضمان ${index + 1}`),
+        { status: 400 },
+      );
+    }
+    if (sourceIds.has(sourceAllocationId)) {
+      throw Object.assign(
+        new Error(`لا يمكن تكرار لقطة المصدر في تفصيل الضمان ${index + 1}`),
+        { status: 400 },
+      );
+    }
+    sourceIds.add(sourceAllocationId);
+    // Amount is deliberately not accepted from the caller. It is copied from
+    // the immutable source allocation after its ownership/treatment checks.
+    if (detail?.amount != null) {
+      throw Object.assign(
+        new Error("مبلغ تفصيل الضمان يجب أن يأتي من مصدر تكلفة مُرحّل"),
+        { status: 400 },
+      );
+    }
+    const description = String(detail?.description ?? "").trim();
+    if (!description) {
+      throw Object.assign(
+        new Error(`وصف تفصيل الضمان مطلوب في السطر ${index + 1}`),
+        { status: 400 },
+      );
+    }
+    return {
+      kind: kind as "parts" | "labor" | "shipping",
+      description: description.slice(0, 250),
+      sourceAllocationId,
+    };
+  });
+}
+
+commercialLifecycleRouter.get("/orders/:id/commercial-lifecycle", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -1129,8 +1239,9 @@ router.get("/orders/:id/commercial-lifecycle", async (req, res) => {
     if (!order || !rowInScope(req, order.branchId))
       return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
     const records = lifecycleRows(order.meta);
-    const allocationIds = records.map((x) => Number(x.sourceAllocationId))
-      .filter((x) => Number.isInteger(x) && x > 0);
+    const allocationIds = [...new Set(records.flatMap((record) =>
+      lifecycleSourceAllocationIds(record),
+    ))];
     const allocations = allocationIds.length ? await db.select().from(productionCostAllocationsTable)
       .where(and(eq(productionCostAllocationsTable.companyId, cid),
         eq(productionCostAllocationsTable.orderId, id),
@@ -1139,9 +1250,43 @@ router.get("/orders/:id/commercial-lifecycle", async (req, res) => {
     res.json({
       records: records.map((record) => {
         const source = allocationById.get(Number(record.sourceAllocationId)) ?? null;
+        const claimDetails = Array.isArray(record.claimDetails)
+          ? record.claimDetails.map((detail: any) => {
+              const detailSource = allocationById.get(
+                Number(detail.sourceAllocationId),
+              ) ?? null;
+              return {
+                ...detail,
+                amount: detailSource ? num(detailSource.allocatedAmount) : null,
+                source: detailSource
+                  ? {
+                      allocationId: detailSource.id,
+                      sourceType: detailSource.sourceType,
+                      sourceRecordId: detailSource.sourceRecordId,
+                      periodStart: detailSource.periodStart,
+                      periodEnd: detailSource.periodEnd,
+                      snapshotMeta: detailSource.snapshotMeta,
+                    }
+                  : null,
+              };
+            })
+          : [];
+        const claimSourceAmount = claimDetails.length
+          ? [...new Set<number>(
+              claimDetails
+                .map((detail: any) => Number(detail.sourceAllocationId))
+                .filter((id: number) => Number.isInteger(id) && id > 0),
+            )].reduce(
+              (sum, id) => sum + num(allocationById.get(id)?.allocatedAmount),
+              0,
+            )
+          : null;
         return {
           ...record,
-          recognisedAmount: source ? (order.status === "reversed" ? 0 : num(source.allocatedAmount)) : null,
+          claimDetails,
+          recognisedAmount: order.status === "reversed"
+            ? 0
+            : claimSourceAmount ?? (source ? num(source.allocatedAmount) : null),
           originalAllocatedAmount: source ? num(source.allocatedAmount) : null,
           recognitionStatus: order.status === "reversed" ? "reversed_with_order" : "current",
           source: source ? {
@@ -1159,10 +1304,10 @@ router.get("/orders/:id/commercial-lifecycle", async (req, res) => {
   } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
 
-router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
+commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    if (!canAccessModule(req.authUser, "production", "post"))
+    if (!canAccessModule(req.authUser, lifecycleModuleKey(), "post"))
       return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
     const orderId = Number(req.params.id);
     const body = req.body ?? {};
@@ -1174,8 +1319,52 @@ router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
       return void res.status(400).json({ error: "السجل الجديد يجب أن يبدأ كمسودة أو نشط" });
     const name = String(body.name ?? "").trim();
     if (!name) return void res.status(400).json({ error: "الاسم/العقد مطلوب" });
-    const sourceAllocationId = body.sourceAllocationId ? Number(body.sourceAllocationId) : null;
+    const requestedSourceAllocationId = body.sourceAllocationId ? Number(body.sourceAllocationId) : null;
+    if (
+      body.sourceAllocationId != null &&
+      body.sourceAllocationId !== "" &&
+      (!Number.isInteger(requestedSourceAllocationId) || requestedSourceAllocationId! <= 0)
+    ) {
+      return void res.status(400).json({ error: "لقطة مصدر التكلفة غير صحيحة" });
+    }
+    const claimDetails = normalizeWarrantyClaimDetails(body.claimDetails);
+    if (
+      requestedSourceAllocationId &&
+      claimDetails.some((detail) => detail.sourceAllocationId === requestedSourceAllocationId)
+    ) {
+      return void res.status(400).json({ error: "لا يمكن استخدام لقطة المصدر نفسها كمرجع رئيسي وتفصيل مطالبة" });
+    }
+    if (claimDetails.length && type !== "warranty")
+      return void res.status(400).json({ error: "تفاصيل المطالبة متاحة للضمان فقط" });
+    const sourceAllocationId = requestedSourceAllocationId ??
+      (claimDetails.length ? claimDetails[0].sourceAllocationId : null);
     const salesReturnId = body.salesReturnId ? Number(body.salesReturnId) : null;
+    const supplierId = body.supplierId ? Number(body.supplierId) : null;
+    if (
+      body.salesReturnId != null &&
+      body.salesReturnId !== "" &&
+      (!Number.isInteger(salesReturnId) || salesReturnId! <= 0)
+    ) {
+      return void res.status(400).json({ error: "مرتجع البيع غير صحيح" });
+    }
+    const tiers = Array.isArray(body.tiers)
+      ? body.tiers.map((tier: any, index: number) => {
+          const upTo = tier?.upTo == null ? null : Number(tier.upTo);
+          const tierRate = Number(tier?.rate);
+          if (
+            (upTo == null && index < body.tiers.length - 1) ||
+            (upTo != null && (!Number.isFinite(upTo) || upTo < 0)) ||
+            !Number.isFinite(tierRate) ||
+            tierRate < 0 ||
+            (body.tierBasis === "sales" && tierRate > 100)
+          ) {
+            throw Object.assign(new Error(`شريحة Royalty غير صحيحة في السطر ${index + 1}`), {
+              status: 400,
+            });
+          }
+          return { upTo, rate: tierRate };
+        })
+      : [];
     const allowedMethods = type === "royalty"
       ? ["per_unit", "sales_percentage", "manufacturing_cost_percentage", "tiered"]
       : type === "warranty"
@@ -1203,8 +1392,22 @@ router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
       return void res.status(400).json({ error: "المطالبة الفعلية تتطلب ربط مرتجع بيع مُرحّل" });
     if (type === "warranty" && calculationMethod === "actual_claim" && !sourceAllocationId)
       return void res.status(400).json({ error: "المطالبة الفعلية تتطلب لقطة تكلفة ضمان مُرحّلة من المصدر" });
+    if (type === "warranty" && calculationMethod === "actual_claim" && !claimDetails.length)
+      return void res.status(400).json({ error: "المطالبة الفعلية تتطلب تفاصيل قطع/عمالة/شحن مرتبطة بمصادر" });
+    if (
+      body.supplierId != null &&
+      body.supplierId !== "" &&
+      (!Number.isInteger(supplierId) || supplierId! <= 0)
+    )
+      return void res.status(400).json({ error: "المورد غير صحيح" });
+    if (type !== "royalty" && supplierId)
+      return void res.status(400).json({ error: "المورد متاح لعقود Royalty فقط" });
     const rate = body.rate == null ? null : Number(body.rate);
-    if (type === "royalty" && status === "active" && !(rate != null && rate > 0))
+    if (
+      type === "royalty" &&
+      status === "active" &&
+      !((rate != null && rate > 0) || (calculationMethod === "tiered" && tiers.length > 0))
+    )
       return void res.status(400).json({ error: "تفعيل عقد Royalty يتطلب معدلاً موجباً" });
     if ((calculationMethod === "sales_percentage" || calculationMethod === "manufacturing_cost_percentage") &&
         rate != null && rate > 100)
@@ -1230,18 +1433,32 @@ router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
       if (order.status === "cancelled")
         throw Object.assign(new Error("لا يمكن تعديل دورة حياة أمر ملغى"), { status: 409 });
 
-      let allocation: any = null;
-      if (sourceAllocationId) {
-        [allocation] = await tx.select().from(productionCostAllocationsTable).where(and(
-          eq(productionCostAllocationsTable.id, sourceAllocationId),
+      let allocations: any[] = [];
+      const sourceAllocationIds = lifecycleSourceAllocationIds({
+        sourceAllocationId,
+        claimDetails,
+      });
+      if (sourceAllocationIds.length) {
+        allocations = await tx.select().from(productionCostAllocationsTable).where(and(
           eq(productionCostAllocationsTable.companyId, cid),
           eq(productionCostAllocationsTable.orderId, orderId),
+          inArray(productionCostAllocationsTable.id, sourceAllocationIds),
+        ));
+        if (allocations.length !== sourceAllocationIds.length)
+          throw Object.assign(new Error("إحدى لقطات مصدر التكلفة غير موجودة لهذا الأمر"), { status: 400 });
+        for (const allocation of allocations) {
+          const treatment = String((allocation.snapshotMeta as any)?.costTreatment ?? "");
+          if (treatment !== type && !(type === "certificate" && treatment === "certification"))
+            throw Object.assign(new Error("تصنيف لقطة المصدر لا يطابق نوع السجل"), { status: 400 });
+        }
+      }
+      if (supplierId) {
+        const [supplier] = await tx.select({ id: suppliersTable.id }).from(suppliersTable).where(and(
+          eq(suppliersTable.id, supplierId),
+          eq(suppliersTable.companyId, cid),
         )).limit(1);
-        if (!allocation)
-          throw Object.assign(new Error("لقطة مصدر التكلفة غير موجودة لهذا الأمر"), { status: 400 });
-        const treatment = String((allocation.snapshotMeta as any)?.costTreatment ?? "");
-        if (treatment !== type && !(type === "certificate" && treatment === "certification"))
-          throw Object.assign(new Error("تصنيف لقطة المصدر لا يطابق نوع السجل"), { status: 400 });
+        if (!supplier)
+          throw Object.assign(new Error("المورد غير موجود في هذه الشركة"), { status: 400 });
       }
       if (salesReturnId) {
         if (type !== "warranty")
@@ -1259,11 +1476,18 @@ router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
         if (!returnLine)
           throw Object.assign(new Error("المرتجع المُرحّل لا يحتوي منتج أمر التصنيع"), { status: 400 });
       }
-      if (status !== "draft" && !sourceAllocationId && calculationMethod !== "provision")
+      if (
+        status !== "draft" &&
+        !sourceAllocationId &&
+        calculationMethod !== "provision" &&
+        type !== "royalty"
+      )
         throw Object.assign(new Error("التفعيل المالي يتطلب لقطة تكلفة مُرحّلة من المصدر"), { status: 400 });
 
       const rows = lifecycleRows(order.meta);
-      if (sourceAllocationId && rows.some((x) => Number(x.sourceAllocationId) === sourceAllocationId))
+      if (sourceAllocationIds.some((sourceId) =>
+        rows.some((x) => lifecycleSourceAllocationIds(x).includes(sourceId)),
+      ))
         throw Object.assign(new Error("لقطة المصدر مرتبطة بالفعل بسجل دورة حياة آخر في هذا الأمر"), { status: 409 });
       if (salesReturnId && rows.some((x) => Number(x.salesReturnId) === salesReturnId))
         throw Object.assign(new Error("مرتجع البيع مرتبط بالفعل بمطالبة ضمان أخرى في هذا الأمر"), { status: 409 });
@@ -1274,7 +1498,12 @@ router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
         rate: body.rate == null ? null : num(body.rate),
         minimumAmount: body.minimumAmount == null ? null : num(body.minimumAmount),
         maximumAmount: body.maximumAmount == null ? null : num(body.maximumAmount),
-        effectiveFrom, effectiveTo, sourceAllocationId, salesReturnId,
+        effectiveFrom, effectiveTo, sourceAllocationId, salesReturnId, supplierId,
+        tiers, tierBasis: body.tierBasis === "sales" ? "sales" : "units",
+        claimDetails: claimDetails.map((detail) => ({
+          ...detail,
+          amount: num(allocations.find((x) => x.id === detail.sourceAllocationId)?.allocatedAmount),
+        })),
         notes: body.notes ? String(body.notes).slice(0, 2000) : null,
         createdAt: now, updatedAt: now, createdBy: req.authUser!.id,
       };
@@ -1284,7 +1513,12 @@ router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
       ));
       await writeEvent(cid, orderId, `${type}_lifecycle_created`, {
         lifecycleId: next.id, status, sourceAllocationId, salesReturnId,
-        recognisedAmount: allocation ? num(allocation.allocatedAmount) : null,
+        recognisedAmount: (claimDetails.length
+          ? claimDetails.reduce((sum, detail) =>
+              sum + num(allocations.find((allocation) =>
+                allocation.id === detail.sourceAllocationId)?.allocatedAmount), 0)
+          : allocations.reduce((sum, allocation) =>
+              sum + num(allocation.allocatedAmount), 0)) || null,
       }, req.authUser!.id, false, tx);
       return next;
     });
@@ -1292,10 +1526,219 @@ router.post("/orders/:id/commercial-lifecycle", async (req, res) => {
   } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/orders/:id/commercial-lifecycle/:lifecycleId", async (req, res) => {
+commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle/:lifecycleId/renew", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    if (!canAccessModule(req.authUser, "production", "post"))
+    if (!canAccessModule(req.authUser, lifecycleModuleKey(), "post"))
+      return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
+    const orderId = Number(req.params.id);
+    const lifecycleId = String(req.params.lifecycleId);
+    const renewed = await db.transaction(async (tx) => {
+      const locked = await tx.execute(sql`
+        select id, branch_id, status, meta from production_orders
+        where id = ${orderId} and company_id = ${cid} for update
+      `);
+      const order: any = locked.rows[0];
+      if (!order || !rowInScope(req, order.branch_id))
+        throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+      if (order.status === "cancelled")
+        throw Object.assign(new Error("لا يمكن تجديد شهادة أمر ملغى"), { status: 409 });
+      const rows = lifecycleRows(order.meta);
+      const source = rows.find((row) => row.id === lifecycleId);
+      if (!source || source.type !== "certificate")
+        throw Object.assign(new Error("شهادة التصنيع غير موجودة"), { status: 404 });
+      if (["settled", "cancelled"].includes(String(source.status)))
+        throw Object.assign(new Error("لا يمكن تجديد سجل شهادة مغلق"), { status: 409 });
+      const effectiveFrom = req.body?.effectiveFrom
+        ? String(req.body.effectiveFrom) : source.effectiveTo ?? null;
+      const effectiveTo = req.body?.effectiveTo
+        ? String(req.body.effectiveTo) : null;
+      if ((effectiveFrom && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) ||
+          (effectiveTo && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveTo)) ||
+          (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom))
+        throw Object.assign(new Error("فترة التجديد غير صحيحة"), { status: 400 });
+      const now = new Date().toISOString();
+      const next = {
+        id: randomBytes(12).toString("hex"),
+        type: "certificate",
+        name: String(req.body?.name ?? `${source.name} — تجديد`).slice(0, 250),
+        status: "draft",
+        calculationMethod: source.calculationMethod ?? "period",
+        rate: null, minimumAmount: null, maximumAmount: null,
+        effectiveFrom, effectiveTo, sourceAllocationId: null, salesReturnId: null,
+        supplierId: null, tiers: [], tierBasis: "units", claimDetails: [],
+        renewedFromLifecycleId: lifecycleId,
+        notes: req.body?.notes ? String(req.body.notes).slice(0, 2000) : null,
+        createdAt: now, updatedAt: now, createdBy: req.authUser!.id,
+      };
+      const nextRows = rows.map((row) =>
+        row.id === lifecycleId && row.status === "active"
+          ? { ...row, status: "settled", updatedAt: now, settledByRenewalId: next.id }
+          : row,
+      );
+      nextRows.push(next);
+      await tx.update(productionOrdersTable).set({
+        meta: { ...(order.meta ?? {}), commercialLifecycle: nextRows },
+        updatedAt: new Date(),
+      }).where(and(eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid)));
+      await writeEvent(cid, orderId, "certificate_renewal_started", {
+        lifecycleId, renewedLifecycleId: next.id, effectiveFrom, effectiveTo,
+      }, req.authUser!.id, false, tx);
+      return next;
+    });
+    res.status(201).json(renewed);
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
+
+commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle/:lifecycleId/royalty-calculate", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    if (!canAccessModule(req.authUser, lifecycleModuleKey(), "post"))
+      return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
+    const orderId = Number(req.params.id);
+    const lifecycleId = String(req.params.lifecycleId);
+    const result = await db.transaction(async (tx) => {
+      const locked = await tx.execute(sql`
+        select id, branch_id, product_item_id, status, meta from production_orders
+        where id = ${orderId} and company_id = ${cid} for update
+      `);
+      const order: any = locked.rows[0];
+      if (!order || !rowInScope(req, order.branch_id))
+        throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+      const rows = lifecycleRows(order.meta);
+      const current = rows.find((row) => row.id === lifecycleId);
+      if (!current || current.type !== "royalty")
+        throw Object.assign(new Error("عقد Royalty غير موجود"), { status: 404 });
+      if (!["active", "suspended"].includes(String(current.status)))
+        throw Object.assign(new Error("لا يمكن حساب Royalty لعقد غير نشط"), { status: 409 });
+      if (!order.product_item_id)
+        throw Object.assign(new Error("أمر التصنيع غير مرتبط بمنتج"), { status: 409 });
+      const today = new Date().toISOString().slice(0, 10);
+      const from = String(req.body?.from ?? current.effectiveFrom ?? today);
+      const to = String(req.body?.to ?? current.effectiveTo ?? today);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from)
+        throw Object.assign(new Error("فترة حساب Royalty غير صحيحة"), { status: 400 });
+      const [sales, returns] = await Promise.all([
+        tx.select({ invoiceId: salesInvoicesTable.id, qty: salesInvoiceLinesTable.qty,
+          lineTotal: salesInvoiceLinesTable.lineTotal, exchangeRate: salesInvoicesTable.exchangeRate })
+          .from(salesInvoiceLinesTable)
+          .innerJoin(salesInvoicesTable, eq(salesInvoicesTable.id, salesInvoiceLinesTable.invoiceId))
+          .where(and(eq(salesInvoiceLinesTable.companyId, cid),
+            eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
+            eq(salesInvoiceLinesTable.itemId, Number(order.product_item_id)),
+            sql`${salesInvoicesTable.invoiceDate} >= ${from}`,
+            sql`${salesInvoicesTable.invoiceDate} <= ${to}`)),
+        tx.select({ returnId: salesReturnsTable.id, qty: salesReturnLinesTable.qty,
+          lineTotal: salesReturnLinesTable.lineTotal, exchangeRate: salesReturnsTable.exchangeRate })
+          .from(salesReturnLinesTable)
+          .innerJoin(salesReturnsTable, eq(salesReturnsTable.id, salesReturnLinesTable.returnId))
+          .where(and(eq(salesReturnLinesTable.companyId, cid),
+            eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
+            eq(salesReturnLinesTable.itemId, Number(order.product_item_id)),
+            sql`${salesReturnsTable.returnDate} >= ${from}`,
+            sql`${salesReturnsTable.returnDate} <= ${to}`)),
+      ]);
+      const postedUnits = sales.reduce((sum, line) => sum + num(line.qty), 0);
+      const returnedUnits = returns.reduce((sum, line) => sum + num(line.qty), 0);
+      const netUnits = Math.max(0, postedUnits - returnedUnits);
+      const postedRevenue = sales.reduce((sum, line) =>
+        sum + num(line.lineTotal) * num(line.exchangeRate || 1), 0);
+      const returnedRevenue = returns.reduce((sum, line) =>
+        sum + num(line.lineTotal) * num(line.exchangeRate || 1), 0);
+      const netRevenue = Math.max(0, postedRevenue - returnedRevenue);
+      const allocations = await tx.select().from(productionCostAllocationsTable).where(and(
+        eq(productionCostAllocationsTable.companyId, cid),
+        eq(productionCostAllocationsTable.orderId, orderId),
+      ));
+      const manufacturingCost = allocations
+        .filter((allocation) => (allocation.snapshotMeta as any)?.includeInManufacturing !== false)
+        .reduce((sum, allocation) => sum + num(allocation.allocatedAmount), 0);
+      const method = String(current.calculationMethod);
+      const tierBasis = current.tierBasis === "sales" ? "sales" : "units";
+      const basisAmount = method === "sales_percentage" ? netRevenue
+        : method === "manufacturing_cost_percentage" ? manufacturingCost
+        : method === "tiered" && tierBasis === "sales" ? netRevenue
+        : netUnits;
+      const sortedTiers = Array.isArray(current.tiers) ? [...current.tiers].sort((a, b) =>
+        (a.upTo == null ? Number.POSITIVE_INFINITY : num(a.upTo)) -
+        (b.upTo == null ? Number.POSITIVE_INFINITY : num(b.upTo))) : [];
+      const tier = method === "tiered"
+        ? (sortedTiers.find((candidate) =>
+            candidate.upTo == null || basisAmount <= num(candidate.upTo)) ??
+          sortedTiers[sortedTiers.length - 1] ?? null)
+        : null;
+      const rate = tier ? num(tier.rate) : num(current.rate);
+      const rawAmount = method === "per_unit" ||
+        (method === "tiered" && tierBasis === "units")
+        ? basisAmount * rate
+        : basisAmount * rate / 100;
+      const minimum = current.minimumAmount == null ? 0 : num(current.minimumAmount);
+      const maximum = current.maximumAmount == null ? Number.POSITIVE_INFINITY : num(current.maximumAmount);
+      const amount = Number(Math.min(maximum, Math.max(minimum, rawAmount)).toFixed(2));
+      const references = {
+        invoiceIds: [...new Set(sales.map((line) => Number(line.invoiceId)))],
+        returnIds: [...new Set(returns.map((line) => Number(line.returnId)))],
+        allocationIds: allocations.map((allocation) => allocation.id),
+      };
+      let settlement: any = null;
+      if (req.body?.settle === true) {
+        const supplierId = Number(current.supplierId);
+        if (!Number.isInteger(supplierId) || supplierId <= 0)
+          throw Object.assign(new Error("تسوية Royalty تتطلب مورداً مستفيداً"), { status: 400 });
+        const [supplier] = await tx.select({ id: suppliersTable.id, branchId: suppliersTable.branchId })
+          .from(suppliersTable).where(and(
+          eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, cid))).limit(1);
+        if (!supplier)
+          throw Object.assign(new Error("مورد Royalty غير موجود في هذه الشركة"), { status: 400 });
+        if (!rowInScope(req, supplier.branchId))
+          throw Object.assign(new Error("لا يمكنك إنشاء تسوية لمورد خارج نطاق فروعك"), { status: 403 });
+        if (!(amount > 0))
+          throw Object.assign(new Error("لا يمكن إنشاء تسوية Royalty بصفر؛ لا توجد وقائع مرحّلة"), { status: 400 });
+        const sourceKey = `production_royalty:${cid}:${orderId}:${lifecycleId}:${from}:${to}`;
+        [settlement] = await tx.select().from(supplierSettlementsTable).where(and(
+          eq(supplierSettlementsTable.companyId, cid),
+          eq(supplierSettlementsTable.sourceKey, sourceKey))).limit(1);
+        if (!settlement) {
+          [settlement] = await tx.insert(supplierSettlementsTable).values({
+            companyId: cid, docNumber: `ROY-${orderId}-${from.replaceAll("-", "")}`,
+            settlementDate: to, supplierId, paymentMethod: "bank", accountId: null,
+            amount: String(amount), currencyCode: "SAR", exchangeRate: "1", status: "draft",
+            notes: `Royalty source: order=${orderId}; lifecycle=${lifecycleId}; period=${from}:${to}; references=${JSON.stringify(references)}`,
+            sourceType: "production_royalty", sourceRecordId: orderId, sourceKey,
+          }).returning();
+        }
+        const updatedRows = rows.map((row) => row.id === lifecycleId
+          ? { ...row, royaltySettlementId: settlement.id, lastRoyaltyCalculation: {
+              from, to, amount, basisAmount, rate, references,
+            }, updatedAt: new Date().toISOString() } : row);
+        await tx.update(productionOrdersTable).set({
+          meta: { ...(order.meta ?? {}), commercialLifecycle: updatedRows },
+          updatedAt: new Date(),
+        }).where(and(eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid)));
+        await writeEvent(cid, orderId, "royalty_settlement_draft_created", {
+          lifecycleId, settlementId: settlement.id, amount, from, to, references,
+        }, req.authUser!.id, false, tx);
+      }
+      return {
+        lifecycleId, method, period: { from, to }, basisAmount, rate, amount,
+        basis: { postedUnits, returnedUnits, netUnits, postedRevenue, returnedRevenue,
+          netRevenue, manufacturingCost,
+          attribution: "posted_product_period_and_order_source_allocations" },
+        references,
+        settlement: settlement
+          ? { id: settlement.id, status: settlement.status, sourceKey: settlement.sourceKey }
+          : null,
+      };
+    });
+    res.json(result);
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
+
+commercialLifecycleRouter.patch("/orders/:id/commercial-lifecycle/:lifecycleId", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    if (!canAccessModule(req.authUser, lifecycleModuleKey(), "post"))
       return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
     const orderId = Number(req.params.id);
     const lifecycleId = String(req.params.lifecycleId);
@@ -1318,7 +1761,12 @@ router.patch("/orders/:id/commercial-lifecycle/:lifecycleId", async (req, res) =
       const current = rows[index];
       if (!(COMMERCIAL_LIFECYCLE_TRANSITIONS[String(current.status)] ?? []).includes(status))
         throw Object.assign(new Error(`لا يمكن نقل دورة الحياة من ${current.status} إلى ${status}`), { status: 409 });
-      if (status === "active" && !current.sourceAllocationId && current.calculationMethod !== "provision")
+      if (
+        status === "active" &&
+        !current.sourceAllocationId &&
+        current.calculationMethod !== "provision" &&
+        current.type !== "royalty"
+      )
         throw Object.assign(new Error("التفعيل المالي يتطلب لقطة تكلفة مُرحّلة من المصدر"), { status: 400 });
       if (status === "active") {
         const today = new Date().toISOString().slice(0, 10);
@@ -1326,7 +1774,11 @@ router.patch("/orders/:id/commercial-lifecycle/:lifecycleId", async (req, res) =
           throw Object.assign(new Error("لا يمكن التفعيل قبل تاريخ السريان"), { status: 400 });
         if (current.effectiveTo && current.effectiveTo < today)
           throw Object.assign(new Error("لا يمكن تفعيل سجل منتهي الصلاحية"), { status: 400 });
-        if (current.type === "royalty" && !(num(current.rate) > 0))
+        if (
+          current.type === "royalty" &&
+          !(num(current.rate) > 0 || (current.calculationMethod === "tiered" &&
+            Array.isArray(current.tiers) && current.tiers.length > 0))
+        )
           throw Object.assign(new Error("تفعيل عقد Royalty يتطلب معدلاً موجباً"), { status: 400 });
       }
       const next = { ...current, status, updatedAt: new Date().toISOString(), updatedBy: req.authUser!.id };
@@ -1354,11 +1806,12 @@ router.get("/reports/costs", async (req, res) => {
       return void res.status(400).json({ error: "نطاق التاريخ غير صحيح" });
     const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId,
       req.query.branchId ? Number(req.query.branchId) : undefined);
-    if (branchResult.deny) return void res.json({ orders: [], sources: [], products: [] });
+    if (branchResult.deny)
+      return void res.json({ orders: [], sources: [], products: [], overhead: { rows: [], totals: null } });
     const orderWhere = and(eq(productionOrdersTable.companyId, cid),
       sql`coalesce(${productionOrdersTable.actualEndAt}::date, ${productionOrdersTable.plannedStartDate}) between ${from} and ${to}`,
       branchResult.cond);
-    const [orders, sources, products] = await Promise.all([
+    const [orders, sources, products, overheadAllocations] = await Promise.all([
       db.select({
         status: productionOrdersTable.status,
         orders: sql<number>`count(*)::int`,
@@ -1392,12 +1845,69 @@ router.get("/reports/costs", async (req, res) => {
           eq(itemsTable.companyId, cid)))
         .where(and(orderWhere, sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`))
         .groupBy(productionOrdersTable.productItemId, itemsTable.nameAr),
+      db.select({
+        sourceType: productionCostAllocationsTable.sourceType,
+        sourceRecordId: productionCostAllocationsTable.sourceRecordId,
+        sourceAmount: productionCostAllocationsTable.sourceAmount,
+        allocatedAmount: productionCostAllocationsTable.allocatedAmount,
+        periodStart: productionCostAllocationsTable.periodStart,
+        periodEnd: productionCostAllocationsTable.periodEnd,
+        snapshotMeta: productionCostAllocationsTable.snapshotMeta,
+      }).from(productionCostAllocationsTable)
+        .innerJoin(productionOrdersTable, and(
+          eq(productionOrdersTable.id, productionCostAllocationsTable.orderId),
+          eq(productionOrdersTable.companyId, cid)))
+        .where(and(
+          orderWhere,
+          eq(productionCostAllocationsTable.companyId, cid),
+          sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
+          sql`coalesce(${productionCostAllocationsTable.snapshotMeta}->>'costTreatment','') = 'manufacturing_overhead'`,
+        )),
     ]);
+    // Actual is counted once per owning source record; applied is the sum of
+    // immutable order allocations. This is an aggregate reconciliation only,
+    // not an unsupported order-level margin attribution.
+    const overheadBySource = new Map<string, any>();
+    for (const row of overheadAllocations) {
+      const key = `${row.sourceType}:${row.sourceRecordId}`;
+      const current = overheadBySource.get(key);
+      if (current) {
+        current.appliedAmount += num(row.allocatedAmount);
+        continue;
+      }
+      overheadBySource.set(key, {
+        sourceType: row.sourceType,
+        sourceRecordId: row.sourceRecordId,
+        periodStart: row.periodStart,
+        periodEnd: row.periodEnd,
+        actualAmount: num(row.sourceAmount),
+        appliedAmount: num(row.allocatedAmount),
+        sourceReference: `${row.sourceType}:${row.sourceRecordId}`,
+      });
+    }
+    const overheadRows = [...overheadBySource.values()].map((row) => {
+      const variance = Number((row.actualAmount - row.appliedAmount).toFixed(2));
+      return {
+        ...row,
+        variance,
+        underAppliedAmount: Math.max(0, variance),
+        overAppliedAmount: Math.max(0, -variance),
+      };
+    });
+    const overheadTotals = overheadRows.reduce((totals, row) => ({
+      actualAmount: totals.actualAmount + row.actualAmount,
+      appliedAmount: totals.appliedAmount + row.appliedAmount,
+      variance: totals.variance + row.variance,
+      underAppliedAmount: totals.underAppliedAmount + row.underAppliedAmount,
+      overAppliedAmount: totals.overAppliedAmount + row.overAppliedAmount,
+    }), { actualAmount: 0, appliedAmount: 0, variance: 0, underAppliedAmount: 0, overAppliedAmount: 0 });
     res.json({
       orders: orders.map((x) => ({ ...x, variance: num(x.actual) - num(x.planned) })),
       sources, products: products.map((x) => ({ ...x,
         variance: num(x.actualCost) - num(x.standardCost),
         actualUnitCost: num(x.producedQty) > 0 ? num(x.actualCost) / num(x.producedQty) : null })),
+      overhead: { rows: overheadRows, totals: overheadTotals,
+        basis: "distinct_posted_source_actual_vs_immutable_allocated_applied" },
       scope: { from, to, branchScoped: Boolean(branchResult.cond) },
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1465,7 +1975,7 @@ router.get("/reports/realized-product-profitability", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-router.get("/orders/:id", async (req, res) => {
+export async function productionOrderDetailHandler(req: any, res: any) {
   try {
     const cid = guard(req, res);
     if (!cid) return;
@@ -1525,9 +2035,11 @@ router.get("/orders/:id", async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
-});
+}
 
-router.post("/orders/wizard", async (req, res) => {
+router.get("/orders/:id", productionOrderDetailHandler);
+
+export async function productionWizardHandler(req: any, res: any) {
   const wizardRequestId = typeof req.body?.wizardRequestId === "string"
     ? req.body.wizardRequestId.trim().slice(0, 100) : "";
   const requestHash = wizardPayloadHash(req.body);
@@ -1609,7 +2121,9 @@ router.post("/orders/wizard", async (req, res) => {
     const plannedHours = num(b.plannedHours);
     const period = String(b.costPeriod || String(b.plannedStartDate || "").slice(0, 7));
     const requested: any[] = Array.isArray(b.allocations) ? b.allocations : [];
-    if (requested.length && !canAccessModule(req.authUser, "production", "post"))
+    if (requested.length &&
+        !canAccessModule(req.authUser, "production", "post") &&
+        !canAccessModule(req.authUser, "simple_manufacturing", "post"))
       return void res.status(403).json({ error: "لا تملك صلاحية تصنيف وترحيل مصادر تكلفة التصنيع" });
     const orderNumber = await nextSequenceNumber(cid, "production_order", {
       userId: req.authUser!.id, refTable: "production_orders", branchId,
@@ -1789,7 +2303,9 @@ router.post("/orders/wizard", async (req, res) => {
     }
     res.status(e.status ?? (code === "23505" ? 409 : 500)).json({ error: e.message });
   }
-});
+}
+
+router.post("/orders/wizard", productionWizardHandler);
 
 router.post("/orders", async (req, res) => {
   try {
@@ -2319,7 +2835,21 @@ router.patch("/orders/:id", async (req, res) => {
 // All postings reuse the shared createJournalEntry helper so they obey the
 // same period guard, cost-center propagation and balance check as invoices.
 // ──────────────────────────────────────────────────────────────────────────
-router.post("/orders/:id/status", async (req, res) => {
+function productionStatusAction(req: any): "post" | "unpost" {
+  return /^(cancelled|reversed)$/i.test(String(req.body?.status ?? "")) ? "unpost" : "post";
+}
+
+function productionStatusPermission(req: any, res: any, next: any) {
+  const action = productionStatusAction(req);
+  return requirePermission("production", action)(req, res, next);
+}
+
+function productionStatusPostingRight(req: any, res: any, next: any) {
+  const action = productionStatusAction(req);
+  return (action === "unpost" ? requireUnpostRight("production") : requirePostRight("production"))(req, res, next);
+}
+
+export async function productionStatusHandler(req: any, res: any) {
   try {
     const cid = guard(req, res);
     if (!cid) return;
@@ -2887,7 +3417,8 @@ router.post("/orders/:id/status", async (req, res) => {
     // reversal journal ids are appended to meta and the terminal status is
     // `reversed`, never recycled to draft/cancelled.
     if ((target as string) === "reversed" && order.status === "completed") {
-      if (!canAccessModule(req.authUser, "production", "post")) {
+      if (!canAccessModule(req.authUser, "production", "unpost") &&
+          !canAccessModule(req.authUser, "simple_manufacturing", "unpost")) {
         res.status(403).json({ error: "عكس أمر مكتمل يتطلب صلاحية ترحيل التصنيع" });
         return;
       }
@@ -3252,7 +3783,14 @@ router.post("/orders/:id/status", async (req, res) => {
     const status = e?.status === 423 ? 423 : 500;
     res.status(status).json({ error: e.message });
   }
-});
+}
+
+router.post(
+  "/orders/:id/status",
+  productionStatusPermission,
+  productionStatusPostingRight,
+  productionStatusHandler,
+);
 
 // ────────────────────────────────────────────────────────────────────────
 // ORDER ITEMS (raw materials / products / by-products)

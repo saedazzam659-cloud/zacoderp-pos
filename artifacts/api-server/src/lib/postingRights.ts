@@ -57,7 +57,7 @@ const DENY_POST_MSG   = "ليس لديك صلاحية ترحيل هذا النو
 const DENY_UNPOST_MSG = "ليس لديك صلاحية فك ترحيل هذا النوع من المستندات";
 
 /** Express middleware: 403 when the caller lacks the POST right for docType. */
-export function requirePostRight(docType: AutoPostDocType) {
+export function requirePostRight(docType: AutoPostDocType | string) {
   return (req: any, res: any, next: any) => {
     if (canPostDoc(req.authUser, docType)) return next();
     res.status(403).json({ error: DENY_POST_MSG });
@@ -65,7 +65,7 @@ export function requirePostRight(docType: AutoPostDocType) {
 }
 
 /** Express middleware: 403 when the caller lacks the UNPOST right for docType. */
-export function requireUnpostRight(docType: AutoPostDocType) {
+export function requireUnpostRight(docType: AutoPostDocType | string) {
   return (req: any, res: any, next: any) => {
     if (canUnpostDoc(req.authUser, docType)) return next();
     res.status(403).json({ error: DENY_UNPOST_MSG });

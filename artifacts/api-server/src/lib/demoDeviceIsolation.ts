@@ -14,6 +14,7 @@ import {
 } from "@workspace/db";
 import { cloneCompany } from "./cloneCompany.js";
 import { normalizePhone } from "./demoAnalytics.js";
+import { normalizeCompanyMenuPermissions } from "./menuPermissionCatalog.js";
 
 const DEVICE_TOKEN_MIN = 24;
 const DEVICE_TOKEN_MAX = 256;
@@ -307,6 +308,7 @@ export async function propagateDemoWorkspaceMenuPermissions(
   sourceCompanyId: number,
   menuPermissions: string,
 ): Promise<number[]> {
+  const normalizedMenuPermissions = normalizeCompanyMenuPermissions(menuPermissions);
   const links = await db.select({
     workspaceCompanyId: demoDeviceWorkspacesTable.workspaceCompanyId,
   }).from(demoDeviceWorkspacesTable).where(and(
@@ -323,7 +325,7 @@ export async function propagateDemoWorkspaceMenuPermissions(
 
   if (workspaceCompanyIds.length) {
     await db.update(companiesTable).set({
-      menuPermissions,
+      menuPermissions: normalizedMenuPermissions,
       updatedAt: new Date(),
     }).where(inArray(companiesTable.id, workspaceCompanyIds));
   }
@@ -345,9 +347,10 @@ async function syncRetainedWorkspaceMenuPermissions(
     }).from(companiesTable).where(eq(companiesTable.id, workspaceCompanyId)).limit(1),
   ]).then(([sourceRows, workspaceRows]) => [sourceRows[0], workspaceRows[0]]);
   if (!sourceCompany || !workspaceCompany) return;
-  if (sourceCompany.menuPermissions === workspaceCompany.menuPermissions) return;
+  const normalizedMenuPermissions = normalizeCompanyMenuPermissions(sourceCompany.menuPermissions);
+  if (normalizedMenuPermissions === workspaceCompany.menuPermissions) return;
   await db.update(companiesTable).set({
-    menuPermissions: sourceCompany.menuPermissions,
+    menuPermissions: normalizedMenuPermissions,
     updatedAt: new Date(),
   }).where(eq(companiesTable.id, workspaceCompanyId));
 }

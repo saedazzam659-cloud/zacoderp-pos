@@ -38,6 +38,7 @@ import {
 } from "@workspace/db";
 import { ensureCustomerLedger, ensureSupplierLedger } from "./entityAccounts.js";
 import { companyTemplateExcludedAccountIds } from "./companyTemplate.js";
+import { normalizeCompanyMenuPermissions } from "./menuPermissionCatalog.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -157,7 +158,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       decimalPlaces:             source.decimalPlaces,
       showZeros:                 source.showZeros,
       hideQuickAddBar:           source.hideQuickAddBar,
-      menuPermissions:           source.menuPermissions,
+      menuPermissions:           normalizeCompanyMenuPermissions(source.menuPermissions),
       windowsModulePermissions:  source.windowsModulePermissions,
       autoPostingEnabled:        source.autoPostingEnabled,
       allowUnbalancedOpeningBalances: source.allowUnbalancedOpeningBalances,

@@ -1170,6 +1170,9 @@ export const REGISTRATION_MODULE_PERMISSIONS: Record<string, string[]> = {
   // Manufacturing/Production — single permission key matching the
   // requirePermission("production") guard in production routes.
   production: ["production"],
+  // Compact manufacturing is intentionally a separate, opt-in module. It
+  // must not seed or imply the advanced production permission.
+  simple_manufacturing: ["simple_manufacturing"],
   // Security & Surveillance — backend uses the `security_events` permission
   // key (see routes/ai.ts security/* handlers and Layout.tsx securitySubNav).
   security: ["security_events"],

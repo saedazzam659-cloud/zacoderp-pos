@@ -7,6 +7,8 @@ import {
 import { and, desc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql } from "drizzle-orm";
 import { extractAuth } from "../middleware/auth.js";
 import { findUnbalancedOpeningDrafts } from "../lib/openingBalances.js";
+import { ensureProductionCertificateExpiryNotifications } from "../lib/productionLifecycleReminders.js";
+import { notificationScopeWhere, notificationScopeSql } from "../lib/notificationScope.js";
 
 const router = Router();
 
@@ -17,7 +19,8 @@ router.use((req, res, next) => {
 });
 
 // A notification is visible to the current user when:
-//   companyId matches AND (it's a broadcast OR addressed to this user).
+//   companyId matches AND (it's a broadcast OR addressed to this user), while
+//   its optional module/branch scope is also visible to that user.
 function recipientWhere(req: any) {
   const u = req.authUser;
   // Superadmin can also read notifications addressed directly to their user_id
@@ -27,13 +30,15 @@ function recipientWhere(req: any) {
       and(
         eq(notificationsTable.companyId, u.companyId),
         or(isNull(notificationsTable.userId), eq(notificationsTable.userId, u.id)),
+        notificationScopeWhere(u),
       ),
-      eq(notificationsTable.userId, u.id),
+      and(eq(notificationsTable.userId, u.id), notificationScopeWhere(u)),
     );
   }
   return and(
     eq(notificationsTable.companyId, u.companyId),
     or(isNull(notificationsTable.userId), eq(notificationsTable.userId, u.id)),
+    notificationScopeWhere(u),
   );
 }
 
@@ -102,7 +107,14 @@ async function ensureOpeningBalanceReminders(companyId: number | null | undefine
     severity: "high",
     category: "opening_balance_reminder",
     sourceKey: `opening_balance_reminder:${date}:${slot}`,
+    moduleKey: "accounts",
+    branchId: null,
   }))).onConflictDoNothing();
+  await db.update(notificationsTable).set({ moduleKey: "accounts", branchId: null })
+    .where(and(
+      eq(notificationsTable.companyId, companyId),
+      eq(notificationsTable.category, "opening_balance_reminder"),
+    ));
 }
 
 // Insurance alerts are materialized only while the notification bell is read.
@@ -127,6 +139,7 @@ async function ensureInsuranceExpiryNotifications(companyId: number | null | und
       insuranceCompany: employeeMedicalInsurancePoliciesTable.insuranceCompany,
       endDate: employeeMedicalInsurancePoliciesTable.endDate,
       employeeName: employeesTable.nameAr,
+      branchId: employeesTable.branchId,
     }).from(employeeMedicalInsurancePoliciesTable)
       .innerJoin(employeesTable, eq(employeesTable.id, employeeMedicalInsurancePoliciesTable.employeeId))
       .where(and(
@@ -141,6 +154,7 @@ async function ensureInsuranceExpiryNotifications(companyId: number | null | und
       nameAr: fixedAssetsTable.nameAr,
       insuranceCompany: fixedAssetsTable.insuranceCompany,
       insuranceEnd: fixedAssetsTable.insuranceEnd,
+      branchId: fixedAssetsTable.branchId,
     }).from(fixedAssetsTable).where(and(
       eq(fixedAssetsTable.companyId, companyId),
       isNotNull(fixedAssetsTable.insuranceEnd),
@@ -162,6 +176,8 @@ async function ensureInsuranceExpiryNotifications(companyId: number | null | und
       severity: "high",
       category: "medical_insurance_expiry",
       sourceKey: `medical_insurance_expiry:${policy.id}:${policy.endDate}`,
+       moduleKey: "hr_employees",
+       branchId: policy.branchId ?? null,
     })),
     ...vehicleAssets.map((asset) => ({
       companyId,
@@ -171,6 +187,8 @@ async function ensureInsuranceExpiryNotifications(companyId: number | null | und
       severity: "high",
       category: "vehicle_insurance_expiry",
       sourceKey: `vehicle_insurance_expiry:${asset.id}:${asset.insuranceEnd}`,
+       moduleKey: "fixed_assets",
+       branchId: asset.branchId ?? null,
     })),
   ];
   const categories = ["medical_insurance_expiry", "vehicle_insurance_expiry"];
@@ -199,6 +217,8 @@ async function ensureInsuranceExpiryNotifications(companyId: number | null | und
     body: row.body,
     severity: row.severity,
     category: row.category,
+    moduleKey: row.moduleKey,
+    branchId: row.branchId,
   }).where(and(
     eq(notificationsTable.companyId, companyId),
     eq(notificationsTable.sourceKey, row.sourceKey),
@@ -212,14 +232,15 @@ router.get("/", async (req, res) => {
   try {
     await ensureOpeningBalanceReminders(req.authUser!.companyId);
     await ensureInsuranceExpiryNotifications(req.authUser!.companyId);
+    await ensureProductionCertificateExpiryNotifications(req.authUser!.companyId);
     const userId = req.authUser!.id;
     const onlyUnread = req.query.unread === "1";
 
     // LEFT JOIN against notification_reads filtered by current user → is_read.
     // Filter out per-user dismissals so the row disappears for THIS user only.
     const rows = await db.execute(sql`
-      SELECT n.id, n.company_id, n.user_id, n.title, n.body,
-             n.severity, n.category, n.source_key,
+       SELECT n.id, n.company_id, n.user_id, n.title, n.body,
+              n.severity, n.category, n.source_key, n.module_key, n.branch_id,
              n.created_at, n.created_by_user_id,
              (nr.user_id IS NOT NULL)            AS is_read,
              nr.read_at                          AS read_at
@@ -236,6 +257,7 @@ router.get("/", async (req, res) => {
           )
           ${req.authUser!.role === "superadmin" ? sql`OR n.user_id = ${userId}` : sql``}
         )
+         ${notificationScopeSql(req.authUser)}
         ${onlyUnread ? sql`AND nr.user_id IS NULL` : sql``}
       ORDER BY n.created_at DESC
       LIMIT 100
@@ -244,7 +266,8 @@ router.get("/", async (req, res) => {
     const notifications = ((rows as any).rows ?? rows ?? []).map((r: any) => ({
       id: r.id, companyId: r.company_id, userId: r.user_id,
       title: r.title, body: r.body, severity: r.severity,
-      category: r.category, sourceKey: r.source_key,
+       category: r.category, sourceKey: r.source_key,
+       moduleKey: r.module_key, branchId: r.branch_id,
       createdAt: r.created_at, createdByUserId: r.created_by_user_id,
       isRead: r.is_read, readAt: r.read_at,
     }));
@@ -259,6 +282,7 @@ router.get("/unread-count", async (req, res) => {
   try {
     await ensureOpeningBalanceReminders(req.authUser!.companyId);
     await ensureInsuranceExpiryNotifications(req.authUser!.companyId);
+    await ensureProductionCertificateExpiryNotifications(req.authUser!.companyId);
     const userId = req.authUser!.id;
     const result = await db.execute(sql`
       SELECT COUNT(*)::int AS c
@@ -272,6 +296,7 @@ router.get("/unread-count", async (req, res) => {
           (n.company_id = ${req.authUser!.companyId} AND (n.user_id IS NULL OR n.user_id = ${userId}))
           ${req.authUser!.role === "superadmin" ? sql`OR n.user_id = ${userId}` : sql``}
         )
+         ${notificationScopeSql(req.authUser)}
         AND nr.user_id IS NULL
     `);
     const c = ((result as any).rows ?? result ?? [])[0]?.c ?? 0;
@@ -318,6 +343,7 @@ router.post("/read-all", async (req, res) => {
       WHERE n.company_id = ${req.authUser!.companyId}
         AND (n.user_id IS NULL OR n.user_id = ${req.authUser!.id})
         AND nr.user_id IS NULL
+         ${notificationScopeSql(req.authUser)}
       ON CONFLICT (notification_id, user_id) DO NOTHING
     `);
     res.json({ ok: true });
@@ -352,6 +378,10 @@ router.post("/:id/restore", async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "id غير صالح" }); return; }
+    const [row] = await db.select({ id: notificationsTable.id })
+      .from(notificationsTable)
+      .where(and(eq(notificationsTable.id, id), recipientWhere(req)));
+    if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
     await db.execute(sql`
       DELETE FROM notification_dismissals
       WHERE notification_id = ${id} AND user_id = ${req.authUser!.id}
@@ -380,6 +410,7 @@ router.delete("/cleanup/read", async (req, res) => {
           (n.company_id = ${req.authUser!.companyId} AND (n.user_id IS NULL OR n.user_id = ${userId}))
           ${req.authUser!.role === "superadmin" ? sql`OR n.user_id = ${userId}` : sql``}
         )
+         ${notificationScopeSql(req.authUser)}
       ON CONFLICT (notification_id, user_id) DO NOTHING
       RETURNING notification_id
     `);

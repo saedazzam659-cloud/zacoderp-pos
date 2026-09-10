@@ -19,7 +19,7 @@ import { companyAllowsModule } from "@/lib/companyModuleGate";
 //   const canCreate = usePermission("sales_invoices", "create");
 // ──────────────────────────────────────────────────────────────────────────
 
-export type PermAction = "view" | "create" | "edit" | "delete" | "post" | "export";
+export type PermAction = "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export";
 
 export function usePermission(module: string, action: PermAction = "view"): boolean {
   const { user } = useAuth() as any;

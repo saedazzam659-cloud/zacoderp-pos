@@ -1,0 +1,621 @@
+// Compact manufacturing facade.
+//
+// This router is deliberately not mounted through /production and never
+// broadens the advanced production gate. It exposes only the single-screen
+// operations needed by a tenant that enabled `simple_manufacturing`, while
+// delegating order creation/detail/status to the same production handlers and
+// tables used by the advanced UI.
+import { Router } from "express";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import {
+  db,
+  itemsTable,
+  warehousesTable,
+  productionOrdersTable,
+  productionCostAllocationsTable,
+  productionWizardTemplatesTable,
+  bomTemplatesTable,
+  bomTemplateLinesTable,
+  productionRoutingsTable,
+  productionRoutingStagesTable,
+  branchesTable,
+  suppliersTable,
+} from "@workspace/db";
+import {
+  extractAuth,
+  resolveCompanyId,
+  effectiveBranchCondition,
+  intersectBranchRequest,
+} from "../middleware/auth.js";
+import {
+  requireModulePermission,
+  requirePermission,
+  moduleAudit,
+} from "../middleware/permissions.js";
+import { setContextModuleKey } from "../lib/requestContext.js";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
+import {
+  productionOrderDetailHandler,
+  productionStatusHandler,
+  productionWizardHandler,
+  commercialLifecycleRouter,
+} from "./production.js";
+
+const router = Router();
+
+router.use(extractAuth);
+router.use((_req, _res, next) => {
+  setContextModuleKey("simple_manufacturing");
+  next();
+});
+router.use(requireModulePermission("simple_manufacturing"));
+router.use(moduleAudit("simple_manufacturing"));
+// Only the commercial lifecycle sub-router is shared with advanced
+// production. Never mount the complete production router here.
+router.use(commercialLifecycleRouter);
+
+function companyId(req: any, res: any): number | null {
+  const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
+  if (!cid) {
+    res.status(401).json({ error: "غير مصرح" });
+    return null;
+  }
+  return cid;
+}
+
+const view = requirePermission("simple_manufacturing", "view");
+const create = requirePermission("simple_manufacturing", "create");
+const edit = requirePermission("simple_manufacturing", "edit");
+const remove = requirePermission("simple_manufacturing", "delete");
+const post = requirePermission("simple_manufacturing", "post");
+const unpost = requirePermission("simple_manufacturing", "unpost");
+const exportReport = requirePermission("simple_manufacturing", "export");
+
+router.get("/", view, (_req, res) => {
+  res.json({
+    module: "simple_manufacturing",
+    title: "Simple Manufacturing",
+    endpoints: ["/catalog", "/orders", "/templates", "/setup/materials", "/setup/products", "/setup/warehouses", "/setup/bom", "/setup/routing", "/reports"],
+  });
+});
+
+// One call hydrates the simple screen without requiring inventory/advanced
+// production permissions. These are the same item and warehouse entities.
+router.get("/catalog", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    const branchResult = effectiveBranchCondition(req, warehousesTable.branchId, req.query.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const branch = branchResult.cond;
+    const templateBranchResult = effectiveBranchCondition(req, productionWizardTemplatesTable.branchId, req.query.branchId);
+    if ("deny" in templateBranchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const templateWhere = templateBranchResult.cond
+      ? and(eq(productionWizardTemplatesTable.companyId, cid), eq(productionWizardTemplatesTable.isActive, true), templateBranchResult.cond)
+      : and(eq(productionWizardTemplatesTable.companyId, cid), eq(productionWizardTemplatesTable.isActive, true));
+    const warehouseWhere = branch
+      ? and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true), branch)
+      : and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true));
+    const [items, warehouses, templates, routings] = await Promise.all([
+      db.select({
+        id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr,
+        nameEn: itemsTable.nameEn, itemNature: itemsTable.itemNature,
+        unitId: itemsTable.unitId,
+      }).from(itemsTable).where(and(eq(itemsTable.companyId, cid), eq(itemsTable.status, "active")))
+        .orderBy(asc(itemsTable.nameAr)).limit(5000),
+      db.select({
+        id: warehousesTable.id, code: warehousesTable.code, nameAr: warehousesTable.nameAr,
+        branchId: warehousesTable.branchId, isDefault: warehousesTable.isDefault,
+      }).from(warehousesTable).where(warehouseWhere).orderBy(asc(warehousesTable.nameAr)),
+      db.select().from(productionWizardTemplatesTable).where(templateWhere)
+        .orderBy(desc(productionWizardTemplatesTable.updatedAt)),
+      db.select().from(productionRoutingsTable).where(and(
+        eq(productionRoutingsTable.companyId, cid),
+        eq(productionRoutingsTable.isActive, true),
+      )).orderBy(desc(productionRoutingsTable.updatedAt)),
+    ]);
+    res.json({ items, warehouses, templates, routings });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const materialSetupHandler = async (req: any, res: any) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const code = String(req.body?.code ?? "").trim();
+  const nameAr = String(req.body?.nameAr ?? "").trim();
+  const allowedNature = new Set(["raw", "semi", "finished", "consumable", "merchandise"]);
+  const itemNature = String(req.body?.itemNature || "raw");
+  if (!code || !nameAr) return void res.status(400).json({ error: "رمز المادة واسمها مطلوبان" });
+  if (!allowedNature.has(itemNature)) return void res.status(400).json({ error: "طبيعة مادة غير صحيحة" });
+  try {
+    const [duplicate] = await db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.code, code))).limit(1);
+    if (duplicate) return void res.status(409).json({ error: "رمز المادة مستخدم بالفعل" });
+    const [row] = await db.insert(itemsTable).values({
+      companyId: cid, code, nameAr,
+      nameEn: req.body?.nameEn ? String(req.body.nameEn).trim() : null,
+      itemType: "stock", itemNature: itemNature as "raw" | "semi" | "finished" | "consumable" | "merchandise",
+      status: "active",
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+router.post("/setup/materials", create, materialSetupHandler);
+// Products are the same tenant-scoped inventory entity; keeping a dedicated
+// alias makes the compact screen self-contained without granting inventory
+// module access.
+router.post("/setup/products", create, materialSetupHandler);
+
+router.post("/setup/warehouses", create, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const code = String(req.body?.code ?? "").trim();
+  const nameAr = String(req.body?.nameAr ?? "").trim();
+  if (!code || !nameAr) return void res.status(400).json({ error: "رمز المخزن واسمه مطلوبان" });
+  if (code.length > 80 || nameAr.length > 200) {
+    return void res.status(400).json({ error: "بيانات المخزن تتجاوز الحد المسموح" });
+  }
+  const requestedBranch = req.body?.branchId == null || req.body?.branchId === ""
+    ? null : Number(req.body.branchId);
+  if (requestedBranch !== null && !Number.isInteger(requestedBranch)) {
+    return void res.status(400).json({ error: "الفرع غير صحيح" });
+  }
+  try {
+    const branchId = intersectBranchRequest(req, requestedBranch);
+    if (branchId === "deny") return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    if (branchId !== null) {
+      const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable)
+        .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid))).limit(1);
+      if (!branch) return void res.status(400).json({ error: "الفرع غير موجود في هذه الشركة" });
+    }
+    const [duplicate] = await db.select({ id: warehousesTable.id }).from(warehousesTable)
+      .where(and(eq(warehousesTable.companyId, cid), eq(warehousesTable.code, code))).limit(1);
+    if (duplicate) return void res.status(409).json({ error: "رمز المخزن مستخدم بالفعل" });
+    const [row] = await db.insert(warehousesTable).values({
+      companyId: cid,
+      branchId,
+      code,
+      nameAr,
+      nameEn: req.body?.nameEn ? String(req.body.nameEn).trim() : null,
+      city: req.body?.city ? String(req.body.city).trim() : null,
+      isDefault: req.body?.isDefault === true,
+      isActive: true,
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) {
+    const code = String(e?.code ?? "");
+    res.status(code === "23505" ? 409 : 500).json({ error: code === "23505" ? "يوجد مخزن افتراضي آخر لهذه الشركة" : e.message });
+  }
+});
+
+router.get("/orders", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    const conditions: any[] = [eq(productionOrdersTable.companyId, cid)];
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, req.query.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const branch = branchResult.cond;
+    if (branch) conditions.push(branch);
+    if (typeof req.query.status === "string" && req.query.status) {
+      conditions.push(eq(productionOrdersTable.status, req.query.status));
+    }
+    const rows = await db.select({
+      id: productionOrdersTable.id,
+      orderNumber: productionOrdersTable.orderNumber,
+      title: productionOrdersTable.title,
+      status: productionOrdersTable.status,
+      plannedQty: productionOrdersTable.plannedQty,
+      producedQty: productionOrdersTable.producedQty,
+      wasteQty: productionOrdersTable.wasteQty,
+      estimatedCost: productionOrdersTable.estimatedCost,
+      actualCost: productionOrdersTable.actualCost,
+      productItemId: productionOrdersTable.productItemId,
+      plannedStartDate: productionOrdersTable.plannedStartDate,
+      plannedEndDate: productionOrdersTable.plannedEndDate,
+      branchId: productionOrdersTable.branchId,
+      createdAt: productionOrdersTable.createdAt,
+    }).from(productionOrdersTable).where(and(...conditions))
+      .orderBy(desc(productionOrdersTable.createdAt)).limit(500);
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// The existing wizard is configuration-only until the status route posts
+// stock/GL. Keeping the request under this facade avoids exposing /production.
+const compactWizardHandler = async (req: any, res: any) => {
+  req.url = "/orders/wizard";
+  return productionWizardHandler(req, res);
+};
+
+router.post("/orders", create, compactWizardHandler);
+router.post("/orders/wizard", create, compactWizardHandler);
+
+router.delete("/orders/:id", remove, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  try {
+    const [order] = await db.select({
+      id: productionOrdersTable.id,
+      status: productionOrdersTable.status,
+      branchId: productionOrdersTable.branchId,
+    }).from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, id), eq(productionOrdersTable.companyId, cid),
+    )).limit(1);
+    if (!order) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, order.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    if (order.status !== "draft") {
+      return void res.status(409).json({ error: "لا يمكن حذف أمر غير مسودة؛ استخدم الإلغاء أو العكس حسب حالته" });
+    }
+    const [allocation] = await db.select({ id: productionCostAllocationsTable.id })
+      .from(productionCostAllocationsTable)
+      .where(eq(productionCostAllocationsTable.orderId, id)).limit(1);
+    if (allocation) return void res.status(409).json({ error: "لا يمكن حذف أمر يحتوي على روابط مصادر تكلفة" });
+    await db.delete(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, id), eq(productionOrdersTable.companyId, cid),
+    ));
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function simpleStatusAction(req: any): "post" | "unpost" {
+  return /^(cancelled|reversed)$/i.test(String(req.body?.status ?? "")) ? "unpost" : "post";
+}
+
+function simpleStatusPermission(req: any, res: any, next: any) {
+  const action = simpleStatusAction(req);
+  return (action === "unpost" ? unpost : post)(req, res, next);
+}
+
+function simpleStatusPostingRight(req: any, res: any, next: any) {
+  const action = simpleStatusAction(req);
+  return (action === "unpost" ? requireUnpostRight("simple_manufacturing") : requirePostRight("simple_manufacturing"))(req, res, next);
+}
+
+router.post("/orders/:id/status", simpleStatusPermission, simpleStatusPostingRight, async (req, res) => {
+  // This handler performs the atomic stock + GL transition, including pause,
+  // resume, cancellation and provenance-checked completed reversal.
+  return productionStatusHandler(req, res);
+});
+
+for (const [operation, status] of [
+  ["pause", "paused"],
+  ["resume", "in_production"],
+  ["cancel", "cancelled"],
+  ["reverse", "reversed"],
+] as const) {
+  const operationPermission = operation === "cancel" || operation === "reverse" ? unpost : post;
+  const operationPostingRight = operation === "cancel" || operation === "reverse"
+    ? requireUnpostRight("simple_manufacturing")
+    : requirePostRight("simple_manufacturing");
+  router.post(`/orders/:id/${operation}`, operationPermission, operationPostingRight, async (req, res) => {
+    req.body = { ...(req.body ?? {}), status };
+    return productionStatusHandler(req, res);
+  });
+}
+
+router.get("/templates", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    const branchResult = effectiveBranchCondition(req, productionWizardTemplatesTable.branchId, req.query.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const branch = branchResult.cond;
+    const where = branch
+      ? and(eq(productionWizardTemplatesTable.companyId, cid), eq(productionWizardTemplatesTable.isActive, true), branch)
+      : and(eq(productionWizardTemplatesTable.companyId, cid), eq(productionWizardTemplatesTable.isActive, true));
+    res.json(await db.select().from(productionWizardTemplatesTable).where(where)
+      .orderBy(desc(productionWizardTemplatesTable.updatedAt)));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/templates", create, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const name = String(req.body?.name ?? "").trim();
+  if (!name) return void res.status(400).json({ error: "اسم القالب مطلوب" });
+  try {
+    const bid = intersectBranchRequest(req, req.body?.branchId ?? null);
+    if (bid === "deny") return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const configuration = req.body?.configuration;
+    if (!configuration || typeof configuration !== "object" || Array.isArray(configuration)) {
+      return void res.status(400).json({ error: "إعدادات القالب مطلوبة" });
+    }
+    // Configuration-only invariant: no document number, actuals, journals,
+    // stock movements, or source allocation data can be stored here.
+    const [row] = await db.insert(productionWizardTemplatesTable).values({
+      companyId: cid,
+      branchId: typeof bid === "number" ? bid : null,
+      name,
+      configuration,
+      createdBy: req.authUser!.id,
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/templates/:id", remove, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  try {
+    const [existing] = await db.select({ branchId: productionWizardTemplatesTable.branchId })
+      .from(productionWizardTemplatesTable).where(and(
+        eq(productionWizardTemplatesTable.id, id), eq(productionWizardTemplatesTable.companyId, cid),
+      )).limit(1);
+    if (!existing) return void res.status(404).json({ error: "القالب غير موجود" });
+    const branchResult = effectiveBranchCondition(req, productionWizardTemplatesTable.branchId, existing.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const [row] = await db.update(productionWizardTemplatesTable)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(and(eq(productionWizardTemplatesTable.id, id), eq(productionWizardTemplatesTable.companyId, cid)))
+      .returning({ id: productionWizardTemplatesTable.id });
+    if (!row) return void res.status(404).json({ error: "القالب غير موجود" });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// BOM/material setup is intentionally inside this facade. It writes the
+// existing BOM tables and validates every item against the current tenant.
+router.post("/setup/bom", edit, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const productItemId = Number(req.body?.productItemId);
+  const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+  if (!Number.isInteger(productItemId) || !lines.length) {
+    return void res.status(400).json({ error: "المنتج النهائي وسطور المواد مطلوبان" });
+  }
+  try {
+    const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(eq(itemsTable.id, productItemId), eq(itemsTable.companyId, cid))).limit(1);
+    if (!product) return void res.status(400).json({ error: "المنتج النهائي غير موجود" });
+    const normalizedLines = lines.map((x: any) => ({
+      itemId: Number(x?.itemId),
+      quantity: Number(x?.quantity),
+      description: String(x?.description || "مادة خام").trim(),
+      unitCode: String(x?.unitCode || "PCE").trim(),
+      notes: x?.notes ? String(x.notes) : null,
+    }));
+    if (normalizedLines.some((x: any) =>
+      !Number.isInteger(x.itemId) || x.itemId <= 0 ||
+      !Number.isFinite(x.quantity) || x.quantity <= 0 ||
+      !x.description || !x.unitCode
+    )) {
+      return void res.status(400).json({ error: "كل سطر في قائمة المواد يحتاج صنفاً وكمية أكبر من صفر" });
+    }
+    const itemIds = normalizedLines.map((x: any) => x.itemId);
+    const owned = itemIds.length ? await db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds))) : [];
+    if (owned.length !== itemIds.length) return void res.status(400).json({ error: "إحدى المواد خارج الشركة" });
+    const outputQty = Number(req.body?.outputQty ?? 1);
+    if (!Number.isFinite(outputQty) || outputQty <= 0) {
+      return void res.status(400).json({ error: "كمية الناتج يجب أن تكون أكبر من صفر" });
+    }
+    const [bom] = await db.insert(bomTemplatesTable).values({
+      companyId: cid, productItemId, nameAr: String(req.body?.nameAr || "قائمة مواد مبسطة"),
+      nameEn: req.body?.nameEn ? String(req.body.nameEn) : null,
+      outputQty: String(outputQty),
+      outputUnitCode: String(req.body?.outputUnitCode || "PCE"),
+      notes: req.body?.notes ? String(req.body.notes) : null,
+    }).returning();
+    await db.insert(bomTemplateLinesTable).values(normalizedLines.map((x: any) => ({
+      templateId: bom.id, itemId: x.itemId,
+      description: x.description,
+      quantity: String(x.quantity),
+      unitCode: x.unitCode,
+      notes: x.notes,
+    })));
+    res.status(201).json(bom);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/setup/routing", edit, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+    const productItemId = Number(req.body?.productItemId);
+  const stages = Array.isArray(req.body?.stages) ? req.body.stages : [];
+  if (!Number.isInteger(productItemId) || !stages.length) {
+    return void res.status(400).json({ error: "المنتج ومراحل المسار مطلوبان" });
+  }
+  try {
+    const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(eq(itemsTable.id, productItemId), eq(itemsTable.companyId, cid))).limit(1);
+    if (!product) return void res.status(400).json({ error: "المنتج النهائي غير موجود" });
+    const normalizedStages = stages.map((x: any, i: number) => ({
+      code: String(x?.code || `S${i + 1}`).trim(),
+      nameAr: String(x?.nameAr || `مرحلة ${i + 1}`).trim(),
+      nameEn: x?.nameEn ? String(x.nameEn).trim() : null,
+      expectedDurationMinutes: x?.expectedDurationMinutes == null || x.expectedDurationMinutes === ""
+        ? null : Number(x.expectedDurationMinutes),
+      expectedWasteRatio: x?.expectedWasteRatio == null || x.expectedWasteRatio === ""
+        ? 0 : Number(x.expectedWasteRatio),
+      expectedCost: x?.expectedCost == null || x.expectedCost === "" ? 0 : Number(x.expectedCost),
+      notes: x?.notes ? String(x.notes) : null,
+    }));
+    if (normalizedStages.some((x: any) =>
+      !x.code || !x.nameAr ||
+      (x.expectedDurationMinutes !== null &&
+        (!Number.isFinite(x.expectedDurationMinutes) || x.expectedDurationMinutes <= 0)) ||
+      !Number.isFinite(x.expectedWasteRatio) || x.expectedWasteRatio < 0 ||
+      !Number.isFinite(x.expectedCost) || x.expectedCost < 0
+    )) {
+      return void res.status(400).json({ error: "كل مرحلة تحتاج رمزاً واسماً وقيم تكلفة/هالك صحيحة" });
+    }
+    const [routing] = await db.insert(productionRoutingsTable).values({
+      companyId: cid, productItemId,
+      nameAr: String(req.body?.nameAr || "مسار مبسط"),
+      nameEn: req.body?.nameEn ? String(req.body.nameEn) : null,
+      notes: req.body?.notes ? String(req.body.notes) : null,
+    }).returning();
+    await db.insert(productionRoutingStagesTable).values(normalizedStages.map((x: any, i: number) => ({
+      routingId: routing.id, sequence: i + 1,
+      code: x.code,
+      nameAr: x.nameAr,
+      nameEn: x.nameEn,
+      expectedDurationMinutes: x.expectedDurationMinutes,
+      expectedWasteRatio: String(x.expectedWasteRatio),
+      expectedCost: String(x.expectedCost),
+      notes: x.notes ? String(x.notes) : null,
+    })));
+    res.status(201).json(routing);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const sourceCostHandler = async (req: any, res: any) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const orderId = Number(req.params.id);
+  try {
+    const [order] = await db.select({ branchId: productionOrdersTable.branchId })
+      .from(productionOrdersTable).where(and(
+        eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid),
+      )).limit(1);
+    if (!order) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, order.branchId);
+    if ("deny" in branchResult) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const rows = await db.select().from(productionCostAllocationsTable)
+      .where(and(eq(productionCostAllocationsTable.companyId, cid), eq(productionCostAllocationsTable.orderId, orderId)))
+      .orderBy(asc(productionCostAllocationsTable.id));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+router.get("/orders/:id/source-costs", view, sourceCostHandler);
+router.get("/orders/:id/costs", view, sourceCostHandler);
+router.get("/orders/:id/cost-drilldown", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const orderId = Number(req.params.id);
+  try {
+    const [order] = await db.select({
+      id: productionOrdersTable.id,
+      orderNumber: productionOrdersTable.orderNumber,
+      status: productionOrdersTable.status,
+      branchId: productionOrdersTable.branchId,
+      producedQty: productionOrdersTable.producedQty,
+      plannedQty: productionOrdersTable.plannedQty,
+    }).from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, orderId),
+      eq(productionOrdersTable.companyId, cid),
+    )).limit(1);
+    if (!order) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, order.branchId);
+    if ("deny" in branchResult) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const allocations = await db.select().from(productionCostAllocationsTable)
+      .where(and(
+        eq(productionCostAllocationsTable.companyId, cid),
+        eq(productionCostAllocationsTable.orderId, orderId),
+      )).orderBy(asc(productionCostAllocationsTable.id));
+    res.json({
+      order: {
+        id: order.id, orderNumber: order.orderNumber, status: order.status,
+        producedQty: Number(order.producedQty || order.plannedQty || 0),
+      },
+      layers: {}, totals: {},
+      trace: { allocations, materials: [], stages: [], waste: [], quality: { checks: 0, failed: 0 } },
+      costPolicy: null,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/suppliers", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    const branchResult = effectiveBranchCondition(req, suppliersTable.branchId, req.query.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const conditions: any[] = [eq(suppliersTable.companyId, cid), eq(suppliersTable.isActive, true)];
+    if (branchResult.cond) conditions.push(branchResult.cond);
+    const rows = await db.select({
+      id: suppliersTable.id,
+      nameAr: suppliersTable.nameAr,
+      nameEn: suppliersTable.nameEn,
+      branchId: suppliersTable.branchId,
+      accountId: suppliersTable.accountId,
+    }).from(suppliersTable).where(and(...conditions)).orderBy(asc(suppliersTable.nameAr));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Work centers are not part of the compact setup surface. Return an explicit
+// empty lookup so the shared detail screen does not fall back to /production.
+router.get("/work-centers", view, (_req, res) => {
+  res.json([]);
+});
+
+// Reuse the canonical detail endpoint implementation, but only after the
+// compact module gate and compact user view permission have passed. This must
+// stay after the source-costs literal route.
+router.get("/orders/:id", view, productionOrderDetailHandler);
+
+const simpleReportHandler = async (req: any, res: any) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, req.query.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const conditions: any[] = [eq(productionOrdersTable.companyId, cid)];
+    if (branchResult.cond) conditions.push(branchResult.cond);
+    const rows = await db.select({
+      id: productionOrdersTable.id,
+      orderNumber: productionOrdersTable.orderNumber,
+      title: productionOrdersTable.title,
+      status: productionOrdersTable.status,
+      plannedQty: productionOrdersTable.plannedQty,
+      producedQty: productionOrdersTable.producedQty,
+      estimatedCost: productionOrdersTable.estimatedCost,
+      actualCost: productionOrdersTable.actualCost,
+      productItemId: productionOrdersTable.productItemId,
+      productName: itemsTable.nameAr,
+      createdAt: productionOrdersTable.createdAt,
+    }).from(productionOrdersTable)
+      .leftJoin(itemsTable, and(
+        eq(itemsTable.id, productionOrdersTable.productItemId),
+        eq(itemsTable.companyId, cid),
+      ))
+      .where(and(...conditions))
+      .orderBy(desc(productionOrdersTable.createdAt)).limit(1000);
+    res.json({
+      rows,
+      totals: {
+        standardCost: rows.reduce((s, x) => s + Number(x.estimatedCost || 0), 0),
+        actualCost: rows.reduce((s, x) => s + Number(x.actualCost || 0), 0),
+      },
+      basis: "shared_production_order_costs",
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+router.get("/reports", view, simpleReportHandler);
+router.get("/reports/export", exportReport, simpleReportHandler);
+
+export default router;

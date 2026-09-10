@@ -3349,6 +3349,22 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS agent_servers_agent_idx ON agent_servers (agent_id)` },
     { label: "agent_servers_marker_idx",
       sql:   `CREATE INDEX IF NOT EXISTS agent_servers_marker_idx ON agent_servers (agent_id, hb_marker)` },
+    { label: "supplier_settlements provenance columns",
+      sql:   `ALTER TABLE supplier_settlements
+        ADD COLUMN IF NOT EXISTS source_type TEXT,
+        ADD COLUMN IF NOT EXISTS source_record_id INTEGER,
+        ADD COLUMN IF NOT EXISTS source_key TEXT` },
+    { label: "supplier_settlements_company_source_key_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS supplier_settlements_company_source_key_uniq
+        ON supplier_settlements (company_id, source_key)
+        WHERE source_key IS NOT NULL` },
+    { label: "notifications delivery scope columns",
+      sql:   `ALTER TABLE notifications
+        ADD COLUMN IF NOT EXISTS module_key TEXT,
+        ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL` },
+    { label: "notifications_company_module_branch_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS notifications_company_module_branch_idx
+        ON notifications (company_id, module_key, branch_id)` },
     { label: "journal_entry_lines bank-only cost-center lock",
       sql: BANK_JE_COST_CENTER_LOCK_DDL },
   ];

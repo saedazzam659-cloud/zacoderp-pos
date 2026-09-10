@@ -3,7 +3,7 @@
 // Labels and group names are i18n keys; resolve via t(label) in the UI.
 // ─────────────────────────────────────────────────────────────────────
 
-export type Action = "view" | "create" | "edit" | "delete" | "post" | "export";
+export type Action = "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export";
 
 export interface ModuleDef {
   key: string;
@@ -13,6 +13,7 @@ export interface ModuleDef {
 }
 
 const ALL: Action[] = ["view", "create", "edit", "delete", "post", "export"];
+const MANUFACTURING_ALL: Action[] = [...ALL, "unpost"];
 const VC:  Action[] = ["view", "create", "edit", "delete"];
 const VO:  Action[] = ["view"];
 
@@ -28,6 +29,7 @@ const G = {
   pos:         "perms.groups.pos",
   hr:          "perms.groups.hr",
   production:  "perms.groups.production",
+  simpleManufacturing: "perms.groups.simpleManufacturing",
   safety:      "perms.groups.safety",
   contracting: "perms.groups.contracting",
   maintenance: "perms.groups.maintenance",
@@ -125,7 +127,10 @@ export const PERMISSION_MODULES: ModuleDef[] = [
 
   // Production & Manufacturing — backend key is "production"; one logical
   // module covers dashboard / orders / resources behind a single permission.
-  { key: "production",           label: "perms.modules.production",           group: G.production,  actions: ALL },
+  { key: "production",           label: "perms.modules.production",           group: G.production,  actions: MANUFACTURING_ALL },
+  // Separate regular-user grants for the compact facade. The server maps
+  // these actions to the simple_manufacturing company gate only.
+  { key: "simple_manufacturing", label: "perms.modules.simple_manufacturing", group: G.simpleManufacturing, actions: MANUFACTURING_ALL },
 
   // Occupational Safety & Health (OSH / ISO 45001) — per-screen permission
   // keys. All three roll up to the single company-level `safety` module gate
@@ -211,6 +216,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   edit:   "perms.actions.edit",
   delete: "perms.actions.delete",
   post:   "perms.actions.post",
+  unpost: "perms.actions.unpost",
   export: "perms.actions.export",
 };
 

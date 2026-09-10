@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtNum } from "@/lib/format";
@@ -110,6 +110,7 @@ type WorkCenterRef = {
   defaultOverheadAccountId: number | null;
   isActive: boolean;
 };
+type SupplierRef = { id: number; code?: string | null; nameAr?: string | null; name?: string | null };
 
 // Status → list of allowed transitions, each rendered as a coloured action
 // button. Mirrors the server-side PRODUCTION_STATUS_TRANSITIONS map. Keep the
@@ -161,7 +162,11 @@ const LIFECYCLE_NEXT: Record<string,string[]> = {
 
 export default function ProductionOrderDetail() {
   const { id } = useParams();
+  const [location] = useLocation();
   const orderId = Number(id);
+  const simpleFacade = location.startsWith("/simple-manufacturing");
+  const routePrefix = simpleFacade ? "/simple-manufacturing" : "/production";
+  const apiPrefix = `${API}/api${routePrefix}`;
   const { t } = useTranslation();
   const { token } = useAuth() as any;
   const { toast } = useToast();
@@ -175,6 +180,7 @@ export default function ProductionOrderDetail() {
   // ─── WIP setup state (warehouses, accounts, labor/overhead, completion) ──
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierRef[]>([]);
   const [itemRefs, setItemRefs] = useState<ItemRef[]>([]);
   const [workCenters, setWorkCenters] = useState<WorkCenterRef[]>([]);
   const [savingWip, setSavingWip] = useState(false);
@@ -186,8 +192,17 @@ export default function ProductionOrderDetail() {
   const [lifecycleForm, setLifecycleForm] = useState({
     type: "certificate", name: "", status: "draft", calculationMethod: "period",
     effectiveFrom: "", effectiveTo: "", sourceAllocationId: "", salesReturnId: "",
-    rate: "", minimumAmount: "", maximumAmount: "", notes: "",
+    rate: "", minimumAmount: "", maximumAmount: "", notes: "", supplierId: "",
+    tierBasis: "units",
   });
+  const [claimDetails, setClaimDetails] = useState([
+    { kind: "parts", description: "قطع الغيار", sourceAllocationId: "" },
+    { kind: "labor", description: "العمالة", sourceAllocationId: "" },
+    { kind: "shipping", description: "الشحن", sourceAllocationId: "" },
+  ]);
+  const [royaltyTiers, setRoyaltyTiers] = useState([
+    { upTo: "", rate: "" }, { upTo: "", rate: "" }, { upTo: "", rate: "" },
+  ]);
   const [itemForm, setItemForm] = useState({
     kind: "raw" as Item["kind"],
     description: "",
@@ -225,9 +240,9 @@ export default function ProductionOrderDetail() {
     try {
       const headers = { Authorization: `Bearer ${token}` };
       const [r, costResponse, lifecycleResponse] = await Promise.all([
-        fetch(`${API}/api/production/orders/${orderId}`, { headers }),
-        fetch(`${API}/api/production/orders/${orderId}/cost-drilldown`, { headers }),
-        fetch(`${API}/api/production/orders/${orderId}/commercial-lifecycle`, { headers }),
+        fetch(`${apiPrefix}/orders/${orderId}`, { headers }),
+        fetch(`${apiPrefix}/orders/${orderId}/cost-drilldown`, { headers }),
+        fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle`, { headers }),
       ]);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
@@ -245,7 +260,7 @@ export default function ProductionOrderDetail() {
     } finally {
       setLoading(false);
     }
-  }, [orderId, token, t, toast]);
+  }, [apiPrefix, orderId, token, t, toast]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -256,20 +271,22 @@ export default function ProductionOrderDetail() {
     if (!token) return;
     const h = { Authorization: `Bearer ${token}` };
     try {
-      const [whs, accs, its, wcs] = await Promise.all([
+      const [whs, accs, its, wcs, sups] = await Promise.all([
         fetch(`${API}/api/inventory/warehouses`, { headers: h }).then((r) => r.ok ? r.json() : []),
         fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
         fetch(`${API}/api/inventory/items?includeHidden=1&limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
-        fetch(`${API}/api/production/work-centers`, { headers: h }).then((r) => r.ok ? r.json() : []),
+        fetch(`${apiPrefix}/work-centers`, { headers: h }).then((r) => r.ok ? r.json() : []),
+        fetch(simpleFacade ? `${apiPrefix}/suppliers` : `${API}/api/suppliers?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
       ]);
       setWarehouses(Array.isArray(whs) ? whs : (whs?.rows ?? whs?.data ?? []));
       setAccounts(Array.isArray(accs) ? accs : (accs?.rows ?? accs?.data ?? []));
       setItemRefs(Array.isArray(its) ? its : (its?.rows ?? its?.data ?? []));
       setWorkCenters(Array.isArray(wcs) ? wcs : (wcs?.rows ?? []));
+      setSuppliers(Array.isArray(sups) ? sups : (sups?.rows ?? sups?.data ?? []));
     } catch {
       /* silent */
     }
-  }, [token]);
+  }, [apiPrefix, simpleFacade, token]);
   useEffect(() => { void loadLookups(); }, [loadLookups]);
   useRefetchOnFocus(loadLookups);
 
@@ -288,7 +305,7 @@ export default function ProductionOrderDetail() {
     if (target === "reversed" && !confirm("سيتم عكس مخزون المنتج والخامات والقيود في معاملة واحدة. لن ينجح العكس إذا تحركت التشغيلة. هل تريد المتابعة؟")) return;
     setTransitioning(true);
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}/status`, {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status: target, ...extra }),
@@ -308,7 +325,7 @@ export default function ProductionOrderDetail() {
   async function saveWipSetup(patch: Record<string, unknown>) {
     setSavingWip(true);
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}`, {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(patch),
@@ -328,7 +345,7 @@ export default function ProductionOrderDetail() {
     e.preventDefault();
     setSavingItem(true);
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}/items`, {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -355,7 +372,7 @@ export default function ProductionOrderDetail() {
   async function deleteItem(lineId: number) {
     if (!confirm(t("production.confirmDelete"))) return;
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}/items/${lineId}`, {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/items/${lineId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -390,11 +407,23 @@ export default function ProductionOrderDetail() {
         ...lifecycleForm,
         sourceAllocationId: lifecycleForm.sourceAllocationId ? Number(lifecycleForm.sourceAllocationId) : null,
         salesReturnId: lifecycleForm.salesReturnId ? Number(lifecycleForm.salesReturnId) : null,
+        supplierId: lifecycleForm.supplierId ? Number(lifecycleForm.supplierId) : null,
         rate: lifecycleForm.rate === "" ? null : Number(lifecycleForm.rate),
         minimumAmount: lifecycleForm.minimumAmount === "" ? null : Number(lifecycleForm.minimumAmount),
         maximumAmount: lifecycleForm.maximumAmount === "" ? null : Number(lifecycleForm.maximumAmount),
+        tiers: royaltyTiers.filter((tier) => tier.rate !== "").map((tier) => ({
+          upTo: tier.upTo === "" ? null : Number(tier.upTo),
+          rate: Number(tier.rate),
+        })),
+        claimDetails: lifecycleForm.type === "warranty" &&
+          lifecycleForm.calculationMethod === "actual_claim"
+          ? claimDetails.filter((detail) => detail.sourceAllocationId).map((detail) => ({
+              ...detail,
+              sourceAllocationId: Number(detail.sourceAllocationId),
+            }))
+          : [],
       };
-      const r = await fetch(`${API}/api/production/orders/${orderId}/commercial-lifecycle`, {
+       const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
@@ -404,8 +433,15 @@ export default function ProductionOrderDetail() {
       setLifecycleForm({
         type: "certificate", name: "", status: "draft", calculationMethod: "period",
         effectiveFrom: "", effectiveTo: "", sourceAllocationId: "", salesReturnId: "",
-        rate: "", minimumAmount: "", maximumAmount: "", notes: "",
+        rate: "", minimumAmount: "", maximumAmount: "", notes: "", supplierId: "",
+        tierBasis: "units",
       });
+      setClaimDetails([
+        { kind: "parts", description: "قطع الغيار", sourceAllocationId: "" },
+        { kind: "labor", description: "العمالة", sourceAllocationId: "" },
+        { kind: "shipping", description: "الشحن", sourceAllocationId: "" },
+      ]);
+      setRoyaltyTiers([{ upTo: "", rate: "" }, { upTo: "", rate: "" }, { upTo: "", rate: "" }]);
       toast({ title: "تم حفظ سجل دورة الحياة دون إنشاء قيد مكرر" });
       void load();
     } catch (e: any) {
@@ -417,7 +453,7 @@ export default function ProductionOrderDetail() {
 
   async function changeLifecycleStatus(lifecycleId: string, status: string) {
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}/commercial-lifecycle/${lifecycleId}`, {
+       const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${lifecycleId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status }),
@@ -428,6 +464,38 @@ export default function ProductionOrderDetail() {
       void load();
     } catch (e: any) {
       toast({ title: "تعذر تحديث الحالة", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function renewCertificate(lifecycleId: string) {
+    try {
+       const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${lifecycleId}/renew`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: "تم إنشاء مسودة تجديد الشهادة" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر بدء التجديد", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function calculateRoyalty(lifecycleId: string, settle: boolean) {
+    try {
+       const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${lifecycleId}/royalty-calculate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ settle }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: settle ? "تم إنشاء مسودة تسوية Royalty" : `Royalty المحسوب: ${Number(j.amount ?? 0).toLocaleString("en-US")}` });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر حساب Royalty", description: e.message, variant: "destructive" });
     }
   }
 
@@ -450,7 +518,7 @@ export default function ProductionOrderDetail() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
-          <Link href="/production/orders">
+          <Link href={`${routePrefix}/orders`}>
             <Button variant="outline" size="icon" data-testid="btn-back">
               <ArrowLeft className="h-4 w-4" />
             </Button>
@@ -546,20 +614,23 @@ export default function ProductionOrderDetail() {
           )}
 
           {/* ─── Phase E — Issue preview (which batches will be pulled) ─── */}
-          {!order.issueJournalEntryId && order.rawWarehouseId && (
-            <IssuePreviewPanel orderId={orderId} token={token ?? ""} />
+          {!simpleFacade && !order.issueJournalEntryId && order.rawWarehouseId && (
+            <IssuePreviewPanel orderId={orderId} token={token ?? ""} apiPrefix={apiPrefix} />
           )}
 
           {/* ─── SAP-style WIP setup panel — editable while pre-issue, locked after ─── */}
-          <WipSetupPanel
+          {!simpleFacade && <WipSetupPanel
             order={order}
             warehouses={warehouses}
             accounts={accounts}
             itemRefs={itemRefs}
             workCenters={workCenters}
+            apiPrefix={apiPrefix}
+            routePrefix={routePrefix}
+            simpleFacade={simpleFacade}
             saving={savingWip}
             onSave={saveWipSetup}
-          />
+          />}
 
           {/* ─── Completion qty form (visible when ready to close the order) ─── */}
           {(order.status === "in_production" || order.status === "quality_check") && !order.receiptJournalEntryId && (
@@ -808,7 +879,7 @@ export default function ProductionOrderDetail() {
                   سجّل وراجع فحوصات الجودة الخاصة بهذا الأمر (بصري، وزن، أبعاد، كاميرا ذكية...)
                 </div>
                 <a
-                  href="/production/quality"
+                  href={`${routePrefix}/quality`}
                   className="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-2"
                   data-testid="link-open-quality"
                 >
@@ -824,6 +895,7 @@ export default function ProductionOrderDetail() {
                 records={wasteRecords}
                 onReload={load}
                 workCenters={workCenters}
+                apiPrefix={apiPrefix}
                 disabled={order.status === "draft" || order.status === "paused" || order.status === "cancelled"}
               />
             </TabsContent>
@@ -894,6 +966,23 @@ export default function ProductionOrderDetail() {
                       #{a.id} — {a.sourceType} — {Number(a.allocatedAmount).toLocaleString("en-US")}
                     </option>)}
                   </select></div>
+                  {lifecycleForm.type==="royalty" && <div>
+                    <Label>المستفيد / المورد</Label>
+                    <select className="w-full border rounded-md p-2" value={lifecycleForm.supplierId}
+                      onChange={e=>setLifecycleForm({...lifecycleForm,supplierId:e.target.value})}>
+                      <option value="">اختر المورد عند التسوية</option>
+                      {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>
+                        {supplier.code ? `${supplier.code} — ` : ""}{supplier.nameAr ?? supplier.name ?? `#${supplier.id}`}
+                      </option>)}
+                    </select>
+                  </div>}
+                  {lifecycleForm.type==="royalty" && lifecycleForm.calculationMethod==="tiered" && <div>
+                    <Label>أساس الشرائح</Label>
+                    <select className="w-full border rounded-md p-2" value={lifecycleForm.tierBasis}
+                      onChange={e=>setLifecycleForm({...lifecycleForm,tierBasis:e.target.value})}>
+                      <option value="units">الوحدات المباعة</option><option value="sales">صافي المبيعات</option>
+                    </select>
+                  </div>}
                   <div><Label>المعدل</Label><Input type="number" step="0.0001" min="0" value={lifecycleForm.rate}
                     onChange={e=>setLifecycleForm({...lifecycleForm,rate:e.target.value})}/></div>
                   <div><Label>حد أدنى</Label><Input type="number" step="0.01" min="0" value={lifecycleForm.minimumAmount}
@@ -903,6 +992,37 @@ export default function ProductionOrderDetail() {
                   {lifecycleForm.type==="warranty" && <div><Label>رقم مرتجع بيع مُرحّل</Label>
                     <Input type="number" min="1" value={lifecycleForm.salesReturnId}
                       onChange={e=>setLifecycleForm({...lifecycleForm,salesReturnId:e.target.value})}/></div>}
+                  {lifecycleForm.type==="royalty" && lifecycleForm.calculationMethod==="tiered" &&
+                    <div className="md:col-span-4 rounded border p-3">
+                      <Label>شرائح Royalty (حتى / معدل %)</Label>
+                      <div className="grid md:grid-cols-3 gap-2 mt-2">
+                        {royaltyTiers.map((tier, index) => <div key={index} className="flex gap-2">
+                          <Input type="number" min="0" placeholder={index===royaltyTiers.length-1?"بدون حد":"حتى"}
+                            value={tier.upTo} onChange={e=>setRoyaltyTiers(rows=>rows.map((row,i)=>i===index?{...row,upTo:e.target.value}:row))}/>
+                          <Input type="number" min="0" max={lifecycleForm.tierBasis==="sales" ? 100 : undefined}
+                            step="0.0001" placeholder={lifecycleForm.tierBasis==="sales" ? "معدل %" : "مبلغ/وحدة"}
+                            value={tier.rate} onChange={e=>setRoyaltyTiers(rows=>rows.map((row,i)=>i===index?{...row,rate:e.target.value}:row))}/>
+                        </div>)}
+                      </div>
+                    </div>}
+                  {lifecycleForm.type==="warranty" && lifecycleForm.calculationMethod==="actual_claim" &&
+                    <div className="md:col-span-4 rounded border p-3">
+                      <Label>تفاصيل المطالبة — المبلغ يقرأ من لقطة المصدر فقط</Label>
+                      <div className="grid md:grid-cols-3 gap-2 mt-2">
+                        {claimDetails.map((detail, index) => <div key={detail.kind} className="space-y-1">
+                          <div className="text-xs text-slate-500">{detail.kind==="parts"?"قطع الغيار":detail.kind==="labor"?"العمالة":"الشحن"}</div>
+                          <Input value={detail.description} aria-label={`وصف ${detail.kind}`}
+                            onChange={e=>setClaimDetails(rows=>rows.map((row,i)=>i===index?{...row,description:e.target.value}:row))}/>
+                          <select className="w-full border rounded-md p-2" value={detail.sourceAllocationId}
+                            onChange={e=>setClaimDetails(rows=>rows.map((row,i)=>i===index?{...row,sourceAllocationId:e.target.value}:row))}>
+                            <option value="">اختر لقطة المصدر</option>
+                            {(costDrilldown?.trace?.allocations??[]).map((a:any)=><option key={a.id} value={a.id}>
+                              #{a.id} — {a.sourceType} — {Number(a.allocatedAmount).toLocaleString("en-US")}
+                            </option>)}
+                          </select>
+                        </div>)}
+                      </div>
+                    </div>}
                   <div className="md:col-span-4"><Label>ملاحظات</Label><Input value={lifecycleForm.notes}
                     onChange={e=>setLifecycleForm({...lifecycleForm,notes:e.target.value})}/></div>
                 </div>
@@ -912,11 +1032,13 @@ export default function ProductionOrderDetail() {
               </form>
               <div className="rounded-lg border bg-white dark:bg-slate-900 divide-y">
                 {commercialLifecycle.length===0 && <div className="p-6 text-center text-slate-500">لا توجد سجلات تشغيلية بعد.</div>}
-                {commercialLifecycle.map((row:any)=><div key={row.id} className="p-3 grid md:grid-cols-[1fr_auto_auto] gap-3 items-center">
+                {commercialLifecycle.map((row:any)=><div key={row.id} className="p-3 grid md:grid-cols-[1fr_auto_auto_auto] gap-3 items-center">
                   <div><b>{row.name}</b><p className="text-xs text-slate-500">
                     {row.type} • {row.calculationMethod} • المصدر:
                     {row.source ? ` ${row.source.sourceType} #${row.source.sourceRecordId}` : " غير مرتبط"}
                     {row.salesReturnId ? ` • مرتجع #${row.salesReturnId}` : ""}
+                    {row.supplierId ? ` • مورد #${row.supplierId}` : ""}
+                    {row.claimDetails?.length ? ` • تفاصيل مطالبة: ${row.claimDetails.length}` : ""}
                   </p></div>
                   <div className="font-mono text-end">{row.recognisedAmount==null?"تحليلي بلا مبلغ":Number(row.recognisedAmount).toLocaleString("en-US")}</div>
                   <select className="border rounded-md p-2 text-xs" value={row.status}
@@ -926,6 +1048,15 @@ export default function ProductionOrderDetail() {
                       {({draft:"مسودة",active:"نشط",suspended:"موقوف",expired:"منتهي",settled:"مسوّى",cancelled:"ملغى"} as any)[status]??status}
                     </option>)}
                   </select>
+                  <div className="flex gap-1 justify-end">
+                    {row.type==="certificate" && ["active","expired","suspended"].includes(row.status) &&
+                      <Button type="button" size="sm" variant="outline" onClick={()=>void renewCertificate(row.id)}>بدء تجديد</Button>}
+                    {row.type==="royalty" && ["active","suspended"].includes(row.status) &&
+                      <>
+                        <Button type="button" size="sm" variant="outline" onClick={()=>void calculateRoyalty(row.id, false)}>حساب</Button>
+                        <Button type="button" size="sm" onClick={()=>void calculateRoyalty(row.id, true)}>تسوية مسودة</Button>
+                      </>}
+                  </div>
                 </div>)}
               </div>
             </TabsContent>
@@ -973,13 +1104,16 @@ function DrillRow({ label, value, detail }: { label: string; value: unknown; det
 // is locked once the order moves past "approved" because the issue JE has
 // already posted against these accounts. Saved via a single PATCH per change.
 function WipSetupPanel({
-  order, warehouses, accounts, itemRefs, workCenters, saving, onSave,
+  order, warehouses, accounts, itemRefs, workCenters, apiPrefix, routePrefix, simpleFacade, saving, onSave,
 }: {
   order: Order;
   warehouses: Warehouse[];
   accounts: Account[];
   itemRefs: ItemRef[];
   workCenters: WorkCenterRef[];
+  apiPrefix: string;
+  routePrefix: string;
+  simpleFacade: boolean;
   saving: boolean;
   onSave: (patch: Record<string, unknown>) => void;
 }) {
@@ -1036,7 +1170,7 @@ function WipSetupPanel({
     if (locked || aiBusy) return;
     setAiBusy(true);
     try {
-      const r = await fetch(`${API}/api/production/manufacturing-settings/ai-suggest`, {
+      const r = await fetch(`${apiPrefix}/manufacturing-settings/ai-suggest`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${aiToken}` },
         body: JSON.stringify({}),
@@ -1144,7 +1278,7 @@ function WipSetupPanel({
           إعداد دورة الإنتاج (WIP)
         </div>
         <div className="flex items-center gap-2">
-          {!locked && (
+          {!locked && !simpleFacade && (
             <Button
               type="button"
               variant="outline"
@@ -1191,7 +1325,7 @@ function WipSetupPanel({
             تم التعبئة تلقائياً من <strong>إعدادات التصنيع</strong> — يمكنك تعديل أي قيمة لهذا الأمر فقط دون التأثير على الافتراضيات.
           </span>
           <Link
-            href="/production/settings"
+            href={`${routePrefix}/settings`}
             className="font-medium text-violet-700 underline-offset-2 hover:underline dark:text-violet-300"
             data-testid="link-mfg-settings"
           >
@@ -1327,9 +1461,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function IssuePreviewPanel({
   orderId,
   token,
+  apiPrefix,
 }: {
   orderId: number;
   token: string;
+  apiPrefix: string;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1339,7 +1475,7 @@ function IssuePreviewPanel({
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}/issue-preview`, {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/issue-preview`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const j = await r.json();
@@ -1551,6 +1687,7 @@ function WasteRecordsTab({
   records,
   onReload,
   workCenters,
+  apiPrefix,
   disabled,
 }: {
   orderId: number;
@@ -1558,6 +1695,7 @@ function WasteRecordsTab({
   records: WasteRecord[];
   onReload: () => Promise<void> | void;
   workCenters: WorkCenterRef[];
+  apiPrefix: string;
   disabled: boolean;
 }) {
   const { toast } = useToast();
@@ -1586,7 +1724,7 @@ function WasteRecordsTab({
     }
     setSaving(true);
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}/waste-records`, {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/waste-records`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -1614,7 +1752,7 @@ function WasteRecordsTab({
   async function remove(id: number) {
     if (!confirm("حذف سجل التالف؟")) return;
     try {
-      const r = await fetch(`${API}/api/production/orders/${orderId}/waste-records/${id}`, {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/waste-records/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

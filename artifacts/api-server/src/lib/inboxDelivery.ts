@@ -58,6 +58,9 @@ export interface DeliverReportInput {
   category?: string;
   /** Notification severity — info | low | medium | high. */
   severity?: "info" | "low" | "medium" | "high";
+  /** Optional notification visibility scope. */
+  moduleKey?: string;
+  branchId?: number | null;
 }
 
 export interface DeliverReportResult {
@@ -137,6 +140,8 @@ export async function deliverReport(input: DeliverReportInput): Promise<DeliverR
           severity,
           category,
           sourceKey: `inbox:${inserted.id}`,
+           moduleKey: input.moduleKey ?? null,
+           branchId: input.branchId ?? null,
           createdByUserId: createdByUserId ?? null,
         }).returning({ id: notificationsTable.id });
         notifIds.push(notif.id);

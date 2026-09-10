@@ -177,6 +177,7 @@ import WorkCenters from "@/pages/production/WorkCenters";
 import QualityChecks from "@/pages/production/QualityChecks";
 import ProductionRoutings from "@/pages/production/ProductionRoutings";
 import ProductionBoard from "@/pages/production/ProductionBoard";
+import SimpleManufacturing from "@/pages/SimpleManufacturing";
 import SafetyDashboard from "@/pages/safety/SafetyDashboard";
 import RiskRegister from "@/pages/safety/RiskRegister";
 import SafetyIncidents from "@/pages/safety/Incidents";
@@ -488,7 +489,7 @@ const PROTECTED_PREFIXES = [
   "/contracting", "/control-panel", "/customers", "/general-settings",
   "/hospital", "/hotel", "/hr", "/inbox", "/installments", "/inventory", "/invoices", "/maintenance",
   "/chat", "/notifications", "/org", "/pos-management", "/pos-monitoring", "/pos-operations",
-  "/pos-settings", "/pos-terminals", "/production", "/purchasing",
+  "/pos-settings", "/pos-terminals", "/production", "/simple-manufacturing", "/purchasing",
   "/sales", "/security", "/seo", "/sessions", "/settings", "/suppliers",
   "/users", "/vat-declaration", "/voice-assistant", "/work-sessions",
   "/zatca", "/zatca-bridge", "/zatca-report",
@@ -941,6 +942,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/cost-rollup"        module="production"     component={CostRollup} />}
             {!isSuperAdmin && <PermRoute path="/production/approvals"          module="production"     component={PendingApprovals} />}
             {!isSuperAdmin && <PermRoute path="/production/kpis"               module="production"     component={ManufacturingKpis} />}
+            {!isSuperAdmin && <PermRoute path="/simple-manufacturing/orders/:id" module="simple_manufacturing" component={ProductionOrderDetail} />}
+            {!isSuperAdmin && <PermRoute path="/simple-manufacturing"           module="simple_manufacturing" component={SimpleManufacturing} />}
 
             {/* Occupational Safety & Health (OSH / ISO 45001) — per-screen permission keys, all gated by the `safety` company module. */}
             {!isSuperAdmin && <PermRoute path="/safety"                        module="safety_dashboard"  component={SafetyDashboard} />}

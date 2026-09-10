@@ -21,7 +21,7 @@ import { mobilePermAllowed } from "../lib/mobilePerms.js";
 //     user — only call where granular gating is desired.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type PermAction = "view" | "create" | "edit" | "delete" | "post" | "export";
+export type PermAction = "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export";
 
 // Maps the granular per-action module key (used by users.permissions and by
 // every requirePermission(...) call below) to the high-level company-module
@@ -89,6 +89,9 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // Operations
   contracting: "contracting",
   production: "production",
+  // Compact manufacturing facade. This is intentionally its own tenant gate:
+  // simple users must never inherit access to the advanced production router.
+  simple_manufacturing: "simple_manufacturing",
   // Occupational Safety & Health (OSH / ISO 45001). Standalone company gate
   // keyed `safety`; mirror in frontend COMPANY_MODULE_GATE. Disabling it hides
   // the sidebar group AND 403s every /api/safety/* call regardless of per-user
@@ -165,7 +168,9 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // SuperAdmin platform modules that must stay hidden until turned on. Keep in
 // sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
 // MenuPermissions.tsx.
-const MODULE_GATE_DEFAULT_OFF = new Set<string>(["extensions_platform", "office", "demo_analytics"]);
+const MODULE_GATE_DEFAULT_OFF = new Set<string>([
+  "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
+]);
 
 // FROZEN legacy baseline (snapshot 2026-08): gate keys that keep the old
 // "missing = allowed" fallback. Any gate key added to COMPANY_MODULE_GATE
@@ -209,6 +214,15 @@ function userActionAllowed(u: any, module: string, action: PermAction): boolean 
   if (u.role === "admin") return true;
   const map = (u as any).permissions ?? {};
   if (map[module]?.[action]) return true;
+  // `unpost` was added after the original action map. Preserve the old
+  // allow-by-post behaviour for existing users whose saved map has no
+  // `unpost` key, while allowing an explicit false to deny it. New users can
+  // set the action explicitly (the manufacturing modules expose it in the
+  // permission editor).
+  if (action === "unpost" && map[module]?.unpost === undefined) {
+    if (map[module]?.post === false) return false;
+    if (map[module]?.post === true) return true;
+  }
   // POS bypass — see requirePermission for the rationale.
   if (
     (module === "sales_invoices" || module === "customers") &&
@@ -448,7 +462,8 @@ const METHOD_ACTION: Record<string, PermAction> = {
 const PATH_ACTION_OVERRIDES: Array<[RegExp, PermAction]> = [
   [/\/(post|posting)(\/|$)/i,   "post"],
   [/\/(approve|confirm)(\/|$)/i,"post"],
-  [/\/(unpost|reverse|cancel|void)(\/|$)/i, "post"],
+  [/\/(unpost|reverse|cancel|void)(\/|$)/i, "unpost"],
+  [/\/status(\/|$)/i,            "post"],
   [/\/export(\/|$)/i,           "export"],
 ];
 
@@ -457,6 +472,16 @@ function inferAction(req: Request): PermAction | null {
   if (!base) return null;
   // Only override mutating methods — never reclassify GET.
   const path = req.path || "";
+  // Status transitions are POST endpoints, but cancellation/reversal are
+  // unposting operations even when the compact facade sends them through the
+  // canonical `/orders/:id/status` endpoint with a body target.
+  if (
+    base === "create" &&
+    /\/status(\/|$)/i.test(path) &&
+    /^(cancelled|reversed)$/i.test(String((req as any).body?.status ?? ""))
+  ) {
+    return "unpost";
+  }
   for (const [re, act] of PATH_ACTION_OVERRIDES) {
     if (re.test(path)) return act;
   }

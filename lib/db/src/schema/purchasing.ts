@@ -1,6 +1,7 @@
 import {
-  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, date, jsonb,
+  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, date, jsonb, uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import { suppliersTable } from "./suppliers";
 import { accountsTable } from "./accounts";
@@ -300,9 +301,20 @@ export const supplierSettlementsTable = pgTable("supplier_settlements", {
   exchangeRate:  numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
   status:        text("status").notNull().default("draft"),
   notes:         text("notes"),
+  // Optional provenance for generated payable drafts (for example a royalty
+  // calculation). The owning module remains responsible for the source facts;
+  // this row only enters the normal supplier-settlement workflow and does not
+  // create accounting until the existing posting action is used.
+  sourceType:    text("source_type"),
+  sourceRecordId: integer("source_record_id"),
+  sourceKey:     text("source_key"),
   createdAt:     timestamp("created_at").defaultNow().notNull(),
   updatedAt:     timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  sourceKeyUniq: uniqueIndex("supplier_settlements_company_source_key_uniq")
+    .on(t.companyId, t.sourceKey)
+    .where(sql`${t.sourceKey} IS NOT NULL`),
+}));
 
 export type SupplierGroup        = typeof supplierGroupsTable.$inferSelect;
 export type LetterOfCredit       = typeof lettersOfCreditTable.$inferSelect;
