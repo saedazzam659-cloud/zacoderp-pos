@@ -322,6 +322,7 @@ export async function nextSequenceNumber(
   companyId: number,
   transactionType: string,
   ctx: NextSequenceCtx = {},
+  dx?: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
 ): Promise<string | null> {
   // Coalesce missing branch to the company-wide sentinel (0). Real branches
   // are always > 0 (branches.id is serial). Negative values are coerced to 0
@@ -330,7 +331,9 @@ export async function nextSequenceNumber(
     ? Number(ctx.branchId)
     : 0;
 
-  return await db.transaction(async (tx) => {
+  const issueWithin = async (
+    tx: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
+  ): Promise<string | null> => {
     // Pull the company-wide date-source setting once per issuance. The
     // column was added in Phase-2 print/sequence settings and defaults
     // to "system" so existing tenants keep their legacy behaviour.
@@ -541,7 +544,8 @@ export async function nextSequenceNumber(
     });
 
     return generated;
-  });
+  };
+  return dx ? issueWithin(dx) : db.transaction(issueWithin);
 }
 
 /**

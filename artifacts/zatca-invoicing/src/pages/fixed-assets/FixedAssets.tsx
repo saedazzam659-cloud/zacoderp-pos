@@ -14,7 +14,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, Package, QrCode,
-  Info, ShoppingCart, Cog, TrendingDown, Shield, FileText, Receipt, Calculator } from "lucide-react";
+  Info, ShoppingCart, Cog, TrendingDown, Shield, FileText, Receipt, Calculator, Factory } from "lucide-react";
 import { YearMonthInput } from "@/components/YearMonthInput";
 import { DateField } from "@/components/ui/date-field";
 import { SearchCombobox } from "@/components/ui/search-combobox";
@@ -49,6 +49,8 @@ type Asset = {
   riskLevel: string | null; aiRecommendation: string | null;
   qrPayload: string | null; notes: string | null;
   sourceType: string | null; sourceDocumentId: number | null; sourceLineId: number | null;
+  usedInManufacturing: boolean; manufacturingAllocationMethod: string;
+  approvedOperatingHours: string | null; fixedManufacturingRate: string | null;
 };
 type Category = {
   id: number; nameAr: string;
@@ -79,6 +81,8 @@ const EMPTY = {
   insuranceCompany:"", insurancePolicyNo:"", insuranceCoverage: "",
   insuranceStart:"", insuranceEnd:"", insuranceValue:"0",
   custodianEmployeeId:"", location:"", notes:"",
+  usedInManufacturing:false, manufacturingAllocationMethod:"none",
+  approvedOperatingHours:"", fixedManufacturingRate:"",
 };
 
 export default function FixedAssets() {
@@ -100,7 +104,7 @@ export default function FixedAssets() {
   const [del, setDel] = useState<Asset | null>(null);
   const [showQr, setShowQr] = useState<Asset | null>(null);
   const [showSchedule, setShowSchedule] = useState<Asset | null>(null);
-  const [activeTab, setActiveTab] = useState<"basic"|"purchase"|"tech"|"depreciation"|"insurance"|"extra"|"tax">("basic");
+  const [activeTab, setActiveTab] = useState<"basic"|"purchase"|"tech"|"depreciation"|"manufacturing"|"insurance"|"extra"|"tax">("basic");
 
   // ── Import-from-source: pull the purchase data from an already-recorded
   //    purchase invoice OR journal entry (looked up by its number) so the
@@ -219,6 +223,10 @@ export default function FixedAssets() {
       insuranceValue:String(a.insuranceValue??"0"),
       custodianEmployeeId:a.custodianEmployeeId?String(a.custodianEmployeeId):"",
       location:a.location??"", notes:a.notes??"",
+      usedInManufacturing:!!a.usedInManufacturing,
+      manufacturingAllocationMethod:a.manufacturingAllocationMethod??"none",
+      approvedOperatingHours:a.approvedOperatingHours??"",
+      fixedManufacturingRate:a.fixedManufacturingRate??"",
     });
     setDepTouched({ lifeYears:true, depreciationMethod:true, scrapValue:true });
     resetImport(); setActiveTab("basic"); setShowForm(true);
@@ -428,6 +436,7 @@ export default function FixedAssets() {
     { id:"tech",         label:"بيانات فنية",        icon: Cog,           grad:"from-amber-500 to-amber-600",     text:"text-amber-700",    border:"border-amber-200" },
     { id:"tax",          label:"الضرائب",           icon: Receipt,       grad:"from-teal-500 to-teal-600",        text:"text-teal-700",    border:"border-teal-200" },
     { id:"depreciation", label:"الإهلاك",            icon: TrendingDown,  grad:"from-violet-500 to-violet-600",   text:"text-violet-700",   border:"border-violet-200" },
+    { id:"manufacturing",label:"ربط التصنيع",         icon: Factory,       grad:"from-orange-500 to-amber-600",     text:"text-orange-700",   border:"border-orange-200" },
     { id:"insurance",    label:t("hrPages.insurance.vehicleInsuranceTab"), icon: Shield,        grad:"from-pink-500 to-pink-600",        text:"text-pink-700",    border:"border-pink-200" },
     { id:"extra",        label:"إضافي / ملاحظات",   icon: FileText,      grad:"from-slate-500 to-slate-600",      text:"text-slate-700",   border:"border-slate-200" },
   ] as const;
@@ -1100,6 +1109,64 @@ export default function FixedAssets() {
                     </div>
                   </div>
                 )}
+              </div>
+            </fieldset>
+            )}
+
+            {activeTab === "manufacturing" && (
+            <fieldset className="border border-orange-200 rounded-lg p-4 bg-orange-50/20">
+              <legend className="px-2 text-sm font-bold text-orange-700 flex items-center gap-1">
+                <Factory className="h-4 w-4" /> ربط تكلفة الأصل بالتصنيع
+              </legend>
+              <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 mb-4 text-xs leading-6 text-blue-900">
+                <strong>المصدر:</strong> الإهلاك المُرحّل فعلياً من الأصول الثابتة خلال الشهر.
+                <span className="mx-2">•</span><strong>الفترة:</strong> شهر الإهلاك.
+                <span className="mx-2">•</span><strong>الأساس:</strong> الطريقة المختارة أدناه.
+                <p>التصنيع يأخذ نصيب الأمر من التكلفة فقط؛ لا ينشئ قيد إهلاك جديداً. يبقى قيد الإهلاك في مصدره مرة واحدة، وتُثبت النسبة والمعدل داخل لقطة تكلفة أمر الإنتاج عند التنفيذ.</p>
+              </div>
+              <label className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer ${
+                form.usedInManufacturing ? "border-orange-400 bg-orange-50" : "border-slate-200 bg-white"
+              }`}>
+                <input type="checkbox" checked={form.usedInManufacturing}
+                  onChange={(e)=>setForm({...form,usedInManufacturing:e.target.checked,
+                    manufacturingAllocationMethod:e.target.checked ? (form.manufacturingAllocationMethod === "none" ? "operating_hours" : form.manufacturingAllocationMethod) : "none"})}
+                  data-testid="check-used-in-manufacturing" className="h-5 w-5 accent-orange-600" />
+                <div><p className="font-semibold text-sm">يُستخدم هذا الأصل في التصنيع</p>
+                  <p className="text-xs text-muted-foreground">يظهر كآلة/مورد قابل للربط بأوامر الإنتاج ضمن نفس الشركة والفرع.</p></div>
+              </label>
+              {form.usedInManufacturing && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+                  <div><Label>طريقة توزيع نصيب الإهلاك *</Label>
+                    <select value={form.manufacturingAllocationMethod}
+                      onChange={(e)=>setForm({...form,manufacturingAllocationMethod:e.target.value})}
+                      data-testid="select-manufacturing-allocation-method"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm">
+                      <option value="operating_hours">حسب ساعات التشغيل</option>
+                      <option value="fixed_hourly_rate">تكلفة ثابتة لكل ساعة</option>
+                      <option value="none">عدم التحميل على التصنيع</option>
+                    </select>
+                    <p className="text-[11px] text-muted-foreground mt-1">تحدد مقام التوزيع وحصة كل أمر، ولا تعيد تسجيل المصروف.</p>
+                  </div>
+                  {form.manufacturingAllocationMethod === "operating_hours" && (
+                    <div><Label>ساعات التشغيل الشهرية المعتمدة *</Label>
+                      <Input type="number" min="0.0001" step="0.01" value={form.approvedOperatingHours}
+                        onChange={(e)=>setForm({...form,approvedOperatingHours:e.target.value})}
+                        data-testid="input-approved-operating-hours" />
+                      <p className="text-[11px] text-muted-foreground mt-1">مطلوبة ولا يفترض النظام رقماً تلقائياً. حصة الأمر = إهلاك الشهر ÷ الساعات المعتمدة × ساعات الأمر.</p>
+                    </div>
+                  )}
+                  {form.manufacturingAllocationMethod === "fixed_hourly_rate" && (
+                    <div><Label>التكلفة الثابتة لكل ساعة *</Label>
+                      <Input type="number" min="0" step="0.01" value={form.fixedManufacturingRate}
+                        onChange={(e)=>setForm({...form,fixedManufacturingRate:e.target.value})}
+                        data-testid="input-fixed-manufacturing-rate" />
+                      <p className="text-[11px] text-muted-foreground mt-1">حصة الأمر = المعدل المعتمد × ساعات تشغيل الأصل في الأمر.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                منع الازدواج: إذا دخل الإهلاك ضمن معدل الآلة، فلا يُضاف مرة أخرى كتكلـفة صناعية غير مباشرة. تغيير هذا الإعداد يطبق على الأوامر المستقبلية فقط ولا يعيد احتساب اللقطات التاريخية.
               </div>
             </fieldset>
             )}

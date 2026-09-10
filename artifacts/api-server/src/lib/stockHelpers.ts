@@ -326,8 +326,8 @@ export async function addStockLedgerEntry(entry: {
   batchNumber?: string | null;
   expiryDate?: string | null;
   notes?: string;
-}) {
-  await db.insert(stockLedgerTable).values(entry);
+}, executor: any = db) {
+  await executor.insert(stockLedgerTable).values(entry);
 }
 
 // ─── ITEM-MASTER COST WRITE-BACK ─────────────────────────────────────────────

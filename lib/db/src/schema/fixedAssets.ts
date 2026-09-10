@@ -150,6 +150,15 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   accumAsOfAmount:     numeric("accum_as_of_amount", { precision: 15, scale: 2 }),
   bookValue:           numeric("book_value", { precision: 15, scale: 2 }).notNull().default("0"),
 
+  // ── Manufacturing cost-allocation link ──────────────────────
+  // Fixed Assets remains the sole owner of depreciation and its journal.
+  // These fields only configure how the already-booked depreciation is
+  // apportioned analytically to production orders.
+  usedInManufacturing: boolean("used_in_manufacturing").notNull().default(false),
+  manufacturingAllocationMethod: text("manufacturing_allocation_method").notNull().default("none"),
+  approvedOperatingHours: numeric("approved_operating_hours", { precision: 14, scale: 4 }),
+  fixedManufacturingRate: numeric("fixed_manufacturing_rate", { precision: 14, scale: 4 }),
+
   // ── Insurance ────────────────────────────────────────────────
   insuranceCompany:    text("insurance_company"),
   insurancePolicyNo:   text("insurance_policy_no"),

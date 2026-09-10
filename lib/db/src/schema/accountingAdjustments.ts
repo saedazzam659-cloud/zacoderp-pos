@@ -47,6 +47,11 @@ export const accountingAdjustmentsTable = pgTable("accounting_adjustments", {
   // periodic JE: [{ costCenterId: number, pct: number }] — pcts sum to 100.
   // When set it overrides costCenterId; the contra line stays dimension-free.
   costCenterSplit:     jsonb("cost_center_split"),
+  // Explicit production link. Only prepaid runs with this opt-in and a valid
+  // approved quantity denominator are offered to manufacturing.
+  manufacturingEligible: boolean("manufacturing_eligible").notNull().default(false),
+  manufacturingAllocationMethod: text("manufacturing_allocation_method").notNull().default("none"),
+  approvedProductionQuantity: numeric("approved_production_quantity", { precision: 14, scale: 4 }),
   autoGenerate:        boolean("auto_generate").notNull().default(true),
   carryForwardEnabled: boolean("carry_forward_enabled").notNull().default(true),
   parentAdjustmentId:  integer("parent_adjustment_id"),

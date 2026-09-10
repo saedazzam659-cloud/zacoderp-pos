@@ -16,7 +16,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, isNull, isNotNull, inArray, notInArray } from "drizzle-orm";
 import { assertWritableForDate } from "../lib/periodGuard.js";
-import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
+import { extractAuth, intersectBranchRequest, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import {
@@ -401,6 +401,11 @@ router.post("/assets", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body ?? {};
+    const scopedBranch = intersectBranchRequest(req, b.branchId ?? null);
+    if (scopedBranch === "deny") {
+      res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" }); return;
+    }
+    const branchId = typeof scopedBranch === "number" ? scopedBranch : null;
     const insuranceDateError = insuranceDatesValid(b.insuranceStart, b.insuranceEnd);
     if (insuranceDateError) { res.status(400).json({ error: insuranceDateError }); return; }
     const nameAr = String(b.nameAr ?? "").trim();
@@ -415,11 +420,29 @@ router.post("/assets", async (req, res) => {
     const code = String(b.code ?? "").trim() || await nextSequenceOrFallback(
       cid,
       "fixed_asset",
-      { userId: (req as any).authUser?.id ?? null, refTable: "fixed_assets", branchId: b.branchId ? Number(b.branchId) : null },
+      { userId: (req as any).authUser?.id ?? null, refTable: "fixed_assets", branchId },
       () => nextCode(cid, fixedAssetsTable, "AST"),
     );
     const status = (STATUSES as readonly string[]).includes(b.status) ? b.status : "active";
     const method = (DEP_METHODS as readonly string[]).includes(b.depreciationMethod) ? b.depreciationMethod : "straight_line";
+    const MFG_ALLOCATION_METHODS = ["none", "operating_hours", "fixed_hourly_rate"] as const;
+    const usedInManufacturing = coerceBool(b.usedInManufacturing);
+    const manufacturingAllocationMethod = usedInManufacturing &&
+      (MFG_ALLOCATION_METHODS as readonly string[]).includes(String(b.manufacturingAllocationMethod))
+        ? String(b.manufacturingAllocationMethod)
+        : "none";
+    const approvedOperatingHours = b.approvedOperatingHours === "" || b.approvedOperatingHours == null
+      ? null : Number(b.approvedOperatingHours);
+    const fixedManufacturingRate = b.fixedManufacturingRate === "" || b.fixedManufacturingRate == null
+      ? null : Number(b.fixedManufacturingRate);
+    if (manufacturingAllocationMethod === "operating_hours" &&
+        !(Number.isFinite(approvedOperatingHours) && (approvedOperatingHours as number) > 0)) {
+      res.status(400).json({ error: "ساعات التشغيل الشهرية المعتمدة مطلوبة ويجب أن تكون أكبر من صفر" }); return;
+    }
+    if (manufacturingAllocationMethod === "fixed_hourly_rate" &&
+        !(Number.isFinite(fixedManufacturingRate) && (fixedManufacturingRate as number) >= 0)) {
+      res.status(400).json({ error: "التكلفة الثابتة لكل ساعة مطلوبة ولا يمكن أن تكون سالبة" }); return;
+    }
     const purchaseValue = String(b.purchaseValue ?? "0");
     const scrapValue    = String(b.scrapValue ?? "0");
     const accumulated   = String(b.accumulatedDepreciation ?? "0");
@@ -484,7 +507,7 @@ router.post("/assets", async (req, res) => {
     }
     const [row] = await db.insert(fixedAssetsTable).values({
       companyId: cid,
-      branchId: b.branchId ? Number(b.branchId) : null,
+      branchId,
       costCenterId: b.costCenterId ? Number(b.costCenterId) : null,
       categoryId: b.categoryId ? Number(b.categoryId) : null,
       groupId: b.groupId ? Number(b.groupId) : null,
@@ -525,6 +548,10 @@ router.post("/assets", async (req, res) => {
       accumAsOf: b.accumAsOf || null,
       accumAsOfAmount: b.accumAsOf ? accumulated : null,
       bookValue,
+      usedInManufacturing,
+      manufacturingAllocationMethod,
+      approvedOperatingHours: approvedOperatingHours == null ? null : String(approvedOperatingHours),
+      fixedManufacturingRate: fixedManufacturingRate == null ? null : String(fixedManufacturingRate),
       insuranceCompany: b.insuranceCompany || null,
       insurancePolicyNo: b.insurancePolicyNo || null,
       insuranceCoverage: b.insuranceCoverage || null,
@@ -587,7 +614,16 @@ router.put("/assets/:id", async (req, res) => {
     const [currentInsurance] = await db.select({
       insuranceStart: fixedAssetsTable.insuranceStart,
       insuranceEnd: fixedAssetsTable.insuranceEnd,
+      branchId: fixedAssetsTable.branchId,
+      usedInManufacturing: fixedAssetsTable.usedInManufacturing,
+      manufacturingAllocationMethod: fixedAssetsTable.manufacturingAllocationMethod,
+      approvedOperatingHours: fixedAssetsTable.approvedOperatingHours,
+      fixedManufacturingRate: fixedAssetsTable.fixedManufacturingRate,
     }).from(fixedAssetsTable).where(and(eq(fixedAssetsTable.id, id), eq(fixedAssetsTable.companyId, cid)));
+    const scopedCurrentBranch = intersectBranchRequest(req, currentInsurance?.branchId ?? null);
+    if (scopedCurrentBranch === "deny") {
+      res.status(404).json({ error: "الأصل غير موجود" }); return;
+    }
     const insuranceDateError = insuranceDatesValid(
       b.insuranceStart !== undefined ? b.insuranceStart : currentInsurance?.insuranceStart,
       b.insuranceEnd !== undefined ? b.insuranceEnd : currentInsurance?.insuranceEnd,
@@ -626,11 +662,56 @@ router.put("/assets/:id", async (req, res) => {
     }
     const intFields = ["branchId","costCenterId","categoryId","groupId","custodianEmployeeId","initialKm","currentKm","supplierId","cashBoxId","bankAccountId"];
     for (const k of intFields) if (b[k] !== undefined) patch[k] = b[k] ? Number(b[k]) : null;
+    if (b.branchId !== undefined) {
+      const scopedBranch = intersectBranchRequest(req, b.branchId || null);
+      if (scopedBranch === "deny") {
+        res.status(403).json({ error: "لا يمكنك نقل الأصل إلى هذا الفرع" }); return;
+      }
+      patch.branchId = typeof scopedBranch === "number" ? scopedBranch : null;
+    }
     if (b.lifeYears !== undefined) patch.lifeYears = String(b.lifeYears || 5);
     if (b.vatRate !== undefined) patch.vatRate = String(b.vatRate || "15");
     if (b.priceIncludesVat !== undefined) patch.priceIncludesVat = coerceBool(b.priceIncludesVat);
     if ((STATUSES as readonly string[]).includes(b.status)) patch.status = b.status;
     if ((DEP_METHODS as readonly string[]).includes(b.depreciationMethod)) patch.depreciationMethod = b.depreciationMethod;
+    const MFG_ALLOCATION_METHODS = ["none", "operating_hours", "fixed_hourly_rate"] as const;
+    if (b.usedInManufacturing !== undefined) patch.usedInManufacturing = coerceBool(b.usedInManufacturing);
+    if (b.manufacturingAllocationMethod !== undefined) {
+      if (!(MFG_ALLOCATION_METHODS as readonly string[]).includes(String(b.manufacturingAllocationMethod))) {
+        res.status(400).json({ error: "طريقة توزيع تكلفة التصنيع غير صحيحة" }); return;
+      }
+      patch.manufacturingAllocationMethod = String(b.manufacturingAllocationMethod);
+    }
+    if (b.approvedOperatingHours !== undefined) {
+      const v = b.approvedOperatingHours === "" || b.approvedOperatingHours == null ? null : Number(b.approvedOperatingHours);
+      if (v != null && (!Number.isFinite(v) || v <= 0)) {
+        res.status(400).json({ error: "ساعات التشغيل الشهرية المعتمدة يجب أن تكون أكبر من صفر" }); return;
+      }
+      patch.approvedOperatingHours = v == null ? null : String(v);
+    }
+    if (b.fixedManufacturingRate !== undefined) {
+      const v = b.fixedManufacturingRate === "" || b.fixedManufacturingRate == null ? null : Number(b.fixedManufacturingRate);
+      if (v != null && (!Number.isFinite(v) || v < 0)) {
+        res.status(400).json({ error: "التكلفة الثابتة لكل ساعة لا يمكن أن تكون سالبة" }); return;
+      }
+      patch.fixedManufacturingRate = v == null ? null : String(v);
+    }
+    const finalUsed = patch.usedInManufacturing ?? currentInsurance?.usedInManufacturing ?? false;
+    const finalMethod = patch.manufacturingAllocationMethod ??
+      currentInsurance?.manufacturingAllocationMethod ?? "none";
+    if (finalUsed && finalMethod === "operating_hours") {
+      const hours = patch.approvedOperatingHours ?? currentInsurance?.approvedOperatingHours;
+      if (!(Number(hours) > 0)) {
+        res.status(400).json({ error: "ساعات التشغيل الشهرية المعتمدة مطلوبة لطريقة ساعات التشغيل" }); return;
+      }
+    }
+    if (finalUsed && finalMethod === "fixed_hourly_rate") {
+      const rate = patch.fixedManufacturingRate ?? currentInsurance?.fixedManufacturingRate;
+      if (!(Number(rate) >= 0) || rate == null) {
+        res.status(400).json({ error: "التكلفة الثابتة لكل ساعة مطلوبة لطريقة المعدل الثابت" }); return;
+      }
+    }
+    if (patch.usedInManufacturing === false) patch.manufacturingAllocationMethod = "none";
     // Tenant isolation: a groupId in the patch must belong to this company.
     if (patch.groupId && !await ownsRow(faAssetGroupsTable, Number(patch.groupId), cid)) {
       res.status(400).json({ error: "المجموعة غير موجودة" }); return;

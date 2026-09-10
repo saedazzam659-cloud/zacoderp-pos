@@ -363,7 +363,8 @@ async function validateCostCenter(cid: number, raw: unknown): Promise<number | n
 router.post("/", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { type, name, expenseAccountId, contraAccountId, totalAmount, startDate, endDate, autoGenerate, notes, costCenterId, periodicity, costCenterSplit } = req.body ?? {};
+    const { type, name, expenseAccountId, contraAccountId, totalAmount, startDate, endDate, autoGenerate, notes, costCenterId, periodicity, costCenterSplit,
+      manufacturingEligible, approvedProductionQuantity } = req.body ?? {};
 
     if (!["prepaid", "accrued"].includes(type)) {
       res.status(400).json({ error: "نوع التسوية غير صالح (prepaid/accrued فقط)" }); return;
@@ -413,6 +414,12 @@ router.post("/", async (req, res) => {
     for (const _ of monthsBetween(startDate, endDate)) months++;
     if (months <= 0) { res.status(400).json({ error: "لا توجد أشهر كافية بين التاريخين" }); return; }
     const monthlyAmount = (total / months).toFixed(2);
+    const mfgEligible = type === "prepaid" && manufacturingEligible === true;
+    const approvedQty = approvedProductionQuantity === "" || approvedProductionQuantity == null
+      ? null : Number(approvedProductionQuantity);
+    if (mfgEligible && !(Number.isFinite(approvedQty) && (approvedQty as number) > 0)) {
+      res.status(400).json({ error: "كمية الإنتاج الشهرية المعتمدة مطلوبة لربط المصروف المقدم بالتصنيع" }); return;
+    }
 
     const [created] = await db.insert(accountingAdjustmentsTable).values({
       companyId:        cid,
@@ -426,6 +433,9 @@ router.post("/", async (req, res) => {
       monthlyAmount,
       periodicity:      per,
       costCenterSplit:  split,
+      manufacturingEligible: mfgEligible,
+      manufacturingAllocationMethod: mfgEligible ? "production_quantity" : "none",
+      approvedProductionQuantity: approvedQty == null ? null : String(approvedQty),
       autoGenerate:     autoGenerate !== false,
       status:           "active",
       notes:            notes || null,
@@ -454,7 +464,7 @@ router.put("/:id", async (req, res) => {
     const {
       name, autoGenerate, status, notes, carryForwardEnabled,
       totalAmount, startDate, endDate, expenseAccountId, contraAccountId,
-      costCenterId,
+      costCenterId, manufacturingEligible, approvedProductionQuantity,
     } = req.body ?? {};
 
     const patch: any = { updatedAt: new Date() };
@@ -470,6 +480,25 @@ router.put("/:id", async (req, res) => {
     if (typeof carryForwardEnabled === "boolean") patch.carryForwardEnabled = carryForwardEnabled;
     if (status && ["active", "completed", "cancelled"].includes(status)) patch.status = status;
     if (typeof notes === "string" || notes === null) patch.notes = notes;
+    if (manufacturingEligible !== undefined || approvedProductionQuantity !== undefined) {
+      const [cur] = await db.select({ type: accountingAdjustmentsTable.type,
+        eligible: accountingAdjustmentsTable.manufacturingEligible,
+        qty: accountingAdjustmentsTable.approvedProductionQuantity })
+        .from(accountingAdjustmentsTable)
+        .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)));
+      if (!cur) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+      const eligible = cur.type === "prepaid" &&
+        (manufacturingEligible !== undefined ? manufacturingEligible === true : cur.eligible);
+      const qty = approvedProductionQuantity !== undefined
+        ? (approvedProductionQuantity === "" || approvedProductionQuantity == null ? null : Number(approvedProductionQuantity))
+        : Number(cur.qty);
+      if (eligible && !(Number.isFinite(qty) && Number(qty) > 0)) {
+        res.status(400).json({ error: "كمية الإنتاج الشهرية المعتمدة مطلوبة لربط المصروف المقدم بالتصنيع" }); return;
+      }
+      patch.manufacturingEligible = eligible;
+      patch.manufacturingAllocationMethod = eligible ? "production_quantity" : "none";
+      patch.approvedProductionQuantity = qty == null ? null : String(qty);
+    }
 
     // ── Financial fields (amount / dates / accounts) ────────────────────
     // Editable with automatic re-spread: months already generated keep their

@@ -44,6 +44,9 @@ type Adjustment = {
   recognizedAmount: string;
   remainingAmount:  string;
   runCount: number;
+  manufacturingEligible: boolean;
+  manufacturingAllocationMethod: string;
+  approvedProductionQuantity: string | null;
 };
 
 const TYPE_LABELS: Record<Adjustment["type"], string> = {
@@ -90,6 +93,8 @@ const EMPTY_FORM = {
   endDate: plusYear(),
   autoGenerate: true,
   carryForwardEnabled: true,
+  manufacturingEligible: false,
+  approvedProductionQuantity: "",
   notes: "",
 };
 
@@ -308,6 +313,8 @@ export default function Adjustments() {
       endDate:          a.endDate,
       autoGenerate:     a.autoGenerate,
       carryForwardEnabled: a.carryForwardEnabled,
+      manufacturingEligible: !!a.manufacturingEligible,
+      approvedProductionQuantity: a.approvedProductionQuantity ?? "",
       notes:            a.notes ?? "",
     });
     setShowForm(true);
@@ -719,6 +726,22 @@ export default function Adjustments() {
                 توليد القيود تلقائياً ضمن «تشغيل التسويات المستحقة»
               </label>
             </Field>
+            {form.type === "prepaid" && <Field label="" className="md:col-span-2">
+              <div className="rounded-lg border border-orange-200 bg-orange-50/40 p-3 space-y-2">
+                <label className="flex items-center gap-2 text-sm font-semibold cursor-pointer">
+                  <input type="checkbox" checked={form.manufacturingEligible}
+                    onChange={e=>setForm(p=>({...p,manufacturingEligible:e.target.checked}))} />
+                  مؤهل كمصدر تكلفة لأوامر الإنتاج
+                </label>
+                {form.manufacturingEligible && <div>
+                  <Label>كمية الإنتاج الشهرية المعتمدة *</Label>
+                  <Input className="max-w-xs" type="number" min="0.0001" step="0.01"
+                    value={form.approvedProductionQuantity}
+                    onChange={e=>setForm(p=>({...p,approvedProductionQuantity:e.target.value}))} />
+                  <p className="text-xs text-muted-foreground mt-1">حصة الأمر = قسط المصروف المُرحّل × كمية الأمر ÷ الكمية المعتمدة.</p>
+                </div>}
+              </div>
+            </Field>}
             <Field label="" className="md:col-span-2">
               <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input

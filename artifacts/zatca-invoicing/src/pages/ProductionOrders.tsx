@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { Link, useLocation } from "wouter";
-import { Plus, Search, Factory, ArrowRight, X } from "lucide-react";
+import { Plus, Search, Factory, ArrowRight, X, ClipboardList, Boxes, Route, Cog, Calculator, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -61,6 +61,7 @@ export default function ProductionOrders() {
   const [loading, setLoading] = useState(false);
   const [openCreate, setOpenCreate] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [wizardTab, setWizardTab] = useState<"basic"|"materials"|"routing"|"resources"|"costs"|"review">("basic");
   // Peek the next production-order number from the central sequence engine
   // so the user sees the upcoming auto-assigned number before saving.
   const nextCode = useNextSequenceNumber("production_order", openCreate);
@@ -70,7 +71,26 @@ export default function ProductionOrders() {
     plannedQty: "",
     unitCode: "PCE",
     notes: "",
+    plannedStartDate: new Date().toISOString().slice(0,10),
+    plannedEndDate: "",
+    rawWarehouseId: "", finishedWarehouseId: "", workCenterId: "", plannedHours: "",
+    costPeriod: new Date().toISOString().slice(0,7),
   });
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [workCenters, setWorkCenters] = useState<any[]>([]);
+  const [costSources, setCostSources] = useState<any[]>([]);
+  const [allocations, setAllocations] = useState<Record<string,string>>({});
+  const derivedSourceAmount = (s:any) => {
+    const method=s.meta?.allocationMethod || s.basis;
+    if (s.sourceType==="prepaid_amortization")
+      return Number(s.sourceAmount)*Number(form.plannedQty||0)/Number(s.meta?.approvedProductionQuantity||0);
+    if (s.sourceType==="fixed_asset_depreciation" && method==="fixed_hourly_rate")
+      return Number(form.plannedHours||0)*Number(s.meta?.fixedManufacturingRate||0);
+    return Number(s.sourceAmount)*Number(form.plannedHours||0)/
+      Number(s.meta?.approvedManufacturingHours||s.meta?.approvedOperatingHours||0);
+  };
+  const [bomPreview, setBomPreview] = useState<any>(null);
+  const [routingPreview, setRoutingPreview] = useState<any>(null);
   // Manufactured items (finished + semi) used as the FG product picker.
   // BOM templates auto-copy raw lines to the order based on this id.
   const [items, setItems] = useState<{ id: number; code: string; nameAr: string; itemNature?: string | null; unitCode?: string | null }[]>([]);
@@ -105,12 +125,18 @@ export default function ProductionOrders() {
     [fgItems, fgUsageModes],
   );
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const wizardRequestIdRef = useRef(crypto.randomUUID());
   const panelRef = useRef<HTMLDivElement>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
 
   function closePanel() {
     setOpenCreate(false);
-    setForm({ title: "", productItemId: "", plannedQty: "", unitCode: "PCE", notes: "" });
+    setForm({ title: "", productItemId: "", plannedQty: "", unitCode: "PCE", notes: "",
+      plannedStartDate:new Date().toISOString().slice(0,10), plannedEndDate:"",
+      rawWarehouseId:"", finishedWarehouseId:"", workCenterId:"", plannedHours:"",
+      costPeriod:new Date().toISOString().slice(0,7) });
+    setAllocations({}); setWizardTab("basic");
+    wizardRequestIdRef.current = crypto.randomUUID();
     requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
@@ -127,6 +153,39 @@ export default function ProductionOrders() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openCreate]);
+
+  useEffect(() => {
+    if (!openCreate || !token) return;
+    void Promise.all([
+      fetch(`${API}/api/inventory/warehouses`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.ok?r.json():[]),
+      fetch(`${API}/api/production/work-centers`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.ok?r.json():[]),
+      fetch(`${API}/api/production/manufacturing-settings`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.ok?r.json():null),
+    ]).then(([w,c,s]) => {
+      setWarehouses(Array.isArray(w)?w:(w.rows??[])); setWorkCenters(Array.isArray(c)?c:(c.rows??[]));
+      if (s) setForm(f=>({...f,rawWarehouseId:f.rawWarehouseId||String(s.defaultRawWarehouseId||""),
+        finishedWarehouseId:f.finishedWarehouseId||String(s.defaultFinishedWarehouseId||"")}));
+    });
+  }, [openCreate, token]);
+
+  useEffect(() => {
+    if (!openCreate || !token || !form.costPeriod) return;
+    void fetch(`${API}/api/production/cost-sources?period=${form.costPeriod}`, { headers:{Authorization:`Bearer ${token}`} })
+      .then(async r => { const j=await r.json(); if(!r.ok) throw new Error(j.error); return j; })
+      .then(setCostSources).catch(e=>toast({title:"تعذر تحميل مصادر التكلفة",description:e.message,variant:"destructive"}));
+  }, [openCreate, token, form.costPeriod, toast]);
+
+  useEffect(() => {
+    if (!openCreate || !token || !form.productItemId) { setBomPreview(null); setRoutingPreview(null); return; }
+    const id=Number(form.productItemId);
+    void Promise.all([
+      fetch(`${API}/api/production/bom-templates?productItemId=${id}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()),
+      fetch(`${API}/api/production/routings?productItemId=${id}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()),
+    ]).then(async ([bs,rs])=>{
+      const b=(Array.isArray(bs)?bs:bs.rows??[])[0]; const rt=(Array.isArray(rs)?rs:rs.rows??[])[0];
+      setBomPreview(b ? await fetch(`${API}/api/production/bom-templates/${b.id}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()) : null);
+      setRoutingPreview(rt ? await fetch(`${API}/api/production/routings/${rt.id}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()) : null);
+    }).catch(()=>{setBomPreview(null);setRoutingPreview(null);});
+  }, [openCreate, token, form.productItemId]);
 
   async function load() {
     if (!token) return;
@@ -161,28 +220,77 @@ export default function ProductionOrders() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const createMode = submitter?.dataset.mode === "execute" ? "execute" : "draft";
     if (!form.title.trim()) {
       toast({ title: t("production.errorOccurred"), description: t("production.title_field"), variant: "destructive" });
+      setWizardTab("basic");
+      return;
+    }
+    if (!form.productItemId || !(Number(form.plannedQty) > 0)) {
+      toast({ title: t("production.errorOccurred"), description: "اختر المنتج النهائي وأدخل كمية موجبة", variant: "destructive" });
+      setWizardTab("basic");
+      return;
+    }
+    if (!bomPreview?.lines?.length) {
+      toast({ title: t("production.errorOccurred"), description: "لا يوجد قالب مكونات نشط وقابل للتحميل للمنتج", variant: "destructive" });
+      setWizardTab("materials");
+      return;
+    }
+    if (!form.rawWarehouseId || !form.finishedWarehouseId) {
+      toast({ title: t("production.errorOccurred"), description: "اختر مخزن الخامات ومخزن الإنتاج التام", variant: "destructive" });
+      setWizardTab("resources");
       return;
     }
     setCreating(true);
     try {
-      const r = await fetch(`${API}/api/production/orders`, {
+      const r = await fetch(`${API}/api/production/orders/wizard`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
+          wizardRequestId: wizardRequestIdRef.current,
           title: form.title.trim(),
-          productItemId: form.productItemId === "" ? null : Number(form.productItemId),
+          productItemId: Number(form.productItemId),
           plannedQty: Number(form.plannedQty) || 0,
           unitCode: form.unitCode || "PCE",
           notes: form.notes || null,
+          plannedStartDate: form.plannedStartDate || null,
+          plannedEndDate: form.plannedEndDate || null,
+          rawWarehouseId: Number(form.rawWarehouseId) || null,
+          finishedWarehouseId: Number(form.finishedWarehouseId) || null,
+          workCenterId: Number(form.workCenterId) || null,
+          plannedHours: Number(form.plannedHours) || 0,
+          costPeriod: form.costPeriod,
+          allocations: costSources.flatMap((s:any)=>{
+            const selected=allocations[`${s.sourceType}:${s.sourceRecordId}`]==="1";
+            return selected?[{sourceType:s.sourceType,sourceRecordId:s.sourceRecordId}]:[];
+          }),
         }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      if (createMode === "execute") {
+        let status=j.status;
+        if (status==="draft") {
+          const approve = await fetch(`${API}/api/production/orders/${j.id}/approve`, {
+            method:"POST", headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`}, body:"{}",
+          });
+          const aj=await approve.json(); if(!approve.ok) throw new Error(aj.error||"تعذر اعتماد الأمر");
+          status="approved";
+        }
+        if (status==="approved") {
+          const start = await fetch(`${API}/api/production/orders/${j.id}/status`, {
+            method:"POST", headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+            body:JSON.stringify({status:"in_production"}),
+          });
+          const sj=await start.json(); if(!start.ok) throw new Error(sj.error||"تعذر بدء التنفيذ");
+        } else if (status!=="in_production") {
+          throw new Error(`لا يمكن إعادة تنفيذ أمر حالته ${status}`);
+        }
+      }
       toast({ title: `✓ ${t("production.saved")}` });
       setOpenCreate(false);
-      setForm({ title: "", productItemId: "", plannedQty: "", unitCode: "PCE", notes: "" });
+      setAllocations({});
       navigate(`/production/orders/${j.id}`);
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
@@ -243,89 +351,79 @@ export default function ProductionOrders() {
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <form onSubmit={handleCreate} className="p-4 space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div>
-                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.orderNumber")}</Label>
-                <Input
-                  value={nextCode.number ?? (nextCode.loading ? "..." : t("production.autoCode"))}
-                  readOnly
-                  disabled
-                  className="mt-1 font-mono text-sm bg-muted/30"
-                  data-testid="input-order-number"
-                />
-              </div>
-              <div className="md:col-span-3">
-                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.title_field")}</Label>
-                <Input
-                  ref={firstFieldRef}
-                  value={form.title}
-                  onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  required
-                  data-testid="input-title"
-                  className="mt-1"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                  صنف المنتج النهائي <span className="text-slate-400">(لتعبئة الخامات تلقائياً من قالب المكونات)</span>
-                </Label>
-                <SearchCombobox
-                  value={form.productItemId === "" ? "" : String(form.productItemId)}
-                  onValueChange={(v) => {
-                    const idNum = v === "" ? "" : Number(v);
-                    const it = idNum === "" ? undefined : fgItems.find((x) => x.id === idNum);
-                    setForm((f) => ({
-                      ...f,
-                      productItemId: idNum,
-                      // Auto-fill unit + a default title from the picked item
-                      unitCode: it?.unitCode || f.unitCode,
-                      title: f.title.trim() ? f.title : (it?.nameAr ?? f.title),
-                    }));
-                  }}
-                  placeholder="—"
-                  searchPlaceholder="ابحث بالاسم أو الكود…"
-                  items={fgComboItems}
-                />
-              </div>
-              <div>
-                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.plannedQty")}</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  value={form.plannedQty}
-                  onChange={(e) => setForm({ ...form, plannedQty: e.target.value })}
-                  data-testid="input-planned-qty"
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.unitCode")}</Label>
-                <UnitCodeSelect
-                  value={form.unitCode}
-                  onChange={(v) => setForm({ ...form, unitCode: v })}
-                  data-testid="input-unit-code"
-                  className="mt-1"
-                />
-              </div>
+          <form onSubmit={handleCreate} className="p-4 space-y-4">
+            <div className="grid grid-cols-3 lg:grid-cols-6 gap-1 rounded-xl bg-white/80 border p-1">
+              {([
+                ["basic","البيانات",ClipboardList],["materials","المواد",Boxes],["routing","المراحل",Route],
+                ["resources","الموارد",Cog],["costs","التكاليف",Calculator],["review","المراجعة",CheckCircle2],
+              ] as const).map(([id,label,Icon])=>(
+                <button key={id} type="button" onClick={()=>setWizardTab(id)}
+                  className={`rounded-lg px-2 py-2 text-xs font-semibold flex items-center justify-center gap-1 ${wizardTab===id?"bg-violet-600 text-white":"hover:bg-violet-50 text-slate-600"}`}>
+                  <Icon className="h-4 w-4"/>{label}
+                </button>
+              ))}
             </div>
-            <div>
-              <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.notes")}</Label>
-              <Input
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                data-testid="input-notes"
-                className="mt-1"
-              />
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <Button type="button" variant="outline" onClick={closePanel}>
-                {t("common.cancel")}
-              </Button>
-              <Button type="submit" disabled={creating} data-testid="btn-create-order">
-                {creating ? t("common.loading") : t("common.save")}
-              </Button>
+
+            {wizardTab==="basic" && <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div><Label>رقم الأمر</Label><Input value={nextCode.number??"..."} readOnly disabled className="font-mono"/></div>
+              <div className="md:col-span-3"><Label>عنوان الأمر *</Label><Input ref={firstFieldRef} required value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></div>
+              <div className="md:col-span-2"><Label>المنتج النهائي *</Label><SearchCombobox
+                value={form.productItemId===""?"":String(form.productItemId)} items={fgComboItems}
+                placeholder="اختر المنتج" searchPlaceholder="ابحث بالاسم أو الكود…"
+                onValueChange={v=>{const idNum=v===""?"":Number(v);const it=idNum===""?undefined:fgItems.find(x=>x.id===idNum);
+                  setForm(f=>({...f,productItemId:idNum,unitCode:it?.unitCode||f.unitCode,title:f.title.trim()?f.title:(it?.nameAr??f.title)}));}}/></div>
+              <div><Label>الكمية *</Label><Input type="number" min="0.0001" step="0.01" value={form.plannedQty} onChange={e=>setForm({...form,plannedQty:e.target.value})}/></div>
+              <div><Label>الوحدة</Label><UnitCodeSelect value={form.unitCode} onChange={v=>setForm({...form,unitCode:v})}/></div>
+              <div><Label>بداية مخططة</Label><Input type="date" value={form.plannedStartDate} onChange={e=>setForm({...form,plannedStartDate:e.target.value,costPeriod:e.target.value.slice(0,7)})}/></div>
+              <div><Label>نهاية مخططة</Label><Input type="date" value={form.plannedEndDate} onChange={e=>setForm({...form,plannedEndDate:e.target.value})}/></div>
+              <div className="md:col-span-2"><Label>ملاحظات</Label><Input value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></div>
+            </div>}
+
+            {wizardTab==="materials" && <div className="space-y-3">
+              <div className="rounded-lg border bg-blue-50 p-3 text-sm">يُحمّل قالب المكونات النشط تلقائياً ويُضرب في كمية الأمر. تكلفة المعاينة من متوسط تكلفة مخزن الخامات، وتُثبّت التكلفة الفعلية عند الصرف.</div>
+              {!bomPreview?<div className="text-center py-8 text-amber-700">لا يوجد قالب مكونات نشط للمنتج المختار.</div>:
+                <div><h3 className="font-bold mb-2">{bomPreview.template?.nameAr||bomPreview.nameAr}</h3>
+                  <div className="divide-y border rounded-lg">{(bomPreview.lines??[]).map((l:any)=><div key={l.id} className="p-2 flex justify-between text-sm"><span>{l.description}</span><span className="font-mono">{l.quantity} {l.unitCode}</span></div>)}</div></div>}
+            </div>}
+
+            {wizardTab==="routing" && <div className="space-y-3">
+              <div className="rounded-lg border bg-violet-50 p-3 text-sm">تُنسخ المراحل من مسار الإنتاج النشط كـ snapshot مستقل للأمر، فلا تغيّر تعديلات القالب اللاحقة تاريخ هذا الأمر.</div>
+              {!routingPreview?<div className="text-center py-8 text-amber-700">لا يوجد مسار نشط؛ يمكن متابعة الأمر بلا مراحل.</div>:
+                <div className="flex flex-wrap gap-2">{(routingPreview.stages??[]).map((s:any,i:number)=><div key={s.id} className="rounded-lg border bg-white p-3 min-w-36"><b>{i+1}. {s.nameAr}</b><p className="text-xs text-slate-500">{s.expectedDurationMinutes||0} دقيقة</p></div>)}</div>}
+            </div>}
+
+            {wizardTab==="resources" && <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><Label>مخزن الخامات *</Label><SearchCombobox value={form.rawWarehouseId} onValueChange={v=>setForm({...form,rawWarehouseId:v})} placeholder="اختر" items={warehouses.map(w=>({value:String(w.id),label:w.nameAr||w.name||`#${w.id}`}))}/></div>
+              <div><Label>مخزن الإنتاج التام *</Label><SearchCombobox value={form.finishedWarehouseId} onValueChange={v=>setForm({...form,finishedWarehouseId:v})} placeholder="اختر" items={warehouses.map(w=>({value:String(w.id),label:w.nameAr||w.name||`#${w.id}`}))}/></div>
+              <div><Label>مركز العمل</Label><SearchCombobox value={form.workCenterId} onValueChange={v=>setForm({...form,workCenterId:v})} placeholder="اختياري" items={workCenters.map(w=>({value:String(w.id),label:`${w.code} — ${w.nameAr}`}))}/></div>
+              <div><Label>الساعات المخططة</Label><Input type="number" min="0" step="0.25" value={form.plannedHours} onChange={e=>setForm({...form,plannedHours:e.target.value})}/></div>
+            </div>}
+
+            {wizardTab==="costs" && <div className="space-y-3">
+              <div className="flex items-end gap-3"><div><Label>فترة التكلفة</Label><Input type="month" value={form.costPeriod} onChange={e=>setForm({...form,costPeriod:e.target.value})}/></div>
+                <p className="text-xs text-slate-500 pb-2">تظهر فقط تكاليف مُرحّلة فعلياً من الرواتب، الإهلاك، والمصروفات المقدمة.</p></div>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">اختر المصدر فقط؛ يحسب الخادم الحصة من ساعات/كمية الأمر والمقام أو المعدل المعتمد في شاشة المصدر، ويحفظ جميع عناصر المعادلة في لقطة غير قابلة للتعديل.</div>
+              <div className="divide-y border rounded-lg">{costSources.length===0?<div className="p-6 text-center text-slate-500">لا توجد مصادر مُرحّلة لهذه الفترة.</div>:costSources.map((s:any)=>{
+                const key=`${s.sourceType}:${s.sourceRecordId}`; return <div key={key} className="p-3 grid grid-cols-[1fr_110px_120px] gap-3 items-center">
+                  <div><b className="text-sm">{s.label}</b><p className="text-xs text-slate-500">المتاح {Number(s.availableAmount).toLocaleString()} • {s.meta?.allocationMethod||s.basis}</p></div>
+                  <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={allocations[key]==="1"} onChange={e=>setAllocations({...allocations,[key]:e.target.checked?"1":""})}/> اختيار</label>
+                  <div className="text-end font-mono text-sm">{Number.isFinite(derivedSourceAmount(s))?derivedSourceAmount(s).toFixed(2):"—"}</div>
+                </div>})}</div>
+            </div>}
+
+            {wizardTab==="review" && <div className="grid md:grid-cols-3 gap-3">
+              <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">المنتج / الكمية</p><b>{fgItems.find(x=>x.id===Number(form.productItemId))?.nameAr||"—"} — {form.plannedQty||0} {form.unitCode}</b></div>
+              <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">المواد / المراحل</p><b>{bomPreview?.lines?.length||0} مادة • {routingPreview?.stages?.length||0} مرحلة</b></div>
+              <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">تكاليف المصادر</p><b>{costSources.reduce((sum:number,s:any)=>sum+(allocations[`${s.sourceType}:${s.sourceRecordId}`]==="1"?derivedSourceAmount(s):0),0).toFixed(2)}</b></div>
+              <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">الحفظ كمسودة لا يحرك المخزون. «حفظ وتنفيذ» يعتمد الأمر ثم يستخدم مسار التنفيذ المحاسبي والمخزني الحالي نفسه؛ وأي خطأ في الاعتماد أو الصرف يظهر صراحة.</div>
+            </div>}
+
+            <div className="flex items-center justify-between gap-2 pt-2 border-t">
+              <Button type="button" variant="outline" onClick={closePanel}>{t("common.cancel")}</Button>
+              <div className="flex gap-2">
+                <Button type="submit" variant="outline" disabled={creating} data-mode="draft">حفظ كمسودة</Button>
+                <Button type="submit" disabled={creating} data-mode="execute" data-testid="btn-create-order">{creating?t("common.loading"):"حفظ وتنفيذ"}</Button>
+              </div>
             </div>
           </form>
         </div>

@@ -642,6 +642,43 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     sql: `CREATE OR REPLACE FUNCTION reject_payroll_allocation_snapshot_update() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'payroll allocation snapshots are immutable'; END; $$ LANGUAGE plpgsql;
            DROP TRIGGER IF EXISTS payroll_allocation_snapshots_no_update ON payroll_allocation_snapshots;
            CREATE TRIGGER payroll_allocation_snapshots_no_update BEFORE UPDATE ON payroll_allocation_snapshots FOR EACH ROW EXECUTE FUNCTION reject_payroll_allocation_snapshot_update()` },
+  { label: "production_cost_allocations",
+    sql: `CREATE TABLE IF NOT EXISTS production_cost_allocations (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      order_id INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE RESTRICT,
+      source_type TEXT NOT NULL,
+      source_record_id INTEGER NOT NULL,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      basis TEXT NOT NULL,
+      source_amount NUMERIC(18,2) NOT NULL,
+      share_pct NUMERIC(9,6) NOT NULL CHECK (share_pct > 0 AND share_pct <= 100),
+      allocated_amount NUMERIC(18,2) NOT NULL CHECK (allocated_amount >= 0),
+      snapshot_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT prod_cost_alloc_order_source_uniq UNIQUE(order_id, source_type, source_record_id)
+    );
+    CREATE INDEX IF NOT EXISTS prod_cost_alloc_source_idx ON production_cost_allocations(company_id, source_type, source_record_id);
+    CREATE OR REPLACE FUNCTION reject_production_cost_allocation_mutation() RETURNS trigger AS $$
+    BEGIN RAISE EXCEPTION 'production cost allocation snapshots are immutable'; END; $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS production_cost_allocations_no_mutation ON production_cost_allocations;
+    CREATE TRIGGER production_cost_allocations_no_mutation BEFORE UPDATE OR DELETE ON production_cost_allocations
+      FOR EACH ROW EXECUTE FUNCTION reject_production_cost_allocation_mutation();` },
+  { label: "production wizard retry key",
+    sql: `ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS wizard_request_id TEXT;
+          CREATE UNIQUE INDEX IF NOT EXISTS prod_orders_wizard_request_uniq
+            ON production_orders(company_id, wizard_request_id) WHERE wizard_request_id IS NOT NULL;` },
+  { label: "manufacturing source eligibility configuration",
+    sql: `ALTER TABLE payroll_runs
+            ADD COLUMN IF NOT EXISTS manufacturing_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS manufacturing_allocation_method TEXT NOT NULL DEFAULT 'none',
+            ADD COLUMN IF NOT EXISTS approved_manufacturing_hours NUMERIC(14,4);
+          ALTER TABLE accounting_adjustments
+            ADD COLUMN IF NOT EXISTS manufacturing_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS manufacturing_allocation_method TEXT NOT NULL DEFAULT 'none',
+            ADD COLUMN IF NOT EXISTS approved_production_quantity NUMERIC(14,4);` },
 ];
 
 async function ensurePayrollAllocationSchema(options: { strict?: boolean } = {}): Promise<string[]> {
@@ -2101,6 +2138,20 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS is_opening_balance BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "fixed_assets add insurance_coverage",
       sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS insurance_coverage TEXT` },
+    { label: "fixed_assets manufacturing allocation config",
+      sql:   `ALTER TABLE fixed_assets
+                ADD COLUMN IF NOT EXISTS used_in_manufacturing BOOLEAN NOT NULL DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS manufacturing_allocation_method TEXT NOT NULL DEFAULT 'none',
+                ADD COLUMN IF NOT EXISTS approved_operating_hours NUMERIC(14,4),
+                ADD COLUMN IF NOT EXISTS fixed_manufacturing_rate NUMERIC(14,4);
+              DO $$ BEGIN
+                UPDATE fixed_assets SET manufacturing_allocation_method = 'none',
+                  used_in_manufacturing = FALSE
+                  WHERE manufacturing_allocation_method = 'production_quantity';
+                ALTER TABLE fixed_assets DROP CONSTRAINT IF EXISTS fixed_assets_mfg_allocation_method_chk;
+                ALTER TABLE fixed_assets ADD CONSTRAINT fixed_assets_mfg_allocation_method_chk
+                  CHECK (manufacturing_allocation_method IN ('none','operating_hours','fixed_hourly_rate'));
+              EXCEPTION WHEN duplicate_object THEN NULL; END $$;` },
     // Source linkage (create-asset-from-purchase-invoice / from-JE): one LIVE
     // asset per (company, source doc, line). sold/scrapped excluded so a
     // disposed asset can be re-created from the same source if needed.

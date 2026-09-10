@@ -11,6 +11,7 @@ import {
   productionOrderItemsTable,
   productionResourcesTable,
   productionEventsTable,
+  productionCostAllocationsTable,
   warehousesTable,
   itemsTable,
   stockBalanceTable,
@@ -44,11 +45,17 @@ import {
   PRODUCTION_STATUS_TRANSITIONS,
   PRODUCTION_STAGE_STATUSES,
   usersTable,
+  payrollAllocationSnapshotsTable,
+  payrollRunsTable,
+  faDepreciationRunsTable,
+  fixedAssetsTable,
+  accountingAdjustmentRunsTable,
+  accountingAdjustmentsTable,
   type ProductionOrderStatus,
   type ProductionStageStatus,
 } from "@workspace/db";
-import { randomBytes } from "node:crypto";
-import { and, asc, desc, eq, ilike, sql, or, inArray } from "drizzle-orm";
+import { createHash, randomBytes } from "node:crypto";
+import { and, asc, desc, eq, ilike, sql, or, inArray, ne } from "drizzle-orm";
 import {
   extractAuth,
   resolveCompanyId,
@@ -58,11 +65,24 @@ import {
 } from "../middleware/auth.js";
 import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
-import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, readBatchRemaining } from "../lib/stockHelpers.js";
+import {
+  upsertBalance,
+  getBalance,
+  addStockLedgerEntry,
+  lockStockBalances,
+  pickBatches,
+  readBatchRemaining,
+} from "../lib/stockHelpers.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import {
+  allocateToSourceAccounts,
+  assertAllocationCapacity,
+  calculateFormulaAllocation,
+  type WeightedAccount,
+} from "../lib/productionCostAllocation.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // ─── Journal entry helper (mirrors sales.ts / purchasing.ts) ─────────────────
@@ -87,7 +107,9 @@ async function createJournalEntry(opts: {
   // Audit-trail fields injected by callers via `fullAuditFor(req)`.
   audit?: Record<string, unknown>;
   lines: JLine[];
+  dx?: any;
 }): Promise<number> {
+  const dx = opts.dx ?? db;
   const cleanLines = opts.lines.filter(
     (l) => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0),
   );
@@ -143,9 +165,9 @@ async function createJournalEntry(opts: {
     refTable: "journal_entries",
     branchId: opts.branchId ?? null,
     docDate:  opts.date,
-  });
+  }, dx);
   const jeDocNumber = seqDocNumber ?? (opts.docNumber ?? null);
-  const [entry] = await db
+  const [entry] = await dx
     .insert(journalEntriesTable)
     .values({
       companyId: opts.companyId,
@@ -161,7 +183,7 @@ async function createJournalEntry(opts: {
       ...auditFields,
     })
     .returning();
-  await db.insert(journalEntryLinesTable).values(
+  await dx.insert(journalEntryLinesTable).values(
     cleanLines.map((l, i) => ({
       entryId: entry.id,
       accountId: l.accountId!,
@@ -182,8 +204,9 @@ async function readAvgCost(
   itemId: number,
   warehouseId: number,
   fallback: number,
+  executor: any = db,
 ): Promise<number> {
-  const [bal] = await db
+  const [bal] = await executor
     .select({ avgCost: stockBalanceTable.avgCost, qty: stockBalanceTable.qty })
     .from(stockBalanceTable)
     .where(
@@ -337,8 +360,9 @@ async function writeEvent(
   payload: Record<string, unknown>,
   userId: number | null,
   byAi = false,
+  executor: any = db,
 ) {
-  await db.insert(productionEventsTable).values({
+  await executor.insert(productionEventsTable).values({
     companyId: cid,
     orderId: orderId ?? null,
     eventType,
@@ -352,6 +376,197 @@ function num(v: unknown, def = 0): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
 }
+
+function wizardPayloadHash(body: any): string {
+  const allocations = Array.isArray(body?.allocations)
+    ? body.allocations.map((x: any) => ({
+        sourceType: String(x?.sourceType ?? ""),
+        sourceRecordId: Number(x?.sourceRecordId) || 0,
+      })).sort((a: any, b: any) =>
+        `${a.sourceType}:${a.sourceRecordId}`.localeCompare(`${b.sourceType}:${b.sourceRecordId}`))
+    : [];
+  const canonical = {
+    title: String(body?.title ?? "").trim(),
+    productItemId: Number(body?.productItemId) || 0,
+    plannedQty: Number(body?.plannedQty) || 0,
+    unitCode: String(body?.unitCode || "PCE"),
+    notes: body?.notes || null,
+    plannedStartDate: body?.plannedStartDate || null,
+    plannedEndDate: body?.plannedEndDate || null,
+    branchId: Number(body?.branchId) || null,
+    rawWarehouseId: Number(body?.rawWarehouseId) || null,
+    finishedWarehouseId: Number(body?.finishedWarehouseId) || null,
+    workCenterId: Number(body?.workCenterId) || null,
+    plannedHours: Number(body?.plannedHours) || 0,
+    costPeriod: String(body?.costPeriod ?? ""),
+    allocations,
+  };
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+type CostSource = {
+  sourceType: "payroll" | "fixed_asset_depreciation" | "prepaid_amortization";
+  sourceRecordId: number;
+  label: string;
+  periodStart: string;
+  periodEnd: string;
+  basis: string;
+  sourceAmount: number;
+  meta: Record<string, unknown>;
+};
+
+function sourceReclassificationLines(
+  frozenCosts: Array<{ allocatedAmount: unknown; snapshotMeta: unknown }>,
+): { accountId: number; amount: number }[] {
+  const totals = new Map<number, number>();
+  for (const frozen of frozenCosts) {
+    const meta = frozen.snapshotMeta && typeof frozen.snapshotMeta === "object"
+      ? frozen.snapshotMeta as Record<string, unknown>
+      : {};
+    const accounts = Array.isArray(meta.reclassificationAccounts)
+      ? meta.reclassificationAccounts as WeightedAccount[]
+      : [];
+    for (const line of allocateToSourceAccounts(num(frozen.allocatedAmount), accounts)) {
+      totals.set(line.accountId, (totals.get(line.accountId) ?? 0) + line.amount);
+    }
+  }
+  return [...totals].map(([accountId, amount]) => ({
+    accountId,
+    amount: Number(amount.toFixed(2)),
+  }));
+}
+
+async function loadPostedCostSources(
+  q: any,
+  cid: number,
+  period: string,
+  req?: any,
+  requestedBranchId?: number | null,
+): Promise<CostSource[]> {
+  if (!/^\d{4}-\d{2}$/.test(period)) throw Object.assign(new Error("الفترة مطلوبة بصيغة YYYY-MM"), { status: 400 });
+  const [year, month] = period.split("-").map(Number);
+  const start = `${period}-01`;
+  const endDate = new Date(Date.UTC(year, month, 0));
+  const end = `${year}-${String(month).padStart(2, "0")}-${String(endDate.getUTCDate()).padStart(2, "0")}`;
+
+  const journalBranchResult = req
+    ? effectiveBranchCondition(req, journalEntriesTable.branchId, requestedBranchId ?? undefined)
+    : undefined;
+  if (journalBranchResult?.deny) return [];
+  const journalBranch = journalBranchResult?.cond;
+  const payroll = await q.select({
+    id: payrollRunsTable.id, code: payrollRunsTable.code,
+    journalId: payrollRunsTable.postedJournalId,
+    method: payrollRunsTable.manufacturingAllocationMethod,
+    hours: payrollRunsTable.approvedManufacturingHours,
+    amount: sql<string>`coalesce(sum(${payrollAllocationSnapshotsTable.allocatedAmount}), 0)`,
+  }).from(payrollRunsTable)
+    .innerJoin(payrollAllocationSnapshotsTable, eq(payrollAllocationSnapshotsTable.payrollRunId, payrollRunsTable.id))
+    .innerJoin(journalEntriesTable, eq(payrollRunsTable.postedJournalId, journalEntriesTable.id))
+    .where(and(eq(payrollRunsTable.companyId, cid), eq(payrollRunsTable.year, year),
+      eq(payrollRunsTable.month, month), inArray(payrollRunsTable.status, ["posted", "paid"]),
+      eq(journalEntriesTable.status, "posted"), eq(payrollRunsTable.manufacturingEligible, true),
+      eq(payrollRunsTable.manufacturingAllocationMethod, "operating_hours"),
+      sql`${payrollRunsTable.approvedManufacturingHours} > 0`, journalBranch))
+    .groupBy(payrollRunsTable.id, payrollRunsTable.code);
+
+  const assets = await q.select({
+    id: faDepreciationRunsTable.id, journalId: faDepreciationRunsTable.journalEntryId,
+    amount: faDepreciationRunsTable.depreciationAmount,
+    assetId: fixedAssetsTable.id, code: fixedAssetsTable.code, name: fixedAssetsTable.nameAr,
+    method: fixedAssetsTable.manufacturingAllocationMethod,
+    hours: fixedAssetsTable.approvedOperatingHours, rate: fixedAssetsTable.fixedManufacturingRate,
+  }).from(faDepreciationRunsTable)
+    .innerJoin(fixedAssetsTable, eq(faDepreciationRunsTable.assetId, fixedAssetsTable.id))
+    .innerJoin(journalEntriesTable, eq(faDepreciationRunsTable.journalEntryId, journalEntriesTable.id))
+    .where(and(eq(faDepreciationRunsTable.companyId, cid), eq(faDepreciationRunsTable.periodYear, year),
+      eq(faDepreciationRunsTable.periodMonth, month), eq(faDepreciationRunsTable.status, "posted"),
+      eq(journalEntriesTable.status, "posted"), eq(fixedAssetsTable.usedInManufacturing, true),
+      or(
+        and(eq(fixedAssetsTable.manufacturingAllocationMethod, "operating_hours"),
+          sql`${fixedAssetsTable.approvedOperatingHours} > 0`),
+        and(eq(fixedAssetsTable.manufacturingAllocationMethod, "fixed_hourly_rate"),
+          sql`${fixedAssetsTable.fixedManufacturingRate} > 0`),
+      ),
+      journalBranch));
+
+  const prepaid = await q.select({
+    id: accountingAdjustmentRunsTable.id, journalId: accountingAdjustmentRunsTable.journalEntryId,
+    amount: accountingAdjustmentRunsTable.amount,
+    name: accountingAdjustmentsTable.name, adjustmentId: accountingAdjustmentsTable.id,
+    method: accountingAdjustmentsTable.manufacturingAllocationMethod,
+    approvedQty: accountingAdjustmentsTable.approvedProductionQuantity,
+  }).from(accountingAdjustmentRunsTable)
+    .innerJoin(accountingAdjustmentsTable, eq(accountingAdjustmentRunsTable.adjustmentId, accountingAdjustmentsTable.id))
+    .innerJoin(journalEntriesTable, eq(accountingAdjustmentRunsTable.journalEntryId, journalEntriesTable.id))
+    .where(and(eq(accountingAdjustmentRunsTable.companyId, cid), eq(accountingAdjustmentRunsTable.periodMonth, period),
+      eq(accountingAdjustmentsTable.type, "prepaid"), eq(journalEntriesTable.status, "posted"),
+      eq(accountingAdjustmentsTable.manufacturingEligible, true),
+      eq(accountingAdjustmentsTable.manufacturingAllocationMethod, "production_quantity"),
+      sql`${accountingAdjustmentsTable.approvedProductionQuantity} > 0`,
+      journalBranch));
+
+  const journalIds = [...payroll, ...assets, ...prepaid]
+    .map((r: any) => Number(r.journalId))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const debitLines = journalIds.length ? await q.select({
+    journalId: journalEntryLinesTable.entryId,
+    accountId: journalEntryLinesTable.accountId,
+    debit: journalEntryLinesTable.debit,
+  }).from(journalEntryLinesTable).where(and(
+    inArray(journalEntryLinesTable.entryId, journalIds),
+    sql`${journalEntryLinesTable.debit} > 0`,
+  )) : [];
+  const accountsByJournal = new Map<number, WeightedAccount[]>();
+  for (const line of debitLines) {
+    if (!line.accountId) continue;
+    const list = accountsByJournal.get(line.journalId) ?? [];
+    list.push({ accountId: line.accountId, weight: num(line.debit) });
+    accountsByJournal.set(line.journalId, list);
+  }
+  const sourceMeta = (row: any, extra: Record<string, unknown>) => ({
+    ...extra,
+    sourceJournalId: row.journalId,
+    reclassificationAccounts: accountsByJournal.get(Number(row.journalId)) ?? [],
+  });
+
+  return [
+    ...payroll.map((r: any) => ({ sourceType: "payroll" as const, sourceRecordId: r.id,
+      label: `رواتب ${r.code}`, periodStart: start, periodEnd: end, basis: "posted_payroll_allocation",
+      sourceAmount: num(r.amount), meta: sourceMeta(r, { payrollRunId: r.id,
+        manufacturingEligible: true, allocationMethod: r.method, approvedManufacturingHours: r.hours }) })),
+    ...assets.map((r: any) => ({ sourceType: "fixed_asset_depreciation" as const, sourceRecordId: r.id,
+      label: `إهلاك ${r.code} — ${r.name}`, periodStart: start, periodEnd: end,
+      basis: r.method, sourceAmount: num(r.amount),
+      meta: sourceMeta(r, { assetId: r.assetId, manufacturingEligible: true,
+        allocationMethod: r.method, approvedOperatingHours: r.hours, fixedManufacturingRate: r.rate }) })),
+    ...prepaid.map((r: any) => ({ sourceType: "prepaid_amortization" as const, sourceRecordId: r.id,
+      label: `مصروف مقدم — ${r.name}`, periodStart: start, periodEnd: end, basis: "posted_amortization",
+      sourceAmount: num(r.amount), meta: sourceMeta(r, { adjustmentId: r.adjustmentId, manufacturingEligible: true,
+        allocationMethod: r.method, approvedProductionQuantity: r.approvedQty }) })),
+  ];
+}
+
+router.get("/cost-sources", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const period = String(req.query.period ?? "");
+    const requestedBranchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+    const sources = await loadPostedCostSources(db, cid, period, req, requestedBranchId);
+    const allocated = await db.select({
+      sourceType: productionCostAllocationsTable.sourceType,
+      sourceRecordId: productionCostAllocationsTable.sourceRecordId,
+      amount: sql<string>`coalesce(sum(${productionCostAllocationsTable.allocatedAmount}), 0)`,
+    }).from(productionCostAllocationsTable)
+      .innerJoin(productionOrdersTable, eq(productionCostAllocationsTable.orderId, productionOrdersTable.id))
+      .where(and(eq(productionCostAllocationsTable.companyId, cid),
+        ne(productionOrdersTable.status, "cancelled")))
+      .groupBy(productionCostAllocationsTable.sourceType, productionCostAllocationsTable.sourceRecordId);
+    const used = new Map(allocated.map((x: any) => [`${x.sourceType}:${x.sourceRecordId}`, num(x.amount)]));
+    res.json(sources.map((s) => ({ ...s, allocatedAmount: used.get(`${s.sourceType}:${s.sourceRecordId}`) ?? 0,
+      availableAmount: Math.max(0, s.sourceAmount - (used.get(`${s.sourceType}:${s.sourceRecordId}`) ?? 0)) })));
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
 
 // ────────────────────────────────────────────────────────────────────────
 // RESOURCES (machines / lines / stations)
@@ -701,9 +916,234 @@ router.get("/orders/:id", async (req, res) => {
         ),
       )
       .orderBy(desc(productionWasteRecordsTable.createdAt));
-    res.json({ order, items, events, wasteRecords });
+    const costAllocations = await db.select().from(productionCostAllocationsTable)
+      .where(and(eq(productionCostAllocationsTable.companyId, cid),
+        eq(productionCostAllocationsTable.orderId, id)))
+      .orderBy(asc(productionCostAllocationsTable.id));
+    res.json({ order, items, events, wasteRecords, costAllocations });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/orders/wizard", async (req, res) => {
+  const wizardRequestId = typeof req.body?.wizardRequestId === "string"
+    ? req.body.wizardRequestId.trim().slice(0, 100) : "";
+  const requestHash = wizardPayloadHash(req.body);
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const b = req.body ?? {};
+    if (!wizardRequestId) { res.status(400).json({ error: "مفتاح الطلب مطلوب لإتاحة إعادة المحاولة الآمنة" }); return; }
+    const [previous] = await db.select().from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.companyId, cid), eq(productionOrdersTable.wizardRequestId, wizardRequestId),
+    )).limit(1);
+    if (previous) {
+      if (!rowInScope(req, previous.branchId)) {
+        res.status(404).json({ error: "أمر الإنتاج غير موجود" }); return;
+      }
+      if ((previous.meta as any)?.wizardRequestHash !== requestHash) {
+        res.status(409).json({ error: "أُعيد استخدام مفتاح المحاولة ببيانات مختلفة" }); return;
+      }
+      res.json({ ...previous, idempotentReplay: true }); return;
+    }
+    if (!String(b.title ?? "").trim()) { res.status(400).json({ error: "عنوان أمر الإنتاج مطلوب" }); return; }
+    const productItemId = Number(b.productItemId);
+    const plannedQty = num(b.plannedQty);
+    if (!Number.isInteger(productItemId) || productItemId <= 0 || plannedQty <= 0) {
+      res.status(400).json({ error: "المنتج النهائي والكمية الموجبة مطلوبان" }); return;
+    }
+    await validateItem(cid, productItemId);
+    const bid = intersectBranchRequest(req, b.branchId ?? null);
+    if (bid === "deny") { res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" }); return; }
+    let branchId = typeof bid === "number" ? bid : null;
+    const rawWarehouseId = await validateWarehouse(cid, b.rawWarehouseId ? Number(b.rawWarehouseId) : null);
+    const finishedWarehouseId = await validateWarehouse(cid, b.finishedWarehouseId ? Number(b.finishedWarehouseId) : null);
+    if (!rawWarehouseId || !finishedWarehouseId) {
+      res.status(400).json({ error: "مخزن الخامات ومخزن الإنتاج التام مطلوبان" }); return;
+    }
+    const selectedWarehouses = await db.select({
+      id: warehousesTable.id,
+      branchId: warehousesTable.branchId,
+    }).from(warehousesTable).where(and(
+      eq(warehousesTable.companyId, cid),
+      inArray(warehousesTable.id, [rawWarehouseId, finishedWarehouseId]),
+    ));
+    const warehouseBranches = selectedWarehouses
+      .map((w) => w.branchId)
+      .filter((x): x is number => x != null);
+    if (warehouseBranches.some((x) => !rowInScope(req, x)) ||
+        new Set(warehouseBranches).size > 1 ||
+        (branchId != null && warehouseBranches.some((x) => x !== branchId))) {
+      res.status(403).json({ error: "يجب أن تكون مخازن الأمر ضمن نفس الفرع المسموح" }); return;
+    }
+    if (branchId == null && warehouseBranches.length) branchId = warehouseBranches[0];
+    const wc = b.workCenterId ? await loadWorkCenter(cid, Number(b.workCenterId)) : null;
+    const [mfg] = await db.select().from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+    const plannedHours = num(b.plannedHours);
+    const period = String(b.costPeriod || String(b.plannedStartDate || "").slice(0, 7));
+    const requested: any[] = Array.isArray(b.allocations) ? b.allocations : [];
+    const orderNumber = await nextSequenceNumber(cid, "production_order", {
+      userId: req.authUser!.id, refTable: "production_orders", branchId,
+      docDate: b.plannedStartDate || undefined,
+    }) ?? `PRD-${Date.now().toString(36)}`;
+
+    const result = await db.transaction(async (tx) => {
+      const sources = requested.length ? await loadPostedCostSources(tx, cid, period, req, branchId) : [];
+      const sourceMap = new Map(sources.map((s) => [`${s.sourceType}:${s.sourceRecordId}`, s]));
+      let payrollCost = 0, indirectCost = 0;
+      const snapshots: any[] = [];
+      const requestedKeys = new Set<string>();
+      for (const a of requested) {
+        const key = `${a.sourceType}:${Number(a.sourceRecordId)}`;
+        if (requestedKeys.has(key)) {
+          throw Object.assign(new Error(`مصدر التكلفة مكرر في الطلب: ${key}`), { status: 400 });
+        }
+        requestedKeys.add(key);
+        const source = sourceMap.get(key);
+        if (!source) {
+          throw Object.assign(new Error(`مصدر تكلفة غير مؤهل أو غير صالح: ${key}`), { status: 400 });
+        }
+        const method = String(source.meta.allocationMethod ?? source.basis);
+        let amount = 0;
+        let denominator = 0;
+        if (source.sourceType === "payroll" ||
+            (source.sourceType === "fixed_asset_depreciation" && method === "operating_hours")) {
+          denominator = num(source.meta.approvedManufacturingHours ?? source.meta.approvedOperatingHours);
+          if (!(plannedHours > 0 && denominator > 0))
+            throw Object.assign(new Error(`ساعات الأمر والساعات المعتمدة مطلوبة لتوزيع ${source.label}`), { status: 400 });
+          amount = calculateFormulaAllocation("operating_hours", source.sourceAmount, plannedHours, denominator);
+        } else if (source.sourceType === "fixed_asset_depreciation" && method === "fixed_hourly_rate") {
+          denominator = num(source.meta.fixedManufacturingRate);
+          if (!(plannedHours > 0 && denominator > 0))
+            throw Object.assign(new Error(`ساعات الأمر ومعدل الساعة مطلوبان لتوزيع ${source.label}`), { status: 400 });
+          amount = calculateFormulaAllocation("fixed_hourly_rate", source.sourceAmount, plannedHours, denominator);
+        } else if (source.sourceType === "prepaid_amortization") {
+          denominator = num(source.meta.approvedProductionQuantity);
+          if (!(plannedQty > 0 && denominator > 0))
+            throw Object.assign(new Error(`كمية الأمر والكمية الشهرية المعتمدة مطلوبتان لتوزيع ${source.label}`), { status: 400 });
+          amount = calculateFormulaAllocation("production_quantity", source.sourceAmount, plannedQty, denominator);
+        } else {
+          throw Object.assign(new Error(`طريقة توزيع غير مدعومة للمصدر: ${source.label}`), { status: 400 });
+        }
+        const sharePct = source.sourceAmount > 0 ? Number((amount / source.sourceAmount * 100).toFixed(6)) : 0;
+        if (!(amount > 0 && sharePct > 0))
+          throw Object.assign(new Error(`ناتج توزيع صفري للمصدر: ${source.label}`), { status: 400 });
+        const reclassificationAccounts = (source.meta.reclassificationAccounts as WeightedAccount[] | undefined) ?? [];
+        try { allocateToSourceAccounts(0.01, reclassificationAccounts); }
+        catch {
+          throw Object.assign(new Error(`قيد المصدر لا يحتوي حساب مصروف مدين صالح لإعادة التصنيف: ${source.label}`), { status: 409 });
+        }
+        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${key}))`);
+        const [used] = await tx.select({
+          amount: sql<string>`coalesce(sum(${productionCostAllocationsTable.allocatedAmount}), 0)`,
+        }).from(productionCostAllocationsTable)
+          .innerJoin(productionOrdersTable, eq(productionCostAllocationsTable.orderId, productionOrdersTable.id))
+          .where(and(
+            eq(productionCostAllocationsTable.companyId, cid),
+            eq(productionCostAllocationsTable.sourceType, source.sourceType),
+            eq(productionCostAllocationsTable.sourceRecordId, source.sourceRecordId),
+            ne(productionOrdersTable.status, "cancelled"),
+          ));
+        try { assertAllocationCapacity(source.sourceAmount, num(used?.amount), amount); }
+        catch { throw Object.assign(new Error(`تجاوز توزيع المصدر المتاح: ${source.label}`), { status: 409 }); }
+        if (source.sourceType === "payroll") payrollCost += amount;
+        else indirectCost += amount;
+        snapshots.push({ companyId: cid, sourceType: source.sourceType, sourceRecordId: source.sourceRecordId,
+          periodStart: source.periodStart, periodEnd: source.periodEnd, basis: source.basis,
+          sourceAmount: String(source.sourceAmount.toFixed(2)), sharePct: String(sharePct),
+          allocatedAmount: String(amount.toFixed(2)), snapshotMeta: { ...source.meta, label: source.label,
+            formulaMethod: method,
+            formulaNumerator: source.sourceType === "prepaid_amortization" ? plannedQty : plannedHours,
+            formulaDenominator: denominator },
+          createdBy: req.authUser!.id });
+      }
+
+      const [tmpl] = await tx.select().from(bomTemplatesTable).where(and(
+        eq(bomTemplatesTable.companyId, cid), eq(bomTemplatesTable.productItemId, productItemId),
+        eq(bomTemplatesTable.isActive, true))).orderBy(desc(bomTemplatesTable.updatedAt)).limit(1);
+      const bomLines = tmpl ? await tx.select().from(bomTemplateLinesTable)
+        .where(eq(bomTemplateLinesTable.templateId, tmpl.id)) : [];
+      if (!tmpl || !bomLines.length) throw Object.assign(new Error("لا يوجد قالب مكونات نشط للمنتج المختار"), { status: 400 });
+      const scale = plannedQty / Math.max(num(tmpl.outputQty, 1), 0.000001);
+      let rawCost = 0;
+      const itemRows: any[] = [];
+      for (const line of bomLines) {
+        let unitCost = 0;
+        if (line.itemId) {
+          const [bal] = await tx.select({ avgCost: stockBalanceTable.avgCost }).from(stockBalanceTable)
+            .where(and(eq(stockBalanceTable.companyId, cid), eq(stockBalanceTable.itemId, line.itemId),
+              eq(stockBalanceTable.warehouseId, rawWarehouseId))).limit(1);
+          unitCost = num(bal?.avgCost);
+        }
+        const quantity = num(line.quantity) * scale;
+        const total = Number((quantity * unitCost).toFixed(2)); rawCost += total;
+        itemRows.push({ kind: "raw", itemId: line.itemId, description: line.description,
+          quantity: String(quantity), unitCode: line.unitCode, unitCost: String(unitCost),
+          totalCost: String(total), meta: { fromBomTemplateId: tmpl.id } });
+      }
+      const wcLabor = wc && plannedHours > 0 ? plannedHours * num(wc.laborRatePerHour) : 0;
+      const wcOverhead = wc && plannedHours > 0 ? plannedHours * num(wc.overheadRatePerHour) : 0;
+      // Source snapshots take precedence: never add a work-centre rate for the
+      // same bucket, which is the central duplicate-cost guard.
+      const laborCost = payrollCost > 0 ? payrollCost : wcLabor;
+      const overheadCost = indirectCost > 0 ? indirectCost : wcOverhead;
+      const [order] = await tx.insert(productionOrdersTable).values({
+        companyId: cid, branchId, orderNumber, wizardRequestId, title: String(b.title).trim(), status: "draft",
+        plannedQty: String(plannedQty), productItemId, unitCode: b.unitCode || tmpl.outputUnitCode || "PCE",
+        plannedStartDate: b.plannedStartDate || null, plannedEndDate: b.plannedEndDate || null,
+        rawWarehouseId, finishedWarehouseId, workCenterId: wc?.id ?? null,
+        plannedHours: String(plannedHours), laborCost: String(laborCost.toFixed(2)),
+        overheadCost: String(overheadCost.toFixed(2)), estimatedCost: String((rawCost + laborCost + overheadCost).toFixed(2)),
+        costCenter: b.costCenter || wc?.costCenterCode || mfg?.defaultCostCenter || null,
+        wipAccountId: await validateAccount(cid, mfg?.defaultWipAccountId ?? null),
+        rawInventoryAccountId: await validateAccount(cid, mfg?.defaultRawInventoryAccountId ?? null),
+        finishedGoodsAccountId: await validateAccount(cid, mfg?.defaultFinishedGoodsAccountId ?? null),
+        laborAccountId: await validateAccount(cid, wc?.defaultLaborAccountId ?? mfg?.defaultLaborAccountId ?? null),
+        overheadAccountId: await validateAccount(cid, wc?.defaultOverheadAccountId ?? mfg?.defaultOverheadAccountId ?? null),
+        varianceAccountId: await validateAccount(cid, mfg?.defaultVarianceAccountId ?? null),
+        wasteAccountId: await validateAccount(cid, mfg?.defaultWasteAccountId ?? null),
+        notes: b.notes || null,
+        meta: { wizardVersion: 1, wizardRequestHash: requestHash, costPeriod: period,
+          duplicateCostGuard: "source_snapshot_precedes_rate" },
+        createdBy: req.authUser!.id,
+      }).returning();
+      await tx.insert(productionOrderItemsTable).values(itemRows.map((x) => ({ ...x, orderId: order.id })));
+      if (snapshots.length) await tx.insert(productionCostAllocationsTable)
+        .values(snapshots.map((x) => ({ ...x, orderId: order.id })));
+      const [routing] = await tx.select().from(productionRoutingsTable).where(and(
+        eq(productionRoutingsTable.companyId, cid), eq(productionRoutingsTable.productItemId, productItemId),
+        eq(productionRoutingsTable.isActive, true))).orderBy(desc(productionRoutingsTable.updatedAt)).limit(1);
+      const stages = routing ? await tx.select().from(productionRoutingStagesTable)
+        .where(eq(productionRoutingStagesTable.routingId, routing.id)).orderBy(asc(productionRoutingStagesTable.sequence)) : [];
+      if (stages.length) await tx.insert(productionOrderStagesTable).values(stages.map((s: any, i: number) => ({
+        orderId: order.id, sequence: s.sequence, code: s.code, nameAr: s.nameAr, nameEn: s.nameEn,
+        workCenterId: s.workCenterId, expectedWasteRatio: s.expectedWasteRatio,
+        expectedDurationMinutes: s.expectedDurationMinutes, expectedCost: s.expectedCost,
+        expectedCostAccountId: s.expectedCostAccountId, icon: s.icon, color: s.color,
+        inputQty: i === 0 ? String(plannedQty) : "0", fromRoutingId: routing.id,
+      })));
+      await tx.insert(productionEventsTable).values({ companyId: cid, orderId: order.id,
+        eventType: "wizard_created", payload: { bomTemplateId: tmpl.id, materialLines: itemRows.length,
+          routingId: routing?.id ?? null, stages: stages.length, allocations: snapshots.length },
+        userId: req.authUser!.id });
+      return { ...order, bomLoaded: itemRows.length, routingLoaded: stages.length,
+        allocatedCosts: snapshots.reduce((s, x) => s + num(x.allocatedAmount), 0) };
+    });
+    res.status(201).json(result);
+  } catch (e: any) {
+    const code = e?.code || e?.cause?.code;
+    if (code === "23505" && wizardRequestId) {
+      const cid = guard(req, res); if (!cid) return;
+      const [previous] = await db.select().from(productionOrdersTable).where(and(
+        eq(productionOrdersTable.companyId, cid), eq(productionOrdersTable.wizardRequestId, wizardRequestId),
+      )).limit(1);
+      if (previous && rowInScope(req, previous.branchId) &&
+          (previous.meta as any)?.wizardRequestHash === requestHash) {
+        res.json({ ...previous, idempotentReplay: true }); return;
+      }
+    }
+    res.status(e.status ?? (code === "23505" ? 409 : 500)).json({ error: e.message });
   }
 });
 
@@ -1029,6 +1469,8 @@ router.patch("/orders/:id", async (req, res) => {
       .select({
         branchId: productionOrdersTable.branchId,
         status: productionOrdersTable.status,
+        workCenterId: productionOrdersTable.workCenterId,
+        plannedHours: productionOrdersTable.plannedHours,
       })
       .from(productionOrdersTable)
       .where(
@@ -1175,11 +1617,11 @@ router.patch("/orders/:id", async (req, res) => {
       const finalWcId =
         updates.workCenterId !== undefined
           ? (updates.workCenterId as number | null)
-          : (existing.workCenterId as number | null);
+          : (existingOrder.workCenterId as number | null);
       const finalHours =
         updates.plannedHours !== undefined
           ? Number(updates.plannedHours)
-          : Number(existing.plannedHours ?? 0);
+          : Number(existingOrder.plannedHours ?? 0);
       const wc = finalWcId
         ? (recomputeWc?.id === finalWcId ? recomputeWc : await loadWorkCenter(cid, finalWcId))
         : null;
@@ -1234,7 +1676,11 @@ router.post("/orders/:id/status", async (req, res) => {
       res.status(400).json({ error: "حالة غير صحيحة" });
       return;
     }
-    const [order] = await db
+    const transitioned = await db.transaction(async (tx) => {
+    // Serialize every transition for one tenant/order. The lock is held until
+    // stock, ledger, GL, event and status all commit or all roll back.
+    await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${id})`);
+    const [order] = await tx
       .select()
       .from(productionOrdersTable)
       .where(
@@ -1251,6 +1697,10 @@ router.post("/orders/:id/status", async (req, res) => {
       res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
       return;
     }
+    // A lost HTTP response must be safely retryable. The order lock guarantees
+    // that seeing the target status means the first attempt committed all of
+    // stock, ledger, GL, event and status; do not emit any duplicate effects.
+    if (order.status === target) return order;
     const allowed =
       PRODUCTION_STATUS_TRANSITIONS[order.status as ProductionOrderStatus] ?? [];
     if (!allowed.includes(target)) {
@@ -1293,6 +1743,25 @@ router.post("/orders/:id/status", async (req, res) => {
         });
         return;
       }
+      // A draft may sit for weeks after the wizard. Revalidate every frozen
+      // source immediately before issue so an unposted payroll/depreciation/
+      // amortization run can never silently flow into inventory valuation.
+      const frozenCosts = await tx.select().from(productionCostAllocationsTable)
+        .where(and(eq(productionCostAllocationsTable.companyId, cid),
+          eq(productionCostAllocationsTable.orderId, id)));
+      const sourceCache = new Map<string, Map<string, CostSource>>();
+      for (const frozen of frozenCosts) {
+        const period = String(frozen.periodStart).slice(0, 7);
+        if (!sourceCache.has(period)) {
+          const current = await loadPostedCostSources(tx, cid, period, req, order.branchId);
+          sourceCache.set(period, new Map(current.map((s) => [`${s.sourceType}:${s.sourceRecordId}`, s])));
+        }
+        const current = sourceCache.get(period)!.get(`${frozen.sourceType}:${frozen.sourceRecordId}`);
+        if (!current || Math.abs(current.sourceAmount - num(frozen.sourceAmount)) > 0.005) {
+          res.status(409).json({ error: "تعذر التنفيذ: أحد مصادر التكلفة أُلغي ترحيله أو تغير. أنشئ أمراً جديداً بلقطة تكلفة حديثة." });
+          return;
+        }
+      }
       // a) Required setup
       if (!order.rawWarehouseId) {
         res
@@ -1307,7 +1776,35 @@ router.post("/orders/:id/status", async (req, res) => {
         });
         return;
       }
-      const rawLines = await db
+      const labor = Number(order.laborCost ?? 0);
+      const overhead = Number(order.overheadCost ?? 0);
+      const payrollSnapshots = frozenCosts.filter((x) => x.sourceType === "payroll");
+      const indirectSnapshots = frozenCosts.filter((x) => x.sourceType !== "payroll");
+      const frozenLabor = payrollSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
+      const frozenOverhead = indirectSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
+      if ((payrollSnapshots.length && Math.abs(frozenLabor - labor) > 0.005) ||
+          (indirectSnapshots.length && Math.abs(frozenOverhead - overhead) > 0.005)) {
+        res.status(409).json({ error: "تكلفة الأمر لم تعد تطابق لقطات المصادر غير القابلة للتعديل. أنشئ أمراً جديداً." });
+        return;
+      }
+      if (payrollSnapshots.length === 0 && labor > 0 && !order.laborAccountId) {
+        res.status(400).json({ error: "حساب الأجور مطلوب قبل بدء الإنتاج" }); return;
+      }
+      if (indirectSnapshots.length === 0 && overhead > 0 && !order.overheadAccountId) {
+        res.status(400).json({ error: "حساب التكاليف الصناعية غير المباشرة مطلوب قبل بدء الإنتاج" }); return;
+      }
+      let sourceCredits: { accountId: number; amount: number }[];
+      try {
+        sourceCredits = sourceReclassificationLines(frozenCosts);
+      } catch {
+        res.status(409).json({ error: "تعذر تحديد حساب المصروف الأصلي لأحد مصادر التكلفة. أنشئ لقطة حديثة بعد مراجعة القيد المصدر." });
+        return;
+      }
+      const writable = await assertWritableForDate(cid, todayIso);
+      if (!writable.ok) {
+        res.status(423).json({ error: writable.reason }); return;
+      }
+      const rawLines = await tx
         .select()
         .from(productionOrderItemsTable)
         .where(
@@ -1335,8 +1832,13 @@ router.post("/orders/:id/status", async (req, res) => {
 
       // b) Validate stock availability up-front so we don't decrement
       //    half the lines then fail.
+      await lockStockBalances(issuableLines.map((ln) => ({
+        companyId: cid,
+        itemId: ln.itemId!,
+        warehouseId: order.rawWarehouseId!,
+      })), tx);
       for (const ln of issuableLines) {
-        const have = await getBalance(cid, ln.itemId!, order.rawWarehouseId);
+        const have = await getBalance(cid, ln.itemId!, order.rawWarehouseId, tx);
         const need = Number(ln.quantity);
         if (have + 1e-6 < need) {
           res.status(400).json({
@@ -1359,7 +1861,7 @@ router.post("/orders/:id/status", async (req, res) => {
       // Items' batch modes are fetched in one query to avoid N+1.
       const itemIds = issuableLines.map((l) => l.itemId!);
       const itemRows = itemIds.length
-        ? await db
+        ? await tx
             .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
             .from(itemsTable)
             .where(
@@ -1388,9 +1890,10 @@ router.post("/orders/:id/status", async (req, res) => {
             ln.itemId!,
             order.rawWarehouseId,
             Number(ln.unitCost),
+            tx,
           );
-          await upsertBalance(cid, ln.itemId!, order.rawWarehouseId, -qty, cost);
-          const newBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId);
+          await upsertBalance(cid, ln.itemId!, order.rawWarehouseId, -qty, cost, tx);
+          const newBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId, tx);
           await addStockLedgerEntry({
             companyId: cid,
             itemId: ln.itemId!,
@@ -1404,7 +1907,7 @@ router.post("/orders/:id/status", async (req, res) => {
             refId: id,
             refType: "production_order",
             notes: `صرف لأمر إنتاج ${order.orderNumber}`,
-          });
+          }, tx);
           rawTotal += qty * cost;
         } else {
           // FIFO / FEFO path — derive per-batch picks then write N
@@ -1418,12 +1921,13 @@ router.post("/orders/:id/status", async (req, res) => {
             order.rawWarehouseId,
             qty,
             mode,
+            tx,
           );
           const linecost = picks.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
           // Update aggregated balance (single update for the whole line)
           const wac = qty > 0 ? linecost / qty : 0;
-          await upsertBalance(cid, ln.itemId!, order.rawWarehouseId, -qty, wac);
-          let runningBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId);
+          await upsertBalance(cid, ln.itemId!, order.rawWarehouseId, -qty, wac, tx);
+          let runningBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId, tx);
           // We've already decremented runningBal once for the whole qty.
           // Each ledger row's `balance_qty` should reflect the post-row
           // running total, so walk back up from the final value.
@@ -1445,17 +1949,17 @@ router.post("/orders/:id/status", async (req, res) => {
               batchNumber: p.batchNumber,
               expiryDate: p.expiryDate,
               notes: `صرف لأمر إنتاج ${order.orderNumber}${p.batchNumber ? ` — تشغيلة ${p.batchNumber}` : ""}`,
-            });
+            }, tx);
           }
           rawTotal += linecost;
         }
       }
 
-      const labor = Number(order.laborCost ?? 0);
-      const overhead = Number(order.overheadCost ?? 0);
       const wipDr = rawTotal + labor + overhead;
 
-      // d) Issue JE: DR WIP / CR Raw Inv (+ CR Labor / CR Overhead).
+      // d) Issue JE: source snapshots reclassify the debit accounts of their
+      // already-posted journals (DR WIP / CR original expense). Only the
+      // legacy work-centre fallback uses the configured applied-cost accounts.
       const issueJournalId = await createJournalEntry({
         companyId: cid,
         audit: { req },
@@ -1476,7 +1980,12 @@ router.post("/orders/:id/status", async (req, res) => {
             credit: rawTotal,
             description: "مخزون خامات",
           },
-          ...(labor > 0 && order.laborAccountId
+          ...sourceCredits.map((line) => ({
+            accountId: line.accountId,
+            credit: line.amount,
+            description: "إعادة تصنيف تكلفة مُرحّلة إلى الإنتاج تحت التشغيل",
+          } satisfies JLine)),
+          ...(payrollSnapshots.length === 0 && labor > 0 && order.laborAccountId
             ? [
                 {
                   accountId: order.laborAccountId,
@@ -1485,7 +1994,7 @@ router.post("/orders/:id/status", async (req, res) => {
                 } satisfies JLine,
               ]
             : []),
-          ...(overhead > 0 && order.overheadAccountId
+          ...(indirectSnapshots.length === 0 && overhead > 0 && order.overheadAccountId
             ? [
                 {
                   accountId: order.overheadAccountId,
@@ -1495,6 +2004,7 @@ router.post("/orders/:id/status", async (req, res) => {
               ]
             : []),
         ],
+        dx: tx,
       });
 
       updates.rawMaterialsCost = String(rawTotal.toFixed(2));
@@ -1549,7 +2059,7 @@ router.post("/orders/:id/status", async (req, res) => {
         return;
       }
       // Validate the FG item belongs to this tenant.
-      const [fgItem] = await db
+      const [fgItem] = await tx
         .select({ id: itemsTable.id })
         .from(itemsTable)
         .where(
@@ -1609,6 +2119,19 @@ router.post("/orders/:id/status", async (req, res) => {
       const fgCost = wipBalance * (producedQty / totalOut);
       const wasteCost = wipBalance - fgCost;
       const fgUnitCost = fgCost / producedQty;
+      const wasteAcct =
+        order.wasteAccountId ?? order.varianceAccountId ?? null;
+      if (wasteCost > 0.005 && !wasteAcct) {
+        res.status(400).json({
+          error:
+            "يوجد كمية هالك بدون حساب مخصص لها (Waste/Variance). حدّد الحساب أو اضبط wasteQty=0.",
+        });
+        return;
+      }
+      const writable = await assertWritableForDate(cid, todayIso);
+      if (!writable.ok) {
+        res.status(423).json({ error: writable.reason }); return;
+      }
 
       // a) Increment FG stock + ledger
       await upsertBalance(
@@ -1617,11 +2140,13 @@ router.post("/orders/:id/status", async (req, res) => {
         order.finishedWarehouseId,
         producedQty,
         fgUnitCost,
+        tx,
       );
       const newBal = await getBalance(
         cid,
         order.productItemId,
         order.finishedWarehouseId,
+        tx,
       );
       // PHASE D: stamp the production batchNumber + expiry onto the ledger
       // row so the FG batch shows up in the item's "الدفعات" panel and is
@@ -1644,18 +2169,9 @@ router.post("/orders/:id/status", async (req, res) => {
         expiryDate:
           ((updates.fgExpiryDate as string | null | undefined) ?? order.fgExpiryDate) ?? null,
         notes: `إذن إضافة بضاعة تامة من أمر إنتاج ${order.orderNumber}${order.batchNumber ? ` — تشغيلة ${order.batchNumber}` : ""}`,
-      });
+      }, tx);
 
       // b) Receipt JE: DR FG (+ DR Waste/Variance) / CR WIP
-      const wasteAcct =
-        order.wasteAccountId ?? order.varianceAccountId ?? null;
-      if (wasteCost > 0.005 && !wasteAcct) {
-        res.status(400).json({
-          error:
-            "يوجد كمية هالك بدون حساب مخصص لها (Waste/Variance). حدّد الحساب أو اضبط wasteQty=0.",
-        });
-        return;
-      }
       const receiptJournalId = await createJournalEntry({
         companyId: cid,
         audit: { req },
@@ -1686,6 +2202,7 @@ router.post("/orders/:id/status", async (req, res) => {
             description: "إقفال WIP",
           },
         ],
+        dx: tx,
       });
 
       updates.producedQty = String(producedQty);
@@ -1705,7 +2222,7 @@ router.post("/orders/:id/status", async (req, res) => {
       !order.receiptJournalEntryId
     ) {
       // Restore raw materials we previously consumed.
-      const rawLines = await db
+      const rawLines = await tx
         .select()
         .from(productionOrderItemsTable)
         .where(
@@ -1721,6 +2238,16 @@ router.post("/orders/:id/status", async (req, res) => {
       const labor = Number(order.laborCost ?? 0);
       const overhead = Number(order.overheadCost ?? 0);
       const wipBalance = rawTotal + labor + overhead;
+      const frozenCosts = await tx.select().from(productionCostAllocationsTable)
+        .where(and(eq(productionCostAllocationsTable.companyId, cid),
+          eq(productionCostAllocationsTable.orderId, id)));
+      const payrollSnapshots = frozenCosts.filter((x) => x.sourceType === "payroll");
+      const indirectSnapshots = frozenCosts.filter((x) => x.sourceType !== "payroll");
+      const sourceDebits = sourceReclassificationLines(frozenCosts);
+      const writable = await assertWritableForDate(cid, todayIso);
+      if (!writable.ok) {
+        res.status(423).json({ error: writable.reason }); return;
+      }
       for (const ln of issuable) {
         const qty = Number(ln.quantity);
         const cost = await readAvgCost(
@@ -1728,9 +2255,10 @@ router.post("/orders/:id/status", async (req, res) => {
           ln.itemId!,
           order.rawWarehouseId!,
           Number(ln.unitCost),
+          tx,
         );
-        await upsertBalance(cid, ln.itemId!, order.rawWarehouseId!, qty, cost);
-        const newBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId!);
+        await upsertBalance(cid, ln.itemId!, order.rawWarehouseId!, qty, cost, tx);
+        const newBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId!, tx);
         await addStockLedgerEntry({
           companyId: cid,
           itemId: ln.itemId!,
@@ -1744,7 +2272,7 @@ router.post("/orders/:id/status", async (req, res) => {
           refId: id,
           refType: "production_order_cancel",
           notes: `إعادة خامات بعد إلغاء أمر إنتاج ${order.orderNumber}`,
-        });
+        }, tx);
       }
       // Reversing JE: DR Raw / DR Labor / DR Overhead, CR WIP — flips the issue.
       await createJournalEntry({
@@ -1762,7 +2290,12 @@ router.post("/orders/:id/status", async (req, res) => {
             debit: rawTotal,
             description: "إعادة مخزون خامات",
           },
-          ...(labor > 0 && order.laborAccountId
+          ...sourceDebits.map((line) => ({
+            accountId: line.accountId,
+            debit: line.amount,
+            description: "عكس إعادة تصنيف تكلفة المصدر المُرحّل",
+          } satisfies JLine)),
+          ...(payrollSnapshots.length === 0 && labor > 0 && order.laborAccountId
             ? [
                 {
                   accountId: order.laborAccountId,
@@ -1771,7 +2304,7 @@ router.post("/orders/:id/status", async (req, res) => {
                 } satisfies JLine,
               ]
             : []),
-          ...(overhead > 0 && order.overheadAccountId
+          ...(indirectSnapshots.length === 0 && overhead > 0 && order.overheadAccountId
             ? [
                 {
                   accountId: order.overheadAccountId,
@@ -1786,13 +2319,14 @@ router.post("/orders/:id/status", async (req, res) => {
             description: "إلغاء رصيد WIP",
           },
         ],
+        dx: tx,
       });
       updates.rawMaterialsCost = "0";
       updates.actualCost = "0";
       updates.issueJournalEntryId = null;
     }
 
-    const [row] = await db
+    const [row] = await tx
       .update(productionOrdersTable)
       .set(updates)
       .where(eq(productionOrdersTable.id, id))
@@ -1809,8 +2343,12 @@ router.post("/orders/:id/status", async (req, res) => {
         note: req.body?.note ?? null,
       },
       req.authUser!.id,
+      false,
+      tx,
     );
-    res.json(row);
+    return row;
+    });
+    if (transitioned && !res.headersSent) res.json(transitioned);
   } catch (e: any) {
     const status = e?.status === 423 ? 423 : 500;
     res.status(status).json({ error: e.message });

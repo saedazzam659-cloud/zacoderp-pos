@@ -58,6 +58,7 @@ export const productionOrdersTable = pgTable(
       onDelete: "set null",
     }),
     orderNumber: text("order_number").notNull(),
+    wizardRequestId: text("wizard_request_id"),
     title: text("title").notNull(),
     status: text("status").notNull().default("draft"),
     plannedQty: numeric("planned_qty", { precision: 14, scale: 4 })
@@ -192,6 +193,9 @@ export const productionOrdersTable = pgTable(
       t.companyId,
       t.status,
     ),
+    wizardRequestDedup: uniqueIndex("prod_orders_wizard_request_uniq")
+      .on(t.companyId, t.wizardRequestId)
+      .where(sql`${t.wizardRequestId} IS NOT NULL`),
     // PHASE D — partial unique index: prevents duplicate batchNumbers per
     // company. NULL values are excluded (drafts/pre-issue orders allowed to
     // share the empty slot). Also guards the manual-override PATCH path.
@@ -254,6 +258,35 @@ export const productionEventsTable = pgTable(
     byCompany: index("prod_events_company_idx").on(t.companyId),
   }),
 );
+
+// Immutable analytical snapshots of costs already recognised by their owning
+// modules. They never post a JE: production consumes the snapshot amount while
+// payroll, fixed assets and prepaid adjustments remain the accounting source.
+export const productionCostAllocationsTable = pgTable(
+  "production_cost_allocations",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "restrict" }),
+    sourceType: text("source_type").notNull(), // payroll | fixed_asset_depreciation | prepaid_amortization
+    sourceRecordId: integer("source_record_id").notNull(),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    basis: text("basis").notNull(),
+    sourceAmount: numeric("source_amount", { precision: 18, scale: 2 }).notNull(),
+    sharePct: numeric("share_pct", { precision: 9, scale: 6 }).notNull(),
+    allocatedAmount: numeric("allocated_amount", { precision: 18, scale: 2 }).notNull(),
+    snapshotMeta: jsonb("snapshot_meta").$type<Record<string, unknown>>().default({}),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    dedup: uniqueIndex("prod_cost_alloc_order_source_uniq").on(t.orderId, t.sourceType, t.sourceRecordId),
+    bySource: index("prod_cost_alloc_source_idx").on(t.companyId, t.sourceType, t.sourceRecordId),
+  }),
+);
+
+export type ProductionCostAllocation = typeof productionCostAllocationsTable.$inferSelect;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Zod insert/select schemas

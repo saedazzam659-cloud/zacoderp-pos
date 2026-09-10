@@ -388,6 +388,11 @@ export const payrollRunsTable = pgTable("payroll_runs", {
   // JE of the actual salary payment (DR salaries payable / CR cash|bank).
   // Set by «صرف الرواتب»; non-null = paid (blocks double payment + run unpost).
   paymentJournalId: integer("payment_journal_id"),
+  // Explicit opt-in for analytical manufacturing allocation. The approved
+  // denominator is snapshotted by production; payroll remains JE owner.
+  manufacturingEligible: boolean("manufacturing_eligible").notNull().default(false),
+  manufacturingAllocationMethod: text("manufacturing_allocation_method").notNull().default("none"),
+  approvedManufacturingHours: decimal("approved_manufacturing_hours", { precision: 14, scale: 4 }),
   notes:          text("notes"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),

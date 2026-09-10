@@ -57,6 +57,8 @@ export default function Payroll() {
   const [payMethod, setPayMethod] = useState<"cash" | "bank">("bank");
   const [payAccountId, setPayAccountId] = useState<number | "">("");
   const [payDate, setPayDate] = useState<string>("");
+  const [mfgEligible, setMfgEligible] = useState(false);
+  const [mfgHours, setMfgHours] = useState("");
 
   const { data: runs = [], isLoading: loadingRuns } = useQuery<any[]>({
     queryKey: ["payroll-runs"], queryFn: () => employeesApi.payrollRuns(),
@@ -185,6 +187,18 @@ export default function Payroll() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["payroll-runs"] }); toast({ title: tr("toastDeleted") }); },
     onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
+  const mfgConfigMut = useMutation({
+    mutationFn: () => employeesApi.updatePayrollManufacturingConfig(viewing!, {
+      manufacturingEligible: mfgEligible,
+      approvedManufacturingHours: mfgEligible ? Number(mfgHours) : null,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["payroll-runs"] });
+      qc.invalidateQueries({ queryKey: ["payroll-run", viewing] });
+      toast({ title: "تم حفظ ربط التصنيع" });
+    },
+    onError: (e) => toast({ variant: "destructive", title: "تعذر حفظ ربط التصنيع", description: parseError(e) }),
+  });
 
   async function downloadCSV() {
       if (!(await gate('export'))) return;
@@ -273,7 +287,10 @@ export default function Payroll() {
                       <td className="p-2 text-sm tabular-nums font-semibold text-emerald-700">{fmt2(r.totalNet)}</td>
                       <td className="p-2"><Badge variant="outline" className={st.cls}>{st.label}</Badge></td>
                       <td className="p-2 text-end whitespace-nowrap">
-                        <Button size="sm" variant="ghost" onClick={() => { setViewing(r.id); setTab("detail"); }} data-testid={`btn-view-${r.id}`}>
+                        <Button size="sm" variant="ghost" onClick={() => {
+                          setViewing(r.id); setTab("detail"); setMfgEligible(!!r.manufacturingEligible);
+                          setMfgHours(r.approvedManufacturingHours??"");
+                        }} data-testid={`btn-view-${r.id}`}>
                           <Eye className="size-3.5" />
                         </Button>
                         {r.status === "posted" && !r.paymentJournalId && (
@@ -425,6 +442,21 @@ export default function Payroll() {
                       </>
                     )}
                   </div>
+                </div>
+
+                <div className="rounded-lg border border-orange-200 bg-orange-50/40 p-3 space-y-3">
+                  <div className="font-semibold text-sm">ربط تكلفة الرواتب بالتصنيع</div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={mfgEligible} onChange={e=>setMfgEligible(e.target.checked)} />
+                    هذا المسير مؤهل كمصدر تكلفة لأوامر الإنتاج
+                  </label>
+                  {mfgEligible && <div className="flex flex-wrap items-end gap-2">
+                    <div><label className="text-xs">ساعات التصنيع الشهرية المعتمدة *</label>
+                      <Input className="w-48" type="number" min="0.0001" step="0.25" value={mfgHours} onChange={e=>setMfgHours(e.target.value)} /></div>
+                    <p className="text-xs text-muted-foreground pb-2">حصة الأمر = تكلفة الرواتب المُرحّلة × ساعات الأمر ÷ الساعات المعتمدة.</p>
+                  </div>}
+                  <Button type="button" size="sm" variant="outline" disabled={mfgConfigMut.isPending}
+                    onClick={()=>mfgConfigMut.mutate()}>حفظ إعداد التصنيع</Button>
                 </div>
 
                 {showJournal && viewRun.status === "posted" && (

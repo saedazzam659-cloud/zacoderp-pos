@@ -1787,13 +1787,19 @@ router.post("/payroll/runs", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body || {};
-    const { year, month, lines, payDate, notes, branchId } = b;
+    const { year, month, lines, payDate, notes, branchId, manufacturingEligible, approvedManufacturingHours } = b;
     if (!year || !month || !Array.isArray(lines)) { res.status(400).json({ error: "بيانات غير مكتملة" }); return; }
     const y = intOrDefault(year, 0, "السنة", 2000, 2100);
     const m = intOrDefault(month, 0, "الشهر", 1, 12);
     const periodStart = `${y}-${String(m).padStart(2,"0")}-01`;
     const periodEnd = new Date(y, m, 0).toISOString().slice(0, 10);
     const code = `PR-${y}${String(m).padStart(2,"0")}`;
+    const mfgEligible = manufacturingEligible === true;
+    const approvedHours = approvedManufacturingHours === "" || approvedManufacturingHours == null
+      ? null : Number(approvedManufacturingHours);
+    if (mfgEligible && !(Number.isFinite(approvedHours) && (approvedHours as number) > 0)) {
+      res.status(400).json({ error: "ساعات التصنيع الشهرية المعتمدة مطلوبة ويجب أن تكون أكبر من صفر" }); return;
+    }
     // Default branch: stamp it on the run so the JE that posting later builds
     // is visible in branch-scoped reports. Resolution rules:
     //   - If the caller passed branchId, intersect against their allowed scope
@@ -1882,6 +1888,9 @@ router.post("/payroll/runs", async (req, res) => {
         totalNet: String(totalNet.toFixed(2)),
         employeesCount: lines.length,
         status: "draft",
+        manufacturingEligible: mfgEligible,
+        manufacturingAllocationMethod: mfgEligible ? "operating_hours" : "none",
+        approvedManufacturingHours: approvedHours == null ? null : String(approvedHours),
         notes: N(notes),
       }).returning();
       const [company] = await tx.select({ payrollCostBasis: companiesTable.payrollCostBasis })
@@ -1951,6 +1960,27 @@ router.post("/payroll/runs", async (req, res) => {
       }
       throw e;
     }
+  } catch (e: any) { respondHrError(req, res, e); }
+});
+
+router.patch("/payroll/runs/:id/manufacturing-config", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const eligible = req.body?.manufacturingEligible === true;
+    const hours = req.body?.approvedManufacturingHours === "" || req.body?.approvedManufacturingHours == null
+      ? null : Number(req.body.approvedManufacturingHours);
+    if (eligible && !(Number.isFinite(hours) && (hours as number) > 0)) {
+      res.status(400).json({ error: "ساعات التصنيع الشهرية المعتمدة مطلوبة ويجب أن تكون أكبر من صفر" }); return;
+    }
+    const [row] = await db.update(payrollRunsTable).set({
+      manufacturingEligible: eligible,
+      manufacturingAllocationMethod: eligible ? "operating_hours" : "none",
+      approvedManufacturingHours: hours == null ? null : String(hours),
+      updatedAt: new Date(),
+    }).where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid))).returning();
+    if (!row) { res.status(404).json({ error: "مسير الرواتب غير موجود" }); return; }
+    res.json(row);
   } catch (e: any) { respondHrError(req, res, e); }
 });
 

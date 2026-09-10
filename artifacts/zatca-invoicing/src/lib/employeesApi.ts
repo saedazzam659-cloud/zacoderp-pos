@@ -113,6 +113,8 @@ export const employeesApi = {
   // Payroll
   payrollRuns:    () => req<any[]>("GET", "/employees/payroll/runs"),
   payrollRun:     (id: number) => req<any>("GET", `/employees/payroll/runs/${id}`),
+  updatePayrollManufacturingConfig: (id: number, data: any) =>
+    req<any>("PATCH", `/employees/payroll/runs/${id}/manufacturing-config`, data),
   payrollPreview: (year: number, month: number) => req<any>("POST", "/employees/payroll/preview", { year, month }),
   createPayroll:  (data: any) => req<any>("POST", "/employees/payroll/runs", data),
   postPayroll:    (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/post`, {}),
