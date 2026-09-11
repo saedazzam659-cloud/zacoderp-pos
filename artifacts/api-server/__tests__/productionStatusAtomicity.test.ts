@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 
 test("production status effects share one transaction and order lock", async () => {
   const source = await readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8");
-  const start = source.indexOf('router.post("/orders/:id/status"');
-  const end = source.indexOf("// ORDER ITEMS", start);
+  const start = source.indexOf("export async function productionStatusHandler(");
+  const end = source.indexOf('\nrouter.post(\n  "/orders/:id/status"', start);
   assert.ok(start > 0 && end > start, "status handler must be present");
   const handler = source.slice(start, end);
 
@@ -13,7 +13,9 @@ test("production status effects share one transaction and order lock", async () 
   assert.match(handler, /pg_advisory_xact_lock/);
   assert.match(handler, /lockStockBalances\([\s\S]*?, tx\)/);
   assert.doesNotMatch(handler.replace("db.transaction", ""), /\bdb\.(select|insert|update|delete|execute)\b/);
-  assert.equal((handler.match(/dx: tx/g) ?? []).length, 3, "issue, receipt and reversal journals use tx");
+  const journalCalls = (handler.match(/await createJournalEntry\(/g) ?? []).length;
+  assert.equal(journalCalls, 5, "issue, receipt, both reversal journals and cancellation are covered");
+  assert.equal((handler.match(/dx: tx/g) ?? []).length, journalCalls, "every journal uses the surrounding transaction");
   assert.ok((handler.match(/}, tx\);/g) ?? []).length >= 4, "stock ledger writes use tx");
   assert.match(handler, /writeEvent\([\s\S]*?false,\s*tx,/);
 });
