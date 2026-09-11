@@ -49,7 +49,7 @@ export function SimpleWizard({
 
   // Inline BOM creation
   const [creatingBom, setCreatingBom] = useState(false);
-  const [newBomLines, setNewBomLines] = useState<Array<{ itemId: string; quantity: string }>>([]);
+  const [newBomLines, setNewBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([]);
 
   const wizardRequestIdRef = useRef(crypto.randomUUID());
   const productRequestRef = useRef(0);
@@ -183,11 +183,12 @@ export function SimpleWizard({
         body: JSON.stringify({
           productItemId: Number(form.productItemId),
           nameAr: `وصفة ${catalog.items.find(i => String(i.id) === form.productItemId)?.nameAr || "جديدة"}`,
+          outputQty: 1,
           lines: newBomLines.filter(l => l.itemId && Number(l.quantity) > 0).map(l => ({
             itemId: Number(l.itemId),
             quantity: Number(l.quantity),
             description: catalog.items.find(i => String(i.id) === l.itemId)?.nameAr || "مادة خام",
-            unitCode: "PCE"
+            ...(l.unitCode ? { unitCode: l.unitCode } : {})
           }))
         })
       });
@@ -211,6 +212,7 @@ export function SimpleWizard({
     }
     const chosen = catalog.templates.find(t => String(t.id) === val);
     const conf = chosen?.configuration || {};
+    const it = catalog.items.find(x => String(x.id) === String(conf.productItemId));
     const nextPlannedQty = conf.plannedQty ? String(conf.plannedQty) : form.plannedQty;
     setForm(f => ({
       ...f,
@@ -218,7 +220,7 @@ export function SimpleWizard({
       title: conf.title || f.title,
       productItemId: conf.productItemId ? String(conf.productItemId) : f.productItemId,
       plannedQty: conf.plannedQty ? String(conf.plannedQty) : f.plannedQty,
-      unitCode: conf.unitCode || f.unitCode,
+      unitCode: conf.unitCode || it?.unitCode || f.unitCode,
       rawWarehouseId: conf.rawWarehouseId ? String(conf.rawWarehouseId) : f.rawWarehouseId,
       finishedWarehouseId: conf.finishedWarehouseId ? String(conf.finishedWarehouseId) : f.finishedWarehouseId,
       plannedHours: conf.plannedHoursPerUnit && Number(nextPlannedQty) > 0 ? String(Number(conf.plannedHoursPerUnit) * Number(nextPlannedQty)) : f.plannedHours,
@@ -365,7 +367,7 @@ export function SimpleWizard({
                     items={fgComboItems}
                     onValueChange={v => {
                       const it = catalog.items.find(x => String(x.id) === v);
-                       setForm(f => ({ ...f, productItemId: v, title: f.title.trim() ? f.title : (it?.nameAr ?? f.title) }));
+                       setForm(f => ({ ...f, productItemId: v, title: f.title.trim() ? f.title : (it?.nameAr ?? f.title), unitCode: it?.unitCode || f.unitCode }));
                     }}
                     placeholder="ابحث عن المنتج..."
                   />
@@ -373,7 +375,7 @@ export function SimpleWizard({
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>الكمية المخططة <span className="text-red-500">*</span></Label>
-                    <Input type="number" min="0.01" step="0.01" value={form.plannedQty} onChange={e => setForm({...form, plannedQty: e.target.value})} className="h-10 text-lg font-mono text-left" dir="ltr" />
+                    <Input type="text" inputMode="decimal" value={form.plannedQty} onChange={e => setForm({...form, plannedQty: e.target.value})} className="h-10 text-lg font-mono text-left" dir="ltr" />
                   </div>
                   <div className="space-y-2">
                     <Label>وحدة القياس</Label>
@@ -416,7 +418,7 @@ export function SimpleWizard({
                     <p className="text-sm text-slate-500">القالب المختار يحفظ إعدادات الأمر فقط ولا يحتوي وصفة. يجب إنشاء قائمة مواد نشطة قبل حفظ الأمر.</p>
                   </div>
                   {!creatingBom ? (
-                     <Button onClick={() => { setCreatingBom(true); setNewBomLines([{ itemId: "", quantity: "1" }]); }} disabled={!canEdit}>
+                     <Button onClick={() => { setCreatingBom(true); setNewBomLines([{ itemId: "", quantity: "1", unitCode: "" }]); }} disabled={!canEdit}>
                       <Plus className="ml-2 h-4 w-4" />
                       إنشاء وصفة مكونات الآن
                     </Button>
@@ -425,7 +427,7 @@ export function SimpleWizard({
                       <h4 className="font-semibold border-b pb-2 mb-3">وصفة جديدة لـ {catalog.items.find(i=>String(i.id)===form.productItemId)?.nameAr}</h4>
                       {newBomLines.map((line, i) => (
                         <div key={i} className="flex gap-2 items-end">
-                          <div className="flex-1 space-y-1">
+                          <div className="flex-[2] space-y-1">
                             <Label className="text-xs">المادة</Label>
                             <select className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                               value={line.itemId} onChange={e => {
@@ -437,15 +439,27 @@ export function SimpleWizard({
                                {materialItems.map(it => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
                             </select>
                           </div>
-                          <div className="w-24 space-y-1">
+                          <div className="flex-[1] space-y-1">
                             <Label className="text-xs">الكمية</Label>
-                            <Input type="number" value={line.quantity} onChange={e => {
+                            <Input type="text" inputMode="decimal" className="h-9" value={line.quantity} onChange={e => {
                                setNewBomLines(lines => lines.map((line, index) => index === i
                                  ? { ...line, quantity: e.target.value }
                                  : line));
                             }} />
                           </div>
-                          <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive"
+                          <div className="flex-[1] space-y-1">
+                            <Label className="text-xs">الوحدة (فارغ=الأساسية)</Label>
+                            <select className="flex h-9 w-full rounded-md border border-input bg-slate-50 px-2 py-1 text-xs shadow-sm"
+                              value={line.unitCode} onChange={e => {
+                                 setNewBomLines(lines => lines.map((line, index) => index === i
+                                   ? { ...line, unitCode: e.target.value }
+                                   : line));
+                              }}>
+                              <option value="">(افتراضي)</option>
+                               {catalog.units?.map(u => <option key={u.id} value={u.code}>{u.code}</option>)}
+                            </select>
+                          </div>
+                          <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive shrink-0"
                              onClick={() => setNewBomLines(lines => lines.filter((_, idx) => idx !== i))}
                              disabled={newBomLines.length <= 1}>
                             <Trash2 className="h-4 w-4" />
@@ -453,7 +467,7 @@ export function SimpleWizard({
                         </div>
                       ))}
                       <div className="pt-2 flex justify-between">
-                       <Button variant="outline" size="sm" onClick={() => setNewBomLines(lines => [...lines, { itemId: "", quantity: "1" }])} disabled={!canEdit}>
+                       <Button variant="outline" size="sm" onClick={() => setNewBomLines(lines => [...lines, { itemId: "", quantity: "1", unitCode: "" }])} disabled={!canEdit}>
                           إضافة مادة أخرى
                         </Button>
                         <div className="flex gap-2">
@@ -551,7 +565,7 @@ export function SimpleWizard({
                 </div>
                 <div className="space-y-2">
                   <Label>إجمالي الساعات المخططة</Label>
-                  <Input type="number" min="0" step="0.25" value={form.plannedHours} onChange={e => setForm({...form, plannedHours: e.target.value})} className="h-10 text-left" dir="ltr" />
+                  <Input type="text" inputMode="decimal" value={form.plannedHours} onChange={e => setForm({...form, plannedHours: e.target.value})} className="h-10 text-left" dir="ltr" />
                   <p className="text-xs text-slate-500">يُستخدم هذا الرقم لتوزيع تكلفة الإهلاك والإيجار على الأمر بدقة.</p>
                 </div>
               </div>

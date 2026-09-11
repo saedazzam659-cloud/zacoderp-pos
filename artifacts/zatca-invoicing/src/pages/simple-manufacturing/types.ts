@@ -9,6 +9,12 @@ export type Catalog = {
     nameEn?: string | null;
     itemNature?: string | null;
     unitId?: number | null;
+    unitCode?: string | null;
+  }>;
+  units?: Array<{
+    id: number;
+    code: string;
+    nameAr: string;
   }>;
   warehouses: Array<{ id: number; code: string; nameAr: string; branchId?: number | null; isDefault?: boolean }>;
   templates: Array<{
@@ -19,6 +25,13 @@ export type Catalog = {
     isActive?: boolean;
     updatedAt?: string;
   }>;
+  bomTemplates?: Array<{
+    id: number;
+    nameAr: string;
+    productItemId: number;
+    productNameAr?: string;
+    linesCount?: number;
+  }>;
   routings: Array<{
     id: number;
     productItemId: number | null;
@@ -26,6 +39,13 @@ export type Catalog = {
     nameAr: string;
     isActive?: boolean;
     stagesCount?: number;
+    stages?: Array<{
+      id: number;
+      nameAr: string;
+      sequence?: number;
+      plannedMinutes?: number;
+      workCenterId?: number | null;
+    }>;
   }>;
 };
 

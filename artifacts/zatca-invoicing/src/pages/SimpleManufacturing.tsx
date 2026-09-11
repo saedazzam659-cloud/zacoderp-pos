@@ -231,29 +231,37 @@ export default function SimpleManufacturing() {
     const lines = Array.isArray(data.lines) ? data.lines : [{
       itemId: data.itemId,
       quantity: data.quantity,
+      unitCode: data.unitCode,
     }];
     return mutate(() => request("/api/simple-manufacturing/setup/bom", {
       method: "POST",
       body: JSON.stringify({
         productItemId: Number(data.productItemId), nameAr: data.nameAr || "قائمة مكونات",
         outputQty: Number(data.outputQty) > 0 ? Number(data.outputQty) : 1,
-        outputUnitCode: data.outputUnitCode || "PCE",
+        ...(data.outputUnitCode ? { outputUnitCode: data.outputUnitCode } : {}),
         lines: lines.map((line: any) => ({
           itemId: Number(line.itemId),
           quantity: Number(line.quantity),
           description: line.description || "مادة خام",
-          unitCode: line.unitCode || "PCE",
+          ...(line.unitCode ? { unitCode: line.unitCode } : {}),
         })),
       }),
     }), "تم حفظ الوصفة");
   };
 
   const handleSaveRouting = async (data: any) => {
+    const stages = (data.stages || []).map((s: any, idx: number) => ({
+      nameAr: s.nameAr || "مرحلة",
+      code: `S${idx + 1}`,
+      expectedCost: 0,
+      expectedWasteRatio: 0,
+      expectedDurationMinutes: s.expectedDurationMinutes ? Number(s.expectedDurationMinutes) : undefined
+    }));
     return mutate(() => request("/api/simple-manufacturing/setup/routing", {
       method: "POST",
       body: JSON.stringify({
         productItemId: Number(data.productItemId), nameAr: data.nameAr || "مسار مبسط",
-        stages: [{ nameAr: data.stage || "مرحلة الإنتاج", code: "S1", expectedCost: 0, expectedWasteRatio: 0 }],
+        stages: stages.length ? stages : [{ nameAr: "مرحلة الإنتاج", code: "S1", expectedCost: 0, expectedWasteRatio: 0 }],
       }),
     }), "تم حفظ مسار الإنتاج");
   };
@@ -266,6 +274,7 @@ export default function SimpleManufacturing() {
         configuration: {
           productItemId: Number(data.productItemId),
           plannedQty: Number(data.plannedQty),
+          ...(data.unitCode ? { unitCode: data.unitCode } : {}),
         },
       }),
     }), "تم حفظ القالب");

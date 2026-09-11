@@ -22,16 +22,17 @@ export function SimpleSetup({
    canCreate: boolean;
    canEdit: boolean;
   onSaveMaterial: (data: { code: string; nameAr: string; itemNature: string }) => Promise<any>;
-    onSaveBom: (data: { productItemId: string; nameAr: string; lines: Array<{ itemId: string; quantity: string }> }) => Promise<unknown>;
-   onSaveRouting: (data: { productItemId: string; nameAr: string; stage: string }) => Promise<unknown>;
-   onSaveTemplate: (data: { name: string; productItemId: string; plannedQty: string }) => Promise<unknown>;
-   onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
+  onSaveBom: (data: { productItemId: string; nameAr: string; outputQty: string; outputUnitCode: string; lines: Array<{ itemId: string; quantity: string; unitCode: string }> }) => Promise<unknown>;
+  onSaveRouting: (data: { productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number }> }) => Promise<unknown>;
+  onSaveTemplate: (data: { name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
+  onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
 }) {
   const [material, setMaterial] = useState({ code: "", nameAr: "", itemNature: "raw" });
-  const [bom, setBom] = useState({ productItemId: "", nameAr: "" });
-  const [bomLines, setBomLines] = useState<Array<{ itemId: string; quantity: string }>>([{ itemId: "", quantity: "1" }]);
-  const [routing, setRouting] = useState({ productItemId: "", nameAr: "", stage: "" });
-  const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1" });
+  const [bom, setBom] = useState({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
+  const [bomLines, setBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([{ itemId: "", quantity: "1", unitCode: "" }]);
+  const [routing, setRouting] = useState({ productItemId: "", nameAr: "" });
+  const [routingStages, setRoutingStages] = useState<Array<{ nameAr: string; expectedDurationMinutes: number }>>([{ nameAr: "", expectedDurationMinutes: 0 }]);
+  const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1", unitCode: "" });
   const [warehouse, setWarehouse] = useState({ code: "", nameAr: "", isDefault: false });
 
   // Dialog open states
@@ -45,11 +46,11 @@ export function SimpleSetup({
     const row = await onSaveMaterial(material);
     setMaterial({ code: "", nameAr: "", itemNature: "raw" });
     setOpenMat(false);
-    if (row && row.id) setBomLines([{ itemId: String(row.id), quantity: "1" }]);
+    if (row && row.id) setBomLines([{ itemId: String(row.id), quantity: "1", unitCode: "" }]);
   };
 
   return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
+    <div dir="rtl" className="grid gap-6 text-start md:grid-cols-2 lg:grid-cols-2">
 
       {/* Materials & BOM */}
       <Card className="border-violet-100 shadow-sm">
@@ -90,19 +91,38 @@ export function SimpleSetup({
               <DialogTrigger asChild>
                 <Button variant="outline" className="w-full justify-start" disabled={!canEdit}><Plus className="mr-2 h-4 w-4" /> ربط قائمة مكونات (بسيطة)</Button>
               </DialogTrigger>
-              <DialogContent dir="rtl">
-                 <DialogHeader><DialogTitle>قائمة مكونات مبسطة</DialogTitle><DialogDescription>اربط أي عدد من المواد الخام أو نصف المصنعة بالمنتج النهائي.</DialogDescription></DialogHeader>
+              <DialogContent dir="rtl" className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                 <DialogHeader><DialogTitle>قائمة مكونات مبسطة</DialogTitle><DialogDescription>اربط أي عدد من المواد بالمنتج النهائي.</DialogDescription></DialogHeader>
                 <div className="space-y-4 py-4">
-                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={bom.productItemId} onChange={e => setBom({ ...bom, productItemId: e.target.value })}>
-                    <option value="">اختر المنتج النهائي...</option>
-                    {catalog.items.filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature)).map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                  </select>
-                  <Input value={bom.nameAr} onChange={e => setBom({ ...bom, nameAr: e.target.value })} placeholder="اسم القائمة (مثال: وصفة الخبز الأساسية)" />
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold">المنتج النهائي</label>
+                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={bom.productItemId} onChange={e => setBom({ ...bom, productItemId: e.target.value })}>
+                      <option value="">اختر المنتج...</option>
+                      {catalog.items.filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature)).map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold">الكمية الناتجة</label>
+                      <Input type="text" inputMode="decimal" value={bom.outputQty} onChange={e => setBom({ ...bom, outputQty: e.target.value })} placeholder="الكمية الافتراضية" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold">وحدة المنتج (اختياري)</label>
+                      <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-slate-700" value={bom.outputUnitCode} onChange={e => setBom({ ...bom, outputUnitCode: e.target.value })}>
+                        <option value="">(افتراضي للصنف)</option>
+                        {catalog.units?.map(u => <option key={u.id} value={u.code}>{u.nameAr}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold">اسم القائمة</label>
+                    <Input value={bom.nameAr} onChange={e => setBom({ ...bom, nameAr: e.target.value })} placeholder="اسم القائمة (مثال: وصفة الخبز الأساسية)" />
+                  </div>
                    <div className="space-y-2">
-                     <div className="text-sm font-semibold text-slate-700">المواد</div>
+                     <div className="text-sm font-semibold text-slate-700">المواد المطلوبة للإنتاج</div>
                      {bomLines.map((line, index) => (
                        <div key={index} className="flex items-center gap-2">
-                         <select className="flex h-10 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                         <select className="flex h-10 flex-[2] rounded-md border border-input bg-background px-3 py-2 text-sm"
                            value={line.itemId}
                            onChange={e => setBomLines(lines => lines.map((current, i) => i === index
                              ? { ...current, itemId: e.target.value }
@@ -112,11 +132,20 @@ export function SimpleSetup({
                              .filter(i => !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature))
                              .map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
                          </select>
-                         <Input className="w-24" type="number" min="0.0001" step="0.0001" value={line.quantity}
+                         <Input className="flex-[1] min-w-[80px]" type="text" inputMode="decimal" value={line.quantity}
                            onChange={e => setBomLines(lines => lines.map((current, i) => i === index
                              ? { ...current, quantity: e.target.value }
                              : current))}
                            placeholder="الكمية" />
+                         <select className="flex h-10 flex-[1] rounded-md border border-input bg-slate-50 px-2 py-2 text-xs"
+                           value={line.unitCode}
+                           title="وحدة القياس (فارغ يعتمد على الوحدة الأساسية للصنف)"
+                           onChange={e => setBomLines(lines => lines.map((current, i) => i === index
+                             ? { ...current, unitCode: e.target.value }
+                             : current))}>
+                           <option value="">(افتراضي)</option>
+                           {catalog.units?.map(u => <option key={u.id} value={u.code}>{u.code}</option>)}
+                         </select>
                          <Button type="button" variant="ghost" size="icon" className="text-destructive"
                            disabled={bomLines.length <= 1}
                            onClick={() => setBomLines(lines => lines.filter((_, i) => i !== index))}>
@@ -125,17 +154,18 @@ export function SimpleSetup({
                        </div>
                      ))}
                      <Button type="button" variant="outline" size="sm"
-                       onClick={() => setBomLines(lines => [...lines, { itemId: "", quantity: "1" }])}
+                       onClick={() => setBomLines(lines => [...lines, { itemId: "", quantity: "1", unitCode: "" }])}
                        disabled={!canEdit}>
                        <Plus className="mr-1 h-4 w-4" /> إضافة مادة
                      </Button>
                    </div>
+                   <div className="bg-slate-50 p-2 text-xs text-slate-500 rounded border">ملاحظة: إذا تركت الوحدة فارغة سيتم استخدام وحدة القياس الأساسية للصنف.</div>
                    <Button disabled={busy || !canEdit || !bom.productItemId || !bomLines.length || bomLines.some(line => !line.itemId || !(Number(line.quantity) > 0))}
                      onClick={async () => {
                        await onSaveBom({ ...bom, lines: bomLines });
                        setOpenBom(false);
-                       setBom({ productItemId: "", nameAr: "" });
-                       setBomLines([{ itemId: "", quantity: "1" }]);
+                       setBom({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
+                       setBomLines([{ itemId: "", quantity: "1", unitCode: "" }]);
                      }} className="w-full">
                     حفظ القائمة
                   </Button>
@@ -143,6 +173,31 @@ export function SimpleSetup({
               </DialogContent>
             </Dialog>
           </div>
+
+          {catalog.bomTemplates && catalog.bomTemplates.length > 0 && (
+            <div className="space-y-2 mt-2">
+              <div className="text-sm font-semibold text-slate-600">الأصناف المحفوظة</div>
+              <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto">
+                {catalog.items.map(item => (
+                  <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/40 px-3 py-2 text-sm">
+                    <span className="font-medium">{item.nameAr}</span>
+                    <span className="text-xs text-muted-foreground" dir="ltr">{item.code}{item.unitCode ? ` · ${item.unitCode}` : ""}</span>
+                  </div>
+                ))}
+                {!catalog.items.length && <span className="text-sm text-muted-foreground">لم تُضف أصناف بعد.</span>}
+              </div>
+              <div className="text-sm font-semibold text-slate-600">قوائم المواد المحفوظة</div>
+              <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
+                {catalog.bomTemplates.map(b => (
+                  <div key={b.id} className="text-sm bg-white border border-slate-200 px-3 py-2 rounded-md shadow-sm flex flex-col">
+                    <span className="font-semibold text-violet-700">{b.nameAr}</span>
+                    <span className="text-xs text-slate-500">{b.productNameAr} • {b.linesCount} مكونات</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg border">
             <b>تلميح:</b> لإنشاء وصفات معقدة بأسطر متعددة بشكل أسهل، يمكنك إنشاء القائمة مباشرة من داخل شاشة إعداد أمر التصنيع الجديد.
           </div>
@@ -165,24 +220,82 @@ export function SimpleSetup({
             <DialogTrigger asChild>
               <Button variant="outline" className="w-full justify-start" disabled={!canEdit}><Plus className="mr-2 h-4 w-4" /> مسار إنتاج جديد</Button>
             </DialogTrigger>
-            <DialogContent dir="rtl">
-              <DialogHeader><DialogTitle>مسار إنتاج مبسط</DialogTitle></DialogHeader>
+            <DialogContent dir="rtl" className="max-w-xl max-h-[85vh] overflow-y-auto">
+              <DialogHeader><DialogTitle>مسار إنتاج جديد</DialogTitle></DialogHeader>
               <div className="space-y-4 py-4">
-                <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={routing.productItemId} onChange={e => setRouting({ ...routing, productItemId: e.target.value })}>
-                  <option value="">اختر المنتج...</option>
-                  {catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                </select>
-                <Input value={routing.nameAr} onChange={e => setRouting({ ...routing, nameAr: e.target.value })} placeholder="اسم المسار (مثال: خط الخبز)" />
-                <Input value={routing.stage} onChange={e => setRouting({ ...routing, stage: e.target.value })} placeholder="اسم المرحلة الأولى (مثال: العجن والخبز)" />
-                <Button disabled={busy || !canEdit || !routing.productItemId} onClick={async () => { await onSaveRouting(routing); setOpenRouting(false); setRouting({ productItemId: "", nameAr: "", stage: "" }); }} className="w-full">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">المنتج المرتبط</label>
+                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={routing.productItemId} onChange={e => setRouting({ ...routing, productItemId: e.target.value })}>
+                    <option value="">اختر المنتج...</option>
+                    {catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">اسم المسار</label>
+                  <Input value={routing.nameAr} onChange={e => setRouting({ ...routing, nameAr: e.target.value })} placeholder="اسم المسار (مثال: خط الخبز)" />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-sm font-semibold text-slate-700">مراحل الإنتاج بالترتيب</div>
+                  {routingStages.map((stage, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <div className="w-6 h-6 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500">{index + 1}</div>
+                      <Input className="flex-[2]" value={stage.nameAr} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, nameAr: e.target.value } : s))} placeholder="اسم المرحلة (مثال: العجن)" />
+                      <div className="flex-[1] flex items-center gap-1">
+                        <Input type="text" inputMode="numeric" value={stage.expectedDurationMinutes || ""} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, expectedDurationMinutes: Number(e.target.value) || 0 } : s))} placeholder="المدة (دقيقة)" />
+                      </div>
+                      <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0"
+                        disabled={routingStages.length <= 1}
+                        onClick={() => setRoutingStages(stages => stages.filter((_, i) => i !== index))}>
+                        ×
+                      </Button>
+                    </div>
+                  ))}
+                  <Button type="button" variant="outline" size="sm"
+                    onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0 }])}
+                    disabled={!canEdit}>
+                    <Plus className="mr-1 h-4 w-4" /> إضافة مرحلة
+                  </Button>
+                </div>
+
+                <Button disabled={busy || !canEdit || !routing.productItemId || routingStages.some(s => !s.nameAr)} onClick={async () => { await onSaveRouting({ ...routing, stages: routingStages }); setOpenRouting(false); setRouting({ productItemId: "", nameAr: "" }); setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0 }]); }} className="w-full">
                   حفظ المسار
                 </Button>
               </div>
             </DialogContent>
           </Dialog>
-          <div className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg border">
-            المسارات النشطة حالياً: <span className="font-semibold text-slate-700">{catalog.routings.length}</span>
-          </div>
+
+          {catalog.routings && catalog.routings.length > 0 ? (
+            <div className="space-y-2 mt-2">
+              <div className="text-sm font-semibold text-slate-600">مسارات الإنتاج المحفوظة</div>
+              <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
+                {catalog.routings.map(r => (
+                  <div key={r.id} className="text-sm bg-white border border-slate-200 px-3 py-2 rounded-md shadow-sm flex flex-col gap-1">
+                    <div className="flex justify-between items-start">
+                      <span className="font-semibold text-violet-700">{r.nameAr}</span>
+                      <span className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">{r.productNameAr}</span>
+                    </div>
+                    {r.stages && r.stages.length > 0 ? (
+                      <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-1">
+                        {r.stages.map((st, idx) => (
+                          <span key={st.id || idx} className="bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded flex items-center">
+                            <span className="opacity-50 mr-1">{idx + 1}.</span> {st.nameAr}
+                            {st.plannedMinutes ? <span className="mr-1 opacity-75">({st.plannedMinutes}د)</span> : null}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-400 mt-1">عدد المراحل: {r.stagesCount || 0}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg border">
+              المسارات النشطة حالياً: <span className="font-semibold text-slate-700">0</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -205,22 +318,42 @@ export function SimpleSetup({
             <DialogContent dir="rtl">
               <DialogHeader><DialogTitle>حفظ كقالب متكرر</DialogTitle></DialogHeader>
               <div className="space-y-4 py-4">
-                <Input value={template.name} onChange={e => setTemplate({ ...template, name: e.target.value })} placeholder="اسم القالب (مثال: طلبية المخبز اليومية)" />
-                <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={template.productItemId} onChange={e => setTemplate({ ...template, productItemId: e.target.value })}>
-                  <option value="">اختر المنتج الافتراضي...</option>
-                  {catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                </select>
-                <Input type="number" value={template.plannedQty} onChange={e => setTemplate({ ...template, plannedQty: e.target.value })} placeholder="الكمية الافتراضية" />
-                <Button disabled={busy || !canCreate || !template.productItemId || !template.name} onClick={async () => { await onSaveTemplate(template); setOpenTemplate(false); setTemplate({ name: "", productItemId: "", plannedQty: "1" }); }} className="w-full">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">اسم القالب</label>
+                  <Input value={template.name} onChange={e => setTemplate({ ...template, name: e.target.value })} placeholder="اسم القالب (مثال: طلبية المخبز اليومية)" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">المنتج الافتراضي</label>
+                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={template.productItemId} onChange={e => setTemplate({ ...template, productItemId: e.target.value })}>
+                    <option value="">اختر المنتج الافتراضي...</option>
+                    {catalog.items.filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature)).map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold">الكمية الافتراضية</label>
+                    <Input type="text" inputMode="decimal" value={template.plannedQty} onChange={e => setTemplate({ ...template, plannedQty: e.target.value })} placeholder="الكمية" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold">وحدة القياس</label>
+                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={template.unitCode} onChange={e => setTemplate({ ...template, unitCode: e.target.value })}>
+                      <option value="">(افتراضي للصنف)</option>
+                      {catalog.units?.map(u => <option key={u.id} value={u.code}>{u.nameAr}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="bg-slate-50 p-2 text-xs text-slate-500 rounded border">ملاحظة: إذا تركت الوحدة فارغة سيتم استخدام وحدة القياس الأساسية للصنف عند تطبيق القالب.</div>
+                <Button disabled={busy || !canCreate || !template.productItemId || !template.name} onClick={async () => { await onSaveTemplate(template); setOpenTemplate(false); setTemplate({ name: "", productItemId: "", plannedQty: "1", unitCode: "" }); }} className="w-full">
                   حفظ القالب
                 </Button>
               </div>
             </DialogContent>
           </Dialog>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
             {catalog.templates.map(t => (
-              <div key={t.id} className="text-xs bg-violet-100 text-violet-800 px-2 py-1 rounded-md border border-violet-200">
-                {t.name}
+              <div key={t.id} className="text-sm bg-white text-violet-900 p-3 rounded-md border border-violet-100 shadow-sm flex flex-col">
+                <span className="font-semibold">{t.name}</span>
+                <span className="text-xs text-slate-500 mt-1">الكمية: {t.configuration?.plannedQty || 1} {t.configuration?.unitCode ? `(${t.configuration.unitCode})` : ""}</span>
               </div>
             ))}
             {catalog.templates.length === 0 && <span className="text-sm text-slate-400">لا توجد قوالب محفوظة.</span>}

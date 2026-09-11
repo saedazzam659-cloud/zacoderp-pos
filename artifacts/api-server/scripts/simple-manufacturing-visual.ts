@@ -32,6 +32,7 @@ import {
   companiesTable,
   subscriptionsTable,
   usersTable,
+  unitsTable,
 } from "@workspace/db";
 import { CANONICAL_MENU_PERMISSION_KEYS } from "../src/lib/menuPermissionCatalog.js";
 
@@ -45,6 +46,8 @@ type Fixture = {
   nameAr: string;
   nameEn: string;
   crNumber: string;
+  unitCode: string;
+  fallbackUnitCode: string;
 };
 
 const VISUAL_TIMEOUT_MS = 15_000;
@@ -254,6 +257,14 @@ async function createFixture(): Promise<Fixture> {
       })
       .returning({ id: usersTable.id });
 
+    // Units are master data rather than a simple-manufacturing mutation. Keep
+    // them inside this owned fixture transaction; the browser then exercises
+    // the real facade using these tenant-scoped unit codes.
+    await tx.insert(unitsTable).values([
+      { companyId: company.id, code: "PCE", nameAr: "حبة", nameEn: "Piece", conversionFactor: "1" },
+      { companyId: company.id, code: "BAG", nameAr: "كيس", nameEn: "Bag", conversionFactor: "1" },
+    ]);
+
     // Keep the ownership proof inside the creation transaction. If this
     // assertion fails, the transaction rolls back instead of leaving a tenant
     // that the caller cannot safely identify for cleanup.
@@ -267,12 +278,25 @@ async function createFixture(): Promise<Fixture> {
       nameAr,
       nameEn,
       crNumber,
+      unitCode: "BAG",
+      fallbackUnitCode: "PCE",
     };
     await assertOwnedFixture(tx, transactionFixture);
     return { companyId: company.id, adminUserId: admin.id };
   });
 
-  return { ...created, tag, companyCode, username, password, nameAr, nameEn, crNumber };
+  return {
+    ...created,
+    tag,
+    companyCode,
+    username,
+    password,
+    nameAr,
+    nameEn,
+    crNumber,
+    unitCode: "BAG",
+    fallbackUnitCode: "PCE",
+  };
 }
 
 async function cleanupFixture(fixture: Fixture): Promise<void> {
@@ -322,6 +346,12 @@ async function loginAndCapture(
       ignoreHTTPSErrors: true,
     });
     const page = await context.newPage();
+    // tsx preserves nested function names through this helper; evaluated
+    // browser functions do not inherit the Node-side helper.
+    await page.addInitScript("window.__name = (fn) => fn;");
+    page.on("console", (message) => {
+      if (message.text().startsWith("[visual]")) console.log(message.text());
+    });
     page.setDefaultTimeout(VISUAL_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(VISUAL_TIMEOUT_MS);
 
@@ -427,10 +457,240 @@ async function loginAndCapture(
       });
     });
 
+    const seeded = await runStage("setup-seed", async () => page.evaluate(async (seed) => {
+      const token = localStorage.getItem("zatca_token");
+      if (!token) throw new Error("The browser session token is missing.");
+
+      async function request(path: string, body: Record<string, unknown>): Promise<any> {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+        const payload = await response.json().catch(() => ({}));
+        console.log(`[visual] stage=setup-request path=${path} status=${response.status}`);
+        if (!response.ok) {
+          throw new Error(`Setup request failed: ${path} (${response.status})`);
+        }
+        return payload;
+      }
+
+      const material = await request("/api/simple-manufacturing/setup/materials", {
+        code: "RAW-FLOUR",
+        nameAr: "دقيق",
+        nameEn: "Flour",
+        itemNature: "raw",
+      });
+      const secondMaterial = await request("/api/simple-manufacturing/setup/materials", {
+        code: "RAW-YEAST",
+        nameAr: "خميرة",
+        nameEn: "Yeast",
+        itemNature: "raw",
+      });
+      const product = await request("/api/simple-manufacturing/setup/products", {
+        code: "FG-BREAD",
+        nameAr: "خبز عربي",
+        nameEn: "Arabic Bread",
+        itemNature: "finished",
+      });
+      if (!Number.isInteger(material?.id) || !Number.isInteger(secondMaterial?.id)
+          || !Number.isInteger(product?.id)) {
+        throw new Error("The setup item responses did not contain numeric ids.");
+      }
+
+      const bom = await request("/api/simple-manufacturing/setup/bom", {
+        productItemId: product.id,
+        nameAr: "وصفة الخبز اليومية",
+        nameEn: "Daily Bread Recipe",
+        outputQty: 12,
+        outputUnitCode: seed.unitCode,
+        lines: [{
+          itemId: material.id,
+          quantity: 2.5,
+          description: material.nameAr,
+          unitCode: seed.unitCode,
+          notes: "وحدة شراء اختيارية",
+        }, {
+          itemId: secondMaterial.id,
+          quantity: 0.1,
+          description: secondMaterial.nameAr,
+          // Deliberately omitted: the facade must store the real PCE fallback.
+        }],
+      });
+      const routing = await request("/api/simple-manufacturing/setup/routing", {
+        productItemId: product.id,
+        nameAr: "خط إنتاج الخبز",
+        nameEn: "Bread Production Line",
+        stages: [
+          {
+            code: "MIX",
+            nameAr: "العجن",
+            nameEn: "Mixing",
+            expectedDurationMinutes: 15,
+            expectedWasteRatio: 0.01,
+            expectedCost: 12,
+          },
+          {
+            code: "PACK",
+            nameAr: "التعبئة",
+            nameEn: "Packing",
+            expectedDurationMinutes: 20,
+            expectedWasteRatio: 0.02,
+            expectedCost: 8,
+          },
+        ],
+      });
+      const template = await request("/api/simple-manufacturing/templates", {
+        name: "إنتاج الخبز اليومي",
+        configuration: {
+          productItemId: product.id,
+          plannedQty: 12,
+          unitCode: seed.unitCode,
+          bomTemplateId: bom?.id ?? null,
+          routingId: routing?.id ?? null,
+        },
+      });
+      const warehouse = await request("/api/simple-manufacturing/setup/warehouses", {
+        code: "WH-MAIN",
+        nameAr: "مخزن الإنتاج",
+        nameEn: "Production Warehouse",
+        isDefault: true,
+      });
+      if (!Number.isInteger(bom?.id) || !Number.isInteger(routing?.id)
+          || !Number.isInteger(template?.id) || !Number.isInteger(warehouse?.id)) {
+        throw new Error("A setup response did not contain a numeric id.");
+      }
+
+      const bomDetailResponse = await fetch(`/api/simple-manufacturing/bom-templates/${bom.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const bomDetail = await bomDetailResponse.json().catch(() => ({}));
+      const explicitUnitLine = Array.isArray(bomDetail?.lines)
+        ? bomDetail.lines.find((line: any) => line.itemId === material.id)
+        : undefined;
+      const defaultUnitLine = Array.isArray(bomDetail?.lines)
+        ? bomDetail.lines.find((line: any) => line.itemId === secondMaterial.id)
+        : undefined;
+      console.log(`[visual] stage=setup-bom-detail path=/api/simple-manufacturing/bom-templates/:id status=${bomDetailResponse.status}`
+        + ` lines=${Array.isArray(bomDetail?.lines) ? bomDetail.lines.length : "none"}`
+        + ` outputUnit=${typeof bomDetail?.outputUnitCode === "string" ? bomDetail.outputUnitCode : "missing"}`
+        + ` explicitUnit=${explicitUnitLine?.unitCode ?? "missing"}`
+        + ` defaultUnit=${defaultUnitLine?.unitCode ?? "missing"}`);
+      if (!bomDetailResponse.ok || bomDetail?.outputUnitCode !== seed.unitCode
+          || !Array.isArray(bomDetail?.lines) || bomDetail.lines.length !== 2
+          || explicitUnitLine?.unitCode !== seed.unitCode
+          || defaultUnitLine?.unitCode !== seed.fallbackUnitCode) {
+        throw new Error("The BOM detail did not preserve explicit and default unit codes.");
+      }
+
+      return {
+        unitCode: seed.unitCode,
+        fallbackUnitCode: seed.fallbackUnitCode,
+        materialCode: material.code,
+        secondMaterialCode: secondMaterial.code,
+        productCode: product.code,
+        productId: product.id,
+        bomId: bom.id,
+        bomName: bom.nameAr,
+        routingId: routing.id,
+        routingName: routing.nameAr,
+        templateId: template.id,
+        templateName: template.name,
+        warehouseCode: warehouse.code,
+        warehouseName: warehouse.nameAr,
+      };
+    }, {
+      unitCode: fixture.unitCode,
+      fallbackUnitCode: fixture.fallbackUnitCode,
+    }));
+
+    await runStage("setup-reload-and-assert", async () => {
+      const catalogResponse = page.waitForResponse(
+        (response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname.endsWith("/api/simple-manufacturing/catalog"),
+        { timeout: VISUAL_TIMEOUT_MS },
+      );
+      await page.reload({ waitUntil: "domcontentloaded" });
+      const response = await catalogResponse;
+      if (!response.ok()) throw new Error("The catalog reload request did not succeed.");
+      const catalog = await response.json();
+      const unit = Array.isArray(catalog.units)
+        ? catalog.units.find((row: any) => row.code === seeded.unitCode)
+        : undefined;
+      const material = catalog.items?.find((row: any) => row.code === seeded.materialCode);
+      const product = catalog.items?.find((row: any) => row.code === seeded.productCode);
+      const bom = Array.isArray(catalog.bomTemplates)
+        ? catalog.bomTemplates.find((row: any) => row.id === seeded.bomId
+          || row.nameAr === seeded.bomName)
+        : undefined;
+      const routing = catalog.routings?.find((row: any) => row.id === seeded.routingId
+        || row.nameAr === seeded.routingName);
+      const template = catalog.templates?.find((row: any) => row.id === seeded.templateId
+        || row.name === seeded.templateName);
+      const stageCount = Array.isArray(routing?.stages)
+        ? routing.stages.length
+        : Number(routing?.stagesCount ?? 0);
+      if (!unit || !material || !product || !bom || !routing || !template
+          || !catalog.warehouses?.some((row: any) => row.code === seeded.warehouseCode)
+          || !catalog.units?.some((row: any) => row.code === seeded.fallbackUnitCode)
+          || Number(bom.linesCount ?? 0) !== 2
+          || stageCount < 2) {
+        throw new Error("Reloaded catalog did not contain all saved setup records.");
+      }
+      console.log("[visual] stage=setup-catalog status=contains-seeded-records");
+    });
+
     const listPath = outputPath;
     await runStage("screenshot-list", async () => {
       await page.screenshot({ path: listPath, fullPage: true });
       console.log(`[visual] stage=screenshot-list artifact=${listPath}`);
+    });
+
+    await runStage("settings-tab", async () => {
+      await page.getByRole("tab", { name: "الإعدادات", exact: true }).click();
+      await Promise.race([
+        page.getByText(seeded.templateName, { exact: true }).waitFor({ state: "visible" }),
+        page.getByText(seeded.warehouseName, { exact: true }).waitFor({ state: "visible" }),
+      ]);
+    });
+    const settingsPath = "/tmp/simple-manufacturing-settings.png";
+    await runStage("screenshot-settings", async () => {
+      await page.screenshot({ path: settingsPath, fullPage: true });
+      console.log(`[visual] stage=screenshot-settings artifact=${settingsPath}`);
+    });
+
+    await runStage("unit-dialog", async () => {
+      const unitButton = page.getByRole("button", {
+        name: /إضافة وحدة|وحدة جديدة/,
+      }).first();
+      if (await unitButton.count() === 0) {
+        console.log("[visual] stage=unit-dialog status=selector-not-present");
+        return;
+      }
+      await unitButton.click();
+      await page.getByRole("dialog").waitFor({ state: "visible" });
+      const unitPath = derivedCapturePath(outputPath, "-setup-unit");
+      await page.screenshot({ path: unitPath, fullPage: true });
+      console.log(`[visual] stage=screenshot-setup-unit artifact=${unitPath}`);
+      await page.keyboard.press("Escape");
+    });
+
+    await runStage("bom-dialog", async () => {
+      const bomButton = page.getByRole("button", {
+        name: /إضافة وصفة|ربط قائمة مكونات|قائمة مكونات/,
+      }).first();
+      await bomButton.waitFor({ state: "visible" });
+      await bomButton.click();
+      await page.getByRole("dialog").waitFor({ state: "visible" });
+    });
+    const bomPath = derivedCapturePath(outputPath, "-setup-bom");
+    await runStage("screenshot-setup-bom", async () => {
+      await page.screenshot({ path: bomPath, fullPage: true });
+      console.log(`[visual] stage=screenshot-setup-bom artifact=${bomPath}`);
+      await page.keyboard.press("Escape");
     });
 
     await runStage("wizard-tab", () => page.getByRole("tab", { name: "أمر تصنيع جديد", exact: true }).click());

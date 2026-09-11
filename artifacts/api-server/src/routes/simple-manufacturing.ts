@@ -6,10 +6,11 @@
 // delegating order creation/detail/status to the same production handlers and
 // tables used by the advanced UI.
 import { Router } from "express";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   db,
   itemsTable,
+  unitsTable,
   warehousesTable,
   productionOrdersTable,
   productionCostAllocationsTable,
@@ -18,6 +19,7 @@ import {
   bomTemplateLinesTable,
   productionRoutingsTable,
   productionRoutingStagesTable,
+  workCentersTable,
   branchesTable,
   suppliersTable,
 } from "@workspace/db";
@@ -106,12 +108,18 @@ router.get("/catalog", view, async (req, res) => {
     const warehouseWhere = branch
       ? and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true), branch)
       : and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true));
-    const [items, warehouses, templates, routings] = await Promise.all([
+    const [items, warehouses, templates, bomTemplates, routings, units] = await Promise.all([
       db.select({
         id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr,
         nameEn: itemsTable.nameEn, itemNature: itemsTable.itemNature,
         unitId: itemsTable.unitId,
-      }).from(itemsTable).where(and(eq(itemsTable.companyId, cid), eq(itemsTable.status, "active")))
+        unitCode: unitsTable.code,
+      }).from(itemsTable)
+        .leftJoin(unitsTable, and(
+          eq(itemsTable.unitId, unitsTable.id),
+          eq(unitsTable.companyId, cid),
+        ))
+        .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.status, "active")))
         .orderBy(asc(itemsTable.nameAr)).limit(5000),
       db.select({
         id: warehousesTable.id, code: warehousesTable.code, nameAr: warehousesTable.nameAr,
@@ -119,12 +127,94 @@ router.get("/catalog", view, async (req, res) => {
       }).from(warehousesTable).where(warehouseWhere).orderBy(asc(warehousesTable.nameAr)),
       db.select().from(productionWizardTemplatesTable).where(templateWhere)
         .orderBy(desc(productionWizardTemplatesTable.updatedAt)),
+      db.select({
+        id: bomTemplatesTable.id,
+        nameAr: bomTemplatesTable.nameAr,
+        productItemId: bomTemplatesTable.productItemId,
+        productNameAr: itemsTable.nameAr,
+        linesCount: sql<number>`(
+          SELECT COUNT(*)::int
+          FROM ${bomTemplateLinesTable}
+          WHERE ${bomTemplateLinesTable.templateId} = ${bomTemplatesTable.id}
+        )`,
+      }).from(bomTemplatesTable)
+        .leftJoin(itemsTable, and(
+          eq(itemsTable.id, bomTemplatesTable.productItemId),
+          eq(itemsTable.companyId, cid),
+        ))
+        .where(and(
+          eq(bomTemplatesTable.companyId, cid),
+          eq(bomTemplatesTable.isActive, true),
+        ))
+        .orderBy(desc(bomTemplatesTable.updatedAt)),
       db.select().from(productionRoutingsTable).where(and(
         eq(productionRoutingsTable.companyId, cid),
         eq(productionRoutingsTable.isActive, true),
       )).orderBy(desc(productionRoutingsTable.updatedAt)),
+      db.select({
+        id: unitsTable.id,
+        code: unitsTable.code,
+        nameAr: unitsTable.nameAr,
+      }).from(unitsTable)
+        .where(eq(unitsTable.companyId, cid))
+        .orderBy(asc(unitsTable.code)),
     ]);
-    res.json({ items, warehouses, templates, routings });
+    const routingIds = routings.map((routing) => routing.id);
+    const routingProductIds = [...new Set<number>(
+      routings
+        .map((routing) => routing.productItemId)
+        .filter((id: number | null): id is number => id !== null),
+    )];
+    const routingStages = routingIds.length
+      ? await db.select({
+        routingId: productionRoutingStagesTable.routingId,
+        id: productionRoutingStagesTable.id,
+        nameAr: productionRoutingStagesTable.nameAr,
+        sequence: productionRoutingStagesTable.sequence,
+        plannedMinutes: productionRoutingStagesTable.expectedDurationMinutes,
+        workCenterId: productionRoutingStagesTable.workCenterId,
+      }).from(productionRoutingStagesTable)
+        .where(inArray(productionRoutingStagesTable.routingId, routingIds))
+        .orderBy(asc(productionRoutingStagesTable.sequence), asc(productionRoutingStagesTable.id))
+      : [];
+    const routingProducts = routingProductIds.length
+      ? await db.select({
+        id: itemsTable.id,
+        nameAr: itemsTable.nameAr,
+      }).from(itemsTable)
+        .where(and(
+          eq(itemsTable.companyId, cid),
+          inArray(itemsTable.id, routingProductIds),
+        ))
+      : [];
+    const productNameById = new Map(routingProducts.map((item) => [item.id, item.nameAr]));
+    const stagesByRouting = new Map<number, Array<{
+      id: number;
+      nameAr: string;
+      sequence: number;
+      plannedMinutes: number | null;
+      workCenterId: number | null;
+    }>>();
+    for (const stage of routingStages) {
+      const stages = stagesByRouting.get(stage.routingId);
+      const stageSummary = {
+        id: stage.id,
+        nameAr: stage.nameAr,
+        sequence: stage.sequence,
+        plannedMinutes: stage.plannedMinutes,
+        workCenterId: stage.workCenterId,
+      };
+      if (stages) stages.push(stageSummary);
+      else stagesByRouting.set(stage.routingId, [stageSummary]);
+    }
+    const routingCatalog = routings.map((routing) => ({
+      ...routing,
+      productNameAr: routing.productItemId == null
+        ? null
+        : productNameById.get(routing.productItemId) ?? null,
+      stages: stagesByRouting.get(routing.id) ?? [],
+    }));
+    res.json({ items, warehouses, templates, bomTemplates, routings: routingCatalog, units });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -510,7 +600,14 @@ router.post("/setup/bom", edit, async (req, res) => {
     return void res.status(400).json({ error: "المنتج النهائي وسطور المواد مطلوبان" });
   }
   try {
-    const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    const [product] = await db.select({
+      id: itemsTable.id,
+      unitCode: unitsTable.code,
+    }).from(itemsTable)
+      .leftJoin(unitsTable, and(
+        eq(itemsTable.unitId, unitsTable.id),
+        eq(unitsTable.companyId, cid),
+      ))
       .where(and(
         eq(itemsTable.id, productItemId),
         eq(itemsTable.companyId, cid),
@@ -521,19 +618,26 @@ router.post("/setup/bom", edit, async (req, res) => {
       itemId: Number(x?.itemId ?? x?.item?.id),
       quantity: Number(x?.quantity),
       description: String(x?.description || "مادة خام").trim(),
-      unitCode: String(x?.unitCode || "PCE").trim(),
+      unitCode: x?.unitCode == null ? "" : String(x.unitCode).trim(),
       notes: x?.notes ? String(x.notes) : null,
     }));
     if (normalizedLines.some((x: any) =>
       !Number.isInteger(x.itemId) || x.itemId <= 0 ||
       !Number.isFinite(x.quantity) || x.quantity <= 0 ||
-      !x.description || !x.unitCode
+      !x.description
     )) {
       return void res.status(400).json({ error: "كل سطر في قائمة المواد يحتاج صنفاً وكمية أكبر من صفر" });
     }
     const itemIds = normalizedLines.map((x: any) => x.itemId);
     const uniqueItemIds: number[] = [...new Set<number>(itemIds)];
-    const owned = uniqueItemIds.length ? await db.select({ id: itemsTable.id }).from(itemsTable)
+    const owned = uniqueItemIds.length ? await db.select({
+      id: itemsTable.id,
+      unitCode: unitsTable.code,
+    }).from(itemsTable)
+      .leftJoin(unitsTable, and(
+        eq(itemsTable.unitId, unitsTable.id),
+        eq(unitsTable.companyId, cid),
+      ))
       .where(and(
         eq(itemsTable.companyId, cid),
         eq(itemsTable.status, "active"),
@@ -541,6 +645,41 @@ router.post("/setup/bom", edit, async (req, res) => {
       )) : [];
     if (owned.length !== uniqueItemIds.length) {
       return void res.status(400).json({ error: "إحدى المواد غير موجودة أو غير نشطة في هذه الشركة" });
+    }
+    // Unit codes are metadata on the existing BOM tables. Do not infer a
+    // conversion or manufacture a code that is not in this tenant's catalog.
+    // A blank line code uses that component's base unit when one exists; PCE
+    // remains the legacy fallback, but is accepted only when it is a real
+    // permitted unit for this company.
+    const permittedUnits = await db.select({ code: unitsTable.code })
+      .from(unitsTable)
+      .where(eq(unitsTable.companyId, cid));
+    const unitByCode = new Map<string, string>();
+    for (const unit of permittedUnits) {
+      const code = String(unit.code ?? "").trim();
+      if (code && !unitByCode.has(code.toLowerCase())) unitByCode.set(code.toLowerCase(), code);
+    }
+    const ownedByItem = new Map(owned.map((item) => [item.id, item]));
+    for (const line of normalizedLines) {
+      const item = ownedByItem.get(line.itemId);
+      const requestedCode = line.unitCode || item?.unitCode || "PCE";
+      const actualCode = unitByCode.get(requestedCode.toLowerCase());
+      if (!actualCode) {
+        return void res.status(400).json({
+          error: `وحدة القياس "${requestedCode}" غير موجودة في كتالوج الشركة`,
+        });
+      }
+      line.unitCode = actualCode;
+    }
+    const requestedOutputCode = req.body?.outputUnitCode == null
+      ? ""
+      : String(req.body.outputUnitCode).trim();
+    const outputCode = requestedOutputCode || product.unitCode || "PCE";
+    const actualOutputCode = unitByCode.get(outputCode.toLowerCase());
+    if (!actualOutputCode) {
+      return void res.status(400).json({
+        error: `وحدة الناتج "${outputCode}" غير موجودة في كتالوج الشركة`,
+      });
     }
     const outputQty = Number(req.body?.outputQty ?? 1);
     if (!Number.isFinite(outputQty) || outputQty <= 0) {
@@ -551,7 +690,7 @@ router.post("/setup/bom", edit, async (req, res) => {
         companyId: cid, productItemId, nameAr: String(req.body?.nameAr || "قائمة مواد مبسطة"),
         nameEn: req.body?.nameEn ? String(req.body.nameEn) : null,
         outputQty: String(outputQty),
-        outputUnitCode: String(req.body?.outputUnitCode || "PCE"),
+        outputUnitCode: actualOutputCode,
         isActive: true,
         notes: req.body?.notes ? String(req.body.notes) : null,
       }).returning();
@@ -574,7 +713,16 @@ router.post("/setup/routing", edit, async (req, res) => {
   const cid = companyId(req, res);
   if (!cid) return;
   const productItemId = Number(req.body?.productItemId);
-  const stages = Array.isArray(req.body?.stages) ? req.body.stages : [];
+  // The structured stages[] contract is canonical. Accept the compact
+  // legacy `stage` string (and string entries in stages[]) so older simple
+  // screens keep creating the same one-stage routing.
+  const stages = Array.isArray(req.body?.stages)
+    ? req.body.stages
+    : typeof req.body?.stages === "string"
+      ? [req.body.stages]
+      : req.body?.stage != null
+        ? [req.body.stage]
+        : [];
   if (!Number.isInteger(productItemId) || !stages.length) {
     return void res.status(400).json({ error: "المنتج ومراحل المسار مطلوبان" });
   }
@@ -586,25 +734,53 @@ router.post("/setup/routing", edit, async (req, res) => {
         eq(itemsTable.status, "active"),
       )).limit(1);
     if (!product) return void res.status(400).json({ error: "المنتج النهائي غير موجود" });
-    const normalizedStages = stages.map((x: any, i: number) => ({
-      code: String(x?.code || `S${i + 1}`).trim(),
-      nameAr: String(x?.nameAr || `مرحلة ${i + 1}`).trim(),
-      nameEn: x?.nameEn ? String(x.nameEn).trim() : null,
-      expectedDurationMinutes: x?.expectedDurationMinutes == null || x.expectedDurationMinutes === ""
-        ? null : Number(x.expectedDurationMinutes),
-      expectedWasteRatio: x?.expectedWasteRatio == null || x.expectedWasteRatio === ""
-        ? 0 : Number(x.expectedWasteRatio),
-      expectedCost: x?.expectedCost == null || x.expectedCost === "" ? 0 : Number(x.expectedCost),
-      notes: x?.notes ? String(x.notes) : null,
-    }));
+    const normalizedStages = stages.map((rawStage: any, i: number) => {
+      const x = typeof rawStage === "string" ? { nameAr: rawStage } : (rawStage ?? {});
+      const rawDuration = x.expectedDurationMinutes == null || x.expectedDurationMinutes === ""
+        ? x.plannedMinutes
+        : x.expectedDurationMinutes;
+      const rawWorkCenterId = x.workCenterId == null || x.workCenterId === ""
+        ? null
+        : Number(x.workCenterId);
+      return {
+        code: String(x.code || `S${i + 1}`).trim(),
+        nameAr: String(x.nameAr || `مرحلة ${i + 1}`).trim(),
+        nameEn: x.nameEn ? String(x.nameEn).trim() : null,
+        expectedDurationMinutes: rawDuration == null || rawDuration === ""
+          ? null : Number(rawDuration),
+        expectedWasteRatio: x.expectedWasteRatio == null || x.expectedWasteRatio === ""
+          ? 0 : Number(x.expectedWasteRatio),
+        expectedCost: x.expectedCost == null || x.expectedCost === "" ? 0 : Number(x.expectedCost),
+        workCenterId: rawWorkCenterId,
+        notes: x.notes ? String(x.notes) : null,
+      };
+    });
     if (normalizedStages.some((x: any) =>
       !x.code || !x.nameAr ||
       (x.expectedDurationMinutes !== null &&
         (!Number.isFinite(x.expectedDurationMinutes) || x.expectedDurationMinutes <= 0)) ||
+      (x.workCenterId !== null &&
+        (!Number.isInteger(x.workCenterId) || x.workCenterId <= 0)) ||
       !Number.isFinite(x.expectedWasteRatio) || x.expectedWasteRatio < 0 ||
       !Number.isFinite(x.expectedCost) || x.expectedCost < 0
     )) {
       return void res.status(400).json({ error: "كل مرحلة تحتاج رمزاً واسماً وقيم تكلفة/هالك صحيحة" });
+    }
+    const workCenterIds: number[] = [...new Set<number>(
+      normalizedStages
+        .map((stage: any) => stage.workCenterId)
+        .filter((id: number | null): id is number => id !== null),
+    )];
+    if (workCenterIds.length) {
+      const permittedWorkCenters = await db.select({ id: workCentersTable.id })
+        .from(workCentersTable)
+        .where(and(
+          eq(workCentersTable.companyId, cid),
+          inArray(workCentersTable.id, workCenterIds),
+        ));
+      if (permittedWorkCenters.length !== workCenterIds.length) {
+        return void res.status(400).json({ error: "أحد مراكز العمل غير موجود في هذه الشركة" });
+      }
     }
     const [routing] = await db.insert(productionRoutingsTable).values({
       companyId: cid, productItemId,
@@ -617,6 +793,7 @@ router.post("/setup/routing", edit, async (req, res) => {
       code: x.code,
       nameAr: x.nameAr,
       nameEn: x.nameEn,
+      workCenterId: x.workCenterId,
       expectedDurationMinutes: x.expectedDurationMinutes,
       expectedWasteRatio: String(x.expectedWasteRatio),
       expectedCost: String(x.expectedCost),
