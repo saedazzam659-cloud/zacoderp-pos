@@ -95,3 +95,35 @@ test("simple facade exposes only explicit lifecycle endpoints under simple actio
   assert.match(production, /getContextModuleKey\(\) === "simple_manufacturing"/);
   assert.match(production, /eq\(productionOrdersTable\.companyId, cid\)/);
 });
+
+test("simple accounting setup exposes only active posting asset accounts and preserves existing settings", async () => {
+  const facade = await readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8");
+  assert.match(
+    facade,
+    /router\.put\("\/setup\/accounting", edit/,
+    "account setup must use the simple module edit gate",
+  );
+  assert.match(
+    facade,
+    /eq\(accountsTable\.isActive, true\)[\s\S]*?eq\(accountsTable\.isPosting, true\)[\s\S]*?eq\(accountsTable\.accountType, "asset"\)/,
+    "catalog must filter eligible asset accounts before applying the limit",
+  );
+  assert.match(facade, /accounting:\s*\{\s*settings: accountingSettings\[0\] \?\? null,\s*accounts,/);
+  assert.match(facade, /onConflictDoUpdate\(\{/);
+  assert.match(facade, /defaultWipAccountId/);
+  assert.match(facade, /defaultRawInventoryAccountId/);
+  assert.match(facade, /defaultFinishedGoodsAccountId/);
+});
+
+test("simple status hydration is branch-scoped, status-guarded, and coalescing", async () => {
+  const facade = await readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8");
+  const start = facade.indexOf('router.post("/orders/:id/status"');
+  const end = facade.indexOf("\nfor (const [operation, status]", start);
+  assert.ok(start >= 0 && end > start, "compact status wrapper must be present");
+  const hydration = facade.slice(start, end);
+  assert.match(hydration, /if \(branchResult\.cond\) updateConditions\.push\(branchResult\.cond\)/);
+  assert.match(hydration, /inArray\(productionOrdersTable\.status, \["draft", "approved"\]\)/);
+  assert.match(hydration, /sql`coalesce\(\$\{productionOrdersTable\.wipAccountId\}/);
+  assert.match(hydration, /sql`coalesce\(\$\{productionOrdersTable\.rawInventoryAccountId\}/);
+  assert.match(hydration, /sql`coalesce\(\$\{productionOrdersTable\.finishedGoodsAccountId\}/);
+});

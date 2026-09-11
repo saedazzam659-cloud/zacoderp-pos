@@ -14,6 +14,12 @@ The simple surface must include the full source-cost selection experience (payro
 
 **How to apply:** Verify all wizard lookups use the independent facade, and visually inspect an authenticated simple-only tenant rather than treating a login-page screenshot as UI verification.
 
+Simple manufacturing must expose its required WIP/raw/finished account defaults inside the compact flow, reusing existing company accounts. Warehouse selections belong to the order save, and draft saving must not require posting-account configuration.
+
+**Why:** Users could select warehouses but could not discover the review-only save controls, and execution required accounts that were configurable only through advanced manufacturing.
+
+**How to apply:** Keep save actions available across tabs. Retry a saved order after configuration errors; account-default hydration may fill only null fields while status remains pre-issue, under tenant and branch scope.
+
 **Why:** The user explicitly chose a compact single-screen workflow and required reuse of existing modules rather than duplicated screens and accounting.
 
 Allocated posted costs must reclassify the original expense debit accounts into WIP, not book another expense or use unrelated generic offsets. Fixed assets still own depreciation and payroll still owns salary accounting. Use approved allocation denominators/rates, not arbitrary source percentages.

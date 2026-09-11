@@ -700,6 +700,12 @@ async function loginAndCapture(
       console.log(`[visual] stage=screenshot-wizard artifact=${wizardPath}`);
     });
 
+    await runStage("resources-footer", async () => {
+      await page.getByRole("button", { name: "الموارد", exact: true }).click();
+      await page.getByRole("button", { name: "حفظ مسودة", exact: true }).waitFor({ state: "visible" });
+      await page.getByRole("button", { name: "مراجعة وبدء الإنتاج", exact: true }).waitFor({ state: "visible" });
+      await page.screenshot({ path: derivedCapturePath(outputPath, "-resources"), fullPage: true });
+    });
     await runStage("costs-tab", async () => {
       await page.getByRole("button", { name: "التكاليف", exact: true }).click();
       await page.getByText("أجور ورواتب (HR)", { exact: true }).waitFor({ state: "visible" });

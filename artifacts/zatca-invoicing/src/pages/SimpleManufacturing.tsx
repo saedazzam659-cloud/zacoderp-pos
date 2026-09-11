@@ -292,6 +292,17 @@ export default function SimpleManufacturing() {
     }), "تمت إضافة المخزن");
   };
 
+  const handleSaveAccounting = async (data: {
+    defaultWipAccountId: number | null;
+    defaultRawInventoryAccountId: number | null;
+    defaultFinishedGoodsAccountId: number | null;
+  }) => {
+    return mutate(() => request("/api/simple-manufacturing/setup/accounting", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }), "تم حفظ حسابات التصنيع");
+  };
+
   return (
     <div dir="rtl" className="space-y-6 pb-12 max-w-7xl mx-auto">
       <div className="flex items-center justify-between gap-4 flex-wrap bg-white p-6 rounded-2xl border shadow-sm">
@@ -354,6 +365,7 @@ export default function SimpleManufacturing() {
             token={token || ""}
             catalog={catalog}
             busy={busy}
+             onSaveAccounting={handleSaveAccounting}
             onSubmit={handleWizardSubmit}
             onCancel={() => setTab("orders")}
           />

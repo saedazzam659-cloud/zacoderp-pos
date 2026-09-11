@@ -22,6 +22,8 @@ import {
   workCentersTable,
   branchesTable,
   suppliersTable,
+  accountsTable,
+  manufacturingSettingsTable,
 } from "@workspace/db";
 import {
   extractAuth,
@@ -86,7 +88,7 @@ router.get("/", view, (_req, res) => {
     endpoints: [
       "/catalog", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
       "/orders", "/templates", "/setup/materials", "/setup/products",
-      "/setup/warehouses", "/setup/bom", "/setup/routing", "/reports",
+      "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/routing", "/reports",
     ],
   });
 });
@@ -108,7 +110,7 @@ router.get("/catalog", view, async (req, res) => {
     const warehouseWhere = branch
       ? and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true), branch)
       : and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true));
-    const [items, warehouses, templates, bomTemplates, routings, units] = await Promise.all([
+    const [items, warehouses, templates, bomTemplates, routings, units, accountingSettings, accounts] = await Promise.all([
       db.select({
         id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr,
         nameEn: itemsTable.nameEn, itemNature: itemsTable.itemNature,
@@ -158,6 +160,25 @@ router.get("/catalog", view, async (req, res) => {
       }).from(unitsTable)
         .where(eq(unitsTable.companyId, cid))
         .orderBy(asc(unitsTable.code)),
+      db.select().from(manufacturingSettingsTable)
+        .where(eq(manufacturingSettingsTable.companyId, cid))
+        .limit(1),
+      db.select({
+        id: accountsTable.id,
+        code: accountsTable.code,
+        nameAr: accountsTable.nameAr,
+        nameEn: accountsTable.nameEn,
+        accountType: accountsTable.accountType,
+        isPosting: accountsTable.isPosting,
+      }).from(accountsTable)
+        .where(and(
+          eq(accountsTable.companyId, cid),
+          eq(accountsTable.isActive, true),
+          eq(accountsTable.isPosting, true),
+          eq(accountsTable.accountType, "asset"),
+        ))
+        .orderBy(asc(accountsTable.code))
+        .limit(2000),
     ]);
     const routingIds = routings.map((routing) => routing.id);
     const routingProductIds = [...new Set<number>(
@@ -214,7 +235,18 @@ router.get("/catalog", view, async (req, res) => {
         : productNameById.get(routing.productItemId) ?? null,
       stages: stagesByRouting.get(routing.id) ?? [],
     }));
-    res.json({ items, warehouses, templates, bomTemplates, routings: routingCatalog, units });
+    res.json({
+      items,
+      warehouses,
+      templates,
+      bomTemplates,
+      routings: routingCatalog,
+      units,
+      accounting: {
+        settings: accountingSettings[0] ?? null,
+        accounts,
+      },
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -410,6 +442,88 @@ router.post("/setup/warehouses", create, async (req, res) => {
   }
 });
 
+// The compact screen owns only the small set of manufacturing defaults needed
+// to post a simple order.  It deliberately reuses the company's existing
+// posting accounts instead of creating a second chart of accounts or exposing
+// the advanced production settings screen.
+router.put("/setup/accounting", edit, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const keys = [
+    "defaultWipAccountId",
+    "defaultRawInventoryAccountId",
+    "defaultFinishedGoodsAccountId",
+  ] as const;
+  const values: Record<(typeof keys)[number], number | null> = {
+    defaultWipAccountId: null,
+    defaultRawInventoryAccountId: null,
+    defaultFinishedGoodsAccountId: null,
+  };
+  try {
+    const [current] = await db.select({
+      defaultWipAccountId: manufacturingSettingsTable.defaultWipAccountId,
+      defaultRawInventoryAccountId: manufacturingSettingsTable.defaultRawInventoryAccountId,
+      defaultFinishedGoodsAccountId: manufacturingSettingsTable.defaultFinishedGoodsAccountId,
+    }).from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+    const requestedIds = new Set<number>();
+    for (const key of keys) {
+      const raw = req.body?.[key];
+      if (raw === undefined) {
+        values[key] = current?.[key] ?? null;
+        if (values[key]) requestedIds.add(values[key]!);
+        continue;
+      }
+      if (raw === null || raw === undefined || raw === "") {
+        values[key] = null;
+        continue;
+      }
+      const id = Number(raw);
+      if (!Number.isInteger(id) || id <= 0) {
+        return void res.status(400).json({ error: `الحساب المحدد للحقل ${key} غير صحيح` });
+      }
+      values[key] = id;
+      requestedIds.add(id);
+    }
+    if (requestedIds.size) {
+      const rows = await db.select({
+        id: accountsTable.id,
+        accountType: accountsTable.accountType,
+        isActive: accountsTable.isActive,
+        isPosting: accountsTable.isPosting,
+      }).from(accountsTable).where(and(
+        eq(accountsTable.companyId, cid),
+        inArray(accountsTable.id, Array.from(requestedIds)),
+      ));
+      const validIds = new Set(rows
+        .filter((row) => row.isActive && row.isPosting)
+        .map((row) => row.id));
+      for (const id of requestedIds) {
+        const row = rows.find((candidate) => candidate.id === id);
+        if (!validIds.has(id) || row?.accountType !== "asset") {
+          return void res.status(400).json({
+            error: "اختر حسابات أصول قابلة للترحيل ونشطة من دليل حسابات الشركة",
+          });
+        }
+      }
+    }
+    const [row] = await db.insert(manufacturingSettingsTable).values({
+      companyId: cid,
+      ...values,
+      updatedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: manufacturingSettingsTable.companyId,
+      set: {
+        ...values,
+        updatedAt: new Date(),
+      },
+    }).returning();
+    res.json({ settings: row });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get("/orders", view, async (req, res) => {
   const cid = companyId(req, res);
   if (!cid) return;
@@ -501,6 +615,68 @@ function simpleStatusPostingRight(req: any, res: any, next: any) {
 }
 
 router.post("/orders/:id/status", simpleStatusPermission, simpleStatusPostingRight, async (req, res) => {
+  // A draft can be saved before accounting is configured.  Once the user
+  // fixes the compact setup, hydrate only still-empty pre-issue fields on the
+  // existing order before retrying the same status transition.  This keeps the
+  // wizard's idempotent order id while preserving the frozen values once stock
+  // has been issued.
+  const target = String(req.body?.status ?? "");
+  if (target === "approved" || target === "in_production") {
+    const cid = companyId(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const [order] = await db.select({
+      id: productionOrdersTable.id,
+      status: productionOrdersTable.status,
+      branchId: productionOrdersTable.branchId,
+      wipAccountId: productionOrdersTable.wipAccountId,
+      rawInventoryAccountId: productionOrdersTable.rawInventoryAccountId,
+      finishedGoodsAccountId: productionOrdersTable.finishedGoodsAccountId,
+    }).from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, id),
+      eq(productionOrdersTable.companyId, cid),
+    )).limit(1);
+    if (order) {
+      const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, order.branchId);
+      if ("deny" in branchResult) {
+        return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+      }
+      if (order.status === "draft" || order.status === "approved") {
+        const [settings] = await db.select({
+          wipAccountId: manufacturingSettingsTable.defaultWipAccountId,
+          rawInventoryAccountId: manufacturingSettingsTable.defaultRawInventoryAccountId,
+          finishedGoodsAccountId: manufacturingSettingsTable.defaultFinishedGoodsAccountId,
+        }).from(manufacturingSettingsTable)
+          .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+        const updates: Record<string, unknown> = {};
+        // Keep the read-before-update only for scope/default lookup. The
+        // UPDATE itself must win races with issue/approval transitions:
+        // status is guarded and each field is filled with SQL COALESCE so a
+        // concurrently supplied account can never be overwritten.
+        if (settings?.wipAccountId) {
+          updates.wipAccountId = sql`coalesce(${productionOrdersTable.wipAccountId}, ${settings.wipAccountId})`;
+        }
+        if (settings?.rawInventoryAccountId) {
+          updates.rawInventoryAccountId = sql`coalesce(${productionOrdersTable.rawInventoryAccountId}, ${settings.rawInventoryAccountId})`;
+        }
+        if (settings?.finishedGoodsAccountId) {
+          updates.finishedGoodsAccountId = sql`coalesce(${productionOrdersTable.finishedGoodsAccountId}, ${settings.finishedGoodsAccountId})`;
+        }
+        if (Object.keys(updates).length) {
+          const updateConditions: any[] = [
+            eq(productionOrdersTable.id, id),
+            eq(productionOrdersTable.companyId, cid),
+            inArray(productionOrdersTable.status, ["draft", "approved"]),
+          ];
+          if (branchResult.cond) updateConditions.push(branchResult.cond);
+          await db.update(productionOrdersTable).set({
+            ...updates,
+            updatedAt: new Date(),
+          }).where(and(...updateConditions));
+        }
+      }
+    }
+  }
   // This handler performs the atomic stock + GL transition, including pause,
   // resume, cancellation and provenance-checked completed reversal.
   return productionStatusHandler(req, res);

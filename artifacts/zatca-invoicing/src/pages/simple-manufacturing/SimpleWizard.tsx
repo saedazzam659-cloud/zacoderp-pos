@@ -19,12 +19,18 @@ export function SimpleWizard({
   token,
   catalog,
   busy,
+  onSaveAccounting,
   onSubmit,
   onCancel
 }: {
   token: string;
   catalog: Catalog;
   busy: boolean;
+  onSaveAccounting: (data: {
+    defaultWipAccountId: number | null;
+    defaultRawInventoryAccountId: number | null;
+    defaultFinishedGoodsAccountId: number | null;
+  }) => Promise<unknown>;
   onSubmit: (mode: "draft" | "execute", payload: any) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -46,11 +52,19 @@ export function SimpleWizard({
   const [costSources, setCostSources] = useState<any[]>([]);
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [sourceTreatments, setSourceTreatments] = useState<Record<string, string>>({});
+  const [accountSettings, setAccountSettings] = useState({
+    defaultWipAccountId: "",
+    defaultRawInventoryAccountId: "",
+    defaultFinishedGoodsAccountId: "",
+  });
 
   // Inline BOM creation
   const [creatingBom, setCreatingBom] = useState(false);
   const [newBomLines, setNewBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([]);
 
+  // The facade keys wizard creation by this stable id. If a draft was created
+  // and only the following start transition failed, retrying the footer action
+  // replays that order instead of inserting a duplicate.
   const wizardRequestIdRef = useRef(crypto.randomUUID());
   const productRequestRef = useRef(0);
   const costRequestRef = useRef(0);
@@ -61,6 +75,16 @@ export function SimpleWizard({
   const canViewPayroll = usePermission("hr_payroll", "view");
   const canViewAssets = usePermission("fixed_assets", "view");
   const canViewJournals = usePermission("journal_entries", "view");
+
+  useEffect(() => {
+    const settings = catalog.accounting?.settings;
+    if (!settings) return;
+    setAccountSettings({
+      defaultWipAccountId: settings.defaultWipAccountId ? String(settings.defaultWipAccountId) : "",
+      defaultRawInventoryAccountId: settings.defaultRawInventoryAccountId ? String(settings.defaultRawInventoryAccountId) : "",
+      defaultFinishedGoodsAccountId: settings.defaultFinishedGoodsAccountId ? String(settings.defaultFinishedGoodsAccountId) : "",
+    });
+  }, [catalog.accounting?.settings]);
 
   const request = useCallback(async (path: string, init: RequestInit = {}) => {
     const response = await fetch(`${API}${path}`, {
@@ -229,7 +253,7 @@ export function SimpleWizard({
     }));
   };
 
-  const submit = (mode: "draft" | "execute") => {
+  const submit = async (mode: "draft" | "execute") => {
     if (!form.title.trim() || !form.productItemId || !(Number(form.plannedQty) > 0)) {
       toast({ title: "بيانات أساسية مفقودة", description: "تأكد من إدخال العنوان واختيار المنتج والكمية", variant: "destructive" });
       setTab("basic");
@@ -244,6 +268,35 @@ export function SimpleWizard({
       toast({ title: "الوصفة مفقودة", description: "أنشئ قائمة مواد نشطة للمنتج قبل حفظ أمر التصنيع.", variant: "destructive" });
       setTab("materials");
       return;
+    }
+    if (mode === "execute" &&
+        (!accountSettings.defaultWipAccountId || !accountSettings.defaultRawInventoryAccountId)) {
+      toast({
+        title: "إعداد الحسابات مطلوب قبل البدء",
+        description: "حدّد حساب إنتاج تحت التشغيل WIP وحساب مخزون الخامات في قسم إعداد حسابات التصنيع داخل تبويب الموارد ثم احفظهما.",
+        variant: "destructive",
+      });
+      setTab("resources");
+      return;
+    }
+
+    const configuredSettings = catalog.accounting?.settings;
+    const accountingChanged = mode === "execute" && (
+      String(configuredSettings?.defaultWipAccountId ?? "") !== accountSettings.defaultWipAccountId ||
+      String(configuredSettings?.defaultRawInventoryAccountId ?? "") !== accountSettings.defaultRawInventoryAccountId ||
+      String(configuredSettings?.defaultFinishedGoodsAccountId ?? "") !== accountSettings.defaultFinishedGoodsAccountId
+    );
+    if (accountingChanged) {
+      try {
+        await onSaveAccounting({
+          defaultWipAccountId: accountSettings.defaultWipAccountId ? Number(accountSettings.defaultWipAccountId) : null,
+          defaultRawInventoryAccountId: accountSettings.defaultRawInventoryAccountId ? Number(accountSettings.defaultRawInventoryAccountId) : null,
+          defaultFinishedGoodsAccountId: accountSettings.defaultFinishedGoodsAccountId ? Number(accountSettings.defaultFinishedGoodsAccountId) : null,
+        });
+      } catch {
+        setTab("resources");
+        return;
+      }
     }
 
     const payload = {
@@ -273,7 +326,24 @@ export function SimpleWizard({
       })
     };
 
-    void onSubmit(mode, payload);
+    await onSubmit(mode, payload);
+  };
+
+  const saveAccounting = async () => {
+    if (!accountSettings.defaultWipAccountId || !accountSettings.defaultRawInventoryAccountId) {
+      toast({
+        title: "حسابات الترحيل ناقصة",
+        description: "حساب WIP وحساب مخزون الخامات مطلوبان لبدء الإنتاج.",
+        variant: "destructive",
+      });
+      return;
+    }
+    await onSaveAccounting({
+      defaultWipAccountId: Number(accountSettings.defaultWipAccountId),
+      defaultRawInventoryAccountId: Number(accountSettings.defaultRawInventoryAccountId),
+      defaultFinishedGoodsAccountId: accountSettings.defaultFinishedGoodsAccountId
+        ? Number(accountSettings.defaultFinishedGoodsAccountId) : null,
+    });
   };
 
   const calculateAllocatedTotal = () => {
@@ -316,6 +386,10 @@ export function SimpleWizard({
     { id: "costs" as const, label: "التكاليف", icon: Calculator },
     { id: "review" as const, label: "المراجعة", icon: CheckCircle2 }
   ];
+  const accountingAccounts = (catalog.accounting?.accounts ?? [])
+    .filter(account => account.accountType === "asset");
+  const hasRequiredAccounting =
+    !!accountSettings.defaultWipAccountId && !!accountSettings.defaultRawInventoryAccountId;
 
   return (
     <div className="space-y-4">
@@ -541,6 +615,75 @@ export function SimpleWizard({
 
           {tab === "resources" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+              <Card className="border-amber-200 bg-amber-50/40 shadow-none">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base text-amber-900">إعداد حسابات ترحيل التصنيع</CardTitle>
+                  <CardDescription className="text-amber-800">
+                    تُستخدم حسابات الشركة الموجودة فقط. حفظ المسودة لا يرحّل قيداً ولا يحتاج حساب WIP؛ يلزم حفظ حساب WIP وحساب مخزون الخامات قبل بدء الإنتاج.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-3 space-y-4">
+                  {accountingAccounts.length === 0 ? (
+                    <div className="rounded-lg border border-amber-300 bg-white p-3 text-sm text-amber-900">
+                      لا توجد حسابات ترحيل نشطة في دليل حسابات الشركة. أضف حسابات قابلة للترحيل من دليل الحسابات ثم عد إلى هنا.
+                    </div>
+                  ) : (
+                    <div className="grid md:grid-cols-3 gap-4">
+                      {[
+                        {
+                          key: "defaultWipAccountId" as const,
+                          label: "حساب إنتاج تحت التشغيل WIP",
+                          required: true,
+                        },
+                        {
+                          key: "defaultRawInventoryAccountId" as const,
+                          label: "حساب مخزون الخامات",
+                          required: true,
+                        },
+                        {
+                          key: "defaultFinishedGoodsAccountId" as const,
+                          label: "حساب مخزون الإنتاج التام (اختياري)",
+                          required: false,
+                        },
+                      ].map(field => (
+                        <div key={field.key} className="space-y-2">
+                          <Label>{field.label} {field.required && <span className="text-red-500">*</span>}</Label>
+                          <select
+                            className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm"
+                            value={accountSettings[field.key]}
+                            onChange={e => setAccountSettings(current => ({
+                              ...current,
+                              [field.key]: e.target.value,
+                            }))}
+                          >
+                            <option value="">اختر حساباً من دليل الشركة...</option>
+                            {accountingAccounts.map(account => (
+                              <option key={account.id} value={account.id}>
+                                {account.code} — {account.nameAr}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-amber-200 pt-3">
+                    <p className="text-xs text-amber-800">
+                      اختيارات المخازن أدناه تُحفظ مع أمر التصنيع نفسه، وليست إعداد مخزن مستقلاً.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void saveAccounting().catch(() => {})}
+                      disabled={busy || !canEdit || !hasRequiredAccounting || accountingAccounts.length === 0}
+                      className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+                    >
+                      <Save className="ml-2 h-4 w-4" />
+                      حفظ حسابات التصنيع
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>مخزن سحب الخامات <span className="text-red-500">*</span></Label>
@@ -721,6 +864,12 @@ export function SimpleWizard({
                     <div className="flex justify-between"><span className="text-slate-500">إيداع الإنتاج:</span> <span className="font-medium">{catalog.warehouses.find(w=>String(w.id)===form.finishedWarehouseId)?.nameAr || "—"}</span></div>
                      <div className="flex justify-between"><span className="text-slate-500">الوصفة:</span> <span className="font-medium">{bomPreview?.lines?.length ? "جاهزة للتحميل" : "بدون وصفة"}</span></div>
                     <div className="flex justify-between"><span className="text-slate-500">المراحل:</span> <span className="font-medium">{routingPreview?.stages?.length ? `${routingPreview.stages.length} مراحل` : "مباشر (خطوة واحدة)"}</span></div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">حسابات بدء الإنتاج:</span>
+                        <span className={`font-medium ${hasRequiredAccounting ? "text-emerald-700" : "text-amber-700"}`}>
+                          {hasRequiredAccounting ? "مضبوطة" : "تحتاج إعداداً في الموارد"}
+                        </span>
+                      </div>
                   </div>
                 </div>
                 <div className="border rounded-xl p-4 bg-violet-50/30">
@@ -753,17 +902,6 @@ export function SimpleWizard({
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t">
-                <Button variant="outline" size="lg" className="flex-1 text-slate-600" onClick={onCancel}>
-                  إلغاء
-                </Button>
-                <Button variant="secondary" size="lg" className="flex-1 bg-slate-100 hover:bg-slate-200" disabled={busy || !canCreate} onClick={() => submit("draft")}>
-                  <Save className="mr-2 h-5 w-5" /> حفظ كمسودة
-                </Button>
-                <Button size="lg" className="flex-[2] bg-violet-600 hover:bg-violet-700 text-white shadow-md" disabled={busy || !canCreate || !canPost} onClick={() => submit("execute")}>
-                  <Play className="mr-2 h-5 w-5" /> حفظ وبدء الإنتاج فوراً
-                </Button>
-              </div>
                    </>
                  );
                })()}
@@ -771,6 +909,50 @@ export function SimpleWizard({
           )}
         </CardContent>
       </Card>
+      <div className="sticky bottom-3 z-10 flex flex-col gap-3 rounded-xl border bg-white/95 p-3 shadow-lg backdrop-blur sm:flex-row sm:items-center">
+        <Button variant="outline" className="sm:ml-auto" onClick={onCancel} disabled={busy}>
+          إلغاء
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setTab(steps[Math.max(0, steps.findIndex(step => step.id === tab) - 1)]!.id)}
+          disabled={busy || tab === "basic"}
+        >
+          السابق
+        </Button>
+        {tab !== "review" && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setTab(steps[Math.min(steps.length - 1, steps.findIndex(step => step.id === tab) + 1)]!.id)}
+            disabled={busy}
+          >
+            التالي
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => void submit("draft")}
+          disabled={busy || !canCreate}
+        >
+          <Save className="ml-2 h-4 w-4" />
+          حفظ مسودة
+        </Button>
+        <Button
+          type="button"
+          className="bg-violet-600 text-white shadow-md hover:bg-violet-700"
+          onClick={() => {
+            if (tab !== "review") setTab("review");
+            else void submit("execute");
+          }}
+          disabled={busy || !canCreate || !canPost}
+        >
+          <Play className="ml-2 h-4 w-4" />
+          مراجعة وبدء الإنتاج
+        </Button>
+      </div>
     </div>
   );
 }

@@ -47,6 +47,21 @@ export type Catalog = {
       workCenterId?: number | null;
     }>;
   }>;
+  accounting?: {
+    settings: {
+      defaultWipAccountId?: number | null;
+      defaultRawInventoryAccountId?: number | null;
+      defaultFinishedGoodsAccountId?: number | null;
+    } | null;
+    accounts: Array<{
+      id: number;
+      code: string;
+      nameAr: string;
+      nameEn?: string | null;
+      accountType?: string | null;
+      isPosting?: boolean;
+    }>;
+  };
 };
 
 export type Order = {
