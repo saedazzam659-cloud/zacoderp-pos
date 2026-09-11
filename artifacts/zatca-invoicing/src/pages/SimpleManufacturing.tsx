@@ -1,364 +1,373 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { Link } from "wouter";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Factory, Plus, RefreshCw, ChevronLeft, Save, Play, Pause,
-  RotateCcw, Settings2, FileText, Boxes, GitBranch,
-} from "lucide-react";
+import { usePermission } from "@/hooks/usePermission";
+import { Factory, RefreshCw, Boxes, Plus, Settings2, FileText } from "lucide-react";
+import type { Catalog, Order } from "./simple-manufacturing/types";
+import { SimpleOrderList } from "./simple-manufacturing/SimpleList";
+import { SimpleWizard } from "./simple-manufacturing/SimpleWizard";
+import { SimpleSetup } from "./simple-manufacturing/SimpleSetup";
+import { SimpleReports } from "./simple-manufacturing/SimpleReports";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Catalog = {
-  items: Array<{ id: number; code: string; nameAr: string; itemNature?: string }>;
-  warehouses: Array<{ id: number; code: string; nameAr: string; branchId?: number | null; isDefault?: boolean }>;
-  templates: Array<{ id: number; name: string; configuration: Record<string, any> }>;
-  routings: Array<{ id: number; productItemId: number | null; nameAr: string }>;
-};
-type Order = {
-  id: number; orderNumber: string; title: string; status: string;
-  plannedQty: string | number; producedQty: string | number;
-  estimatedCost: string | number; actualCost: string | number;
-  productItemId: number | null; plannedStartDate?: string | null;
-};
-
-function statusLabel(status: string) {
-  return ({
-    draft: "مسودة", approved: "معتمد", in_production: "قيد الإنتاج",
-    paused: "متوقف مؤقتاً", quality_check: "فحص الجودة", completed: "مكتمل",
-    cancelled: "ملغى", reversed: "معكوس",
-  } as Record<string, string>)[status] ?? status;
-}
-
-function nextStatus(status: string): string | null {
-  return ({
-    draft: "approved", approved: "in_production", in_production: "completed",
-    paused: "in_production", quality_check: "completed",
-  } as Record<string, string>)[status] ?? null;
-}
-
 export default function SimpleManufacturing() {
-  const { token } = useAuth();
+  const { token, user, actingCompanyId } = useAuth();
   const { toast } = useToast();
-  const [catalog, setCatalog] = useState<Catalog>({ items: [], warehouses: [], templates: [], routings: [] });
+
+  const emptyCatalog = (): Catalog => ({ items: [], warehouses: [], templates: [], routings: [] });
+  const [catalog, setCatalog] = useState<Catalog>(() => emptyCatalog());
   const [orders, setOrders] = useState<Order[]>([]);
-  const [selected, setSelected] = useState<any>(null);
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [sourceCosts, setSourceCosts] = useState<any[]>([]);
+  const [costDrilldown, setCostDrilldown] = useState<any>(null);
+
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("orders");
-  const [form, setForm] = useState({
-    title: "", productItemId: "", plannedQty: "1", rawWarehouseId: "", finishedWarehouseId: "",
-    plannedStartDate: new Date().toISOString().slice(0, 10), templateId: "",
-  });
-  const [bom, setBom] = useState({ productItemId: "", nameAr: "", itemId: "", quantity: "1" });
-  const [material, setMaterial] = useState({ code: "", nameAr: "", itemNature: "raw" });
-  const [warehouse, setWarehouse] = useState({ code: "", nameAr: "", isDefault: false });
-  const [routing, setRouting] = useState({ productItemId: "", nameAr: "", stage: "" });
-  const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1" });
+  const loadRequestRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
+  const orderRequestRef = useRef(0);
+  const orderAbortRef = useRef<AbortController | null>(null);
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token ?? ""}`,
     "Content-Type": "application/json",
-  }), [token]);
+    ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+  }), [token, actingCompanyId]);
 
-  const request = useCallback(async (path: string, init?: RequestInit) => {
-    const response = await fetch(`${API}${path}`, { ...init, headers: { ...headers, ...(init?.headers ?? {}) } });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || "تعذر إتمام العملية");
+  const request = useCallback(async (path: string, init: RequestInit = {}) => {
+    const response = await fetch(`${API}${path}`, {
+      ...init,
+      headers: { ...headers, ...(init.headers ?? {}) },
+    });
+    const text = await response.text();
+    let body: any = null;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        throw new Error(response.ok ? "استجابة غير صالحة من الخادم" : `HTTP ${response.status}`);
+      }
+    }
+    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
     return body;
   }, [headers]);
 
   const load = useCallback(async () => {
-    const [nextCatalog, nextOrders] = await Promise.all([
-      request("/api/simple-manufacturing/catalog"),
-      request("/api/simple-manufacturing/orders"),
-    ]);
-    setCatalog(nextCatalog);
-    setOrders(Array.isArray(nextOrders) ? nextOrders : []);
-    setForm(current => ({
-      ...current,
-      rawWarehouseId: current.rawWarehouseId || String(nextCatalog.warehouses[0]?.id ?? ""),
-      finishedWarehouseId: current.finishedWarehouseId || String(nextCatalog.warehouses[0]?.id ?? ""),
-      productItemId: current.productItemId || String(nextCatalog.items[0]?.id ?? ""),
-    }));
-  }, [request]);
-
-  useEffect(() => { void load().catch(e => toast({ title: e.message, variant: "destructive" })); }, [load, toast]);
-
-  const mutate = async (fn: () => Promise<unknown>, success: string) => {
+    const requestId = ++loadRequestRef.current;
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
     setBusy(true);
     try {
-      await fn();
+      const [nextCatalog, nextOrders] = await Promise.all([
+        request("/api/simple-manufacturing/catalog", { signal: controller.signal }),
+        request("/api/simple-manufacturing/orders", { signal: controller.signal }),
+      ]);
+      if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
+      if (!nextCatalog || typeof nextCatalog !== "object" ||
+          !Array.isArray(nextCatalog.items) ||
+          !Array.isArray(nextCatalog.warehouses) ||
+          !Array.isArray(nextCatalog.templates) ||
+          !Array.isArray(nextCatalog.routings)) {
+        throw new Error("استجابة كتالوج التصنيع غير صالحة");
+      }
+      setCatalog(nextCatalog);
+      if (!Array.isArray(nextOrders)) throw new Error("استجابة أوامر التصنيع غير صالحة");
+      setOrders(nextOrders);
+    } catch (e: any) {
+      if (e?.name !== "AbortError" && requestId === loadRequestRef.current) {
+        toast({ title: e.message, variant: "destructive" });
+      }
+    } finally {
+      if (requestId === loadRequestRef.current) setBusy(false);
+    }
+  }, [request, toast]);
+
+  // The same page can stay mounted while a SuperAdmin changes the acting
+  // tenant. Clear all local screen state before loading the new tenant so a
+  // late response can never leak the previous company's catalog/order data.
+  const tenantScope = `${user?.id ?? "anonymous"}:${user?.companyId ?? ""}:${actingCompanyId ?? ""}`;
+  const tenantScopeRef = useRef(tenantScope);
+  tenantScopeRef.current = tenantScope;
+  useEffect(() => {
+    loadRequestRef.current += 1;
+    loadAbortRef.current?.abort();
+    orderRequestRef.current += 1;
+    orderAbortRef.current?.abort();
+    setCatalog(emptyCatalog());
+    setOrders([]);
+    setSelectedOrder(null);
+    setSourceCosts([]);
+    setCostDrilldown(null);
+    void load();
+    return () => {
+      loadRequestRef.current += 1;
+      loadAbortRef.current?.abort();
+      orderRequestRef.current += 1;
+      orderAbortRef.current?.abort();
+    };
+  }, [load, tenantScope]);
+
+  const mutate = async (fn: () => Promise<unknown>, success: string) => {
+    const mutationScope = tenantScopeRef.current;
+    setBusy(true);
+    try {
+      const result = await fn();
+      if (mutationScope !== tenantScopeRef.current) return;
       await load();
+      if (mutationScope !== tenantScopeRef.current) return;
       toast({ title: success });
+      return result;
     } catch (e: any) {
       toast({ title: e.message, variant: "destructive" });
+      throw e;
     } finally {
-      setBusy(false);
+      if (mutationScope === tenantScopeRef.current) setBusy(false);
     }
   };
 
   const openOrder = async (order: Order) => {
+    const requestId = ++orderRequestRef.current;
+    orderAbortRef.current?.abort();
+    const controller = new AbortController();
+    orderAbortRef.current = controller;
     try {
-      const [detail, costs] = await Promise.all([
-        request(`/api/simple-manufacturing/orders/${order.id}`),
-        request(`/api/simple-manufacturing/orders/${order.id}/source-costs`),
+      const [detail, costs, drilldown] = await Promise.all([
+        request(`/api/simple-manufacturing/orders/${order.id}`, { signal: controller.signal }),
+        request(`/api/simple-manufacturing/orders/${order.id}/source-costs`, { signal: controller.signal }),
+        request(`/api/simple-manufacturing/orders/${order.id}/cost-drilldown`, { signal: controller.signal }),
       ]);
-      setSelected({ ...detail.order, detail });
-      setSourceCosts(Array.isArray(costs) ? costs : []);
+      if (requestId !== orderRequestRef.current || controller.signal.aborted) return;
+      if (!detail?.order) throw new Error("استجابة تفاصيل أمر التصنيع غير صالحة");
+      if (!Array.isArray(costs)) throw new Error("استجابة مصادر تكلفة الأمر غير صالحة");
+      setSelectedOrder({ ...detail.order, detail });
+      setSourceCosts(costs);
+      setCostDrilldown(drilldown);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e: any) {
-      toast({ title: e.message, variant: "destructive" });
+      if (e?.name !== "AbortError" && requestId === orderRequestRef.current) {
+        toast({ title: e.message, variant: "destructive" });
+      }
     }
   };
 
-  const createOrder = () => mutate(async () => {
-    const productItemId = Number(form.productItemId);
-    const title = form.title.trim() || `تشغيل ${catalog.items.find(i => i.id === productItemId)?.nameAr || ""}`.trim();
-    const row = await request("/api/simple-manufacturing/orders", {
-      method: "POST",
-      body: JSON.stringify({
-        ...form, title, productItemId, plannedQty: Number(form.plannedQty),
-        rawWarehouseId: Number(form.rawWarehouseId), finishedWarehouseId: Number(form.finishedWarehouseId),
-        templateId: form.templateId || undefined,
-        wizardRequestId: `simple-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      }),
-    });
-    setSelected(row);
-    setTab("orders");
-  }, "تم إنشاء أمر التصنيع");
+  const closeOrder = () => {
+    orderRequestRef.current += 1;
+    orderAbortRef.current?.abort();
+    setSelectedOrder(null);
+    setSourceCosts([]);
+    setCostDrilldown(null);
+  };
 
   const changeStatus = (order: Order, target: string) => mutate(async () => {
     const row = await request(`/api/simple-manufacturing/orders/${order.id}/status`, {
       method: "POST", body: JSON.stringify({ status: target }),
     });
-    setSelected(row);
-  }, `تم تحديث الحالة إلى ${statusLabel(target)}`);
+    setSelectedOrder(row);
+  }, `تم تحديث الحالة`);
 
-  const deleteOrder = (order: Order) => mutate(async () => {
+  const deleteDraft = (order: Order) => mutate(async () => {
     await request(`/api/simple-manufacturing/orders/${order.id}`, { method: "DELETE" });
-    setSelected(null);
+    setSelectedOrder(null);
     setSourceCosts([]);
   }, "تم حذف المسودة");
 
-  const saveBom = () => mutate(async () => {
-    await request("/api/simple-manufacturing/setup/bom", {
+  // Wizard Submit
+  const handleWizardSubmit = async (mode: "draft" | "execute", payload: any) => {
+    const submissionScope = tenantScopeRef.current;
+    setBusy(true);
+    try {
+      const j = await request("/api/simple-manufacturing/orders/wizard", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      let finalOrder = j;
+
+      if (mode === "execute") {
+        let status = j.status;
+        if (status === "draft") {
+          const approve = await request(`/api/simple-manufacturing/orders/${j.id}/status`, {
+            method: "POST", body: JSON.stringify({ status: "approved" })
+          });
+          status = approve.status;
+        }
+        if (status === "approved") {
+          finalOrder = await request(`/api/simple-manufacturing/orders/${j.id}/status`, {
+            method: "POST", body: JSON.stringify({ status: "in_production" })
+          });
+        }
+      }
+
+      if (submissionScope !== tenantScopeRef.current) return;
+      await load();
+      if (submissionScope !== tenantScopeRef.current) return;
+      toast({ title: mode === "execute" ? "تم إنشاء الأمر وبدء الإنتاج" : "تم حفظ المسودة بنجاح" });
+      setTab("orders");
+      await openOrder(finalOrder);
+    } catch (e: any) {
+      toast({ title: e?.message || "حدث خطأ أثناء الحفظ", variant: "destructive" });
+    } finally {
+      if (submissionScope === tenantScopeRef.current) setBusy(false);
+    }
+  };
+
+  // Setup Mutations
+  const handleSaveMaterial = async (data: any) => {
+    // Raw/consumable stock is created through the materials endpoint; only
+    // finished/semi/merchandise items use the product alias.
+    const setupPath = ["finished", "semi", "merchandise"].includes(data.itemNature)
+      ? "/api/simple-manufacturing/setup/products"
+      : "/api/simple-manufacturing/setup/materials";
+    return mutate(() => request(setupPath, {
+      method: "POST", body: JSON.stringify(data),
+    }), "تمت إضافة الصنف بنجاح");
+  };
+
+  const handleSaveBom = async (data: any) => {
+    const lines = Array.isArray(data.lines) ? data.lines : [{
+      itemId: data.itemId,
+      quantity: data.quantity,
+    }];
+    return mutate(() => request("/api/simple-manufacturing/setup/bom", {
       method: "POST",
       body: JSON.stringify({
-        productItemId: Number(bom.productItemId), nameAr: bom.nameAr || "قائمة مواد مبسطة",
-        lines: [{ itemId: Number(bom.itemId), quantity: Number(bom.quantity), description: "مادة خام" }],
+        productItemId: Number(data.productItemId), nameAr: data.nameAr || "قائمة مكونات",
+        outputQty: Number(data.outputQty) > 0 ? Number(data.outputQty) : 1,
+        outputUnitCode: data.outputUnitCode || "PCE",
+        lines: lines.map((line: any) => ({
+          itemId: Number(line.itemId),
+          quantity: Number(line.quantity),
+          description: line.description || "مادة خام",
+          unitCode: line.unitCode || "PCE",
+        })),
       }),
-    });
-  }, "تم حفظ قائمة المواد");
+    }), "تم حفظ الوصفة");
+  };
 
-  const saveMaterial = () => mutate(async () => {
-    const row = await request("/api/simple-manufacturing/setup/products", {
-      method: "POST", body: JSON.stringify(material),
-    });
-    setMaterial({ code: "", nameAr: "", itemNature: "raw" });
-    setBom(current => ({ ...current, itemId: String(row.id) }));
-  }, "تمت إضافة المادة");
-
-  const saveWarehouse = () => mutate(async () => {
-    await request("/api/simple-manufacturing/setup/warehouses", {
-      method: "POST", body: JSON.stringify(warehouse),
-    });
-    setWarehouse({ code: "", nameAr: "", isDefault: false });
-  }, "تمت إضافة المخزن");
-
-  const saveRouting = () => mutate(async () => {
-    await request("/api/simple-manufacturing/setup/routing", {
+  const handleSaveRouting = async (data: any) => {
+    return mutate(() => request("/api/simple-manufacturing/setup/routing", {
       method: "POST",
       body: JSON.stringify({
-        productItemId: Number(routing.productItemId), nameAr: routing.nameAr || "مسار مبسط",
-        stages: [{ nameAr: routing.stage || "مرحلة الإنتاج", code: "S1" }],
+        productItemId: Number(data.productItemId), nameAr: data.nameAr || "مسار مبسط",
+        stages: [{ nameAr: data.stage || "مرحلة الإنتاج", code: "S1", expectedCost: 0, expectedWasteRatio: 0 }],
       }),
-    });
-  }, "تم حفظ مسار الإنتاج");
+    }), "تم حفظ مسار الإنتاج");
+  };
 
-  const saveTemplate = () => mutate(async () => {
-    await request("/api/simple-manufacturing/templates", {
+  const handleSaveTemplate = async (data: any) => {
+    return mutate(() => request("/api/simple-manufacturing/templates", {
       method: "POST",
       body: JSON.stringify({
-        name: template.name || "قالب تصنيع مبسط",
+        name: data.name || "قالب تصنيع",
         configuration: {
-          productItemId: Number(template.productItemId),
-          plannedQty: Number(template.plannedQty),
-          rawWarehouseId: Number(form.rawWarehouseId),
-          finishedWarehouseId: Number(form.finishedWarehouseId),
+          productItemId: Number(data.productItemId),
+          plannedQty: Number(data.plannedQty),
         },
       }),
-    });
-  }, "تم حفظ القالب");
+    }), "تم حفظ القالب");
+  };
 
-  const productName = (id: number | null) => catalog.items.find(i => i.id === id)?.nameAr || "—";
-  const selectedOrder = selected ? (orders.find(o => o.id === selected.id) ?? selected) : null;
+  const canCreate = usePermission("simple_manufacturing", "create");
+  const canEdit = usePermission("simple_manufacturing", "edit");
+  const canDelete = usePermission("simple_manufacturing", "delete");
+  const canPost = usePermission("simple_manufacturing", "post");
+  const canUnpost = usePermission("simple_manufacturing", "unpost");
+
+  const handleSaveWarehouse = async (data: any) => {
+    return mutate(() => request("/api/simple-manufacturing/setup/warehouses", {
+      method: "POST", body: JSON.stringify(data),
+    }), "تمت إضافة المخزن");
+  };
 
   return (
-    <div dir="rtl" className="space-y-5 pb-10">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 p-3 text-white shadow-lg">
-            <Factory className="h-6 w-6" />
+    <div dir="rtl" className="space-y-6 pb-12 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between gap-4 flex-wrap bg-white p-6 rounded-2xl border shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 p-3.5 text-white shadow-lg shadow-violet-200">
+            <Factory className="h-7 w-7" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">التصنيع المبسط</h1>
-            <p className="text-sm text-muted-foreground">قائمة الأوامر، الإنشاء، التفاصيل والإعداد داخل شاشة واحدة</p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">التصنيع المبسط</h1>
+            <p className="text-sm text-slate-500 mt-1">إدارة أوامر التشغيل، التكاليف، وإعدادات الورشة من شاشة واحدة.</p>
           </div>
         </div>
-        <Button variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className="ml-2 h-4 w-4" />تحديث</Button>
+        <Button variant="outline" onClick={() => void load()} disabled={busy} className="bg-slate-50">
+          <RefreshCw className={`ml-2 h-4 w-4 ${busy ? "animate-spin" : ""}`} />
+          تحديث البيانات
+        </Button>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="orders"><Boxes className="ml-2 h-4 w-4" />الأوامر</TabsTrigger>
-          <TabsTrigger value="new"><Plus className="ml-2 h-4 w-4" />أمر جديد</TabsTrigger>
-          <TabsTrigger value="setup"><Settings2 className="ml-2 h-4 w-4" />الإعداد</TabsTrigger>
-          <TabsTrigger value="reports"><FileText className="ml-2 h-4 w-4" />التقارير</TabsTrigger>
+      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+        <TabsList className="flex w-full overflow-x-auto no-scrollbar bg-white border p-1 h-14 rounded-xl shadow-sm">
+          <TabsTrigger value="orders" className="flex-1 rounded-lg text-base h-11 data-[state=active]:bg-violet-50 data-[state=active]:text-violet-700 data-[state=active]:shadow-sm">
+            <Boxes className="ml-2 h-4 w-4" />
+            سجل الأوامر
+          </TabsTrigger>
+          <TabsTrigger value="new" className="flex-1 rounded-lg text-base h-11 data-[state=active]:bg-violet-600 data-[state=active]:text-white data-[state=active]:shadow-sm">
+            <Plus className="ml-2 h-4 w-4" />
+            أمر تصنيع جديد
+          </TabsTrigger>
+          <TabsTrigger value="setup" className="flex-1 rounded-lg text-base h-11 data-[state=active]:bg-violet-50 data-[state=active]:text-violet-700 data-[state=active]:shadow-sm">
+            <Settings2 className="ml-2 h-4 w-4" />
+            الإعدادات
+          </TabsTrigger>
+          <TabsTrigger value="reports" className="flex-1 rounded-lg text-base h-11 data-[state=active]:bg-violet-50 data-[state=active]:text-violet-700 data-[state=active]:shadow-sm">
+            <FileText className="ml-2 h-4 w-4" />
+            التقارير المجمعة
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="orders" className="space-y-4">
-          {selectedOrder && (
-            <Card className="border-violet-200 shadow-sm">
-              <CardHeader className="flex-row items-center justify-between">
-                <CardTitle>تفاصيل {selectedOrder.orderNumber}</CardTitle>
-                <Button variant="ghost" size="sm" onClick={() => setSelected(null)}><ChevronLeft className="ml-1 h-4 w-4" />إخفاء</Button>
-              </CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-4 text-sm">
-                <div><span className="text-muted-foreground">المنتج</span><div className="font-semibold">{productName(selectedOrder.productItemId)}</div></div>
-                <div><span className="text-muted-foreground">الكمية</span><div className="font-semibold">{selectedOrder.plannedQty}</div></div>
-                <div><span className="text-muted-foreground">التكلفة التقديرية</span><div className="font-semibold">{selectedOrder.estimatedCost ?? 0}</div></div>
-                <div><span className="text-muted-foreground">الحالة</span><div><Badge>{statusLabel(selectedOrder.status)}</Badge></div></div>
-                <div className="md:col-span-4 flex gap-2 flex-wrap pt-2">
-                  {nextStatus(selectedOrder.status) && <Button disabled={busy} onClick={() => changeStatus(selectedOrder, nextStatus(selectedOrder.status)!)}>
-                    <Play className="ml-2 h-4 w-4" />{statusLabel(nextStatus(selectedOrder.status)!)}
-                  </Button>}
-                  {selectedOrder.status === "in_production" && <Button variant="outline" disabled={busy} onClick={() => changeStatus(selectedOrder, "paused")}><Pause className="ml-2 h-4 w-4" />إيقاف مؤقت</Button>}
-                  {selectedOrder.status === "completed" && <Button variant="destructive" disabled={busy} onClick={() => changeStatus(selectedOrder, "reversed")}><RotateCcw className="ml-2 h-4 w-4" />عكس</Button>}
-                  {selectedOrder.status === "draft" && <Button variant="destructive" disabled={busy} onClick={() => deleteOrder(selectedOrder)}>حذف المسودة</Button>}
-                </div>
-                <div className="md:col-span-4 rounded-lg border p-3">
-                  <div className="mb-2 font-medium">روابط مصادر التكلفة</div>
-                  {sourceCosts.length ? sourceCosts.map(source => (
-                    <div key={source.id} className="flex justify-between border-b py-1 last:border-0">
-                      <span>{source.sourceType} #{source.sourceRecordId}</span><b>{source.allocatedAmount}</b>
-                    </div>
-                  )) : <span className="text-muted-foreground">لا توجد توزيعات مصادر تكلفة لهذا الأمر</span>}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          <Card>
-            <CardHeader><CardTitle>أوامر التصنيع</CardTitle></CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="border-b text-right"><th className="p-2">الرقم</th><th className="p-2">المنتج</th><th className="p-2">الكمية</th><th className="p-2">الحالة</th><th className="p-2" /></tr></thead>
-                  <tbody>{orders.map(order => <tr key={order.id} className="border-b hover:bg-muted/40">
-                    <td className="p-2 font-medium">{order.orderNumber}</td><td className="p-2">{productName(order.productItemId)}</td>
-                    <td className="p-2">{order.plannedQty}</td><td className="p-2"><Badge variant="outline">{statusLabel(order.status)}</Badge></td>
-                     <td className="p-2 text-left flex gap-1 justify-end">
-                       <Button size="sm" variant="ghost" onClick={() => void openOrder(order)}>التفاصيل</Button>
-                       <Link href={`/simple-manufacturing/orders/${order.id}`}><Button size="sm" variant="outline">دورة الحياة</Button></Link>
-                     </td>
-                  </tr>)}</tbody>
-                </table>
-                {!orders.length && <div className="py-12 text-center text-muted-foreground">لا توجد أوامر بعد</div>}
-              </div>
-            </CardContent>
-          </Card>
+        <TabsContent value="orders" className="mt-0">
+          <SimpleOrderList
+            orders={orders}
+            catalog={catalog}
+            busy={busy}
+            selectedOrder={selectedOrder}
+            sourceCosts={sourceCosts}
+             costDrilldown={costDrilldown}
+             canPost={canPost}
+             canUnpost={canUnpost}
+             canDelete={canDelete}
+            onOpenOrder={openOrder}
+             onCloseOrder={closeOrder}
+            onChangeStatus={changeStatus}
+            onDeleteDraft={deleteDraft}
+          />
         </TabsContent>
 
-        <TabsContent value="new">
-          <Card><CardHeader><CardTitle>إنشاء أمر تصنيع مبسط</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2">
-            <label>العنوان<Input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="تشغيل إنتاج جديد" /></label>
-            <label>قالب جاهز<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.templateId} onChange={e => {
-              const value = e.target.value;
-              const chosen = catalog.templates.find(t => String(t.id) === value);
-              const configuration = chosen?.configuration || {};
-              setForm({
-                ...form, templateId: value,
-                productItemId: configuration.productItemId ? String(configuration.productItemId) : form.productItemId,
-                plannedQty: configuration.plannedQty ? String(configuration.plannedQty) : form.plannedQty,
-                rawWarehouseId: configuration.rawWarehouseId ? String(configuration.rawWarehouseId) : form.rawWarehouseId,
-                finishedWarehouseId: configuration.finishedWarehouseId ? String(configuration.finishedWarehouseId) : form.finishedWarehouseId,
-              });
-            }}><option value="">بدون قالب</option>{catalog.templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
-            <label>المنتج النهائي<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.productItemId} onChange={e => setForm({ ...form, productItemId: e.target.value })}>{catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr} — {i.code}</option>)}</select></label>
-            <label>الكمية<Input inputMode="decimal" value={form.plannedQty} onChange={e => setForm({ ...form, plannedQty: e.target.value })} /></label>
-            <label>تاريخ البدء<Input type="date" value={form.plannedStartDate} onChange={e => setForm({ ...form, plannedStartDate: e.target.value })} /></label>
-            <label>مخزن الخامات<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.rawWarehouseId} onChange={e => setForm({ ...form, rawWarehouseId: e.target.value })}>{catalog.warehouses.map(w => <option key={w.id} value={w.id}>{w.nameAr} — {w.code}</option>)}</select></label>
-            <label>مخزن الإنتاج التام<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.finishedWarehouseId} onChange={e => setForm({ ...form, finishedWarehouseId: e.target.value })}>{catalog.warehouses.map(w => <option key={w.id} value={w.id}>{w.nameAr} — {w.code}</option>)}</select></label>
-            <div className="md:col-span-2 flex justify-end"><Button disabled={busy || !form.productItemId} onClick={createOrder}><Plus className="ml-2 h-4 w-4" />إنشاء الأمر</Button></div>
-          </CardContent></Card>
+        <TabsContent value="new" className="mt-0">
+          <SimpleWizard
+             key={tenantScope}
+            token={token || ""}
+            catalog={catalog}
+            busy={busy}
+            onSubmit={handleWizardSubmit}
+            onCancel={() => setTab("orders")}
+          />
         </TabsContent>
 
-        <TabsContent value="setup" className="grid gap-4 lg:grid-cols-4">
-          <Card><CardHeader><CardTitle><Boxes className="ml-2 inline h-4 w-4" />المواد وقائمة المكونات</CardTitle></CardHeader><CardContent className="space-y-3">
-            <div className="rounded-lg border border-dashed p-3">
-              <div className="mb-2 text-sm font-medium">إضافة مادة خام</div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Input value={material.code} onChange={e => setMaterial({ ...material, code: e.target.value })} placeholder="رمز المادة" />
-                <Input value={material.nameAr} onChange={e => setMaterial({ ...material, nameAr: e.target.value })} placeholder="اسم المادة" />
-                <select className="rounded-md border bg-background p-2" value={material.itemNature} onChange={e => setMaterial({ ...material, itemNature: e.target.value })}>
-                  <option value="raw">مادة خام</option><option value="semi">نصف مصنعة</option>
-                  <option value="finished">منتج نهائي</option><option value="consumable">مستهلك</option>
-                </select>
-              </div>
-              <Button variant="outline" size="sm" className="mt-2 w-full" disabled={busy || !material.code || !material.nameAr} onClick={saveMaterial}><Plus className="ml-2 h-4 w-4" />إضافة الصنف</Button>
-            </div>
-            <select className="w-full rounded-md border bg-background p-2" value={bom.productItemId} onChange={e => setBom({ ...bom, productItemId: e.target.value })}><option value="">المنتج النهائي</option>{catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}</select>
-            <Input value={bom.nameAr} onChange={e => setBom({ ...bom, nameAr: e.target.value })} placeholder="اسم القائمة" />
-            <select className="w-full rounded-md border bg-background p-2" value={bom.itemId} onChange={e => setBom({ ...bom, itemId: e.target.value })}><option value="">المادة الخام</option>{catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}</select>
-            <Input value={bom.quantity} onChange={e => setBom({ ...bom, quantity: e.target.value })} placeholder="الكمية" />
-            <Button className="w-full" disabled={busy || !bom.productItemId || !bom.itemId} onClick={saveBom}><Save className="ml-2 h-4 w-4" />حفظ قائمة المواد</Button>
-          </CardContent></Card>
-          <Card><CardHeader><CardTitle><GitBranch className="ml-2 inline h-4 w-4" />المسار والمراحل</CardTitle></CardHeader><CardContent className="space-y-3">
-            <select className="w-full rounded-md border bg-background p-2" value={routing.productItemId} onChange={e => setRouting({ ...routing, productItemId: e.target.value })}><option value="">المنتج</option>{catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}</select>
-            <Input value={routing.nameAr} onChange={e => setRouting({ ...routing, nameAr: e.target.value })} placeholder="اسم المسار" />
-            <Input value={routing.stage} onChange={e => setRouting({ ...routing, stage: e.target.value })} placeholder="المرحلة الأولى" />
-            <Button className="w-full" disabled={busy || !routing.productItemId} onClick={saveRouting}><Save className="ml-2 h-4 w-4" />حفظ المسار</Button>
-          </CardContent></Card>
-          <Card><CardHeader><CardTitle><FileText className="ml-2 inline h-4 w-4" />قوالب التصنيع</CardTitle></CardHeader><CardContent className="space-y-3">
-            <Input value={template.name} onChange={e => setTemplate({ ...template, name: e.target.value })} placeholder="اسم القالب" />
-            <select className="w-full rounded-md border bg-background p-2" value={template.productItemId} onChange={e => setTemplate({ ...template, productItemId: e.target.value })}><option value="">المنتج</option>{catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}</select>
-            <Input value={template.plannedQty} onChange={e => setTemplate({ ...template, plannedQty: e.target.value })} placeholder="الكمية الافتراضية" />
-            <Button className="w-full" disabled={busy || !template.productItemId} onClick={saveTemplate}><Save className="ml-2 h-4 w-4" />حفظ القالب</Button>
-            <div className="space-y-1 text-xs text-muted-foreground">{catalog.templates.map(t => <div key={t.id} className="rounded bg-muted p-2">{t.name}</div>)}</div>
-          </CardContent></Card>
-           <Card><CardHeader><CardTitle><Boxes className="ml-2 inline h-4 w-4" />المخازن</CardTitle></CardHeader><CardContent className="space-y-3">
-             <Input value={warehouse.code} onChange={e => setWarehouse({ ...warehouse, code: e.target.value })} placeholder="رمز المخزن" />
-             <Input value={warehouse.nameAr} onChange={e => setWarehouse({ ...warehouse, nameAr: e.target.value })} placeholder="اسم المخزن" />
-             <label className="flex items-center gap-2 text-sm">
-               <input type="checkbox" checked={warehouse.isDefault} onChange={e => setWarehouse({ ...warehouse, isDefault: e.target.checked })} />
-               مخزن افتراضي
-             </label>
-             <Button className="w-full" disabled={busy || !warehouse.code || !warehouse.nameAr} onClick={saveWarehouse}><Save className="ml-2 h-4 w-4" />حفظ المخزن</Button>
-           </CardContent></Card>
+        <TabsContent value="setup" className="mt-0">
+          <SimpleSetup
+            catalog={catalog}
+            busy={busy}
+             canCreate={canCreate}
+             canEdit={canEdit}
+            onSaveMaterial={handleSaveMaterial}
+            onSaveBom={handleSaveBom}
+            onSaveRouting={handleSaveRouting}
+            onSaveTemplate={handleSaveTemplate}
+            onSaveWarehouse={handleSaveWarehouse}
+          />
         </TabsContent>
 
-        <TabsContent value="reports">
-          <SimpleManufacturingReport request={request} />
+        <TabsContent value="reports" className="mt-0">
+          <SimpleReports request={request} />
         </TabsContent>
       </Tabs>
     </div>
   );
-}
-
-function SimpleManufacturingReport({ request }: { request: (path: string, init?: RequestInit) => Promise<any> }) {
-  const [report, setReport] = useState<any>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    void request("/api/simple-manufacturing/reports").then(setReport).catch((e: any) => setError(e.message));
-  }, [request]);
-  if (error) return <Card><CardContent className="p-6 text-destructive">{error}</CardContent></Card>;
-  if (!report) return <Card><CardContent className="p-6 text-muted-foreground">جاري تحميل التقرير…</CardContent></Card>;
-  return <Card><CardHeader><CardTitle>تقرير تكلفة التصنيع</CardTitle></CardHeader><CardContent>
-    <div className="mb-4 grid gap-3 md:grid-cols-2"><div className="rounded-lg bg-muted p-3">التكلفة المعيارية: <b>{Number(report.totals.standardCost || 0).toFixed(2)}</b></div><div className="rounded-lg bg-muted p-3">التكلفة الفعلية: <b>{Number(report.totals.actualCost || 0).toFixed(2)}</b></div></div>
-    <div className="space-y-2">{(report.rows || []).map((row: any) => <div key={row.id} className="flex items-center justify-between rounded border p-2 text-sm"><span>{row.orderNumber} — {row.productName || row.title}</span><span>{statusLabel(row.status)} · {row.actualCost || 0}</span></div>)}</div>
-  </CardContent></Card>;
 }

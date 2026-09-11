@@ -303,7 +303,11 @@ async function validateItem(cid: number, id: number | null | undefined) {
   const [it] = await db
     .select({ id: itemsTable.id })
     .from(itemsTable)
-    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+    .where(and(
+      eq(itemsTable.id, id),
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.status, "active"),
+    ));
   if (!it) {
     const err: any = new Error(`الصنف رقم ${id} لا ينتمي إلى هذه الشركة`);
     err.status = 400;
@@ -555,7 +559,9 @@ async function loadPostedCostSources(
   const journalBranchResult = req
     ? effectiveBranchCondition(req, journalEntriesTable.branchId, requestedBranchId ?? undefined)
     : undefined;
-  if (journalBranchResult?.deny) return [];
+  if (journalBranchResult?.deny) {
+    throw Object.assign(new Error("لا يمكنك العمل على هذا الفرع"), { status: 403 });
+  }
   const journalBranch = journalBranchResult?.cond;
   const payroll = await q.select({
     id: payrollRunsTable.id, code: payrollRunsTable.code,
@@ -565,7 +571,10 @@ async function loadPostedCostSources(
     amount: sql<string>`coalesce(sum(${payrollAllocationSnapshotsTable.allocatedAmount}), 0)`,
   }).from(payrollRunsTable)
     .innerJoin(payrollAllocationSnapshotsTable, eq(payrollAllocationSnapshotsTable.payrollRunId, payrollRunsTable.id))
-    .innerJoin(journalEntriesTable, eq(payrollRunsTable.postedJournalId, journalEntriesTable.id))
+    .innerJoin(journalEntriesTable, and(
+      eq(payrollRunsTable.postedJournalId, journalEntriesTable.id),
+      eq(journalEntriesTable.companyId, cid),
+    ))
     .where(and(eq(payrollRunsTable.companyId, cid), eq(payrollRunsTable.year, year),
       eq(payrollRunsTable.month, month), inArray(payrollRunsTable.status, ["posted", "paid"]),
       eq(journalEntriesTable.status, "posted"), eq(payrollRunsTable.manufacturingEligible, true),
@@ -580,8 +589,14 @@ async function loadPostedCostSources(
     method: fixedAssetsTable.manufacturingAllocationMethod,
     hours: fixedAssetsTable.approvedOperatingHours, rate: fixedAssetsTable.fixedManufacturingRate,
   }).from(faDepreciationRunsTable)
-    .innerJoin(fixedAssetsTable, eq(faDepreciationRunsTable.assetId, fixedAssetsTable.id))
-    .innerJoin(journalEntriesTable, eq(faDepreciationRunsTable.journalEntryId, journalEntriesTable.id))
+    .innerJoin(fixedAssetsTable, and(
+      eq(faDepreciationRunsTable.assetId, fixedAssetsTable.id),
+      eq(fixedAssetsTable.companyId, cid),
+    ))
+    .innerJoin(journalEntriesTable, and(
+      eq(faDepreciationRunsTable.journalEntryId, journalEntriesTable.id),
+      eq(journalEntriesTable.companyId, cid),
+    ))
     .where(and(eq(faDepreciationRunsTable.companyId, cid), eq(faDepreciationRunsTable.periodYear, year),
       eq(faDepreciationRunsTable.periodMonth, month), eq(faDepreciationRunsTable.status, "posted"),
       eq(journalEntriesTable.status, "posted"), eq(fixedAssetsTable.usedInManufacturing, true),
@@ -600,8 +615,14 @@ async function loadPostedCostSources(
     method: accountingAdjustmentsTable.manufacturingAllocationMethod,
     approvedQty: accountingAdjustmentsTable.approvedProductionQuantity,
   }).from(accountingAdjustmentRunsTable)
-    .innerJoin(accountingAdjustmentsTable, eq(accountingAdjustmentRunsTable.adjustmentId, accountingAdjustmentsTable.id))
-    .innerJoin(journalEntriesTable, eq(accountingAdjustmentRunsTable.journalEntryId, journalEntriesTable.id))
+    .innerJoin(accountingAdjustmentsTable, and(
+      eq(accountingAdjustmentRunsTable.adjustmentId, accountingAdjustmentsTable.id),
+      eq(accountingAdjustmentsTable.companyId, cid),
+    ))
+    .innerJoin(journalEntriesTable, and(
+      eq(accountingAdjustmentRunsTable.journalEntryId, journalEntriesTable.id),
+      eq(journalEntriesTable.companyId, cid),
+    ))
     .where(and(eq(accountingAdjustmentRunsTable.companyId, cid), eq(accountingAdjustmentRunsTable.periodMonth, period),
       eq(accountingAdjustmentsTable.type, "prepaid"), eq(journalEntriesTable.status, "posted"),
       eq(accountingAdjustmentsTable.manufacturingEligible, true),
@@ -650,24 +671,68 @@ async function loadPostedCostSources(
   ].map((source) => ({ ...source, sourceAmount: sourceAmountCents(source.sourceAmount) }));
 }
 
+/**
+ * Read-only cost-source lookup shared by the advanced and compact
+ * manufacturing facades.  Keeping the capacity calculation here is
+ * important: a compact order must see the same posted payroll, depreciation,
+ * and prepaid rows, as well as the same already-allocated/available amounts,
+ * as an advanced order.
+ *
+ * `q` is deliberately supplied by the caller so posting paths can use the
+ * surrounding transaction while GET routes use the normal db executor.
+ */
+export async function getCostSources(
+  q: any,
+  cid: number,
+  period: string,
+  req?: any,
+  requestedBranchId?: number | null,
+): Promise<Array<CostSource & { allocatedAmount: number; availableAmount: number }>> {
+  const sources = await loadPostedCostSources(q, cid, period, req, requestedBranchId);
+  // Source visibility is branch-scoped by the source journal above, but
+  // capacity is a company-wide delegated-cost boundary. A shared source
+  // (and a source posted by another branch) must still be reduced by every
+  // non-cancelled allocation, otherwise two branch views can over-consume it.
+  const allocationConditions: any[] = [
+    eq(productionCostAllocationsTable.companyId, cid),
+    sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
+  ];
+  const allocated = await q.select({
+    sourceType: productionCostAllocationsTable.sourceType,
+    sourceRecordId: productionCostAllocationsTable.sourceRecordId,
+    amount: sql<string>`coalesce(sum(${productionCostAllocationsTable.allocatedAmount}), 0)`,
+  }).from(productionCostAllocationsTable)
+    .innerJoin(productionOrdersTable, and(
+      eq(productionCostAllocationsTable.orderId, productionOrdersTable.id),
+      eq(productionOrdersTable.companyId, cid),
+    ))
+    .where(and(...allocationConditions))
+    .groupBy(productionCostAllocationsTable.sourceType, productionCostAllocationsTable.sourceRecordId);
+  const used = new Map<string, number>(allocated.map((x: any) => [
+    `${x.sourceType}:${x.sourceRecordId}`,
+    num(x.amount),
+  ] as [string, number]));
+  return sources.map((s) => {
+    const allocatedAmount = used.get(`${s.sourceType}:${s.sourceRecordId}`) ?? 0;
+    return {
+      ...s,
+      allocatedAmount,
+      availableAmount: Math.max(0, s.sourceAmount - allocatedAmount),
+    };
+  });
+}
+
 router.get("/cost-sources", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const period = String(req.query.period ?? "");
-    const requestedBranchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-    const sources = await loadPostedCostSources(db, cid, period, req, requestedBranchId);
-    const allocated = await db.select({
-      sourceType: productionCostAllocationsTable.sourceType,
-      sourceRecordId: productionCostAllocationsTable.sourceRecordId,
-      amount: sql<string>`coalesce(sum(${productionCostAllocationsTable.allocatedAmount}), 0)`,
-    }).from(productionCostAllocationsTable)
-      .innerJoin(productionOrdersTable, eq(productionCostAllocationsTable.orderId, productionOrdersTable.id))
-      .where(and(eq(productionCostAllocationsTable.companyId, cid),
-        sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`))
-      .groupBy(productionCostAllocationsTable.sourceType, productionCostAllocationsTable.sourceRecordId);
-    const used = new Map(allocated.map((x: any) => [`${x.sourceType}:${x.sourceRecordId}`, num(x.amount)]));
-    res.json(sources.map((s) => ({ ...s, allocatedAmount: used.get(`${s.sourceType}:${s.sourceRecordId}`) ?? 0,
-      availableAmount: Math.max(0, s.sourceAmount - (used.get(`${s.sourceType}:${s.sourceRecordId}`) ?? 0)) })));
+    const requestedBranchId = req.query.branchId == null || req.query.branchId === ""
+      ? undefined : Number(req.query.branchId);
+    if (requestedBranchId !== undefined &&
+        (!Number.isInteger(requestedBranchId) || requestedBranchId <= 0)) {
+      return void res.status(400).json({ error: "branchId غير صحيح" });
+    }
+    res.json(await getCostSources(db, cid, period, req, requestedBranchId));
   } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
 
@@ -4376,9 +4441,9 @@ export async function productionWizardHandler(req: any, res: any) {
     const plannedHours = num(b.plannedHours);
     const period = String(b.costPeriod || String(b.plannedStartDate || "").slice(0, 7));
     const requested: any[] = Array.isArray(b.allocations) ? b.allocations : [];
-    if (requested.length &&
-        !canAccessModule(req.authUser, "production", "post") &&
-        !canAccessModule(req.authUser, "simple_manufacturing", "post"))
+    const postingModule = getContextModuleKey() === "simple_manufacturing"
+      ? "simple_manufacturing" : "production";
+    if (requested.length && !canAccessModule(req.authUser, postingModule, "post"))
       return void res.status(403).json({ error: "لا تملك صلاحية تصنيف وترحيل مصادر تكلفة التصنيع" });
     const orderNumber = await nextSequenceNumber(cid, "production_order", {
       userId: req.authUser!.id, refTable: "production_orders", branchId,
@@ -4439,7 +4504,10 @@ export async function productionWizardHandler(req: any, res: any) {
         const [used] = await tx.select({
           amount: sql<string>`coalesce(sum(${productionCostAllocationsTable.allocatedAmount}), 0)`,
         }).from(productionCostAllocationsTable)
-          .innerJoin(productionOrdersTable, eq(productionCostAllocationsTable.orderId, productionOrdersTable.id))
+          .innerJoin(productionOrdersTable, and(
+            eq(productionCostAllocationsTable.orderId, productionOrdersTable.id),
+            eq(productionOrdersTable.companyId, cid),
+          ))
           .where(and(
             eq(productionCostAllocationsTable.companyId, cid),
             eq(productionCostAllocationsTable.sourceType, source.sourceType),
@@ -4475,8 +4543,30 @@ export async function productionWizardHandler(req: any, res: any) {
       const bomLines = tmpl ? await tx.select().from(bomTemplateLinesTable)
         .where(eq(bomTemplateLinesTable.templateId, tmpl.id)) : [];
       if (!tmpl || !bomLines.length) throw Object.assign(new Error("لا يوجد قالب مكونات نشط للمنتج المختار"), { status: 400 });
+      // A runnable recipe must point at real, active tenant items. Text-only
+      // legacy lines are not enough for stock issue and would make the compact
+      // setup look valid while silently producing no inventory movement.
+      const recipeItemIds = bomLines.map((line) => Number(line.itemId));
+      const uniqueRecipeItemIds = [...new Set(recipeItemIds)];
+      if (recipeItemIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+        throw Object.assign(new Error("قالب المكونات النشط يحتوي مادة غير مرتبطة بصنف حقيقي"), { status: 400 });
+      }
+      const activeRecipeItems = await tx.select({ id: itemsTable.id })
+        .from(itemsTable)
+        .where(and(
+          eq(itemsTable.companyId, cid),
+          eq(itemsTable.status, "active"),
+          inArray(itemsTable.id, uniqueRecipeItemIds),
+        ));
+      if (activeRecipeItems.length !== uniqueRecipeItemIds.length) {
+        throw Object.assign(new Error("قالب المكونات النشط يحتوي صنفاً غير موجود أو غير نشط"), { status: 400 });
+      }
       const [productSnapshot] = await tx.select({ salePrice: itemsTable.salePrice })
-        .from(itemsTable).where(and(eq(itemsTable.companyId, cid), eq(itemsTable.id, productItemId))).limit(1);
+        .from(itemsTable).where(and(
+          eq(itemsTable.companyId, cid),
+          eq(itemsTable.id, productItemId),
+          eq(itemsTable.status, "active"),
+        )).limit(1);
       const scale = plannedQty / Math.max(num(tmpl.outputQty, 1), 0.000001);
       let rawCost = 0;
       const itemRows: any[] = [];
@@ -6491,6 +6581,161 @@ router.put("/manufacturing-settings", async (req, res) => {
   }
 });
 
+/**
+ * Canonical read-only setup lookups. The compact facade imports these
+ * helpers instead of mounting this router (which would also mount the
+ * advanced production company gate). Keep the projections and detail
+ * envelopes identical to the advanced endpoints.
+ */
+export async function getWorkCenters(
+  q: any,
+  cid: number,
+  search = "",
+  onlyActive = false,
+) {
+  const trimmed = search.trim();
+  const conditions: any[] = [eq(workCentersTable.companyId, cid)];
+  if (trimmed) {
+    conditions.push(or(
+      ilike(workCentersTable.code, `%${trimmed}%`),
+      ilike(workCentersTable.nameAr, `%${trimmed}%`),
+      ilike(workCentersTable.nameEn, `%${trimmed}%`),
+    )!);
+  }
+  if (onlyActive) conditions.push(eq(workCentersTable.isActive, true));
+  return q.select()
+    .from(workCentersTable)
+    .where(and(...conditions))
+    .orderBy(asc(workCentersTable.code))
+    .limit(500);
+}
+
+export async function getBomTemplates(
+  q: any,
+  cid: number,
+  productItemId?: number | null,
+  search = "",
+) {
+  const trimmed = search.trim();
+  const conditions: any[] = [eq(bomTemplatesTable.companyId, cid)];
+  if (productItemId != null) conditions.push(eq(bomTemplatesTable.productItemId, productItemId));
+  if (trimmed) {
+    conditions.push(or(
+      ilike(bomTemplatesTable.nameAr, `%${trimmed}%`),
+      ilike(bomTemplatesTable.nameEn, `%${trimmed}%`),
+    )!);
+  }
+  return q.select({
+    id: bomTemplatesTable.id,
+    productItemId: bomTemplatesTable.productItemId,
+    nameAr: bomTemplatesTable.nameAr,
+    nameEn: bomTemplatesTable.nameEn,
+    outputQty: bomTemplatesTable.outputQty,
+    outputUnitCode: bomTemplatesTable.outputUnitCode,
+    isActive: bomTemplatesTable.isActive,
+    notes: bomTemplatesTable.notes,
+    updatedAt: bomTemplatesTable.updatedAt,
+    productNameAr: itemsTable.nameAr,
+    productNameEn: itemsTable.nameEn,
+    linesCount: sql<number>`(
+      SELECT COUNT(*)::int
+      FROM ${bomTemplateLinesTable}
+      WHERE ${bomTemplateLinesTable.templateId} = ${bomTemplatesTable.id}
+    )`,
+  })
+    .from(bomTemplatesTable)
+    .leftJoin(itemsTable, and(
+      eq(itemsTable.id, bomTemplatesTable.productItemId),
+      eq(itemsTable.companyId, cid),
+    ))
+    .where(and(...conditions))
+    .orderBy(desc(bomTemplatesTable.updatedAt));
+}
+
+export async function getBomTemplate(q: any, cid: number, id: number) {
+  const [template] = await q.select()
+    .from(bomTemplatesTable)
+    .where(and(
+      eq(bomTemplatesTable.id, id),
+      eq(bomTemplatesTable.companyId, cid),
+    ))
+    .limit(1);
+  if (!template) return null;
+  const lines = await q.select({
+    id: bomTemplateLinesTable.id,
+    itemId: bomTemplateLinesTable.itemId,
+    description: bomTemplateLinesTable.description,
+    quantity: bomTemplateLinesTable.quantity,
+    unitCode: bomTemplateLinesTable.unitCode,
+    notes: bomTemplateLinesTable.notes,
+    itemNameAr: itemsTable.nameAr,
+    itemNameEn: itemsTable.nameEn,
+  })
+    .from(bomTemplateLinesTable)
+    .leftJoin(itemsTable, and(
+      eq(itemsTable.id, bomTemplateLinesTable.itemId),
+      eq(itemsTable.companyId, cid),
+    ))
+    .where(eq(bomTemplateLinesTable.templateId, id));
+  return { ...template, lines };
+}
+
+export async function getRoutings(
+  q: any,
+  cid: number,
+  productItemId?: number | null,
+  search = "",
+) {
+  const trimmed = search.trim();
+  const conditions: any[] = [eq(productionRoutingsTable.companyId, cid)];
+  if (productItemId != null) conditions.push(eq(productionRoutingsTable.productItemId, productItemId));
+  if (trimmed) {
+    conditions.push(or(
+      ilike(productionRoutingsTable.nameAr, `%${trimmed}%`),
+      ilike(productionRoutingsTable.nameEn, `%${trimmed}%`),
+    )!);
+  }
+  return q.select({
+    id: productionRoutingsTable.id,
+    productItemId: productionRoutingsTable.productItemId,
+    productNameAr: itemsTable.nameAr,
+    productNameEn: itemsTable.nameEn,
+    nameAr: productionRoutingsTable.nameAr,
+    nameEn: productionRoutingsTable.nameEn,
+    isActive: productionRoutingsTable.isActive,
+    notes: productionRoutingsTable.notes,
+    updatedAt: productionRoutingsTable.updatedAt,
+    stagesCount: sql<number>`(
+      SELECT COUNT(*)::int
+      FROM ${productionRoutingStagesTable}
+      WHERE ${productionRoutingStagesTable.routingId} = ${productionRoutingsTable.id}
+    )`,
+  })
+    .from(productionRoutingsTable)
+    .leftJoin(itemsTable, and(
+      eq(itemsTable.id, productionRoutingsTable.productItemId),
+      eq(itemsTable.companyId, cid),
+    ))
+    .where(and(...conditions))
+    .orderBy(desc(productionRoutingsTable.updatedAt));
+}
+
+export async function getRouting(q: any, cid: number, id: number) {
+  const [routing] = await q.select()
+    .from(productionRoutingsTable)
+    .where(and(
+      eq(productionRoutingsTable.id, id),
+      eq(productionRoutingsTable.companyId, cid),
+    ))
+    .limit(1);
+  if (!routing) return null;
+  const stages = await q.select()
+    .from(productionRoutingStagesTable)
+    .where(eq(productionRoutingStagesTable.routingId, id))
+    .orderBy(asc(productionRoutingStagesTable.sequence));
+  return { ...routing, stages };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE B — Work Centers (مراكز العمل)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -6499,24 +6744,8 @@ router.get("/work-centers", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
-    const q = (req.query.q as string | undefined)?.trim();
-    const onlyActive = req.query.activeOnly === "1";
-    const conds = [eq(workCentersTable.companyId, cid)];
-    if (q)
-      conds.push(
-        or(
-          ilike(workCentersTable.code, `%${q}%`),
-          ilike(workCentersTable.nameAr, `%${q}%`),
-          ilike(workCentersTable.nameEn, `%${q}%`),
-        )!,
-      );
-    if (onlyActive) conds.push(eq(workCentersTable.isActive, true));
-    const rows = await db
-      .select()
-      .from(workCentersTable)
-      .where(and(...conds))
-      .orderBy(asc(workCentersTable.code))
-      .limit(500);
+    const search = (req.query.q as string | undefined)?.trim() ?? "";
+    const rows = await getWorkCenters(db, cid, search, req.query.activeOnly === "1");
     res.json(rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -6728,35 +6957,19 @@ router.get("/bom-templates", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
-    const q = (req.query.q as string | undefined)?.trim();
-    const where = q
-      ? and(
-          eq(bomTemplatesTable.companyId, cid),
-          or(
-            ilike(bomTemplatesTable.nameAr, `%${q}%`),
-            ilike(bomTemplatesTable.nameEn, `%${q}%`),
-          ),
-        )
-      : eq(bomTemplatesTable.companyId, cid);
-    const rows = await db
-      .select({
-        id: bomTemplatesTable.id,
-        productItemId: bomTemplatesTable.productItemId,
-        nameAr: bomTemplatesTable.nameAr,
-        nameEn: bomTemplatesTable.nameEn,
-        outputQty: bomTemplatesTable.outputQty,
-        outputUnitCode: bomTemplatesTable.outputUnitCode,
-        isActive: bomTemplatesTable.isActive,
-        notes: bomTemplatesTable.notes,
-        updatedAt: bomTemplatesTable.updatedAt,
-        productNameAr: itemsTable.nameAr,
-        productNameEn: itemsTable.nameEn,
-        linesCount: sql<number>`(SELECT COUNT(*)::int FROM ${bomTemplateLinesTable} WHERE ${bomTemplateLinesTable.templateId} = ${bomTemplatesTable.id})`,
-      })
-      .from(bomTemplatesTable)
-      .leftJoin(itemsTable, eq(itemsTable.id, bomTemplatesTable.productItemId))
-      .where(where)
-      .orderBy(desc(bomTemplatesTable.updatedAt));
+    const rawProductItemId = req.query.productItemId;
+    const productItemId = rawProductItemId == null || rawProductItemId === ""
+      ? undefined
+      : Number(rawProductItemId);
+    if (productItemId !== undefined && (!Number.isInteger(productItemId) || productItemId <= 0)) {
+      return void res.status(400).json({ error: "productItemId غير صحيح" });
+    }
+    const rows = await getBomTemplates(
+      db,
+      cid,
+      productItemId,
+      (req.query.q as string | undefined)?.trim() ?? "",
+    );
     res.json(rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -6768,44 +6981,15 @@ router.get("/bom-templates/:id", async (req, res) => {
     const cid = guard(req, res);
     if (!cid) return;
     const id = Number(req.params.id);
-    const [tmpl] = await db
-      .select()
-      .from(bomTemplatesTable)
-      .where(
-        and(
-          eq(bomTemplatesTable.id, id),
-          eq(bomTemplatesTable.companyId, cid),
-        ),
-      )
-      .limit(1);
+    if (!Number.isInteger(id) || id <= 0) {
+      return void res.status(400).json({ error: "id غير صحيح" });
+    }
+    const tmpl = await getBomTemplate(db, cid, id);
     if (!tmpl) {
       res.status(404).json({ error: "القالب غير موجود" });
       return;
     }
-    // SECURITY: join items with companyId predicate so a stale/cross-tenant
-    // item_id (defense in depth) cannot leak nameAr/nameEn from another
-    // company. New writes are blocked by validateItem; this protects reads.
-    const lines = await db
-      .select({
-        id: bomTemplateLinesTable.id,
-        itemId: bomTemplateLinesTable.itemId,
-        description: bomTemplateLinesTable.description,
-        quantity: bomTemplateLinesTable.quantity,
-        unitCode: bomTemplateLinesTable.unitCode,
-        notes: bomTemplateLinesTable.notes,
-        itemNameAr: itemsTable.nameAr,
-        itemNameEn: itemsTable.nameEn,
-      })
-      .from(bomTemplateLinesTable)
-      .leftJoin(
-        itemsTable,
-        and(
-          eq(itemsTable.id, bomTemplateLinesTable.itemId),
-          eq(itemsTable.companyId, cid),
-        ),
-      )
-      .where(eq(bomTemplateLinesTable.templateId, id));
-    res.json({ ...tmpl, lines });
+    res.json(tmpl);
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e.message });
   }
@@ -6834,7 +7018,7 @@ router.post("/bom-templates", async (req, res) => {
     // Pre-validate every line.itemId against this tenant BEFORE any insert,
     // so a foreign id cannot land in bom_template_lines (security).
     const rawLines = Array.isArray(b.lines)
-      ? b.lines.filter((l: any) => l && l.description)
+      ? b.lines.filter((l: any) => l && (l.description || l.itemId || l.item?.id))
       : [];
     const lineInserts: any[] = [];
     for (const l of rawLines) {
@@ -6843,11 +7027,16 @@ router.post("/bom-templates", async (req, res) => {
         res.status(400).json({ error: "كمية كل مكوّن يجب أن تكون أكبر من صفر" });
         return;
       }
-      const itemId = l.itemId ? Number(l.itemId) : null;
-      if (itemId) await validateItem(cid, itemId);
+      const rawItemId = l.itemId ?? l.item?.id;
+      const itemId = rawItemId ? Number(rawItemId) : null;
+      if (!itemId) {
+        res.status(400).json({ error: "كل مكوّن يجب أن يرتبط بصنف حقيقي" });
+        return;
+      }
+      await validateItem(cid, itemId);
       lineInserts.push({
         itemId,
-        description: String(l.description).trim(),
+        description: String(l.description || "مادة خام").trim(),
         quantity: String(qty),
         unitCode: l.unitCode || "PCE",
         notes:
@@ -6982,18 +7171,23 @@ router.put("/bom-templates/:id/lines", async (req, res) => {
     }
     const inserts: any[] = [];
     for (const l of b.lines) {
-      if (!l || !l.description) continue;
+      if (!l || !(l.description || l.itemId || l.item?.id)) continue;
       const qty = Number(l.quantity) || 0;
       if (qty <= 0) {
         res.status(400).json({ error: "كمية كل مكوّن يجب أن تكون أكبر من صفر" });
         return;
       }
-      const itemId = l.itemId ? Number(l.itemId) : null;
-      if (itemId) await validateItem(cid, itemId);
+      const rawItemId = l.itemId ?? l.item?.id;
+      const itemId = rawItemId ? Number(rawItemId) : null;
+      if (!itemId) {
+        res.status(400).json({ error: "كل مكوّن يجب أن يرتبط بصنف حقيقي" });
+        return;
+      }
+      await validateItem(cid, itemId);
       inserts.push({
         templateId: id,
         itemId,
-        description: String(l.description).trim(),
+        description: String(l.description || "مادة خام").trim(),
         quantity: String(qty),
         unitCode: l.unitCode || "PCE",
         notes:
@@ -7026,33 +7220,19 @@ router.get("/routings", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
-    const q = String(req.query.q ?? "").trim();
-    const where = q
-      ? and(
-          eq(productionRoutingsTable.companyId, cid),
-          or(
-            ilike(productionRoutingsTable.nameAr, `%${q}%`),
-            ilike(productionRoutingsTable.nameEn, `%${q}%`),
-          ),
-        )
-      : eq(productionRoutingsTable.companyId, cid);
-    const rows = await db
-      .select({
-        id: productionRoutingsTable.id,
-        productItemId: productionRoutingsTable.productItemId,
-        productNameAr: itemsTable.nameAr,
-        productNameEn: itemsTable.nameEn,
-        nameAr: productionRoutingsTable.nameAr,
-        nameEn: productionRoutingsTable.nameEn,
-        isActive: productionRoutingsTable.isActive,
-        notes: productionRoutingsTable.notes,
-        updatedAt: productionRoutingsTable.updatedAt,
-        stagesCount: sql<number>`(SELECT COUNT(*)::int FROM ${productionRoutingStagesTable} WHERE ${productionRoutingStagesTable.routingId} = ${productionRoutingsTable.id})`,
-      })
-      .from(productionRoutingsTable)
-      .leftJoin(itemsTable, eq(itemsTable.id, productionRoutingsTable.productItemId))
-      .where(where)
-      .orderBy(desc(productionRoutingsTable.updatedAt));
+    const rawProductItemId = req.query.productItemId;
+    const productItemId = rawProductItemId == null || rawProductItemId === ""
+      ? undefined
+      : Number(rawProductItemId);
+    if (productItemId !== undefined && (!Number.isInteger(productItemId) || productItemId <= 0)) {
+      return void res.status(400).json({ error: "productItemId غير صحيح" });
+    }
+    const rows = await getRoutings(
+      db,
+      cid,
+      productItemId,
+      String(req.query.q ?? "").trim(),
+    );
     res.json(rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -7064,25 +7244,15 @@ router.get("/routings/:id", async (req, res) => {
     const cid = guard(req, res);
     if (!cid) return;
     const id = Number(req.params.id);
-    const [r] = await db
-      .select()
-      .from(productionRoutingsTable)
-      .where(
-        and(
-          eq(productionRoutingsTable.id, id),
-          eq(productionRoutingsTable.companyId, cid),
-        ),
-      );
+    if (!Number.isInteger(id) || id <= 0) {
+      return void res.status(400).json({ error: "id غير صحيح" });
+    }
+    const r = await getRouting(db, cid, id);
     if (!r) {
       res.status(404).json({ error: "غير موجود" });
       return;
     }
-    const stages = await db
-      .select()
-      .from(productionRoutingStagesTable)
-      .where(eq(productionRoutingStagesTable.routingId, id))
-      .orderBy(asc(productionRoutingStagesTable.sequence));
-    res.json({ ...r, stages });
+    res.json(r);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

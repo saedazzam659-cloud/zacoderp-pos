@@ -39,6 +39,12 @@ import {
   productionStatusHandler,
   productionWizardHandler,
   commercialLifecycleRouter,
+  getCostSources,
+  getBomTemplates,
+  getBomTemplate,
+  getRoutings,
+  getRouting,
+  getWorkCenters,
 } from "./production.js";
 
 const router = Router();
@@ -75,7 +81,11 @@ router.get("/", view, (_req, res) => {
   res.json({
     module: "simple_manufacturing",
     title: "Simple Manufacturing",
-    endpoints: ["/catalog", "/orders", "/templates", "/setup/materials", "/setup/products", "/setup/warehouses", "/setup/bom", "/setup/routing", "/reports"],
+    endpoints: [
+      "/catalog", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
+      "/orders", "/templates", "/setup/materials", "/setup/products",
+      "/setup/warehouses", "/setup/bom", "/setup/routing", "/reports",
+    ],
   });
 });
 
@@ -115,6 +125,123 @@ router.get("/catalog", view, async (req, res) => {
       )).orderBy(desc(productionRoutingsTable.updatedAt)),
     ]);
     res.json({ items, warehouses, templates, routings });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Shared read-only source/capacity lookup. This deliberately uses the
+// advanced helper rather than mounting the production router, so a simple
+// tenant never needs the advanced production company gate. The helper keeps
+// the exact sourceType/sourceRecordId/sourceAmount/meta/allocatedAmount/
+// availableAmount contract and applies the caller's tenant + branch scope.
+router.get("/cost-sources", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const rawBranchId = req.query.branchId;
+  const requestedBranchId = rawBranchId == null || rawBranchId === ""
+    ? undefined
+    : Number(rawBranchId);
+  if (requestedBranchId !== undefined &&
+      (!Number.isInteger(requestedBranchId) || requestedBranchId <= 0)) {
+    return void res.status(400).json({ error: "branchId غير صحيح" });
+  }
+  try {
+    res.json(await getCostSources(db, cid, String(req.query.period ?? ""), req, requestedBranchId));
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+function productItemQuery(req: any, res: any): number | undefined | null {
+  const raw = req.query.productItemId;
+  if (raw == null || raw === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    res.status(400).json({ error: "productItemId غير صحيح" });
+    return null;
+  }
+  return value;
+}
+
+// These are the canonical setup envelopes from /production. They are
+// read-only and tenant-scoped; no advanced-production permission is involved.
+router.get("/bom-templates", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const productItemId = productItemQuery(req, res);
+  if (productItemId === null) return;
+  try {
+    res.json(await getBomTemplates(
+      db,
+      cid,
+      productItemId,
+      String(req.query.q ?? "").trim(),
+    ));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/bom-templates/:id", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return void res.status(400).json({ error: "id غير صحيح" });
+  }
+  try {
+    const template = await getBomTemplate(db, cid, id);
+    if (!template) return void res.status(404).json({ error: "القالب غير موجود" });
+    res.json(template);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+router.get("/routings", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const productItemId = productItemQuery(req, res);
+  if (productItemId === null) return;
+  try {
+    res.json(await getRoutings(
+      db,
+      cid,
+      productItemId,
+      String(req.query.q ?? "").trim(),
+    ));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/routings/:id", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return void res.status(400).json({ error: "id غير صحيح" });
+  }
+  try {
+    const routing = await getRouting(db, cid, id);
+    if (!routing) return void res.status(404).json({ error: "غير موجود" });
+    res.json(routing);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+router.get("/work-centers", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    res.json(await getWorkCenters(
+      db,
+      cid,
+      String(req.query.q ?? "").trim(),
+      req.query.activeOnly === "1",
+    ));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -384,10 +511,14 @@ router.post("/setup/bom", edit, async (req, res) => {
   }
   try {
     const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
-      .where(and(eq(itemsTable.id, productItemId), eq(itemsTable.companyId, cid))).limit(1);
+      .where(and(
+        eq(itemsTable.id, productItemId),
+        eq(itemsTable.companyId, cid),
+        eq(itemsTable.status, "active"),
+      )).limit(1);
     if (!product) return void res.status(400).json({ error: "المنتج النهائي غير موجود" });
     const normalizedLines = lines.map((x: any) => ({
-      itemId: Number(x?.itemId),
+      itemId: Number(x?.itemId ?? x?.item?.id),
       quantity: Number(x?.quantity),
       description: String(x?.description || "مادة خام").trim(),
       unitCode: String(x?.unitCode || "PCE").trim(),
@@ -401,27 +532,38 @@ router.post("/setup/bom", edit, async (req, res) => {
       return void res.status(400).json({ error: "كل سطر في قائمة المواد يحتاج صنفاً وكمية أكبر من صفر" });
     }
     const itemIds = normalizedLines.map((x: any) => x.itemId);
-    const owned = itemIds.length ? await db.select({ id: itemsTable.id }).from(itemsTable)
-      .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds))) : [];
-    if (owned.length !== itemIds.length) return void res.status(400).json({ error: "إحدى المواد خارج الشركة" });
+    const uniqueItemIds: number[] = [...new Set<number>(itemIds)];
+    const owned = uniqueItemIds.length ? await db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(
+        eq(itemsTable.companyId, cid),
+        eq(itemsTable.status, "active"),
+        inArray(itemsTable.id, uniqueItemIds),
+      )) : [];
+    if (owned.length !== uniqueItemIds.length) {
+      return void res.status(400).json({ error: "إحدى المواد غير موجودة أو غير نشطة في هذه الشركة" });
+    }
     const outputQty = Number(req.body?.outputQty ?? 1);
     if (!Number.isFinite(outputQty) || outputQty <= 0) {
       return void res.status(400).json({ error: "كمية الناتج يجب أن تكون أكبر من صفر" });
     }
-    const [bom] = await db.insert(bomTemplatesTable).values({
-      companyId: cid, productItemId, nameAr: String(req.body?.nameAr || "قائمة مواد مبسطة"),
-      nameEn: req.body?.nameEn ? String(req.body.nameEn) : null,
-      outputQty: String(outputQty),
-      outputUnitCode: String(req.body?.outputUnitCode || "PCE"),
-      notes: req.body?.notes ? String(req.body.notes) : null,
-    }).returning();
-    await db.insert(bomTemplateLinesTable).values(normalizedLines.map((x: any) => ({
-      templateId: bom.id, itemId: x.itemId,
-      description: x.description,
-      quantity: String(x.quantity),
-      unitCode: x.unitCode,
-      notes: x.notes,
-    })));
+    const bom = await db.transaction(async (tx) => {
+      const [row] = await tx.insert(bomTemplatesTable).values({
+        companyId: cid, productItemId, nameAr: String(req.body?.nameAr || "قائمة مواد مبسطة"),
+        nameEn: req.body?.nameEn ? String(req.body.nameEn) : null,
+        outputQty: String(outputQty),
+        outputUnitCode: String(req.body?.outputUnitCode || "PCE"),
+        isActive: true,
+        notes: req.body?.notes ? String(req.body.notes) : null,
+      }).returning();
+      await tx.insert(bomTemplateLinesTable).values(normalizedLines.map((x: any) => ({
+        templateId: row.id, itemId: x.itemId,
+        description: x.description,
+        quantity: String(x.quantity),
+        unitCode: x.unitCode,
+        notes: x.notes,
+      })));
+      return row;
+    });
     res.status(201).json(bom);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -431,14 +573,18 @@ router.post("/setup/bom", edit, async (req, res) => {
 router.post("/setup/routing", edit, async (req, res) => {
   const cid = companyId(req, res);
   if (!cid) return;
-    const productItemId = Number(req.body?.productItemId);
+  const productItemId = Number(req.body?.productItemId);
   const stages = Array.isArray(req.body?.stages) ? req.body.stages : [];
   if (!Number.isInteger(productItemId) || !stages.length) {
     return void res.status(400).json({ error: "المنتج ومراحل المسار مطلوبان" });
   }
   try {
     const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
-      .where(and(eq(itemsTable.id, productItemId), eq(itemsTable.companyId, cid))).limit(1);
+      .where(and(
+        eq(itemsTable.id, productItemId),
+        eq(itemsTable.companyId, cid),
+        eq(itemsTable.status, "active"),
+      )).limit(1);
     if (!product) return void res.status(400).json({ error: "المنتج النهائي غير موجود" });
     const normalizedStages = stages.map((x: any, i: number) => ({
       code: String(x?.code || `S${i + 1}`).trim(),
@@ -562,12 +708,6 @@ router.get("/suppliers", view, async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
-});
-
-// Work centers are not part of the compact setup surface. Return an explicit
-// empty lookup so the shared detail screen does not fall back to /production.
-router.get("/work-centers", view, (_req, res) => {
-  res.json([]);
 });
 
 // Reuse the canonical detail endpoint implementation, but only after the

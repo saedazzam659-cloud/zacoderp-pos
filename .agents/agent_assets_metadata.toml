@@ -59,288 +59,336 @@ id = "ZijkzvPyt1HNWuXO3Wk_d"
 uri = "file://exports/zacoderp-source.tar.gz"
 type = "unspecified"
 title = "كود المشروع الكامل (Frontend + Backend + Schema)"
+logical_id = "ce16f302-57d5-4196-b5b1-bde2f1e2364c"
 
 [[outputs]]
 id = "3Bb-YqznDWBrBZS8mXFoe"
 uri = "file://exports/README.md"
 type = "text"
 title = "دليل تشغيل المشروع (README)"
+logical_id = "d5720169-75aa-49c1-953a-710b6552f93f"
 
 [[outputs]]
 id = "9h-pg5LlnemsY3P9TELTR"
 uri = "file://exports/ERD.md"
 type = "text"
 title = "مخطط العلاقات بين الجداول (ERD)"
+logical_id = "4ca19ad9-6e89-47a3-8d4b-1470a5ce2331"
 
 [[outputs]]
 id = "QTnnES8sCcEuHhhuqz23M"
 uri = "file://docs/SETUP_AR.md"
 type = "text"
 title = "دليل التشغيل الكامل (محلي + سحابي)"
+logical_id = "1887d4a5-78fb-4bd4-a126-6dff78fe74df"
 
 [[outputs]]
 id = "lIAQ6Ya8NSN6jm4mJ0do6"
 uri = "file://exports/zatca-source-20260427-231316.tar.gz"
 type = "unspecified"
 title = "السورس كود الكامل - 26 ميجابايت (zatca-source.tar.gz)"
+logical_id = "8324e9b7-1a2f-42d3-b84c-5d010ca0d85f"
 
 [[outputs]]
 id = "P1J7bQ2sAHpR8wckIloHF"
 uri = "file://exports/دليل_تركيب_نظام_زاتكا.docx"
 type = "word_document"
 title = "دليل تركيب نظام زاتكا (Word)"
+logical_id = "0c6c75c3-05bd-40f6-9db9-4eb02070f1b0"
 
 [[outputs]]
 id = "0o5LjUWt-rDQcqE0ycdsY"
 uri = "file://exports/zatca-source.tar.gz"
 type = "unspecified"
 title = "السورس كود (26 ميجابايت)"
+logical_id = "45160358-e13f-4cb0-9495-34b050acaedf"
 
 [[outputs]]
 id = "Hw0N7TR1P38qvHjulqCiA"
 uri = "file://exports/zatca-source-20260428.tar.gz"
 type = "unspecified"
 title = "السورس كود الكامل - 28 إبريل 2026 (مضغوط tar.gz)"
+logical_id = "45fb9c9d-373e-4b7f-8b9b-1b708ac0dfdd"
 
 [[outputs]]
 id = "8MTyEEM2gmyFB33ekL5yy"
 uri = "file://exports/zatca-source-code-only.tar.gz"
 type = "unspecified"
 title = "سورس كود فقط - 17 ميغا"
+logical_id = "c28c3d3e-fed5-4100-b6b9-b68a9ea231ec"
 
 [[outputs]]
 id = "j8GSBnyXm6Nd5qxBl5ld5"
 uri = "file://exports/zatca-database-20260428.sql.gz"
 type = "unspecified"
 title = "قاعدة البيانات الكاملة (مضغوطة - 125ك)"
+logical_id = "be84fa6d-9bd1-4090-afc2-a8a4ef5d2026"
 
 [[outputs]]
 id = "dp0he7mFQn07IPdfsNVX_"
 uri = "file://.local/exports/source-code.tar.gz"
 type = "unspecified"
 title = "الكود المصدري الكامل (source-code.tar.gz — 139MB)"
+logical_id = "68525389-d30d-424c-be2c-30343193421d"
 
 [[outputs]]
 id = "H8xyyKI20B47AxNeN0PSG"
 uri = "file://.local/exports/database.sql.txt"
 type = "text"
 title = "نسخة قاعدة البيانات (database.sql — غيّر الامتداد إلى .sql)"
+logical_id = "566c1629-30b0-4105-9e67-7e8268dec92c"
 
 [[outputs]]
 id = "JAFtd3Kp5p1rMnUU0Sdid"
 uri = "file://.local/exports/deployment-guide.docx"
 type = "word_document"
 title = "دليل رفع السورس على سيرفر محلي أو سحابي (Word)"
+logical_id = "f94e8416-e0e6-4e6b-93fd-a1571d7e0f75"
 
 [[outputs]]
 id = "2kxROpcbWHg7lzIDxsrBL"
 uri = "file://.local/exports/database.sql.gz"
 type = "unspecified"
 title = "نسخة قاعدة البيانات (gzip - 280KB)"
+logical_id = "de180a2d-f4ee-4ee4-b573-a94ca4b3e185"
 
 [[outputs]]
 id = "aLfUOiAeIBhB9b6c4hMIe"
 uri = "file://.local/sql/backfill_qyd_gaps_company10.sql.txt"
 type = "text"
 title = "backfill_qyd_gaps_company10.sql — جاهز للإنتاج"
+logical_id = "294d5951-4ea0-4401-a94f-8cbb42e317cd"
 
 [[outputs]]
 id = "waC7awRBRhEamitg3kmwR"
 uri = "file://.local/sql/backfill_qyd_0594_0653_company10.sql.txt"
 type = "text"
 title = "backfill_qyd_0594_0653_company10.sql — 60 رقمًا"
+logical_id = "0910083b-27c5-4470-8036-0f8acefb86f8"
 
 [[outputs]]
 id = "CqjxnKlIdtjV4cwhICFsQ"
 uri = "file://.local/sql/backfill_qyd_0251_0281_company10.sql.txt"
 type = "text"
 title = "backfill_qyd_0251_0281_company10.sql — رقمان فقط"
+logical_id = "f696602b-cdb7-4dc9-a0e3-bdbcd21a5474"
 
 [[outputs]]
 id = "3cQbM9SGL1izeUuDqKFCn"
 uri = "file://.local/sql/reset_journal_seq_company10_to_655.sql.txt"
 type = "text"
 title = "reset_journal_seq_company10_to_655.sql — إرجاع العداد إلى 655"
+logical_id = "a5cf5e75-ba0d-4df6-a3c9-34050ab636d5"
 
 [[outputs]]
 id = "oXCjAmuHGeZ3aSbQI7npP"
 uri = "file://.local/sql/fix_duplicate_qyd_0722_company18.sql.txt"
 type = "text"
 title = "fix_duplicate_qyd_0722_company18.sql — إصلاح التكرار"
+logical_id = "2d7ea70a-2c31-43b7-bf80-e6176c260259"
 
 [[outputs]]
 id = "2_mmM084F6mXXbNK9cGFr"
 uri = "file://attached_assets/branding/zacode-logo-horizontal.svg"
 type = "image"
 title = "Zacode — الشعار الأفقي (إنجليزي)"
+logical_id = "c7595968-3ae6-456a-be70-71d3f8f1e7f1"
 
 [[outputs]]
 id = "MA3RpwJ6TeTWM8y6ZfnMr"
 uri = "file://attached_assets/branding/zacode-logo-arabic.svg"
 type = "image"
 title = "زاكود — الشعار الأفقي (عربي)"
+logical_id = "aaf06708-2241-47d0-b15a-13472d168416"
 
 [[outputs]]
 id = "RALLy-Hfi5L736IDiUJPa"
 uri = "file://attached_assets/branding/zacode-logo-dark.svg"
 type = "image"
 title = "Zacode — على خلفية داكنة"
+logical_id = "0f5fa17d-e9c0-4af8-9f5c-6953cec92d46"
 
 [[outputs]]
 id = "tQ3T8Scj5o3ZUsGHKqFAn"
 uri = "file://attached_assets/branding/zacode-mark.svg"
 type = "image"
 title = "Zacode — الأيقونة فقط (Brand Mark / Favicon)"
+logical_id = "2d97fb11-4f9f-40e8-87a2-716e5cc2deb5"
 
 [[outputs]]
 id = "QLoABkQnajYtfdc1qArK_"
 uri = "file://attached_assets/branding/zacode-mark-1024.png"
 type = "image"
 title = "Zacode — أيقونة PNG عالية الدقة (1024×1024 — للسوشيال)"
+logical_id = "def57e41-b4c6-4be3-9174-9a0fa25c07b1"
 
 [[outputs]]
 id = "xJvMJablraDbLCGhvzgOh"
 uri = "file://attached_assets/branding/zacode-mark-512.png"
 type = "image"
 title = "Zacode — أيقونة PNG متوسطة (512×512 — للواتساب Business)"
+logical_id = "1bdc7d5d-14b9-4642-99db-2bcc1bd11250"
 
 [[outputs]]
 id = "SE2__x42rNVnbQqxsQ09k"
 uri = "file://attached_assets/branding/zacode-mark-256.png"
 type = "image"
 title = "Zacode — أيقونة PNG صغيرة (256×256 — لـ LinkedIn/X)"
+logical_id = "37ea1ae6-5585-4f7b-bee8-b90a0b613330"
 
 [[outputs]]
 id = "FvJp66GW44GeNlYMmNG2L"
 uri = "file://attached_assets/branding/zacode-logo-horizontal.png"
 type = "image"
 title = "Zacode — الشعار الأفقي إنجليزي (PNG بخلفية شفافة)"
+logical_id = "835f4232-c51d-423c-ace0-f2e2d408ee72"
 
 [[outputs]]
 id = "I1C1gLnXMMHd3tHb__pwS"
 uri = "file://attached_assets/branding/zacode-logo-arabic.png"
 type = "image"
 title = "زاكود — الشعار الأفقي عربي (PNG بخلفية شفافة)"
+logical_id = "85edeefd-1ed4-4516-b7cd-845188ecb263"
 
 [[outputs]]
 id = "u2MthIBG-LNrjPZtQTuH1"
 uri = "file://attached_assets/branding/zacode-logo-dark.png"
 type = "image"
 title = "Zacode — على خلفية داكنة (PNG للعروض/السوشيال)"
+logical_id = "bd381568-f5b1-44f5-9810-f5c9c409feaa"
 
 [[outputs]]
 id = "AZVS8Ec60ozJmTWzlRcnd"
 uri = "file://.local/exports/source.tar.gz"
 type = "unspecified"
 title = "السورس كود الكامل (tar.gz - 536MB)"
+logical_id = "d4c0f7db-b92a-45b6-b189-c553acd299e3"
 
 [[outputs]]
 id = "hNzwdGEoeaN14JCNaEQVq"
 uri = "file://.local/security_roadmap.md"
 type = "text"
 title = "خطة رفع مستوى الحماية - 3 شهور"
+logical_id = "14450888-9aaf-4e0e-a009-ad0fdd368748"
 
 [[outputs]]
 id = "ViWWKqF_-JjmYeBZkW-lX"
 uri = "file://attached_assets/مطابقة_بنك_الراجحي_110202.xlsx"
 type = "table"
 title = "مطابقة بنك الراجحي 110202 - فجوة 9,848.95"
+logical_id = "7786453b-18eb-417b-b32b-67f9b73bba99"
 
 [[outputs]]
 id = "skLkJhOsM_JmlCrMu7P0F"
 uri = "file://attached_assets/قيود_متكررة_110202.txt"
 type = "text"
 title = "قيود حساب 110202 - المبالغ المتكررة"
+logical_id = "a51ae3f5-4012-45e1-93a7-c618d4770c8d"
 
 [[outputs]]
 id = "PFNQ1SseEJwVmT7Hn2AZv"
 uri = "file://attached_assets/grocery_items_egypt.csv"
 type = "table"
 title = "كتالوج البقالة المصري (624 صنف، باركود 622)"
+logical_id = "fddbd4ac-e6a4-4f4c-be54-e6dbbd47df58"
 
 [[outputs]]
 id = "mQANst8X0WDiUgvDgzQMT"
 uri = "file://attached_assets/grocery_items_egypt.xlsx"
 type = "table"
 title = "كتالوج البقالة المصري (Excel، 624 صنف)"
+logical_id = "87bd241a-8cf3-4d14-b9f2-57bd367857a4"
 
 [[outputs]]
 id = "bSFbefmoSvlzePuv0xABw"
 uri = "file://exports/Zacode-ERP-Technical-Offer.pdf"
 type = "pdf"
 title = "العرض التقني — النسخة العربية (مع قسم السلامة والصحة المهنية)"
+logical_id = "f7ef3e5f-b42c-4764-ae9d-94f039d9cc63"
 
 [[outputs]]
 id = "h6z3Rs8ddHmYxz-jwWczs"
 uri = "file://exports/Zacode-ERP-Technical-Offer-EN.pdf"
 type = "pdf"
 title = "Technical Proposal — English Version (incl. Occupational Health & Safety)"
+logical_id = "cfdf26e5-c70a-4037-8ba4-7e69d280ea67"
 
 [[outputs]]
 id = "P6ohXcRbxJQxjfrL7DjzQ"
 uri = "file://exports/Zacode-Safety-Offer-AR.pdf"
 type = "pdf"
 title = "عرض السلامة والصحة المهنية — النسخة العربية (6 صفحات)"
+logical_id = "161b9cae-718d-4111-b28f-407520c3d025"
 
 [[outputs]]
 id = "alcpQJL00x0FzFhGn0ofA"
 uri = "file://exports/Zacode-Safety-Offer-EN.pdf"
 type = "pdf"
 title = "Occupational Health & Safety Proposal — English (6 pages)"
+logical_id = "e5af7192-6c0d-4964-9cf9-92ee0ac09085"
 
 [[outputs]]
 id = "MVeAu3sSgo3p0jh3CJsxi"
 uri = "file://.local/outputs/ZACOD-ERP---Technical-Deck.pdf"
 type = "pdf"
 title = "عرض زاكود ERP التقني (PDF)"
+logical_id = "05df8c7b-97b5-475c-8b4e-1d3a47061980"
 
 [[outputs]]
 id = "o9ib5RuskVVejkNnTtWWY"
 uri = "file://.local/outputs/ZACOD-ERP---Technical-Deck.pptx"
 type = "slides"
 title = "عرض زاكود ERP التقني (PowerPoint)"
+logical_id = "b99e4bc6-0d19-4dbe-afde-b77802ae634f"
 
 [[outputs]]
 id = "81PCyae8uvqH9rOQv5qaC"
 uri = "file://dist/exports/zacoderp-source.tar.gz"
 type = "unspecified"
 title = "الكود المصدري الكامل (zacoderp-source.tar.gz)"
+logical_id = "f1a5ba22-9f88-4849-afef-e4520943556e"
 
 [[outputs]]
 id = "hCNK-gGuKfgBMmtbXB1TP"
 uri = "file://dist/exports/zacoderp-database.sql.gz"
 type = "unspecified"
 title = "نسخة قاعدة البيانات (zacoderp-database.sql.gz)"
+logical_id = "f4eea419-9347-4ce9-9f83-1b20e9e69f24"
 
 [[outputs]]
 id = "tvLDbUC2joeSM51h6jCmM"
 uri = "file://delivery/zatca-erp-source.tar.gz"
 type = "unspecified"
 title = "السورس كود الكامل (شامل برنامج الويندوز POS)"
+logical_id = "88c0ef8d-8316-4412-bf8b-c9ed91c076b4"
 
 [[outputs]]
 id = "7WpQV2Nay7FkKGyRbtc0S"
 uri = "file://delivery/database-full.sql.gz"
 type = "unspecified"
 title = "نسخة قاعدة البيانات الكاملة (257 جدول)"
+logical_id = "1a2cfd0c-9bc0-49ed-8074-32dfb693a772"
 
 [[outputs]]
 id = "Gw45Athmh-A0hKfpV037s"
 uri = "file://delivery/INSTALL-VPS-GoDaddy.md"
 type = "text"
 title = "دليل التركيب على VPS GoDaddy"
+logical_id = "86965931-d1ec-493f-8946-6f4e87f412d7"
 
 [[outputs]]
 id = "vZ3IvOZvbof35BnoNLJ3x"
 uri = "file://exports/zacode-source-code.zip"
 type = "unspecified"
 title = "السورس كود الكامل (ZIP)"
+logical_id = "3da6c337-fc03-46f1-b64a-1005f093310d"
 
 [[outputs]]
 id = "hh2hVdUy7NhUWXCArMh6O"
 uri = "file://exports/zacode-database.sql.gz"
 type = "unspecified"
 title = "قاعدة بيانات التطوير (SQL مضغوط)"
+logical_id = "4da98487-3fd3-4956-903b-116f2a961f0b"
 
 [[outputs]]
 id = "R8dGcrPobZlOA03e3izzS"
@@ -348,6 +396,7 @@ uri = "file://exports/agent-external-package-dev-2026-08-20/zacode-backend-dev.t
 type = "unspecified"
 title = "Backend — بيئة التطوير"
 description = "حزمة Backend جاهزة للرفع في خانة Backend؛ تحتوي index.mjs في جذر الأرشيف."
+logical_id = "ed043ac0-c597-48f7-89a4-ec69978e94ad"
 
 [[outputs]]
 id = "-EaMxI8t1vy7zuUmU3_vE"
@@ -355,6 +404,7 @@ uri = "file://exports/agent-external-package-dev-2026-08-20/zacode-frontend-dev.
 type = "unspecified"
 title = "Frontend — بيئة التطوير"
 description = "حزمة Frontend جاهزة للرفع في خانة Frontend؛ تحتوي index.html وملفات assets في جذر الأرشيف."
+logical_id = "142fcdb7-67b0-46d0-a687-f5312da6281c"
 
 [[outputs]]
 id = "vwr0UPkBHfddoecEe4-fE"
@@ -362,6 +412,7 @@ uri = "file://exports/agent-external-package-dev-2026-08-20/zacode-database-dev.
 type = "unspecified"
 title = "قاعدة البيانات — بيئة التطوير"
 description = "نسخة PostgreSQL كاملة من قاعدة بيانات التطوير، مضغوطة بصيغة SQL.gz وجاهزة للرفع في خانة قاعدة البيانات."
+logical_id = "08da8ad6-03b0-438e-b9f4-b9cb93d5ade7"
 
 [[outputs]]
 id = "yi2UR8bDAzyxoXW9jujUv"
@@ -369,6 +420,7 @@ uri = "file://exports/agent-external-package-dev-2026-08-20/zacode-database-dev-
 type = "unspecified"
 title = "قاعدة بيانات الوكيل الآمنة — بيئة التطوير"
 description = "نسخة PostgreSQL لرفعها مع حزمة وكيل خارجي: تحتوي بيانات التطبيق كاملة وتستثني بيانات الوكلاء وجلسات وأكواد حماية Super Admin التي يجب إنشاؤها على الخادم المستهدف. استخدم هذه النسخة بدل ملف قاعدة البيانات السابق."
+logical_id = "6c6f9539-6eda-4354-a623-c20f2ca6ff96"
 
 [[outputs]]
 id = "waP8xdT7n4yu93VCl-lAm"
@@ -376,6 +428,7 @@ uri = "file://exports/personal-development-backup-2026-08-20/zacode-source-devel
 type = "unspecified"
 title = "سورس Zacode الكامل — بيئة التطوير"
 description = "نسخة كاملة من سورس جميع التطبيقات والمكتبات والإعدادات والأصول، من دون node_modules أو نتائج البناء أو ملفات الأسرار."
+logical_id = "cdf02e54-b873-41b6-a627-03ac58b6dbfd"
 
 [[outputs]]
 id = "_4SRGR5NQsBuRb2V8eG1z"
@@ -383,6 +436,7 @@ uri = "file://exports/personal-development-backup-2026-08-20/zacode-database-dev
 type = "unspecified"
 title = "قاعدة بيانات التطوير الكاملة — نسخة شخصية"
 description = "نسخة PostgreSQL كاملة من مخطط وبيانات بيئة التطوير للاحتفاظ والاستعادة الشخصية. تحتوي بيانات حساسة ويجب حفظها بأمان."
+logical_id = "7bbd78e3-be62-4bcb-aeaf-1abd4d1b8006"
 
 [[outputs]]
 id = "cOeu4EDIXs5zVuY865cVP"
@@ -390,6 +444,7 @@ uri = "file://exports/personal-development-backup-2026-08-20/Zacode-Run-Guide-AR
 type = "text"
 title = "دليل تشغيل Zacode — عربي"
 description = "خطوات فك السورس، تثبيت الحزم، استعادة PostgreSQL، تشغيل Backend وFrontend، البناء، وتسطيب وكيل خارجي وتحديثه."
+logical_id = "72e3d916-5972-4945-ab13-7e74afee47f1"
 
 [[outputs]]
 id = "hxZ3XuoVEVB73w2nfXb3f"
@@ -397,6 +452,7 @@ uri = "file://artifacts/mobile/releases/zacoderp-google-play-v3.aab"
 type = "unspecified"
 title = "Zacode ERP — Google Play AAB v3"
 description = "ملف Android App Bundle جاهز للرفع في مسار Internal testing داخل Google Play Console. هذه نسخة إنتاج أقدم لبدء الاختبار الداخلي."
+logical_id = "0c9e61a2-9430-4843-95c2-9ab4f6466abc"
 
 [[outputs]]
 id = "TsnvG2wdlrJ_-6rsSzfYH"
@@ -404,6 +460,7 @@ uri = "file://artifacts/mobile/releases/zacoderp-google-play-v8.aab"
 type = "unspecified"
 title = "Zacode ERP Android v8 (AAB)"
 description = "آخر نسخة Android Production جاهزة للرفع إلى Google Play، رقم البناء 8."
+logical_id = "87ae5bde-f20e-4dce-bd77-c3f56f4d9fcd"
 
 [[outputs]]
 id = "7wwAROhIK8ZUm6F37M0qH"
@@ -411,6 +468,7 @@ uri = "file://artifacts/mobile/releases/zacoderp-google-play-v11.aab"
 type = "unspecified"
 title = "Zacode ERP Android v11 (AAB) — النسخة النهائية"
 description = "تشمل ترتيب تفاصيل الأصناف، طباعة عروض الأسعار والمرتجعات، صلاحيات الترحيل وفك الترحيل للموبايل، وإصلاح جميع حقول البحث."
+logical_id = "5e02f017-7b1c-47ea-81c1-c0b52ee138e3"
 
 [[outputs]]
 id = "9H0VZ9k3v8RYq3f4AWOiW"
@@ -418,6 +476,7 @@ uri = "file://artifacts/mobile/releases/zacoderp-google-play-v13.aab"
 type = "unspecified"
 title = "Zacode ERP Android v13 (AAB) — النسخة النهائية"
 description = "تعرض الخصومات والكميات المجانية في الفاتورة المرحلة للقراءة فقط، وتظهرها أيضًا في طباعة الفواتير وعروض الأسعار."
+logical_id = "815be42c-0328-4fb6-9711-7d31fd56ea0e"
 
 [[outputs]]
 id = "e3Qp4ksZq769jm-3x4bR4"
@@ -425,6 +484,7 @@ uri = "file://exports/external-agent-package-20260827/backend.tgz"
 type = "unspecified"
 title = "Backend — النسخة الخارجية"
 description = "ارفعه في خانة Backend. يحتوي index.mjs في جذر الحزمة ومبني من أحدث كود حالي."
+logical_id = "63e563e1-0c0a-4705-8626-79edfe19e82c"
 
 [[outputs]]
 id = "gBekNbEOLuCFL4D_At5Cp"
@@ -432,6 +492,7 @@ uri = "file://exports/external-agent-package-20260827/frontend.tgz"
 type = "unspecified"
 title = "Frontend — النسخة الخارجية"
 description = "ارفعه في خانة Frontend. يحتوي index.html في جذر الحزمة ويتضمن أداة Excel الجديدة."
+logical_id = "92477079-460d-44b9-a550-0d0252442249"
 
 [[outputs]]
 id = "KXPDOUfTP5L7XAqh16z7u"
@@ -439,6 +500,7 @@ uri = "file://exports/external-agent-package-20260827/database-sanitized.dump"
 type = "unspecified"
 title = "Database — نسخة تجريبية معمّاة"
 description = "ارفعه في خانة قاعدة البيانات. PostgreSQL custom dump يحتفظ بالبيانات التشغيلية ويعمي البيانات الحساسة ويعطل التكاملات."
+logical_id = "f9b14b8f-83b7-46b9-badb-ac04be00f77b"
 
 [[outputs]]
 id = "a-A9o7w6EzapRX4lEjKcT"
@@ -446,6 +508,7 @@ uri = "file://exports/external-agent-package-20260827/SHA256SUMS.txt"
 type = "text"
 title = "بصمات التحقق SHA-256"
 description = "بصمات الملفات الثلاثة للتحقق بعد النقل."
+logical_id = "b5d96f5b-9b8c-4dd8-a4c4-8567434e24c5"
 
 [[outputs]]
 id = "o7Oeb-gt0SDJbq2TEIKgn"
@@ -453,6 +516,7 @@ uri = "file://exports/external-agent-package-20260827/README.txt"
 type = "text"
 title = "تعليمات الحزمة الخارجية"
 description = "خريطة رفع الملفات وسياسة التحديث والسلامة."
+logical_id = "9b4641f2-0b39-4747-ba34-2f8826735166"
 
 [[outputs]]
 id = "UO2XUN9XG-E5hL8cTIb5u"
@@ -460,3 +524,18 @@ uri = "file://exports/external-agent-package-20260827/database-empty.dump"
 type = "unspecified"
 title = "قاعدة بيانات الوكيل الفارغة"
 description = "PostgreSQL custom dump ببنية النظام كاملة وبدون أي بيانات. ارفعها كملف Database للوكيل KARM AZZAM ثم أعد التسطيب."
+logical_id = "133c0509-53e0-44a2-9d3d-8bb82d70e297"
+
+[[outputs]]
+id = "JNOpdyHSTJINBIPfUJq6I"
+uri = "file://attached_assets/simple-manufacturing-costs-preview.png"
+type = "image"
+title = "تبويب تكاليف التصنيع بعد التعديل"
+description = "لقطة فعلية من حساب تجريبي مستقل: الرواتب، إهلاك الأصول، والإيجارات والمصروفات المقدمة، مع إرشادات تجهيز المصادر. الحساب التجريبي بلا مصادر تكلفة فعلية."
+logical_id = "6842bd75-b9f6-41c5-9a22-db3b5230ee7e"
+content_hash = "sha256:1b7799a484cbb533b92b23835a9c58e1f742c1a1984cf79137917de435551086"
+size = 142638
+mtime_ms = 1789126782324
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/6842bd75-b9f6-41c5-9a22-db3b5230ee7e/80e627de-b244-4233-a288-3e8a4f2672bd"
+storage_version_token = "1789126795327284"
+content_type = "image/png"
