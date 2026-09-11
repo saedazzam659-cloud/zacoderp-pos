@@ -36,6 +36,12 @@ Optional additional costs use one mode per category: none, linked, or manual. A 
 
 Templates and manufacture-again must copy configuration only, never stock results or source allocations. Paused orders must reject operational edits and resume without issuing stock again.
 
+The materials tab must emphasize the live planned-quantity requirement, with the immutable recipe basis shown secondarily.
+
+**Why:** Showing only base recipe quantities made the user think changing planned production did not scale materials. Doubling planned quantity must visibly double requirements, not mutate the master recipe.
+
+**How to apply:** Derive each displayed requirement from base line quantity × planned output ÷ recipe output; never compound from previously scaled quantities.
+
 **Why:** Reusing transactions as templates or re-entering the issue path on resume silently duplicates consumption.
 
 Financial cost variance must exclude analytical layers. Any margin based on a frozen item price is simulated, not realized sales profitability.

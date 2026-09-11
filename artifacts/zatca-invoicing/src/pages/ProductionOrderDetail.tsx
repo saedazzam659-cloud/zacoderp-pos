@@ -28,11 +28,26 @@ const API = import.meta.env.VITE_API_URL || "";
 type Item = {
   id: number;
   kind: "raw" | "product" | "byproduct";
+  itemId: number | null;
   description: string;
   quantity: string;
   unitCode: string;
   unitCost: string;
   totalCost: string;
+  itemNameAr?: string | null;
+  itemNameEn?: string | null;
+  itemCode?: string | null;
+  unitNameAr?: string | null;
+  unitNameEn?: string | null;
+  quantityBasis?: {
+    kind: "bom_template_output";
+    templateId: number;
+    lineQuantity: number;
+    lineUnitCode: string;
+    outputQuantity: number;
+    outputUnitCode: string;
+    formula: string;
+  } | null;
 };
 type Event = {
   id: number;
@@ -1166,15 +1181,39 @@ export default function ProductionOrderDetail() {
                     {items.length === 0 && (
                       <tr><td colSpan={6} className="p-6 text-center text-slate-500">{t("production.noItems")}</td></tr>
                     )}
-                    {items.map((it) => (
+                    {items.map((it) => {
+                      const itemName = it.itemNameAr || it.itemNameEn || it.description
+                        || (it.itemId ? `صنف #${it.itemId}` : "—");
+                      const unitLabel = it.unitNameAr
+                        ? `${it.unitCode} — ${it.unitNameAr}`
+                        : (it.unitNameEn ? `${it.unitCode} — ${it.unitNameEn}` : it.unitCode);
+                      const basis = it.quantityBasis;
+                      return (
                       <tr key={it.id} className="border-t" data-testid={`row-item-${it.id}`}>
                         <td className="p-2 text-xs">
                           <span className="rounded bg-slate-100 px-2 py-0.5 dark:bg-slate-800">
                             {t(`production.kind_${it.kind}`)}
                           </span>
                         </td>
-                        <td className="p-2">{it.description}</td>
-                        <td className="p-2 text-end">{Number(it.quantity).toLocaleString("en-US")} {it.unitCode}</td>
+                        <td className="p-2">
+                          <div className="font-medium">{itemName}</div>
+                          {it.itemCode && (
+                            <div className="text-xs text-slate-500 font-mono">{it.itemCode}</div>
+                          )}
+                          {it.description && it.description !== itemName && (
+                            <div className="text-xs text-slate-400">{it.description}</div>
+                          )}
+                        </td>
+                        <td className="p-2 text-end">
+                          <div>{Number(it.quantity).toLocaleString("en-US")} {unitLabel}</div>
+                          {basis && (
+                            <div className="text-xs text-slate-500 mt-0.5">
+                              أساس الوصفة: {Number(basis.lineQuantity).toLocaleString("en-US")} {basis.lineUnitCode}
+                              {" لكل "}
+                              {Number(basis.outputQuantity).toLocaleString("en-US")} {basis.outputUnitCode}
+                            </div>
+                          )}
+                        </td>
                         <td className="p-2 text-end">{Number(it.unitCost).toLocaleString("en-US")}</td>
                         <td className="p-2 text-end">{Number(it.totalCost).toLocaleString("en-US")}</td>
                         <td className="p-2 text-end">
@@ -1188,7 +1227,8 @@ export default function ProductionOrderDetail() {
                           </Button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

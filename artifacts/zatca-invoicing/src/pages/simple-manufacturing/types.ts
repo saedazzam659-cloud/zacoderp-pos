@@ -30,6 +30,8 @@ export type Catalog = {
     nameAr: string;
     productItemId: number;
     productNameAr?: string;
+    outputQty?: string | number;
+    outputUnitCode?: string | null;
     linesCount?: number;
   }>;
   routings: Array<{

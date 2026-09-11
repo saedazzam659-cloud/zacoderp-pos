@@ -456,7 +456,8 @@ export function SimpleWizard({
   const recipeOutputQty = Number(bomPreview?.outputQty);
   const recipeOutputUnit = bomPreview?.outputUnitCode || form.unitCode;
   const materialScale = Number.isFinite(recipeOutputQty) && recipeOutputQty > 0
-    ? Number(form.plannedQty || 0) / recipeOutputQty
+    && Number.isFinite(Number(form.plannedQty)) && Number(form.plannedQty) > 0
+    ? Number(form.plannedQty) / recipeOutputQty
     : null;
 
   const steps = [
@@ -659,7 +660,9 @@ export function SimpleWizard({
                 <Card className="border-emerald-100 shadow-none">
                   <CardHeader className="bg-emerald-50/30 pb-3 border-b border-emerald-100">
                     <CardTitle className="text-emerald-800 text-base">{bomPreview.template?.nameAr || bomPreview.nameAr}</CardTitle>
-                    <CardDescription>الوصفة المعتمدة للمنتج المختار</CardDescription>
+                    <CardDescription>
+                      كميات المواد المطلوبة لإنتاج {Number(form.plannedQty || 0).toLocaleString("en-US", { maximumFractionDigits: 4 })} {form.unitCode} — تتحدث تلقائياً بنفس نسب الوصفة.
+                    </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-4">
                     <div className="divide-y rounded-lg border">
@@ -668,15 +671,24 @@ export function SimpleWizard({
                            <span className="font-medium text-slate-700">
                              {l.itemNameAr || l.itemNameEn || l.description || `صنف #${l.itemId}`}
                            </span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-slate-400 text-xs">
-                              الكمية لكل {bomPreview?.outputQty || 1} {recipeOutputUnit}:
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="font-mono bg-emerald-50 text-emerald-900 px-2 py-0.5 rounded border border-emerald-200" data-testid={`material-required-${l.itemId}`}>
+                              {materialScale != null && Number.isFinite(Number(l.quantity))
+                                ? (Number(l.quantity) * materialScale).toLocaleString("en-US", { maximumFractionDigits: 4 })
+                                : "—"} {l.unitCode}
                             </span>
-                            <span className="font-mono bg-slate-100 px-2 py-0.5 rounded border">{l.quantity} {l.unitCode}</span>
+                            <span className="text-slate-400 text-xs">
+                              أساس الوصفة: {Number(l.quantity).toLocaleString("en-US", { maximumFractionDigits: 4 })} {l.unitCode} لكل {Number.isFinite(recipeOutputQty) && recipeOutputQty > 0
+                                ? bomPreview.outputQty
+                                : "—"} {recipeOutputUnit}
+                            </span>
                           </div>
                         </div>
                       ))}
                     </div>
+                    <p className="mt-3 text-xs text-slate-500">
+                      المطلوب = كمية الخامة الأساسية × (الكمية المخططة ÷ كمية أساس الوصفة). لا تتغير الوصفة المحفوظة، ولا تُحوّل وحدات القياس تلقائياً.
+                    </p>
                   </CardContent>
                 </Card>
               )}

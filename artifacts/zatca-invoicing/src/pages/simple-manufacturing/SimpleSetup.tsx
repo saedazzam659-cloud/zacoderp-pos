@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Boxes, GitBranch, FileText, Plus, Save, Server, PackageOpen } from "lucide-react";
+import { GitBranch, FileText, Plus, Server, PackageOpen } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import type { Catalog } from "./types";
 
@@ -14,7 +14,9 @@ export function SimpleSetup({
    canEdit,
   onSaveMaterial,
   onSaveBom,
+  onLoadBom,
   onSaveRouting,
+  onLoadRouting,
   onSaveTemplate,
   onSaveWarehouse
 }: {
@@ -23,8 +25,10 @@ export function SimpleSetup({
    canCreate: boolean;
    canEdit: boolean;
   onSaveMaterial: (data: { code: string; nameAr: string; itemNature: string }) => Promise<any>;
-  onSaveBom: (data: { productItemId: string; nameAr: string; outputQty: string; outputUnitCode: string; lines: Array<{ itemId: string; quantity: string; unitCode: string }> }) => Promise<unknown>;
-  onSaveRouting: (data: { productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number }> }) => Promise<unknown>;
+  onSaveBom: (data: { id?: number; productItemId: string; nameAr: string; outputQty: string; outputUnitCode: string; lines: Array<{ itemId: string; quantity: string; unitCode: string }> }) => Promise<unknown>;
+  onLoadBom: (id: number) => Promise<any>;
+  onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null }> }) => Promise<unknown>;
+  onLoadRouting: (id: number) => Promise<any>;
   onSaveTemplate: (data: { name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
   onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
 }) {
@@ -32,7 +36,17 @@ export function SimpleSetup({
   const [bom, setBom] = useState({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
   const [bomLines, setBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([{ itemId: "", quantity: "1", unitCode: "" }]);
   const [routing, setRouting] = useState({ productItemId: "", nameAr: "" });
-  const [routingStages, setRoutingStages] = useState<Array<{ nameAr: string; expectedDurationMinutes: number }>>([{ nameAr: "", expectedDurationMinutes: 0 }]);
+  const [routingStages, setRoutingStages] = useState<Array<{
+    nameAr: string;
+    expectedDurationMinutes: number;
+    code?: string;
+    expectedCost?: string | number;
+    expectedWasteRatio?: string | number;
+    workCenterId?: number | null;
+    expectedCostAccountId?: number | null;
+    notes?: string | null;
+    nameEn?: string | null;
+  }>>([{ nameAr: "", expectedDurationMinutes: 0 }]);
   const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1", unitCode: "" });
   const [warehouse, setWarehouse] = useState({ code: "", nameAr: "", isDefault: false });
 
@@ -42,6 +56,94 @@ export function SimpleSetup({
   const [openRouting, setOpenRouting] = useState(false);
   const [openTemplate, setOpenTemplate] = useState(false);
   const [openWarehouse, setOpenWarehouse] = useState(false);
+  const [editingBomId, setEditingBomId] = useState<number | null>(null);
+  const [editingRoutingId, setEditingRoutingId] = useState<number | null>(null);
+  const [loadingBomId, setLoadingBomId] = useState<number | null>(null);
+  const [loadingRoutingId, setLoadingRoutingId] = useState<number | null>(null);
+
+  const resetBom = () => {
+    setEditingBomId(null);
+    setBom({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
+    setBomLines([{ itemId: "", quantity: "1", unitCode: "" }]);
+  };
+
+  const resetRouting = () => {
+    setEditingRoutingId(null);
+    setRouting({ productItemId: "", nameAr: "" });
+    setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0 }]);
+  };
+
+  const startBomCreate = () => {
+    resetBom();
+    setOpenBom(true);
+  };
+
+  const startRoutingCreate = () => {
+    resetRouting();
+    setOpenRouting(true);
+  };
+
+  const openBomForEdit = async (id: number) => {
+    setLoadingBomId(id);
+    try {
+      const detail = await onLoadBom(id);
+      const lines = Array.isArray(detail?.lines) ? detail.lines : [];
+      setEditingBomId(id);
+      setBom({
+        productItemId: String(detail?.productItemId ?? ""),
+        nameAr: String(detail?.nameAr ?? ""),
+        outputQty: String(detail?.outputQty ?? "1"),
+        outputUnitCode: detail?.outputUnitCode ? String(detail.outputUnitCode) : "",
+      });
+      setBomLines(lines.length
+        ? lines.map((line: any) => ({
+          itemId: line?.itemId == null ? "" : String(line.itemId),
+          quantity: String(line?.quantity ?? "1"),
+          unitCode: line?.unitCode ? String(line.unitCode) : "",
+        }))
+        : [{ itemId: "", quantity: "1", unitCode: "" }]);
+      setOpenBom(true);
+    } catch {
+      // The controller owns the toast/error contract. Leave the dialog closed
+      // when a detail request fails so stale form values cannot be edited.
+    } finally {
+      setLoadingBomId(null);
+    }
+  };
+
+  const openRoutingForEdit = async (id: number) => {
+    setLoadingRoutingId(id);
+    try {
+      const detail = await onLoadRouting(id);
+      const stages = Array.isArray(detail?.stages) ? detail.stages : [];
+      setEditingRoutingId(id);
+      setRouting({
+        productItemId: String(detail?.productItemId ?? ""),
+        nameAr: String(detail?.nameAr ?? ""),
+      });
+      setRoutingStages(stages.length
+        ? stages
+          .slice()
+          .sort((a: any, b: any) => Number(a?.sequence ?? 0) - Number(b?.sequence ?? 0))
+          .map((stage: any) => ({
+            nameAr: String(stage?.nameAr ?? ""),
+            expectedDurationMinutes: Number(stage?.expectedDurationMinutes ?? 0) || 0,
+            code: stage?.code ? String(stage.code) : undefined,
+            expectedCost: stage?.expectedCost ?? 0,
+            expectedWasteRatio: stage?.expectedWasteRatio ?? 0,
+            workCenterId: stage?.workCenterId == null ? null : Number(stage.workCenterId),
+            expectedCostAccountId: stage?.expectedCostAccountId == null ? null : Number(stage.expectedCostAccountId),
+            notes: stage?.notes ?? null,
+            nameEn: stage?.nameEn ?? null,
+          }))
+        : [{ nameAr: "", expectedDurationMinutes: 0 }]);
+      setOpenRouting(true);
+    } catch {
+      // The controller owns the toast/error contract.
+    } finally {
+      setLoadingRoutingId(null);
+    }
+  };
 
   const handleSaveMaterial = async () => {
     const row = await onSaveMaterial(material);
@@ -96,12 +198,12 @@ export function SimpleSetup({
               </DialogContent>
             </Dialog>
 
-            <Dialog open={openBom} onOpenChange={setOpenBom}>
+            <Dialog open={openBom} onOpenChange={open => { if (!open) { setOpenBom(false); resetBom(); } else setOpenBom(true); }}>
               <DialogTrigger asChild>
-                <Button variant="outline" className="w-full justify-start" disabled={!canEdit}><Plus className="mr-2 h-4 w-4" /> ربط قائمة مكونات (بسيطة)</Button>
+                <Button variant="outline" className="w-full justify-start" disabled={!canEdit} onClick={startBomCreate} data-testid="button-create-bom"><Plus className="mr-2 h-4 w-4" /> ربط قائمة مكونات (بسيطة)</Button>
               </DialogTrigger>
               <DialogContent dir="rtl" className="max-w-2xl max-h-[85vh] overflow-y-auto">
-                 <DialogHeader><DialogTitle>قائمة مكونات مبسطة</DialogTitle><DialogDescription>اربط أي عدد من المواد بالمنتج النهائي.</DialogDescription></DialogHeader>
+                 <DialogHeader><DialogTitle>{editingBomId ? "تعديل قائمة مكونات مبسطة" : "قائمة مكونات مبسطة"}</DialogTitle><DialogDescription>اربط أي عدد من المواد بالمنتج النهائي.</DialogDescription></DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
                     <label className="text-sm font-semibold">المنتج النهائي</label>
@@ -216,14 +318,13 @@ export function SimpleSetup({
                      </Button>
                    </div>
                    <div className="bg-slate-50 p-2 text-xs text-slate-500 rounded border">ملاحظة: إذا تركت الوحدة فارغة سيتم استخدام وحدة القياس الأساسية للصنف.</div>
-                   <Button disabled={busy || !canEdit || !bom.productItemId || !bomLines.length || bomLines.some(line => !line.itemId || !(Number(line.quantity) > 0))}
+                    <Button disabled={busy || !canEdit || !bom.productItemId || !bomLines.length || bomLines.some(line => !line.itemId || !(Number(line.quantity) > 0))}
                      onClick={async () => {
-                       await onSaveBom({ ...bom, lines: bomLines });
-                       setOpenBom(false);
-                       setBom({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
-                       setBomLines([{ itemId: "", quantity: "1", unitCode: "" }]);
+                        await onSaveBom({ ...bom, id: editingBomId ?? undefined, lines: bomLines });
+                        setOpenBom(false);
+                        resetBom();
                      }} className="w-full">
-                    حفظ القائمة
+                     {editingBomId ? "تحديث القائمة" : "حفظ القائمة"}
                   </Button>
                 </div>
               </DialogContent>
@@ -245,9 +346,17 @@ export function SimpleSetup({
               <div className="text-sm font-semibold text-slate-600">قوائم المواد المحفوظة</div>
               <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
                 {catalog.bomTemplates.map(b => (
-                  <div key={b.id} className="text-sm bg-white border border-slate-200 px-3 py-2 rounded-md shadow-sm flex flex-col">
+                   <div
+                     key={b.id}
+                     className={`text-sm bg-white border border-slate-200 px-3 py-2 rounded-md shadow-sm flex flex-col ${canEdit ? "cursor-pointer hover:border-violet-300 hover:bg-violet-50/30" : ""}`}
+                     onDoubleClick={() => { if (canEdit) void openBomForEdit(b.id); }}
+                     data-testid={`card-bom-${b.id}`}
+                     role={canEdit ? "button" : undefined}
+                     tabIndex={canEdit ? 0 : undefined}
+                   >
                     <span className="font-semibold text-violet-700">{b.nameAr}</span>
-                    <span className="text-xs text-slate-500">{b.productNameAr} • {b.linesCount} مكونات</span>
+                     <span className="text-xs text-slate-500">{b.productNameAr} • {b.linesCount} مكونات</span>
+                     {loadingBomId === b.id && <span className="text-xs text-violet-500">جارٍ تحميل القائمة…</span>}
                   </div>
                 ))}
               </div>
@@ -272,12 +381,12 @@ export function SimpleSetup({
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-6 space-y-4">
-          <Dialog open={openRouting} onOpenChange={setOpenRouting}>
+          <Dialog open={openRouting} onOpenChange={open => { if (!open) { setOpenRouting(false); resetRouting(); } else setOpenRouting(true); }}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="w-full justify-start" disabled={!canEdit}><Plus className="mr-2 h-4 w-4" /> مسار إنتاج جديد</Button>
+              <Button variant="outline" className="w-full justify-start" disabled={!canEdit} onClick={startRoutingCreate} data-testid="button-create-routing"><Plus className="mr-2 h-4 w-4" /> مسار إنتاج جديد</Button>
             </DialogTrigger>
             <DialogContent dir="rtl" className="max-w-xl max-h-[85vh] overflow-y-auto">
-              <DialogHeader><DialogTitle>مسار إنتاج جديد</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>{editingRoutingId ? "تعديل مسار الإنتاج" : "مسار إنتاج جديد"}</DialogTitle></DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
                   <label className="text-sm font-semibold">المنتج المرتبط</label>
@@ -327,8 +436,8 @@ export function SimpleSetup({
                   </Button>
                 </div>
 
-                <Button disabled={busy || !canEdit || !routing.productItemId || routingStages.some(s => !s.nameAr)} onClick={async () => { await onSaveRouting({ ...routing, stages: routingStages }); setOpenRouting(false); setRouting({ productItemId: "", nameAr: "" }); setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0 }]); }} className="w-full">
-                  حفظ المسار
+                <Button disabled={busy || !canEdit || !routing.productItemId || routingStages.some(s => !s.nameAr)} onClick={async () => { await onSaveRouting({ ...routing, id: editingRoutingId ?? undefined, stages: routingStages }); setOpenRouting(false); resetRouting(); }} className="w-full">
+                  {editingRoutingId ? "تحديث المسار" : "حفظ المسار"}
                 </Button>
               </div>
             </DialogContent>
@@ -339,11 +448,19 @@ export function SimpleSetup({
               <div className="text-sm font-semibold text-slate-600">مسارات الإنتاج المحفوظة</div>
               <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
                 {catalog.routings.map(r => (
-                  <div key={r.id} className="text-sm bg-white border border-slate-200 px-3 py-2 rounded-md shadow-sm flex flex-col gap-1">
+                  <div
+                    key={r.id}
+                    className={`text-sm bg-white border border-slate-200 px-3 py-2 rounded-md shadow-sm flex flex-col gap-1 ${canEdit ? "cursor-pointer hover:border-violet-300 hover:bg-violet-50/30" : ""}`}
+                    onDoubleClick={() => { if (canEdit) void openRoutingForEdit(r.id); }}
+                    data-testid={`card-routing-${r.id}`}
+                    role={canEdit ? "button" : undefined}
+                    tabIndex={canEdit ? 0 : undefined}
+                  >
                     <div className="flex justify-between items-start">
                       <span className="font-semibold text-violet-700">{r.nameAr}</span>
                       <span className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">{r.productNameAr}</span>
                     </div>
+                    {loadingRoutingId === r.id && <div className="text-xs text-violet-500">جارٍ تحميل المسار…</div>}
                     {r.stages && r.stages.length > 0 ? (
                       <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-1">
                         {r.stages.map((st, idx) => (

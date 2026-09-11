@@ -90,7 +90,8 @@ router.get("/", view, (_req, res) => {
     endpoints: [
       "/catalog", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
       "/orders", "/templates", "/setup/materials", "/setup/products",
-      "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/routing", "/reports",
+      "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/bom/:id",
+      "/setup/routing", "/setup/routing/:id", "/reports",
     ],
   });
 });
@@ -136,6 +137,8 @@ router.get("/catalog", view, async (req, res) => {
         nameAr: bomTemplatesTable.nameAr,
         productItemId: bomTemplatesTable.productItemId,
         productNameAr: itemsTable.nameAr,
+        outputQty: bomTemplatesTable.outputQty,
+        outputUnitCode: bomTemplatesTable.outputUnitCode,
         linesCount: sql<number>`(
           SELECT COUNT(*)::int
           FROM ${bomTemplateLinesTable}
@@ -177,6 +180,7 @@ router.get("/catalog", view, async (req, res) => {
           eq(accountsTable.companyId, cid),
           eq(accountsTable.isActive, true),
           eq(accountsTable.isPosting, true),
+          eq(accountsTable.accountType, "asset"),
         ))
         .orderBy(asc(accountsTable.code))
         .limit(2000),
@@ -766,6 +770,238 @@ router.delete("/templates/:id", remove, async (req, res) => {
   }
 });
 
+function setupError(message: string, status = 400): Error & { status: number } {
+  const error = new Error(message) as Error & { status: number };
+  error.status = status;
+  return error;
+}
+
+/**
+ * BOMs and routings are company-wide core manufacturing definitions (their
+ * tables intentionally do not have a branch column).  A caller may still
+ * send a branch selection from the compact screen; validate that selection
+ * before touching a global definition so a restricted user cannot use the
+ * setup endpoint as a branch-scope bypass.
+ */
+async function validateSetupBranch(req: any, cid: number, rawBranch: unknown) {
+  const requestedBranch = rawBranch == null || rawBranch === "" ? null : Number(rawBranch);
+  if (requestedBranch !== null &&
+      (!Number.isInteger(requestedBranch) || requestedBranch <= 0)) {
+    throw setupError("الفرع غير صحيح");
+  }
+  const branchId = intersectBranchRequest(req, requestedBranch);
+  if (branchId === "deny") {
+    throw setupError("لا يمكنك العمل على هذا الفرع", 403);
+  }
+  if (typeof branchId === "number") {
+    const [branch] = await db.select({ id: branchesTable.id })
+      .from(branchesTable)
+      .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)))
+      .limit(1);
+    if (!branch) throw setupError("الفرع غير موجود في هذه الشركة");
+  }
+  return branchId;
+}
+
+/**
+ * Normalize a compact BOM payload once at the facade boundary.  This keeps
+ * edit validation identical to create validation: every item and unit must
+ * belong to the acting company and the stored output/unit metadata is always
+ * canonical.
+ */
+async function normalizeSetupBom(cid: number, body: any) {
+  const productItemId = Number(body?.productItemId);
+  const lines = Array.isArray(body?.lines) ? body.lines : [];
+  if (!Number.isInteger(productItemId) || !lines.length) {
+    throw setupError("المنتج النهائي وسطور المواد مطلوبان");
+  }
+  const [product] = await db.select({
+    id: itemsTable.id,
+    unitCode: unitsTable.code,
+  }).from(itemsTable)
+    .leftJoin(unitsTable, and(
+      eq(itemsTable.unitId, unitsTable.id),
+      eq(unitsTable.companyId, cid),
+    ))
+    .where(and(
+      eq(itemsTable.id, productItemId),
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.status, "active"),
+    )).limit(1);
+  if (!product) throw setupError("المنتج النهائي غير موجود");
+
+  const normalizedLines = lines.map((x: any) => ({
+    itemId: Number(x?.itemId ?? x?.item?.id),
+    quantity: Number(x?.quantity),
+    description: String(x?.description || "مادة خام").trim(),
+    unitCode: x?.unitCode == null ? "" : String(x.unitCode).trim(),
+    notes: x?.notes ? String(x.notes) : null,
+  }));
+  if (normalizedLines.some((x: any) =>
+    !Number.isInteger(x.itemId) || x.itemId <= 0 ||
+    !Number.isFinite(x.quantity) || x.quantity <= 0 ||
+    !x.description
+  )) {
+    throw setupError("كل سطر في قائمة المواد يحتاج صنفاً وكمية أكبر من صفر");
+  }
+
+  const uniqueItemIds: number[] = [...new Set<number>(
+    normalizedLines.map((x: any) => x.itemId),
+  )];
+  const owned = await db.select({
+    id: itemsTable.id,
+    unitCode: unitsTable.code,
+  }).from(itemsTable)
+    .leftJoin(unitsTable, and(
+      eq(itemsTable.unitId, unitsTable.id),
+      eq(unitsTable.companyId, cid),
+    ))
+    .where(and(
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.status, "active"),
+      inArray(itemsTable.id, uniqueItemIds),
+    ));
+  if (owned.length !== uniqueItemIds.length) {
+    throw setupError("إحدى المواد غير موجودة أو غير نشطة في هذه الشركة");
+  }
+
+  const permittedUnits = await db.select({ code: unitsTable.code })
+    .from(unitsTable)
+    .where(eq(unitsTable.companyId, cid));
+  const unitByCode = new Map<string, string>();
+  for (const unit of permittedUnits) {
+    const code = String(unit.code ?? "").trim();
+    if (code && !unitByCode.has(code.toLowerCase())) unitByCode.set(code.toLowerCase(), code);
+  }
+  const ownedByItem = new Map(owned.map((item) => [item.id, item]));
+  for (const line of normalizedLines) {
+    const item = ownedByItem.get(line.itemId);
+    const requestedCode = line.unitCode || item?.unitCode || "PCE";
+    const actualCode = unitByCode.get(requestedCode.toLowerCase());
+    if (!actualCode) {
+      throw setupError(`وحدة القياس "${requestedCode}" غير موجودة في كتالوج الشركة`);
+    }
+    line.unitCode = actualCode;
+  }
+
+  const requestedOutputCode = body?.outputUnitCode == null
+    ? "" : String(body.outputUnitCode).trim();
+  const outputCode = requestedOutputCode || product.unitCode || "PCE";
+  const actualOutputCode = unitByCode.get(outputCode.toLowerCase());
+  if (!actualOutputCode) {
+    throw setupError(`وحدة الناتج "${outputCode}" غير موجودة في كتالوج الشركة`);
+  }
+  const outputQty = Number(body?.outputQty ?? 1);
+  if (!Number.isFinite(outputQty) || outputQty <= 0) {
+    throw setupError("كمية الناتج يجب أن تكون أكبر من صفر");
+  }
+  return {
+    productItemId,
+    normalizedLines,
+    nameAr: String(body?.nameAr || "قائمة مواد مبسطة").trim(),
+    outputQty,
+    actualOutputCode,
+    nameEn: body?.nameEn ? String(body.nameEn).trim() : null,
+    notes: body?.notes ? String(body.notes) : null,
+  };
+}
+
+async function normalizeSetupRouting(cid: number, body: any) {
+  const productItemId = Number(body?.productItemId);
+  const stages = Array.isArray(body?.stages)
+    ? body.stages
+    : typeof body?.stages === "string"
+      ? [body.stages]
+      : body?.stage != null
+        ? [body.stage]
+        : [];
+  if (!Number.isInteger(productItemId) || !stages.length) {
+    throw setupError("المنتج ومراحل المسار مطلوبان");
+  }
+  const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    .where(and(
+      eq(itemsTable.id, productItemId),
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.status, "active"),
+    )).limit(1);
+  if (!product) throw setupError("المنتج النهائي غير موجود");
+
+  const normalizedStages = stages.map((rawStage: any, i: number) => {
+    const x = typeof rawStage === "string" ? { nameAr: rawStage } : (rawStage ?? {});
+    const rawDuration = x.expectedDurationMinutes == null || x.expectedDurationMinutes === ""
+      ? x.plannedMinutes
+      : x.expectedDurationMinutes;
+    const rawWorkCenterId = x.workCenterId == null || x.workCenterId === ""
+      ? null : Number(x.workCenterId);
+    const rawAccountId = x.expectedCostAccountId == null || x.expectedCostAccountId === ""
+      ? null : Number(x.expectedCostAccountId);
+    return {
+      code: String(x.code || `S${i + 1}`).trim(),
+      nameAr: String(x.nameAr || `مرحلة ${i + 1}`).trim(),
+      nameEn: x.nameEn ? String(x.nameEn).trim() : null,
+      expectedDurationMinutes: rawDuration == null || rawDuration === ""
+        ? null : Number(rawDuration),
+      expectedWasteRatio: x.expectedWasteRatio == null || x.expectedWasteRatio === ""
+        ? 0 : Number(x.expectedWasteRatio),
+      expectedCost: x.expectedCost == null || x.expectedCost === "" ? 0 : Number(x.expectedCost),
+      expectedCostAccountId: rawAccountId,
+      workCenterId: rawWorkCenterId,
+      notes: x.notes ? String(x.notes) : null,
+      icon: x.icon ? String(x.icon) : null,
+      color: x.color ? String(x.color) : null,
+    };
+  });
+  if (normalizedStages.some((x: any) =>
+    !x.code || !x.nameAr ||
+    (x.expectedDurationMinutes !== null &&
+      (!Number.isFinite(x.expectedDurationMinutes) || x.expectedDurationMinutes <= 0)) ||
+    (x.workCenterId !== null &&
+      (!Number.isInteger(x.workCenterId) || x.workCenterId <= 0)) ||
+    (x.expectedCostAccountId !== null &&
+      (!Number.isInteger(x.expectedCostAccountId) || x.expectedCostAccountId <= 0)) ||
+    !Number.isFinite(x.expectedWasteRatio) || x.expectedWasteRatio < 0 ||
+    !Number.isFinite(x.expectedCost) || x.expectedCost < 0
+  )) {
+    throw setupError("كل مرحلة تحتاج رمزاً واسماً وقيم تكلفة/هالك صحيحة");
+  }
+  const workCenterIds: number[] = [...new Set<number>(
+    normalizedStages
+      .map((stage: any) => stage.workCenterId)
+      .filter((id: number | null): id is number => id !== null),
+  )];
+  if (workCenterIds.length) {
+    const permittedWorkCenters = await db.select({ id: workCentersTable.id })
+      .from(workCentersTable)
+      .where(and(
+        eq(workCentersTable.companyId, cid),
+        inArray(workCentersTable.id, workCenterIds),
+      ));
+    if (permittedWorkCenters.length !== workCenterIds.length) {
+      throw setupError("أحد مراكز العمل غير موجود في هذه الشركة");
+    }
+  }
+  const accountIds: number[] = [...new Set<number>(
+    normalizedStages
+      .map((stage: any) => stage.expectedCostAccountId)
+      .filter((id: number | null): id is number => id !== null),
+  )];
+  if (accountIds.length) {
+    const permittedAccounts = await db.select({ id: accountsTable.id })
+      .from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, accountIds)));
+    if (permittedAccounts.length !== accountIds.length) {
+      throw setupError("أحد حسابات تكلفة المراحل غير موجود في هذه الشركة");
+    }
+  }
+  return {
+    productItemId,
+    normalizedStages,
+    nameAr: String(body?.nameAr || "مسار مبسط").trim(),
+    nameEn: body?.nameEn ? String(body.nameEn).trim() : null,
+    notes: body?.notes ? String(body.notes) : null,
+  };
+}
+
 // BOM/material setup is intentionally inside this facade. It writes the
 // existing BOM tables and validates every item against the current tenant.
 router.post("/setup/bom", edit, async (req, res) => {
@@ -777,6 +1013,7 @@ router.post("/setup/bom", edit, async (req, res) => {
     return void res.status(400).json({ error: "المنتج النهائي وسطور المواد مطلوبان" });
   }
   try {
+    await validateSetupBranch(req, cid, req.body?.branchId);
     const [product] = await db.select({
       id: itemsTable.id,
       unitCode: unitsTable.code,
@@ -882,7 +1119,63 @@ router.post("/setup/bom", edit, async (req, res) => {
     });
     res.status(201).json(bom);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+// Edit the existing BOM in place. The header id is stable and its lines are
+// replaced in one transaction, so saving an edit can never create a second
+// active version or leave a partially updated recipe.
+router.patch("/setup/bom/:id", edit, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return void res.status(400).json({ error: "id غير صحيح" });
+  }
+  try {
+    await validateSetupBranch(req, cid, req.body?.branchId);
+    const [existing] = await db.select({ id: bomTemplatesTable.id })
+      .from(bomTemplatesTable)
+      .where(and(
+        eq(bomTemplatesTable.id, id),
+        eq(bomTemplatesTable.companyId, cid),
+      )).limit(1);
+    if (!existing) return void res.status(404).json({ error: "القائمة غير موجودة" });
+
+    const normalized = await normalizeSetupBom(cid, req.body);
+    const row = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(bomTemplatesTable)
+        .set({
+          productItemId: normalized.productItemId,
+          nameAr: normalized.nameAr,
+          nameEn: normalized.nameEn,
+          outputQty: String(normalized.outputQty),
+          outputUnitCode: normalized.actualOutputCode,
+          notes: normalized.notes,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(bomTemplatesTable.id, id),
+          eq(bomTemplatesTable.companyId, cid),
+        ))
+        .returning();
+      if (!updated) throw setupError("القائمة غير موجودة", 404);
+      await tx.delete(bomTemplateLinesTable)
+        .where(eq(bomTemplateLinesTable.templateId, id));
+      await tx.insert(bomTemplateLinesTable).values(normalized.normalizedLines.map((x: any) => ({
+        templateId: id,
+        itemId: x.itemId,
+        description: x.description,
+        quantity: String(x.quantity),
+        unitCode: x.unitCode,
+        notes: x.notes,
+      })));
+      return updated;
+    });
+    res.json(row);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -904,6 +1197,7 @@ router.post("/setup/routing", edit, async (req, res) => {
     return void res.status(400).json({ error: "المنتج ومراحل المسار مطلوبان" });
   }
   try {
+    await validateSetupBranch(req, cid, req.body?.branchId);
     const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
       .where(and(
         eq(itemsTable.id, productItemId),
@@ -978,7 +1272,68 @@ router.post("/setup/routing", edit, async (req, res) => {
     })));
     res.status(201).json(routing);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+// Edit an existing routing in place. Header and ordered stages share one
+// transaction; stage sequence is derived from array order rather than trusted
+// client sequence values.
+router.patch("/setup/routing/:id", edit, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return void res.status(400).json({ error: "id غير صحيح" });
+  }
+  try {
+    await validateSetupBranch(req, cid, req.body?.branchId);
+    const [existing] = await db.select({ id: productionRoutingsTable.id })
+      .from(productionRoutingsTable)
+      .where(and(
+        eq(productionRoutingsTable.id, id),
+        eq(productionRoutingsTable.companyId, cid),
+      )).limit(1);
+    if (!existing) return void res.status(404).json({ error: "مسار الإنتاج غير موجود" });
+
+    const normalized = await normalizeSetupRouting(cid, req.body);
+    const row = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(productionRoutingsTable)
+        .set({
+          productItemId: normalized.productItemId,
+          nameAr: normalized.nameAr,
+          nameEn: normalized.nameEn,
+          notes: normalized.notes,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(productionRoutingsTable.id, id),
+          eq(productionRoutingsTable.companyId, cid),
+        ))
+        .returning();
+      if (!updated) throw setupError("مسار الإنتاج غير موجود", 404);
+      await tx.delete(productionRoutingStagesTable)
+        .where(eq(productionRoutingStagesTable.routingId, id));
+      await tx.insert(productionRoutingStagesTable).values(normalized.normalizedStages.map((x: any, i: number) => ({
+        routingId: id,
+        sequence: i + 1,
+        code: x.code,
+        nameAr: x.nameAr,
+        nameEn: x.nameEn,
+        workCenterId: x.workCenterId,
+        expectedDurationMinutes: x.expectedDurationMinutes,
+        expectedWasteRatio: String(x.expectedWasteRatio),
+        expectedCost: String(x.expectedCost),
+        expectedCostAccountId: x.expectedCostAccountId,
+        notes: x.notes,
+        icon: x.icon,
+        color: x.color,
+      })));
+      return updated;
+    });
+    res.json(row);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 

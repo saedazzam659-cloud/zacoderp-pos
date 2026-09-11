@@ -21,7 +21,7 @@
  *     --capture /tmp/simple-manufacturing.png
  */
 
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
@@ -596,7 +596,9 @@ async function loginAndCapture(
         unitCode: seed.unitCode,
         fallbackUnitCode: seed.fallbackUnitCode,
         materialCode: material.code,
+        materialId: material.id,
         secondMaterialCode: secondMaterial.code,
+        secondMaterialId: secondMaterial.id,
         productCode: product.code,
         productId: product.id,
         bomId: bom.id,
@@ -619,8 +621,13 @@ async function loginAndCapture(
           && new URL(response.url()).pathname.endsWith("/api/simple-manufacturing/catalog"),
         { timeout: VISUAL_TIMEOUT_MS },
       );
+      const ordersResponse = page.waitForResponse(
+        (response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname.endsWith("/api/simple-manufacturing/orders"),
+        { timeout: VISUAL_TIMEOUT_MS },
+      );
       await page.reload({ waitUntil: "domcontentloaded" });
-      const response = await catalogResponse;
+      const [response] = await Promise.all([catalogResponse, ordersResponse]);
       if (!response.ok()) throw new Error("The catalog reload request did not succeed.");
       const catalog = await response.json();
       const unit = Array.isArray(catalog.units)
@@ -647,6 +654,235 @@ async function loginAndCapture(
         throw new Error("Reloaded catalog did not contain all saved setup records.");
       }
       console.log("[visual] stage=setup-catalog status=contains-seeded-records");
+    });
+
+    const editBaseline = await runStage("setup-edit-baseline", async () => page.evaluate(async (expected) => {
+      const token = localStorage.getItem("zatca_token");
+      if (!token) throw new Error("The browser session token is missing.");
+
+      async function get(path: string): Promise<any> {
+        const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(`Setup read failed: ${path} (${response.status})`);
+        return payload;
+      }
+
+      const catalog = await get("/api/simple-manufacturing/catalog");
+      const bom = await get(`/api/simple-manufacturing/bom-templates/${expected.bomId}`);
+      const routing = await get(`/api/simple-manufacturing/routings/${expected.routingId}`);
+      const boms = Array.isArray(catalog.bomTemplates) ? catalog.bomTemplates : [];
+      const routings = Array.isArray(catalog.routings) ? catalog.routings : [];
+      if (bom?.id !== expected.bomId || routing?.id !== expected.routingId) {
+        throw new Error("The setup baseline detail ids do not match the seeded records.");
+      }
+      return {
+        bomCount: boms.length,
+        bomIds: boms.map((row: any) => row.id).sort((a: number, b: number) => a - b),
+        bomOutputQty: Number(bom.outputQty),
+        bomOutputUnitCode: bom.outputUnitCode,
+        bomLines: Array.isArray(bom.lines)
+          ? bom.lines.map((line: any) => ({
+            itemId: line.itemId,
+            quantity: Number(line.quantity),
+            unitCode: line.unitCode,
+          }))
+          : [],
+        routingCount: routings.length,
+        routingIds: routings.map((row: any) => row.id).sort((a: number, b: number) => a - b),
+        routingNameAr: routing.nameAr,
+        routingStages: Array.isArray(routing.stages)
+          ? routing.stages.map((stage: any) => ({
+            code: stage.code,
+            nameAr: stage.nameAr,
+            duration: Number(stage.expectedDurationMinutes),
+          }))
+          : [],
+      };
+    }, { bomId: seeded.bomId, routingId: seeded.routingId }));
+
+    const editedBomName = `${seeded.bomName} — تعديل`;
+    const editedRoutingName = `${seeded.routingName} — تعديل`;
+    await runStage("setup-edit-roundtrip", async () => {
+      await page.getByRole("tab", { name: "الإعدادات", exact: true }).click();
+
+      const bomCard = page.getByTestId(`card-bom-${seeded.bomId}`);
+      const bomDetailResponse = page.waitForResponse(
+        (response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname.endsWith(`/api/simple-manufacturing/bom-templates/${seeded.bomId}`),
+        { timeout: VISUAL_TIMEOUT_MS },
+      );
+      await bomCard.dblclick();
+      await bomDetailResponse;
+      const bomDialog = page.getByRole("dialog");
+      await bomDialog.getByText("تعديل قائمة مكونات مبسطة", { exact: true }).waitFor({ state: "visible" });
+      const bomInputs = bomDialog.locator("input");
+      const bomOutputQty = bomInputs.nth(1);
+      const bomName = bomInputs.nth(3);
+      const bomFirstLineQty = bomInputs.nth(5);
+      const bomInputValues = await bomInputs.evaluateAll((inputs) =>
+        inputs.map((input) => (input as HTMLInputElement).value),
+      );
+      if (bomInputValues[1] !== "12" || bomInputValues[5] !== "2.5") {
+        throw new Error("The BOM edit dialog did not prefill output and material quantities.");
+      }
+      await bomOutputQty.waitFor({ state: "visible" });
+      await bomFirstLineQty.waitFor({ state: "visible" });
+      const bomEditPath = derivedCapturePath(outputPath, "-edit-bom-dialog");
+      await page.screenshot({ path: bomEditPath, fullPage: true });
+      console.log(`[visual] stage=screenshot-edit-bom-dialog artifact=${bomEditPath}`);
+
+      await bomOutputQty.press("Control+A");
+      await bomOutputQty.type("18");
+      await bomFirstLineQty.press("Control+A");
+      await bomFirstLineQty.type("3.75");
+      await bomName.press("Control+A");
+      await bomName.type(editedBomName);
+      const bomSaveButton = bomDialog.getByRole("button", { name: "تحديث القائمة", exact: true });
+      await expect(bomSaveButton).toBeEnabled();
+      const bomCatalogRefresh = page.waitForResponse(
+        (response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname.endsWith("/api/simple-manufacturing/catalog"),
+        { timeout: VISUAL_TIMEOUT_MS },
+      );
+      await bomSaveButton.click();
+      await bomCatalogRefresh;
+      await bomDialog.waitFor({ state: "hidden" });
+
+      const routingCard = page.getByTestId(`card-routing-${seeded.routingId}`);
+      const routingDetailResponse = page.waitForResponse(
+        (response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname.endsWith(`/api/simple-manufacturing/routings/${seeded.routingId}`),
+        { timeout: VISUAL_TIMEOUT_MS },
+      );
+      await routingCard.dblclick();
+      await routingDetailResponse;
+      const routingDialog = page.getByRole("dialog");
+      await routingDialog.getByText("تعديل مسار الإنتاج", { exact: true }).waitFor({ state: "visible" });
+      const routingInputs = routingDialog.locator("input");
+      const routingName = routingInputs.nth(1);
+      const routingFirstStageDuration = routingInputs.nth(3);
+      const routingSecondStageDuration = routingInputs.nth(5);
+      const routingInputValues = await routingInputs.evaluateAll((inputs) =>
+        inputs.map((input) => (input as HTMLInputElement).value),
+      );
+      if (routingInputValues[3] !== "15" || routingInputValues[5] !== "20") {
+        throw new Error("The routing edit dialog did not prefill stage durations.");
+      }
+      await routingFirstStageDuration.waitFor({ state: "visible" });
+      await routingSecondStageDuration.waitFor({ state: "visible" });
+      const routingEditPath = derivedCapturePath(outputPath, "-edit-routing-dialog");
+      await page.screenshot({ path: routingEditPath, fullPage: true });
+      console.log(`[visual] stage=screenshot-edit-routing-dialog artifact=${routingEditPath}`);
+
+      await routingFirstStageDuration.press("Control+A");
+      await routingFirstStageDuration.type("27");
+      await routingSecondStageDuration.press("Control+A");
+      await routingSecondStageDuration.type("22");
+      await routingName.press("Control+A");
+      await routingName.type(editedRoutingName);
+      const routingSaveButton = routingDialog.getByRole("button", { name: "تحديث المسار", exact: true });
+      await expect(routingSaveButton).toBeEnabled();
+      const routingCatalogRefresh = page.waitForResponse(
+        (response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname.endsWith("/api/simple-manufacturing/catalog"),
+        { timeout: VISUAL_TIMEOUT_MS },
+      );
+      await routingSaveButton.click();
+      await routingCatalogRefresh;
+      await routingDialog.waitFor({ state: "hidden" });
+    });
+
+    await runStage("setup-edit-reload-and-assert", async () => {
+      const catalogResponse = page.waitForResponse(
+        (response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname.endsWith("/api/simple-manufacturing/catalog"),
+        { timeout: VISUAL_TIMEOUT_MS },
+      );
+      const ordersResponse = page.waitForResponse(
+        (response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname.endsWith("/api/simple-manufacturing/orders"),
+        { timeout: VISUAL_TIMEOUT_MS },
+      );
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await Promise.all([catalogResponse, ordersResponse]);
+      const final = await page.evaluate(async (expected) => {
+        const token = localStorage.getItem("zatca_token");
+        if (!token) throw new Error("The browser session token is missing.");
+
+        async function get(path: string): Promise<any> {
+          const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(`Setup read failed: ${path} (${response.status})`);
+          return payload;
+        }
+
+        const catalog = await get("/api/simple-manufacturing/catalog");
+        const bom = await get(`/api/simple-manufacturing/bom-templates/${expected.bomId}`);
+        const routing = await get(`/api/simple-manufacturing/routings/${expected.routingId}`);
+        const boms = Array.isArray(catalog.bomTemplates) ? catalog.bomTemplates : [];
+        const routings = Array.isArray(catalog.routings) ? catalog.routings : [];
+        return {
+          bomCount: boms.length,
+          bomIds: boms.map((row: any) => row.id).sort((a: number, b: number) => a - b),
+          bomId: bom?.id,
+          bomNameAr: bom?.nameAr,
+          bomOutputQty: Number(bom?.outputQty),
+          bomOutputUnitCode: bom?.outputUnitCode,
+          bomLines: Array.isArray(bom?.lines)
+            ? bom.lines.map((line: any) => ({
+              itemId: line.itemId,
+              quantity: Number(line.quantity),
+              unitCode: line.unitCode,
+            }))
+            : [],
+          routingCount: routings.length,
+          routingIds: routings.map((row: any) => row.id).sort((a: number, b: number) => a - b),
+          routingId: routing?.id,
+          routingNameAr: routing?.nameAr,
+          routingStages: Array.isArray(routing?.stages)
+            ? routing.stages.map((stage: any) => ({
+              code: stage.code,
+              nameAr: stage.nameAr,
+              duration: Number(stage.expectedDurationMinutes),
+            }))
+            : [],
+        };
+      }, { bomId: seeded.bomId, routingId: seeded.routingId });
+
+      const sameIds = (left: number[], right: number[]) =>
+        left.length === right.length && left.every((id, index) => id === right[index]);
+      const editedFirstLine = final.bomLines.find((line: any) => line.itemId === seeded.materialId);
+      const originalSecondLine = final.bomLines.find((line: any) => line.itemId === seeded.secondMaterialId);
+      const firstStage = final.routingStages[0];
+      const secondStage = final.routingStages[1];
+      if (
+        final.bomId !== seeded.bomId
+        || final.routingId !== seeded.routingId
+        || final.bomCount !== editBaseline.bomCount
+        || final.routingCount !== editBaseline.routingCount
+        || !sameIds(final.bomIds, editBaseline.bomIds)
+        || !sameIds(final.routingIds, editBaseline.routingIds)
+        || final.bomNameAr !== editedBomName
+        || Number(final.bomOutputQty) !== 18
+        || final.bomOutputUnitCode !== seeded.unitCode
+        || editedFirstLine?.quantity !== 3.75
+        || editedFirstLine?.unitCode !== seeded.unitCode
+        || originalSecondLine?.quantity !== 0.1
+        || originalSecondLine?.unitCode !== seeded.fallbackUnitCode
+        || final.routingNameAr !== editedRoutingName
+        || final.routingStages.length !== editBaseline.routingStages.length
+        || firstStage?.code !== "MIX"
+        || firstStage?.duration !== 27
+        || secondStage?.code !== "PACK"
+        || secondStage?.duration !== 22
+      ) {
+        throw new Error("BOM/routing edit save and reload did not preserve the expected ids and values.");
+      }
+      await page.getByRole("tab", { name: "الإعدادات", exact: true }).click();
+      await page.getByTestId(`card-bom-${seeded.bomId}`).waitFor({ state: "visible" });
+      await page.getByTestId(`card-routing-${seeded.routingId}`).waitFor({ state: "visible" });
+      console.log(`[visual] stage=setup-edit-catalog status=ids-and-values-persisted`
+        + ` bomCount=${final.bomCount} routingCount=${final.routingCount}`);
     });
 
     const listPath = outputPath;

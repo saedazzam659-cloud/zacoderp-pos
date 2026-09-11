@@ -22,6 +22,7 @@ import {
   productionWizardTemplatesTable,
   warehousesTable,
   itemsTable,
+  unitsTable,
   stockBalanceTable,
   stockLedgerTable,
   accountsTable,
@@ -452,6 +453,67 @@ async function writeEvent(
 function num(v: unknown, def = 0): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
+}
+
+type BomQuantityBasis = {
+  kind: "bom_template_output";
+  templateId: number;
+  lineQuantity: number;
+  lineUnitCode: string;
+  outputQuantity: number;
+  outputUnitCode: string;
+  formula: "line quantity × planned quantity ÷ BOM output quantity";
+};
+
+// Only return a quantity basis when the order line captured the source recipe
+// evidence at creation time. Older rows only have a generic description and a
+// scaled quantity; deriving their basis from a BOM that may have changed since
+// then would be misleading.
+function readBomQuantityBasis(meta: unknown): BomQuantityBasis | null {
+  const value = meta && typeof meta === "object"
+    ? meta as Record<string, unknown>
+    : {};
+  const templateId = Number(value.fromBomTemplateId);
+  const lineQuantity = Number(value.bomLineQuantity);
+  const outputQuantity = Number(value.bomOutputQuantity);
+  const lineUnitCode = typeof value.bomLineUnitCode === "string"
+    ? value.bomLineUnitCode.trim()
+    : "";
+  const outputUnitCode = typeof value.bomOutputUnitCode === "string"
+    ? value.bomOutputUnitCode.trim()
+    : "";
+  if (
+    !Number.isInteger(templateId) || templateId <= 0 ||
+    !Number.isFinite(lineQuantity) || lineQuantity <= 0 ||
+    !Number.isFinite(outputQuantity) || outputQuantity <= 0 ||
+    !lineUnitCode || !outputUnitCode
+  ) {
+    return null;
+  }
+  return {
+    kind: "bom_template_output",
+    templateId,
+    lineQuantity,
+    lineUnitCode,
+    outputQuantity,
+    outputUnitCode,
+    formula: "line quantity × planned quantity ÷ BOM output quantity",
+  };
+}
+
+function bomLineSnapshotMeta(
+  template: { id: number; outputUnitCode?: string | null },
+  line: { quantity: unknown; unitCode?: string | null },
+  outputQuantity: number,
+): Record<string, unknown> {
+  return {
+    fromBomTemplateId: template.id,
+    quantityBasis: "bom_template_output",
+    bomLineQuantity: num(line.quantity),
+    bomLineUnitCode: String(line.unitCode ?? "").trim(),
+    bomOutputQuantity: outputQuantity,
+    bomOutputUnitCode: String(template.outputUnitCode ?? "").trim(),
+  };
 }
 
 function wizardPayloadHash(body: any): string {
@@ -4375,11 +4437,40 @@ export async function productionOrderDetailHandler(req: any, res: any) {
       res.status(404).json({ error: "أمر الإنتاج غير موجود" });
       return;
     }
-    const items = await db
-      .select()
+    const itemRows = await db
+      .select({
+        id: productionOrderItemsTable.id,
+        orderId: productionOrderItemsTable.orderId,
+        kind: productionOrderItemsTable.kind,
+        itemId: productionOrderItemsTable.itemId,
+        description: productionOrderItemsTable.description,
+        quantity: productionOrderItemsTable.quantity,
+        unitCode: productionOrderItemsTable.unitCode,
+        unitCost: productionOrderItemsTable.unitCost,
+        totalCost: productionOrderItemsTable.totalCost,
+        meta: productionOrderItemsTable.meta,
+        createdAt: productionOrderItemsTable.createdAt,
+        itemNameAr: itemsTable.nameAr,
+        itemNameEn: itemsTable.nameEn,
+        itemCode: itemsTable.code,
+        unitNameAr: unitsTable.nameAr,
+        unitNameEn: unitsTable.nameEn,
+      })
       .from(productionOrderItemsTable)
+      .leftJoin(itemsTable, and(
+        eq(itemsTable.id, productionOrderItemsTable.itemId),
+        eq(itemsTable.companyId, cid),
+      ))
+      .leftJoin(unitsTable, and(
+        eq(unitsTable.companyId, cid),
+        eq(unitsTable.code, productionOrderItemsTable.unitCode),
+      ))
       .where(eq(productionOrderItemsTable.orderId, id))
       .orderBy(asc(productionOrderItemsTable.id));
+    const items = itemRows.map((item) => ({
+      ...item,
+      quantityBasis: readBomQuantityBasis(item.meta),
+    }));
     const events = await db
       .select()
       .from(productionEventsTable)
@@ -4708,7 +4799,7 @@ export async function productionWizardHandler(req: any, res: any) {
         const total = Number((quantity * unitCost).toFixed(2)); rawCost += total;
         itemRows.push({ kind: "raw", itemId: line.itemId, description: line.description,
           quantity: String(quantity), unitCode: line.unitCode, unitCost: String(unitCost),
-          totalCost: String(total), meta: { fromBomTemplateId: tmpl.id } });
+          totalCost: String(total), meta: bomLineSnapshotMeta(tmpl, line, recipeOutputQty) });
       }
       const wcLabor = wc && plannedHours > 0 ? plannedHours * num(wc.laborRatePerHour) : 0;
       const wcOverhead = wc && plannedHours > 0 ? plannedHours * num(wc.overheadRatePerHour) : 0;
@@ -4981,8 +5072,11 @@ router.post("/orders", async (req, res) => {
           .where(eq(bomTemplateLinesTable.templateId, tmpl.id));
         if (lines.length > 0) {
           const planned = Number(row.plannedQty) || 0;
-          const output = Number(tmpl.outputQty) || 1;
-          const scale = output > 0 ? planned / output : 1;
+          const output = Number(tmpl.outputQty);
+          if (!Number.isFinite(output) || output <= 0) {
+            throw new Error("قالب المكونات النشط يحتوي كمية ناتج غير صالحة");
+          }
+          const scale = planned / output;
           const inserts = await Promise.all(
             lines.map(async (l) => {
               // Pull current avg cost from any warehouse for the item to
@@ -5012,7 +5106,7 @@ router.post("/orders", async (req, res) => {
                 unitCode: l.unitCode,
                 unitCost: String(unitCost),
                 totalCost: String((qty * unitCost).toFixed(2)),
-                meta: { fromBomTemplateId: tmpl.id } as Record<string, unknown>,
+                meta: bomLineSnapshotMeta(tmpl, l, output),
               };
             }),
           );
@@ -7196,8 +7290,10 @@ router.post("/bom-templates", async (req, res) => {
       res.status(400).json({ error: "اسم القالب مطلوب" });
       return;
     }
-    const outputQty = Number(b.outputQty) || 1;
-    if (outputQty <= 0) {
+    const outputQty = b.outputQty == null || b.outputQty === ""
+      ? 1
+      : Number(b.outputQty);
+    if (!Number.isFinite(outputQty) || outputQty <= 0) {
       res.status(400).json({ error: "الكمية الناتجة يجب أن تكون أكبر من صفر" });
       return;
     }
@@ -7285,8 +7381,10 @@ router.patch("/bom-templates/:id", async (req, res) => {
     if (typeof b.nameAr === "string" && b.nameAr.trim()) patch.nameAr = b.nameAr.trim();
     if (b.nameEn !== undefined) patch.nameEn = b.nameEn || null;
     if (b.outputQty !== undefined) {
-      const oq = Number(b.outputQty) || 1;
-      if (oq <= 0) {
+      const oq = b.outputQty == null || b.outputQty === ""
+        ? 1
+        : Number(b.outputQty);
+      if (!Number.isFinite(oq) || oq <= 0) {
         res.status(400).json({ error: "الكمية الناتجة يجب أن تكون أكبر من صفر" });
         return;
       }

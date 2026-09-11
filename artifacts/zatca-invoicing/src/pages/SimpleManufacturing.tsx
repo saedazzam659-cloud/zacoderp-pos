@@ -251,8 +251,11 @@ export default function SimpleManufacturing() {
       quantity: data.quantity,
       unitCode: data.unitCode,
     }];
-    return mutate(() => request("/api/simple-manufacturing/setup/bom", {
-      method: "POST",
+    const path = data.id
+      ? `/api/simple-manufacturing/setup/bom/${Number(data.id)}`
+      : "/api/simple-manufacturing/setup/bom";
+    return mutate(() => request(path, {
+      method: data.id ? "PATCH" : "POST",
       body: JSON.stringify({
         productItemId: Number(data.productItemId), nameAr: data.nameAr || "قائمة مكونات",
         outputQty: Number(data.outputQty) > 0 ? Number(data.outputQty) : 1,
@@ -264,24 +267,49 @@ export default function SimpleManufacturing() {
           ...(line.unitCode ? { unitCode: line.unitCode } : {}),
         })),
       }),
-    }), "تم حفظ الوصفة");
+    }), data.id ? "تم تحديث الوصفة" : "تم حفظ الوصفة");
   };
 
   const handleSaveRouting = async (data: any) => {
     const stages = (data.stages || []).map((s: any, idx: number) => ({
       nameAr: s.nameAr || "مرحلة",
-      code: `S${idx + 1}`,
-      expectedCost: 0,
-      expectedWasteRatio: 0,
+      code: s.code || `S${idx + 1}`,
+      expectedCost: Number(s.expectedCost ?? 0) || 0,
+      expectedWasteRatio: Number(s.expectedWasteRatio ?? 0) || 0,
+      workCenterId: s.workCenterId == null ? null : Number(s.workCenterId),
+      expectedCostAccountId: s.expectedCostAccountId == null ? null : Number(s.expectedCostAccountId),
+      notes: s.notes || null,
+      nameEn: s.nameEn || null,
       expectedDurationMinutes: s.expectedDurationMinutes ? Number(s.expectedDurationMinutes) : undefined
     }));
-    return mutate(() => request("/api/simple-manufacturing/setup/routing", {
-      method: "POST",
+    const path = data.id
+      ? `/api/simple-manufacturing/setup/routing/${Number(data.id)}`
+      : "/api/simple-manufacturing/setup/routing";
+    return mutate(() => request(path, {
+      method: data.id ? "PATCH" : "POST",
       body: JSON.stringify({
         productItemId: Number(data.productItemId), nameAr: data.nameAr || "مسار مبسط",
         stages: stages.length ? stages : [{ nameAr: "مرحلة الإنتاج", code: "S1", expectedCost: 0, expectedWasteRatio: 0 }],
       }),
-    }), "تم حفظ مسار الإنتاج");
+    }), data.id ? "تم تحديث مسار الإنتاج" : "تم حفظ مسار الإنتاج");
+  };
+
+  const handleLoadBom = async (id: number) => {
+    try {
+      return await request(`/api/simple-manufacturing/bom-templates/${id}`);
+    } catch (e: any) {
+      toast({ title: e?.message || "تعذر تحميل قائمة المكونات", variant: "destructive" });
+      throw e;
+    }
+  };
+
+  const handleLoadRouting = async (id: number) => {
+    try {
+      return await request(`/api/simple-manufacturing/routings/${id}`);
+    } catch (e: any) {
+      toast({ title: e?.message || "تعذر تحميل مسار الإنتاج", variant: "destructive" });
+      throw e;
+    }
   };
 
   const handleSaveTemplate = async (data: any) => {
@@ -397,7 +425,9 @@ export default function SimpleManufacturing() {
              canEdit={canEdit}
             onSaveMaterial={handleSaveMaterial}
             onSaveBom={handleSaveBom}
+             onLoadBom={handleLoadBom}
             onSaveRouting={handleSaveRouting}
+             onLoadRouting={handleLoadRouting}
             onSaveTemplate={handleSaveTemplate}
             onSaveWarehouse={handleSaveWarehouse}
           />
