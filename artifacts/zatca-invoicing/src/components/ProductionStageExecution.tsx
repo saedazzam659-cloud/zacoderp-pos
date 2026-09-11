@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Play, Pause, Square, Clock, ArrowDownToLine, ArrowUpFromLine, Activity, User, Cog, Save, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
+import { ProductionResourcePicker, type ResourceCatalog } from "@/components/ProductionResourcePicker";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -39,6 +40,7 @@ type Stage = {
   wasteClassification: "normal" | "abnormal";
   workerUserId: string;
   machineId: string;
+  workCenterId: string;
   notes: string;
 };
 
@@ -51,9 +53,10 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
   }), [token, actingCompanyId]);
   const canEdit = usePermission(permissionKey as any, "edit");
+  const canCreate = usePermission(permissionKey as any, "create");
   const [stages, setStages] = useState<Stage[]>([]);
   const [users, setUsers] = useState<{value: string, label: string}[]>([]);
-  const [machines, setMachines] = useState<{value: string, label: string}[]>([]);
+  const [resourceCatalog, setResourceCatalog] = useState<ResourceCatalog>({ workCenters: [], machines: [], assets: [] });
   const [loading, setLoading] = useState(false);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -97,6 +100,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       wasteClassification: s.wasteClassification === "abnormal" ? "abnormal" : "normal",
       workerUserId: s.workerUserId ? String(s.workerUserId) : s.operatorUserId ? String(s.operatorUserId) : "",
       machineId: s.machineId ? String(s.machineId) : s.resourceId ? String(s.resourceId) : "",
+      workCenterId: s.workCenterId ? String(s.workCenterId) : "",
       notes: s.notes || ""
     }));
   };
@@ -110,18 +114,21 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       if (res.ok) {
         const data = await res.json();
         const workersList = Array.isArray(data.workers) ? data.workers : [];
-        const machinesList = Array.isArray(data.machines) ? data.machines : [];
         
         setUsers(workersList.map((x: any) => ({ value: String(x.id), label: x.nameAr || x.nameEn || x.username || `User #${x.id}` })));
-        setMachines(machinesList.map((x: any) => ({ value: String(x.id), label: x.name || `Machine #${x.id}` })));
       } else {
         const error = await res.json().catch(() => ({}));
         throw new Error(error.error || "تعذر تحميل قائمة العمال والآلات");
       }
+      const resources = await fetch(`${apiBase}/orders/${orderId}/resource-catalog`, { headers });
+      const catalog = await resources.json().catch(() => ({}));
+      if (!resources.ok) throw new Error(catalog.error || "تعذر تحميل مراكز العمل والآلات");
+      if (!Array.isArray(catalog.workCenters) || !Array.isArray(catalog.machines) || !Array.isArray(catalog.assets)) throw new Error("بيانات مراكز العمل والآلات غير صالحة");
+      setResourceCatalog(catalog);
     } catch (e: any) {
       toast({ title: "تعذر تحميل قائمة العمال والآلات", description: e.message, variant: "destructive" });
     }
-  }, [apiBase, headers]);
+  }, [apiBase, orderId, headers]);
 
   useEffect(() => {
     setLoading(true);
@@ -149,6 +156,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         wasteQty: stageData.wasteQty || 0,
         workerUserId: stageData.workerUserId ? Number(stageData.workerUserId) : null,
         machineId: stageData.machineId ? Number(stageData.machineId) : null,
+        workCenterId: stageData.workCenterId ? Number(stageData.workCenterId) : null,
         wasteReason: stageData.wasteReason || null,
         wasteType: stageData.wasteType || null,
         wasteClassification: stageData.wasteClassification || "normal",
@@ -295,17 +303,20 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                         placeholder="ابحث..."
                       />
                     </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-slate-500 flex items-center gap-1.5"><Cog className="h-3.5 w-3.5" /> الآلة / المركز</Label>
-                      <SearchCombobox 
-                        value={stage.machineId} 
-                        onValueChange={(val) => handleUpdateStage(stage.id, { machineId: val })}
-                        items={[{value: "", label: "غير محدد"}, ...machines]}
-                        disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")}
-                        placeholder="ابحث..."
-                      />
-                    </div>
                   </div>
+                  <ProductionResourcePicker
+                    workCenterId={stage.workCenterId}
+                    machineId={stage.machineId}
+                    catalog={resourceCatalog}
+                    disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped" || busyStage === stage.id}
+                    canCreate={canCreate}
+                    endpoint={`${apiBase}/orders/${orderId}`}
+                    headers={headers}
+                    onChange={values => handleUpdateStage(stage.id, values)}
+                    onCreated={(kind, row) => setResourceCatalog(previous => kind === "work-centers"
+                      ? { ...previous, workCenters: [...previous.workCenters.filter(x => x.id !== row.id), row] }
+                      : { ...previous, machines: [...previous.machines.filter(x => x.id !== row.id), row] })}
+                  />
                 </div>
 
                 <div className="space-y-4">

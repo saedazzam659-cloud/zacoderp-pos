@@ -8,6 +8,10 @@ Execution inputs must be directly discoverable in the compact order detail, not 
 
 **Why:** The user could see only the routing preview and explicitly required per-stage employee entry while prohibiting changes to the existing linked cost calculations.
 
+Work centers and machines are separate operational selections. Machines may reference an existing fixed asset or remain unlinked (including rented equipment); adding a machine never copies an asset or creates depreciation.
+
+**Why:** The user approved inline resource creation with center-filtered machines and optional fixed-asset linkage, while preserving the existing source-cost ownership.
+
 Smart Manufacturing keeps existing route and permission identities; only the displayed module name changes.
 
 **Why:** The user requested a rename and richer execution without duplicate modules or broken existing links.

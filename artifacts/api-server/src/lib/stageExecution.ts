@@ -9,6 +9,7 @@ export type StageExecutionPayload = {
   workerCount?: number | null;
   operatorUserId?: number | null;
   resourceId?: number | null;
+  workCenterId?: number | null;
   wasteReason?: string | null;
   wasteType?: string | null;
   wasteClassification?: StageWasteClassification | null;
@@ -104,6 +105,9 @@ export function normalizeStageExecutionPayload(
       "resourceId" in body ? body.resourceId : body.machineId,
       "الآلة",
     );
+  }
+  if ("workCenterId" in body) {
+    result.workCenterId = optionalId(body.workCenterId, "مركز العمل");
   }
   if ("wasteReason" in body) result.wasteReason = optionalText(body.wasteReason, "سبب الهالك");
   if ("wasteType" in body) result.wasteType = optionalText(body.wasteType, "نوع الهالك", 100);

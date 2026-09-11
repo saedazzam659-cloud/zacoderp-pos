@@ -124,6 +124,7 @@ import {
 } from "../lib/stageExecution.js";
 import { getPostedIndustrialPurchaseCosts } from "../lib/industrialPurchaseCosts.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { nextEntityCode } from "../lib/nextEntityCode.js";
 
 // ─── Journal entry helper (mirrors sales.ts / purchasing.ts) ─────────────────
 // Keeps production posting consistent with how invoices/vouchers post:
@@ -1692,6 +1693,13 @@ function lifecycleModuleKey(): "production" | "simple_manufacturing" {
 
 function executionAction(req: any): "view" | "edit" | "delete" {
   if (req.method === "GET") return "view";
+  // The shared execution router is mounted by both the advanced and compact
+  // facades. Setup creates must use the facade's create grant, rather than
+  // inheriting the ordinary stage edit grant.
+  if (
+    req.method === "POST" &&
+    /^\/orders\/[^/]+\/setup\/(?:work-centers|machines)\/?$/.test(String(req.path ?? ""))
+  ) return "create";
   if (req.method === "DELETE") return "delete";
   return "edit";
 }
@@ -8276,6 +8284,10 @@ async function validateStageExecutionReferences(
   execution: ReturnType<typeof normalizeStageExecutionPayload>,
   req?: any,
   orderBranchId?: number | null,
+  existingStage?: {
+    workCenterId: number | null;
+    resourceId: number | null;
+  } | null,
 ) {
   if (execution.operatorUserId) {
     const [worker] = await db.select({ id: usersTable.id }).from(usersTable)
@@ -8287,19 +8299,50 @@ async function validateStageExecutionReferences(
       throw Object.assign(new Error("العامل المحدد لا ينتمي إلى هذه الشركة"), { status: 400 });
     }
   }
-  if (execution.resourceId) {
+  // A PATCH/start/complete payload may omit either selector. Validate the
+  // effective pair, not just fields present in the request, so changing a
+  // stage center cannot leave its existing machine linked to another center.
+  const effectiveWorkCenterId = execution.workCenterId !== undefined
+    ? execution.workCenterId
+    : existingStage?.workCenterId ?? null;
+  const effectiveResourceId = execution.resourceId !== undefined
+    ? execution.resourceId
+    : existingStage?.resourceId ?? null;
+  if (effectiveWorkCenterId != null) {
+    const [workCenter] = await db.select({ id: workCentersTable.id })
+      .from(workCentersTable)
+      .where(and(
+        eq(workCentersTable.id, effectiveWorkCenterId),
+        eq(workCentersTable.companyId, cid),
+      ))
+      .limit(1);
+    if (!workCenter) {
+      throw Object.assign(new Error("مركز العمل المحدد لا ينتمي إلى هذه الشركة"), { status: 400 });
+    }
+  }
+  if (effectiveResourceId != null) {
     const [machine] = await db.select({
       id: productionResourcesTable.id,
       branchId: productionResourcesTable.branchId,
+      meta: productionResourcesTable.meta,
     }).from(productionResourcesTable)
       .where(and(
-        eq(productionResourcesTable.id, execution.resourceId),
+        eq(productionResourcesTable.id, effectiveResourceId),
         eq(productionResourcesTable.companyId, cid),
       )).limit(1);
     if (!machine || (req && !rowInScope(req, machine.branchId)) ||
         (machine?.branchId != null && machine.branchId !== orderBranchId)) {
       throw Object.assign(
         new Error("الآلة المحددة لا تنتمي إلى نطاق فرع أمر الإنتاج"),
+        { status: 400 },
+      );
+    }
+    if (
+      effectiveWorkCenterId != null &&
+      resourceRelationshipId(machine.meta, "workCenterId") !== effectiveWorkCenterId
+    ) {
+      throw Object.assign(
+        new Error("الآلة المحددة لا تنتمي إلى مركز العمل المختار"),
         { status: 400 },
       );
     }
@@ -8366,6 +8409,269 @@ async function refreshOrderActualHours(cid: number, orderId: number, actorId: nu
   }
   return actualHours;
 }
+
+function resourceRelationshipId(meta: unknown, key: "workCenterId" | "fixedAssetId"): number | null {
+  const value = meta && typeof meta === "object"
+    ? (meta as Record<string, unknown>)[key]
+    : null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function setupOptionalId(value: unknown, field: string): number | null {
+  if (value == null || value === "") return null;
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw Object.assign(new Error(`${field} غير صحيح`), { status: 400 });
+  }
+  return id;
+}
+
+function orderBranchResourceCondition(
+  table: typeof productionResourcesTable | typeof fixedAssetsTable,
+  branchId: number | null,
+) {
+  return branchId == null
+    ? isNull(table.branchId)
+    : or(isNull(table.branchId), eq(table.branchId, branchId));
+}
+
+/**
+ * Execution pickers intentionally expose only operational references. Fixed
+ * assets remain owned by the fixed-assets module; this endpoint never returns
+ * purchase, book-value, depreciation, or accounting fields.
+ */
+productionExecutionRouter.get("/orders/:id/resource-catalog", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    const { cid, order } = ctx;
+    const stages = await db
+      .select({
+        resourceId: productionOrderStagesTable.resourceId,
+        workCenterId: productionOrderStagesTable.workCenterId,
+      })
+      .from(productionOrderStagesTable)
+      .where(eq(productionOrderStagesTable.orderId, order.id));
+    const savedMachineIds = [...new Set(
+      stages.map((stage) => stage.resourceId).filter((id): id is number => id != null),
+    )];
+    const machineBranch = orderBranchResourceCondition(productionResourcesTable, order.branchId);
+    const machineType = savedMachineIds.length
+      ? or(eq(productionResourcesTable.type, "machine"), inArray(productionResourcesTable.id, savedMachineIds))
+      : eq(productionResourcesTable.type, "machine");
+    const machineStatus = savedMachineIds.length
+      ? or(eq(productionResourcesTable.status, "available"), inArray(productionResourcesTable.id, savedMachineIds))
+      : eq(productionResourcesTable.status, "available");
+    const machineWhere = and(
+      eq(productionResourcesTable.companyId, cid),
+      machineBranch,
+      machineType,
+      machineStatus,
+    );
+    const resources = await db
+      .select({
+        id: productionResourcesTable.id,
+        name: productionResourcesTable.name,
+        meta: productionResourcesTable.meta,
+      })
+      .from(productionResourcesTable)
+      .where(machineWhere)
+      .orderBy(asc(productionResourcesTable.name));
+    const machines = resources.map((resource) => ({
+      id: resource.id,
+      name: resource.name,
+      workCenterId: resourceRelationshipId(resource.meta, "workCenterId"),
+      fixedAssetId: resourceRelationshipId(resource.meta, "fixedAssetId"),
+    }));
+    const workCenters = await db
+      .select({
+        id: workCentersTable.id,
+        nameAr: workCentersTable.nameAr,
+        nameEn: workCentersTable.nameEn,
+      })
+      .from(workCentersTable)
+      .where(eq(workCentersTable.companyId, cid))
+      .orderBy(asc(workCentersTable.nameAr), asc(workCentersTable.id));
+    const linkedAssetIds = [...new Set(
+      machines.map((machine) => machine.fixedAssetId).filter((id): id is number => id != null),
+    )];
+    const assetStatus = linkedAssetIds.length
+      ? or(eq(fixedAssetsTable.status, "active"), inArray(fixedAssetsTable.id, linkedAssetIds))
+      : eq(fixedAssetsTable.status, "active");
+    const assets = await db
+      .select({
+        id: fixedAssetsTable.id,
+        nameAr: fixedAssetsTable.nameAr,
+        nameEn: fixedAssetsTable.nameEn,
+        code: fixedAssetsTable.code,
+      })
+      .from(fixedAssetsTable)
+      .where(and(
+        eq(fixedAssetsTable.companyId, cid),
+        orderBranchResourceCondition(fixedAssetsTable, order.branchId),
+        assetStatus,
+      ))
+      .orderBy(asc(fixedAssetsTable.nameAr), asc(fixedAssetsTable.id));
+    res.json({
+      workCenters: workCenters.map((center) => ({
+        id: center.id,
+        nameAr: center.nameAr,
+        name: center.nameEn ?? center.nameAr,
+      })),
+      machines,
+      assets: assets.map((asset) => ({
+        id: asset.id,
+        nameAr: asset.nameAr,
+        name: asset.nameEn ?? asset.nameAr,
+        code: asset.code,
+      })),
+    });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+productionExecutionRouter.post("/orders/:id/setup/work-centers", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    if (!name) return void res.status(400).json({ error: "اسم مركز العمل مطلوب" });
+    if (name.length > 200) return void res.status(400).json({ error: "اسم مركز العمل طويل جداً" });
+    const row = await db.transaction(async (tx) => {
+      // Serialize generated codes per tenant. The user supplies only a name
+      // for this quick setup endpoint; the full setup route remains available
+      // for explicit codes/rates.
+      await tx.execute(sql`
+        SELECT pg_advisory_xact_lock(
+          hashtext('production-quick-work-center:' || ${ctx.cid}::text)
+        )
+      `);
+      const existing = await tx
+        .select({ code: workCentersTable.code })
+        .from(workCentersTable)
+        .where(eq(workCentersTable.companyId, ctx.cid));
+      const [created] = await tx.insert(workCentersTable).values({
+        companyId: ctx.cid,
+        code: nextEntityCode("WC", existing.map((item) => item.code)),
+        nameAr: name,
+        nameEn: null,
+        laborRatePerHour: "0",
+        overheadRatePerHour: "0",
+        capacityHoursPerDay: "8",
+        isActive: true,
+      }).returning({
+        id: workCentersTable.id,
+        nameAr: workCentersTable.nameAr,
+      });
+      await writeEvent(ctx.cid, ctx.order.id, "work_center_created", {
+        workCenterId: created.id,
+        name,
+        setup: true,
+      }, req.authUser!.id, false, tx);
+      return created;
+    });
+    res.status(201).json({ id: row.id, nameAr: row.nameAr, name: row.nameAr });
+  } catch (e: any) {
+    const code = e?.code ?? e?.cause?.code;
+    res.status(code === "23505" ? 409 : (e?.status ?? 500)).json({
+      error: code === "23505" ? "تعذر توليد كود مركز العمل؛ حاول مرة أخرى" : e.message,
+    });
+  }
+});
+
+productionExecutionRouter.post("/orders/:id/setup/machines", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    if (!name) return void res.status(400).json({ error: "اسم الآلة مطلوب" });
+    if (name.length > 200) return void res.status(400).json({ error: "اسم الآلة طويل جداً" });
+    const workCenterId = setupOptionalId(req.body?.workCenterId, "مركز العمل");
+    const fixedAssetId = setupOptionalId(req.body?.fixedAssetId, "الأصل الثابت");
+    const row = await db.transaction(async (tx) => {
+      if (workCenterId != null) {
+        const [center] = await tx
+          .select({ id: workCentersTable.id })
+          .from(workCentersTable)
+          .where(and(
+            eq(workCentersTable.id, workCenterId),
+            eq(workCentersTable.companyId, ctx.cid),
+          ))
+          .limit(1);
+        if (!center) {
+          throw Object.assign(new Error("مركز العمل المحدد لا ينتمي إلى هذه الشركة"), { status: 400 });
+        }
+      }
+      if (fixedAssetId != null) {
+        // This lock and the lookup must stay in one transaction. JSON metadata
+        // has no schema-level uniqueness constraint, so a plain pre-check
+        // would allow two simultaneous links to the same asset.
+        await tx.execute(sql`
+          SELECT pg_advisory_xact_lock(
+            hashtext(
+              'production-resource-fixed-asset:' ||
+              ${ctx.cid}::text || ':' || ${fixedAssetId}::text
+            )
+          )
+        `);
+        const [asset] = await tx
+          .select({
+            id: fixedAssetsTable.id,
+            branchId: fixedAssetsTable.branchId,
+            status: fixedAssetsTable.status,
+          })
+          .from(fixedAssetsTable)
+          .where(and(
+            eq(fixedAssetsTable.id, fixedAssetId),
+            eq(fixedAssetsTable.companyId, ctx.cid),
+            eq(fixedAssetsTable.status, "active"),
+          ))
+          .limit(1);
+        if (!asset) {
+          throw Object.assign(new Error("الأصل الثابت غير موجود أو غير متاح للربط"), { status: 400 });
+        }
+        if (asset.branchId != null && asset.branchId !== ctx.order.branchId) {
+          throw Object.assign(new Error("الأصل الثابت خارج نطاق فرع أمر الإنتاج"), { status: 400 });
+        }
+        const [duplicate] = await tx
+          .select({ id: productionResourcesTable.id })
+          .from(productionResourcesTable)
+          .where(and(
+            eq(productionResourcesTable.companyId, ctx.cid),
+            sql`${productionResourcesTable.meta}->>'fixedAssetId' = ${String(fixedAssetId)}`,
+          ))
+          .limit(1);
+        if (duplicate) {
+          throw Object.assign(new Error("الأصل الثابت مرتبط بآلة أخرى مسبقاً"), { status: 409 });
+        }
+      }
+      const [created] = await tx.insert(productionResourcesTable).values({
+        companyId: ctx.cid,
+        branchId: ctx.order.branchId,
+        name,
+        type: "machine",
+        status: "available",
+        meta: { workCenterId, fixedAssetId },
+      }).returning({
+        id: productionResourcesTable.id,
+        name: productionResourcesTable.name,
+      });
+      await writeEvent(ctx.cid, ctx.order.id, "machine_resource_created", {
+        resourceId: created.id,
+        name,
+        workCenterId,
+        fixedAssetId,
+        setup: true,
+      }, req.authUser!.id, false, tx);
+      return created;
+    });
+    res.status(201).json({ id: row.id, name: row.name, workCenterId, fixedAssetId });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
 
 productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
   try {
@@ -8528,7 +8834,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
       return;
     }
     const execution = normalizeStageExecutionPayload(req.body);
-    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId);
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, stage);
     const inputQty =
       execution.inputQty !== undefined
         ? String(execution.inputQty)
@@ -8544,6 +8850,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
         actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
         workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
         resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+        workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
         notes: execution.notes !== undefined ? execution.notes : stage.notes,
         operatorUserId: execution.operatorUserId !== undefined
           ? execution.operatorUserId
@@ -8557,7 +8864,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
       "stage_started",
       { stageId, code: stage.code, inputQty, actualDurationMinutes: execution.actualDurationMinutes ?? null,
         workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-        resourceId: execution.resourceId ?? null, workerUserId: execution.operatorUserId ?? null },
+        resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+        workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
+        workerUserId: execution.operatorUserId ?? null },
       req.authUser!.id,
     );
     if (execution.actualDurationMinutes !== undefined) {
@@ -8597,7 +8906,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
       res.status(400).json({ error: "ابدأ المرحلة أولاً قبل إكمالها" });
       return;
     }
-    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId);
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, stage);
     const outputQty = execution.outputQty!;
     const wasteQty = execution.wasteQty ?? num(stage.wasteQty);
     assertStageQuantityConservation(stage.inputQty, outputQty, wasteQty);
@@ -8621,6 +8930,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
         actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
         workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
         resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+        workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
         wasteReason,
         wasteType,
         wasteClassification,
@@ -8655,7 +8965,8 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
       { stageId, code: stage.code, outputQty, wasteQty,
         actualDurationMinutes: execution.actualDurationMinutes ?? num(stage.actualDurationMinutes),
         workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-        resourceId: execution.resourceId ?? stage.resourceId ?? null,
+         resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+         workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
         workerUserId: execution.operatorUserId ?? stage.operatorUserId ?? null,
         wasteReason: wasteReason ?? null,
         wasteType: wasteType ?? null,
@@ -8676,12 +8987,12 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     const stageId = Number(req.params.stageId);
     const b = req.body ?? {};
     const execution = normalizeStageExecutionPayload(b);
-    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId);
     const [current] = await db.select().from(productionOrderStagesTable).where(and(
       eq(productionOrderStagesTable.id, stageId),
       eq(productionOrderStagesTable.orderId, ctx.order.id),
     )).limit(1);
     if (!current) return void res.status(404).json({ error: "المرحلة غير موجودة" });
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, current);
     if (["done", "completed", "skipped"].includes(String(current.status))) {
       return void res.status(409).json({ error: "لا يمكن تعديل مرحلة مكتملة أو متخطاة" });
     }
@@ -8711,6 +9022,7 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
       updates.actualDurationMinutes = execution.actualDurationMinutes;
     if (execution.workerCount !== undefined) updates.workerCount = execution.workerCount;
     if (execution.resourceId !== undefined) updates.resourceId = execution.resourceId;
+    if (execution.workCenterId !== undefined) updates.workCenterId = execution.workCenterId;
     if (execution.wasteReason !== undefined) updates.wasteReason = execution.wasteReason;
     if (execution.wasteType !== undefined) updates.wasteType = execution.wasteType;
     if (execution.wasteClassification !== undefined)
